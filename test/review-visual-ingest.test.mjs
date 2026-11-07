@@ -246,7 +246,7 @@ test('aidrian pr ingest edits the captures comment only from a manifest this mac
   const foreign = [];
   assert.equal(await ingestWith([comment()], foreign), 0);
   assert.deepEqual(foreign, []);
-  assert.ok(lines.includes(`the captures comment of ${sha} was written by another machine; run the review there to show the ingest`), lines.join('\n'));
+  assert.ok(lines.includes(`the captures comment of ${sha} came from another machine's capture: this ingest counts only on this machine; ingest the same images on the machine that captured the head to show them on the pull request`), lines.join('\n'));
 
   // With the review record local there is no captures comment: the pull request is not read.
   lines.length = 0;

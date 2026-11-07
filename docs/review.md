@@ -314,7 +314,9 @@ Every surface shows an ingest as `ingested, not captured`, with its source and w
 never counts it as a capture. An ingest made before a visual reviewer is dispatched on that head is in the captures
 comment that capture posts. A later one rewrites that comment when this machine's capture wrote it: a comment a
 member or the session's own account posted, whose heading names that head. Where another machine captured the head,
-the command says to run the review there, and with `review.record: "local"` there is no captures comment to rewrite;
+the comment is left as it is: the ingest lives in this machine's state folder and counts only here, and ingesting the
+same images on the machine that captured the head shows them on the pull request. With `review.record: "local"` there
+is no captures comment to rewrite;
 a forge failure is a warning, and the ingest stays recorded. The review summary's visual line names an ingest made
 before a visual reviewer is dispatched, unless that capture took every image, as many entries as fit the line whole
 and the count of the rest.

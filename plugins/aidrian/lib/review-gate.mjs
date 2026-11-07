@@ -491,7 +491,8 @@ async function showIngest({ project, pr, repo, manifest, forge, visual }) {
       return;
     }
     if (typeof manifest.platform !== 'string') {
-      console.log(`the captures comment of ${sha} was written by another machine; run the review there to show the ingest`);
+      // The ingest lives only in this machine's state folder, so only an ingest on the capturing machine can reach it.
+      console.log(`the captures comment of ${sha} came from another machine's capture: this ingest counts only on this machine; ingest the same images on the machine that captured the head to show them on the pull request`);
       return;
     }
     const state = readLocalState(project, pr);

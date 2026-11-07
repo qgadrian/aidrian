@@ -18,7 +18,8 @@ import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { normalizeRemote, stateDir } from './project.mjs';
-import { readLocalState } from './review/state.mjs';
+import { HUMAN } from './review/quota.mjs';
+import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit } from './review/state.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNREVIEWED_REQUEST';
 
@@ -239,6 +240,59 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
   return record?.head && record?.repo ? markerFor(record) : null;
 }
 
+// The one flow `aidrian pr signoff <PR> --last` signs off, from the review record `state` and the pull request's current
+// `head`: { flow, head }, with the head the last review ran on, as recorded. It serves one stop only: the last review
+// on that head stopped at human_required for a flow (`outcome`), and the Human took over no stage there (`quotaStops`
+// with the Human's choice, a stage sign-off --last never records). A flow is pending when the last review left it to
+// the Human (`signoffable`) and no sign-off on that head holds it. The record keeps no order among flows, so two
+// pending flows are refused, each listed with its long command, and so is a flow that still owes an overrule or an
+// accept, which --last never records. A violated invariant no reviewer disputes is no refusal: the long form
+// records that sign-off too, and it counts for nothing until the fix lands.
+export function lastSignoff(state, { pr, repo, head }) {
+  const asked = state?.signoffable;
+  if (!asked || typeof asked.head !== 'string') throw new Error(`no review of ${repo}#${pr} ran: run \`aidrian pr review ${pr}\` first, then sign off`);
+  const h7 = asked.head.slice(0, 7);
+  if (!sameCommit(asked.head, head)) throw new Error(`the last review of ${repo}#${pr} ran on ${h7}, and the pull request is at ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on ${head.slice(0, 7)} first, then sign off`);
+  const outcome = state.outcome;
+  if (outcome?.status !== 'human_required' || !sameCommit(outcome.head, asked.head)) {
+    const status = typeof outcome?.status !== 'string' ? null : sameCommit(outcome.head, asked.head) ? outcome.status : `${outcome.status} on ${String(outcome.head).slice(0, 7)}`;
+    throw new Error(`the last review of ${repo}#${pr} on ${h7} ${status ? `stopped at ${status}` : 'recorded no stop'}, not at a flow's human_required: run \`aidrian pr review ${pr}\` for the next step`);
+  }
+  const pending = (Array.isArray(asked.flows) ? asked.flows : []).filter((flow) => !sameCommit(state.signoffs?.[flow]?.head, asked.head));
+  // A head where the Human took over a stage is never --last's, signed or not: an unsigned stage is signed with
+  // --stage, and once it is, each flow still waiting takes its long command.
+  const takeovers = (Array.isArray(state.quotaStops) ? state.quotaStops : []).filter((stop) => sameCommit(stop?.head, asked.head) && stop?.choice === HUMAN);
+  if (takeovers.length) {
+    const stagesOf = (stops) => [...new Set(stops.map((stop) => stop.stage))];
+    const unsigned = stagesOf(takeovers.filter((stop) => !stop.signoff));
+    if (unsigned.length) {
+      const commands = unsigned.map((stage) => `aidrian pr signoff ${pr} --stage ${stage} --head ${asked.head}`).join('; ');
+      throw new Error(`the Human took over the ${unsigned.join(', ')} stage of ${repo}#${pr} on ${h7}, which --last never signs off: use the long form, ${commands}, then run \`aidrian pr review ${pr}\``);
+    }
+    const next = pending.length ? `run ${pending.map((flow) => `aidrian pr signoff ${pr} --flow ${flow} --head ${asked.head}`).join('; ')}` : `run \`aidrian pr review ${pr}\` for the next step`;
+    throw new Error(`the Human took over the ${stagesOf(takeovers).join(', ')} stage of ${repo}#${pr} on ${h7}, so --last does not sign off this head: ${next}`);
+  }
+  if (pending.length === 0) throw new Error(`no flow of ${repo}#${pr} waits for a sign-off on ${h7}: every flow the last review named is signed off there, or none needed one. Run \`aidrian pr review ${pr}\` for the next step`);
+  if (pending.length > 1) {
+    const commands = pending.map((flow) => `aidrian pr signoff ${pr} --flow ${flow} --head ${asked.head}`).join('; ');
+    throw new Error(`${pending.length} flows of ${repo}#${pr} wait for a sign-off on ${h7}: ${pending.join(', ')}. --last signs off one flow only: run one of ${commands}`);
+  }
+  const [flow] = pending;
+  const listOf = (value) => (Array.isArray(value) ? value : []);
+  const overruled = (invariant) => listOf(state.overrulings).some((each) => each?.flow === flow && each?.invariant === invariant && sameCommit(each?.head, asked.head));
+  const disputed = sameCommit(state.disputes?.head, asked.head) ? listOf(state.disputes.items).filter((each) => each?.flow === flow && !overruled(each.invariant)).map((each) => each.invariant) : [];
+  if (disputed.length) throw new Error(`flow ${flow} has a disputed invariant on ${h7} of ${repo}#${pr}: ${disputed.join(', ')}. --last never overrules: the Human settles it first with aidrian pr signoff ${pr} --flow ${flow} --overrule <invariant> --head ${asked.head} --reason "<why>"`);
+  const outside = sameCommit(state.outside?.head, asked.head) ? [...listOf(state.outside.approvals), ...listOf(state.outside.acceptances)] : [];
+  const closed = (invariant) =>
+    listOf(state.acceptances).some((each) => each?.flow === flow && each?.invariant === invariant && sameCommit(each?.head, asked.head)) ||
+    outside.some((each) => each?.flow === flow && each?.invariant === invariant);
+  const unverified = sameCommit(state.invariants?.head, asked.head)
+    ? listOf(state.invariants.items).filter((each) => each?.flow === flow && each?.state === 'unverified' && !closed(each.invariant)).map((each) => each.invariant)
+    : [];
+  if (unverified.length) throw new Error(`flow ${flow} has an unverified invariant on ${h7} of ${repo}#${pr}: ${unverified.join(', ')}. --last never accepts: run the --accept command the review printed first, aidrian pr signoff ${pr} --flow ${flow} --accept <invariant> --evidence <url> --reason "<what it shows>" --head ${asked.head}`);
+  return { flow, head: asked.head };
+}
+
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a critical flow on one head. It is an audit
 // entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
@@ -246,6 +300,8 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 // between reviewers on that head. `--flow <id> --accept <invariant> --evidence <url> --reason <text>` closes, on that
 // head, an invariant no reviewer could verify, on evidence outside the tool: a comment, review, or review comment of
 // the pull request that the forge finds by its id.
+// `--last`, alone or with `--repo` and `--check`, is the short form: it signs off the one flow the last review left
+// waiting, on the head that review ran on, exactly as `--flow <id> --head <sha>` would (lastSignoff).
 // `--check` runs every refusal of the same command and records nothing: it prints `ok` and returns 0, or throws the
 // refusal, which `aidrian pr` prints before it exits 1. The review-signoff rule lets an agent run it, so a session can
 // try a command before it hands it to the Human.
@@ -261,13 +317,23 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
       dryRun = true;
       continue;
     }
+    if (flag === '--last') {
+      flags.last = true;
+      continue;
+    }
     if (!['--flow', '--stage', '--head', '--repo', '--overrule', '--accept', '--evidence', '--reason'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
   }
-  if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
-  if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+  if (flags.last) {
+    const given = ['flow', 'stage', 'head', 'overrule', 'accept', 'evidence', 'reason'].filter((key) => flags[key] !== undefined);
+    if (given.length) throw new Error(`--last takes no ${given.map((key) => `--${key}`).join(', ')}: it signs off the one flow the last review left waiting, on the head that review ran on. Give --last alone, or the long form with --flow and --head`);
+  } else {
+    if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
+    // The --last head comes from the record the review step wrote, so only a typed head must be a local commit.
+    if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+  }
   const repo = prRepo(project, pr, flags.repo, forge);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
   if (flags.overrule && flags.accept) throw new Error('--overrule and --accept are two rulings: give one');
@@ -280,6 +346,28 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
     console.log(dryRun ? `ok: the command would record ${recorded}; --check recorded nothing` : line);
     return 0;
   };
+  if (flags.last) {
+    // --repo steers the sign-off to another pull request's record: --last takes only this checkout's repository, a
+    // fork's parent included, so a short command typed on a phone cannot sign off a pull request of another repository.
+    const remotes = remoteRepos(project);
+    if (remotes.length && !remotes.includes(repo)) throw new Error(`--last signs off a pull request of this checkout's repositories only (${[...new Set(remotes)].join(', ')}), not ${repo}: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha> --repo ${repo}`);
+    const where = forge ?? forgeFor(project.root);
+    let current = null;
+    try {
+      current = where.change(pr, 'headRefOid', { repo })?.headRefOid ?? null;
+    } catch {}
+    if (typeof current !== 'string' || !SHA.test(current)) throw new Error(`could not read the head of ${repo}#${pr} from the forge: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha>`);
+    const remote = remoteState(repo, pr, forge, config);
+    const record = readReviewRecord(project, pr, remote ?? [], repo);
+    if (record.held !== undefined) throw new Error(heldMessage(pr, record.held));
+    if (record.state.repo && repoName(record.state.repo) !== repo) throw new Error(`the review record of #${pr} is for ${repoName(record.state.repo) ?? record.state.repo}, not ${repo}: --last signs off the pull request that record names. Give --repo ${repoName(record.state.repo) ?? record.state.repo}, or the long form`);
+    const { flow, head } = lastSignoff(record.state, { pr, repo, head: current });
+    // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it
+    // writes. A record written between the two reads is checked by those refusals, not by lastSignoff's: deciding and
+    // writing on one read belongs with run.mjs, which #124 changes.
+    recordSignoff(project, { pr, repo, flow, head, by, remote, dryRun });
+    return done(`${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
+  }
   if (flags.overrule) {
     recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, config), dryRun });
     return done(`${by}'s ruling on invariant ${flags.overrule} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s ruling: invariant ${flags.overrule} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the reviewer evidence that it holds. Run \`aidrian pr review\` again.`);

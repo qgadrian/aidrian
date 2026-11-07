@@ -88,7 +88,7 @@ export async function prepareStep(s) {
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;
-  Object.assign(s, { root, cleanEnv, info, repo, n, head, baseTip, base, policy, baseReview, review, onPr, comments, summary, state });
+  Object.assign(s, { root, cleanEnv, info, repo, n, head, baseTip, base, policy, review, onPr, comments, summary, state });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried

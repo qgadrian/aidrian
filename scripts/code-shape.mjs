@@ -117,11 +117,19 @@ const STATEMENT_WORDS = new Set(['return', 'const', 'let', 'var', 'if', 'else', 
 function nestedTernaries(tokens) {
   const found = [];
   const frames = [frame(false)];
-  for (const token of tokens) {
-    if (token.type === 'word' && STATEMENT_WORDS.has(token.value)) resetSegment(frames.at(-1));
+  tokens.forEach((token, index) => {
+    if (startsStatement(tokens, index)) resetSegment(frames.at(-1));
     if (token.type === 'punct') visitPunct(token, frames, found);
-  }
+  });
   return found;
+}
+
+// A statement word, unless it names a property, as in `obj.default` or `obj?.return`, which stays inside the expression.
+function startsStatement(tokens, index) {
+  const token = tokens[index];
+  if (token.type !== 'word' || !STATEMENT_WORDS.has(token.value)) return false;
+  const before = tokens[index - 1];
+  return before?.type !== 'punct' || (before.value !== '.' && before.value !== '?.');
 }
 
 function frame(inBranch) {

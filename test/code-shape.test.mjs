@@ -62,6 +62,10 @@ test('a ternary in another ternary\'s branch or test warns at the inner one', ()
     ['const a = x ? `${y ? 1 : 2}` : 3;\n', 1],
     ['const a = x ? { b: y ? 1 : 2 } : null;\n', 1],
     ['const a = b ? c : x?.5:1;\n', 1],
+    ['const a = x ? 1 : obj.default ? 2 : 3;\n', 1],
+    ['const a = x ? 1 : obj.return ? 2 : 3;\n', 1],
+    ['const a = x ? 1 : obj?.yield ? 2 : 3;\n', 1],
+    ['const o = { return: a ? b : c ? d : e };\n', 1],
   ]) assert.deepEqual(kinds(source, 'ternary').map((warning) => warning.line), [line], source);
 });
 

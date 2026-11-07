@@ -127,6 +127,10 @@ citation proves the line is there, not that it proves the point, so the independ
 invariants and the earlier verdicts and is asked to challenge each `holds`. A flow with no invariants is held to one
 generic invariant, that nothing in it is removed or weakened, and is marked unspecified.
 
+The record stores each verdict's evidence as the reviewer wrote it, prose included. Only a citation of the three forms
+above signs a `holds` or `not_affected`: prose evidence on either leaves the invariant unverified until a cited verdict
+or an outside approval closes it. The verdict schema is unchanged.
+
 An invariant in a list that cites a heading, `{ "id": "no-double", "cite": "docs/product/booking.md#no-double-booking" }`,
 reaches its reviewer with that section as `source`: the heading and its text up to the next heading of the same or a
 higher level, read from the base branch. The anchor may be copied from GitHub, as the heading's link gives it.
@@ -227,6 +231,23 @@ override is listed in the review summary on the pull request, or only in the loc
 Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
 `gh pr view` names, else origin.
 
+`aidrian pr signoff <PR> --last` is the short form, short enough to type from a phone, with no sha, flow id, or free
+text. It serves one stop only: the last `aidrian pr review` stopped at `human_required` naming one flow. It signs off
+that flow, on the head that review ran on, under the git user's name, exactly as `--flow <id> --head <sha>` does; only
+`--repo` and `--check` combine with it. It reads the pull request's head from GitHub and the last review's record, and
+refuses when:
+
+- no review ran, or the pull request has moved past the reviewed head;
+- the last review stopped at any other status, or the Human took over a stage on that head: an unsigned one with
+  `--stage`; once signed, the flow with its long command;
+- no flow waits, or two or more wait (it lists each with its long command, since the record keeps no order among them);
+- the flow still owes an `--overrule` or an `--accept`, which it never records;
+- the pull request's repository, from `--repo` or else the one `gh pr view` names, is no remote of this checkout (a
+  fork's parent counts once it is a remote, such as `upstream`), or is not the one the record names.
+
+A sign-off the review kept from an older head is not in the record, so `--last` counts that flow as waiting. The
+`review-signoff` rule blocks a session that runs it, `--check` aside, as it blocks the long form.
+
 The command signs only a flow the last `aidrian pr review` on that head asks the Human to sign: one with
 `signoff: "human"`, the built-in `harness-config`, or one whose test the change deletes. It refuses any other flow, and
 a head no review ran on, since such a sign-off would count for nothing. A sign-off never clears a violated invariant.
@@ -309,10 +330,12 @@ A `violated` one has the note `fix the code`; a `disputed` one gives its `--over
 gives the `--accept` command, and as notes the approval to ask for, the review of the head and its
 `aidrian-approve:` line, when the invariant names approvers and both switches are on, and, for a flow a visual
 reviewer judges while the head has no capture, the capture's status line, such as what it needs to run. A session
-offers the Human only these commands, never one of its own making.
+offers the Human only these commands, never one of its own making, with one exception: at `human_required` naming one
+flow, once `aidrian pr signoff <PR> --last --check` exits 0, it hands the Human `aidrian pr signoff <PR> --last` in
+place of the long command, naming the flow and short head that `--check` printed.
 
-**Trying a command first.** `--check` on any `aidrian pr signoff` command, `--flow`, `--overrule`, `--accept`, or
-`--stage`, runs every refusal of that command and records nothing. It prints `ok` and exits 0, or prints the refusal
+**Trying a command first.** `--check` on any `aidrian pr signoff` command, `--flow`, `--overrule`, `--accept`,
+`--stage`, or `--last`, runs every refusal of that command and records nothing. It prints `ok` and exits 0, or prints the refusal
 and exits 1. The `review-signoff` rule lets an agent run it, so a session can check a command before it hands it to
 the Human.
 
@@ -451,7 +474,10 @@ A project adds its own in `review.reviewers`:
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
   `codex-local` reads the checkout at the head.
-- `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result.
+- `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
+  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings <n> --fixed <n> --verdicts -`, the
+  agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
 
 ### The engine
 
@@ -499,6 +525,29 @@ Before marking the draft ready, each flow, `pr-merge-when-green` included, runs 
 owed, the skill's re-check run, then `status` once more. On any other exit the draft stays a draft. The
 [ready hold](hooks.md#ready-hold) refuses marking it ready while `status` says owed, and the steps are in the skill's
 `references/in-a-flow.md`.
+
+### Accepted residuals against decisions
+
+A `## Accepted residuals` item, or an item of the section config.json `github.pullRequest.residuals.section` names, is a defect
+the branch ships on purpose. Before the body ships, `pr-write` sets each one against the decisions on record:
+`aidrian decisions residuals --body <file>` lists each item beside every decision marker in the indexed docs (id, status, wording,
+doc and line), a marker whose class no list holds included and a `rejected` one left out, since it is no rule, and the
+`## Consequences` lines of each ADR in `docs/adr/`, or the folder `--adr` names, an ADR whose Status starts `Superseded` skipped
+with a note; no `docs/adr/` is an empty list, an `--adr` that is no folder fails, and with no project folder the record is the ADR
+lines alone. It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
+Decisions. That part is deterministic. When the list holds no decision and no ADR line, it ends
+`nothing on record: no judgment owed` and exits 0, `--judged` or not, unless part of the record did not read (an index problem, a
+doc that does not read, a failed git scan): then it prints those problems and exits 1. Otherwise whether a residual contradicts a
+decision is a judgment, so `product-manager` returns one row per residual, `{ residual, contradicts, evidence }`, with
+`contradicts` a decision id or ADR `path:line` from that list, or null, and `evidence` the wording it contradicts.
+`--judged <file>` validates the rows: a residual with no row or two, an item the body holds twice, a `contradicts` that names
+nothing listed or an id two markers hold, or one with no evidence is invalid. The command prints each contradiction as
+`residual -> id, doc:line`, or `residual -> path:line` for an ADR line, and exits 1 on any contradiction or invalid row; 0 when
+every row is null, or when the body has no such section or an empty one. The skill fixes or drops each contradiction and ships
+only on 0. Dropping means the residual leaves the body because the defect no longer ships, or because it is shown to be no defect,
+with one line of why left in the body; deleting the bullet while the defect still ships is never a fix. A decision found out of
+date is revised only through its own route, never reworded on the branch to let a residual pass.
+The review engine is not involved: nothing here changes a round or a verdict.
 
 ### Out of quota
 

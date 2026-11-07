@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import {
-  BRIEF_CALLS, handoffCost, handoffReason, planApprovedContext, ratioStep, readMarker, RESUME_TOKENS, sessionUsage, stopReminder, tokenCeiling,
+  BRIEF_CALLS, handoffCost, handoffReason, nextRatio, planApprovedContext, readMarker, RESUME_TOKENS, sessionUsage, stopReminder, tokenCeiling,
 } from '../plugins/aidrian/lib/session-length.mjs';
 import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from '../plugins/aidrian/lib/transcript.mjs';
 
@@ -89,17 +89,20 @@ test('no usage, or a context no bigger than a fresh session, never fires the cos
   assert.equal(stopReminder('', anyRatio, null), null);
 });
 
-test('the steps add costRatio − 1 each, and the ceiling doubles', () => {
-  assert.deepEqual([0, 1, 2].map((fired) => ratioStep(2, fired)), [2, 3, 4]);
-  assert.deepEqual([0, 1, 2].map((fired) => ratioStep(1.5, fired)), [1.5, 2, 2.5]);
+test('the cost trigger fires first at costRatio, then at twice the ratio of its last firing, and the ceiling doubles', () => {
+  assert.deepEqual([0, 2, 2.5].map((last) => nextRatio(2, last)), [2, 4, 5]);
+  assert.deepEqual([0, 1.51].map((last) => nextRatio(1.5, last)), [1.5, 3.02]);
+  assert.equal(nextRatio(3, 1.2), 3, 'a costRatio raised above twice the last firing holds');
   assert.deepEqual([0, 2].map((fired) => tokenCeiling(150_000, fired)), [150_000, 600_000]);
   assert.equal(tokenCeiling(0, 3), 0);
 });
 
-test('a marker holds both counts; one an older version wrote counts as one firing of each', () => {
-  assert.deepEqual(readMarker(null, 2), { ratio: 0, tokens: 0, compactions: 0 });
-  assert.deepEqual(readMarker('{"ratio": 2, "tokens": 1, "compactions": 1}\n', 3), { ratio: 2, tokens: 1, compactions: 1 });
-  for (const old of ['ask\n', 'remind\n', '1\n', '3\n']) assert.deepEqual(readMarker(old, 2), { ratio: 1, tokens: 1, compactions: 2 }, old);
+test('a marker holds the last cost ratio and the ceiling count; one an older version wrote counts as one firing of each', () => {
+  assert.deepEqual(readMarker(null, 2, 2), { lastRatio: 0, tokens: 0, compactions: 0 });
+  assert.deepEqual(readMarker('{"lastRatio": 2.5, "tokens": 1, "compactions": 1}\n', 3, 2), { lastRatio: 2.5, tokens: 1, compactions: 1 });
+  assert.deepEqual(readMarker('{"ratio": 2, "tokens": 1, "compactions": 1}\n', 3, 2), { lastRatio: 2, tokens: 1, compactions: 1 }, 'a count from v0.28.0 to v0.47.0: a firing at costRatio');
+  assert.deepEqual(readMarker('{"ratio": 0, "tokens": 0, "compactions": 0}\n', 0, 2), { lastRatio: 0, tokens: 0, compactions: 0 }, 'a marker from v0.28.0 to v0.47.0 with no cost firing');
+  for (const old of ['ask\n', 'remind\n', '1\n', '3\n']) assert.deepEqual(readMarker(old, 2, 2), { lastRatio: 2, tokens: 1, compactions: 2 }, old);
 });
 
 test('both modes let the agent judge the handoff not worth it and say nothing; ask asks, auto writes the brief', () => {
@@ -157,7 +160,7 @@ function setup(t, session) {
 
 const QUIET = { status: 0, stderr: '' };
 
-test('ask mode fires at the cost ratio with the question, then again only at the next step', (t) => {
+test('ask mode fires once at the cost ratio with the question, then again only once the ratio doubles', (t) => {
   const { stop, reach, temp, counts } = setup(t);
   reach(REVIEW_LOOP.last);
   assert.deepEqual(stop(), QUIET, 'r 1.51 is under the default 2');
@@ -165,30 +168,39 @@ test('ask mode fires at the cost ratio with the question, then again only at the
   const first = stop();
   assert.equal(first.status, 2);
   assert.match(first.stderr, /^This session is long: each call costs 2\.0 times .* about 59 more model calls.*hand off now, or keep going\?/s);
-  assert.match(first.stderr, /comes back once each call costs 3 times/);
+  assert.match(first.stderr, /comes back once each call costs 4 times/);
   assert.deepEqual(readdirSync(temp), ['aidrian-session-length-abc-123']);
-  assert.deepEqual(counts(), { ratio: 1, tokens: 0, compactions: 0 });
-  assert.deepEqual(stop(), QUIET, 'a later turn of the same session, under the next step');
+  assert.deepEqual(counts(), { lastRatio: 2, tokens: 0, compactions: 0 });
+  assert.deepEqual(stop(), QUIET, 'a later turn of the same session, under double');
   assert.equal(stop({ session_id: 'other' }).status, 2, 'another session counts on its own');
-  reach(300_000);
-  assert.deepEqual(stop(), QUIET, 'r 2.92 is under the step of 3');
+  reach(256_690);
+  assert.deepEqual(stop(), QUIET, 'r 2.5 is under twice the last firing');
   reach(308_028);
-  assert.match(stop().stderr, /^This session is long: each call costs 3\.0 times/);
-  assert.deepEqual(counts(), { ratio: 2, tokens: 0, compactions: 0 });
+  assert.deepEqual(stop(), QUIET, 'r 3.0 is under twice the last firing');
+  reach(410_000);
+  assert.deepEqual(stop(), QUIET, 'r 3.99 is under twice the last firing');
+  reach(410_704);
+  const again = stop();
+  assert.match(again.stderr, /^This session is long: each call costs 4\.0 times/);
+  assert.match(again.stderr, /comes back once each call costs 8 times/);
+  assert.deepEqual(counts(), { lastRatio: 4, tokens: 0, compactions: 0 });
 });
 
-test('a costRatio of 1.5 fires at 1.5 and re-arms at 2', (t) => {
+test('a costRatio of 1.5 fires at 1.5 and re-arms at twice the ratio it fired at', (t) => {
   const { stop, reach, counts } = setup(t, { handoff: { costRatio: 1.5 } });
   reach(REVIEW_LOOP.last);
-  assert.match(stop().stderr, /each call costs 1\.5 times.*comes back once each call costs 2 times/s);
+  assert.match(stop().stderr, /each call costs 1\.5 times.*comes back once each call costs 3\.02 times/s);
+  assert.deepEqual(counts(), { lastRatio: REVIEW_LOOP.last / 102_676, tokens: 0, compactions: 0 });
   reach(200_000);
   assert.deepEqual(stop(), QUIET, 'r 1.95');
   reach(205_352);
-  assert.equal(stop().status, 2);
-  assert.deepEqual(counts(), { ratio: 2, tokens: 0, compactions: 0 });
+  assert.deepEqual(stop(), QUIET, 'r 2.0 is under twice 1.51');
+  reach(2 * REVIEW_LOOP.last);
+  assert.equal(stop().status, 2, 'exactly twice the ratio of the last firing');
+  assert.deepEqual(counts(), { lastRatio: (2 * REVIEW_LOOP.last) / 102_676, tokens: 0, compactions: 0 });
 });
 
-test('the token ceiling fires on its own, with no cost in its message, and leaves the ratio count at 0', (t) => {
+test('the token ceiling fires on its own, with no cost in its message, and leaves the last cost ratio at 0', (t) => {
   const { stop, reach, counts } = setup(t, { handoff: { maxTokens: 100_000 } });
   reach(110_000);
   const { status, stderr } = stop();
@@ -196,36 +208,41 @@ test('the token ceiling fires on its own, with no cost in its message, and leave
   assert.match(stderr, /^This session is long: 110k tokens of context\. A fresh session started from a handoff brief works from a smaller context\./);
   assert.match(stderr, /comes back once the context reaches 200k tokens\./);
   assert.doesNotMatch(stderr, /times|pays back|fewer model calls/);
-  assert.deepEqual(counts(), { ratio: 0, tokens: 1, compactions: 0 });
+  assert.deepEqual(counts(), { lastRatio: 0, tokens: 1, compactions: 0 });
   reach(150_000);
   assert.deepEqual(stop(), QUIET, 'under twice the ceiling');
   reach(205_352);
   assert.match(stop().stderr, /^This session is long: 205k tokens of context, and each call costs 2\.0 times/);
-  assert.deepEqual(counts(), { ratio: 1, tokens: 2, compactions: 0 });
+  assert.deepEqual(counts(), { lastRatio: 2, tokens: 2, compactions: 0 });
 });
 
-test('a compaction after a firing resets both counts, so the first step fires again', (t) => {
+test('a compaction after a firing resets both triggers, so costRatio fires again', (t) => {
   const { stop, reach, counts } = setup(t, { handoff: { maxTokens: 200_000 } });
   reach(205_352);
   assert.equal(stop().status, 2);
-  assert.deepEqual(counts(), { ratio: 1, tokens: 1, compactions: 0 });
+  assert.deepEqual(counts(), { lastRatio: 2, tokens: 1, compactions: 0 });
   reach(206_000);
-  assert.deepEqual(stop(), QUIET, 'no compaction: the next steps are r 3 and 400k');
-  reach(COMPACTION, 206_000);
+  assert.deepEqual(stop(), QUIET, 'no compaction: the next thresholds are r 4 and 400k');
+  reach(COMPACTION, 205_352);
   assert.equal(stop().status, 2);
-  assert.deepEqual(counts(), { ratio: 1, tokens: 1, compactions: 1 });
+  assert.deepEqual(counts(), { lastRatio: 2, tokens: 1, compactions: 1 });
   assert.deepEqual(stop(), QUIET, 'the same compaction resets nothing again');
 });
 
-test('a marker an older version wrote counts as one firing of each trigger', (t) => {
-  for (const old of ['ask\n', '2\n']) {
+test('a marker an older version wrote counts as one firing of each trigger, the cost one at costRatio', (t) => {
+  for (const old of ['ask\n', '2\n', '{"ratio":1,"tokens":1,"compactions":0}\n']) {
     const { stop, reach, marker, counts } = setup(t, { handoff: { maxTokens: 110_000 } });
     writeFileSync(marker, old);
     reach(205_352);
-    assert.deepEqual(stop(), QUIET, `${JSON.stringify(old)}: past the first ratio step and the ceiling, under their second`);
+    assert.deepEqual(stop(), QUIET, `${JSON.stringify(old)}: r 2.0 is under 4, and 205k under 220k`);
     reach(308_028);
-    assert.equal(stop().status, 2);
-    assert.deepEqual(counts(), { ratio: 2, tokens: 2, compactions: 0 });
+    const ceiling = stop();
+    assert.equal(ceiling.status, 2, `${JSON.stringify(old)}: the ceiling at 220k`);
+    assert.doesNotMatch(ceiling.stderr, /times/, `${JSON.stringify(old)}: r 3.0 is under 4, so the ceiling fires alone`);
+    assert.deepEqual(counts(), { lastRatio: 2, tokens: 2, compactions: 0 });
+    reach(410_704);
+    assert.match(stop().stderr, /each call costs 4\.0 times/, `${JSON.stringify(old)}: r 4.0`);
+    assert.deepEqual(counts(), { lastRatio: 4, tokens: 2, compactions: 0 });
   }
 });
 
@@ -239,7 +256,7 @@ test('auto mode, and a legacy "auto" string, send the agent back to write the br
   }
 });
 
-test('nothing happens when off, under the step, on the stop it caused, on another host, or outside a project', (t) => {
+test('nothing happens when off, under costRatio, on the stop it caused, on another host, or outside a project', (t) => {
   for (const handoff of [{ mode: 'off' }, 'off']) {
     const off = setup(t, { handoff });
     off.reach(400_000);
@@ -247,7 +264,7 @@ test('nothing happens when off, under the step, on the stop it caused, on anothe
     assert.equal(off.plan(), '', `the plan offer, off as ${JSON.stringify(handoff)}`);
   }
   const { stop, reach, temp, transcript } = setup(t);
-  assert.deepEqual(stop(), QUIET, 'under the default step');
+  assert.deepEqual(stop(), QUIET, 'under the default costRatio');
   reach(205_352);
   assert.deepEqual(stop({ stop_hook_active: true }), QUIET, 'the stop this hook caused');
   assert.deepEqual(stop({ stop_hook_active: undefined }), QUIET, 'a payload without stop_hook_active');
@@ -293,21 +310,31 @@ test('with a token ceiling, an approved plan offers a handoff from half of it', 
   assert.equal(planApprovedContext({ mode: 'ask', costRatio: 2, maxTokens: 0 }, usageOf({ first: 58_676, last: 60_000 })), null, 'no ceiling');
 });
 
-test('a firing past several steps at once re-arms above them all, so the next turn is not reminded again', () => {
-  // A 50k baseline is a 94k fresh session; 300.8k is 3.2 times that, past the steps at 2 and 3, and three ceilings of 100k.
+test('a firing far past costRatio re-arms at twice its own ratio, so the next turn is not reminded again', () => {
+  // A 50k baseline is a 94k fresh session; 300.8k is 3.2 times that, so the cost trigger comes back at 6.4, and it is past three ceilings of 100k.
   const text = [call('w', 50_000), call('c', 300_800)].join('\n');
   const handoff = { ...DEFAULTS.session.handoff, maxTokens: 100_000 };
   const first = stopReminder(text, handoff, null);
-  assert.deepEqual(first.marker, { ratio: 2, tokens: 2, compactions: 0 });
-  assert.match(first.reason, /comes back once the context reaches 400k tokens or each call costs 4 times/);
+  assert.deepEqual(first.marker, { lastRatio: 300_800 / 94_000, tokens: 2, compactions: 0 });
+  assert.match(first.reason, /comes back once the context reaches 400k tokens or each call costs 6\.4 times/);
   assert.equal(stopReminder(text, handoff, JSON.stringify(first.marker)), null, 'the next turn at the same size');
 });
 
-test('a large jump at the smallest costRatio re-arms in one computed step', () => {
-  // 1.1 steps are 0.1 apart; a 50k baseline is 94k fresh, and 935.3k is a ratio of 9.95, past 89 steps (1.1 to 9.9).
+test('a large jump at the smallest costRatio re-arms at twice the ratio it fired at', () => {
+  // A 50k baseline is 94k fresh, and 935.3k is a ratio of 9.95: the cost trigger comes back at 19.9.
   const handoff = { ...DEFAULTS.session.handoff, costRatio: 1.1 };
   const text = [call('w', 50_000), call('c', 935_300)].join('\n');
   const reminder = stopReminder(text, handoff, null);
-  assert.equal(reminder.marker.ratio, 89);
+  assert.equal(reminder.marker.lastRatio, 935_300 / 94_000);
   assert.equal(stopReminder(text, handoff, JSON.stringify(reminder.marker)), null, 'the next turn at the same size');
+});
+
+test('a costRatio raised mid-session above twice the last firing holds: no firing below it', () => {
+  // A 50k baseline is 94k fresh. The marker's last firing was at 1.2, under an earlier costRatio; costRatio is now 3.
+  const handoff = { ...DEFAULTS.session.handoff, costRatio: 3 };
+  const marker = JSON.stringify({ lastRatio: 1.2, tokens: 0, compactions: 0 });
+  assert.equal(stopReminder([call('w', 50_000), call('c', 235_000)].join('\n'), handoff, marker), null, 'r 2.5 is past twice 1.2 but under 3');
+  const fired = stopReminder([call('w', 50_000), call('c', 282_000)].join('\n'), handoff, marker);
+  assert.equal(fired.marker.lastRatio, 3);
+  assert.match(fired.reason, /comes back once each call costs 6 times/);
 });

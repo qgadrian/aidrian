@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { awaitReview, runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { asksForReview, gateReview, markerFor, OVERRIDE, readRecord, writeRecord } from '../plugins/aidrian/lib/review-gate.mjs';
-import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { asksForReview, gateReview, lastSignoff, markerFor, OVERRIDE, readRecord, runSignoff, writeRecord } from '../plugins/aidrian/lib/review-gate.mjs';
+import { emptyState, heldMessage, readLocalState, SUMMARY_MARKER, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check } from '../plugins/aidrian/lib/rules/github/review-request.mjs';
 
 const STATE = process.env.XDG_STATE_HOME;
@@ -155,6 +155,46 @@ test('aidrian pr attest records the review and prints the marker; --check reads 
   assert.equal(readRecord(project, 7).head, head);
 });
 
+test('aidrian pr attest --pass --verdicts - reads the agent`s JSON from stdin and stores its evidence as written', (t) => {
+  const { dir, head, project } = repo(t, { ...GATE, review: { record: 'local' } });
+  // --repo keeps the pull request's repository off the forge, so the test reads no network.
+  const attest = (pass, input, ...more) => spawnSync(process.execPath, [CLI, 'pr', 'attest', '7', '--pass', pass, '--head', head, '--reviewer', 'product-manager', ...more, '--repo', 'Acme/Notes'], { cwd: dir, encoding: 'utf8', env: process.env, input });
+  const counted = ['--findings', '0', '--fixed', '0'];
+  const recorded = (pass) => readLocalState(project, 7)?.passes[pass];
+  const evidence = 'The checkout copy says "Pay now" before the total, as the brief asks; no price moves (see the summary step).';
+  const verdicts = [{ flow: 'checkout', invariant: 'price-shown', verdict: 'holds', evidence }];
+
+  const bare = attest('agent:product-manager', JSON.stringify(verdicts), ...counted, '--verdicts', '-');
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.deepEqual(recorded('agent:product-manager').verdicts, verdicts);
+  assert.equal(recorded('agent:product-manager').verdicts[0].evidence, evidence, 'prose evidence is stored byte-identical');
+
+  const whole = { findings: [], verdicts: [{ ...verdicts[0], invariant: 'copy-plain' }], contracts: ['c'], cross_notes: ['n'] };
+  const object = attest('agent:product-manager', JSON.stringify(whole), ...counted, '--verdicts', '-');
+  assert.equal(object.status, 0, object.stderr);
+  assert.deepEqual(recorded('agent:product-manager').verdicts, whole.verdicts, 'the agent`s whole final object');
+  assert.deepEqual(recorded('agent:product-manager').contracts, ['c']);
+  assert.deepEqual(recorded('agent:product-manager').cross_notes, ['n']);
+
+  const both = attest('agent:security-engineer', JSON.stringify(verdicts), '--verdicts', '-', '--findings-file', '-');
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /--findings-file - is not supported: stdin is read once, by --verdicts -; write the findings to a file/);
+  assert.equal(recorded('agent:security-engineer'), undefined);
+
+  for (const input of ['', 'not json']) {
+    const bad = attest('agent:security-engineer', input, ...counted, '--verdicts', '-');
+    assert.equal(bad.status, 1, `stdin ${JSON.stringify(input)}`);
+    assert.match(bad.stderr, /--verdicts must be a JSON file/);
+    assert.equal(recorded('agent:security-engineer'), undefined);
+  }
+
+  const file = path.join(dir, 'verdicts.json');
+  writeFileSync(file, JSON.stringify(verdicts));
+  const fromFile = attest('agent:code-reviewer', undefined, ...counted, '--verdicts', file);
+  assert.equal(fromFile.status, 0, fromFile.stderr);
+  assert.deepEqual(recorded('agent:code-reviewer').verdicts, verdicts, '--verdicts FILE reads the file as before');
+});
+
 // The review step's record of pull request `pr` with `passes`, as `aidrian pr attest --pass` writes them (recordPass).
 function passes(project, pr, entries) {
   const state = emptyState(pr, 'acme/notes');
@@ -248,4 +288,167 @@ test('the MCP hook holds the gate for the GitHub comment tools', (t) => {
   }
   reviewed(project, 5);
   assert.equal(hook({ owner: 'acme', repo: 'notes', issue_number: 5, body: '@codex review' }).status, 2);
+});
+
+test('aidrian pr signoff --last signs off the one flow the last review left waiting, and refuses the rest', async (t) => {
+  const { dir, project, head } = repo(t, { version: 1, review: { record: 'local' } });
+  execFileSync('git', ['config', 'user.name', 'Tester'], { cwd: dir });
+  const h7 = head.slice(0, 7);
+  const stale = 'f'.repeat(40);
+  const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review.json');
+  const seed = (fields = {}) => {
+    // The stop --last serves, unless a case seeds another outcome.
+    writeLocalState(project, { ...emptyState(7, 'acme/notes'), outcome: { status: 'human_required', head, at: 'x' }, ...fields });
+    return readFileSync(recordFile, 'utf8');
+  };
+  let forgeHead = head;
+  let forgeFails = false;
+  const forge = {
+    change: () => {
+      if (forgeFails) throw new Error('gh: offline');
+      return { url: 'https://github.com/acme/notes/pull/7', headRefOid: forgeHead };
+    },
+  };
+  const { config } = loadConfig(project);
+  const signoff = async (...args) => {
+    const lines = [];
+    t.mock.method(console, 'log', (line) => lines.push(line));
+    try {
+      return { code: await runSignoff(['7', ...args, ...(args.includes('--repo') ? [] : ['--repo', 'acme/notes'])], project, config, { forge }), lines };
+    } finally {
+      t.mock.restoreAll();
+    }
+  };
+  // A refusal throws the same message with and without --check, and neither writes the record.
+  const refuses = async (args, message) => {
+    const before = readFileSync(recordFile, 'utf8');
+    await assert.rejects(signoff(...args), message, args.join(' '));
+    await assert.rejects(signoff(...args, '--check'), message, `${args.join(' ')} --check`);
+    // The same bytes: no sign-off, overrule, or acceptance was written.
+    assert.equal(readFileSync(recordFile, 'utf8'), before, `${args.join(' ')} wrote the record`);
+  };
+  const ok = (flow) => `ok: the command would record Tester's sign-off of flow ${flow} on ${h7}; --check recorded nothing`;
+
+  // One flow waits: --check records nothing, --last records it as --flow pay --head <sha> would, and then none waits.
+  const one = seed({ signoffable: { head, flows: ['pay'] } });
+  assert.deepEqual(await signoff('--last', '--check'), { code: 0, lines: [ok('pay')] });
+  assert.equal(readFileSync(recordFile, 'utf8'), one, '--check wrote the record');
+  assert.deepEqual(await signoff('--last'), { code: 0, lines: [`recorded Tester's sign-off of flow pay on ${h7}. Run \`aidrian pr review\` again.`] });
+  const signed = readLocalState(project, 7);
+  assert.deepEqual({ ...signed.signoffs.pay, at: typeof signed.signoffs.pay.at }, { head, by: 'Tester', at: 'string' });
+  assert.deepEqual([signed.overrulings ?? [], signed.acceptances ?? []], [[], []], '--last records no ruling');
+  await refuses(['--last'], /no flow of acme\/notes#7 waits for a sign-off on/u);
+
+  // Two flows wait: no order is invented; both are listed with their long commands. One signed: the other is the one.
+  seed({ signoffable: { head, flows: ['harness-config', 'pay'] } });
+  await refuses(['--last'], (error) => {
+    assert.match(error.message, /2 flows of acme\/notes#7 wait .* harness-config, pay/u);
+    assert.ok(error.message.includes(`--flow harness-config --head ${head}`) && error.message.includes(`--flow pay --head ${head}`), error.message);
+    return true;
+  });
+  seed({ signoffable: { head, flows: ['harness-config', 'pay'] }, signoffs: { 'harness-config': { head, by: 'Tester', at: 'x' } } });
+  assert.deepEqual(await signoff('--last', '--check'), { code: 0, lines: [ok('pay')] });
+
+  // No review ran; the pull request moved past the reviewed head; the forge cannot say where it is.
+  seed();
+  await refuses(['--last'], /no review of acme\/notes#7 ran/u);
+  seed({ signoffable: { head, flows: ['pay'] } });
+  forgeHead = stale;
+  await refuses(['--last'], new RegExp(`ran on ${h7}, and the pull request is at fffffff`, 'u'));
+  forgeHead = head;
+  forgeFails = true;
+  await refuses(['--last'], /could not read the head of acme\/notes#7/u);
+  forgeFails = false;
+
+  // A disputed invariant owes an overrule, which --last never records; once overruled on that head, it passes.
+  const disputes = { head, items: [{ flow: 'pay', invariant: 'cap' }] };
+  seed({ signoffable: { head, flows: ['pay'] }, disputes });
+  await refuses(['--last'], (error) => {
+    assert.match(error.message, /--last never overrules/u);
+    assert.ok(error.message.includes('--overrule <invariant>'), error.message);
+    return true;
+  });
+  seed({ signoffable: { head, flows: ['pay'] }, disputes, overrulings: [{ flow: 'pay', invariant: 'cap', head, by: 'Tester', reason: 'r', at: 'x' }] });
+  assert.deepEqual(await signoff('--last', '--check'), { code: 0, lines: [ok('pay')] });
+
+  // An unverified invariant owes an accept, closed by an acceptance or by outside evidence on that head.
+  const invariants = { head, items: [{ flow: 'pay', invariant: 'cap', state: 'unverified' }] };
+  seed({ signoffable: { head, flows: ['pay'] }, invariants });
+  await refuses(['--last'], /--last never accepts/u);
+  seed({ signoffable: { head, flows: ['pay'] }, invariants, acceptances: [{ flow: 'pay', invariant: 'cap', head, by: 'Tester', reason: 'r', evidence: 'https://x', kind: 'comment', at: 'x' }] });
+  assert.deepEqual(await signoff('--last', '--check'), { code: 0, lines: [ok('pay')] });
+  seed({ signoffable: { head, flows: ['pay'] }, invariants, outside: { head, approvals: [{ flow: 'pay', invariant: 'cap' }], acceptances: [] } });
+  assert.deepEqual(await signoff('--last', '--check'), { code: 0, lines: [ok('pay')] });
+  // A violated invariant no reviewer disputes is no refusal, as with --flow: the sign-off counts for nothing until the fix.
+  seed({ signoffable: { head, flows: ['pay'] }, invariants: { head, items: [{ flow: 'pay', invariant: 'cap', state: 'violated' }] } });
+  assert.deepEqual(await signoff('--last', '--check'), { code: 0, lines: [ok('pay')] });
+
+  // --last takes no free text and no flag of the long forms; only --repo and --check combine with it.
+  seed({ signoffable: { head, flows: ['pay'] } });
+  for (const extra of [['--head', head], ['--flow', 'pay'], ['--stage', 'x'], ['--overrule', 'cap'], ['--accept', 'cap'], ['--evidence', 'https://x'], ['--reason', 'x']]) {
+    await refuses(['--last', ...extra], new RegExp(`--last takes no ${extra[0]}\\b`, 'u'));
+  }
+  await refuses(['--last', 'extra'], /unknown argument: extra/u);
+
+  // --last serves only the human_required stop of a flow, on the reviewed head: any other recorded status refuses,
+  // a flow that waits only for a deleted test (fix_required) included.
+  for (const status of ['fix_required', 'dispatch', 'error']) {
+    seed({ signoffable: { head, flows: ['pay'] }, outcome: { status, head, at: 'x' } });
+    await refuses(['--last'], new RegExp(`the last review of acme/notes#7 on ${h7} stopped at ${status}, not at a flow's human_required`, 'u'));
+  }
+  seed({ signoffable: { head, flows: ['pay'] }, outcome: { status: 'human_required', head: stale, at: 'x' } });
+  await refuses(['--last'], /stopped at human_required on fffffff, not at a flow's human_required/u);
+  seed({ signoffable: { head, flows: ['pay'] }, outcome: null });
+  await refuses(['--last'], /recorded no stop, not at a flow's human_required/u);
+  // A head where the Human took over a stage is never --last's, signed or not: unsigned, the message gives the --stage
+  // command; signed, each waiting flow's long command.
+  const stop = { head, stage: 'independent', reviewer: 'codex', passes: ['p'], reason: 'quota', at: 'x', choice: 'human' };
+  seed({ signoffable: { head, flows: [] }, quotaStops: [stop] });
+  await refuses(['--last'], (error) => {
+    assert.match(error.message, /the Human took over the independent stage of acme\/notes#7/u);
+    assert.ok(error.message.includes(`aidrian pr signoff 7 --stage independent --head ${head}`), error.message);
+    return true;
+  });
+  seed({ signoffable: { head, flows: ['pay'] }, quotaStops: [{ ...stop, signoff: { by: 'Tester', at: 'x' } }] });
+  await refuses(['--last'], (error) => {
+    assert.match(error.message, new RegExp(`the Human took over the independent stage of acme/notes#7 on ${h7}, so --last does not sign off this head`, 'u'));
+    assert.ok(error.message.includes(`aidrian pr signoff 7 --flow pay --head ${head}`), error.message);
+    assert.ok(!error.message.includes('--stage'), error.message);
+    return true;
+  });
+  seed({ signoffable: { head, flows: ['pay'] }, quotaStops: [{ ...stop, head: stale }, { ...stop, choice: 'agent:critic' }] });
+  assert.deepEqual(await signoff('--last', '--check'), { code: 0, lines: [ok('pay')] }, 'a stop on another head, or an agent fallback, is no takeover');
+
+  // --repo steers --last only to this checkout's repositories, and only to the one the record names.
+  seed({ signoffable: { head, flows: ['pay'] } });
+  await refuses(['--last', '--repo', 'stranger/repo'], /--last signs off a pull request of this checkout's repositories only \(acme\/notes\), not stranger\/repo/u);
+  execFileSync('git', ['remote', 'add', 'upstream', 'git@github.com:Other/X.git'], { cwd: dir });
+  await refuses(['--last', '--repo', 'other/x'], /the review record of #7 is for acme\/notes, not other\/x/u);
+  assert.deepEqual(await signoff('--last', '--check', '--repo', 'Acme/Notes'), { code: 0, lines: [ok('pay')] });
+});
+
+test('aidrian pr signoff --last refuses a review record held on another machine', async (t) => {
+  const { dir, project, head } = repo(t, { version: 1 });
+  execFileSync('git', ['config', 'user.name', 'Tester'], { cwd: dir });
+  writeLocalState(project, { ...emptyState(7, 'acme/notes'), signoffable: { head, flows: ['pay'] }, outcome: { status: 'human_required', head, at: 'x' } });
+  const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review.json');
+  const before = readFileSync(recordFile, 'utf8');
+  const forge = {
+    change: () => ({ url: 'https://github.com/acme/notes/pull/7', headRefOid: head }),
+    conversationComments: () => [{ body: `${SUMMARY_MARKER}\n<!-- aidrian-review-state-held:99 -->`, author_association: 'OWNER' }],
+  };
+  const { config } = loadConfig(project);
+  for (const args of [['--last'], ['--last', '--check']]) {
+    await assert.rejects(runSignoff(['7', ...args, '--repo', 'acme/notes'], project, config, { forge }), { message: heldMessage(7, 99) }, args.join(' '));
+  }
+  assert.equal(readFileSync(recordFile, 'utf8'), before);
+});
+
+test('lastSignoff compares heads as commits, and a sign-off on another head leaves the flow pending', () => {
+  const head = 'abcdef0123456789abcdef0123456789abcdef01';
+  const where = { pr: 7, repo: 'acme/notes', head };
+  const outcome = { status: 'human_required', head, at: 'x' };
+  assert.deepEqual(lastSignoff({ signoffable: { head: head.slice(0, 7), flows: ['pay'] }, signoffs: {}, outcome }, where), { flow: 'pay', head: head.slice(0, 7) });
+  assert.deepEqual(lastSignoff({ signoffable: { head, flows: ['pay'] }, signoffs: { pay: { head: '1234567890', by: 'T', at: 'x' } }, outcome }, where), { flow: 'pay', head });
+  assert.throws(() => lastSignoff({ signoffable: { head, flows: ['pay'] }, signoffs: { pay: { head: head.slice(0, 7), by: 'T', at: 'x' } }, outcome }, where), /no flow of acme\/notes#7 waits/u);
 });

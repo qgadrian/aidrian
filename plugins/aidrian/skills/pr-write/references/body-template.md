@@ -46,4 +46,7 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
   or of the first section on the closed list when Summary is not on it, as a `Decisions:` line and its bullets.
   When the `queue` that `aidrian decisions list --added-since` prints is `report`, it stays out of the body.
 - **Accepted residuals** come from `aidrian pr disposition` verdicts of `accepted_residual`.
+  Before the body ships, each one is set against the decisions on record and the ADR consequences (`aidrian decisions residuals`),
+  and one that contradicts a decision is fixed or dropped, never shipped. A residual is dropped only when the defect no longer
+  ships or is shown to be no defect, and then one line of why stays in the body: never delete the bullet alone while the defect ships.
 - **Follow-up for a person** never lists a check CI runs, or work an agent can do now.

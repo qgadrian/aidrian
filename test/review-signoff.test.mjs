@@ -26,6 +26,11 @@ test('an agent cannot sign off a flow, however it runs aidrian', (t) => {
     'cd x && aidrian pr signoff 9',
     'echo $(aidrian pr signoff 9)',
     'env FOO=1 aidrian pr signoff 9',
+    'aidrian pr signoff 9 --last',
+    '/usr/local/bin/aidrian pr signoff 9 --last',
+    'node plugins/aidrian/lib/cli.mjs pr signoff 9 --last',
+    'node "$CLAUDE_PLUGIN_ROOT/bin/aidrian" pr signoff 9 --last',
+    'echo $(aidrian pr signoff 9 --last)',
   ]) assert.equal(check(command, { cwd }), REASON, command);
   for (const command of ['aidrian pr review 9', 'aidrian pr attest 9 --check', 'echo "aidrian pr signoff 9"', 'grep signoff docs/review.md', 'node other.mjs pr signoff']) {
     assert.equal(check(command, { cwd }), null, command);
@@ -44,6 +49,10 @@ test('a sign-off inside a shell wrapper is denied', (t) => {
     "bash <<'EOF'\naidrian pr signoff 9\nEOF",
     'bash <<< "aidrian pr signoff 9"',
     'echo "aidrian pr signoff 9" | bash',
+    'bash -c "aidrian pr signoff 9 --last"',
+    'eval "aidrian pr signoff 9 --last"',
+    "bash <<'EOF'\naidrian pr signoff 9 --last\nEOF",
+    'echo "aidrian pr signoff 9 --last" | bash',
   ]) assert.equal(check(command, { cwd }), REASON, command);
   for (const command of ['bash -c "aidrian pr review 9"', 'eval "echo pr signoff"', 'echo "pr signoff" | grep signoff', "cat <<'EOF'\naidrian pr signoff 9\nEOF"]) {
     assert.equal(check(command, { cwd }), null, command);
@@ -57,13 +66,44 @@ test('an agent may dry-run a sign-off with --check, and every other sign-off is 
     'aidrian pr signoff 9 --flow look --accept matches-design --evidence https://github.com/o/r/pull/9#issuecomment-1 --reason "approved" --head abc1234 --check',
     'node plugins/aidrian/lib/cli.mjs pr signoff 9 --check --stage independent --head abc1234',
     'bash -c "aidrian pr signoff 9 --flow x --head abc1234 --check"',
+    'aidrian pr signoff 9 --last --check',
+    'bash -c "aidrian pr signoff 9 --last --check"',
   ]) assert.equal(check(command, { cwd }), null, command);
   for (const command of [
     'aidrian pr signoff 9 --flow look --accept matches-design --evidence https://x --reason "y" --head abc1234',
     'aidrian pr signoff 9 --flow x --head abc1234 --check-in',
     'aidrian pr signoff 9 --flow x --head abc1234 --check && aidrian pr signoff 9 --flow x --head abc1234',
     'echo "aidrian pr signoff 9 --check" | bash',
+    'aidrian pr signoff 9 --last --check && aidrian pr signoff 9 --last',
   ]) assert.equal(check(command, { cwd }), REASON, command);
+});
+
+test("the rule's message names the short form and still hands the command over", () => {
+  assert.match(REASON, /only the Human runs it, `--last` included/u);
+  assert.match(REASON, /Stop\b/u);
+  assert.match(REASON, /At human_required naming one flow, once `aidrian pr signoff <PR> --last --check` exits 0, hand over the short form `aidrian pr signoff <PR> --last`/u);
+  assert.match(REASON, /phone/u);
+  assert.match(REASON, /naming the flow and short head that `--check` printed/u);
+  assert.match(REASON, /At a disputed flow's overrule, or any other stop, hand over the command the review step printed/u);
+  assert.match(REASON, /run it with `--check`, which records nothing/u);
+});
+
+test('a --check the shell builds at run time is no dry run, and a subcommand it builds is denied', (t) => {
+  const cwd = project(t);
+  for (const command of [
+    'aidrian pr signoff `printf https://github.com/o/r/pull/9/`--check --last',
+    'aidrian pr signoff `printf https://github.com/o/r/pull/9/`--check --flow x --head abc1234',
+    'aidrian pr signoff 9 --repo `printf o/r/pull/1/`--check --last',
+    'aidrian pr signoff 9 --last `true`--check',
+    'aidrian pr signoff 9 --last $(true)--check',
+    'set -- pr signoff 9 --last; aidrian "$@"',
+    'a=(pr signoff 9 --last); aidrian "${a[@]}"',
+    'aidrian() { command aidrian "${@/--check/}"; }; aidrian pr signoff 9 --last --check',
+    'aidrian pr "$sub" 9 --last',
+  ]) assert.equal(check(command, { cwd }), REASON, command);
+  for (const command of ['aidrian pr review $PR', 'aidrian pr signoff 9 --last --check', 'aidrian pr signoff "$PR" --last --check', 'aidrian check']) {
+    assert.equal(check(command, { cwd }), null, command);
+  }
 });
 
 test('outside a project the rule is off', (t) => {

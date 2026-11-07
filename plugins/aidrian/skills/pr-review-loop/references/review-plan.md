@@ -13,7 +13,7 @@ repository describes the plan itself.
   review, with `priorFindings` from it. `files`: the files to report findings in, or null for all.
   For a project below the repository root, `brief` says so: hand it to the agent, which runs every `git diff` in the
   project's folder with `--relative` and cites from the project root, as `files` lists them.
-- `flows[]`: each critical flow with its `invariants`. The agent writes one verdict per invariant to a JSON file:
+- `flows[]`: each critical flow with its `invariants`. The agent returns one verdict per invariant in its final JSON:
 
   ```json
   [{ "flow": "booking-creation", "invariant": "no-double-booking", "verdict": "holds", "evidence": "src/lib/booking/lock.ts:42" }]
@@ -31,7 +31,8 @@ repository describes the plan itself.
   except that entries with `ingested: true` (images taken outside the tool, with a `source` and no facts) are opened
   and may be cited as `capture:<key>` too.
 - `record`: the command that records the pass. `--findings` is what the agent found, `--fixed` what was fixed in a
-  pushed commit, `--accepted` what was dispositioned another way (step 3). `--verdicts` takes the file above.
+  pushed commit, `--accepted` what was dispositioned another way (step 3). Pipe the agent's final JSON to `record`
+  as it is, with `--verdicts -` in place of the file, and never retype a verdict; `--verdicts FILE` still reads a file.
   When `record` asks for `--findings-file` instead, the agent writes each finding with its axes and state, and the
   disposition table decides what stays open (`aidrian pr disposition --vocab` lists the words):
 
@@ -43,7 +44,7 @@ repository describes the plan itself.
   without likelihood and affects stays open until it has them.
 
 A split review's passes carry `role`: a `slice` reviews only its `files` and also writes `contracts` and
-`cross_notes` (lists of strings) into its `--verdicts` file, as `{ "verdicts": [...], "contracts": [...], "cross_notes": [...] }`; the `cross` pass reads `slices` and reports only what
+`cross_notes` (lists of strings) in its final JSON, as `{ "verdicts": [...], "contracts": [...], "cross_notes": [...] }`; the `cross` pass reads `slices` and reports only what
 crosses them.
 
 ## `fix_required`
@@ -62,7 +63,10 @@ crosses them.
 - Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or
   `tests_removed[].accept`, each starting with `aidrian pr signoff`, with its placeholders filled. Hand it over only
   after the same command with `--check` added exits 0 in your shell; `--check` records nothing. Never write a sign-off
-  command of your own. When `--check` refuses, report the refusal instead.
+  command of your own, with one exception: at `human_required` naming one flow, once
+  `aidrian pr signoff <PR> --last --check` exits 0, offer the short form `aidrian pr signoff <PR> --last` in place of
+  the printed command, naming in plain words the flow and short head that `--check` printed.
+  When `--check` refuses, report the refusal instead.
 - `tests_removed[]`: a flow's test was deleted. Restore it, or the Human accepts it with the `accept` command.
 - `checks_failing[]`: a check the flow requires failed or was skipped on the head.
 

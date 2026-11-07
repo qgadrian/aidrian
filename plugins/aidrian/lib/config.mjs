@@ -3,9 +3,7 @@
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 // The public entry: every config name is importable from here. The schema, its types, the defaults, the merge, the
 // commit readers, the local caps, and the version checks live in the config-*.mjs files beside it.
-// versionFloorProblem and pluginAgents stay here: test/auto-merge-guard.test.mjs reviews each folder they read by this file.
 
-import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { DEFAULTS, deepFreeze } from './config-defaults.mjs';
@@ -78,14 +76,4 @@ export function versionFloorProblem(config, running = pluginVersion()) {
 // as one it cannot read.
 export function malformedGates(gateErrors) {
   return gateErrors[0] ?? null;
-}
-
-// The plugin's agent names, from the agent files it ships beside this folder.
-let agentNames;
-export function pluginAgents() {
-  agentNames ??= readdirSync(path.join(import.meta.dirname, '../agents'))
-    .filter((file) => file.endsWith('.md'))
-    .map((file) => file.slice(0, -'.md'.length))
-    .sort();
-  return agentNames;
 }

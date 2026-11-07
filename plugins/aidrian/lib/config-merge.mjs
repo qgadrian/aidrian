@@ -1,8 +1,10 @@
 // Reads one file's values over the defaults, key by key, by config-schema.mjs: a value that fails its check is an error
 // and keeps the default. `models`, `agents`, and `tracker` have checks of their own here.
 
+import { readdirSync } from 'node:fs';
+import path from 'node:path';
+
 import { agentNameProblem, patternProblem } from './agent-gates.mjs';
-import { pluginAgents } from './config.mjs';
 import { HANDOFF_MODES, MODEL_CHOICES, REMOVED, RENAMED, TRACKER_GROUPS, TRACKER_SHORT_KEYS } from './config-schema.mjs';
 import { checkToolList, checkTrackerProvider, readToolProblem, readToolReport, trackerToolProblem, unclearedWriteProblem, unreachableWriteProblem } from './config-tracker.mjs';
 import { isText, isTexts, oneOf, TYPES } from './config-types.mjs';
@@ -222,4 +224,14 @@ function checkTrackerGroup(name, value, file, errors) {
   const group = merge(TRACKER_GROUPS[name], {}, value, `${at}.`, file, errors);
   for (const key of Object.keys(TRACKER_GROUPS[name])) if (!Object.hasOwn(value, key)) errors.push(`${file}: "${at}.${key}" is missing`);
   return errors.length === before ? group : null;
+}
+
+// The plugin's agent names, from the agent files it ships beside this folder.
+let agentNames;
+function pluginAgents() {
+  agentNames ??= readdirSync(path.join(import.meta.dirname, '../agents'))
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => file.slice(0, -'.md'.length))
+    .sort();
+  return agentNames;
 }

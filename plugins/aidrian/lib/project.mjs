@@ -108,14 +108,15 @@ export function projectAt(start) {
 
 // The project rooted at `root`, whether or not its folder exists yet:
 // { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
-// localAutoMerge, errors, unreadable }.
+// localAutoMerge, localReviewApprovals, errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
 // `localDecisions` are the `models`, `names`, `telemetry`, `agents`, `review`, and `decisions` values of
 // `.aidrian.local.json`, as written; config.mjs checks them. `localAutoMerge`
 // is its `github.autoMerge`: "on" or "off", checked here, "unset" when no file sets it, and "off" for a file with an error; the team's
-// ceiling still decides (resolveAutoMerge). `errors` lists the problems in the root files; a broken
+// ceiling still decides (resolveAutoMerge). `localReviewApprovals` is its `reviewApprovals`, read the same way: "on" or
+// "off", "unset" when no file sets it; the team's `review.approvals.allow` still decides (lib/review/approvals.mjs). `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 // `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
 // because it could not be read or names no usable folder: from `root`, or absolute when it is in the main checkout.
@@ -141,6 +142,7 @@ export function openProject(root, roots) {
     localReview: local.review,
     localDecisions: local.decisions,
     localAutoMerge: local.autoMerge,
+    localReviewApprovals: local.reviewApprovals,
     errors,
     unreadable,
   };
@@ -220,21 +222,22 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github'];
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals'];
 
-// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge }. A git worktree has no copy of that git-ignored file, so it is read
+// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, reviewApprovals }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
-// and, optionally, a config.json with `version`. `decisions` and the auto-merge switch come only from the main checkout's
+// and, optionally, a config.json with `version`. `decisions` and the two machine switches, auto-merge and review
+// approvals, come only from the main checkout's
 // file (checkouts.at(-1)): a copy a session writes in its own worktree raises nothing and never turns merging on.
 function readLocal(checkouts, errors, unreadable) {
-  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset' };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', reviewApprovals: 'unset' };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const raw = readJson(holder, LOCAL, errors);
   const main = checkouts.at(-1);
   if (!raw) {
     unreadable.push(holder === checkouts[0] ? LOCAL : path.join(holder, LOCAL));
-    return { ...none, autoMerge: machineSwitch(raw, holder, main, errors) };
+    return { ...none, autoMerge: machineSwitch(raw, holder, main, errors), reviewApprovals: machineSwitch(raw, holder, main, errors, APPROVALS_SWITCH) };
   }
   for (const key of Object.keys(raw)) {
     if (!LOCAL_KEYS.includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
@@ -242,9 +245,10 @@ function readLocal(checkouts, errors, unreadable) {
   const { models, names, telemetry, agents, review, decisions } = raw;
   const sources = localSources(holder, raw, errors);
   const autoMerge = machineSwitch(raw, holder, main, errors);
+  const reviewApprovals = machineSwitch(raw, holder, main, errors, APPROVALS_SWITCH);
   // A main-checkout file with any error never follows a team default of "on": a wrong local file never turns merging on.
   const broken = holder === main && autoMerge === 'unset' && errors.some((each) => each.startsWith(`${LOCAL}:`));
-  return { sources, models, names, telemetry, agents, review, decisions: mainDecisions(main, holder, decisions), autoMerge: broken ? 'off' : autoMerge };
+  return { sources, models, names, telemetry, agents, review, decisions: mainDecisions(main, holder, decisions), autoMerge: broken ? 'off' : autoMerge, reviewApprovals };
 }
 
 // The `decisions` of the local file in `main`, the main checkout; `held` when that file is the one already read. A main
@@ -255,21 +259,26 @@ function mainDecisions(main, holder, held) {
   return readJson(main, LOCAL, [])?.decisions;
 }
 
-// This machine's auto-merge switch: the main checkout's. `raw` is the file read from `holder`, null when that could not
-// be read, so a worktree's own broken copy leaves the main checkout's switch in force, as any other copy does.
-function machineSwitch(raw, holder, main, errors) {
-  let autoMerge = raw ? localAutoMerge(raw, errors) : 'off';
+// The machine switches of the local file: how each is read from it, and the key its errors name.
+const AUTO_MERGE_SWITCH = Object.freeze({ key: 'github.autoMerge', read: (raw, errors) => localAutoMerge(raw, errors) });
+const APPROVALS_SWITCH = Object.freeze({ key: 'reviewApprovals', read: (raw, errors) => localReviewApprovals(raw, errors) });
+
+// One of this machine's switches, auto-merge unless another is named: the main checkout's. `raw` is the file read from
+// `holder`, null when that could not be read, so a worktree's own broken copy leaves the main checkout's switch in
+// force, as any other copy does.
+function machineSwitch(raw, holder, main, errors, { key, read } = AUTO_MERGE_SWITCH) {
+  let autoMerge = raw ? read(raw, errors) : 'off';
   if (holder !== main) {
     const mainFile = isFile(path.join(main, LOCAL)) ? readJson(main, LOCAL, []) : null;
-    autoMerge = !isFile(path.join(main, LOCAL)) ? 'unset' : mainFile ? switchOfValidFile(mainFile, main) : 'off';
+    autoMerge = !isFile(path.join(main, LOCAL)) ? 'unset' : mainFile ? switchOfValidFile(mainFile, main, read) : 'off';
   }
   // A local file git tracks travels with a branch, so it is no machine's own switch. Only git's answer "untracked"
   // (exit 1) keeps it on: tracked under any case, a git that fails or stalls, or no repository at all reads "off". Asked
   // only when the switch is on, so a hook pays no git call for a file that keeps auto-merge off.
   if (autoMerge === 'on') {
     const { status } = runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main);
-    if (status === 0) errors.push(`${LOCAL}: git tracks it, so a branch could carry it; "github.autoMerge" reads "off" until it is untracked (git rm --cached ${LOCAL})`);
-    else if (status !== 1) errors.push(`${LOCAL}: git could not say whether it tracks it, so "github.autoMerge" reads "off"`);
+    if (status === 0) errors.push(`${LOCAL}: git tracks it, so a branch could carry it; "${key}" reads "off" until it is untracked (git rm --cached ${LOCAL})`);
+    else if (status !== 1) errors.push(`${LOCAL}: git could not say whether it tracks it, so "${key}" reads "off"`);
     if (status !== 1) autoMerge = 'off';
   }
   return autoMerge;
@@ -277,13 +286,13 @@ function machineSwitch(raw, holder, main, errors) {
 
 // The switch of the main checkout's file when a worktree's own copy was the one loaded: any error in it reads "off", as
 // it does when that file is the one loaded, so a worktree's copy cannot hide it.
-function switchOfValidFile(raw, main) {
+function switchOfValidFile(raw, main, read = localAutoMerge) {
   const problems = [];
   for (const key of Object.keys(raw)) {
     if (!LOCAL_KEYS.includes(key)) problems.push(key);
   }
   localSources(main, raw, problems);
-  const value = localAutoMerge(raw, problems);
+  const value = read(raw, problems);
   return value === 'unset' && problems.length > 0 ? 'off' : value;
 }
 
@@ -313,6 +322,16 @@ function localAutoMerge(raw, errors) {
   const value = isObject(given) && Object.keys(given).length === 1 && typeof given.enabled === 'boolean' ? (given.enabled ? 'on' : 'off') : given;
   if (!['on', 'off', 'unset'].includes(value) || given === 'unset' && Object.hasOwn(raw.github, 'autoMerge')) errors.push(`${LOCAL}: "github.autoMerge" must be { "enabled": true } or { "enabled": false }`);
   return errors.length === before ? value : 'off';
+}
+
+// The local file's `reviewApprovals` as "on", "off", or "unset": whether this machine lets a named approver's review on
+// the forge close an invariant no reviewer could verify, when the team's `review.approvals.allow` is true. Anything but
+// "on" or "off" is an error and reads "off".
+function localReviewApprovals(raw, errors) {
+  if (!Object.hasOwn(raw, 'reviewApprovals')) return 'unset';
+  if (raw.reviewApprovals === 'on' || raw.reviewApprovals === 'off') return raw.reviewApprovals;
+  errors.push(`${LOCAL}: "reviewApprovals" must be "on" or "off"`);
+  return 'off';
 }
 
 function localSources(holder, raw, errors) {

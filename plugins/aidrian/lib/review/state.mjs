@@ -207,6 +207,7 @@ export function summaryBody(state, plan, status) {
     const visual = state.visual;
     lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${clip(visual.reason)})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
   }
+  lines.push(...outsideLines(state, plan?.head));
   lines.push(...quotaLines(state));
   lines.push(...extensionLines(state));
   if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${clip(each)}`));
@@ -259,6 +260,16 @@ function currentLogin(viewer) {
   } catch {
     return null;
   }
+}
+
+// The invariants evidence outside the tool closed on `head`, apart from the reviewers' verdicts: each approval by a named
+// approver's review on the forge. The login is in code, so the edited comment never mentions the approver again.
+function outsideLines(state, head) {
+  const outside = state.outside;
+  if (!outside || !head || !sameCommit(outside.head, head)) return [];
+  const approvals = Array.isArray(outside.approvals) ? outside.approvals : [];
+  if (!approvals.length) return [];
+  return ['', '**Outside evidence:**', ...approvals.map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: approved by \`@${clip(each.login)}\` on \`${String(head).slice(0, 7)}\`: ${clip(each.url ?? 'no review link')}`)];
 }
 
 const EXTRA_HEADING = '**Extra rounds:**';

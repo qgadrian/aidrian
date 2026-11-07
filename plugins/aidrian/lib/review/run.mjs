@@ -32,9 +32,10 @@ import { currentRoot, runGit, showPrefix } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
 import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
-import { checkReview } from './config.mjs';
+import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { blocks, parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
+import { approvalsSwitch, hasApprovers, readApprovals } from './approvals.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
@@ -73,10 +74,11 @@ const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.stat
 export function reviewInForce(baseReview, headReview) {
   if (!baseReview) {
     const pending = Object.fromEntries(Object.entries(headReview.reviewers).map(([name, reviewer]) => [name, { ...reviewer, pending: true }]));
-    return { review: { ...headReview, engine: null, planCommand: null, visual: null, reviewers: pending }, changed: ['engine', 'planCommand', 'reviewers', 'visual'].filter((key) => JSON.stringify(headReview[key] ?? null) !== JSON.stringify(key === 'reviewers' ? {} : null)) };
+    const none = { reviewers: {}, approvals: REVIEW_DEFAULTS.approvals };
+    return { review: { ...headReview, engine: null, planCommand: null, visual: null, approvals: REVIEW_DEFAULTS.approvals, reviewers: pending }, changed: ['engine', 'planCommand', 'reviewers', 'visual', 'approvals'].filter((key) => JSON.stringify(headReview[key] ?? none[key] ?? null) !== JSON.stringify(none[key] ?? null)) };
   }
   const changed = [];
-  for (const key of ['engine', 'rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual']) {
+  for (const key of ['engine', 'rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual', 'approvals']) {
     if (JSON.stringify(baseReview[key] ?? null) !== JSON.stringify(headReview[key] ?? null)) changed.push(key);
   }
   return {
@@ -95,6 +97,9 @@ export function reviewInForce(baseReview, headReview) {
       // The visual capture's policy (what it attaches, where it signs in) and its hooks are the base branch's too, so
       // a pull request cannot switch itself to attaching, or point the capture somewhere else.
       visual: baseReview.visual ?? null,
+      // Whether an approver's review may close an invariant is the base branch's too: a pull request cannot let
+      // approvals close its own invariants.
+      approvals: baseReview.approvals ?? REVIEW_DEFAULTS.approvals,
       reviewers: {
         ...Object.fromEntries(Object.entries(headReview.reviewers).filter(([name]) => !Object.hasOwn(baseReview.reviewers, name)).map(([name, reviewer]) => [name, { ...reviewer, pending: true }])),
         ...baseReview.reviewers,
@@ -425,7 +430,18 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   const capturesOf = (at) => new Set([...(state.captured?.[at] ?? []), ...captureKeys(at === head ? manifest : readManifest(project, n, at))]);
   // The invariants the Human overruled on this head: a violated verdict another reviewer disputes with evidence.
   const overruledOn = (flowId) => new Set((state.overrulings ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head)).map((each) => each.invariant));
-  const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }), overruledOn(flow.id));
+  // Evidence outside the tool (lib/review/approvals.mjs): a named approver's review of this head, read once per step,
+  // and only when an invariant names approvers and both switches are on. A failed read closes nothing.
+  const approvalPath = hasApprovers(plan.flows) ? approvalsSwitch(review, project) : null;
+  let approvalRead = null;
+  const approvals = () => (approvalRead ??= approvalPath?.on ? readApprovals(forge, repo, n, { head, flows: plan.flows }) : { approvals: [], error: null });
+  const approvedOn = (flowId) => new Set(approvals().approvals.filter((each) => each.flow === flowId).map((each) => each.invariant));
+  const flowStatus = (flow, { outside = true } = {}) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }), overruledOn(flow.id), outside ? approvedOn(flow.id) : new Set());
+  // The outside evidence that closed an invariant on this head: an approval of one the reviewers left unverified.
+  const outsideClosed = () => plan.flows.flatMap((flow) => {
+    const left = new Set(flowStatus(flow, { outside: false }).unverified);
+    return approvals().approvals.filter((each) => each.flow === flow.id && left.has(each.invariant));
+  });
 
 
   // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
@@ -777,6 +793,10 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
     prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
     // The disputes the Human may settle on this head: `aidrian pr signoff --overrule` refuses any other invariant.
     state.disputes = { head, items: plan.flows.flatMap((flow) => flowStatus(flow).disputed.map((invariant) => ({ flow: flow.id, invariant }))) };
+    // The approvals that closed an invariant, kept for the summary, and the path's state when an invariant names
+    // approvers: which switch is off, or why the approvals could not be read.
+    state.outside = { head, approvals: outsideClosed().map(({ flow, invariant, login, url, at }) => ({ flow, invariant, login, url, at })) };
+    if (approvalPath) result.approvals = { on: approvalPath.on, ...(approvalPath.off ? { off: approvalPath.off } : {}), ...(approvals().error ? { error: approvals().error } : {}), closed: state.outside.approvals };
     settle(result);
     if (onPr) {
       const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);

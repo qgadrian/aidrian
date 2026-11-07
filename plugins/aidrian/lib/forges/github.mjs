@@ -12,6 +12,9 @@ export const MEMBER_ASSOCIATIONS = Object.freeze({ has: (association) => associa
 // Whether GitHub says the comment's author belongs to the repository. Anyone can comment on a pull request.
 export const isTrustedCommenter = (comment) => MEMBER_ASSOCIATIONS.has(comment?.author_association);
 
+// Whether `name` is shaped like a GitHub login: letters, digits, and single hyphens between them, at most 39 characters.
+export const isLogin = (name) => typeof name === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/u.test(name);
+
 // The REST media type `aidrian pr await-review` has always named: index.mjs passes it as `mediaType` for `strictJson`.
 export const GITHUB_JSON = 'application/vnd.github+json';
 

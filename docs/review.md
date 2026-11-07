@@ -113,7 +113,7 @@ of its invariants, with evidence, and the flow must be signed before the review 
 | --- | --- |
 | `files` | required: globs, or `re:<regex>` over the path; a changed file that can change behaviour triggers the flow |
 | `added` | regular expressions over the added lines of any file, for a use that lives outside the flow's folders |
-| `invariants` | a doc, whose `##` and `###` headings are the invariants, a repeated one numbered `-1`, `-2` as GitHub numbers its anchor; or a list of `{ id, text, cite?, focus? }` with unique ids |
+| `invariants` | a doc, whose `##` and `###` headings are the invariants, a repeated one numbered `-1`, `-2` as GitHub numbers its anchor; or a list of `{ id, text, cite?, focus?, approvers? }` with unique ids, where `approvers` lists the GitHub logins whose review may close the invariant ([Sign-off by the Human](#sign-off-by-the-human)) |
 | `require` | the flow's reviewers; the code-reviewer agent by default |
 | `tests` | the flow's tests: deleting one stops the review until it is restored or the Human accepts it |
 | `checks` | check names that must be `SUCCESS` on the head; a skipped or missing one does not pass |
@@ -200,7 +200,7 @@ can remove the way into a flow.
 
 ### A pull request cannot weaken its own review
 
-The flows, rules, ignore lists, reviewers, engine, plan command, and invariants docs in force are the **base branch's**. The
+The flows, rules, ignore lists, reviewers, engine, plan command, approvals switch, invariant approvers, and invariants docs in force are the **base branch's**. The
 pull request's own config can only add flows, rules, and reviewers under new names; its changes to the rest, and a
 plan command it adds, take effect once they are merged. The plan command runs from a temporary checkout of the base,
 so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
@@ -208,7 +208,7 @@ pull request. A change to any of these triggers the built-in `harness-config` fl
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
-headings, a cite to a heading that is not there, and a `focus` that starts no block of its section. When `git ls-files`
+headings, a cite to a heading that is not there, a `focus` that starts no block of its section, and an approver that is not a GitHub login. When `git ls-files`
 cannot run in the project, it fails with that alone, instead of reading every flow as matching nothing. It warns past 16
 flows, or 10 invariants in one flow; about an invariants doc that repeats a heading, naming the ids it gets; about a source past its limit, 4000 characters or 8000 with `focus`; about a question that asks
 whether the change breaks, removes, weakens, or bypasses something, so that yes would be the breach; and about a cited
@@ -236,6 +236,26 @@ of its own, answers `holds` or `not_affected` with valid evidence, the flow in `
 own shell, and the invariant then passes on that head on the other reviewer's evidence, never on the Human's word
 alone. The ruling holds for that head only and is listed with the overrides in the review summary. The command
 refuses an invariant that is not disputed on that head, and a ruling with no reason.
+
+**Evidence outside the tool.** Some invariants no reviewer can verify, because the evidence lives elsewhere: a
+designer approved real screenshots while no app runs for the [visual capture](#visual-review). Such an invariant stays
+`unverified`, and a second account can close it on one head with no Human in the session:
+
+```json
+{ "id": "matches-design", "text": "Does the screen still match the approved design?", "approvers": ["amy-designer"] }
+```
+
+A GitHub review closes it when its state is `APPROVED`, it was given on exactly the head under review, its author is
+one of the invariant's `approvers` and not the account the session's `gh` token belongs to, and its body holds the line
+`aidrian-approve: <flow>/<invariant>`. A comment is never an approval: only a review carries the commit it approves.
+A push drops the approval, as it drops every sign-off. The path is on only with both switches on: the team's
+`review.approvals.allow: true` on the base branch, and this machine's `"reviewApprovals": "on"` in the git-ignored
+`.aidrian.local.json` ([Config](config.md#review-plan)). With either off, `aidrian pr review` ignores approvals and its
+`approvals.off` names the switch. The approvals are read once per step; a read that fails closes nothing, and
+`approvals.error` says why. The review summary lists each approval apart from the reviewers' verdicts, as
+`approved by @login on <sha7>: <review url>`. An approval never clears a violated invariant: fix the code.
+The approval is as strong as the approver's account: give `approvers` only accounts no agent can use, and keep a
+required review on the protected branch for proof.
 
 A sign-off holds on a later head when the signed head is its ancestor and the change since selects nothing of the
 flow, through the same selection the plan uses: its globs, `added` patterns, `content`, the plan command, its tests,

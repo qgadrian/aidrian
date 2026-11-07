@@ -1468,3 +1468,58 @@ test('a --quota-fallback refused for an independent-model plan, or given with no
   await assert.rejects(r.step({ exec: outOfQuota }, { quotaFallback: 'human' }), /no quota stop is on record/u);
   assert.match(judgeMerge({ project: projectAt(r.dir), pr: 7, head: next, viewPr: () => null, answers: [] }) ?? '', /is `error`/u, 'a step that throws leaves `error` on the head');
 });
+
+// A flow whose design invariant no reviewer can verify, and whose base config names its approver.
+const APPROVED_FLOWS = { look: { files: ['src/ui/**'], invariants: [
+  { id: 'matches-design', text: 'Does the screen still match the approved design?', approvers: ['amy-designer'] },
+  { id: 'keeps-copy', text: 'Does the copy stay as written?' },
+] } };
+const approval = (head, more = {}) => ({ id: 41, state: 'APPROVED', commit_id: head, user: { login: 'amy-designer' }, body: 'Checked the screenshots.\naidrian-approve: look/matches-design\n', html_url: 'https://github.com/o/r/pull/7#pullrequestreview-41', ...more });
+
+// The review of that flow on its first head, with the code reviewer's verdicts recorded: the copy holds, and the design
+// cannot be verified. The forge's token is `session-bot`, and the approver's review is on the head.
+async function unverifiedDesign(t, review = { flows: APPROVED_FLOWS, approvals: { allow: true } }) {
+  const r = repo(t, { baseConfig: { version: 1, review }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const first = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'cannot_verify', evidence: 'no app runs for the visual capture' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+  ]) });
+  r.forge.viewer = () => 'session-bot';
+  r.forge.reviews = () => [approval(first.head)];
+  return { r, head: first.head };
+}
+
+test('a named approver`s review of the head closes an unverified invariant once both switches are on, and the summary lists it', async (t) => {
+  const { r, head } = await unverifiedDesign(t);
+  const off = await r.step({ exec: clean });
+  assert.deepEqual([off.status, off.flows], ['fix_required', [{ flow: 'look', violated: [], unverified: ['matches-design'] }]], 'the machine switch is off: the approval counts for nothing');
+  assert.match(off.approvals.off, /reviewApprovals is not "on" in \.aidrian\.local\.json/u, 'the review says which switch is off');
+  r.write('.aidrian.local.json', JSON.stringify({ reviewApprovals: 'on' }));
+  const on = await r.step({ exec: clean });
+  assert.equal(on.status, 'received');
+  assert.deepEqual(on.approvals.closed, [{ flow: 'look', invariant: 'matches-design', login: 'amy-designer', url: 'https://github.com/o/r/pull/7#pullrequestreview-41', at: null }]);
+  assert.match(r.comments[0].body, new RegExp(`- look/matches-design: approved by \`@amy-designer\` on \`${head.slice(0, 7)}\`: https://github\\.com/o/r/pull/7#pullrequestreview-41`, 'u'));
+});
+
+test('approvals: the team switch is the base branch`s, and a forge read that fails closes nothing while the step still answers', async (t) => {
+  const { r } = await unverifiedDesign(t, { flows: APPROVED_FLOWS });
+  r.write('.aidrian.local.json', JSON.stringify({ reviewApprovals: 'on' }));
+  const team = await r.step({ exec: clean });
+  assert.deepEqual([team.status, team.flows[0].unverified], ['fix_required', ['matches-design']]);
+  assert.match(team.approvals.off, /review\.approvals\.allow is not true on the base branch/u);
+
+  const { r: failing } = await unverifiedDesign(t);
+  failing.write('.aidrian.local.json', JSON.stringify({ reviewApprovals: 'on' }));
+  failing.forge.reviews = () => { throw new Error('gh: HTTP 502'); };
+  const broken = await failing.step({ exec: clean });
+  assert.deepEqual([broken.status, broken.flows[0].unverified, broken.approvals.closed], ['fix_required', ['matches-design'], []]);
+  assert.match(broken.approvals.error, /could not be read, so none counts: gh: HTTP 502/u);
+});
+
+test('approvals: a pull request cannot turn the team switch on for its own review, and turning it on is a change to the review', () => {
+  const base = { rules: [], ignore: [], nonBehaviour: [], flows: {}, planCommand: null, reviewers: {}, approvals: { allow: false } };
+  const { review, changed } = reviewInForce(base, { ...base, approvals: { allow: true } });
+  assert.deepEqual([review.approvals, changed], [{ allow: false }, ['approvals']]);
+  assert.deepEqual(reviewInForce(null, { ...base, approvals: { allow: true } }).review.approvals, { allow: false });
+});

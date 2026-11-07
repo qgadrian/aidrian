@@ -18,7 +18,7 @@ import path from 'node:path';
 import { gateDenial, readOnlyDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
-import { autoMergeWriteDenial, configWriteDenial } from '../lib/config-guard.mjs';
+import { configWriteDenial, machineSwitchWriteDenial } from '../lib/config-guard.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
@@ -49,8 +49,8 @@ async function gate(input) {
   const broken = unreadable(project, current, errors) ?? (current ? malformedGates(gateErrors) : null);
   const failed = broken && unreadableConfigDenial(input, broken.file, broken.problem, config);
   if (failed) await block(input, 'agent-gates', failed.reason, { match: failed.match, project, config });
-  const autoMerge = autoMergeWriteDenial(input, project, config);
-  if (autoMerge) await block(input, 'config-guard', autoMerge.reason, { match: autoMerge.match, project, config });
+  const machineSwitch = machineSwitchWriteDenial(input, project, config);
+  if (machineSwitch) await block(input, 'config-guard', machineSwitch.reason, { match: machineSwitch.match, project, config });
   const started = (snapshot?.gates ?? []).filter((agents) => Object.keys(agents).length > 0);
   if (Object.keys(config.agents).length === 0 && started.length === 0) return;
   const gate = gateDenial(input, config, project.paths)

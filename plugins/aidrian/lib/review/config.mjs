@@ -27,6 +27,9 @@ export const REVIEW_DEFAULTS = Object.freeze({
   reviewers: {},
   split: SPLIT_DEFAULTS,
   visual: null,
+  // Whether a named approver's review on the forge may close an invariant no reviewer could verify
+  // (lib/review/approvals.mjs). The base branch's value is the one in force, and the machine must turn it on too.
+  approvals: Object.freeze({ allow: false }),
 });
 
 // The visual review's limits: images one route may ask for across viewports, locales, and variants (a config error
@@ -83,6 +86,10 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'reviewers')) out.reviewers = checkReviewers(value.reviewers, bad);
   if (Object.hasOwn(value, 'split')) out.split = checkSplit(value.split, bad);
   if (Object.hasOwn(value, 'visual')) out.visual = value.visual === null ? null : checkVisual(value.visual, bad);
+  if (Object.hasOwn(value, 'approvals')) {
+    if (isObject(value.approvals) && Object.keys(value.approvals).every((key) => key === 'allow') && typeof (value.approvals.allow ?? false) === 'boolean') out.approvals = { allow: value.approvals.allow === true };
+    else bad('"review.approvals" must be { "allow": true } or { "allow": false }');
+  }
   return out;
 }
 
@@ -249,7 +256,7 @@ function checkFlows(flows, bad) {
     }
     if (flow.signoff !== undefined && !SIGNOFFS.includes(flow.signoff)) problems.push(`"${at}.signoff" must be "reviewer" or "human"`);
     if (flow.invariants !== undefined && !isText(flow.invariants) && !invariantList(flow.invariants)) {
-      problems.push(`"${at}.invariants" must be a doc path or a list of { "id", "text", "cite"?, "focus"? }, where text may be left out, and focus set, only when cite names a heading`);
+      problems.push(`"${at}.invariants" must be a doc path or a list of { "id", "text", "cite"?, "focus"?, "approvers"? }, where text may be left out, and focus set, only when cite names a heading, and approvers is a non-empty list of logins`);
     }
     if (invariantList(flow.invariants)) {
       const ids = flow.invariants.map((each) => each.id);
@@ -264,13 +271,16 @@ function checkFlows(flows, bad) {
   return kept;
 }
 
-// An invariant is { id, text, cite?, focus? }; with a cite to a heading (`doc.md#heading`), text is optional: the
+// An invariant is { id, text, cite?, focus?, approvers? }; with a cite to a heading (`doc.md#heading`), text is optional: the
 // question comes from the heading, and the reviewer judges against the cited section (flows.mjs withSource). `focus`,
 // one string or a list, narrows that section to the top-level blocks it starts, so it needs a cite to a heading.
+// `approvers` lists the forge logins whose review of the head may close the invariant when no reviewer could verify
+// it (lib/review/approvals.mjs); `aidrian lint review` checks each is shaped like a login.
 const citesHeading = (each) => isText(each.cite) && /#./u.test(each.cite);
 const focusOk = (each) => each.focus === undefined || (citesHeading(each) && (isText(each.focus) || someTexts(each.focus)));
+const approversOk = (each) => each.approvers === undefined || someTexts(each.approvers);
 const invariantList = (value) =>
-  Array.isArray(value) && value.length > 0 && value.every((each) => isObject(each) && FLOW_ID.test(each.id ?? '') && (each.cite === undefined || isText(each.cite)) && (isText(each.text) || (each.text === undefined && citesHeading(each))) && focusOk(each));
+  Array.isArray(value) && value.length > 0 && value.every((each) => isObject(each) && FLOW_ID.test(each.id ?? '') && (each.cite === undefined || isText(each.cite)) && (isText(each.text) || (each.text === undefined && citesHeading(each))) && focusOk(each) && approversOk(each));
 
 function checkReviewers(reviewers, bad) {
   if (!isObject(reviewers)) {

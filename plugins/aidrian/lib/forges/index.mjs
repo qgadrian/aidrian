@@ -5,7 +5,7 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE } from './github.mjs';
+import { createGithubForge, GITHUB_JSON, isLogin, isTrustedCommenter, REVIEWS_PAGE } from './github.mjs';
 import { repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
@@ -14,6 +14,9 @@ export { repoIdentity };
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };
+
+// Whether a name is shaped like a login of the forge, as an invariant's `approvers` must be.
+export { isLogin };
 
 // The most reviews, and the most inline comments of one review, that one `reviewsWithComments` call reads.
 export { REVIEWS_PAGE };

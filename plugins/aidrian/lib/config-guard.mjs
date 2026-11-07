@@ -67,33 +67,44 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
-// Why the subagent call in `input` may not set the machine's auto-merge switch, or null: { match, reason }. It targets
-// the project's local file and either changes the switch (changesAutoMerge) or is a Bash command that names `autoMerge`.
-// This holds with no gates set, and other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
-export function autoMergeWriteDenial(input, project, { names: { human } }) {
+// The machine switches of the local file a subagent may not set: the word a write of one names, the key the denial
+// names, the switch as a text of the file sets it, and what the switch turns on.
+const SWITCHES = Object.freeze([
+  Object.freeze({ word: 'autoMerge', key: 'github.autoMerge', of: (raw) => raw?.github?.autoMerge, what: 'turn merging without a Human on or off' }),
+  Object.freeze({ word: 'reviewApprovals', key: 'reviewApprovals', of: (raw) => raw?.reviewApprovals, what: 'let a named approver\'s review close a flow invariant, or stop it' }),
+]);
+
+// Why the subagent call in `input` may not set one of the machine's switches, auto-merge or review approvals, or null:
+// { match, reason }. It targets the project's local file and either changes the switch (changesSwitch) or is a Bash
+// command that names the switch's word. This holds with no gates set, and other writes to that file stay allowed. Like
+// the rest of this guard, it is for agents that cooperate.
+export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
   const isBash = input.tool_name === 'Bash';
-  if (isBash && !String(input.tool_input?.command).includes('autoMerge')) return null;
+  const named = isBash ? SWITCHES.filter((each) => String(input.tool_input?.command).includes(each.word)) : SWITCHES;
+  if (named.length === 0) return null;
   const { files, names } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
   if (targets.length === 0 && !names.some((name) => name.toLowerCase().includes(local))) return null;
-  if (!isBash && !changesAutoMerge(input, targets[0])) return null;
-  return { match: `sets github.autoMerge in ${local}`, reason: projectRuleReason(input, `it sets github.autoMerge in ${local}, and only the main session may turn merging without a Human on or off`, human) };
+  const changed = isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
+  if (!changed) return null;
+  return { match: `sets ${changed.key} in ${local}`, reason: projectRuleReason(input, `it sets ${changed.key} in ${local}, and only the main session may ${changed.what}`, human) };
 }
 
-// Whether a Write, Edit, or apply_patch of the local `file` changes the switch. A Write or Edit changes it when its text
-// names `autoMerge`, or when the file it leaves parses to another `github.autoMerge` than the file on disk, which covers
-// `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
-// removes names `autoMerge`: a patch is not applied here, so a value on a line of its own without the key, or a key spelled with a JSON escape, is not seen.
-function changesAutoMerge({ tool_name: tool, tool_input: given }, file) {
+// Whether a Write, Edit, or apply_patch of the local `file` changes the switch `which`. A Write or Edit changes it when
+// its text names the switch's word, or when the file it leaves parses to another value of the switch than the file on
+// disk, which covers `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when
+// a line it adds or removes names the word: a patch is not applied here, so a value on a line of its own without the
+// key, or a key spelled with a JSON escape, is not seen.
+function changesSwitch({ tool_name: tool, tool_input: given }, file, which) {
   const edit = fileEditOf({ tool_name: tool, tool_input: given });
-  if (edit?.shape === 'patch') return /^[+-].*autoMerge/mu.test(edit.text);
+  if (edit?.shape === 'patch') return new RegExp(`^[+-].*${which.word}`, 'mu').test(edit.text);
   const written = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
   if (typeof written !== 'string') return false;
-  if (written.includes('autoMerge')) return true;
+  if (written.includes(which.word)) return true;
   const before = readText(file);
-  return switchIn(before) !== switchIn(edit.shape === 'write' ? written : editedText(before, given));
+  return switchIn(before, which) !== switchIn(edit.shape === 'write' ? written : editedText(before, given), which);
 }
 
 // `text` after an Edit, with its new text taken literally: a replacer function keeps `$&` from meaning what it replaces.
@@ -111,10 +122,11 @@ function readText(file) {
   }
 }
 
-// The `github.autoMerge` a text of the local file sets, as JSON text, or undefined when it sets none or is no JSON.
-function switchIn(text) {
+// The value of the switch `which` a text of the local file sets, as JSON text, or undefined when it sets none or is no
+// JSON.
+function switchIn(text, which) {
   try {
-    return JSON.stringify(JSON.parse(text)?.github?.autoMerge);
+    return JSON.stringify(which.of(JSON.parse(text)));
   } catch {
     return undefined;
   }

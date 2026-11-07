@@ -161,7 +161,9 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['REVIEWS_PAGE', 'forgeFor', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(Object.keys(facade).sort(), ['REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
+  assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
   assert.equal(facade.repoIdentity, repoIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);

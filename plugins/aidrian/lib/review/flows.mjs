@@ -273,7 +273,10 @@ export function citationProblem(evidence, { root, head, captures = new Set() }) 
 // gave no violated verdict of its own, answers holds or not_affected with valid evidence: reviewers disagree, and the
 // Human may overrule the violated side on that head (`overruled`, a set of invariant ids). An overruled invariant then
 // passes on the other reviewer's evidence, never on the Human's word alone. A verdict names its reviewer in `reviewer`.
-export function flowState(invariants, verdicts, check, overruled = new Set()) {
+// `approved`, a set of invariant ids, holds those closed on this head by evidence outside the tool: a named approver's
+// review of the commit, or the Human's acceptance (lib/review/approvals.mjs). It takes an id out of `unverified` only:
+// an invariant a verdict says is violated stays open.
+export function flowState(invariants, verdicts, check, overruled = new Set(), approved = new Set()) {
   const open = [];
   const unverified = [];
   const disputed = [];
@@ -286,7 +289,7 @@ export function flowState(invariants, verdicts, check, overruled = new Set()) {
     const other = backers.some((verdict) => !violators.has(verdict.reviewer));
     if (violated && other) disputed.push(invariant.id);
     if (violated && !(other && overruled.has(invariant.id))) open.push(invariant.id);
-    else if (!backed) unverified.push(invariant.id);
+    else if (!backed && !approved.has(invariant.id)) unverified.push(invariant.id);
   }
   return { signed: open.length === 0 && unverified.length === 0, open, unverified, disputed };
 }

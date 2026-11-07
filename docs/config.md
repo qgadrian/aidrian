@@ -372,6 +372,13 @@ to their invariants, the reviewers a project adds, and the [visual capture](revi
 [review.md](review.md) describes every key. Two machine settings live in `.aidrian.local.json`: the engine,
 `review.engine`, unless the project sets it here, and the visual capture's base URL, `review.visual.baseUrl`.
 
+`review.approvals.allow`, `false` by default and read from the base branch, lets a named approver's GitHub review of the
+head close a flow invariant no reviewer could verify: [Sign-off by the Human](review.md#sign-off-by-the-human).
+An invariant of a flow's list names its approvers, GitHub logins, in `approvers`; `aidrian lint review` fails a name
+that is not one. Each machine turns the path on too, with `"reviewApprovals": "on"` in `.aidrian.local.json`;
+`"off"` or no setting keeps it off. Like the auto-merge switch, it counts only in the main checkout's untracked file,
+and a subagent may not write it ([the config guard](hooks.md#agent-gates)).
+
 ## Review gate
 
 With `aidrian pr review`, an enabled gate is one more required reviewer: the code-reviewer agent runs in the local

@@ -4,11 +4,13 @@
 //   - a flow with no invariants is reviewed against a generic one: a warning
 //   - a focus that starts no block of its cited section: an error; a cited source past its limit: a warning
 //   - an invariant question whose yes would be the breach, or a text that restates its cite: a warning
+//   - an invariant approver that is not shaped like a login: an error
 //   - more than FLOW_BUDGET flows, or INVARIANT_BUDGET invariants in one flow: a warning (a review plan, not a spec)
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { isLogin } from '../forges/index.mjs';
 import { projectFolders } from '../hosts/index.mjs';
 import { pathPattern } from './plan.mjs';
 import { runGit } from '../git.mjs';
@@ -68,6 +70,10 @@ export function lintReview(project, config) {
     if (invariants.length > INVARIANT_BUDGET) warnings.push(`flow ${id} has ${invariants.length} invariants, past ${INVARIANT_BUDGET}`);
     for (const invariant of Array.isArray(flow.invariants) ? flow.invariants : []) {
       warnings.push(...questionWarnings(invariant).map((warning) => `flow ${id}: invariant ${invariant.id} ${warning}`));
+      // An approver that is no login matches no review, so the invariant could never close the way the config says.
+      for (const approver of invariant.approvers ?? []) {
+        if (!isLogin(approver)) problems.push(`flow ${id}: invariant ${invariant.id} names approver "${approver}", which is not a login`);
+      }
       if (!invariant.cite) continue;
       const [file, anchor] = invariant.cite.split('#');
       const text = read(project.root)(file);

@@ -116,6 +116,11 @@ test('a refusal names the read as the Codex model sees that tool', (t) => {
   assert.equal(codex.nativeToolName('mcp__linear_server__get_workspace'), 'mcp__linear_server__get_workspace');
 });
 
+test('Codex calls the question tool request_user_input; Claude Code calls it by the standard name', () => {
+  assert.equal(codex.nativeToolName('AskUserQuestion'), 'request_user_input');
+  assert.equal(codex.nativeToolName('Bash'), 'Bash');
+});
+
 test('a tool a raw pattern lists is no unlisted tool', () => {
   const lists = { readTools: ['mcp__codex_apps__linear__get_workspace'], writeTools: ['mcp__codex_apps__linear__save_*'] };
   assert.equal(unlistedTool(lists, STANDARD_WRITE, RAW_WRITE), false);

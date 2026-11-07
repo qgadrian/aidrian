@@ -24,7 +24,7 @@
       "tags": ["docs"]
     },
     "hooks.md": {
-      "summary": "Bash rules: pr-body, main-checkout, commit messages, amend, terms, gates, merge guard, product feedback answer and post, ready hold, AIDRIAN_ALLOW_UNHELD_READY.",
+      "summary": "Bash rules: pr-body, main-checkout, commit messages, amend, terms, gates, merge guard, product feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce check.",
       "tags": []
     },
     "project-folder.md": {

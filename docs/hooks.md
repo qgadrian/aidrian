@@ -33,7 +33,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per step |
+| The main session ends a turn | The [announce check](#announced-work), then the [session-length reminder](#session-length) | Claude Code; the announce check also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once per step |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
@@ -133,7 +133,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
-The knowledge, names, and lessons start lines have no switch; they act only inside a project folder.
+The knowledge, names, and lessons start lines and the [announce check](#announced-work) have no switch; they act only inside a project folder.
 The main-checkout start lines follow the commit guard, so they are off with it.
 [config.md](config.md#telemetry) lists the other `telemetry` keys.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
@@ -745,6 +745,35 @@ it started in the background or was moved there at its timeout; an async Agent l
 `resumedAgentId`. A result's text never counts, so a command's output or an agent's report that quotes a launch line claims nothing.
 Reading, waiting on, or stopping another agent's task, such as tailing its output file, does not make it the subagent's own.
 A peer teammate is never a child: a message wakes it. A payload without `background_tasks`, such as Codex's, checks nothing.
+
+## Announced work
+
+When the main session ends a turn on a message whose last paragraph announces work the AI is about to start, and does
+not start it, the Stop hook sends it back once: nothing wakes the session until the Human writes, so the Human would wait
+on work that never begins. The agent does the work, asks the Human with the question tool when it needs a decision first,
+or ends the turn again when the message only reports work done or work that something else wakes it for.
+Its second stop always ends.
+
+These phrases count, in any case, where the AI is its name from [names](config.md#names), "I", or "we":
+
+- "unless the Human says otherwise", "unless told otherwise", "unless the Human objects";
+- "starting now", "proceeding now", "starting on it now";
+- "Claude will now", "I'll start", "Claude will proceed", "we're going to begin";
+- "Next, Claude writes", "Next up: Claude will", with one of a short list of verbs.
+
+It does not fire when the last paragraph ends with a question mark, waits on the Human ("once the Human approves",
+"waits for the Human"), or names another actor, or when the payload lists a background task still running, whose end
+wakes the session on its own. A question tool call earlier in the turn exempts nothing: the call waits for the Human's
+answer, so a turn never stops on it, and an announcement written after the answer stalls the same.
+The message is the payload's `last_assistant_message`, else the last turn of the transcript.
+It runs before the session-length reminder, which writes its marker only when it fires, so a reminder due on the same
+stop comes at the next one. A payload without `stop_hook_active` does nothing. `lib/stop-announce.mjs` holds the phrases.
+
+It runs on both hosts, from the same `hooks.json` entry. Claude Code is verified live. On Codex, the Stop input's
+`stop_hook_active` and `last_assistant_message`, and exit 2 with stderr as the continuation prompt, come from the
+0.167.0 binary, and no live session has run it: [codex.md](providers/codex.md#hooks).
+Codex's transcript is not read, so there the message is the payload's alone;
+the reason names the question tool as each host's model calls it, `AskUserQuestion` or `request_user_input`.
 
 ## Session length
 

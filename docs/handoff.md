@@ -12,6 +12,7 @@ costs more, and lets it hand off, ask, or carry on. This page is the feature in 
 
 Both hooks run in Claude Code's main session only, and read its transcript. A subagent, another host, or a transcript
 with no Claude Code usage gets nothing. [hooks.md](hooks.md#session-length) lists them with the other hooks.
+On a stop where the [announce check](hooks.md#announced-work) sends the agent back, the reminder waits for the next stop.
 
 ## The reminder
 

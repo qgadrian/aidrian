@@ -1,6 +1,7 @@
 // The names rule: agents name the human and the AI instead of saying "I", "me", "my", "you", or "your". Finds the
 // words that break it in a question (hook-ask.mjs) or the last chat reply (hook-prompt.mjs), and the reply in a
-// Claude Code transcript. Text in code or quotes is left alone, since it may quote a command, a UI string, or the human.
+// Claude Code transcript, which the stop hook's announce check reads too (stop-announce.mjs). Text in code or quotes is
+// left alone, since it may quote a command, a UI string, or the human.
 // Word edges are Unicode letters and marks, so "problème" or "Uděláme" does not read as "me". "mine" is left out on
 // purpose: it is also a verb.
 

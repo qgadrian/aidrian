@@ -170,6 +170,50 @@ test('a clean merge that brings in a new flow over the change reviews the merge 
   assert.deepEqual([again.status, again.carried_from], ['dispatch', undefined], 'a later step on the merge head reviews it whole too');
 });
 
+// Commits `files` on main after feat merged it, and returns to feat: the base tip moves past the merged commit.
+const advanceMain = (r, files) => {
+  r.git('switch', '-q', 'main');
+  for (const [file, text] of Object.entries(files)) r.write(file, text);
+  r.commit('on main after the merge');
+  r.git('switch', '-q', 'feat');
+};
+const NEW_FLOW = { '.aidrian/config.json': JSON.stringify({ version: 1, review: { flows: { app: { files: ['src/**'] } } } }) };
+
+test('a clean merge carries no review once main, after the merged commit, adds a flow over the change', async (t) => {
+  const r = repo(t);
+  assert.equal((await r.step({ exec: recorder().exec })).status, 'received');
+  const merge = r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n' });
+  advanceMain(r, NEW_FLOW);
+  const result = await r.step({ exec: recorder().exec });
+  assert.deepEqual([result.status, result.head, result.carried_from], ['dispatch', merge, undefined], 'the reviewed head was never judged under the flow main has now');
+  assert.ok(result.plan.flows.includes('app'), JSON.stringify(result.plan.flows));
+  assert.ok(result.plan.reasons.includes('the merge from main changes how the project is reviewed (.aidrian/config.json review): the whole change is reviewed'), result.plan.reasons.join('; '));
+});
+
+test('a carried head is reviewed whole on a later call once main adds a flow after the merged commit', async (t) => {
+  const r = repo(t);
+  await r.step({ exec: recorder().exec });
+  r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n' });
+  const carried = await r.step({ exec: recorder().exec });
+  assert.deepEqual([carried.status, carried.carried_from], ['received', r.first]);
+  advanceMain(r, NEW_FLOW);
+  const again = await r.step({ exec: recorder().exec });
+  assert.deepEqual([again.status, again.carried_from], ['dispatch', undefined], 'the carried review does not hold under the new flow');
+  assert.notEqual(r.guard(carried.head), null, 'the merge guard refuses the head until its review under the flow finishes');
+});
+
+test('a resolved merge is reviewed whole, not by its resolution alone, once main adds a review rule after the merged commit', async (t) => {
+  const r = repo(t);
+  await r.step({ exec: recorder().exec });
+  r.mergeMain(CONFLICT, RESOLVED);
+  advanceMain(r, { '.aidrian/config.json': JSON.stringify({ version: 1, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'single' }] } }) });
+  const seen = recorder();
+  const result = await r.step({ exec: seen.exec });
+  assert.equal(result.status, 'received');
+  assert.deepEqual([seen.inputs[0].remerge, seen.inputs[0].files], [undefined, null], 'no remerge scope: the pass reads the whole change');
+  assert.equal(readLocalState(r.project(), 7).remerge, undefined);
+});
+
 test('a merge that brings in a resolution and a new review rule reviews the whole change, not the resolution alone', async (t) => {
   const r = repo(t);
   await r.step({ exec: recorder().exec });

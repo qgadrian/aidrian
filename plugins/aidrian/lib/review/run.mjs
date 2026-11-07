@@ -21,8 +21,8 @@
 // when it changes nothing git's own merge would not, it carries that review to its head (`received`, with
 // `carried_from` and `carried_base`), with no reviewer and no round, and answers no owed review; otherwise the round
 // reviews only the changes the merge commit itself made, `git show --remerge-diff` (lib/review/diff.mjs baseMergeOf).
-// A merge whose base side changes how the project is reviewed (baseReviewMoved), and a merge git cannot read this way,
-// are reviewed as before, and the plan's reasons say why.
+// A merge where the base branch, up to its current tip, changes how the project is reviewed (baseReviewMoved), and a
+// merge git cannot read this way, are reviewed as before, and the plan's reasons say why.
 //
 // docs/review.md describes the plan, the stages, and the record.
 
@@ -133,10 +133,11 @@ function commandFiles(root, command, commit) {
   return (command ?? '').split(/\s+/u).filter((word) => /[./]/u.test(word) && !word.startsWith('-') && fileAt(root, commit, word) !== null);
 }
 
-// What the base side of a merge from the base branch, `from` (the old merge base of the reviewed head) to `to` (the
-// merge's base parent), changes in how the project is reviewed: the config's `review` group (a flow, rule, reviewer, or
-// plan command), a file a review command names (`harnessFiles`), and a flow's invariants doc or a doc an invariant cites.
-// The reviewed head was judged without it, so its review cannot carry and the merge's own diff is not the whole question.
+// What the base branch changed in how the project is reviewed from `from` (the old merge base of the reviewed head) to
+// `to` (the base tip, whose rules the step reviews under, so a rule main gains after the merged commit counts too): the
+// config's `review` group (a flow, rule, reviewer, or plan command), a file a review command names (`harnessFiles`), and
+// a flow's invariants doc or a doc an invariant cites. The reviewed head was judged without it, so its review cannot
+// carry and the merge's own diff is not the whole question.
 function baseReviewMoved(project, { from, to, flows, harnessFiles }) {
   const root = project.root;
   const changes = changedFiles(root, from, to);
@@ -285,7 +286,8 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // outcome or the first step on it named. A clean merge carries the review: no reviewer, no round, nothing marked
   // running. Any other reviews only the changes the merge commit made; `base` stays the merge base for everything
   // else. A merge git cannot read (an older git, a broken config) is reviewed as any head is, never refused for it, and
-  // so is one whose base side changes how the project is reviewed (baseReviewMoved): the reviewed head never met it.
+  // so is one where the base branch, up to its tip, changes how the project is reviewed (baseReviewMoved): the reviewed
+  // head never met that rule, whether it came with the merge or landed on the base after it.
   const last = state.outcome ?? null;
   const reviewedHead = last?.status === 'received' && typeof last.head === 'string' && !sameCommit(last.head, head) ? last.head
     : sameCommit(last?.head, head) && typeof last?.carried_from === 'string' ? last.carried_from
@@ -297,7 +299,7 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
     baseMerge = reviewedHead ? baseMergeOf(root, head, { priorHead: reviewedHead, base: baseTip }) : null;
     if (baseMerge) {
       mergedBase = parents(root, head)[1];
-      const moved = baseReviewMoved(project, { from: mergeBase(root, reviewedHead, mergedBase), to: mergedBase, flows: review.flows, harnessFiles });
+      const moved = baseReviewMoved(project, { from: mergeBase(root, reviewedHead, mergedBase), to: baseTip, flows: review.flows, harnessFiles });
       if (moved.length) {
         baseMerge = null;
         mergeNote = `the merge from ${info.baseRefName} changes how the project is reviewed (${moved.join(', ')}): the whole change is reviewed`;

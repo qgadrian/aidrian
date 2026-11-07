@@ -144,6 +144,27 @@ test('the local switch reads both shapes, unset when absent, and off with one er
   assert.equal(findProject(r.dir).localUnattendedWaiver, 'off', 'unparsable');
 });
 
+test('an error anywhere in the local file reads the waiver "off" though it says "on", in the main checkout and from a worktree', (t) => {
+  const r = repo(t);
+  writeFileSync(path.join(r.dir, '.gitignore'), `${LOCAL}\nwt/\n`);
+  const local = path.join(r.dir, LOCAL);
+  const stray = (waiver) => JSON.stringify({ stray: 1, github: { unattendedWaiver: waiver } });
+  writeFileSync(local, stray('on'));
+  const main = findProject(r.dir);
+  assert.deepEqual([main.localUnattendedWaiver, main.errors], ['off', [`${LOCAL}: unknown key "stray"`]], 'the main checkout\'s own file');
+  writeFileSync(local, JSON.stringify({ sources: 'no-list', github: { unattendedWaiver: { enabled: true } } }));
+  assert.equal(findProject(r.dir).localUnattendedWaiver, 'off', 'a wrong sources value');
+
+  const worktree = path.join(r.dir, 'wt/task');
+  r.git('worktree', 'add', '-q', '-b', 'task', worktree);
+  writeFileSync(path.join(worktree, LOCAL), JSON.stringify({ github: { unattendedWaiver: 'on' } }));
+  writeFileSync(local, stray('on'));
+  assert.equal(findProject(worktree).localUnattendedWaiver, 'off', 'a worktree\'s valid copy hides no error in the main checkout\'s file');
+  writeFileSync(local, JSON.stringify({ github: { unattendedWaiver: 'on' } }));
+  assert.equal(findProject(worktree).localUnattendedWaiver, 'on', 'a valid main file still turns it on from a worktree');
+  assert.equal(findProject(r.dir).localUnattendedWaiver, 'on', 'and in the main checkout');
+});
+
 test('a local file git tracks reads the waiver switch "off" with the tracked-file error', (t) => {
   const r = repo(t, { local: ON });
   assert.deepEqual([findProject(r.dir).errors, findProject(r.dir).localUnattendedWaiver], [[], 'on'], 'untracked: the machine\'s own');

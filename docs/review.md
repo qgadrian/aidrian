@@ -460,8 +460,9 @@ head, and the reviewer is told to review that diff alone; a pass the merge does 
 dropped what the base brought, as `git merge -s ours` does, is touched. It counts as a round. Later steps on the same
 merge head keep that scope, through the `remerge` entry of the record.
 
-Neither the carry nor the resolution-only round applies when the base side of the merge, from the merge base of the
-reviewed head and the merge's base parent to that parent, changes how the project is reviewed: the config's `review`
+Neither the carry nor the resolution-only round applies when the base branch, from the merge base of the reviewed head
+and the merge's base parent to the base branch's current tip, changes how the project is reviewed: a rule that lands on
+the base after the merged commit counts too, on every later step for the merge head. That covers the config's `review`
 group (a flow, a rule, a reviewer, the plan command), a file the plan command, a visual hook, or a reviewer command
 names, or a flow's invariants doc or a doc an invariant cites. The reviewed head was never judged against those rules, so the merge head is reviewed as before, and
 the plan's reasons name what changed. A change elsewhere in the config, outside `review`, does not count.

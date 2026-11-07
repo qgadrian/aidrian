@@ -277,11 +277,12 @@ function readLocal(checkouts, errors, unreadable) {
   const unattendedWaiver = machineSwitch(raw, holder, main, errors, WAIVER_SWITCH);
   const reviewApprovals = machineSwitch(raw, holder, main, errors, APPROVALS_SWITCH);
   // A main-checkout file with any error never follows a team default of "on": a wrong local file never turns merging on.
+  // The waiver reads "off" on any error, an explicit "on" too: a wrong local file never lets a verdict stand in for the Human.
   const broken = holder === main && errors.some((each) => each.startsWith(`${LOCAL}:`));
   const unlessBroken = (value) => (broken && value === 'unset' ? 'off' : value);
   return {
     sources, models, names, telemetry, agents, review, decisions: mainDecisions(main, holder, decisions),
-    autoMerge: unlessBroken(autoMerge), unattendedWaiver: unlessBroken(unattendedWaiver), reviewApprovals, feedbackAuto: mainFeedbackAuto(raw, holder, main, errors),
+    autoMerge: unlessBroken(autoMerge), unattendedWaiver: broken ? 'off' : unattendedWaiver, reviewApprovals, feedbackAuto: mainFeedbackAuto(raw, holder, main, errors),
   };
 }
 
@@ -311,17 +312,17 @@ function mainDecisions(main, holder, held) {
 
 // The machine switches of the local file: how each is read from it, and the key its errors name.
 const AUTO_MERGE_SWITCH = Object.freeze({ key: 'github.autoMerge', read: (raw, errors) => localAutoMerge(raw, errors) });
-const WAIVER_SWITCH = Object.freeze({ key: 'github.unattendedWaiver', read: (raw, errors) => localUnattendedWaiver(raw, errors) });
+const WAIVER_SWITCH = Object.freeze({ key: 'github.unattendedWaiver', read: (raw, errors) => localUnattendedWaiver(raw, errors), strict: true });
 const APPROVALS_SWITCH = Object.freeze({ key: 'reviewApprovals', read: (raw, errors) => localReviewApprovals(raw, errors) });
 
 // One of this machine's switches, auto-merge unless another is named: the main checkout's. `raw` is the file read from
 // `holder`, null when that could not be read, so a worktree's own broken copy leaves the main checkout's switch in
 // force, as any other copy does.
-function machineSwitch(raw, holder, main, errors, { key, read } = AUTO_MERGE_SWITCH) {
+function machineSwitch(raw, holder, main, errors, { key, read, strict = false } = AUTO_MERGE_SWITCH) {
   let autoMerge = raw ? read(raw, errors) : 'off';
   if (holder !== main) {
     const mainFile = isFile(path.join(main, LOCAL)) ? readJson(main, LOCAL, []) : null;
-    autoMerge = !isFile(path.join(main, LOCAL)) ? 'unset' : mainFile ? switchOfValidFile(mainFile, main, read) : 'off';
+    autoMerge = !isFile(path.join(main, LOCAL)) ? 'unset' : mainFile ? switchOfValidFile(mainFile, main, read, strict) : 'off';
   }
   // A local file git tracks travels with a branch, so it is no machine's own switch. Only git's answer "untracked"
   // (exit 1) keeps it on: tracked under any case, a git that fails or stalls, or no repository at all reads "off". Asked
@@ -336,15 +337,16 @@ function machineSwitch(raw, holder, main, errors, { key, read } = AUTO_MERGE_SWI
 }
 
 // The switch of the main checkout's file when a worktree's own copy was the one loaded: any error in it reads "off", as
-// it does when that file is the one loaded, so a worktree's copy cannot hide it.
-function switchOfValidFile(raw, main, read = localAutoMerge) {
+// it does when that file is the one loaded, so a worktree's copy cannot hide it. An unset switch reads "off" then; a
+// `strict` one (the waiver) reads "off" even when the file sets it "on".
+function switchOfValidFile(raw, main, read = localAutoMerge, strict = false) {
   const problems = [];
   for (const key of Object.keys(raw)) {
     if (!LOCAL_KEYS.includes(key)) problems.push(key);
   }
   localSources(main, raw, problems);
   const value = read(raw, problems);
-  return value === 'unset' && problems.length > 0 ? 'off' : value;
+  return problems.length > 0 && (strict || value === 'unset') ? 'off' : value;
 }
 
 // Whether a machine with no setting may follow a team default of "on": git says it tracks no local file in the main

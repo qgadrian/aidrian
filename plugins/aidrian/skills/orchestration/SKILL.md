@@ -77,6 +77,7 @@ The stop hook sends a subagent back once when it stops with one still running.
 ## 4. Review findings
 
 - Check each finding's premise first, as `references/review-rules.md` § Verify the premise says.
+- Then check its proposed fix against the approval conditions and earlier decisions, as § Check the proposed fix says.
 - **Security-sensitive findings**, on auth, tenant isolation, another user's data, public trust boundaries, server-side validation,
   abuse, payment or webhook trust, or privileged access: only `security-engineer` closes or excludes one. Weak evidence goes to `explorer`.
 - "Disputed" closes nothing: escalate to the Human with the owning agent and the missing evidence.

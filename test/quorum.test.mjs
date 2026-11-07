@@ -1273,9 +1273,12 @@ test('the decide mode file holds the runners, the swap, the cap, every Codex mod
   assert.match(skill, /`<state>\/quorum\/questions\/`/u, 'SKILL.md names the questions folder');
 });
 
-// The lines `quorum check` prints for a decide ledger, as the docs quote them: each is in lib/quorum.mjs word for word.
+// The lines `quorum check` prints for a decide ledger, as the docs quote them: each is in lib/quorum.mjs, or a module under
+// lib/quorum/, word for word.
 test('docs/project-folder.md quotes the decide check lines exactly as lib/quorum.mjs prints them', () => {
-  const source = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/quorum.mjs'), 'utf8');
+  const lib = path.resolve(import.meta.dirname, '../plugins/aidrian/lib');
+  const files = ['quorum.mjs', ...readdirSync(path.join(lib, 'quorum')).filter((name) => name.endsWith('.mjs')).sort().map((name) => `quorum/${name}`)];
+  const source = files.map((file) => readFileSync(path.join(lib, file), 'utf8')).join('\n');
   const doc = readFileSync(path.resolve(import.meta.dirname, '../docs/project-folder.md'), 'utf8').replace(/\s+/gu, ' ');
   const lines = [
     'relabeled opinion (was pending): no citation passes',

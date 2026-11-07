@@ -938,6 +938,7 @@ Its `deny` for an agent replaces the team's `deny` for that agent, and its `allo
 A developer can lift a team's `allow` list on one machine with `"allow": ["*"]`.
 An agent cannot: while `agents` sets any gate, no subagent may change config.json, `.aidrian.json`, or `.aidrian.local.json`,
 also the main checkout's when the project is a git worktree. The main session still can.
+A write through a link to one of them counts, also a link whose file is not made yet (`out/alias -> ../.aidrian.local.json`).
 While one of those files is there but cannot be read, the gates are unknown, so every subagent may only read files until it is fixed.
 `aidrian check` names an unknown key, a key that is not an agent name, and a pattern it cannot read, such as `Bash(git *)`.
 A bad pattern is left out and the rest of its list still applies, so a bad `allow` pattern makes the list stricter.

@@ -70,13 +70,14 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
 // The machine's switches in the local file, read from what it parses to: the key a write of one names, where it sits,
 // the name the denial gives it, what a subagent may not do, and the shape of a patch line that changes it.
 const SWITCHES = Object.freeze([
-  Object.freeze({ key: 'autoMerge', valueIn: (parsed) => parsed?.github?.autoMerge, name: 'github.autoMerge', why: 'only the main session may turn merging without a Human on or off', patched: /^[+-].*autoMerge/mu }),
+  Object.freeze({ key: 'autoMerge', valueIn: (parsed) => parsed?.github?.autoMerge, name: 'github.autoMerge', why: 'only the main session may turn merging without a Human on or off', patched: /^[+-].*(?:autoMerge|"enabled"\s*:)/mu }),
+  Object.freeze({ key: 'unattendedWaiver', valueIn: (parsed) => parsed?.github?.unattendedWaiver, name: 'github.unattendedWaiver', why: 'only the main session may let a recorded judge verdict waive the merge guard', patched: /^[+-].*(?:unattendedWaiver|"enabled"\s*:)/mu }),
   Object.freeze({ key: 'reviewApprovals', valueIn: (parsed) => parsed?.reviewApprovals, name: 'reviewApprovals', why: 'only the main session may let a named approver\'s review close a flow invariant, or stop it', patched: /^[+-].*reviewApprovals/mu }),
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
 ]);
 
-// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, review approvals, or
+// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, or
 // the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that names its key. This holds with no gates set, and other writes to that
 // file stay allowed. Like the rest of this guard, it is for agents that cooperate.

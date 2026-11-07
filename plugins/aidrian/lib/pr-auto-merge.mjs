@@ -123,6 +123,21 @@ export function branchConfig(forge, { repo, host }, branch, prefix = '', { locat
   return parse(read(file), file);
 }
 
+// The team's config at the two branches that decide a ceiling: { main, policy, basePolicy }, the default branch's name,
+// its config, and the base's config (the same object when the base is the default branch). Read in this order: the
+// default branch, its config, then the base's config, each config by branchConfig's reads. `pr` is { repo, host, base }.
+// Throws as defaultBranch and branchConfig do.
+export function branchPolicies(forge, pr, prefix = '') {
+  const main = defaultBranch(forge, pr);
+  const policy = branchConfig(forge, pr, main, prefix);
+  const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix);
+  return { main, policy, basePolicy };
+}
+
+// The branches whose `github.<key>.allow` is not true, the default branch first, each once: empty when both allow it.
+export const refusingBranches = ({ main, policy, basePolicy }, base, key) =>
+  [...new Set([[main, policy.github[key]], [base, basePolicy.github[key]]].filter(([, each]) => each?.allow !== true).map(([name]) => name))];
+
 // GitHub's REST file statuses as the GraphQL change types `gh pr view` gives and pathsProblem reads. `unchanged`, a file
 // listed with no change to its content, reads as MODIFIED, so its path still meets every guard.
 const REST_CHANGE_TYPES = Object.freeze({
@@ -260,12 +275,10 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   let main;
   let policy;
   try {
-    main = defaultBranch(forge, pr);
-    policy = branchConfig(forge, pr, main, prefix ?? '');
-    const onDefault = policy.github.autoMerge;
-    const onBase = pr.base === main ? onDefault : branchConfig(forge, pr, pr.base, prefix ?? '').github.autoMerge;
-    refusing = [...new Set([[main, onDefault], [pr.base, onBase]].filter(([, each]) => each.allow !== true).map(([name]) => name))];
-    team = { ...onDefault, allow: refusing.length === 0 };
+    const policies = branchPolicies(forge, pr, prefix ?? '');
+    ({ main, policy } = policies);
+    refusing = refusingBranches(policies, pr.base, 'autoMerge');
+    team = { ...policy.github.autoMerge, allow: refusing.length === 0 };
   } catch (error) {
     return fail(error.message);
   }

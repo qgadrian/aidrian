@@ -629,9 +629,11 @@ With no comment of that user's, or when the user cannot be read, it attempts the
 or GitHub refuses the edit with a 403; it never edits a non-member's.
 
 The comment carries the record brotli-compressed, in base64, in one `<!-- aidrian-review-state-br:... -->` marker.
-The older plain `<!-- aidrian-review-state:... -->` marker is still read. A reader takes the newer of every record
-marker a comment holds, compressed or plain, and a write by this release leaves exactly one: an older release's write
-keeps the compressed marker and appends a plain one, so a comment it touched can hold both until the next write here.
+The older plain `<!-- aidrian-review-state:... -->` marker is still read. A reader takes the newer of the record
+markers on the lines that end the comment, each a line of its own, compressed or plain, and a write by this release
+leaves exactly one there: an older release's write keeps the compressed marker and appends a plain one, so a comment it
+touched can end with both until the next write here. A marker anywhere else is not read, and free text the summary
+shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can carry a record of its own.
 
 - **Size.** GitHub refuses a comment past 65,536 characters. Each split review step keeps only the slice results of
   the head's own [split](#split) packing: for each reviewer with slice results in the record, the slices `review.split`
@@ -683,6 +685,11 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   An entry is only ever marked, never removed, and the review step merges in the entries and marks on disk before it
   writes, so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
   machine does not see them.
+- **Waivers.** `waivers` lists the judge verdicts `aidrian pr waive` recorded, each `{ head, kind, verdict, reason, judge, at }`,
+  where `kind` is `round_cap` or `moved_head` and `verdict` is `waive` or `refuse`. Each binds to one head and one kind.
+  The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof.
+  A record without the list has none. The [merge guard](hooks.md#merge-guard) reads them only while the team's
+  `github.unattendedWaiver.allow` and this machine's switch are both on: [Unattended waiver](config.md#unattended-waiver).
 
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot

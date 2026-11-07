@@ -36,11 +36,11 @@
       "tags": []
     },
     "review.md": {
-      "summary": "pr review: plan, splits, flows, invariants, approvers, approvals, visual, reviewers, quota, rounds, sign-off, --accept, record, owed reviews, product feedback.",
+      "summary": "review: plan, splits, flows, invariants, approvers, approvals, visual, reviewers, quota, rounds, sign-off, --accept, record, owed, product feedback, residuals.",
       "tags": []
     },
     "knowledge.md": {
-      "summary": "Knowledge buckets: index file format, tags, shaping buckets, overrides, project agents, aidrian-knowledge commands, checks.",
+      "summary": "Knowledge buckets: index file format, tags, shaping buckets, overrides, default code style, project agents, aidrian-knowledge commands, checks.",
       "tags": ["harness_engineering"]
     },
     "lessons.md": {

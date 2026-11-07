@@ -7,6 +7,7 @@
 //   aidrian decisions list --added-since REF     # decisions, settled, and removed are the branch's; problems may also hold rows marked inherited; --json adds queue, the base branch's decisions.record.queue
 //   aidrian decisions set ID confirmed|changed|rejected  # the Human's answer: rewrites that one marker in the working copy; changed confirms it
 //   aidrian decisions undo ID                    # the Human's undo: puts back the old wording and removes the decision's lines
+//   aidrian decisions residuals --body FILE [--judged FILE] [--adr DIR] [--json]  # each accepted residual beside the decisions on record and the ADR consequences; with --judged, the contradictions, exit 1
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
 // reachesUsersUnreviewed. An answer left out asks, and a yes asks but for one on the last that the base commit's
@@ -19,18 +20,23 @@
 // docs/project-folder.md#decision-markers the marker. `list` exits 0 with problems: they are part of what it reports.
 // `list --added-since` in a repository with no project folder prints the empty result and exits 0: no folder, no markers.
 // `undo` exits 1 and writes nothing when it refuses, after printing why, both wordings, and the block it searched.
+// `residuals` exits 0 with the pairing, and with `--judged` exits 1 on any contradiction or invalid row. Only a body with no
+// such section, or an empty one, exits 0 whatever `--judged` holds, and so does a pairing that lists no decision and no ADR
+// line. With no project folder the record is the ADR lines alone, and a superseded ADR adds none, as a note says. A scan
+// problem (an index problem, a doc that does not read, a failed git scan) prints as a note, and forces exit 1 only where the
+// pairing would otherwise say nothing is on record. It exits 1 too when `--adr` names no folder or `--project` no project.
 // `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` and `quorum provisional` add `resolve`'s;
 // docs/dispatch-log.md describes them.
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { ageDays, blockOf, classDomain, DECISION_STATUSES, isClassName, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
+import { ageDays, blockOf, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { indexedPaths, loadKnowledge } from './knowledge.mjs';
@@ -39,24 +45,28 @@ import { checkTool as mainCheckoutDenial } from './rules/main-checkout.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab [--project DIR] ' +
-  '| list [--added-since REF] [--json] [--project DIR] | set ID confirmed|changed|rejected [--project DIR] | undo ID [--project DIR]';
+  '| list [--added-since REF] [--json] [--project DIR] | residuals --body FILE [--judged FILE] [--adr DIR] [--json] [--project DIR] ' +
+  '| set ID confirmed|changed|rejected [--project DIR] | undo ID [--project DIR]';
 // Each answer `set` takes, and the status it writes. `changed` is the Human's wording in place of the agent's: the rule stands, so
 // the marker reads confirmed, and the log counts the answer as an override.
 const SET_STATUS = { confirmed: 'confirmed', changed: 'confirmed', rejected: 'rejected' };
 // A branch-scoped list reads whole docs from git, which can outlast git.mjs's default for a hook.
 const GIT_READ = { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 };
 const ANSWERS = { no: false, yes: true };
+// What `residuals` notes in a repository with no project folder: only the ADR lines are on record.
+const NO_FOLDER = 'no project folder: no decision on record';
 
 export const commands = {
   decisions: {
     usage: USAGE,
-    about: 'say whether an agent may settle one decision or must ask the Human, from config.json `decisions` at the base branch, with A,B,C,D the four reversibility answers, each no or yes; print the decision classes; list the decisions on record in the indexed docs, or those a branch added since REF; set the Human\'s answer on one; or undo one, putting back the wording it replaced',
+    about: 'say whether an agent may settle one decision or must ask the Human, from config.json `decisions` at the base branch, with A,B,C,D the four reversibility answers, each no or yes; print the decision classes; list the decisions on record in the indexed docs, or those a branch added since REF; set the Human\'s answer on one; or undo one, putting back the wording it replaced; or set a pull request body\'s accepted residuals against the decisions on record',
     run(args) {
       const [action, ...rest] = args;
       if (action === 'list') return list(rest);
+      if (action === 'residuals') return residuals(rest);
       if (action === 'set') return set(rest);
       if (action === 'undo') return undo(rest);
-      if (action !== 'resolve') return fail(`decisions takes resolve, list, set, or undo${action ? `, not "${action}"` : ''}`);
+      if (action !== 'resolve') return fail(`decisions takes resolve, list, residuals, set, or undo${action ? `, not "${action}"` : ''}`);
       const word = { type: 'string' };
       const { values } = parseArgs({
         args: rest,
@@ -370,6 +380,122 @@ function list(args) {
   const shown = [...(rows.length ? rows.map((row) => row.join('\t')) : [empty]), ...notes.map((note) => `note\t${note}`)];
   console.log(shown.join('\n'));
   return 0;
+}
+
+// `decisions residuals`: each item of a pull request body's accepted residuals section beside every decision on record and every
+// `## Consequences` line of the ADR folder, for `product-manager` to judge; with `--judged`, that judgment checked. `--body`,
+// `--judged`, and `--adr` are read from the current folder; `--project` only finds the project.
+function residuals(args) {
+  const word = { type: 'string' };
+  const { values } = parseArgs({ args, options: { body: word, judged: word, adr: word, json: { type: 'boolean' }, project: word } });
+  if (!values.body) return fail('residuals needs --body FILE');
+  const start = path.resolve(values.project ?? process.cwd());
+  // A --project that names no project is a mistake, not a repository that has not adopted the folder.
+  const project = values.project === undefined ? findProject(start) : knownProject(start);
+  if (values.project !== undefined && !project) return 1;
+  const root = project ? project.root : start;
+  const section = (project ? commandConfig(project).github.pullRequest.residuals?.section : null) ?? 'Accepted residuals';
+  const bodyFile = path.resolve(values.body);
+  let text;
+  try {
+    text = readFileSync(bodyFile, 'utf8');
+  } catch (error) {
+    return fail(`cannot read the body file ${bodyFile}: ${error.code ?? error.message}`);
+  }
+  const items = residualItems(text, section);
+  if (!items?.length) {
+    const nothing = `nothing to check: the body has no "## ${section}" items`;
+    console.log(values.json ? JSON.stringify({ residuals: [], section, nothing: true, notes: project ? [nothing] : [NO_FOLDER, nothing] }) : nothing);
+    return 0;
+  }
+  // A marker whose class no list holds is still a decision on record, as `list` and the domain pause count it.
+  const scanned = project ? scanDecisions(project) : null;
+  const decisions = scanned ? [...scanned.decisions, ...scanned.unlisted] : [];
+  // A broken index, a doc that does not read, or a scan git could not finish leaves part of the record unknown: each is a note,
+  // and it never lets an empty pairing say that nothing is owed.
+  const unread = (scanned?.problems ?? []).filter(({ line }) => line === null);
+  const notes = scanned ? [...scanned.notes, ...unread.map((each) => (each.doc === null ? each.problem : `${place(each)}: ${each.problem}`))] : [NO_FOLDER];
+  const partial = unread.length > 0 || (scanned?.notes.length ?? 0) > 0;
+  const adrDir = values.adr === undefined ? path.join(root, 'docs/adr') : path.resolve(values.adr);
+  const { folder, adrs, skipped } = adrConsequences(adrDir, values.adr, root);
+  if (folder === null && values.adr !== undefined) return fail(`no ADR folder at ${adrDir}`);
+  const skippedNotes = skipped.map((each) => `skipped superseded ADR ${each}`);
+  notes.push(...skippedNotes);
+  const pairs = pairResiduals(items, decisions, adrs);
+  // With no decision and no ADR line on record, no residual can contradict one: nothing is owed, --judged or not.
+  const nothing = pairs.every((pair) => pair.decisions.length === 0 && pair.adrs.length === 0);
+  if (nothing && partial) {
+    const why = 'the decisions on record could not all be read, so an empty record proves nothing: fix the problems above, then run this again';
+    if (values.json) console.log(JSON.stringify({ residuals: pairs, section, adrFolder: folder, nothing: false, problems: unread, notes }));
+    else console.log([...unread.map((each) => ['problem', ...(each.doc === null ? [] : [place(each)]), each.problem].join('\t')),
+      ...[...scanned.notes, ...skippedNotes].map((note) => `note\t${note}`), why].join('\n'));
+    return 1;
+  }
+  if (values.judged === undefined || nothing) {
+    const last = nothing ? 'nothing on record: no judgment owed' : 'judgment owed: product-manager returns one row per residual, { residual, contradicts, evidence }';
+    if (values.json) {
+      console.log(JSON.stringify({ residuals: pairs, section, adrFolder: folder, nothing, notes: nothing ? [...notes, last] : notes }));
+      return 0;
+    }
+    const shown = pairs.flatMap((pair) => [
+      `residual: ${pair.residual}`,
+      ...(pair.decisions.length ? pair.decisions.map((each) => `  decision ${each.id} ${each.status} ${place(each)}: ${each.wording}`) : ['  decision none on record']),
+      ...(pair.adrs.length ? pair.adrs.map((each) => `  adr ${each.path}:${each.line}: ${each.text}`) : ['  adr none found']),
+    ]);
+    console.log([...shown, ...notes.map((note) => `note\t${note}`), last].join('\n'));
+    return 0;
+  }
+  const judgedFile = path.resolve(values.judged);
+  let rows;
+  try {
+    rows = JSON.parse(readFileSync(judgedFile, 'utf8'));
+  } catch (error) {
+    return fail(`cannot read the judged file ${judgedFile}: ${error.code ?? error.message}`);
+  }
+  const { contradictions, invalid } = judgeResiduals(pairs, rows);
+  const status = contradictions.length || invalid.length ? 1 : 0;
+  if (values.json) {
+    console.log(JSON.stringify({ residuals: pairs, contradictions, invalid, notes }));
+    return status;
+  }
+  const shown = [
+    ...contradictions.map((each) => (each.contradicts === each.place ? `${each.residual} -> ${each.place}` : `${each.residual} -> ${each.contradicts}, ${each.place}`)),
+    ...invalid.map((reason) => `invalid: ${reason}`),
+    status ? `${contradictions.length} contradiction(s), ${invalid.length} invalid row(s)` : 'no residual contradicts a decision on record',
+    ...notes.map((note) => `note\t${note}`),
+  ];
+  console.log(shown.join('\n'));
+  return status;
+}
+
+// The `## Consequences` lines of each `*.md` file directly in `dir`, by name: { folder, adrs }, with `folder` the path read,
+// as written from `root` (writtenFromRoot), or null when `dir` is no directory, and each ADR's `path` that folder joined with
+// its name. A folder outside `root` keeps the `--adr` spelling. A file that does not read is passed over, and a superseded
+// ADR (supersededAdr) goes in `skipped`, by path.
+function adrConsequences(dir, spelled, root) {
+  let names;
+  try {
+    if (!statSync(dir).isDirectory()) return { folder: null, adrs: [], skipped: [] };
+    names = readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith('.md')).map(({ name }) => name).sort();
+  } catch {
+    return { folder: null, adrs: [], skipped: [] };
+  }
+  const folder = writtenFromRoot(real(root), dir) ?? (spelled ?? dir).replace(/\/+$/u, '');
+  const adrs = [];
+  const skipped = [];
+  for (const name of names) {
+    const shown = folder === '.' ? name : `${folder}/${name}`;
+    let text;
+    try {
+      text = readFileSync(path.join(dir, name), 'utf8');
+    } catch {
+      // An ADR that does not read adds no line; the pairing goes on with the rest.
+      continue;
+    }
+    if (supersededAdr(text)) skipped.push(shown);
+    else adrs.push({ path: shown, lines: consequenceLines(text) });
+  }
+  return { folder, adrs, skipped };
 }
 
 function set(args) {

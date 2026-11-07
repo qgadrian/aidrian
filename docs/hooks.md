@@ -28,12 +28,12 @@ the tracker write guard, and the question names check also record each block: se
 | Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
 | After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
-| Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
+| Before an Agent tool call | The project's [model and effort](config.md#models) for that agent, and a subagent's background dispatch moved to the [foreground](#background-check) | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), then the [session-length reminder](#session-length) | Claude Code; the announce check also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once per step |
+| The main session ends a turn | The [announce check](#announced-work), then the [session-length reminder](#session-length) | Claude Code; the announce check also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
@@ -766,6 +766,13 @@ to wait for it in the foreground: poll it with a foreground command and a timeou
 or stop it with `TaskStop` when it should not outlive the turn. Its second stop always ends; ending with the task still running
 is an occurrence of an [automatic lesson](lessons.md#automatic-lessons) for the plugin.
 
+The send-back alone did not hold: subagents still ended their turn with a background agent running. So the Agent hook
+also rewrites the dispatch before it runs: a call a subagent makes, one whose payload has `agent_id`, with
+`run_in_background: true` runs with it `false`. The subagent then gets the child's report as the call's result, and
+several dispatches in one turn still run side by side. The main session's background dispatches run as written, since a
+background agent's report wakes it. A background shell is left as it is, for a server the subagent polls; the stop hook
+still checks it. A host whose agent tool reaches no hook, such as Codex, is not rewritten.
+
 Claude Code's SubagentStop payload lists the session's in-flight tasks in `background_tasks`, without the agent that started each.
 A task is the subagent's own only when one of its own calls launched or resumed it, as the structured result Claude Code
 stores beside that call's result in the transcript (`toolUseResult`) names it: a Bash call's `backgroundTaskId`, set when
@@ -806,15 +813,16 @@ the reason names the question tool as each host's model calls it, `AskUserQuesti
 ## Session length
 
 Two hooks weigh what continuing the main session costs against a fresh session started from a handoff brief.
-[handoff.md](handoff.md) has the cost model, its steps, and the config.
+[handoff.md](handoff.md) has the cost model, its re-arming rule, and the config.
 
 - When the main session ends a turn, the Stop hook reads its transcript. Once each call costs `session.handoff.costRatio`
   times what it would in a fresh session, or the context passes the optional `maxTokens` ceiling, it sends the agent back
   for one more turn, with the ratio and the calls a handoff needs to pay back. The agent judges first whether a handoff
   is worth it, and may end the turn without a word; otherwise it asks the Human (`ask`) or writes the brief (`auto`).
-  It fires once per step: a marker in the system's temporary folder counts the firings, and a compaction resets them.
+  It fires once, then again once the ratio doubles: a marker in the system's temporary folder holds the ratio of the
+  last firing, and a compaction resets it.
 - When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan hook tells the agent to offer the same handoff
-  before its first build step, from half a step: a cost ratio of 1.5 by default.
+  before its first build step, from halfway to `costRatio`: a cost ratio of 1.5 by default.
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.

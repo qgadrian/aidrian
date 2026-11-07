@@ -1118,7 +1118,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
     '               [--repo OWNER/NAME]',
     '       aidrian pr attest PR --pass ID --head SHA --reviewer WHO',
-    '               (--findings N --fixed N [--accepted N] | --findings-file FILE) [--verdicts FILE]',
+    '               (--findings N --fixed N [--accepted N] | --findings-file FILE) [--verdicts FILE|-]',
     '               [--repo OWNER/NAME]',
     '       aidrian pr attest PR --check',
     '       aidrian pr checks [PR] [-R OWNER/REPO] [--json]',

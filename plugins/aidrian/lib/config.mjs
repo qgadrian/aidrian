@@ -105,7 +105,7 @@ const SCHEMA = {
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
   terms: { file: 'textOrNull' },
-  knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
+  knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' }, defaults: { codeStyle: 'boolean' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
   session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore' } },
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
@@ -219,7 +219,8 @@ const TYPES = {
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   percent: [(value) => Number.isInteger(value) && value > 0 && value <= 100, 'a whole number from 1 to 100'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
-  // A step under a tenth of a fresh call's cost means nothing, and rounds away in the step arithmetic.
+  // At 1 a call costs what it would in a fresh session, so a handoff saves nothing; under 1.1 the saving per call is
+  // too small for a handoff to pay back its own calls.
   costRatio: [(value) => typeof value === 'number' && Number.isFinite(value) && value >= 1.1, 'a number of 1.1 or more'],
   commitFields: [(value) => Array.isArray(value) && value.every((f) => COMMIT_FIELDS.includes(f)), `a list of ${COMMIT_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
@@ -324,7 +325,8 @@ export const DEFAULTS = deepFreeze({
   docs: { wrapLimit: 155 },
   // The terms file (lib/terms.mjs); null turns the terms rule off.
   terms: { file: null },
-  knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 } },
+  // The docs this plugin ships under a project's own knowledge, each on unless set to false (DEFAULT_DOCS in lib/knowledge.mjs).
+  knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 }, defaults: { codeStyle: true } },
   skills: { descriptionChars: 160, listingBytes: 9216 },
   // The session-length reminder (lib/session-length.mjs, docs/handoff.md): it fires once a call costs `costRatio` times
   // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off.

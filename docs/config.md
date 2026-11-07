@@ -56,7 +56,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
-  "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
+  "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 }, "defaults": { "codeStyle": true } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0 } },
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
@@ -169,10 +169,11 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
+| `knowledge.defaults.codeStyle` | `false` takes the plugin's [default code-style doc](knowledge.md#default-code-style) out of every `code_style` route. `true`, the default, lists it after the project's own `code_style` docs, which win where they conflict. |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
 | `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
 | `session.handoff.mode` | What the [session-length reminder](handoff.md#the-reminder) and the plan handoff offer do: `"ask"`, `"auto"`, or `"off"`. |
-| `session.handoff.costRatio` | How many times a fresh session's cost each call must cost before the reminder fires, a number of 1.1 or more; each later reminder adds `costRatio − 1`: [Handoff](handoff.md). |
+| `session.handoff.costRatio` | How many times a fresh session's cost each call must cost before the reminder fires, a number of 1.1 or more; it comes back once the ratio doubles since its last firing, never below `costRatio`: [Handoff](handoff.md). |
 | `session.handoff.maxTokens` | An optional ceiling on the main session's context, in tokens, that fires the reminder on its own and doubles after each firing; `0`, the default, is off. |
 | `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
@@ -415,6 +416,9 @@ The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr 
 | `residuals` | An item of the `section` list that lacks one of `fields`, written `field:`, or that names an issue. |
 | `sharedTempBodyFile` | `--body-file` in `/tmp`, `/var/tmp`, `/var/folders`, or `$TMPDIR`, such as the host's scratchpad, unless inside the project or its state folder: concurrent sessions overwrite those. |
 | `duplicateBody` | A body identical to another open pull request's. This check runs `gh pr list`, and lets the command run when gh does not answer in 3 s. |
+
+`aidrian decisions residuals` reads `residuals.section` too, to set each residual against the decisions on record
+([Accepted residuals against decisions](review.md#accepted-residuals-against-decisions)).
 
 A title is checked only when the command sets one, so a body-only `gh pr edit` never blocks on a title written before the rule.
 The items of a section are its list items; prose under the heading, and a bullet indented under an item, are not items.
@@ -1210,7 +1214,7 @@ The first rule that matches wins:
 - A name of the built-in list is a config error, so a project can neither redefine a class nor lift or remove a floor class.
 - A project class is an ordinary class: the rules below rule 1 apply to it, and `decisions.escalate` may list it.
 - `resolve` and `--vocab` read it from the base branch, so a class the working copy adds counts once it merges.
-  `aidrian decisions list`, `set`, and `undo` read it from the working copy, as they read the docs;
+  `aidrian decisions list`, `set`, `undo`, and `residuals` read it from the working copy, as they read the docs;
   `list --added-since` reads each end's from that commit, so a branch that removes a class owns the problems that makes.
   A class removed later leaves its markers as problems, which `aidrian check` warns about. They still count toward the domain pause.
 

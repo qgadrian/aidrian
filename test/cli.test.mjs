@@ -584,8 +584,8 @@ test('decisions resolve --vocab lists the classes with definitions, and bad argu
   assert.deepEqual(Object.keys(vocab.reversibility), ['storedData', 'external', 'pricingOrContract', 'reachesUsersUnreviewed']);
 
   const bad = [
-    [['decisions'], /decisions takes resolve, list, set, or undo/u],
-    [['decisions', 'bogus'], /decisions takes resolve, list, set, or undo, not "bogus"/u],
+    [['decisions'], /decisions takes resolve, list, residuals, set, or undo/u],
+    [['decisions', 'bogus'], /decisions takes resolve, list, residuals, set, or undo, not "bogus"/u],
     [['decisions', 'resolve', '--class', 'copy'], /resolve needs --domain and --class/u],
     [['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,maybe'], /--reversible takes up to 4 answers/u],
     [['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no,no'], /--reversible takes up to 4 answers/u],

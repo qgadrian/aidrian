@@ -13,7 +13,7 @@ repository describes the plan itself.
   review, with `priorFindings` from it. `files`: the files to report findings in, or null for all.
   For a project below the repository root, `brief` says so: hand it to the agent, which runs every `git diff` in the
   project's folder with `--relative` and cites from the project root, as `files` lists them.
-- `flows[]`: each critical flow with its `invariants`. The agent writes one verdict per invariant to a JSON file:
+- `flows[]`: each critical flow with its `invariants`. The agent returns one verdict per invariant in its final JSON:
 
   ```json
   [{ "flow": "booking-creation", "invariant": "no-double-booking", "verdict": "holds", "evidence": "src/lib/booking/lock.ts:42" }]
@@ -29,7 +29,8 @@ repository describes the plan itself.
   (horizontal overflow, clipped text, controls under 44 px), plus the project's checklist. Hand the agent `brief`,
   and have it open the files. `status` other than `captured` (no base URL, no Playwright) means review from code.
 - `record`: the command that records the pass. `--findings` is what the agent found, `--fixed` what was fixed in a
-  pushed commit, `--accepted` what was dispositioned another way (step 3). `--verdicts` takes the file above.
+  pushed commit, `--accepted` what was dispositioned another way (step 3). Pipe the agent's final JSON to `record`
+  as it is, with `--verdicts -` in place of the file, and never retype a verdict; `--verdicts FILE` still reads a file.
   When `record` asks for `--findings-file` instead, the agent writes each finding with its axes and state, and the
   disposition table decides what stays open (`aidrian pr disposition --vocab` lists the words):
 
@@ -41,7 +42,7 @@ repository describes the plan itself.
   without likelihood and affects stays open until it has them.
 
 A split review's passes carry `role`: a `slice` reviews only its `files` and also writes `contracts` and
-`cross_notes` (lists of strings) into its `--verdicts` file, as `{ "verdicts": [...], "contracts": [...], "cross_notes": [...] }`; the `cross` pass reads `slices` and reports only what
+`cross_notes` (lists of strings) in its final JSON, as `{ "verdicts": [...], "contracts": [...], "cross_notes": [...] }`; the `cross` pass reads `slices` and reports only what
 crosses them.
 
 ## `fix_required`

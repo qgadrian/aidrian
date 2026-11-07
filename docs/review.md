@@ -127,6 +127,10 @@ citation proves the line is there, not that it proves the point, so the independ
 invariants and the earlier verdicts and is asked to challenge each `holds`. A flow with no invariants is held to one
 generic invariant, that nothing in it is removed or weakened, and is marked unspecified.
 
+The record stores each verdict's evidence as the reviewer wrote it, prose included. Only a citation of the three forms
+above signs a `holds` or `not_affected`: prose evidence on either leaves the invariant unverified until a cited verdict
+or an outside approval closes it. The verdict schema is unchanged.
+
 An invariant in a list that cites a heading, `{ "id": "no-double", "cite": "docs/product/booking.md#no-double-booking" }`,
 reaches its reviewer with that section as `source`: the heading and its text up to the next heading of the same or a
 higher level, read from the base branch. The anchor may be copied from GitHub, as the heading's link gives it.
@@ -414,7 +418,10 @@ A project adds its own in `review.reviewers`:
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
   `codex-local` reads the checkout at the head.
-- `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result.
+- `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
+  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings <n> --fixed <n> --verdicts -`, the
+  agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
 
 ### The engine
 
@@ -429,7 +436,11 @@ rest of the review config it is the base branch's. Unset, each machine picks its
 
 ## Rounds
 
-A round is one run of the plan on one head. The cap is `github.maxReviewRounds` as the base branch commits it, so an
+A round is one run of the plan on one head. Right after a push, GitHub can still report the commit the push built
+on. When the checkout's branch tracks the pull request's branch, its pushed commit, which that report is an ancestor
+of, is the head the step reviews, so the first step after a push opens a new round instead of re-serving the last one.
+A local commit past that head returns `incomplete`, with `local_head` and `retry_recommended: true`: push, then run
+the step again. A checkout on any other branch reviews the head GitHub reports. The cap is `github.maxReviewRounds` as the base branch commits it, so an
 edit to the working copy's config cannot raise it. At the cap, [extra rounds](#extra-rounds) may grant one more;
 raising the cap itself needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
 agent command that sets it, and a bot request posted any way but through `aidrian pr`. The last round runs the final stage first, so a pull request
@@ -489,6 +500,29 @@ Before marking the draft ready, each flow, `pr-merge-when-green` included, runs 
 owed, the skill's re-check run, then `status` once more. On any other exit the draft stays a draft. The
 [ready hold](hooks.md#ready-hold) refuses marking it ready while `status` says owed, and the steps are in the skill's
 `references/in-a-flow.md`.
+
+### Accepted residuals against decisions
+
+A `## Accepted residuals` item, or an item of the section config.json `github.pullRequest.residuals.section` names, is a defect
+the branch ships on purpose. Before the body ships, `pr-write` sets each one against the decisions on record:
+`aidrian decisions residuals --body <file>` lists each item beside every decision marker in the indexed docs (id, status, wording,
+doc and line), a marker whose class no list holds included and a `rejected` one left out, since it is no rule, and the
+`## Consequences` lines of each ADR in `docs/adr/`, or the folder `--adr` names, an ADR whose Status starts `Superseded` skipped
+with a note; no `docs/adr/` is an empty list, an `--adr` that is no folder fails, and with no project folder the record is the ADR
+lines alone. It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
+Decisions. That part is deterministic. When the list holds no decision and no ADR line, it ends
+`nothing on record: no judgment owed` and exits 0, `--judged` or not, unless part of the record did not read (an index problem, a
+doc that does not read, a failed git scan): then it prints those problems and exits 1. Otherwise whether a residual contradicts a
+decision is a judgment, so `product-manager` returns one row per residual, `{ residual, contradicts, evidence }`, with
+`contradicts` a decision id or ADR `path:line` from that list, or null, and `evidence` the wording it contradicts.
+`--judged <file>` validates the rows: a residual with no row or two, an item the body holds twice, a `contradicts` that names
+nothing listed or an id two markers hold, or one with no evidence is invalid. The command prints each contradiction as
+`residual -> id, doc:line`, or `residual -> path:line` for an ADR line, and exits 1 on any contradiction or invalid row; 0 when
+every row is null, or when the body has no such section or an empty one. The skill fixes or drops each contradiction and ships
+only on 0. Dropping means the residual leaves the body because the defect no longer ships, or because it is shown to be no defect,
+with one line of why left in the body; deleting the bullet while the defect still ships is never a fix. A decision found out of
+date is revised only through its own route, never reworded on the branch to let a residual pass.
+The review engine is not involved: nothing here changes a round or a verdict.
 
 ### Out of quota
 

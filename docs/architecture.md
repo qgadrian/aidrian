@@ -30,6 +30,7 @@ plugins/aidrian/
     └── install-agents.mjs          copies those roles into $CODEX_HOME/agents (~/.codex/agents by default)
 scripts/build.mjs                   generates the flat agents/ and codex/agents from agents-src/ and providers/
 scripts/version.mjs                 checks a branch keeps the version, and raises it on release
+scripts/code-shape.mjs              warns about long files, long functions, and nested ternaries in lib/
 .github/workflows/release.yml       releases the plugin after each merge to main
 examples/consumer/                  a small project that uses the plugin
 docs/                               one page per surface; docs/providers/ has one page per host

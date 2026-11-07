@@ -28,6 +28,10 @@ A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents
 - a test fails;
 - the branch changes the plugin version ([Versions](#versions)).
 
+Last, `scripts/code-shape.mjs` lists on stderr the files of `plugins/aidrian/lib/` over 300 lines, the functions over 40,
+and the nested ternaries, by the [default code style](../plugins/aidrian/skills/knowledge/references/code-style.md).
+These are warnings, and never fail the check.
+
 ## What the tests hold
 
 - Both marketplaces publish the one plugin from `./plugins/aidrian`.

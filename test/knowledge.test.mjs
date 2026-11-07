@@ -44,6 +44,29 @@ test('routing returns "always" docs first, then tagged docs, in bucket order and
   assert.deepEqual(listTags(buckets).map(([tag]) => tag), ['backend', 'code_style', 'docs', 'issue_tracker', 'orchestration', 'product_sensitive', 'review', 'testing']);
 });
 
+const CODE_STYLE_DEFAULT = path.join(ROOT, 'plugins/aidrian/skills/knowledge/references/code-style.md');
+
+test('a code_style route ends with the plugin default code-style doc, after the project docs of the tag', () => {
+  const { buckets } = loadKnowledge(EXAMPLE);
+  const project = ['docs/knowledge/engineering/working-agreement.md', 'docs/knowledge/engineering/code-style.md'];
+  assert.deepEqual(routeKnowledge(buckets, ['code_style']), [...project, CODE_STYLE_DEFAULT]);
+  assert.deepEqual(routeKnowledge(buckets, ['backend', 'code_style'], { codeStyle: true }), [...project, CODE_STYLE_DEFAULT]);
+  assert.deepEqual(routeKnowledge(buckets, ['code_style'], { codeStyle: false }), project, 'knowledge.defaults.codeStyle: false');
+  for (const tags of [[], ['backend'], ['testing', 'review']]) {
+    assert.equal(routeKnowledge(buckets, tags).includes(CODE_STYLE_DEFAULT), false, tags.join(','));
+  }
+  assert.ok(readFileSync(CODE_STYLE_DEFAULT, 'utf8').includes('`knowledge.defaults.codeStyle: false`'), 'the doc names its switch');
+});
+
+test('the command line routes code_style to the plugin default unless config turns it off', (t) => {
+  const project = validProject(t);
+  const route = () => spawnSync(CLI, ['route', 'code_style', '--project', project], { encoding: 'utf8' });
+  // The project defines no code_style doc: the default still counts as a doc of the tag.
+  assert.deepEqual([route().stdout, route().stderr], [`kb/rules.md\n${CODE_STYLE_DEFAULT}\n`, '']);
+  writeConfig(project, { version: 1, knowledge: { defaults: { codeStyle: false } } });
+  assert.deepEqual([route().stdout, route().stderr], ['kb/rules.md\n', 'no docs tagged code_style; printed only the "always" docs\n']);
+});
+
 test('nested buckets pass when path.relative returns "\\" separators, as on Windows', (t) => {
   const relative = path.relative;
   t.mock.method(path, 'relative', (from, to) => relative(from, to).replaceAll('/', '\\'));

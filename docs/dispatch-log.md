@@ -317,6 +317,30 @@ with a late finding.
 `aidrian report --since 7d --prs N` keeps the form the view grew from: the default view, then the reviews of the last N merged pull requests.
 Its `--since` applies to the log only, and its `--json` holds the reviews under `reviews`.
 
+### Findings
+
+`aidrian report findings` reads the review manifests in `<state>/reviews/` and shows, per review specialist,
+how often its findings turned out right. It reads no log and calls no forge.
+
+```console
+$ aidrian report findings
+Review manifests /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/reviews: 12 pull requests
+code-reviewer: 31 findings, precision 82% of 22 settled (18 resolved, 4 dismissed), 9 unsettled
+security-engineer: 6 findings, precision 100% of 3 settled (3 resolved, 0 dismissed), 3 unsettled
+critic: 4 findings, precision unknown, nothing settled (0 resolved, 0 dismissed), 4 unsettled
+```
+
+- **resolved**: a fix that a later review round confirmed, with its fix `commit`. **dismissed**: a finding the Human judged wrong.
+  Before `dismissed` existed, a dispute the Human settled with no change was `resolved` too, and has no fix commit,
+  so a `resolved` finding without a `commit` counts as unsettled, never as a confirmed fix.
+  These are the only settled outcomes ([the manifest's outcomes](../plugins/aidrian/skills/pr-review/references/manifest.md#outcomes)).
+- **precision**: resolved / (resolved + dismissed). A finding still `open`, `fixed`, `disputed`, `follow_up`, or any other status is unsettled.
+- A finding two agents raised counts for each of them.
+- Manifests hold no times of their own, so `--since` keeps those modified since then; with no `--since`, it reads every one.
+  `--prs` does not apply. An unreadable manifest, one with a finding that is not an object, or a reviews folder that
+  cannot be read is named on an `Unreadable:` line, never skipped silently; a missing folder is no history.
+- `--json` prints `dir`, `since`, `pull_requests`, `unreadable`, and `specialists`, each with its counts and `precision`, `null` while nothing is settled.
+
 ### Doc reads
 
 `aidrian report docs` answers three questions about the knowledge docs in one view:
@@ -358,7 +382,8 @@ Indexed docs never read since 30d, 2:
 
 ### Health
 
-`aidrian report health` puts the views above on one page and judges each signal against a threshold,
+`aidrian report health` puts the agents, docs, sessions, and reviews views and the lesson inbox on one page,
+and judges each signal against a threshold,
 so that the `harness-health` skill can say what to fix first.
 Its window is the last 30 days unless `--since` sets another, because each signal needs a sample.
 

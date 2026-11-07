@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { coverage, coverageLines, readLog } from './dispatch-log.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { projectAt } from './project.mjs';
+import { projectAt, stateDir } from './project.mjs';
 import { formatReport, summarize } from './report-agents.mjs';
 import { formatDocs, knowledgeOf, summarizeDocs } from './report-docs.mjs';
 import { formatSessions, summarizeSessions } from './report-sessions.mjs';
@@ -24,7 +24,7 @@ export function parseSince(value, now = Date.now()) {
 }
 
 // The views of `aidrian report`; the first is the default.
-const VIEWS = ['agents', 'docs', 'sessions', 'reviews', 'health'];
+const VIEWS = ['agents', 'docs', 'sessions', 'reviews', 'findings', 'health'];
 // The views that read the review bot's pull requests, and so take --prs.
 const PR_VIEWS = ['agents', 'reviews', 'health'];
 // `aidrian report reviews` and `health` read this many merged pull requests unless --prs says otherwise.
@@ -32,9 +32,10 @@ const DEFAULT_PRS = 20;
 
 export const commands = {
   report: {
-    usage: '[agents|docs|sessions|reviews|health] [--since 7d] [--prs N] [--json] [--project DIR]',
+    usage: '[agents|docs|sessions|reviews|findings|health] [--since 7d] [--prs N] [--json] [--project DIR]',
     about: 'summarize the dispatch log per agent type with hook denies, per knowledge doc read (docs), or per session ' +
-      '(sessions), the bot reviews of the last N merged pull requests (reviews), or every signal against its threshold ' +
+      '(sessions), the bot reviews of the last N merged pull requests (reviews), each review specialist\'s precision from the ' +
+      'review manifests (findings), or every signal against its threshold ' +
       '(health, since 30d by default); --prs N on the default view adds reviews',
     async run(args) {
       const { values, positionals } = parseArgs({
@@ -66,6 +67,15 @@ export const commands = {
       } catch (error) {
         console.error(error.message);
         return 1;
+      }
+      if (view === 'findings') {
+        // Every manifest by default: they hold no times of their own, so --since reads a manifest's modification time.
+        const { formatFindings, readManifests, summarizeFindings } = await import('./report-findings.mjs');
+        const dir = path.join(stateDir(project), 'reviews');
+        const label = values.since ?? null;
+        const summary = summarizeFindings(readManifests(dir, { sinceMs: label === null ? null : sinceMs }));
+        console.log(values.json ? JSON.stringify({ dir, since: label, ...summary }) : formatFindings(summary, { dir, since: label }));
+        return 0;
       }
       if (view === 'reviews') {
         // The pull requests are the last N merged, or those merged since --since when it is given. The log adds only the

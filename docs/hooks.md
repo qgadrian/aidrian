@@ -33,7 +33,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), then the [session-length reminder](#session-length) | Claude Code; the announce check also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once per step |
+| The main session ends a turn | The [announce check](#announced-work), then the [session-length reminder](#session-length) | Claude Code; the announce check also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
@@ -152,7 +152,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Attribution, when turned on | An agent's commit or new pull request without the [attribution](config.md#attribution) lines | `AIDRIAN_ALLOW_UNATTRIBUTED=1` |
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
-| Review sign-off | `aidrian pr signoff`, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
+| Review sign-off | `aidrian pr signoff`, `--last` included, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
 | Decision answer | `aidrian decisions set` or `undo` from a subagent, which carry out the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs them on the Human's word |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
@@ -224,12 +224,16 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
-- Review sign-off: `aidrian pr signoff`, with `--overrule` and `--accept` too, also as `node …/cli.mjs` or `node …/bin/aidrian`,
+- Review sign-off: `aidrian pr signoff`, with `--overrule`, `--accept`, and `--last` too, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
   A sign-off with `--check` among its words runs: it is the dry run, which runs every refusal and records nothing,
   so a session can try a command before it hands it to the Human. A pipe into a shell that names a sign-off stays
-  blocked, `--check` or not, since the rule cannot read it.
+  blocked, `--check` or not, since the rule cannot read it. Only a plain `--check` counts: one the shell builds at run
+  time, such as `` `printf …`--check ``, is no dry run. An `aidrian` whose subcommand the shell builds at run time,
+  such as `aidrian "$@"`, is denied too. The rule's message stops the session; at `human_required` naming one flow,
+  once `--last --check` exits 0, it hands the Human the short form, `aidrian pr signoff <PR> --last`, short enough to
+  type from a phone, which refuses any other stop.
 - Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
@@ -559,6 +563,7 @@ Then task work has to happen in a git worktree, so the main checkout stays clean
 The deny reason names `aidrian worktree new <branch>`, which creates one.
 The rule blocks a write to a file git tracks, or would track, in the main checkout.
 It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
+A target that is a link is judged as itself too, wherever it points ([The state folder](#the-state-folder)).
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
 
@@ -636,6 +641,26 @@ What it does not stop:
 
 From a guarded main checkout, `cd <other repository> && git pull` is blocked as well; `git -C <other repository> pull`
 is the way.
+
+### The state folder
+
+Agents write plans and handoffs to the project's state folder by its absolute path, the one `aidrian state` prints:
+`cat > <state>/plans/x.md`, a heredoc included, passes from a guarded main checkout, as any write outside the
+repository does. A `cd` into it is still untrusted: `cd <state> && cat > x.md` is blocked, as [After a cd](#after-a-cd)
+says, because the write lands in the main checkout if the `cd` fails.
+
+The state folder gets no trust of its own. A target that is a link is judged both as itself and where it leads, a link
+whose target does not exist yet included, so a link in the state folder into the repository (`<state>/src -> <repo>/src`)
+blocks a tracked or new file there, and `rm` of a tracked link in the main checkout is blocked wherever it points.
+A state folder that is, holds, or sits in the main checkout (config.json `state.dir` set to `.`, `..`, or `~` around
+the repository) is judged as the main checkout and the folders around it are.
+
+Not covered: a target held in an expansion (`cat > "$S/x.md"`) is not read, so it passes, wherever it points; a state
+folder inside the git folder (`state.dir` under `.git`) takes writes, since a write inside the git folder is not judged,
+and after `cd <state>` there, a relative write that climbs back (`../../src/app.js`) is judged from the folder before
+the `cd` and passes. A link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
+`<state>/x -> inner/../src/app.js`) is read with `..` taken from the text, not after the link, so its target may be
+misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
 
 ## Agent gates
 
@@ -789,15 +814,16 @@ the reason names the question tool as each host's model calls it, `AskUserQuesti
 ## Session length
 
 Two hooks weigh what continuing the main session costs against a fresh session started from a handoff brief.
-[handoff.md](handoff.md) has the cost model, its steps, and the config.
+[handoff.md](handoff.md) has the cost model, its re-arming rule, and the config.
 
 - When the main session ends a turn, the Stop hook reads its transcript. Once each call costs `session.handoff.costRatio`
   times what it would in a fresh session, or the context passes the optional `maxTokens` ceiling, it sends the agent back
   for one more turn, with the ratio and the calls a handoff needs to pay back. The agent judges first whether a handoff
   is worth it, and may end the turn without a word; otherwise it asks the Human (`ask`) or writes the brief (`auto`).
-  It fires once per step: a marker in the system's temporary folder counts the firings, and a compaction resets them.
+  It fires once, then again once the ratio doubles: a marker in the system's temporary folder holds the ratio of the
+  last firing, and a compaction resets it.
 - When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan hook tells the agent to offer the same handoff
-  before its first build step, from half a step: a cost ratio of 1.5 by default.
+  before its first build step, from halfway to `costRatio`: a cost ratio of 1.5 by default.
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.

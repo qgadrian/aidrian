@@ -16,6 +16,7 @@
 // no approval: the invariant stays unverified, and the review step still runs. docs/review.md#sign-off-by-the-human.
 
 import { isLogin } from '../forges/index.mjs';
+import { sameCommit } from './state.mjs';
 
 export const APPROVE_KEY = 'aidrian-approve';
 
@@ -87,4 +88,17 @@ export function readApprovals(forge, repo, n, { head, flows }) {
   } catch (error) {
     return { approvals: [], error: `the approvals on the pull request could not be read, so none counts: ${String(error?.message ?? error).split('\n')[0].slice(0, 200)}` };
   }
+}
+
+// The refusal of `aidrian pr signoff --overrule` for an invariant not disputed on `head`. `invariants` is the review
+// record's `{ head, items }` (run.mjs reviewStep). An invariant the last review of that head lists as unverified gets
+// both routes that close it on evidence outside the tool: where the base branch sets review.visual, ingest the images
+// and have a reviewer cite one; or the Human's --accept. A violated or unknown invariant gets none: no route closes a violated verdict.
+export function overruleRefusal({ pr, repo, flow, invariant, head, invariants }) {
+  const lead = `invariant ${invariant} of flow ${flow} is not disputed on ${head.slice(0, 7)} of ${repo}#${pr}`;
+  const rule = '--overrule settles only a violated verdict another reviewer answers holds or not_affected with evidence';
+  const unverified = Boolean(invariants) && sameCommit(invariants.head, head) && Array.isArray(invariants.items)
+    && invariants.items.some((each) => each?.flow === flow && each?.invariant === invariant && each?.state === 'unverified');
+  if (!unverified) return `${lead}: ${rule}. Fix the code, or have a reviewer record its verdict with evidence first`;
+  return `${lead}: it is unverified, and ${rule}. An unverified invariant closes on evidence outside the tool: when the base branch sets review.visual, ingest the images that show it with \`aidrian pr ingest ${pr} --head ${head} --source "<where they came from>" <image>...\` and have a reviewer cite \`capture:<key>\` in its verdict; or the Human accepts it in their own shell with \`aidrian pr signoff ${pr} --flow ${flow} --accept ${invariant} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}\``;
 }

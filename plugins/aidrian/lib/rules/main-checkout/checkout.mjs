@@ -1,7 +1,7 @@
 // The main-checkout rule's shared reading of a target: the guarded main checkout a folder is in, the decision on a
 // write target, and the deny reasons. lib/rules/main-checkout.mjs is the rule's entry.
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { globPattern } from '../../fs.mjs';
@@ -41,31 +41,47 @@ export function guardedMain(at) {
   return found;
 }
 
+// The deny reason for writing `targets`, or null. A target is judged where it is and, when it is a link, where it leads:
+// `rm`, `mv`, and `ln -sf` change the link, and a write through it changes its target, or creates one not made yet.
 // `leadFor(root)`, when given, writes the reason's first line in place of today's.
 export function decide(targets, cwd, failSafe, verb, leadFor = null) {
   for (const target of targets) {
-    const file = canonical(path.resolve(cwd, target));
-    const folder = existingFolder(path.dirname(file));
-    const project = findProject(folder);
-    if (!project) continue;
-    const { config } = loadConfig(project);
-    if (!config.git.mainCheckout.guard) continue;
-    const roots = checkoutRoots(folder);
-    if (!roots || canonical(roots.current) !== canonical(roots.main)) continue;
-    const root = roots.main;
-    const rel = path.relative(canonical(root), file);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
-    if (config.git.mainCheckout.allowWrites.some((glob) => globPattern(glob).test(rel.split(path.sep).join('/')))) continue;
-    const ignored = isIgnored(root, rel || '.');
-    if (ignored === true || (ignored === null && !failSafe)) continue;
-    const lead = leadFor
-      ? leadFor(root)
-      : ignored === null
-        ? `Blocked: git could not tell whether '${rel}' is tracked in the main checkout (${root}), so ${verb} nothing to be safe.`
-        : `Blocked: ${verb} '${rel}', a tracked file in the main checkout (${root}).`;
-    return reason(lead, project, config);
+    const absolute = path.resolve(cwd, target);
+    for (const file of new Set([entryOf(absolute), canonical(absolute)])) {
+      const denial = judged(file, failSafe, verb, leadFor);
+      if (denial) return denial;
+    }
   }
   return null;
+}
+
+// The path `file` names with the folders above it resolved through links, but not its last part: the entry itself.
+function entryOf(file) {
+  const name = path.basename(file);
+  return name ? path.join(canonical(path.dirname(file)), name) : canonical(file);
+}
+
+// The deny reason for a write to `file`, a path with links resolved, or null.
+function judged(file, failSafe, verb, leadFor) {
+  const folder = existingFolder(path.dirname(file));
+  const project = findProject(folder);
+  if (!project) return null;
+  const { config } = loadConfig(project);
+  if (!config.git.mainCheckout.guard) return null;
+  const roots = checkoutRoots(folder);
+  if (!roots || canonical(roots.current) !== canonical(roots.main)) return null;
+  const root = roots.main;
+  const rel = path.relative(canonical(root), file);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  if (config.git.mainCheckout.allowWrites.some((glob) => globPattern(glob).test(rel.split(path.sep).join('/')))) return null;
+  const ignored = isIgnored(root, rel || '.');
+  if (ignored === true || (ignored === null && !failSafe)) return null;
+  const lead = leadFor
+    ? leadFor(root)
+    : ignored === null
+      ? `Blocked: git could not tell whether '${rel}' is tracked in the main checkout (${root}), so ${verb} nothing to be safe.`
+      : `Blocked: ${verb} '${rel}', a tracked file in the main checkout (${root}).`;
+  return reason(lead, project, config);
 }
 
 export function reason(lead, project, config) {
@@ -80,19 +96,47 @@ export function reason(lead, project, config) {
   ].join('\n');
 }
 
-// The path with symlinks resolved, for the part of it that exists; git reports the main checkout that way.
+// Most links canonical follows whose target does not exist yet, as Linux follows in one path, and the longest path it
+// builds while it follows them.
+const LINK_HOPS = 40;
+const PATH_LIMIT = 4096;
+
+// The path with symlinks resolved, for the part of it that exists; git reports the main checkout that way. A link whose
+// target does not exist yet is followed too: a write through it creates that target, as `echo x > link` does.
 export function canonical(file) {
+  return throughLinks(file, 0);
+}
+
+// canonical, after `hops` links not made yet. A link is followed only when what it leads to does not exist (ENOENT):
+// past a loop (ELOOP) or a folder it may not read (EACCES), the path stays as spelled, so a link that nests itself
+// returns at once. At the hop or length limit, the last target reached is returned.
+function throughLinks(file, hops) {
   const tail = [];
   let current = file;
   for (;;) {
     try {
       return path.join(realpathSync(current), ...tail);
-    } catch {
+    } catch (error) {
+      const target = error?.code === 'ENOENT' ? linkTarget(current) : null;
+      if (target !== null) {
+        const next = path.join(target, ...tail);
+        return hops + 1 >= LINK_HOPS || next.length > PATH_LIMIT ? next : throughLinks(next, hops + 1);
+      }
       const parent = path.dirname(current);
       if (parent === current) return file;
       tail.unshift(path.basename(current));
       current = parent;
     }
+  }
+}
+
+// Where the link `file` points, resolved from the real folder it sits in, or null when `file` is no link.
+function linkTarget(file) {
+  try {
+    if (!lstatSync(file).isSymbolicLink()) return null;
+    return path.resolve(realpathSync(path.dirname(file)), readlinkSync(file));
+  } catch {
+    return null;
   }
 }
 

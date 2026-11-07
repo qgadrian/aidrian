@@ -170,7 +170,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
 | `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
 | `session.handoff.mode` | What the [session-length reminder](handoff.md#the-reminder) and the plan handoff offer do: `"ask"`, `"auto"`, or `"off"`. |
-| `session.handoff.costRatio` | How many times a fresh session's cost each call must cost before the reminder fires, a number of 1.1 or more; each later reminder adds `costRatio − 1`: [Handoff](handoff.md). |
+| `session.handoff.costRatio` | How many times a fresh session's cost each call must cost before the reminder fires, a number of 1.1 or more; it comes back once the ratio doubles since its last firing, never below `costRatio`: [Handoff](handoff.md). |
 | `session.handoff.maxTokens` | An optional ceiling on the main session's context, in tokens, that fires the reminder on its own and doubles after each firing; `0`, the default, is off. |
 | `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
@@ -350,6 +350,9 @@ The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr 
 | `residuals` | An item of the `section` list that lacks one of `fields`, written `field:`, or that names an issue. |
 | `sharedTempBodyFile` | `--body-file` in `/tmp`, `/var/tmp`, `/var/folders`, or `$TMPDIR`, such as the host's scratchpad, unless inside the project or its state folder: concurrent sessions overwrite those. |
 | `duplicateBody` | A body identical to another open pull request's. This check runs `gh pr list`, and lets the command run when gh does not answer in 3 s. |
+
+`aidrian decisions residuals` reads `residuals.section` too, to set each residual against the decisions on record
+([Accepted residuals against decisions](review.md#accepted-residuals-against-decisions)).
 
 A title is checked only when the command sets one, so a body-only `gh pr edit` never blocks on a title written before the rule.
 The items of a section are its list items; prose under the heading, and a bullet indented under an item, are not items.
@@ -935,6 +938,7 @@ Its `deny` for an agent replaces the team's `deny` for that agent, and its `allo
 A developer can lift a team's `allow` list on one machine with `"allow": ["*"]`.
 An agent cannot: while `agents` sets any gate, no subagent may change config.json, `.aidrian.json`, or `.aidrian.local.json`,
 also the main checkout's when the project is a git worktree. The main session still can.
+A write through a link to one of them counts, also a link whose file is not made yet (`out/alias -> ../.aidrian.local.json`).
 While one of those files is there but cannot be read, the gates are unknown, so every subagent may only read files until it is fixed.
 `aidrian check` names an unknown key, a key that is not an agent name, and a pattern it cannot read, such as `Bash(git *)`.
 A bad pattern is left out and the rest of its list still applies, so a bad `allow` pattern makes the list stricter.
@@ -1144,7 +1148,7 @@ The first rule that matches wins:
 - A name of the built-in list is a config error, so a project can neither redefine a class nor lift or remove a floor class.
 - A project class is an ordinary class: the rules below rule 1 apply to it, and `decisions.escalate` may list it.
 - `resolve` and `--vocab` read it from the base branch, so a class the working copy adds counts once it merges.
-  `aidrian decisions list`, `set`, and `undo` read it from the working copy, as they read the docs;
+  `aidrian decisions list`, `set`, `undo`, and `residuals` read it from the working copy, as they read the docs;
   `list --added-since` reads each end's from that commit, so a branch that removes a class owns the problems that makes.
   A class removed later leaves its markers as problems, which `aidrian check` warns about. They still count toward the domain pause.
 

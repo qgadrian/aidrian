@@ -6,6 +6,10 @@
 //
 // Only `aidrian pr review` uploads, and only files this capture wrote and listed in its manifest, checked by hash and
 // by their PNG signature: an agent that drops a file into the captures folder cannot get it published.
+//
+// Images taken outside the tool, such as an end-to-end run's screenshots, are ingested (`aidrian pr ingest`,
+// ingestCaptures) into the manifest's own `ingested` list, apart from `entries`: a flow verdict may cite one as
+// `capture:<key>`, but it is never counted as a capture, never uploaded, and every surface marks it as ingested.
 
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -13,15 +17,28 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isObject } from '../fs.mjs';
+import { isFile, isObject, isWithin, resolvedPath } from '../fs.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { stateDir } from '../project.mjs';
 import { pathPattern } from './plan.mjs';
+import { clip } from './state.mjs';
 import { VISUAL_PER_RUN } from './config.mjs';
 
 export const VISUAL_MARKER = '<!-- aidrian-visual-captures -->';
 const ADAPTERS = Object.freeze({ web: fileURLToPath(new URL('./visual-web.mjs', import.meta.url)) });
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+// The images an ingest takes, by their first bytes; `type` is the copy's extension.
+const IMAGE_TYPES = Object.freeze([
+  { type: 'png', is: (bytes) => bytes.subarray(0, PNG.length).equals(PNG) },
+  { type: 'jpg', is: (bytes) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff },
+  { type: 'gif', is: (bytes) => ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('latin1')) },
+  { type: 'webp', is: (bytes) => bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP' },
+]);
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const INGEST_NOTE = 'ingested, not captured: ';
+// The most characters of an ingest's --source the manifest keeps, and of a source or a name in the summary's note.
+const MAX_ORIGIN = 300;
+const NOTE_PART = 80;
 const URL_RE = /^https?:\/\/[^\s/]+(?:\/\S*)?$/u;
 const CAPTURE_MS = 15 * 60_000;
 // The most uploaded hashes the review record keeps; the oldest go first.
@@ -106,8 +123,107 @@ export function readManifest(project, pr, head) {
   }
 }
 
-// The keys a flow verdict may cite as `capture:<key>`: the entries of this head's manifest that captured an image.
-export const captureKeys = (manifest) => new Set((manifest?.entries ?? []).filter((entry) => entry.sha256).map((entry) => entry.key));
+// The images ingested for this head, never null.
+const ingestedOf = (manifest) => (Array.isArray(manifest?.ingested) ? manifest.ingested.filter((entry) => isObject(entry) && typeof entry.key === 'string' && entry.sha256 && isObject(entry.source)) : []);
+
+// The keys a flow verdict may cite as `capture:<key>`: the entries of this head's manifest that captured an image, and
+// the images ingested for it.
+export const captureKeys = (manifest) => new Set([...(manifest?.entries ?? []).filter((entry) => entry.sha256), ...ingestedOf(manifest)].map((entry) => entry.key));
+
+// The tool's own reason in a manifest's `reason`, without the ingest note withIngested added.
+function toolReason(reason) {
+  if (typeof reason !== 'string') return null;
+  const at = reason.startsWith(INGEST_NOTE) ? 0 : reason.indexOf(`; ${INGEST_NOTE}`);
+  return at === -1 ? reason : reason.slice(0, at) || null;
+}
+
+// `text` on one line as a Markdown code span, whatever backticks it holds (a fence longer than its longest run), so a
+// mention, link, or markup in it renders as text.
+function codeSpan(text) {
+  const plain = String(text ?? '').replace(/\s+/gu, ' ').trim();
+  const fence = '`'.repeat(Math.max(0, ...[...plain.matchAll(/`+/gu)].map((run) => run[0].length)) + 1);
+  const pad = plain.startsWith('`') || plain.endsWith('`') ? ' ' : '';
+  return `${fence}${pad}${plain}${pad}${fence}`;
+}
+
+// Who ingested an image, as posted: the git user's name, and in an AI session the agent, or that the host named none.
+// The Human's own shell, where no host is detected, gives the name alone.
+const ingestedBy = (source, cut = (text) => text) => `${codeSpan(cut(source.by))}${source.session === 'ai' ? (source.agent ? ` via ${codeSpan(cut(source.agent))}` : ' in an AI session, agent unknown') : ''}`;
+
+// `text` cut to NOTE_PART characters, marked when cut; a code span is built around the result, never cut inside one.
+const shortened = (text) => {
+  const plain = String(text ?? '').replace(/\s+/gu, ' ').trim();
+  return plain.length > NOTE_PART ? `${plain.slice(0, NOTE_PART - 1)}…` : plain;
+};
+
+// The reason with the ingest note, built to fit the review summary's clip whole, so the clip never cuts a code span and
+// leaves its rest to render as Markdown: whole entries only, each source and name shortened, and the rest counted.
+function ingestReason(own, ingested) {
+  const lead = `${own ? `${own}; ` : ''}${INGEST_NOTE}`;
+  const parts = ingested.map((entry) => `${entry.key} from ${codeSpan(shortened(entry.source.origin))} by ${ingestedBy(entry.source, shortened)}`);
+  const fits = (text) => clip(text) === text.replace(/\s+/gu, ' ');
+  for (let shown = parts.length; shown >= 1; shown -= 1) {
+    const rest = parts.length - shown;
+    const text = `${lead}${parts.slice(0, shown).join('; ')}${rest ? ` and ${rest} more, listed in the captures comment` : ''}`;
+    if (fits(text)) return text;
+  }
+  return `${lead}${parts.length} image(s), listed in the captures comment`;
+}
+
+// `manifest` with the head's ingested images, and, unless the tool captured every image, a reason that names each
+// one with its source, which the review summary prints: an ingest is never shown as a measured capture.
+function withIngested(manifest, ingested) {
+  if (!ingested.length) return manifest;
+  const { reason, ...rest } = manifest;
+  if (manifest.status === 'captured') return { ...rest, ingested };
+  return { ...rest, reason: ingestReason(toolReason(reason), ingested), ingested };
+}
+
+// `aidrian pr ingest`: copies each image in `files` into the head's capture folder and records it in the manifest's
+// `ingested` list, with its key, hash, type, and `source` { origin, path, by, agent, session, at }, where `session` is
+// `ai` when the command ran in an AI session (the host layer detected one, or names the agent) and `shell` otherwise.
+// The source is what the caller says: an audit entry, not proof. Every file is checked before
+// anything is written, so `dryRun` (`--check`) runs every refusal and writes nothing. A file must be an image (PNG,
+// JPEG, GIF, or WebP, by its bytes) inside the working tree or the state folder, with symlinks resolved. The key is
+// `ingest-<name>-<hash>`: the same bytes under the same name replace their entry, and two files that share a name never
+// share a key. A manifest with no tool capture gets the status `ingested`. Returns { manifest, ingested }.
+export function ingestCaptures({ project, pr, head, files, source, by, agent = null, session = null, dryRun = false }) {
+  const origin = String(source ?? '').replace(/\s+/gu, ' ').trim().slice(0, MAX_ORIGIN);
+  if (!origin) throw new Error('--source needs text: say where the image came from, such as the tool or run that took it');
+  // The source reaches the review summary, whose record is an HTML comment: no source may open or close one.
+  if (/[<>]/u.test(origin)) throw new Error('--source cannot hold < or >: name the tool or run in plain words');
+  // The same rule for the names, which come from git and the host rather than the caller's words.
+  const name = (text) => String(text ?? '').replace(/[<>]/gu, '').replace(/\s+/gu, ' ').trim();
+  const who = { by: name(by) || 'unknown', agent: name(agent) || null };
+  const kind = who.agent || session === 'ai' ? 'ai' : 'shell';
+  if (typeof head !== 'string' || !FULL_SHA.test(head)) throw new Error('head must be the full commit SHA');
+  if (!Array.isArray(files) || !files.length) throw new Error('at least one image file is required');
+  const roots = [resolvedPath(project.root), resolvedPath(stateDir(project))].filter(Boolean);
+  const dir = captureDir(project, pr, head);
+  const at = new Date().toISOString();
+  const found = new Map();
+  for (const file of files) {
+    if (!isFile(file)) throw new Error(`${file} is not a file`);
+    const real = resolvedPath(file);
+    if (!real || !roots.some((root) => isWithin(root, real))) throw new Error(`${file} is outside the working tree and the state folder`);
+    const bytes = readFileSync(real);
+    const image = IMAGE_TYPES.find((each) => each.is(bytes));
+    if (!image) throw new Error(`${file} is not an image: PNG, JPEG, GIF, or WebP`);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const key = `ingest-${slug(path.basename(file, path.extname(file)))}-${sha256.slice(0, 6)}`;
+    found.set(key, { bytes, entry: { key, file: path.join(dir, `${key}.${image.type}`), sha256, type: image.type, source: { origin, path: real, ...who, session: kind, at } } });
+  }
+  const ingested = [...found.values()].map(({ entry }) => entry);
+  const known = readManifest(project, pr, head);
+  const merged = [...ingestedOf(known).filter((entry) => !found.has(entry.key)), ...ingested];
+  const manifest = withIngested(known ?? { version: 1, head, at, status: 'ingested', entries: [] }, merged);
+  if (dryRun) return { manifest, ingested };
+  mkdirSync(dir, { recursive: true });
+  // The copy holds the bytes that were hashed, whatever the source file holds by now.
+  for (const { bytes, entry } of found.values()) writeFileSync(entry.file, bytes);
+  writeFileSync(path.join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  return { manifest, ingested };
+}
 
 const fail = (status, reason) => ({ status, reason });
 
@@ -136,7 +252,8 @@ function urlFrom(text, what) {
 }
 
 // Captures this head's matrix and writes its manifest; a captured manifest already there for the head is returned as
-// is, so the capture runs once per head. `withBase(use)` runs `use(hook)` in a checkout of the base, where `hook(command,
+// is, so the capture runs once per head. Every write keeps the images ingested for the head (withIngested), and an
+// ingest-only manifest is captured over, never taken for a capture. `withBase(use)` runs `use(hook)` in a checkout of the base, where `hook(command,
 // input)` runs a review.visual command line from the base branch with `input` on stdin and returns its stdout:
 // a pull request cannot change the login or preview code it is captured with. `baseUrl` is this machine's setting.
 export async function captureVisual({ project, pr, head, visual, entries, baseUrl, env, withBase, spawn = spawnSync }) {
@@ -145,7 +262,9 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
   if (known?.status === 'captured') return known;
   const dir = captureDir(project, pr, head);
   mkdirSync(dir, { recursive: true });
-  const write = (manifest) => {
+  const carried = ingestedOf(known);
+  const write = (fresh) => {
+    const manifest = withIngested(fresh, carried);
     writeFileSync(path.join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
     return manifest;
   };
@@ -297,10 +416,16 @@ export function uploadCaptures({ project, pr, manifest, uploaded = {}, repo, ima
 // The record's uploaded hashes with `more` added, the oldest dropped past MAX_UPLOADED.
 export const keepUploaded = (uploaded, more) => Object.fromEntries(Object.entries({ ...uploaded, ...more }).slice(-MAX_UPLOADED));
 
-// The captures comment: one per pull request, edited in place for each head.
+// The captures comment: one per pull request, edited in place for each head. Ingested images get their own table,
+// with their source and no image: they are never uploaded, and their local path stays out of a posted comment.
 export function capturesBody(manifest, uploaded, { mode, visibility, error }) {
   const lines = [VISUAL_MARKER, `### Visual capture: \`${manifest.head.slice(0, 7)}\``, ''];
-  lines.push(`Attach: **${mode}**${visibility ? `, ${String(visibility).toLowerCase()} repository` : ''}. ${manifest.status === 'captured' ? `${manifest.entries.filter((entry) => entry.sha256).length} of ${manifest.entries.length} captured.` : `${manifest.status}: ${manifest.reason}`}`);
+  const ingested = ingestedOf(manifest);
+  // The Attach line gives the tool's own status and only the count of ingests; their table names each source.
+  const own = manifest.status === 'captured'
+    ? `${manifest.entries.filter((entry) => entry.sha256).length} of ${manifest.entries.length} captured.`
+    : manifest.status === 'ingested' ? '' : ingested.length ? `${manifest.status}${toolReason(manifest.reason) ? `: ${toolReason(manifest.reason)}` : ''}.` : `${manifest.status}: ${manifest.reason}`;
+  lines.push(`Attach: **${mode}**${visibility ? `, ${String(visibility).toLowerCase()} repository` : ''}. ${[own, ingested.length ? `${ingested.length} ingested, not captured.` : ''].filter(Boolean).join(' ')}`);
   if (error) lines.push('', `> ${error}`);
   const byRoute = new Map();
   for (const entry of manifest.entries) byRoute.set(entry.route, [...(byRoute.get(entry.route) ?? []), entry]);
@@ -311,6 +436,12 @@ export function capturesBody(manifest, uploaded, { mode, visibility, error }) {
       const facts = entry.error ? `error: ${entry.error}` : factsLine(entry.facts);
       lines.push(`| \`${entry.width}px ${entry.locale ?? ''} ${entry.variant}\` | ${url ? `![${entry.key}](${url})` : mode === 'auto' ? 'not uploaded' : 'kept local'} | ${facts.replaceAll('|', '\\|')} |`);
     }
+  }
+  if (ingested.length) {
+    lines.push('', '#### Ingested, not captured', '', '| Capture | Source | By |', '| --- | --- | --- |');
+    // Origin, name, and agent as code spans: no mention, link, or markup of theirs renders in a posted comment.
+    const cell = (text) => text.replaceAll('|', '\\|');
+    for (const { key, source } of ingested) lines.push(`| \`${key}\` | ${cell(codeSpan(source.origin))} | ${cell(ingestedBy(source))} |`);
   }
   return lines.join('\n');
 }
@@ -325,15 +456,19 @@ export function factsLine(facts = {}) {
   return parts.join('; ') || 'none';
 }
 
-// What a visual reviewer's pass reads: the captures with their facts and upload links, and the checklist.
+// What a visual reviewer's pass reads: the captures with their facts and upload links, the ingested images with their
+// source, and the checklist.
 export function visualInput(manifest, uploaded, checklist) {
   return {
     status: manifest.status,
     ...(manifest.reason ? { reason: manifest.reason } : {}),
     ...(checklist ? { checklist } : {}),
-    cite: 'cite a capture in a flow verdict as capture:<key>',
-    captures: manifest.entries.map(({ key, route, width, locale, variant, file, facts, error, sha256 }) => ({
-      key, route, width, locale, variant, ...(file ? { file } : {}), ...(sha256 && uploaded[sha256] ? { url: uploaded[sha256] } : {}), ...(facts ? { facts } : {}), ...(error ? { error } : {}),
-    })),
+    cite: 'cite a capture in a flow verdict as capture:<key>; an entry with ingested: true was taken outside the tool and carries no measured facts',
+    captures: [
+      ...manifest.entries.map(({ key, route, width, locale, variant, file, facts, error, sha256 }) => ({
+        key, route, width, locale, variant, ...(file ? { file } : {}), ...(sha256 && uploaded[sha256] ? { url: uploaded[sha256] } : {}), ...(facts ? { facts } : {}), ...(error ? { error } : {}),
+      })),
+      ...ingestedOf(manifest).map(({ key, file, source }) => ({ key, file, ingested: true, source: { origin: source.origin, path: source.path, by: source.by, agent: source.agent ?? null, session: source.session === 'ai' ? 'ai' : 'shell', at: source.at } })),
+    ],
   };
 }

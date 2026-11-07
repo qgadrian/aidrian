@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
-import { bashTargets, bashWrites, check, checkTool } from '../plugins/aidrian/lib/rules/main-checkout.mjs';
+import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { bashTargets, bashWrites, canonical, check, checkTool } from '../plugins/aidrian/lib/rules/main-checkout.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -588,6 +589,159 @@ test('after a cd that leaves the repository, or that the rule cannot read, the m
   }
   const off = fixture(t, { version: 1 }).repo;
   for (const command of ['cd /tmp && git init', 'cd "$S" && echo x > a.txt']) assert.equal(check(command, { cwd: off, env: ENV }), null, `the guard off: ${command}`);
+});
+
+test('a write into the state folder by its absolute path is allowed; a cd into it is still untrusted', (t) => {
+  const { repo } = fixture(t);
+  const bash = (command) => check(command, { cwd: repo, env: ENV });
+  const state = stateDir(findProject(repo), { env: process.env });
+  mkdirSync(path.join(state, 'plans'), { recursive: true });
+  for (const command of [
+    `cat > ${state}/handoff.md`,
+    `cat > ${state}/plans/x.md`,
+    `cat > ${state}/handoff.md <<'X'\necho x > src/app.js\nX`,
+    `cat > ${state}/plans/x.md <<'X'\nplan\nX`,
+    `cat > ${state}/plans/new/x.md`,
+    `mkdir -p ${state}/plans/new`,
+  ]) assert.equal(bash(command), null, command);
+  assert.equal(edit(path.join(state, 'plans/x.md'), repo, 'Write'), null, 'a Write tool call');
+
+  // A cd into the state folder is untrusted, as any cd that leaves the repository is: if it fails, the write lands in
+  // the main checkout.
+  for (const [command, cd, name] of [
+    [`cd ${state} && cat > handoff.md`, `cd ${state}`, 'handoff.md'],
+    [`cd ${state}/plans && cat > x.md <<'X'\nplan\nX`, `cd ${state}/plans`, 'x.md'],
+    ['cd /tmp && cat > file', 'cd /tmp', 'file'],
+    ['S=/tmp/x; cd "$S" && cat > file', 'cd "$S"', 'file'],
+    [`cd ${state} && rm -rf ./*.md`, `cd ${state}`, './*.md'],
+  ]) {
+    const reason = bash(command) ?? '';
+    assert.ok(reason.startsWith(`Blocked: this command writes '${name}' after a cd`), `${command}: ${reason}`);
+    assert.ok(reason.includes(`The cd is \`${cd}\`;`), `${command}: ${reason}`);
+  }
+  // A tracked file in the main checkout, with or without a cd, and a link in the state folder into the repository, to a
+  // folder, a file, or a file not made yet, which a write through it creates.
+  symlinkSync(path.join(repo, 'src'), path.join(state, 'src'));
+  symlinkSync(repo, path.join(state, 'repo'));
+  symlinkSync(path.join(repo, 'src/app.js'), path.join(state, 'app.js'));
+  symlinkSync(path.join(repo, 'src/new.js'), path.join(state, 'new.js'));
+  for (const [command, rel] of [
+    ['echo x > src/app.js', 'src/app.js'],
+    [`cd ${state} && echo x > ${repo}/src/app.js`, 'src/app.js'],
+    [`echo x > ${state}/src/app.js`, 'src/app.js'],
+    [`cat > ${state}/repo/src/new.js <<'X'\nx\nX`, 'src/new.js'],
+    [`echo x > ${state}/app.js`, 'src/app.js'],
+    [`echo x > ${state}/new.js`, 'src/new.js'],
+    [`cd ${state} && echo x > ${state}/new.js`, 'src/new.js'],
+  ]) assert.match(bash(command) ?? '', new RegExp(`^Blocked: this command writes '${rel.replace('.', '\\.')}', a tracked file in the main checkout`), command);
+  assert.match(edit(path.join(state, 'new.js'), repo, 'Write') ?? '', /^Blocked: this writes 'src\/new\.js'/, 'a Write tool call through a link');
+});
+
+test('a tracked link whose target does not exist is judged as itself as well as where it points', (t) => {
+  const { repo } = fixture(t);
+  symlinkSync('build/cc.json', path.join(repo, 'cc.json'));
+  symlinkSync('/nonexistent/aidrian/x', path.join(repo, 'ext'));
+  execFileSync('git', ['-C', repo, 'add', 'cc.json', 'ext']);
+  execFileSync('git', ['-C', repo, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'links']);
+  const bash = (command) => check(command, { cwd: repo, env: ENV });
+  for (const link of ['cc.json', 'ext']) {
+    for (const command of [
+      `rm ${link}`, `rm -f ${link}`, `git rm ${link}`, `unlink ${link}`, `ln -sf other ${link}`, `echo x > ${link}`, `tee ${link}`,
+      `touch ${link}`, `mv ${link} /tmp/x`, `cp /tmp/x ${link}`, `sed -i s/a/b/ ${link}`, `install /tmp/x ${link}`,
+      `echo x > ${path.join(repo, link)}`,
+    ]) assert.match(bash(command) ?? '', new RegExp(`^Blocked: this command writes '${link.replace('.', '\\.')}', a tracked file`), command);
+    assert.match(edit(path.join(repo, link), repo, 'Write') ?? '', new RegExp(`^Blocked: this writes '${link.replace('.', '\\.')}'`), `Write ${link}`);
+  }
+});
+
+test('a tracked link whose target exists outside the repository is judged as itself; a file through a folder link is not', (t) => {
+  const { repo } = fixture(t);
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-outside-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(path.join(outside, 'target.txt'), 'x\n');
+  symlinkSync(path.join(outside, 'target.txt'), path.join(repo, 'extfile'));
+  symlinkSync(outside, path.join(repo, 'extdir'));
+  execFileSync('git', ['-C', repo, 'add', 'extfile', 'extdir']);
+  execFileSync('git', ['-C', repo, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'links']);
+  const bash = (command) => check(command, { cwd: repo, env: ENV });
+  for (const link of ['extfile', 'extdir']) {
+    for (const command of [`rm ${link}`, `rm -rf ${link}`, `echo x > ${link}`]) {
+      assert.match(bash(command) ?? '', new RegExp(`^Blocked: this command writes '${link}', a tracked file`), command);
+    }
+    assert.match(edit(path.join(repo, link), repo, 'Write') ?? '', new RegExp(`^Blocked: this writes '${link}'`), `Write ${link}`);
+  }
+  assert.equal(bash('echo x > extdir/f.txt'), null, 'a file through the folder link is outside the repository');
+  assert.equal(edit(path.join(repo, 'extdir/f.txt'), repo, 'Write'), null);
+});
+
+test('canonical leaves a link loop, a self-nesting link, and a folder it may not read as typed', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-links-')));
+  t.after(() => {
+    chmodSync(path.join(base, 'locked'), 0o755);
+    rmSync(base, { recursive: true, force: true });
+  });
+  symlinkSync('a/a/a/a', path.join(base, 'a'));
+  symlinkSync('c', path.join(base, 'b'));
+  symlinkSync('b', path.join(base, 'c'));
+  mkdirSync(path.join(base, 'locked'));
+  symlinkSync('/nonexistent/aidrian/x', path.join(base, 'locked/x'));
+  chmodSync(path.join(base, 'locked'), 0);
+  for (const name of ['a', 'a/x', 'b', 'c/x', 'locked/x']) assert.equal(canonical(path.join(base, name)), path.join(base, name), name);
+});
+
+test('a chain of links not made yet is followed as far as the system follows one', (t) => {
+  const { repo } = fixture(t);
+  const links = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-chain-')));
+  t.after(() => rmSync(links, { recursive: true, force: true }));
+  const chain = (name, length) => {
+    for (let i = 0; i < length; i += 1) symlinkSync(i === length - 1 ? path.join(repo, `src/${name}.js`) : `${name}${i + 1}`, path.join(links, `${name}${i}`));
+    return path.join(links, `${name}0`);
+  };
+  // Under every system's limit (32 on macOS, 40 on Linux).
+  assert.match(check(`echo x > ${chain('short', 30)}`, { cwd: repo, env: ENV }) ?? '', /^Blocked: this command writes 'src\/short\.js', a tracked file/);
+  // Past the old 32-link cap: denied where the system follows it; where it stops sooner, the write itself fails.
+  const head = chain('long', 36);
+  let follows = true;
+  try {
+    realpathSync(head);
+  } catch (error) {
+    follows = error.code === 'ENOENT';
+  }
+  if (follows) assert.match(check(`echo x > ${head}`, { cwd: repo, env: ENV }) ?? '', /^Blocked: this command writes 'src\/long\.js', a tracked file/);
+  else {
+    assert.notEqual(spawnSync('sh', ['-c', `echo x > '${head}'`]).status, 0, 'the system refuses the write');
+    assert.equal(existsSync(path.join(repo, 'src/long.js')), false);
+  }
+});
+
+test('a state folder at, around, or inside the main checkout or its git folder gets no trust', (t) => {
+  const home = process.env.HOME;
+  t.after(() => {
+    process.env.HOME = home;
+  });
+  for (const dir of ['..', '~', '.git/aidrian']) {
+    const { base, repo } = fixture(t, { version: 1, git: { mainCheckout: { guard: true } }, state: { dir } });
+    process.env.HOME = base;
+    const bash = (command) => check(command, { cwd: repo, env: ENV });
+    const state = stateDir(findProject(repo), { env: process.env });
+    mkdirSync(state, { recursive: true });
+    assert.ok(repo.startsWith(`${state}/`) || state.startsWith(`${repo}/`), `${dir}: ${state} holds or sits in ${repo}`);
+    const tracked = path.relative(state, path.join(repo, 'src/app.js'));
+    assert.match(bash(`echo x > ${path.join(state, tracked)}`) ?? '', /^Blocked: this command writes 'src\/app\.js', a tracked file/, dir);
+    // After the cd, a relative write is judged at the folders before it, as after any untrusted cd: from a state folder
+    // around the root, `repo/src/app.js` there is a new file in the main checkout. From one inside the git folder,
+    // `../../src/app.js` resolves outside it and passes, a residual hooks.md names.
+    if (dir !== '.git/aidrian') assert.ok((bash(`cd ${state} && echo x > ${tracked}`) ?? '').startsWith('Blocked: '), `${dir}: a tracked file after a cd into the state folder`);
+    assert.ok((bash(`cd ${state} && cat > handoff.md`) ?? '').startsWith('Blocked: '), `${dir}: a cd into the state folder`);
+    assert.ok((bash(`cd ${state} && rm -rf *`) ?? '').startsWith('Blocked: '), `${dir}: a glob after a cd into the state folder`);
+    process.env.HOME = home;
+  }
+  // A state folder that is the main checkout itself is the main checkout: a write there is judged as any other.
+  const { repo } = fixture(t, { version: 1, git: { mainCheckout: { guard: true } }, state: { dir: '.' } });
+  assert.equal(stateDir(findProject(repo), { env: process.env }), repo);
+  for (const command of [`cat > ${repo}/handoff.md`, `cd ${repo} && cat > handoff.md`]) {
+    assert.match(check(command, { cwd: repo, env: ENV }) ?? '', /^Blocked: this command writes 'handoff\.md', a tracked file/, command);
+  }
 });
 
 test('a cd reads its folder past --, and followCd keeps the folder before it', () => {

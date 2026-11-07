@@ -82,3 +82,5 @@ The review turns the axes into a verdict, so a contrived finding becomes an acce
   A second miss is a coverage gap: report it.
 - A finding without `likelihood` or `affects` goes back to its agent once. Never fill in an axis yourself.
 - `needs_input` or `blocked` goes to the user as it is; it is not a finished review.
+- For an agent run from a dispatch entry of `aidrian pr review`, one with `pass` and `record`, pipe its final JSON as it is to
+  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings <n> --fixed <n> --verdicts -`. Never retype a verdict or its evidence.

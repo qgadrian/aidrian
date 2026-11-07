@@ -9,7 +9,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { awaitReview, runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { asksForReview, gateReview, markerFor, OVERRIDE, readRecord, writeRecord } from '../plugins/aidrian/lib/review-gate.mjs';
-import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check } from '../plugins/aidrian/lib/rules/github/review-request.mjs';
 
 const STATE = process.env.XDG_STATE_HOME;
@@ -153,6 +153,46 @@ test('aidrian pr attest records the review and prints the marker; --check reads 
   assert.match(done.stdout, new RegExp(`<!-- aidrian-review: pr=7 repo=acme/notes head=${head} reviewer=code-reviewer findings=2 fixed=1 -->`));
   assert.equal(run('7', '--check').status, 0);
   assert.equal(readRecord(project, 7).head, head);
+});
+
+test('aidrian pr attest --pass --verdicts - reads the agent`s JSON from stdin and stores its evidence as written', (t) => {
+  const { dir, head, project } = repo(t, { ...GATE, review: { record: 'local' } });
+  // --repo keeps the pull request's repository off the forge, so the test reads no network.
+  const attest = (pass, input, ...more) => spawnSync(process.execPath, [CLI, 'pr', 'attest', '7', '--pass', pass, '--head', head, '--reviewer', 'product-manager', ...more, '--repo', 'Acme/Notes'], { cwd: dir, encoding: 'utf8', env: process.env, input });
+  const counted = ['--findings', '0', '--fixed', '0'];
+  const recorded = (pass) => readLocalState(project, 7)?.passes[pass];
+  const evidence = 'The checkout copy says "Pay now" before the total, as the brief asks; no price moves (see the summary step).';
+  const verdicts = [{ flow: 'checkout', invariant: 'price-shown', verdict: 'holds', evidence }];
+
+  const bare = attest('agent:product-manager', JSON.stringify(verdicts), ...counted, '--verdicts', '-');
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.deepEqual(recorded('agent:product-manager').verdicts, verdicts);
+  assert.equal(recorded('agent:product-manager').verdicts[0].evidence, evidence, 'prose evidence is stored byte-identical');
+
+  const whole = { findings: [], verdicts: [{ ...verdicts[0], invariant: 'copy-plain' }], contracts: ['c'], cross_notes: ['n'] };
+  const object = attest('agent:product-manager', JSON.stringify(whole), ...counted, '--verdicts', '-');
+  assert.equal(object.status, 0, object.stderr);
+  assert.deepEqual(recorded('agent:product-manager').verdicts, whole.verdicts, 'the agent`s whole final object');
+  assert.deepEqual(recorded('agent:product-manager').contracts, ['c']);
+  assert.deepEqual(recorded('agent:product-manager').cross_notes, ['n']);
+
+  const both = attest('agent:security-engineer', JSON.stringify(verdicts), '--verdicts', '-', '--findings-file', '-');
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /--findings-file - is not supported: stdin is read once, by --verdicts -; write the findings to a file/);
+  assert.equal(recorded('agent:security-engineer'), undefined);
+
+  for (const input of ['', 'not json']) {
+    const bad = attest('agent:security-engineer', input, ...counted, '--verdicts', '-');
+    assert.equal(bad.status, 1, `stdin ${JSON.stringify(input)}`);
+    assert.match(bad.stderr, /--verdicts must be a JSON file/);
+    assert.equal(recorded('agent:security-engineer'), undefined);
+  }
+
+  const file = path.join(dir, 'verdicts.json');
+  writeFileSync(file, JSON.stringify(verdicts));
+  const fromFile = attest('agent:code-reviewer', undefined, ...counted, '--verdicts', file);
+  assert.equal(fromFile.status, 0, fromFile.stderr);
+  assert.deepEqual(recorded('agent:code-reviewer').verdicts, verdicts, '--verdicts FILE reads the file as before');
 });
 
 // The review step's record of pull request `pr` with `passes`, as `aidrian pr attest --pass` writes them (recordPass).

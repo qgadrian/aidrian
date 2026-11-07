@@ -7,9 +7,10 @@
 // later step the Human owns is left alone. Pure: the hook reads the payload and the transcript and passes them in.
 
 import { ENDED_STATUSES } from './dispatch-rows.mjs';
-import { lastTurn } from './names.mjs';
+import { lastReply } from './names.mjs';
 
-// The standard name of the tool that asks the Human a question: a turn whose last tool call asked one ended on it.
+// The standard name of the tool that asks the Human a question, which the reason names as each host's model calls it.
+// A turn whose last call is that tool never ended on it: the call waits for the answer, and the turn goes on after it.
 export const QUESTION_TOOL = 'AskUserQuestion';
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -43,12 +44,11 @@ function announcePatterns(actor) {
 // What the Human still has to do before the work starts: "once the Human approves", "waits for the Human".
 const waitsOn = (human) => new RegExp(`\\b(?:once|after|when|if|until|wait(?:s|ing)?\\s+(?:for|on)|awaiting)\\s+(?:${human})(?![\\p{L}\\p{N}_])`, 'iu');
 
-// Why the agent is sent back, or null. `message` is the final assistant message; `lastTool` the standard name of the
-// turn's last tool call, or null; `ai` and `human` the names config.json `names` gives (docs/config.md#names); `running`
+// Why the agent is sent back, or null. `message` is the final assistant message; `ai` and `human` the names config.json `names` gives (docs/config.md#names); `running`
 // whether a background task still runs, whose end wakes the main session on its own; `questionTool` what the host's
 // model calls the question tool (lib/hosts/ nativeToolName), for the reason to name.
-export function announceReason({ message, lastTool = null, ai = null, human = 'the Human', running = false, questionTool = QUESTION_TOOL }) {
-  if (typeof message !== 'string' || !message.trim() || running || lastTool === QUESTION_TOOL) return null;
+export function announceReason({ message, ai = null, human = 'the Human', running = false, questionTool = QUESTION_TOOL }) {
+  if (typeof message !== 'string' || !message.trim() || running) return null;
   const paragraph = lastParagraph(message);
   if (ENDS_ON_QUESTION.test(paragraph)) return null;
   if (waitsOn(alternatives([human, 'the Human', 'the user', 'you'])).test(paragraph)) return null;
@@ -64,14 +64,13 @@ export function announceReason({ message, lastTool = null, ai = null, human = 't
 }
 
 // announceReason for a Stop payload and its transcript text (or null): the message is the payload's
-// `last_assistant_message`, else the transcript's last turn; the last tool call is the transcript's. `transcript` is null
-// on a host whose transcripts lib/transcript.mjs cannot read, such as Codex: the payload's message alone then counts.
+// `last_assistant_message`, else the transcript's last reply. `transcript` is null on a host whose transcripts
+// lib/transcript.mjs cannot read, such as Codex: the payload's message alone then counts.
 export function announcedWork(input, transcript, { ai = null, human = 'the Human', questionTool = QUESTION_TOOL } = {}) {
-  const turn = typeof transcript === 'string' ? lastTurn(transcript) : { text: '', tools: [] };
   const message = typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()
     ? input.last_assistant_message
-    : turn.text;
+    : typeof transcript === 'string' ? lastReply(transcript) : '';
   const running = Array.isArray(input.background_tasks)
     && input.background_tasks.some((task) => typeof task?.id === 'string' && !ENDED_STATUSES.has(task.status));
-  return announceReason({ message, lastTool: turn.tools.at(-1) ?? null, ai, human, running, questionTool });
+  return announceReason({ message, ai, human, running, questionTool });
 }

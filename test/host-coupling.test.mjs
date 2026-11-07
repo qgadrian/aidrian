@@ -35,7 +35,7 @@ const ALLOWED = {
   'lib/quorum.mjs|host name': { count: 3, why: 'The quorum provider and action named codex: a second-opinion command the plugin runs, whichever host is running.' },
   'lib/review/quota.mjs|host name': { count: 1, why: 'It words a message about the reviewer that ran out of quota, a review bot or the Codex command, whichever host runs.' },
   'lib/review/reviewers.mjs|host name': { count: 1, why: 'The built-in reviewer named codex: a command the plugin runs, whichever host is running.' },
-  'lib/stop-announce.mjs|host tool': { count: 1, why: `${VOCABULARY} A turn whose last call is the question tool ended on a question.` },
+  'lib/stop-announce.mjs|host tool': { count: 1, why: `${VOCABULARY} The question tool the send-back reason names, as each host's model calls it.` },
   'lib/transcript.mjs|host tool': { count: 2, why: 'Reads Claude Code transcripts, whose tool names these are; other hosts stay behind capabilities.transcripts.' },
   'scripts/hook-agent-post.mjs|host tool': { count: 2, why: `${VOCABULARY} This hook runs on what hooks.json matches, Agent or Task.` },
   'scripts/hook-agent-pre.mjs|host tool': { count: 2, why: `${VOCABULARY} This hook runs on what hooks.json matches, Agent or Task.` },

@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { lastTurn } from '../plugins/aidrian/lib/names.mjs';
 import { announcedWork, announceReason, lastParagraph, QUESTION_TOOL } from '../plugins/aidrian/lib/stop-announce.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
@@ -63,10 +62,9 @@ test('a question, a wait on the Human, another actor, or an earlier paragraph do
   ]) assert.ok(!fires(message), message);
 });
 
-test('the turn ended on the question tool, or a background task still runs: no send-back', () => {
-  assert.ok(!fires(STALLED, { lastTool: QUESTION_TOOL }));
-  assert.ok(fires(STALLED, { lastTool: 'Bash' }));
+test('a background task still running holds the send-back', () => {
   assert.ok(!fires(STALLED, { running: true }));
+  assert.ok(fires(STALLED, { running: false }));
 });
 
 test('the AI and the Human are named by config, and the defaults hold without them', () => {
@@ -88,23 +86,29 @@ const text = (t) => ({ type: 'text', text: t });
 const tool = (name) => ({ type: 'tool_use', id: `t-${name}`, name, input: {} });
 const jsonl = (...entries) => `${entries.map((each) => JSON.stringify(each)).join('\n')}\n`;
 
-test('lastTurn names the tool calls of the last turn in order, with its text', () => {
-  const transcript = jsonl(
-    prompt('first'), reply(tool('Read')),
-    prompt('second'), reply(text('Checking.'), tool('Bash')), prompt([{ type: 'tool_result', tool_use_id: 't-Bash', content: 'ok' }]),
-    reply(tool(QUESTION_TOOL)), prompt([{ type: 'tool_result', tool_use_id: `t-${QUESTION_TOOL}`, content: 'Plan first' }]),
-    reply(text(STALLED)),
-  );
-  assert.deepEqual(lastTurn(transcript), { text: `Checking.\n\n${STALLED}`, tools: ['Bash', QUESTION_TOOL] });
+// A turn that asked with the question tool, got the Human's answer, and then announced the work and stopped. The tool
+// waits for the answer, so a question tool call is never what a turn stops on: the announcement after it stalls the same.
+const ANSWERED = jsonl(
+  prompt('first'), reply(tool('Read')),
+  prompt('second'), reply(text('Checking.'), tool('Bash')), prompt([{ type: 'tool_result', tool_use_id: 't-Bash', content: 'ok' }]),
+  reply(tool(QUESTION_TOOL)), prompt([{ type: 'tool_result', tool_use_id: `t-${QUESTION_TOOL}`, content: 'Plan first' }]),
+  reply(text(STALLED)),
+);
+
+test('an announcement after an answered question is sent back, from the payload or the transcript', () => {
+  assert.ok(announcedWork({ last_assistant_message: STALLED }, ANSWERED, NAMES), 'the payload message');
+  assert.ok(announcedWork({}, ANSWERED, NAMES), 'the transcript message');
+  const after = jsonl(prompt('go'), reply(tool(QUESTION_TOOL)), prompt([{ type: 'tool_result', tool_use_id: `t-${QUESTION_TOOL}`, content: 'Go' }]), reply(text('Starting now.')));
+  assert.ok(announcedWork({}, after, NAMES), 'a short announcement right after the answer');
 });
 
-test('announcedWork reads the payload message first, else the transcript, and the last tool call from the transcript', () => {
+test('announcedWork reads the payload message first, else the transcript', () => {
   const plain = jsonl(prompt('go'), reply(tool('Bash')), reply(text(STALLED)));
   assert.ok(announcedWork({}, plain, NAMES), 'the transcript message');
   assert.ok(!announcedWork({ last_assistant_message: 'Done.' }, plain, NAMES), 'the payload message wins');
   assert.ok(announcedWork({ last_assistant_message: STALLED }, null, NAMES), 'no transcript');
-  const asked = jsonl(prompt('go'), reply(tool(QUESTION_TOOL)));
-  assert.ok(!announcedWork({ last_assistant_message: STALLED }, asked, NAMES), 'the turn ended on the question tool');
+  const asked = jsonl(prompt('go'), reply(tool(QUESTION_TOOL)), prompt([{ type: 'tool_result', tool_use_id: `t-${QUESTION_TOOL}`, content: 'Go' }]));
+  assert.ok(announcedWork({ last_assistant_message: STALLED }, asked, NAMES), 'a question tool call earlier in the turn exempts nothing');
   assert.ok(!announcedWork({ last_assistant_message: STALLED, background_tasks: [{ id: 'b1', status: 'running' }] }, plain, NAMES));
   assert.ok(announcedWork({ last_assistant_message: STALLED, background_tasks: [{ id: 'b1', status: 'completed' }] }, plain, NAMES));
 });

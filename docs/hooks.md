@@ -552,8 +552,9 @@ These phrases count, in any case, where the AI is its name from [names](config.m
 - "Next, Claude writes", "Next up: Claude will", with one of a short list of verbs.
 
 It does not fire when the last paragraph ends with a question mark, waits on the Human ("once the Human approves",
-"waits for the Human"), or names another actor; when the turn's last tool call was the question tool (`AskUserQuestion`);
-or when the payload lists a background task still running, whose end wakes the session on its own.
+"waits for the Human"), or names another actor, or when the payload lists a background task still running, whose end
+wakes the session on its own. A question tool call earlier in the turn exempts nothing: the call waits for the Human's
+answer, so a turn never stops on it, and an announcement written after the answer stalls the same.
 The message is the payload's `last_assistant_message`, else the last turn of the transcript.
 It runs before the session-length reminder, which writes its marker only when it fires, so a reminder due on the same
 stop comes at the next one. A payload without `stop_hook_active` does nothing. `lib/stop-announce.mjs` holds the phrases.
@@ -561,7 +562,7 @@ stop comes at the next one. A payload without `stop_hook_active` does nothing. `
 It runs on both hosts, from the same `hooks.json` entry. Claude Code is verified live. On Codex, the Stop input's
 `stop_hook_active` and `last_assistant_message`, and exit 2 with stderr as the continuation prompt, come from the
 0.167.0 binary, and no live session has run it: [codex.md](providers/codex.md#hooks).
-Codex's transcript is not read, so there the message is the payload's alone and the last-tool exception does not apply;
+Codex's transcript is not read, so there the message is the payload's alone;
 the reason names the question tool as each host's model calls it, `AskUserQuestion` or `request_user_input`.
 
 ## Session length

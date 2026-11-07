@@ -1,7 +1,7 @@
 // The names rule: agents name the human and the AI instead of saying "I", "me", "my", "you", or "your". Finds the
 // words that break it in a question (hook-ask.mjs) or the last chat reply (hook-prompt.mjs), and the reply in a
-// Claude Code transcript, whose last turn the stop hook's announce check reads too (stop-announce.mjs). Text in code or
-// quotes is left alone, since it may quote a command, a UI string, or the human.
+// Claude Code transcript, which the stop hook's announce check reads too (stop-announce.mjs). Text in code or quotes is
+// left alone, since it may quote a command, a UI string, or the human.
 // Word edges are Unicode letters and marks, so "problème" or "Uděláme" does not read as "me". "mine" is left out on
 // purpose: it is also a verb.
 
@@ -37,15 +37,10 @@ export function replyWords(markdown) {
 // wrote after the human's last prompt, or after the prompt before it when the newest prompt is already written.
 // Subagent entries, tool output, and the host's own error entries are skipped. '' when there is none, and for a Codex
 // rollout, whose entries never match.
-export const lastReply = (transcript) => lastTurn(transcript).text;
-
-// The main session's last turn in a Claude Code transcript, read as lastReply reads it: { text, tools }, where `text` is
-// lastReply's and `tools` names the tool calls of the turn in order. Both are empty for a Codex rollout.
-export function lastTurn(transcript) {
+export function lastReply(transcript) {
   const lines = transcript.split('\n');
-  if (parse(lines[0])?.type === 'session_meta') return { text: '', tools: [] };
+  if (parse(lines[0])?.type === 'session_meta') return '';
   const parts = [];
-  const tools = [];
   let turn = false;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const entry = parse(lines[i]);
@@ -59,9 +54,8 @@ export function lastTurn(transcript) {
     turn = true;
     if (entry.isApiErrorMessage || entry.message?.model === '<synthetic>') continue;
     parts.unshift(...content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text));
-    tools.unshift(...content.filter((block) => block?.type === 'tool_use' && typeof block.name === 'string').map((block) => block.name));
   }
-  return { text: parts.join('\n\n'), tools };
+  return parts.join('\n\n');
 }
 
 // A prompt the human sent: text, or text with images, but no tool output and no interruption marker.

@@ -28,7 +28,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
 | After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
-| Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
+| Before an Agent tool call | The project's [model and effort](config.md#models) for that agent, and a subagent's background dispatch moved to the [foreground](#background-check) | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
@@ -741,6 +741,13 @@ So when a subagent stops while one of its own background tasks still runs, the s
 to wait for it in the foreground: poll it with a foreground command and a timeout, and repeat the call until it ends,
 or stop it with `TaskStop` when it should not outlive the turn. Its second stop always ends; ending with the task still running
 is an occurrence of an [automatic lesson](lessons.md#automatic-lessons) for the plugin.
+
+The send-back alone did not hold: subagents still ended their turn with a background agent running. So the Agent hook
+also rewrites the dispatch before it runs: a call a subagent makes, one whose payload has `agent_id`, with
+`run_in_background: true` runs with it `false`. The subagent then gets the child's report as the call's result, and
+several dispatches in one turn still run side by side. The main session's background dispatches run as written, since a
+background agent's report wakes it. A background shell is left as it is, for a server the subagent polls; the stop hook
+still checks it. A host whose agent tool reaches no hook, such as Codex, is not rewritten.
 
 Claude Code's SubagentStop payload lists the session's in-flight tasks in `background_tasks`, without the agent that started each.
 A task is the subagent's own only when one of its own calls launched or resumed it, as the structured result Claude Code

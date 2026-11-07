@@ -257,6 +257,20 @@ A push drops the approval, as it drops every sign-off. The path is on only with 
 The approval is as strong as the approver's account: give `approvers` only accounts no agent can use, and keep a
 required review on the protected branch for proof.
 
+With the Human in the session, the Human may close such an invariant themselves:
+`aidrian pr signoff <PR> --flow <id> --accept <invariant> --evidence <url> --reason "<what it shows>" --head <sha>`,
+run in their own shell. `<url>` is a comment, review, review comment, or attachment of that pull request; the command
+asks GitHub that it is there, and an attachment counts when the pull request's body, a comment, or a review links it.
+The acceptance holds for that head only, and the review summary lists it apart from the verdicts, as
+`accepted by <name> on <sha7> on outside evidence: <url>: <reason>`. The command refuses an invariant the last review
+of that head does not list as unverified, a violated one above all, an evidence URL GitHub cannot find on the pull
+request, and an acceptance with no reason. Like every sign-off, it is an audit entry, not proof.
+
+**Trying a command first.** `--check` on any `aidrian pr signoff` command, `--flow`, `--overrule`, `--accept`, or
+`--stage`, runs every refusal of that command and records nothing. It prints `ok` and exits 0, or prints the refusal
+and exits 1. The `review-signoff` rule lets an agent run it, so a session can check a command before it hands it to
+the Human.
+
 A sign-off holds on a later head when the signed head is its ancestor and the change since selects nothing of the
 flow, through the same selection the plan uses: its globs, `added` patterns, `content`, the plan command, its tests,
 and its invariants docs. A push that touches nothing of the flow does not ask the Human again; a rebase does. A

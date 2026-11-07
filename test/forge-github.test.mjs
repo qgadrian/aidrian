@@ -16,7 +16,7 @@ const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'visibility', 'viewer',
   'conversationComments', 'postComment', 'editComment', 'reactions',
-  'pull', 'reviews', 'reviewComments', 'reviewsWithComments', 'reviewThreads', 'commit', 'checkRuns', 'compare', 'uploadImages',
+  'pull', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads', 'commit', 'checkRuns', 'compare', 'uploadImages',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -167,6 +167,46 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
   assert.equal(facade.repoIdentity, repoIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
+});
+
+test('changeEvidence: a comment, review, or attachment of the pull request, each read with the call that finds it', () => {
+  const notFound = () => { throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' }); };
+  const { forge, args } = recorded((call) => {
+    const route = call[1];
+    if (route === 'repos/acme/notes/issues/comments/11') return '{"issue_url":"https://api.github.com/repos/acme/notes/issues/7"}';
+    if (route === 'repos/acme/notes/issues/comments/12') return '{"issue_url":"https://api.github.com/repos/acme/notes/issues/8"}';
+    if (route === 'repos/acme/notes/pulls/7/reviews/21') return '{"id":21}';
+    if (route === 'repos/acme/notes/pulls/7/reviews/22') return notFound();
+    if (route === 'repos/acme/notes/pulls/comments/31') return '{"pull_request_url":"https://api.github.com/repos/acme/notes/pulls/7"}';
+    if (route === 'repos/acme/notes/pulls/7') return '{"body":"see https://github.com/user-attachments/assets/abc-1"}';
+    if (route === 'repos/acme/notes/pulls/7/reviews') return '[[{"body":"https://github.com/user-attachments/assets/rev-2"}]]';
+    return '[[]]';
+  });
+  const pr = 'https://github.com/acme/notes/pull/7';
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`), 'comment');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-12`), null, 'a comment of another pull request');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#pullrequestreview-21`), 'review');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}/files#pullrequestreview-22`), null, 'GitHub finds no such review');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r31`), 'review_comment');
+  assert.equal(forge.changeEvidence('acme/notes', 7, 'https://github.com/user-attachments/assets/abc-1'), 'attachment');
+  assert.equal(forge.changeEvidence('acme/notes', 7, 'https://github.com/user-attachments/assets/rev-2'), 'attachment', 'linked from a review');
+  const calls = args().length;
+  for (const url of ['https://github.com/acme/other/pull/7#issuecomment-11', 'https://github.com/acme/notes/pull/8#issuecomment-11', `${pr}#top`, 'http://github.com/acme/notes/pull/7#issuecomment-11', 'nope', 'https://example.com/a.png']) {
+    assert.equal(forge.changeEvidence('acme/notes', 7, url), null, url);
+  }
+  assert.equal(args().length, calls, 'a URL of another repository, pull request, or kind asks GitHub nothing');
+  assert.equal(forge.changeEvidence('acme/notes', 7, 'https://github.com/user-attachments/assets/elsewhere'), null, 'an upload the pull request does not link');
+  assert.deepEqual(args().slice(0, 7), [
+    ['api', 'repos/acme/notes/issues/comments/11'],
+    ['api', 'repos/acme/notes/issues/comments/12'],
+    ['api', 'repos/acme/notes/pulls/7/reviews/21'],
+    ['api', 'repos/acme/notes/pulls/7/reviews/22'],
+    ['api', 'repos/acme/notes/pulls/comments/31'],
+    ['api', 'repos/acme/notes/pulls/7'],
+    ['api', 'repos/acme/notes/issues/7/comments', '--paginate', '--slurp'],
+  ]);
+  const broken = recorded(() => { throw new Error('gh: Bad Gateway (HTTP 502)'); }).forge;
+  assert.throws(() => broken.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`), /HTTP 502/u, 'any other failure throws');
 });
 
 test('the reviews report`s calls: the merged list and its search string, +1 reactions with the paging flags first, and the compare', () => {

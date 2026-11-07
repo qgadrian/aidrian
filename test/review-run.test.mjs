@@ -10,11 +10,12 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
-import { EXIT, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { EXIT, recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
@@ -1515,6 +1516,76 @@ test('approvals: the team switch is the base branch`s, and a forge read that fai
   const broken = await failing.step({ exec: clean });
   assert.deepEqual([broken.status, broken.flows[0].unverified, broken.approvals.closed], ['fix_required', ['matches-design'], []]);
   assert.match(broken.approvals.error, /could not be read, so none counts: gh: HTTP 502/u);
+});
+
+test('the Human accepts an unverified invariant on outside evidence for one head; a violated one, or one not unverified, is refused', async (t) => {
+  const flows = { ...APPROVED_FLOWS, pay: { files: ['src/ui/**'], invariants: [{ id: 'cap', text: 'Does a refund stay under the charge?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const evidence = 'https://github.com/o/r/pull/7#issuecomment-99';
+  const checkEvidence = (url) => (url === evidence ? 'comment' : (() => { throw new Error(`--evidence ${url} is not a comment, review, or attachment of o/r#7 that the forge can find`); })());
+  const accept = (more = {}) => recordAccept(r.project, { pr: 7, repo: 'o/r', flow: 'look', invariant: 'matches-design', head: r.git('rev-parse', 'HEAD'), by: 'Tester', reason: 'the designer approved the screenshots', evidence, checkEvidence, ...more });
+  assert.throws(() => accept(), /no review of o\/r#7 ran on/u, 'before any review of the head');
+  const first = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'cannot_verify', evidence: 'no app runs' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+    { flow: 'pay', invariant: 'cap', verdict: 'violated', evidence: 'src/ui/a.js:1' },
+  ]) });
+  const blocked = await r.step({ exec: clean });
+  assert.deepEqual(blocked.flows.map((flow) => [flow.flow, flow.violated, flow.unverified]), [['look', [], ['matches-design']], ['pay', ['cap'], []]]);
+  assert.throws(() => accept({ reason: ' ' }), /--accept needs --reason/u);
+  assert.throws(() => accept({ flow: 'pay', invariant: 'cap' }), /is violated on .*never clears a violated invariant/u);
+  assert.throws(() => accept({ invariant: 'keeps-copy' }), /is not unverified on/u);
+  assert.throws(() => accept({ evidence: 'https://github.com/o/r/pull/8#issuecomment-1' }), /is not a comment, review, or attachment of o\/r#7/u);
+  assert.throws(() => accept({ evidence: 'not a url' }), /needs --evidence/u);
+  assert.equal(accept({ dryRun: true }).kind, 'comment');
+  assert.equal(readLocalState(r.project, 7).acceptances, undefined, 'a dry run records nothing');
+  assert.equal(accept().by, 'Tester');
+  const after = await r.step({ exec: clean });
+  assert.deepEqual(after.flows.map((flow) => [flow.flow, flow.violated, flow.unverified]), [['pay', ['cap'], []]], 'the acceptance closes the design invariant; the violated one stays open');
+  assert.match(summaryOf(r), new RegExp(`- look/matches-design: accepted by Tester on \`${first.head.slice(0, 7)}\` on outside evidence: ${evidence}: the designer approved the screenshots`, 'u'));
+  r.write('src/ui/a.js', 'export const screen = 2;\n');
+  const next = r.commit();
+  const again = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: again.dispatch[0].pass, head: next, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'cannot_verify', evidence: 'no app runs' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+    { flow: 'pay', invariant: 'cap', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+  ]) });
+  const moved = await r.step({ exec: clean });
+  assert.deepEqual(moved.flows.map((flow) => [flow.flow, flow.unverified]), [['look', ['matches-design']]], 'an acceptance holds for its head only');
+});
+
+test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --accept, and --stage, and records nothing', async (t) => {
+  const flows = { ...APPROVED_FLOWS, pay: { files: ['src/ui/**'], invariants: [{ id: 'cap', text: 'Does a refund stay under the charge?' }], signoff: 'human' } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, record: 'local' } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const first = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'cannot_verify', evidence: 'no app runs' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+    { flow: 'pay', invariant: 'cap', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+  ]) });
+  await r.step({ exec: clean });
+  const evidence = 'https://github.com/o/r/pull/7#pullrequestreview-5';
+  const forge = { change: () => ({ url: 'https://github.com/o/r/pull/7' }), changeEvidence: (_repo, _n, url) => (url === evidence ? 'review' : null) };
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  const signoff = (...args) => runSignoff(['7', ...args, '--head', first.head, '--repo', 'o/r', '--check'], projectAt(r.dir), loadConfig(projectAt(r.dir)).config, { forge });
+  const before = readFileSync(path.join(stateDir(r.project), 'reviews', 'pr-7-review.json'), 'utf8');
+  assert.equal(await signoff('--flow', 'pay'), 0);
+  assert.equal(await signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', evidence, '--reason', 'the designer approved it'), 0);
+  await assert.rejects(signoff('--flow', 'look'), /flow look takes no Human sign-off/u);
+  await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', 'https://github.com/o/r/pull/7#issuecomment-1', '--reason', 'x'), /is not a comment, review, or attachment of o\/r#7 that the forge can find/u);
+  await assert.rejects(signoff('--flow', 'look', '--accept', 'keeps-copy', '--evidence', evidence, '--reason', 'x'), /is not unverified on/u);
+  await assert.rejects(signoff('--flow', 'look', '--overrule', 'matches-design', '--reason', 'x'), /is not disputed on/u);
+  await assert.rejects(signoff('--stage', 'independent'), /no Human review of the independent stage is waiting/u);
+  await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--reason', 'x'), /--accept needs --flow, --evidence, and --reason/u);
+  t.mock.restoreAll();
+  assert.deepEqual(lines.map((line) => line.split(';')[0]), [
+    `ok: the command would record Tester's sign-off of flow pay on ${first.head.slice(0, 7)}`,
+    `ok: the command would record Tester's acceptance of invariant matches-design of flow look on ${first.head.slice(0, 7)}`,
+  ]);
+  assert.equal(readFileSync(path.join(stateDir(r.project), 'reviews', 'pr-7-review.json'), 'utf8'), before, 'the record is as it was');
 });
 
 test('approvals: a pull request cannot turn the team switch on for its own review, and turning it on is a change to the review', () => {

@@ -435,13 +435,20 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   const approvalPath = hasApprovers(plan.flows) ? approvalsSwitch(review, project) : null;
   let approvalRead = null;
   const approvals = () => (approvalRead ??= approvalPath?.on ? readApprovals(forge, repo, n, { head, flows: plan.flows }) : { approvals: [], error: null });
-  const approvedOn = (flowId) => new Set(approvals().approvals.filter((each) => each.flow === flowId).map((each) => each.invariant));
+  // The Human's acceptances on this head (`aidrian pr signoff --accept`), each on outside evidence they named.
+  const acceptedOn = (flowId) => (state.acceptances ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head));
+  const approvedOn = (flowId) => new Set([...approvals().approvals.filter((each) => each.flow === flowId), ...acceptedOn(flowId)].map((each) => each.invariant));
   const flowStatus = (flow, { outside = true } = {}) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }), overruledOn(flow.id), outside ? approvedOn(flow.id) : new Set());
-  // The outside evidence that closed an invariant on this head: an approval of one the reviewers left unverified.
-  const outsideClosed = () => plan.flows.flatMap((flow) => {
-    const left = new Set(flowStatus(flow, { outside: false }).unverified);
-    return approvals().approvals.filter((each) => each.flow === flow.id && left.has(each.invariant));
-  });
+  // The outside evidence that closed an invariant on this head, of the ones the reviewers left unverified: the approvals,
+  // and the Human's acceptances.
+  const outsideClosed = () => {
+    const left = new Map(plan.flows.map((flow) => [flow.id, new Set(flowStatus(flow, { outside: false }).unverified)]));
+    const closes = (each) => left.get(each.flow)?.has(each.invariant) ?? false;
+    return {
+      approvals: approvals().approvals.filter(closes).map(({ flow, invariant, login, url, at }) => ({ flow, invariant, login, url, at })),
+      acceptances: plan.flows.flatMap((flow) => acceptedOn(flow.id)).filter(closes).map(({ flow, invariant, by, evidence, reason, at }) => ({ flow, invariant, by, evidence, reason, at })),
+    };
+  };
 
 
   // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
@@ -795,7 +802,13 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
     state.disputes = { head, items: plan.flows.flatMap((flow) => flowStatus(flow).disputed.map((invariant) => ({ flow: flow.id, invariant }))) };
     // The approvals that closed an invariant, kept for the summary, and the path's state when an invariant names
     // approvers: which switch is off, or why the approvals could not be read.
-    state.outside = { head, approvals: outsideClosed().map(({ flow, invariant, login, url, at }) => ({ flow, invariant, login, url, at })) };
+    state.outside = { head, ...outsideClosed() };
+    // The invariants the reviewers left open on this head, before any outside evidence: `aidrian pr signoff --accept`
+    // closes only an unverified one of these, and refuses a violated one.
+    state.invariants = { head, items: plan.flows.flatMap((flow) => {
+      const status = flowStatus(flow, { outside: false });
+      return [...status.open.map((invariant) => ({ flow: flow.id, invariant, state: 'violated' })), ...status.unverified.map((invariant) => ({ flow: flow.id, invariant, state: 'unverified' }))];
+    }) };
     if (approvalPath) result.approvals = { on: approvalPath.on, ...(approvalPath.off ? { off: approvalPath.off } : {}), ...(approvals().error ? { error: approvals().error } : {}), closed: state.outside.approvals };
     settle(result);
     if (onPr) {
@@ -857,7 +870,8 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
 
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a flow on a head. An audit entry, not
 // proof: the summary comment shows it, and who ran it.
-export function recordSignoff(project, { pr, repo, flow, head, by, remote = null }) {
+// With `dryRun`, every refusal runs and nothing is written: `aidrian pr signoff --check`.
+export function recordSignoff(project, { pr, repo, flow, head, by, remote = null, dryRun = false }) {
   const state = current(project, pr, repo, remote);
   const asked = state.signoffable;
   if (!asked || !sameCommit(asked.head, head)) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first, and sign off only a flow it names`);
@@ -866,14 +880,14 @@ export function recordSignoff(project, { pr, repo, flow, head, by, remote = null
     throw new Error(`flow ${flow} takes no Human sign-off on ${head.slice(0, 7)} of ${repo}#${pr}: ${which} signed off there. A sign-off never clears a violated invariant: fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
   }
   state.signoffs[flow] = { head, by, at: new Date().toISOString() };
-  writeLocalState(project, state);
+  if (!dryRun) writeLocalState(project, state);
   return state.signoffs[flow];
 }
 
 // `aidrian pr signoff <PR> --flow <id> --overrule <invariant> --head <sha> --reason <text>`: the Human settles a
 // dispute on one head, where one reviewer answered violated and another answered holds or not_affected with evidence.
 // The invariant then passes on that evidence. An audit entry, not proof, listed with the overrides in the summary.
-export function recordOverrule(project, { pr, repo, flow, invariant, head, by, reason, remote = null }) {
+export function recordOverrule(project, { pr, repo, flow, invariant, head, by, reason, remote = null, dryRun = false }) {
   const state = current(project, pr, repo, remote);
   if (!String(reason ?? '').trim()) throw new Error('--overrule needs --reason: say why the violated verdict is wrong');
   const disputes = state.disputes && sameCommit(state.disputes.head, head) ? state.disputes.items : null;
@@ -884,21 +898,43 @@ export function recordOverrule(project, { pr, repo, flow, invariant, head, by, r
   const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), at: new Date().toISOString() };
   state.overrulings = [...(state.overrulings ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];
   state.overrides = [...state.overrides, `${by} overruled the violated verdict on ${flow}/${invariant} at ${head.slice(0, 7)}: ${entry.reason}`];
-  writeLocalState(project, state);
+  if (!dryRun) writeLocalState(project, state);
+  return entry;
+}
+
+// `aidrian pr signoff <PR> --flow <id> --accept <invariant> --evidence <url> --reason <text> --head <sha>`: the Human
+// closes, on one head, an invariant no reviewer could verify, on evidence outside the tool, such as a designer's
+// approval of real screenshots. `evidence` is a comment, review, or attachment URL of this pull request, and
+// `checkEvidence(url)` throws unless the forge finds it there. The acceptance never clears a violated invariant, and
+// holds for that head only. An audit entry, not proof, listed apart from the verdicts in the summary.
+export function recordAccept(project, { pr, repo, flow, invariant, head, by, reason, evidence, checkEvidence = null, remote = null, dryRun = false }) {
+  const state = current(project, pr, repo, remote);
+  if (!String(reason ?? '').trim()) throw new Error('--accept needs --reason: say what the outside evidence shows');
+  const known = state.invariants && sameCommit(state.invariants.head, head) ? state.invariants.items : null;
+  if (!known) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first, and accept only an invariant it lists as unverified`);
+  const item = known.find((each) => each.flow === flow && each.invariant === invariant);
+  if (item?.state === 'violated') throw new Error(`invariant ${invariant} of flow ${flow} is violated on ${head.slice(0, 7)} of ${repo}#${pr}: an acceptance never clears a violated invariant. Fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
+  if (!item) throw new Error(`invariant ${invariant} of flow ${flow} is not unverified on ${head.slice(0, 7)} of ${repo}#${pr}: --accept closes only an invariant the review lists as unverified on that head`);
+  if (typeof evidence !== 'string' || !/^https:\/\/\S+$/u.test(evidence)) throw new Error('--accept needs --evidence: the https URL of a comment, review, or attachment of this pull request');
+  if (typeof checkEvidence !== 'function') throw new Error(`--evidence ${evidence} could not be checked`);
+  const kind = checkEvidence(evidence);
+  const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), evidence, kind, at: new Date().toISOString() };
+  state.acceptances = [...(state.acceptances ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];
+  if (!dryRun) writeLocalState(project, state);
   return entry;
 }
 
 // `aidrian pr signoff <PR> --stage <name> --head <sha>`: the Human's sign-off of a stage they chose to review in place of
 // a reviewer out of quota on that head (lib/review/quota.mjs). Like a flow's, an audit entry, not proof. It signs only a
 // stage the Human chose to review, so it never skips a reviewer that has its quota.
-export function recordStageSignoff(project, { pr, repo, stage, head, by, remote = null }) {
+export function recordStageSignoff(project, { pr, repo, stage, head, by, remote = null, dryRun = false }) {
   const state = current(project, pr, repo, remote);
   // One sign-off covers the stage: every reviewer of it the Human chose to replace on that head.
   const stops = (state.quotaStops ?? []).filter((each) => each.stage === stage && sameCommit(each.head, head) && each.choice === quota.HUMAN);
   if (!stops.length) throw new Error(`no Human review of the ${stage} stage is waiting on ${head.slice(0, 7)} of #${pr}: --stage signs off only a stage the Human chose to review after its reviewer ran out of quota`);
   const signoff = { by, at: new Date().toISOString() };
   for (const stop of stops) stop.signoff = signoff;
-  writeLocalState(project, state);
+  if (!dryRun) writeLocalState(project, state);
   return signoff;
 }
 

@@ -160,7 +160,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, and `pull`.
 - The repository: `repo`, `repository`, `contents`, `visibility`, and `viewer`.
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `postComment`, `editComment`, and `reactions`.
-- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`.
+- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url)`, which says whether a URL is a comment, review, or attachment of the pull request.
 - Commits: `commit`, `checkRuns`, and `compare`, and `uploadImages` for a pull request's captures.
 
 `repoIdentity(value)` is no method: it reads a remote URL or a `-R` value to `{ host, path }` before any forge is chosen,

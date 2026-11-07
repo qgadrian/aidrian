@@ -40,6 +40,9 @@ const THREADS_QUERY = 'query($o:String!,$r:String!,$n:Int!,$after:String){reposi
 // How long an upload of images may take: a pull request's captures go up in one call.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
+// A file uploaded to GitHub, as a pull request's body or comment links it.
+const ATTACHMENT = /^https:\/\/(?:github\.com\/user-attachments\/(?:assets|files)\/|github\.com\/[^/]+\/[^/]+\/(?:assets|files)\/|(?:private-)?user-images\.githubusercontent\.com\/)\S+$/u;
+
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
 // what gh throws. A method that names no `repo` reads gh's default repository for `cwd`.
@@ -120,6 +123,38 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     pull: (repo, n) => rest(`repos/${repo}/pulls/${n}`),
     reviews: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/reviews`, { host }),
     reviewComments: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/comments`, { host }),
+    // What `url` links of pull request `n` of `repo`: "comment", "review", or "review_comment" for a link to one of the
+    // pull request's own, "attachment" for an uploaded file its body, a comment, or a review links, or null when it is
+    // no part of that pull request, or GitHub finds no such item (HTTP 404). Any other failure throws as gh threw it.
+    changeEvidence: (repo, n, url) => {
+      let parsed;
+      try {
+        parsed = new URL(String(url));
+      } catch {
+        return null;
+      }
+      if (parsed.protocol !== 'https:') return null;
+      const found = (read) => {
+        try {
+          return read();
+        } catch (error) {
+          if (/\(HTTP 404\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`)) return null;
+          throw error;
+        }
+      };
+      const link = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/[^/]*)?\/?$/u.exec(parsed.pathname);
+      if (link) {
+        if (`${link[1]}/${link[2]}`.toLowerCase() !== String(repo).toLowerCase() || Number(link[3]) !== Number(n)) return null;
+        const [, kind, id] = /^#(issuecomment-|pullrequestreview-|discussion_r)(\d+)$/u.exec(parsed.hash) ?? [];
+        if (kind === 'issuecomment-') return String(found(() => rest(`repos/${repo}/issues/comments/${id}`))?.issue_url ?? '').endsWith(`/issues/${n}`) ? 'comment' : null;
+        if (kind === 'pullrequestreview-') return found(() => rest(`repos/${repo}/pulls/${n}/reviews/${id}`)) ? 'review' : null;
+        if (kind === 'discussion_r') return String(found(() => rest(`repos/${repo}/pulls/comments/${id}`))?.pull_request_url ?? '').endsWith(`/pulls/${n}`) ? 'review_comment' : null;
+        return null;
+      }
+      if (!ATTACHMENT.test(parsed.href)) return null;
+      const bodies = [found(() => rest(`repos/${repo}/pulls/${n}`))?.body, ...[`repos/${repo}/issues/${n}/comments`, `repos/${repo}/pulls/${n}/reviews`, `repos/${repo}/pulls/${n}/comments`].flatMap((route) => list(route) ?? []).map((each) => each?.body)];
+      return bodies.some((body) => typeof body === 'string' && body.includes(String(url))) ? 'attachment' : null;
+    },
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
     // REVIEWS_PAGE of each, with each list's `totalCount`.
     reviewsWithComments: (repo, n) => {

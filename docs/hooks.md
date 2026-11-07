@@ -217,8 +217,12 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
-- Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`, and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
+- Review sign-off: `aidrian pr signoff`, with `--overrule` and `--accept` too, also as `node …/cli.mjs` or `node …/bin/aidrian`,
+  and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
+  A sign-off with `--check` among its words runs: it is the dry run, which runs every refusal and records nothing,
+  so a session can try a command before it hands it to the Human. A pipe into a shell that names a sign-off stays
+  blocked, `--check` or not, since the rule cannot read it.
 - Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.

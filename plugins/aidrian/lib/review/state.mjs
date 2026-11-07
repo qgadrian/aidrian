@@ -263,13 +263,18 @@ function currentLogin(viewer) {
 }
 
 // The invariants evidence outside the tool closed on `head`, apart from the reviewers' verdicts: each approval by a named
-// approver's review on the forge. The login is in code, so the edited comment never mentions the approver again.
+// approver's review on the forge, and each acceptance by the Human. The login is in code, so the edited comment never
+// mentions the approver again.
 function outsideLines(state, head) {
   const outside = state.outside;
   if (!outside || !head || !sameCommit(outside.head, head)) return [];
-  const approvals = Array.isArray(outside.approvals) ? outside.approvals : [];
-  if (!approvals.length) return [];
-  return ['', '**Outside evidence:**', ...approvals.map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: approved by \`@${clip(each.login)}\` on \`${String(head).slice(0, 7)}\`: ${clip(each.url ?? 'no review link')}`)];
+  const list = (key) => (Array.isArray(outside[key]) ? outside[key] : []);
+  const at = String(head).slice(0, 7);
+  const lines = [
+    ...list('approvals').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: approved by \`@${clip(each.login)}\` on \`${at}\`: ${clip(each.url ?? 'no review link')}`),
+    ...list('acceptances').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: accepted by ${clip(each.by)} on \`${at}\` on outside evidence: ${clip(each.evidence)}: ${clip(each.reason)} (an audit entry, not proof)`),
+  ];
+  return lines.length ? ['', '**Outside evidence:**', ...lines] : [];
 }
 
 const EXTRA_HEADING = '**Extra rounds:**';

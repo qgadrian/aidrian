@@ -241,15 +241,24 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 // entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
 // of quota on that head (lib/review/quota.mjs). `--flow <id> --overrule <invariant> --reason <text>` settles a dispute
-// between reviewers on that head.
+// between reviewers on that head. `--flow <id> --accept <invariant> --evidence <url> --reason <text>` closes, on that
+// head, an invariant no reviewer could verify, on evidence outside the tool that the forge finds on the pull request.
+// `--check` runs every refusal of the same command and records nothing: it prints `ok` and returns 0, or throws the
+// refusal, which `aidrian pr` prints before it exits 1. The review-signoff rule lets an agent run it, so a session can
+// try a command before it hands it to the Human.
 export async function runSignoff(args, project, config = null, { forge } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('signoff needs a pull request number');
   const flags = {};
+  let dryRun = false;
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--flow', '--stage', '--head', '--repo', '--overrule', '--reason'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (flag === '--check') {
+      dryRun = true;
+      continue;
+    }
+    if (!['--flow', '--stage', '--head', '--repo', '--overrule', '--accept', '--evidence', '--reason'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
@@ -258,19 +267,39 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
   const repo = prRepo(project, pr, flags.repo, forge);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
-  if ((flags.overrule || flags.reason) && !(flags.flow && flags.overrule && flags.reason)) throw new Error('--overrule needs --flow and --reason');
-  const { recordOverrule, recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');
-  if (flags.overrule) {
-    recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, config) });
-    console.log(`recorded ${by}'s ruling: invariant ${flags.overrule} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the reviewer evidence that it holds. Run \`aidrian pr review\` again.`);
+  if (flags.overrule && flags.accept) throw new Error('--overrule and --accept are two rulings: give one');
+  if (flags.evidence && !flags.accept) throw new Error('--evidence goes with --accept');
+  if (flags.accept && !(flags.flow && flags.evidence && flags.reason)) throw new Error('--accept needs --flow, --evidence, and --reason');
+  if (!flags.accept && (flags.overrule || flags.reason) && !(flags.flow && flags.overrule && flags.reason)) throw new Error('--overrule needs --flow and --reason');
+  const { recordAccept, recordOverrule, recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');
+  // A dry run says what the command would record; a real one says it recorded it.
+  const done = (recorded, line) => {
+    console.log(dryRun ? `ok: the command would record ${recorded}; --check recorded nothing` : line);
     return 0;
+  };
+  if (flags.overrule) {
+    recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, config), dryRun });
+    return done(`${by}'s ruling on invariant ${flags.overrule} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s ruling: invariant ${flags.overrule} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the reviewer evidence that it holds. Run \`aidrian pr review\` again.`);
+  }
+  if (flags.accept) {
+    const where = forge ?? forgeFor(project.root);
+    const checkEvidence = (url) => {
+      let kind;
+      try {
+        kind = where.changeEvidence(repo, pr, url);
+      } catch (error) {
+        throw new Error(`--evidence ${url} could not be checked on ${repo}#${pr}: ${String(error?.message ?? error).split('\n')[0].slice(0, 200)}`);
+      }
+      if (!kind) throw new Error(`--evidence ${url} is not a comment, review, or attachment of ${repo}#${pr} that the forge can find`);
+      return kind;
+    };
+    recordAccept(project, { pr, repo, flow: flags.flow, invariant: flags.accept, head: flags.head, by, reason: flags.reason, evidence: flags.evidence, checkEvidence, remote: remoteState(repo, pr, undefined, config), dryRun });
+    return done(`${by}'s acceptance of invariant ${flags.accept} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s acceptance: invariant ${flags.accept} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the outside evidence ${flags.evidence}. Run \`aidrian pr review\` again.`);
   }
   if (flags.stage) {
-    recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, config) });
-    console.log(`recorded ${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}, in place of the reviewer that ran out of quota. Run \`aidrian pr review\` again.`);
-    return 0;
+    recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, config), dryRun });
+    return done(`${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}, in place of the reviewer that ran out of quota. Run \`aidrian pr review\` again.`);
   }
-  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, config) });
-  console.log(`recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
-  return 0;
+  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, config), dryRun });
+  return done(`${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
 }

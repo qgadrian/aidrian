@@ -270,9 +270,10 @@ of that head does not list as unverified, a violated one above all, an evidence 
 request, and an acceptance with no reason. Like every sign-off, it is an audit entry, not proof.
 
 **The next step.** Each flow in `fix_required` carries `next`, one entry for every open invariant:
-`{ invariant, state, commands }`. A `violated` one says `fix the code`; a `disputed` one gives its `--overrule`
-command. An `unverified` one gives the approval to ask for, the review of the head and its `aidrian-approve:` line,
-when the invariant names approvers and both switches are on; the `--accept` command; and, for a flow a visual
+`{ invariant, state, commands, notes }`. `commands` holds only `aidrian pr signoff` commands; `notes` holds the rest.
+A `violated` one has the note `fix the code`; a `disputed` one gives its `--overrule` command. An `unverified` one
+gives the `--accept` command, and as notes the approval to ask for, the review of the head and its
+`aidrian-approve:` line, when the invariant names approvers and both switches are on, and, for a flow a visual
 reviewer judges while the head has no capture, the capture's status line, such as what it needs to run. A session
 offers the Human only these commands, never one of its own making.
 

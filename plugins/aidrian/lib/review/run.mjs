@@ -628,10 +628,12 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // fixed in the code, or, when another reviewer disputes it, overruled by the Human. An unverified one closes on
   // evidence: an approver's review when the invariant names approvers and both switches are on, the Human's
   // acceptance, and, for a flow a visual reviewer judges with no capture of this head, the capture's own status line.
+  // `commands` holds only `aidrian pr signoff` commands, for the Human's shell once `--check` passes; `notes` holds
+  // the rest: the fix to make, the approval to ask for, the capture's status.
   function nextSteps(flow, status) {
     const violated = status.open.map((id) => (status.disputed.includes(id)
-      ? { invariant: id, state: 'disputed', commands: [overruleCommand(flow, id)] }
-      : { invariant: id, state: 'violated', commands: ['fix the code'] }));
+      ? { invariant: id, state: 'disputed', commands: [overruleCommand(flow, id)], notes: [] }
+      : { invariant: id, state: 'violated', commands: [], notes: ['fix the code'] }));
     const visualFlow = visualEntries.length > 0 && passes.some((pass) => isVisual(pass) && (pass.flows ?? []).includes(flow.id));
     const capture = visualFlow && captureKeys(manifest).size === 0
       ? (manifest ? `the visual capture of ${head.slice(0, 7)} is ${manifest.status}${manifest.reason ? `: ${manifest.reason}` : ''}` : `no visual capture of ${head.slice(0, 7)} ran`)
@@ -641,9 +643,9 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
       return {
         invariant: id,
         state: 'unverified',
-        commands: [
-          ...(approvers.length && approvalPath?.on ? [`an approving review of ${head} by ${approvers.join(' or ')}, whose body holds the line: ${approveLine(flow.id, id)}`] : []),
-          `aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<comment, review, or attachment URL of this pull request>" --reason "<what it shows>" --head ${head}`,
+        commands: [`aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<comment, review, or attachment URL of this pull request>" --reason "<what it shows>" --head ${head}`],
+        notes: [
+          ...(approvers.length && approvalPath?.on ? [`ask for an approving review of ${head} by ${approvers.join(' or ')}, whose body holds the line: ${approveLine(flow.id, id)}`] : []),
           ...(capture ? [capture] : []),
         ],
       };

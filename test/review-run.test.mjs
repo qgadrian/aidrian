@@ -63,9 +63,9 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
 }
 
 const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });
-// The `next` entry of an unverified invariant, `before` the acceptance command and `after` it.
+// The `next` entry of an unverified invariant: its acceptance command, and `notes` beside it.
 const acceptCommand = (flow, id, head) => `aidrian pr signoff 7 --flow ${flow} --accept ${id} --evidence "<comment, review, or attachment URL of this pull request>" --reason "<what it shows>" --head ${head}`;
-const unverifiedNext = (flow, id, head, { before = [], after = [] } = {}) => ({ invariant: id, state: 'unverified', commands: [...before, acceptCommand(flow, id, head), ...after] });
+const unverifiedNext = (flow, id, head, notes = []) => ({ invariant: id, state: 'unverified', commands: [acceptCommand(flow, id, head)], notes });
 const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
 
 test('a docs-only change needs no review and posts nothing', async (t) => {
@@ -449,7 +449,7 @@ test('an independent reviewer`s violated verdict blocks the flow even with no fi
   assert.deepEqual([result.status, result.stage, result.flows], ['fix_required', 'independent', [{
     flow: 'booking', violated: ['unspecified'], unverified: [], disputed: ['unspecified'],
     overrule: [`aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>"`],
-    next: [{ invariant: 'unspecified', state: 'disputed', commands: [`aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>"`] }],
+    next: [{ invariant: 'unspecified', state: 'disputed', commands: [`aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>"`], notes: [] }],
   }]]);
 });
 
@@ -1613,12 +1613,13 @@ test('fix_required names the next step of every open invariant: the fix, the app
   const blocked = await r.step({ exec: clean, captureSpawn });
   assert.equal(blocked.status, 'fix_required');
   assert.deepEqual(blocked.flows[0].next, [
-    { invariant: 'no-crash', state: 'violated', commands: ['fix the code'] },
-    unverifiedNext('ui', 'fit', first.head, {
-      before: [`an approving review of ${first.head} by amy-designer or bo-design, whose body holds the line: aidrian-approve: ui/fit`],
-      after: [`the visual capture of ${first.head.slice(0, 7)} is unavailable: playwright is not installed: run npm i -D playwright`],
-    }),
+    { invariant: 'no-crash', state: 'violated', commands: [], notes: ['fix the code'] },
+    unverifiedNext('ui', 'fit', first.head, [
+      `ask for an approving review of ${first.head} by amy-designer or bo-design, whose body holds the line: aidrian-approve: ui/fit`,
+      `the visual capture of ${first.head.slice(0, 7)} is unavailable: playwright is not installed: run npm i -D playwright`,
+    ]),
   ]);
+  assert.ok(blocked.flows[0].next.every((entry) => entry.commands.every((command) => command.startsWith('aidrian pr signoff '))), 'commands are sign-off commands only');
 });
 
 test('approvals: a pull request cannot turn the team switch on for its own review, and turning it on is a change to the review', () => {

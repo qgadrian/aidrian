@@ -2,6 +2,8 @@
 // writes, `<state>/reviews/pr-<n>.json` (skills/pr-review/references/manifest.md). Only two statuses are settled
 // outcomes: `resolved`, a fix a later round confirmed, and `dismissed`, a finding the user judged wrong. Precision is
 // resolved / (resolved + dismissed); every other status counts as unsettled. A finding two agents raised counts for each.
+// Before `dismissed` existed, a dispute the user settled with no change was also `resolved`; such a finding has no fix
+// `commit`, so a `resolved` finding counts as a confirmed fix only with one, and is unsettled without it.
 // docs/dispatch-log.md#findings describes the view. Read-only.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -14,8 +16,9 @@ export function readManifests(dir, { sinceMs = null } = {}) {
   let names;
   try {
     names = readdirSync(dir).filter((name) => MANIFEST.test(name)).sort();
-  } catch {
-    return [];
+  } catch (error) {
+    // No reviews folder is no history; any other failure is named, never shown as an empty one.
+    return error.code === 'ENOENT' ? [] : [{ file: dir, error: error.message }];
   }
   const out = [];
   for (const name of names) {
@@ -24,6 +27,8 @@ export function readManifests(dir, { sinceMs = null } = {}) {
       if (sinceMs !== null && statSync(file).mtimeMs < sinceMs) continue;
       const manifest = JSON.parse(readFileSync(file, 'utf8'));
       if (!Array.isArray(manifest?.findings)) throw new Error('no findings list');
+      const bad = manifest.findings.findIndex((finding) => finding === null || typeof finding !== 'object' || Array.isArray(finding));
+      if (bad >= 0) throw new Error(`finding ${bad} is not an object`);
       out.push({ file, manifest });
     } catch (error) {
       out.push({ file, error: error.message });
@@ -49,7 +54,7 @@ export function summarizeFindings(manifests) {
       for (const specialist of names.length ? names : ['unknown']) {
         const row = by.get(specialist) ?? { specialist, findings: 0, resolved: 0, dismissed: 0, unsettled: 0 };
         row.findings += 1;
-        if (finding.status === 'resolved') row.resolved += 1;
+        if (finding.status === 'resolved' && finding.commit) row.resolved += 1;
         else if (finding.status === 'dismissed') row.dismissed += 1;
         else row.unsettled += 1;
         by.set(specialist, row);

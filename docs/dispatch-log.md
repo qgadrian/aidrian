@@ -330,12 +330,15 @@ security-engineer: 6 findings, precision 100% of 3 settled (3 resolved, 0 dismis
 critic: 4 findings, precision unknown, nothing settled (0 resolved, 0 dismissed), 4 unsettled
 ```
 
-- **resolved**: a fix that a later review round confirmed. **dismissed**: a finding the Human judged wrong.
+- **resolved**: a fix that a later review round confirmed, with its fix `commit`. **dismissed**: a finding the Human judged wrong.
+  Before `dismissed` existed, a dispute the Human settled with no change was `resolved` too, and has no fix commit,
+  so a `resolved` finding without a `commit` counts as unsettled, never as a confirmed fix.
   These are the only settled outcomes ([the manifest's outcomes](../plugins/aidrian/skills/pr-review/references/manifest.md#outcomes)).
 - **precision**: resolved / (resolved + dismissed). A finding still `open`, `fixed`, `disputed`, `follow_up`, or any other status is unsettled.
 - A finding two agents raised counts for each of them.
 - Manifests hold no times of their own, so `--since` keeps those modified since then; with no `--since`, it reads every one.
-  `--prs` does not apply. An unreadable manifest is named on an `Unreadable:` line, never skipped silently.
+  `--prs` does not apply. An unreadable manifest, one with a finding that is not an object, or a reviews folder that
+  cannot be read is named on an `Unreadable:` line, never skipped silently; a missing folder is no history.
 - `--json` prints `dir`, `since`, `pull_requests`, `unreadable`, and `specialists`, each with its counts and `precision`, `null` while nothing is settled.
 
 ### Doc reads

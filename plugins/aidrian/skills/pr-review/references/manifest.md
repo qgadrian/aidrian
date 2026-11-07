@@ -71,6 +71,7 @@ Only the user dismisses: an agent that thinks a finding was wrong says so, and t
 
 `resolved` and `dismissed` are the only settled outcomes: a confirmed fix and a finding the user judged wrong.
 `aidrian report findings` counts them per specialist, and its precision is resolved / (resolved + dismissed).
+A `resolved` finding counts only with its fix `commit`: before `dismissed`, a settled dispute was `resolved` with none.
 Every other status is still unsettled, so no status may stand in for one of these two.
 
 ## Writing

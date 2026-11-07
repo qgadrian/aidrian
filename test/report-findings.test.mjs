@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { formatFindings, readManifests, summarizeFindings } from '../plugins/aidrian/lib/report-findings.mjs';
 
-const finding = (specialist, status) => ({ specialist, status });
+const finding = (specialist, status) => ({ specialist, status, commit: status === 'resolved' ? 'abc1234' : null });
 
 test('precision counts only resolved and dismissed findings, per specialist', () => {
   const summary = summarizeFindings([
@@ -42,6 +42,36 @@ test('readManifests reads pr-<n>.json only, names an unreadable one, and filters
     assert.match(formatFindings(summary, { dir }), /critic: 1 findings, precision 100% of 1 settled \(1 resolved, 0 dismissed\), 0 unsettled/u);
     assert.equal(readManifests(dir, { sinceMs: Date.parse('2026-06-01T00:00:00Z') }).filter((entry) => !entry.error).length, 0);
     assert.deepEqual(readManifests(path.join(dir, 'missing')), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a resolved finding with no fix commit, as an old settled dispute, stays unsettled', () => {
+  const { specialists } = summarizeFindings([{ file: 'pr-4.json', manifest: { findings: [{ specialist: 'critic', status: 'resolved', commit: null }] } }]);
+  assert.deepEqual(specialists[0], { specialist: 'critic', findings: 1, resolved: 0, dismissed: 0, unsettled: 1, precision: null });
+});
+
+test('a manifest with a finding that is not an object is named unreadable, not a crash', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'findings-'));
+  try {
+    writeFileSync(path.join(dir, 'pr-5.json'), JSON.stringify({ findings: [null] }));
+    const summary = summarizeFindings(readManifests(dir));
+    assert.equal(summary.pull_requests, 0);
+    assert.match(summary.unreadable[0].error, /finding 0 is not an object/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a reviews path that cannot be read as a folder is named, never an empty history', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'findings-'));
+  try {
+    const file = path.join(dir, 'reviews');
+    writeFileSync(file, 'not a folder');
+    const entries = readManifests(file);
+    assert.equal(entries.length, 1);
+    assert.match(entries[0].error, /ENOTDIR/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

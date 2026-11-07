@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -312,7 +312,7 @@ test('a record that does not read in full is noted, and never lets an empty pair
   const out = run(['--body', file, '--judged', broken.write('judged.json', [])], broken.dir);
   assert.equal(out.status, 1);
   assert.match(out.stdout, /^problem\t.*10-docs\.json/mu);
-  assert.match(out.stdout, /the decisions on record could not all be read/u);
+  assert.match(out.stdout, /the decisions and ADRs on record could not all be read/u);
   assert.doesNotMatch(out.stdout, /nothing on record/u);
   const json = JSON.parse(run(['--body', file, '--json'], broken.dir).stdout);
   assert.equal(json.nothing, false);
@@ -329,6 +329,68 @@ test('a record that does not read in full is noted, and never lets an empty pair
   const gone = run(['--body', missing.write('body.md', body())], missing.dir);
   assert.equal(gone.status, 1);
   assert.match(gone.stdout, /^problem\t.*gone\.md/mu);
+});
+
+// A project with no decision marker and the offer-window ADR in records/, a folder no knowledge index covers, so the ADR
+// lines are the whole record and only `--adr records` reads them. An ADR under an indexed folder that does not read is a
+// knowledge problem already.
+function adrOnly(t, options) {
+  const made = project(t, { adr: false, ...options });
+  writeFileSync(path.join(made.dir, 'docs/a.md'), `# Refunds\n\n${RULE}\n`);
+  mkdirSync(path.join(made.dir, 'records'));
+  writeFileSync(path.join(made.dir, 'records/0001-offer-window.md'), ADR);
+  return { ...made, file: made.write('body.md', body()) };
+}
+const asRoot = { skip: process.getuid?.() === 0 ? 'root reads every file' : false };
+
+test('an ADR that does not read leaves the record partial, never nothing on record', asRoot, (t) => {
+  const { dir, file } = adrOnly(t);
+  chmodSync(path.join(dir, 'records/0001-offer-window.md'), 0o000);
+  const out = run(['--body', file, '--adr', 'records', '--judged', file], dir);
+  assert.deepEqual([out.status, out.stderr], [1, '']);
+  assert.match(out.stdout, /^problem\trecords\/0001-offer-window\.md\tcannot read the ADR: EACCES$/mu);
+  assert.doesNotMatch(out.stdout, /nothing on record/u);
+  const json = JSON.parse(run(['--body', file, '--adr', 'records', '--json'], dir).stdout);
+  assert.equal(json.nothing, false);
+  assert.deepEqual(json.problems, [{ doc: 'records/0001-offer-window.md', line: null, problem: 'cannot read the ADR: EACCES' }]);
+  assert.deepEqual(json.notes, ['records/0001-offer-window.md: cannot read the ADR: EACCES']);
+
+  writeFileSync(path.join(dir, 'records/0002-x.md'), ADR);
+  const paired = run(['--body', file, '--adr', 'records'], dir);
+  assert.equal(paired.status, 0, 'with lines on record the judgment still runs');
+  assert.match(paired.stdout, /^note\trecords\/0001-offer-window\.md: cannot read the ADR: EACCES$/mu);
+
+  const bare = adrOnly(t, { folder: false });
+  mkdirSync(path.join(bare.dir, 'docs/adr'));
+  writeFileSync(path.join(bare.dir, 'docs/adr/0001-offer-window.md'), ADR);
+  chmodSync(path.join(bare.dir, 'docs/adr/0001-offer-window.md'), 0o000);
+  const alone = JSON.parse(run(['--body', bare.file, '--json'], bare.dir).stdout);
+  assert.deepEqual([alone.nothing, alone.problems.map(({ doc }) => doc)], [false, ['docs/adr/0001-offer-window.md']], 'with no project folder too');
+});
+
+test('an ADR folder that does not read leaves the record partial, and is no missing --adr folder', asRoot, (t) => {
+  const { dir, file } = adrOnly(t);
+  const folder = path.join(dir, 'records');
+  chmodSync(folder, 0o000);
+  const out = run(['--body', file, '--adr', 'records', '--json'], dir);
+  const text = run(['--body', file, '--adr', 'records'], dir);
+  chmodSync(folder, 0o755);
+  assert.deepEqual([out.status, out.stderr], [1, '']);
+  const json = JSON.parse(out.stdout);
+  assert.deepEqual([json.nothing, json.adrFolder, json.problems], [false, 'records', [{ doc: 'records', line: null, problem: 'cannot read the ADR folder: EACCES' }]]);
+  assert.equal(text.status, 1);
+  assert.match(text.stdout, /^problem\trecords\tcannot read the ADR folder: EACCES$/mu);
+});
+
+test('an ADR folder that is not there, or is a file, is still no ADR on record', (t) => {
+  const { dir, file } = adrOnly(t);
+  for (const shape of ['missing', 'file']) {
+    if (shape === 'file') writeFileSync(path.join(dir, 'docs/adr'), ADR);
+    const out = run(['--body', file, '--json'], dir);
+    assert.equal(out.status, 0, shape);
+    const json = JSON.parse(out.stdout);
+    assert.deepEqual([json.nothing, json.adrFolder, json.problems], [true, null, undefined], shape);
+  }
 });
 
 test('an --adr that is no folder, or a --project with no project, fails; a missing docs/adr does not', (t) => {

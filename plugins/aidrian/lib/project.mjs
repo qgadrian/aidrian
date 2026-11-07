@@ -18,10 +18,12 @@ const OVERRIDE = '.aidrian.json';
 const LOCAL = '.aidrian.local.json';
 // The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and
 // what decides CI's verdict, and this plugin's own code that decides auto-merge, so the gate never approves a change to
-// itself. Not configurable. Under plugins/aidrian/: every command in bin/, the gate, the review that writes its record,
-// every hook that hooks.json runs, and every module and data file any of them loads (test/auto-merge-guard.test.mjs walks
-// them all and fails on a load it cannot follow); the agents that review, as generated and as sources; the skills with
-// every reference and step file they tell a session to read; the Codex install; and the plugin manifests.
+// itself. Not configurable. Under plugins/aidrian/: bin/; the module each bin/ script starts (lib/cli.mjs,
+// lib/knowledge-cli.mjs), `aidrian pr` (lib/pr.mjs), the gate, the review that writes its record, every hook that
+// hooks.json runs, and every module and data file those load (test/auto-merge-guard.test.mjs walks them and fails on a
+// load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
+// file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
+// subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded.
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'cli', 'code-words', 'config', 'config-guard',

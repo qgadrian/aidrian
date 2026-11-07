@@ -121,7 +121,7 @@ test('every plugin file the gate, its command, its review, and the hooks load ke
     assert.ok(files.includes(`${PLUGIN}/${file}`), `the walk reaches ${file}`);
   }
   const open = files.filter((file) => file.startsWith(`${PLUGIN}/`) && !guarded(file));
-  assert.deepEqual(open, [], 'files the gate loads that a pull request could change under auto-merge');
+  assert.deepEqual(open, [], 'files the gate loads that a pull request could change under auto-merge: add each to GUARDED_LIB or GUARDED_PLUGIN in plugins/aidrian/lib/project.mjs');
   assert.deepEqual(EXCEPTIONS.filter((each) => !used.has(each)).map(({ file, line }) => `${file} ${line}`), [], 'exceptions nothing needs any more');
 });
 

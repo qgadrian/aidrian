@@ -51,9 +51,13 @@ const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles
 // the command makes. `view` overrides fields of the pull request `change` gives; `defaultBranch` is every repository's
 // default branch, or a function standing in for `repository`; `user` is the login, or a function standing in for
 // `viewer`; `comments` holds the pull request's lists, `issues` (conversationComments), `reviews`, and `pulls` (reviewComments),
-// each a list or a function standing in for the call. What gh prints and how each call reads it is the adapter's
-// (test/forge-github.test.mjs).
-function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {} } = {}) {
+// each a list or a function standing in for the call. `restFiles` is the paged file list `changeFiles` gives, or a
+// function standing in for it (by default a 404); `pullHead` is the head `pull` gives, or a function standing in for it.
+// What gh prints and how each call reads it is the adapter's (test/forge-github.test.mjs).
+const notStubbed = () => {
+  throw Object.assign(new Error('Command failed: gh api'), { stderr: 'gh: Not Found (HTTP 404)\n' });
+};
+function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {}, restFiles = notStubbed, pullHead = HEAD } = {}) {
   const calls = [];
   const list = (method, key) => (repo, n, { host } = {}) => {
     calls.push([method, repo, n, host]);
@@ -79,6 +83,14 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
     viewer: ({ host } = {}) => {
       calls.push(['viewer', host]);
       return typeof user === 'function' ? user() : user;
+    },
+    changeFiles: (repo, n, { host } = {}) => {
+      calls.push(['changeFiles', repo, n, host]);
+      return typeof restFiles === 'function' ? restFiles() : restFiles;
+    },
+    pull: (repo, n, { host } = {}) => {
+      calls.push(['pull', repo, n, host]);
+      return typeof pullHead === 'function' ? pullHead() : { head: { sha: pullHead } };
     },
     conversationComments: list('conversationComments', 'issues'),
     reviews: list('reviews', 'reviews'),
@@ -367,8 +379,67 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
   }
   assert.match(run(t, r, ['7'], { view: { files: [{ path: 'notes.md', changeType: 'RENAMED' }] } }).out[0], /gh lists "notes\.md" as RENAMED/u);
   const cut = { view: { files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 101 } };
-  assert.deepEqual(reasonOf(t, r, cut), [1, 'paths'], 'a shorter list hides files');
-  assert.match(run(t, r, ['7'], cut).out[0], /gh listed 1 of its 101 changed files/u);
+  assert.deepEqual(reasonOf(t, r, cut), [1, 'paths'], 'a shorter list hides files, and no full list could be read');
+  assert.match(run(t, r, ['7'], cut).out[0], /could not read the 101 changed files of #7 with gh \(gh: Not Found \(HTTP 404\)\)/u);
+  const over = { view: { files: [{ path: 'src/app.js', changeType: 'MODIFIED' }, { path: 'src/b.js', changeType: 'MODIFIED' }], changedFiles: 1 } };
+  assert.match(run(t, r, ['7'], over).out[0], /gh listed 2 of its 1 changed files/u, 'a longer list than the count is off too');
+});
+
+// The view of a pull request of 110 files, as gh gives it: the first 100, and the count.
+const NAMES = Array.from({ length: 110 }, (_, i) => `src/file-${String(i).padStart(3, '0')}.js`);
+const VIEW_110 = { files: NAMES.slice(0, 100).map((path) => ({ path, changeType: 'MODIFIED' })), changedFiles: 110 };
+const restEntries = (paths = NAMES, status = 'modified') => paths.map((filename) => ({ filename, status, additions: 1, patch: '@@' }));
+
+test('past gh pr view`s 100 files, the paged list is read whole at the head the view gave, and every file is judged', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const whole = run(t, r, ['7', '--json'], { view: VIEW_110, restFiles: restEntries() });
+  assert.deepEqual([whole.code, json(whole).reason], [0, null], 'a 110-file pull request whose files all pass is on');
+  const reads = whole.calls.map((call) => call[0]);
+  assert.deepEqual(whole.calls.filter((call) => call[0] === 'changeFiles' || call[0] === 'pull'), [['changeFiles', 'acme/notes', 7, 'github.com'], ['pull', 'acme/notes', 7, 'github.com']]);
+  assert.ok(reads.indexOf('changeFiles') < reads.indexOf('pull') && reads.indexOf('pull') < reads.indexOf('viewer'), 'the list, then the head again, then the login');
+  const ghe = run(t, r, ['7', '--json'], { view: { ...VIEW_110, url: 'https://ghe.acme.io/acme/notes/pull/7' }, restFiles: restEntries() });
+  assert.equal(ghe.code, 0);
+  for (const call of ghe.calls.filter((each) => each[0] !== 'change')) assert.equal(call.at(-1), 'ghe.acme.io', call[0]);
+
+  for (const status of ['added', 'removed', 'modified', 'copied', 'changed', 'unchanged']) {
+    assert.deepEqual(reasonOf(t, r, { view: VIEW_110, restFiles: restEntries(NAMES, status) }), [0, null], status);
+  }
+  const renamed = run(t, r, ['7'], { view: VIEW_110, restFiles: [...restEntries(NAMES.slice(0, 109)), { filename: NAMES[109], status: 'renamed', previous_filename: 'AGENTS.md' }] });
+  assert.deepEqual([renamed.code, renamed.out[0]], [1, `auto-merge off for #7: gh lists "${NAMES[109]}" as RENAMED, which may hide the path it replaced`]);
+  const guarded = run(t, r, ['7'], { view: VIEW_110, restFiles: restEntries([...NAMES.slice(0, 109), '.github/workflows/ci.yml']) });
+  assert.deepEqual([guarded.code, guarded.out[0]], [1, 'auto-merge off for #7: it changes ".github/workflows/ci.yml", which instructs AI sessions, or decides CI\'s verdict or auto-merge'], 'a guarded file past the first 100');
+  assert.equal(run(t, r, ['7'], { view: { changedFiles: 1 }, restFiles: () => assert.fail('no list read') }).code, 0, 'a whole view reads no list');
+});
+
+test('a paged file list that is short, fails, holds a malformed entry, or was read after the head moved is off (paths)', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const off = (options) => {
+    const result = run(t, r, ['7', '--json'], { view: VIEW_110, ...options });
+    assert.deepEqual([result.code, json(result).reason, json(result).effective], [1, 'paths', false]);
+    assert.equal(userCalls(result.calls).length, 0, 'off before the login is read');
+    return json(result).why;
+  };
+  assert.equal(off({ restFiles: restEntries(NAMES.slice(0, 105)) }), 'gh listed 105 of its 110 changed files, and GitHub lists at most 3000');
+  const failed = () => {
+    throw Object.assign(new Error('Command failed: gh api'), { stderr: 'some detail\ngh: Bad Gateway (HTTP 502)\n' });
+  };
+  assert.equal(off({ restFiles: failed }), 'could not read the 110 changed files of #7 with gh (gh: Bad Gateway (HTTP 502))');
+  assert.equal(off({ restFiles: null }), 'gh returned no list of the changed files of #7');
+  assert.equal(off({ restFiles: { filename: 'x' } }), 'gh returned no list of the changed files of #7');
+  for (const [entry, status] of [[null, 'null'], [{}, 'null'], [{ filename: '', status: 'modified' }, '"modified"'], [{ filename: 'x.js' }, 'null'], [{ filename: 5, status: 'added' }, '"added"'],
+    [{ filename: 'x.js', status: 'gone' }, '"gone"'], [{ filename: 'x.js', status: 'constructor' }, '"constructor"'], [{ filename: 'x.js', status: 'MODIFIED' }, '"MODIFIED"']]) {
+    assert.equal(off({ restFiles: [...restEntries(NAMES.slice(0, 109)), entry] }), `gh listed changed file 110 of #7 with no path or no known status (${status})`, JSON.stringify(entry));
+  }
+  assert.equal(off({ restFiles: restEntries([...NAMES.slice(0, 109), NAMES[3]]) }), 'gh listed a changed file of #7 twice');
+  assert.equal(off({ restFiles: restEntries([...NAMES.slice(1), 'src/extra.js']) }), 'the paged file list leaves out "src/file-000.js", which the view lists');
+  assert.equal(off({ restFiles: restEntries(), pullHead: OLD }), 'the head moved from abcdef1 to 1234567 while gh listed its files');
+  assert.equal(off({ restFiles: restEntries(), pullHead: () => ({}) }), 'the head moved from abcdef1 to none while gh listed its files');
+  const headFailed = () => {
+    throw Object.assign(new Error('Command failed: gh api'), { stderr: 'gh: Not Found (HTTP 404)\n' });
+  };
+  assert.equal(off({ restFiles: restEntries(), pullHead: headFailed }), 'could not read the head of #7 again with gh (gh: Not Found (HTTP 404))');
 });
 
 test('a pull request whose files or reviews gh does not describe exits 3', (t) => {

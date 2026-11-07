@@ -125,6 +125,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     diff: (ref, { repo = null } = {}) => gh(['pr', 'diff', String(ref), ...(repo ? ['--repo', repo] : [])]),
     // The pull request a GraphQL node id names: GitHub's answer, `data.node.url`, whose node is null for any other id.
     nodeChange: (id) => json(['api', 'graphql', '-f', `query=${NODE_QUERY}`, '-f', `id=${id}`]),
+    // Every changed file of the pull request, each as GitHub's REST entry ({ filename, status, ... }), all pages, 100 a
+    // page. GitHub lists at most 3000; `gh pr view` lists at most 100. The list names no commit: it is the head now.
+    changeFiles: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/files?per_page=100`, { host }),
     reviews: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/reviews`, { host }),
     reviewComments: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/comments`, { host }),
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most

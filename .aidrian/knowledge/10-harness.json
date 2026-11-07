@@ -36,7 +36,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "review: plan, splits, flows, invariants, approvers, approvals, visual, reviewers, quota, rounds, sign-off, --accept, record, owed, product feedback, residuals.",
+      "summary": "plan, splits, flows, invariants, approvers, approvals, visual, ingest, reviewers, quota, rounds, sign-off, --accept, record, owed, product feedback, residuals.",
       "tags": []
     },
     "knowledge.md": {

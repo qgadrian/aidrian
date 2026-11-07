@@ -42,7 +42,7 @@ import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, isClean, merg
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { blocks, parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
-import { approveLine, approvalsSwitch, hasApprovers, readApprovals } from './approvals.mjs';
+import { approveLine, approvalsSwitch, hasApprovers, overruleRefusal, readApprovals } from './approvals.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
@@ -1013,7 +1013,7 @@ export function recordOverrule(project, { pr, repo, flow, invariant, head, by, r
   const disputes = state.disputes && sameCommit(state.disputes.head, head) ? state.disputes.items : null;
   if (!disputes) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first`);
   if (!disputes.some((each) => each.flow === flow && each.invariant === invariant)) {
-    throw new Error(`invariant ${invariant} of flow ${flow} is not disputed on ${head.slice(0, 7)} of ${repo}#${pr}: --overrule settles only a violated verdict another reviewer answers holds or not_affected with evidence. Fix the code, or have a reviewer record its verdict with evidence first`);
+    throw new Error(overruleRefusal({ pr, repo, flow, invariant, head, invariants: state.invariants }));
   }
   const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), at: new Date().toISOString() };
   state.overrulings = [...(state.overrulings ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];

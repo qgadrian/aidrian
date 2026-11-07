@@ -1111,6 +1111,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr signoff PR --flow ID --accept INVARIANT --evidence URL --reason TEXT --head SHA',
     '               [--repo OWNER/NAME] [--check]',
     '       aidrian pr signoff PR --last [--repo OWNER/NAME] [--check]',
+    '       aidrian pr ingest PR --head SHA --source TEXT [--repo OWNER/NAME] [--check] FILE...',
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
     '       aidrian pr waive PR --verdict waive|refuse --reason TEXT [--head SHA]',

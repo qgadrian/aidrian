@@ -15,7 +15,7 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
-import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
+import { runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
@@ -477,6 +477,31 @@ test('the Human overrules a disputed violated verdict on one head; an undisputed
   r.write('src/booking/a.js', '2\n');
   const next = r.commit();
   assert.throws(() => recordOverrule(r.project, { pr: 7, repo: 'o/r', flow: 'booking', invariant: 'unspecified', head: next, by: 'Tester', reason: 'x' }), /no review of o\/r#7 ran on/u, 'a ruling is for one head');
+});
+
+test('--overrule on an unverified invariant names both routes, the ingest and cite, and the Human`s --accept; on an undisputed violated one, neither', async (t) => {
+  const flows = { ...APPROVED_FLOWS, pay: { files: ['src/ui/**'], invariants: [{ id: 'cap', text: 'Does a refund stay under the charge?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const first = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'cannot_verify', evidence: 'no app runs' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+    { flow: 'pay', invariant: 'cap', verdict: 'violated', evidence: 'src/ui/a.js:1' },
+  ]) });
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  const overrule = (flow, invariant) => () => recordOverrule(r.project, { pr: 7, repo: 'o/r', flow, invariant, head: first.head, by: 'Tester', reason: 'x' });
+  assert.throws(overrule('look', 'matches-design'), (error) => {
+    assert.match(error.message, /is not disputed on .*: it is unverified/u);
+    assert.match(error.message, /aidrian pr ingest \d+ --head /u);
+    assert.match(error.message, /--accept matches-design /u);
+    return true;
+  });
+  assert.throws(overrule('pay', 'cap'), (error) => {
+    assert.match(error.message, /is not disputed on .*Fix the code, or have a reviewer record its verdict with evidence first$/u);
+    assert.doesNotMatch(error.message, /aidrian pr ingest|--accept/u, 'no route closes a violated invariant');
+    return true;
+  });
+  assert.throws(() => recordAccept(r.project, { pr: 7, repo: 'o/r', flow: 'pay', invariant: 'cap', head: first.head, by: 'Tester', reason: 'x', evidence: 'https://github.com/o/r/pull/7#issuecomment-1', checkEvidence: () => 'comment' }), /never clears a violated invariant/u);
 });
 
 test('a flow only the independent model reviews is signed by its verdicts', async (t) => {
@@ -1558,6 +1583,117 @@ test('the Human accepts an unverified invariant on outside evidence for one head
   ]) });
   const moved = await r.step({ exec: clean });
   assert.deepEqual(moved.flows.map((flow) => [flow.flow, flow.unverified]), [['look', ['matches-design']]], 'an acceptance holds for its head only');
+});
+
+// The ingest route beside the --accept route of #122 above (issue #139): images taken outside the tool, ingested as
+// captures of the head, close an unverified invariant when a reviewer cites one as `capture:<key>`. Here the base
+// branch sets review.visual and this machine has no base URL, so the tool's own capture lands unavailable.
+test('a reviewer citing an ingested capture closes an unverified invariant on that head; an unknown key, another head`s ingest, or a violated verdict does not', async (t) => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const visual = { platform: 'web', targets: [{ files: ['src/ui/**'], routes: ['/look'] }], viewports: [360] };
+  const flows = { look: { files: ['src/ui/**'], require: ['agent:designer'], invariants: [{ id: 'matches-design', text: 'Does the screen still match the approved design?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, visual } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const { ingestCaptures } = await import('../plugins/aidrian/lib/review/visual.mjs');
+  const head = r.git('rev-parse', 'HEAD');
+  const shot = path.join(stateDir(r.project), 'shots', 'look-360.png');
+  mkdirSync(path.dirname(shot), { recursive: true });
+  writeFileSync(shot, PNG);
+  const { ingested: [{ key }] } = ingestCaptures({ project: r.project, pr: 7, head, files: [shot], source: 'e2e-runner run 12', by: 'Tester' });
+  writeFileSync(shot, Buffer.concat([PNG, Buffer.from('main')]));
+  const { ingested: [{ key: elsewhere }] } = ingestCaptures({ project: r.project, pr: 7, head: r.git('rev-parse', 'main'), files: [shot], source: 'e2e-runner run 11', by: 'Tester' });
+  r.forge.visibility = () => 'PUBLIC';
+  const first = await r.step({ exec: clean });
+  const [pass] = first.dispatch;
+  assert.equal(pass.agent, 'designer');
+  assert.equal(pass.visual.status, 'unavailable', 'the tool did not capture the head');
+  assert.deepEqual(pass.visual.captures.map((capture) => [capture.key, capture.ingested, capture.source?.origin]), [[key, true, 'e2e-runner run 12']]);
+  const cite = (evidence, verdict = 'holds') => recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'designer', findingsText: '[]', verdictsText: JSON.stringify([{ flow: 'look', invariant: 'matches-design', verdict, evidence }]) });
+  cite('capture:nope');
+  assert.deepEqual((await r.step({ exec: clean })).flows.map((flow) => [flow.flow, flow.unverified]), [['look', ['matches-design']]], 'a key never ingested is no evidence');
+  cite(`capture:${elsewhere}`);
+  assert.deepEqual((await r.step({ exec: clean })).flows.map((flow) => [flow.flow, flow.unverified]), [['look', ['matches-design']]], 'an ingest of another head does not count on this one');
+  cite(`capture:${key}`, 'violated');
+  assert.deepEqual((await r.step({ exec: clean })).flows.map((flow) => [flow.flow, flow.violated]), [['look', ['matches-design']]], 'a violated verdict keeps the flow open whatever it cites');
+  cite(`capture:${key}`);
+  const closed = await r.step({ exec: clean });
+  assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the ingested capture is the evidence that closes it');
+  assert.match(summaryOf(r), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable \\(no base URL: .*; ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
+});
+
+// The late order: the images are ingested after the visual reviewer answered. The step dispatches no visual reviewer
+// again, so the session runs it by hand with the ingested files and records the pass again. This pins today's
+// behaviour: the re-recorded citation closes the invariant, while the summary's visual line and the record's captured
+// keys stay as the capture left them, since the capture does not run again for this head.
+test('an ingest after the visual reviewer answered counts once the pass is recorded again citing it; the summary line and the record keys stay as they were', async (t) => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const visual = { platform: 'web', targets: [{ files: ['src/ui/**'], routes: ['/look'] }], viewports: [360] };
+  const flows = { look: { files: ['src/ui/**'], require: ['agent:designer'], invariants: [{ id: 'matches-design', text: 'Does the screen still match the approved design?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, visual } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  const first = await r.step({ exec: clean });
+  const [pass] = first.dispatch;
+  const record = (evidence, verdict) => recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: JSON.stringify([{ flow: 'look', invariant: 'matches-design', verdict, evidence }]) });
+  record('no capture of the head', 'cannot_verify');
+  assert.deepEqual((await r.step({ exec: clean })).flows.map((flow) => [flow.flow, flow.unverified]), [['look', ['matches-design']]]);
+  const line = () => summaryOf(r).split('\n').find((each) => each.startsWith('- visual capture of'));
+  const [lineBefore, keysBefore] = [line(), readLocalState(r.project, 7).captured];
+  const shot = path.join(stateDir(r.project), 'shots', 'look-360.png');
+  mkdirSync(path.dirname(shot), { recursive: true });
+  writeFileSync(shot, PNG);
+  const capturesComment = () => r.comments.find((c) => c.body.startsWith('<!-- aidrian-visual-captures -->')).body;
+  const commentBefore = capturesComment();
+  t.mock.method(console, 'log', () => {});
+  const ingest = (...more) => runIngest(['7', '--head', first.head, '--source', 'e2e-runner run 12', '--repo', 'o/r', ...more, shot], projectAt(r.dir), null, { forge: r.forge, env: {} });
+  assert.equal(await ingest('--check'), 0);
+  assert.equal(capturesComment(), commentBefore, '--check edits nothing');
+  assert.equal(await ingest(), 0);
+  t.mock.restoreAll();
+  const { readManifest } = await import('../plugins/aidrian/lib/review/visual.mjs');
+  const [{ key }] = readManifest(r.project, 7, first.head).ingested;
+  // The late ingest leaves its trace on the pull request: the captures comment is rewritten with it.
+  assert.ok(capturesComment().includes(`| \`${key}\` | \`e2e-runner run 12\` | \`Tester\` |`), capturesComment());
+  record(`capture:${key}`, 'holds');
+  const closed = await r.step({ exec: clean });
+  assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the re-recorded citation of the ingest closes the invariant');
+  assert.equal(line(), lineBefore, 'the summary line does not show a late ingest');
+  assert.deepEqual(readLocalState(r.project, 7).captured, keysBefore, 'nor do the record`s captured keys: the ingest counts only on the machine that holds it');
+  assert.doesNotMatch(lineBefore, /ingested/u);
+});
+
+// What a line shows outside its code spans, by CommonMark's rule: a run of backticks opens a span that only a run of
+// the same length closes.
+function outsideSpans(line) {
+  let out = '';
+  for (let i = 0; i < line.length;) {
+    const run = /^`+/u.exec(line.slice(i));
+    if (!run) { out += line[i]; i += 1; continue; }
+    const close = line.slice(i + run[0].length).search(new RegExp(`(?<!\`)${run[0]}(?!\`)`, 'u'));
+    if (close === -1) { out += line.slice(i); break; }
+    i += run[0].length + close + run[0].length;
+  }
+  return out;
+}
+
+test('the summary`s visual line fits every ingest note into its clip: whole entries only, each span closed, and no mention outside one', async (t) => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const visual = { platform: 'web', targets: [{ files: ['src/ui/**'], routes: ['/look'] }], viewports: [360] };
+  const flows = { look: { files: ['src/ui/**'], require: ['agent:designer'], invariants: [{ id: 'matches-design', text: 'Does the screen still match the approved design?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, visual } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  const { ingestCaptures } = await import('../plugins/aidrian/lib/review/visual.mjs');
+  const head = r.git('rev-parse', 'HEAD');
+  const dir = path.join(stateDir(r.project), 'shots');
+  mkdirSync(dir, { recursive: true });
+  for (const [i, source] of [`@x ${'a'.repeat(296)}`, 'e2e @team run 1', 'e2e @team run 2', 'e2e @team run 3'].entries()) {
+    const shot = path.join(dir, `look-${i}.png`);
+    writeFileSync(shot, Buffer.concat([PNG, Buffer.from(String(i))]));
+    ingestCaptures({ project: r.project, pr: 7, head, files: [shot], source, by: 'Tester' });
+  }
+  await r.step({ exec: clean });
+  const line = summaryOf(r).split('\n').find((each) => each.startsWith('- visual capture of'));
+  assert.match(line, /no base URL: .*; ingested, not captured: ingest-look-0-[0-9a-f]{6} from `@x a+…` by `Tester`.* and \d more, listed in the captures comment\)/u, line);
+  assert.equal((line.match(/`/gu) ?? []).length % 2, 0, 'every code span is closed');
+  assert.doesNotMatch(outsideSpans(line), /@/u, line);
 });
 
 test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --accept, and --stage, and records nothing', async (t) => {

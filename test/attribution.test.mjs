@@ -92,10 +92,45 @@ test('the commit rule asks for each configured trailer, and passes once the comm
   writeFileSync(path.join(dir, 'msg.txt'), 'fix: x\n\nAgent: main\nAgent-Model: claude-opus-5-5\nAgent-Effort: high\n');
   assert.equal(run('git commit -F msg.txt'), null);
   assert.match(run('git commit -m "fix: x Agent: main Agent-Model: claude-opus-5-5 Agent-Effort: high"') ?? '', /Blocked/, 'in the subject');
-  assert.match(run('git commit -m "fix: x" -m "Agent: maintainer"') ?? '', /`Agent: main`/, 'a near value');
+  assert.match(run('git commit -m "fix: x" -m "Agent: maintainer"') ?? '', /found "Agent: maintainer", expected "Agent: main"/, 'a near value');
   assert.match(run('git commit -F - <<<"x"') ?? '', /Blocked/, 'stdin counts only --trailer');
   assert.match(run(`git commit -m a ${trailers} && git commit -m b`) ?? '', /Blocked/, 'each commit on its own');
   assert.equal(run('git status && git log --grep commit'), null, 'not a commit');
+});
+
+test('a commit refused for a wrong trailer value names the line found and the line expected', (t) => {
+  const { dir, run } = setup(t, { commit: ['agent', 'model', 'effort'] });
+  const fix = "--trailer 'Agent: main' --trailer 'Agent-Model: claude-opus-5-5' --trailer 'Agent-Effort: high'";
+  const low = run("git commit -m 'fix: x' --trailer 'Agent: main' --trailer 'Agent-Model: claude-opus-5-5' --trailer 'Agent-Effort: low'") ?? '';
+  assert.match(low, /^Blocked: /u);
+  assert.match(low, /the commit carries different attribution trailer line\(s\): found "Agent-Effort: low", expected "Agent-Effort: high"\./u);
+  assert.ok(low.includes(`Delete the found lines and put the expected ones in the message's last paragraph, or delete them and pass: ${fix}\n`),
+    'the delete instruction, then the --trailer fix line');
+  assert.match(low, new RegExp(`${OVERRIDE}=1`, 'u'), 'the override note stays');
+  assert.doesNotMatch(low, /lacks/u, 'nothing is absent');
+  // The same key from the message's trailer block, read by git, in another case, beside one that is absent.
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  const mixed = run("git commit -m 'fix: x' -m 'agent-effort: low' --trailer 'Agent: main'") ?? '';
+  assert.match(mixed, /found "agent-effort: low", expected "Agent-Effort: high"/u);
+  assert.match(mixed, /expected "Agent-Effort: high"\. It also lacks the attribution trailer\(s\) `Agent-Model: claude-opus-5-5`\. Delete/u);
+  assert.ok(mixed.includes(fix));
+  // A line that differs only in its key's case is not the expected line, and is named as found.
+  const base = "git commit -m 'fix: x' --trailer 'Agent: main' --trailer 'Agent-Model: claude-opus-5-5'";
+  assert.match(run(`${base} --trailer 'agent-effort: high'`) ?? '', /found "agent-effort: high", expected "Agent-Effort: high"/u);
+  // Two lines of the same key are both named.
+  assert.match(run(`${base} --trailer 'Agent-Effort: low' --trailer 'Agent-Effort: medium'`) ?? '',
+    /found "Agent-Effort: low" and "Agent-Effort: medium", expected "Agent-Effort: high"/u);
+});
+
+test('a commit refused for an absent trailer keeps the lacks wording', (t) => {
+  const { run } = setup(t, { commit: ['agent', 'model', 'effort'] });
+  const reason = run("git commit -m 'fix: x' --trailer 'Agent: main' --trailer 'Agent-Model: claude-opus-5-5'");
+  assert.equal(reason, 'Blocked: the commit lacks the attribution trailer(s) `Agent-Effort: high`. ' +
+    "Add them to the message's last paragraph, or pass: --trailer 'Agent: main' --trailer 'Agent-Model: claude-opus-5-5' --trailer 'Agent-Effort: high'\n" +
+    "The values come from this session's transcript (config.json `attribution`). " +
+    `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +
+    "(agents must never set it on the user's behalf).");
+  assert.doesNotMatch(reason, /found/u);
 });
 
 test('a heredoc counts only for the commit or pull request that holds it', (t) => {

@@ -233,6 +233,38 @@ test('changeEvidence matches an attachment as a whole URL, never as part of a lo
   assert.deepEqual([...linksIn('see [a](https://x.example/a.png). and https://x.example/b?c=1!')], ['https://x.example/a.png', 'https://x.example/b?c=1']);
 });
 
+test('linksIn keeps a destination its syntax delimits exactly, punctuation included; only a bare URL loses sentence punctuation', () => {
+  const file = (end) => `https://github.com/user-attachments/files/123/report.txt${end}`;
+  for (const end of ['!', '.', ',']) {
+    for (const [syntax, text] of [
+      ['inline link', `[evidence](${file(end)})`],
+      ['inline link with a title', `[evidence](${file(end)} "the report")`],
+      ['inline link in angle brackets', `[evidence](<${file(end)}>)`],
+      ['image', `![shot](${file(end)})`],
+      ['reference definition', `[evidence][r]\n\n[r]: ${file(end)}`],
+      ['autolink', `<${file(end)}>`],
+      ['src in double quotes', `<img src="${file(end)}" width="300">`],
+      ['src in single quotes', `<img src='${file(end)}'>`],
+      ['unquoted src', `<img src=${file(end)} alt=x>`],
+      ['href', `<a href="${file(end)}">report</a>`],
+    ]) assert.deepEqual([...linksIn(text)], [file(end)], `${syntax} ending in ${end}`);
+    assert.deepEqual([...linksIn(`See ${file(end)}`)], [file('')], `a bare URL ending in ${end} is linked without it`);
+  }
+  // The changeEvidence the finding names: the real upload counts, the shorter URL the body never links does not.
+  const { forge } = recorded((call) => (call[1] === 'repos/acme/notes/pulls/7' ? JSON.stringify({ body: `[evidence](${file('!')})` }) : '[[]]'));
+  assert.equal(forge.changeEvidence('acme/notes', 7, file('!')), 'attachment');
+  assert.equal(forge.changeEvidence('acme/notes', 7, file('')), null);
+  // Rendered as GitHub renders them: escapes and character references read, balanced parentheses kept, code ignored.
+  assert.deepEqual([...linksIn('[a](https://x.example/\\!x)')], ['https://x.example/!x']);
+  assert.deepEqual([...linksIn('<a href="https://x.example/q?a=1&amp;b=2">q</a>')], ['https://x.example/q?a=1&b=2']);
+  assert.deepEqual([...linksIn('<https://x.example/q?a=1&amp;b=2>')], ['https://x.example/q?a=1&amp;b=2'], 'an autolink keeps every character');
+  assert.deepEqual([...linksIn('[a](https://x.example/a(1))')], ['https://x.example/a(1)']);
+  assert.deepEqual([...linksIn('[a](https://x.example/a((1)))')], [], 'a target this cannot read whole is left out, never cut short');
+  assert.deepEqual([...linksIn('`[a](https://x.example/c)` and `https://x.example/d`')], [], 'inline code links nothing');
+  assert.deepEqual([...linksIn('```\r\n[e](https://x.example/f)\r\nhttps://x.example/g\r\n```\r\nthen https://x.example/h')], ['https://x.example/h'], 'a fence links nothing, up to its closing line');
+  assert.deepEqual([...linksIn('~~~\nhttps://x.example/never-closed')], [], 'an unclosed fence runs to the end');
+});
+
 test('changeEvidence: a comment or review comment counts only when its API URL names this pull request exactly', () => {
   const { forge } = recorded((call) => ({
     'repos/acme/notes/issues/comments/1': '{"issue_url":"https://api.github.com/repos/acme/notes/issues/17"}',

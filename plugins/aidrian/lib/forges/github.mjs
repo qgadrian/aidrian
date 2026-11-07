@@ -44,19 +44,58 @@ export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const ATTACHMENT = /^https:\/\/(?:github\.com\/user-attachments\/(?:assets|files)\/|github\.com\/[^/]+\/[^/]+\/(?:assets|files)\/|(?:private-)?user-images\.githubusercontent\.com\/)\S+$/u;
 // The same upload's path on a GitHub Enterprise host.
 const ATTACHMENT_PATH = /^\/(?:user-attachments\/(?:assets|files)\/|[^/]+\/[^/]+\/(?:assets|files)\/)\S+$/u;
-// The URLs a Markdown or HTML text links, whole, as the URL parser spells them: in a link `[text](url)`, an autolink
-// `<url>`, an `src` or `href` attribute, or bare, with the punctuation that ends a sentence left off. A URL that runs on
-// into a character this cannot read as its end, such as `(`, is left out rather than cut short, so a link is never
-// read as a shorter one.
+// The URLs a Markdown or HTML text links, each whole, as the URL parser spells it. A destination its syntax delimits is
+// taken exactly as that syntax gives it: an inline link or image target `[text](url "title")`, a reference definition
+// `[label]: url`, an autolink `<url>`, and an `src` or `href` attribute of an HTML tag. As GitHub renders them, a
+// Markdown target loses its backslash escapes and an attribute or Markdown target its character references, such as
+// `&amp;`; an autolink keeps every character. Only a bare URL, outside all of those, loses the punctuation GitHub leaves
+// out of an autolinked URL (`? ! . , : * _ ~`), and one that runs on into a character this cannot read as its end, such
+// as `(`, is left out rather than cut short. Code, fenced or inline, links nothing.
 export function linksIn(text) {
   const found = new Set();
-  for (const [raw] of String(text ?? '').matchAll(/https?:\/\/[^\s<>"'`()[\]{}]+(?=$|[\s<>"'`)\]}])/gu)) {
+  const add = (url) => {
     try {
-      found.add(new URL(raw.replace(/[.,;:!?*_~]+$/u, '')).href);
+      found.add(new URL(url).href);
     } catch {}
-  }
+  };
+  // Code first: a link inside it is text. Each span becomes spaces, so what is left keeps its offsets. A fence ends at
+  // a line of at least its own run of the same character, or, never closed, at the end of the text.
+  let rest = String(text ?? '')
+    .replace(/^ {0,3}((`|~)\2{2,})[^\n]*\n[\s\S]*?(?:\n {0,3}\1\2*[ \t]*\r?(?=\n|(?![\s\S]))|(?![\s\S]))/gmu, blank)
+    .replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/gu, blank);
+  // Each delimited destination is taken, then blanked, so no later pattern, the bare one least of all, reads it again.
+  const take = (pattern, destination) => {
+    rest = rest.replace(pattern, (...match) => {
+      const url = destination(match);
+      if (url !== null) add(url);
+      return blank(match[0]);
+    });
+  };
+  // A Markdown target: `<...>` is taken inside its brackets, any other up to the space before a title or the closing
+  // parenthesis, one level of balanced parentheses kept.
+  const markdown = (given) => references((given.startsWith('<') ? given.slice(1, -1) : given).replace(/\\([!-/:-@[-`{-~])/gu, '$1'));
+  take(/\]\(\s*(<[^<>\n]*>|(?:[^\s()<\\]|\\.|\([^\s()]*\))+)(?:\s+(?:"[^"]*"|'[^']*'|\([^()]*\)))?\s*\)/gu, (match) => markdown(match[1]));
+  take(/^ {0,3}\[[^\]\n]+\]:[ \t]*(<[^<>\n]*>|\S+)/gmu, (match) => markdown(match[1]));
+  take(/<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/gu, (match) => match[1]);
+  take(/<[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?>/gu, ([tag]) => {
+    for (const [, , double, single, bare] of tag.matchAll(/\s(src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/giu)) add(references(double ?? single ?? bare));
+    return null;
+  });
+  for (const [raw] of rest.matchAll(/https?:\/\/[^\s<>"'`()[\]{}]+(?=$|[\s<>"'`)\]}])/gu)) add(raw.replace(/[?!.,:*_~]+$/u, ''));
   return found;
 }
+
+// The same number of spaces as `text` has characters, its line breaks kept.
+const blank = (text) => text.replace(/[^\n]/gu, ' ');
+
+// `text` with its character references read, as an HTML attribute or a Markdown target has them rendered: the named
+// ones a URL holds, and every numeric one. Any other `&name;` stays as written.
+const NAMED = Object.freeze({ amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ' });
+const references = (text) => text.replace(/&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z]+));/gu, (whole, decimal, hex, name) => {
+  if (name !== undefined) return Object.hasOwn(NAMED, name) ? NAMED[name] : whole;
+  const code = Number.parseInt(decimal ?? hex, decimal ? 10 : 16);
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+});
 
 // Whether a GitHub API URL of an issue or pull request, such as a comment's `issue_url`, names `kind` (`issues` or
 // `pulls`) number `n` of `repo` exactly, on any API host.

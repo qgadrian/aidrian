@@ -266,6 +266,13 @@ The acceptance holds for that head only, and the review summary lists it apart f
 of that head does not list as unverified, a violated one above all, an evidence URL GitHub cannot find on the pull
 request, and an acceptance with no reason. Like every sign-off, it is an audit entry, not proof.
 
+**The next step.** Each flow in `fix_required` carries `next`, one entry for every open invariant:
+`{ invariant, state, commands }`. A `violated` one says `fix the code`; a `disputed` one gives its `--overrule`
+command. An `unverified` one gives the approval to ask for, the review of the head and its `aidrian-approve:` line,
+when the invariant names approvers and both switches are on; the `--accept` command; and, for a flow a visual
+reviewer judges while the head has no capture, the capture's status line, such as what it needs to run. A session
+offers the Human only these commands, never one of its own making.
+
 **Trying a command first.** `--check` on any `aidrian pr signoff` command, `--flow`, `--overrule`, `--accept`, or
 `--stage`, runs every refusal of that command and records nothing. It prints `ok` and exits 0, or prints the refusal
 and exits 1. The `review-signoff` rule lets an agent run it, so a session can check a command before it hands it to

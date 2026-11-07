@@ -63,6 +63,9 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
 }
 
 const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });
+// The `next` entry of an unverified invariant, `before` the acceptance command and `after` it.
+const acceptCommand = (flow, id, head) => `aidrian pr signoff 7 --flow ${flow} --accept ${id} --evidence "<comment, review, or attachment URL of this pull request>" --reason "<what it shows>" --head ${head}`;
+const unverifiedNext = (flow, id, head, { before = [], after = [] } = {}) => ({ invariant: id, state: 'unverified', commands: [...before, acceptCommand(flow, id, head), ...after] });
 const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
 
 test('a docs-only change needs no review and posts nothing', async (t) => {
@@ -159,7 +162,7 @@ test('a flow adds a local agent pass that must cite evidence for every invariant
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'product-manager', findings: 0, fixed: 0, verdictsText: verdicts('src/booking/book.js:99') });
   const uncited = await r.step({ exec });
   assert.equal(uncited.status, 'fix_required');
-  assert.deepEqual(uncited.flows, [{ flow: 'booking', violated: [], unverified: ['no-double-booking'] }], 'a citation to a line that is not there does not count');
+  assert.deepEqual(uncited.flows, [{ flow: 'booking', violated: [], unverified: ['no-double-booking'], next: [unverifiedNext('booking', 'no-double-booking', head)] }], 'a citation to a line that is not there does not count');
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'product-manager', findings: 0, fixed: 0, verdictsText: verdicts('src/booking/book.js:2') });
   const done = await r.step({ exec: async (_reviewer, input) => {
     assert.deepEqual(input.flows[0].earlierVerdicts.map((each) => each.verdict), ['holds', 'not_affected'], 'the independent reviewer sees the local verdicts to challenge');
@@ -446,6 +449,7 @@ test('an independent reviewer`s violated verdict blocks the flow even with no fi
   assert.deepEqual([result.status, result.stage, result.flows], ['fix_required', 'independent', [{
     flow: 'booking', violated: ['unspecified'], unverified: [], disputed: ['unspecified'],
     overrule: [`aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>"`],
+    next: [{ invariant: 'unspecified', state: 'disputed', commands: [`aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>"`] }],
   }]]);
 });
 
@@ -866,7 +870,7 @@ test('the visual capture runs before the visual reviewers, attaches on a private
   assert.deepEqual(blocked.flows, [], 'a capture of this head is evidence');
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--768--default--default') });
   const unknown = await step({ exec: clean });
-  assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'] }], 'a capture key the manifest does not have is no evidence');
+  assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'], next: [unverifiedNext('ui', 'fit', first.head)] }], 'a capture key the manifest does not have is no evidence; with captures of the head, no capture line');
   assert.match(r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body, /visual capture of `[0-9a-f]{7}`: captured \(2 of 2\); attach \*\*auto\*\*, private repository/u);
 
   // A clean pass whose verdict cites a capture carries forward over a push that touches nothing of it, and still
@@ -1494,7 +1498,7 @@ async function unverifiedDesign(t, review = { flows: APPROVED_FLOWS, approvals: 
 test('a named approver`s review of the head closes an unverified invariant once both switches are on, and the summary lists it', async (t) => {
   const { r, head } = await unverifiedDesign(t);
   const off = await r.step({ exec: clean });
-  assert.deepEqual([off.status, off.flows], ['fix_required', [{ flow: 'look', violated: [], unverified: ['matches-design'] }]], 'the machine switch is off: the approval counts for nothing');
+  assert.deepEqual([off.status, off.flows], ['fix_required', [{ flow: 'look', violated: [], unverified: ['matches-design'], next: [unverifiedNext('look', 'matches-design', head)] }]], 'the machine switch is off: the approval counts for nothing, and no approval line is offered');
   assert.match(off.approvals.off, /reviewApprovals is not "on" in \.aidrian\.local\.json/u, 'the review says which switch is off');
   r.write('.aidrian.local.json', JSON.stringify({ reviewApprovals: 'on' }));
   const on = await r.step({ exec: clean });
@@ -1586,6 +1590,35 @@ test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --acc
     `ok: the command would record Tester's acceptance of invariant matches-design of flow look on ${first.head.slice(0, 7)}`,
   ]);
   assert.equal(readFileSync(path.join(stateDir(r.project), 'reviews', 'pr-7-review.json'), 'utf8'), before, 'the record is as it was');
+});
+
+test('fix_required names the next step of every open invariant: the fix, the approval line, the acceptance, and the capture`s status', async (t) => {
+  const visual = { platform: 'web', targets: [{ files: ['src/components/**'], routes: ['/dashboard'] }], viewports: [360] };
+  const flows = { ui: { files: ['src/components/**'], require: ['agent:designer'], invariants: [
+    { id: 'no-crash', text: 'Does the screen still render?' },
+    { id: 'fit', text: 'Does the screen still match the approved design?', approvers: ['amy-designer', 'bo-design'] },
+  ] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, visual, approvals: { allow: true } } }, change: (write) => write('src/components/Button.tsx', 'export const Button = () => <button />;\n') });
+  r.write('.aidrian.local.json', JSON.stringify({ review: { visual: { baseUrl: 'http://localhost:3000' } }, reviewApprovals: 'on' }));
+  r.forge.visibility = () => 'PRIVATE';
+  r.forge.viewer = () => 'session-bot';
+  r.forge.reviews = () => [];
+  const captureSpawn = () => ({ status: 3, stdout: '', stderr: 'playwright is not installed: run npm i -D playwright\n' });
+  const first = await r.step({ exec: clean, captureSpawn });
+  assert.equal(first.dispatch[0].agent, 'designer');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: JSON.stringify([
+    { flow: 'ui', invariant: 'no-crash', verdict: 'violated', evidence: 'src/components/Button.tsx:1' },
+    { flow: 'ui', invariant: 'fit', verdict: 'cannot_verify', evidence: 'no capture of the head' },
+  ]) });
+  const blocked = await r.step({ exec: clean, captureSpawn });
+  assert.equal(blocked.status, 'fix_required');
+  assert.deepEqual(blocked.flows[0].next, [
+    { invariant: 'no-crash', state: 'violated', commands: ['fix the code'] },
+    unverifiedNext('ui', 'fit', first.head, {
+      before: [`an approving review of ${first.head} by amy-designer or bo-design, whose body holds the line: aidrian-approve: ui/fit`],
+      after: [`the visual capture of ${first.head.slice(0, 7)} is unavailable: playwright is not installed: run npm i -D playwright`],
+    }),
+  ]);
 });
 
 test('approvals: a pull request cannot turn the team switch on for its own review, and turning it on is a change to the review', () => {

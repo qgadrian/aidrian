@@ -35,7 +35,7 @@ import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolv
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { blocks, parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
-import { approvalsSwitch, hasApprovers, readApprovals } from './approvals.mjs';
+import { approveLine, approvalsSwitch, hasApprovers, readApprovals } from './approvals.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
@@ -592,7 +592,8 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
         flows: unsigned.map(([flow, status]) => ({
           flow: flow.id, violated: status.open, unverified: status.unverified,
           // Reviewers disagree: the Human decides, in their own shell, and the invariant then passes on the evidence.
-          ...(status.disputed.some((id) => status.open.includes(id)) ? { disputed: status.disputed.filter((id) => status.open.includes(id)), overrule: status.disputed.filter((id) => status.open.includes(id)).map((id) => `aidrian pr signoff ${n} --flow ${flow.id} --overrule ${id} --head ${head} --reason "<why>"`) } : {}),
+          ...(status.disputed.some((id) => status.open.includes(id)) ? { disputed: status.disputed.filter((id) => status.open.includes(id)), overrule: status.disputed.filter((id) => status.open.includes(id)).map((id) => overruleCommand(flow, id)) } : {}),
+          next: nextSteps(flow, status),
         })),
       });
     }
@@ -617,6 +618,38 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   const human = plan.flows.filter((flow) => flow.signoff === 'human' && !keptSignoffs.has(flow.id));
   if (human.length) return finish('human_required', { flows: human.map((flow) => flow.id), command: human.map((flow) => `aidrian pr signoff ${n} --flow ${flow.id} --head ${head}`) });
   return finish('received', {});
+
+  // The Human's way out of a dispute on this head.
+  function overruleCommand(flow, id) {
+    return `aidrian pr signoff ${n} --flow ${flow.id} --overrule ${id} --head ${head} --reason "<why>"`;
+  }
+
+  // What closes each open invariant of a flow on this head, so no session has to invent a command: a violated one is
+  // fixed in the code, or, when another reviewer disputes it, overruled by the Human. An unverified one closes on
+  // evidence: an approver's review when the invariant names approvers and both switches are on, the Human's
+  // acceptance, and, for a flow a visual reviewer judges with no capture of this head, the capture's own status line.
+  function nextSteps(flow, status) {
+    const violated = status.open.map((id) => (status.disputed.includes(id)
+      ? { invariant: id, state: 'disputed', commands: [overruleCommand(flow, id)] }
+      : { invariant: id, state: 'violated', commands: ['fix the code'] }));
+    const visualFlow = visualEntries.length > 0 && passes.some((pass) => isVisual(pass) && (pass.flows ?? []).includes(flow.id));
+    const capture = visualFlow && captureKeys(manifest).size === 0
+      ? (manifest ? `the visual capture of ${head.slice(0, 7)} is ${manifest.status}${manifest.reason ? `: ${manifest.reason}` : ''}` : `no visual capture of ${head.slice(0, 7)} ran`)
+      : null;
+    const unverified = status.unverified.map((id) => {
+      const approvers = flow.invariants.find((each) => each.id === id)?.approvers ?? [];
+      return {
+        invariant: id,
+        state: 'unverified',
+        commands: [
+          ...(approvers.length && approvalPath?.on ? [`an approving review of ${head} by ${approvers.join(' or ')}, whose body holds the line: ${approveLine(flow.id, id)}`] : []),
+          `aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<comment, review, or attachment URL of this pull request>" --reason "<what it shows>" --head ${head}`,
+          ...(capture ? [capture] : []),
+        ],
+      };
+    });
+    return [...violated, ...unverified];
+  }
 
   // Captures this head once, then attaches the images as the attach mode allows and writes the captures comment. The
   // repository's visibility is read now, at upload time: a repository made public since the config was written stops

@@ -1059,7 +1059,7 @@ test('persona-audit states the limits of a pull request run, and passes the reso
   assert.match(reaching, noWalk);
   assert.match(skill, /When `limited` is true there is no walk and no sign-in:/u);
   assert.match(skill, noWalk);
-  for (const word of MEMBER_ASSOCIATIONS) assert.ok(!reaching.includes(`\`${word}\``) && !skill.includes(`\`${word}\``), `${word}: the session reads limited`);
+  for (const word of ['OWNER', 'MEMBER', 'COLLABORATOR']) assert.ok(!reaching.includes(`\`${word}\``) && !skill.includes(`\`${word}\``), `${word}: the session reads limited`);
   assert.match(reaching, /Read the field; never compare the association words/u);
   assert.match(reaching, /When `limited` is true, a screenshot on the pull request is the author's claim and gives at most an `opinion`/u);
 

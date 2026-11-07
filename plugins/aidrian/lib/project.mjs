@@ -27,10 +27,11 @@ const LOCAL = '.aidrian.local.json';
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'cli', 'code-words', 'config', 'config-guard',
-  'decisions', 'dispatch-log', 'dispatch-rows', 'finding-disposition', 'fs', 'gate-snapshot', 'git', 'hook-deny',
-  'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose',
-  'markdown-sections', 'markdown-wrap', 'names', 'pr', 'pr-auto-merge', 'pr-await-review', 'pr-checks', 'project',
-  'review-gate', 'session-length', 'shell-lex', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
+  'decisions', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'fs', 'gate-snapshot', 'git',
+  'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
+  'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-await-review',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'review-gate', 'session-length', 'shell-lex', 'terms',
+  'tracker-check', 'tracker-guard', 'transcript', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 export const GUARDED_PATHS = new RegExp(

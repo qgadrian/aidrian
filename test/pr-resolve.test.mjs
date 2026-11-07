@@ -160,7 +160,7 @@ test('limited is the command\'s word on who opened the pull request: a member\'s
   const stranger = limited({ pull: view({ isCrossRepository: true }), association: 'NONE' });
   assert.deepEqual([stranger.cross_repository, stranger.author_association, stranger.limited], [true, 'NONE', true]);
   assert.equal(limited({ pull: view({ isCrossRepository: true }), association: 'MEMBER' }).limited, true, 'a member\'s fork still comes from outside');
-  for (const association of MEMBER_ASSOCIATIONS) assert.equal(limited({ association }).limited, false, association);
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) assert.equal(limited({ association }).limited, false, association);
   for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE']) assert.equal(limited({ association }).limited, true, association);
 });
 

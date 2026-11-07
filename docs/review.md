@@ -257,7 +257,10 @@ of its own, answers `holds` or `not_affected` with valid evidence, the flow in `
 `aidrian pr signoff <PR> --flow <id> --overrule <invariant> --head <sha> --reason "<why>"`. The Human runs it in their
 own shell, and the invariant then passes on that head on the other reviewer's evidence, never on the Human's word
 alone. The ruling holds for that head only and is listed with the overrides in the review summary. The command
-refuses an invariant that is not disputed on that head, and a ruling with no reason.
+refuses an invariant that is not disputed on that head, and a ruling with no reason. On an invariant the last review of
+that head lists as `unverified`, the refusal names the two routes that close it on evidence outside the tool: where
+the base branch sets `review.visual`, the `aidrian pr ingest` command, for a reviewer to cite the image; or the
+`--accept` command below. A violated invariant that no reviewer disputes gets neither: fix the code.
 
 **Evidence outside the tool.** Some invariants no reviewer can verify, because the evidence lives elsewhere: a
 designer approved real screenshots while no app runs for the [visual capture](#visual-review). Such an invariant stays
@@ -292,6 +295,36 @@ The acceptance holds for that head only, and the review summary lists it apart f
 `accepted by <name> on <sha7> on outside evidence: <url>: <reason>`. The command refuses an invariant the last review
 of that head does not list as unverified, a violated one above all, an evidence URL GitHub cannot find on the pull
 request, and an acceptance with no reason. Like every sign-off, it is an audit entry, not proof.
+
+**Ingesting images.** Screenshots taken outside the tool, such as the ones an end-to-end run took while no app runs
+for the visual capture, become captures of one head:
+`aidrian pr ingest <PR> --head <sha> --source "<where they came from>" <image>...`. The Human or an agent may run it,
+such as the end-to-end runner that took the images; it signs nothing off. Each image is copied into that head's capture
+folder and recorded with its key, its hash, and its source: the `--source` text, the file's path, who ingested it (the
+git user), and the session it ran in. Where the host layer detects an AI session, the record says so and names the
+agent when the host gives one (`via <agent>`, else `in an AI session, agent unknown`); the Human's own shell gives
+the name alone. A reviewer then cites the image as `capture:<key>` in a flow verdict, as for any capture, and the
+invariant closes on that verdict. The command refuses a file that is not a PNG, JPEG, GIF, or WebP image by its bytes,
+a path that is not a file, a file outside the working tree and the state folder (symlinks resolved), and a `--source`
+that is empty or holds `<` or `>`; `--check` runs every refusal and records nothing. The same image under the same
+file name ingests again in place. The ingest holds for that head only: a push drops it with the head's other state.
+It counts only in a review whose base branch sets `review.visual`, since the review reads a head's captures only then.
+
+Every surface shows an ingest as `ingested, not captured`, with its source and who ingested it in code spans, and
+never counts it as a capture. An ingest made before a visual reviewer is dispatched on that head is in the captures
+comment that capture posts. A later one rewrites that comment when this machine's capture wrote it: a comment a
+member or the session's own account posted, whose heading names that head. Where another machine captured the head,
+the comment is left as it is: the ingest lives in this machine's state folder and counts only here, and ingesting the
+same images on the machine that captured the head shows them on the pull request. With `review.record: "local"` there
+is no captures comment to rewrite;
+a forge failure is a warning, and the ingest stays recorded. The review summary's visual line names an ingest made
+before a visual reviewer is dispatched, unless that capture took every image, as many entries as fit the line whole
+and the count of the rest.
+A later ingest, or one on a head the tool captured, is not in the summary line or the record's captured keys:
+it reaches the reviewer input and the local manifest, and counts only on the machine that holds it. The step does
+not dispatch the visual reviewer again for it: the session runs that reviewer by hand with the ingested files, and
+records the pass again with `aidrian pr attest --pass <id>`. An ingested image is never uploaded, so its source is what a reader on the pull
+request sees. The source is self-reported: like every sign-off, an ingest is an audit entry, not proof.
 
 **The next step.** Each flow in `fix_required` carries `next`, one entry for every open invariant:
 `{ invariant, state, commands, notes }`. `commands` holds only `aidrian pr signoff` commands; `notes` holds the rest.
@@ -369,6 +402,12 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 - **Once per head**: the capture runs when a visual reviewer is dispatched, and its manifest (each image's key, file,
   hash, and facts) is kept in the state folder. Flow verdicts cite an image as `capture:<key>`; a key of another head
   is no evidence. Animations are off and motion is reduced, so an unchanged screen gives the same bytes.
+- **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
+  elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
+  `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The
+  visual reviewers find each in `visual.captures` with `ingested: true` and its `source`, and no measured facts. A
+  manifest with no tool capture has the status `ingested` and is captured over when the capture next runs; the
+  ingested list survives it. The source is self-reported, an audit entry, not proof.
 - **Attach**: with `auto`, `aidrian pr review` uploads the images through the
   [gh-image](https://github.com/drogers0/gh-image) extension, with no confirmation, into one captures comment edited
   in place. It uploads only images this capture wrote and listed, checked by hash and PNG signature, and each hash

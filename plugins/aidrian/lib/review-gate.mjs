@@ -14,7 +14,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { forgeFor } from './forges/index.mjs';
+import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { normalizeRemote, stateDir } from './project.mjs';
@@ -399,4 +399,107 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
   }
   recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, config), dryRun });
   return done(`${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
+}
+
+// `aidrian pr ingest <PR> --head <sha> --source <text> [--repo OWNER/NAME] [--check] <file>...`: images taken outside
+// the tool, such as an end-to-end run's screenshots, ingested as captures of one head (lib/review/visual.mjs
+// ingestCaptures), so a reviewer may cite one as `capture:<key>`. The Human or an agent runs it, and the manifest names
+// who: `by` is the git user, `session` whether the host layer detects an AI session, and `agent` the host's agent name
+// when it gives one. Like a sign-off, an audit entry, not
+// proof. `--check` runs every refusal and records nothing. Every argument after the pull request that is not a flag
+// is a file.
+export async function runIngest(args, project, config = null, { forge, env = process.env } = {}) {
+  const [ref, ...rest] = args;
+  const pr = prNumber(ref);
+  if (pr === null) throw new Error('ingest needs a pull request number');
+  const flags = {};
+  const files = [];
+  let dryRun = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === '--check') {
+      dryRun = true;
+      continue;
+    }
+    if (!arg.startsWith('--')) {
+      files.push(arg);
+      continue;
+    }
+    if (!['--head', '--source', '--repo'].includes(arg)) throw new Error(`unknown argument: ${arg}`);
+    const value = rest[++i];
+    if (value === undefined || value.startsWith('--')) throw new Error(`${arg} needs a value`);
+    flags[arg.slice(2)] = value;
+  }
+  if (!flags.head || flags.source === undefined || !files.length) throw new Error('--head, --source, and at least one image file are required');
+  if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+  // The review step reads a head's manifest by its full SHA.
+  const head = runGit(['rev-parse', '--verify', `${flags.head}^{commit}`], project.root).stdout.trim();
+  // The repository is not stored, since the capture folder is per pull request; it names where the captures comment is.
+  const repo = prRepo(project, pr, flags.repo, forge);
+  const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
+  // The session kind, from the host layer: an AI session when it detects a host, so an agent's ingest is never
+  // recorded as the Human's own; the agent when the host names one.
+  const hosts = await import('./hosts/index.mjs');
+  const session = hosts.detectHost({ env }).id === hosts.UNKNOWN_HOST.id ? 'shell' : 'ai';
+  const { agent } = hosts.sessionIdentity(env);
+  const visual = await import('./review/visual.mjs');
+  const { manifest, ingested } = visual.ingestCaptures({ project, pr, head, files, source: flags.source, by, agent, session, dryRun });
+  const sha = head.slice(0, 7);
+  if (dryRun) {
+    console.log(`ok: the command would ingest ${ingested.length} image(s) as captures of ${sha}; --check recorded nothing`);
+    return 0;
+  }
+  for (const entry of ingested) {
+    const given = files.find((file) => path.resolve(file) === entry.source.path) ?? entry.source.path;
+    console.log(`ingested ${given} as capture:${entry.key} of ${sha} from ${entry.source.origin} by ${entry.source.by}${entry.source.session === 'ai' ? (entry.source.agent ? ` via ${entry.source.agent}` : ' in an AI session, agent unknown') : ''}`);
+  }
+  // With the review record local, the review posts no captures comment, so the pull request is not read.
+  if (config?.review?.record === 'local') console.log('the review record is local, so no captures comment shows the ingest');
+  else await showIngest({ project, pr, repo, manifest, forge: forge ?? forgeFor(project.root), visual });
+  console.log('Run `aidrian pr review` again.');
+  return 0;
+}
+
+// Rewrites the pull request's captures comment with the manifest an ingest wrote, so an ingest made after the review
+// captured the head still leaves its trace on the pull request. The comment counts only when a member wrote it, or the
+// account of the session's forge token, as the review summary does; only a comment whose heading names this head is
+// edited, and only from a manifest this machine's capture wrote (it names its `platform`), with the attach mode,
+// visibility, and uploads the review record kept for it. A forge failure is a warning: the ingest is recorded.
+async function showIngest({ project, pr, repo, manifest, forge, visual }) {
+  const where = `${repo}#${pr}`;
+  const sha = manifest.head.slice(0, 7);
+  try {
+    let viewer;
+    const own = (comment) => {
+      if (isTrustedCommenter(comment)) return true;
+      if (viewer === undefined) {
+        try {
+          viewer = forge.viewer() ?? null;
+        } catch {
+          viewer = null;
+        }
+      }
+      return viewer !== null && typeof comment?.user?.login === 'string' && comment.user.login.toLowerCase() === String(viewer).toLowerCase();
+    };
+    const comment = (forge.conversationComments(repo, pr) ?? []).find((each) => typeof each?.body === 'string' && each.body.startsWith(visual.VISUAL_MARKER) && own(each));
+    if (!comment) {
+      console.log(`no captures comment on ${where} yet: the review posts one when it captures this head`);
+      return;
+    }
+    if (comment.body.split(/\r?\n/u)[1] !== `### Visual capture: \`${sha}\``) {
+      console.log(`the captures comment on ${where} shows another head; it was not edited`);
+      return;
+    }
+    if (typeof manifest.platform !== 'string') {
+      // The ingest lives only in this machine's state folder, so only an ingest on the capturing machine can reach it.
+      console.log(`the captures comment of ${sha} came from another machine's capture: this ingest counts only on this machine; ingest the same images on the machine that captured the head to show them on the pull request`);
+      return;
+    }
+    const state = readLocalState(project, pr);
+    const kept = state?.visual?.head === manifest.head ? state.visual : null;
+    forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null }));
+    console.log(`updated the captures comment on ${where} with the ingest`);
+  } catch (error) {
+    console.error(`warning: the captures comment on ${where} was not updated (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); the ingest is recorded`);
+  }
 }

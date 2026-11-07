@@ -5,7 +5,9 @@
 import { runGh } from './github-cli.mjs';
 
 // The author associations GitHub gives the people who belong to a repository.
-export const MEMBER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+// Frozen, with no add, and compared by === rather than through a prototype method, so no module in the gate's process
+// can trust another association.
+export const MEMBER_ASSOCIATIONS = Object.freeze({ has: (association) => association === 'OWNER' || association === 'MEMBER' || association === 'COLLABORATOR' });
 
 // Whether GitHub says the comment's author belongs to the repository. Anyone can comment on a pull request.
 export const isTrustedCommenter = (comment) => MEMBER_ASSOCIATIONS.has(comment?.author_association);

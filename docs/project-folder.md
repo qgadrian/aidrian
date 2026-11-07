@@ -526,6 +526,9 @@ and a new marker in it reports as stray. When `git grep` fails in a checkout, th
 as a `note` row, or in `notes` in the JSON, and still exits 0.
 `aidrian check` warns about each problem, and still passes.
 
+`aidrian decisions residuals` sets a pull request body's accepted residuals against these markers before the body ships
+([Accepted residuals against decisions](review.md#accepted-residuals-against-decisions)).
+
 `aidrian decisions list --added-since <ref>` lists what the branch committed since it left `<ref>`, read from git at the merge base and at `HEAD`:
 `decisions`, `settled`, and `removed` are the branch's; `problems` may also hold rows marked `inherited`.
 A decision counts when no marker at the merge base has its id, whatever its status and however it is indented,

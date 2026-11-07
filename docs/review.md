@@ -470,6 +470,29 @@ owed, the skill's re-check run, then `status` once more. On any other exit the d
 [ready hold](hooks.md#ready-hold) refuses marking it ready while `status` says owed, and the steps are in the skill's
 `references/in-a-flow.md`.
 
+### Accepted residuals against decisions
+
+A `## Accepted residuals` item, or an item of the section config.json `github.pullRequest.residuals.section` names, is a defect
+the branch ships on purpose. Before the body ships, `pr-write` sets each one against the decisions on record:
+`aidrian decisions residuals --body <file>` lists each item beside every decision marker in the indexed docs (id, status, wording,
+doc and line), a marker whose class no list holds included and a `rejected` one left out, since it is no rule, and the
+`## Consequences` lines of each ADR in `docs/adr/`, or the folder `--adr` names, an ADR whose Status starts `Superseded` skipped
+with a note; no `docs/adr/` is an empty list, an `--adr` that is no folder fails, and with no project folder the record is the ADR
+lines alone. It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
+Decisions. That part is deterministic. When the list holds no decision and no ADR line, it ends
+`nothing on record: no judgment owed` and exits 0, `--judged` or not, unless part of the record did not read (an index problem, a
+doc that does not read, a failed git scan): then it prints those problems and exits 1. Otherwise whether a residual contradicts a
+decision is a judgment, so `product-manager` returns one row per residual, `{ residual, contradicts, evidence }`, with
+`contradicts` a decision id or ADR `path:line` from that list, or null, and `evidence` the wording it contradicts.
+`--judged <file>` validates the rows: a residual with no row or two, an item the body holds twice, a `contradicts` that names
+nothing listed or an id two markers hold, or one with no evidence is invalid. The command prints each contradiction as
+`residual -> id, doc:line`, or `residual -> path:line` for an ADR line, and exits 1 on any contradiction or invalid row; 0 when
+every row is null, or when the body has no such section or an empty one. The skill fixes or drops each contradiction and ships
+only on 0. Dropping means the residual leaves the body because the defect no longer ships, or because it is shown to be no defect,
+with one line of why left in the body; deleting the bullet while the defect still ships is never a fix. A decision found out of
+date is revised only through its own route, never reworded on the branch to let a residual pass.
+The review engine is not involved: nothing here changes a round or a verdict.
+
 ### Out of quota
 
 When a reviewer runs out of quota, `codex-local` on this machine or the review bot's usage-limit notice, the step

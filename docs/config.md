@@ -351,6 +351,9 @@ The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr 
 | `sharedTempBodyFile` | `--body-file` in `/tmp`, `/var/tmp`, `/var/folders`, or `$TMPDIR`, such as the host's scratchpad, unless inside the project or its state folder: concurrent sessions overwrite those. |
 | `duplicateBody` | A body identical to another open pull request's. This check runs `gh pr list`, and lets the command run when gh does not answer in 3 s. |
 
+`aidrian decisions residuals` reads `residuals.section` too, to set each residual against the decisions on record
+([Accepted residuals against decisions](review.md#accepted-residuals-against-decisions)).
+
 A title is checked only when the command sets one, so a body-only `gh pr edit` never blocks on a title written before the rule.
 The items of a section are its list items; prose under the heading, and a bullet indented under an item, are not items.
 The first `field:` on an item's own line is its reason, and the reason's first word decides it, so prose may follow it.
@@ -1144,7 +1147,7 @@ The first rule that matches wins:
 - A name of the built-in list is a config error, so a project can neither redefine a class nor lift or remove a floor class.
 - A project class is an ordinary class: the rules below rule 1 apply to it, and `decisions.escalate` may list it.
 - `resolve` and `--vocab` read it from the base branch, so a class the working copy adds counts once it merges.
-  `aidrian decisions list`, `set`, and `undo` read it from the working copy, as they read the docs;
+  `aidrian decisions list`, `set`, `undo`, and `residuals` read it from the working copy, as they read the docs;
   `list --added-since` reads each end's from that commit, so a branch that removes a class owns the problems that makes.
   A class removed later leaves its markers as problems, which `aidrian check` warns about. They still count toward the domain pause.
 

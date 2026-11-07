@@ -61,7 +61,10 @@ crosses them.
 - Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or
   `tests_removed[].accept`, each starting with `aidrian pr signoff`, with its placeholders filled. Hand it over only
   after the same command with `--check` added exits 0 in your shell; `--check` records nothing. Never write a sign-off
-  command of your own. When `--check` refuses, report the refusal instead.
+  command of your own, with one exception: at `human_required` naming one flow, once
+  `aidrian pr signoff <PR> --last --check` exits 0, offer the short form `aidrian pr signoff <PR> --last` in place of
+  the printed command, naming in plain words the flow and short head that `--check` printed.
+  When `--check` refuses, report the refusal instead.
 - `tests_removed[]`: a flow's test was deleted. Restore it, or the Human accepts it with the `accept` command.
 - `checks_failing[]`: a check the flow requires failed or was skipped on the head.
 

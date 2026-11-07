@@ -231,6 +231,23 @@ override is listed in the review summary on the pull request, or only in the loc
 Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
 `gh pr view` names, else origin.
 
+`aidrian pr signoff <PR> --last` is the short form, short enough to type from a phone, with no sha, flow id, or free
+text. It serves one stop only: the last `aidrian pr review` stopped at `human_required` naming one flow. It signs off
+that flow, on the head that review ran on, under the git user's name, exactly as `--flow <id> --head <sha>` does; only
+`--repo` and `--check` combine with it. It reads the pull request's head from GitHub and the last review's record, and
+refuses when:
+
+- no review ran, or the pull request has moved past the reviewed head;
+- the last review stopped at any other status, or the Human took over a stage on that head: an unsigned one with
+  `--stage`; once signed, the flow with its long command;
+- no flow waits, or two or more wait (it lists each with its long command, since the record keeps no order among them);
+- the flow still owes an `--overrule` or an `--accept`, which it never records;
+- the pull request's repository, from `--repo` or else the one `gh pr view` names, is no remote of this checkout (a
+  fork's parent counts once it is a remote, such as `upstream`), or is not the one the record names.
+
+A sign-off the review kept from an older head is not in the record, so `--last` counts that flow as waiting. The
+`review-signoff` rule blocks a session that runs it, `--check` aside, as it blocks the long form.
+
 The command signs only a flow the last `aidrian pr review` on that head asks the Human to sign: one with
 `signoff: "human"`, the built-in `harness-config`, or one whose test the change deletes. It refuses any other flow, and
 a head no review ran on, since such a sign-off would count for nothing. A sign-off never clears a violated invariant.
@@ -282,10 +299,12 @@ A `violated` one has the note `fix the code`; a `disputed` one gives its `--over
 gives the `--accept` command, and as notes the approval to ask for, the review of the head and its
 `aidrian-approve:` line, when the invariant names approvers and both switches are on, and, for a flow a visual
 reviewer judges while the head has no capture, the capture's status line, such as what it needs to run. A session
-offers the Human only these commands, never one of its own making.
+offers the Human only these commands, never one of its own making, with one exception: at `human_required` naming one
+flow, once `aidrian pr signoff <PR> --last --check` exits 0, it hands the Human `aidrian pr signoff <PR> --last` in
+place of the long command, naming the flow and short head that `--check` printed.
 
-**Trying a command first.** `--check` on any `aidrian pr signoff` command, `--flow`, `--overrule`, `--accept`, or
-`--stage`, runs every refusal of that command and records nothing. It prints `ok` and exits 0, or prints the refusal
+**Trying a command first.** `--check` on any `aidrian pr signoff` command, `--flow`, `--overrule`, `--accept`,
+`--stage`, or `--last`, runs every refusal of that command and records nothing. It prints `ok` and exits 0, or prints the refusal
 and exits 1. The `review-signoff` rule lets an agent run it, so a session can check a command before it hands it to
 the Human.
 

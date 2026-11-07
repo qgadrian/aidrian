@@ -248,6 +248,9 @@ designer approved real screenshots while no app runs for the [visual capture](#v
 A GitHub review closes it when its state is `APPROVED`, it was given on exactly the head under review, its author is
 one of the invariant's `approvers` and not the account the session's `gh` token belongs to, and its body holds the line
 `aidrian-approve: <flow>/<invariant>`. A comment is never an approval: only a review carries the commit it approves.
+Only each approver's latest verdict on the head counts, as GitHub's own review decision reads it: a later review that
+requests changes on the head takes the approval back, a comment-only review changes nothing, and the latest
+approval must hold the line itself.
 A push drops the approval, as it drops every sign-off. The path is on only with both switches on: the team's
 `review.approvals.allow: true` on the base branch, and this machine's `"reviewApprovals": "on"` in the git-ignored
 `.aidrian.local.json` ([Config](config.md#review-plan)). With either off, `aidrian pr review` ignores approvals and its

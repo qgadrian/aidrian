@@ -4,6 +4,8 @@
 // when every one of these holds:
 //
 //   - its state is APPROVED, and it was given on that exact commit (`commit_id`), so a push drops it
+//   - it is its author's latest verdict on that commit: a later review that requests changes on the head takes the
+//     approval back, as GitHub's own review decision does; a comment-only review changes nothing
 //   - its author is one of the invariant's approvers, and is not the account the session's forge token belongs to, so
 //     an agent holding that token cannot approve for itself
 //   - its body holds the line `aidrian-approve: <flow>/<invariant>`, so one approval names what it closes
@@ -47,12 +49,20 @@ const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 // session's forge token; with none, nothing counts, since no review can be told apart from the session's own.
 export function matchApprovals(reviews, { head, viewer, flows }) {
   if (!isLogin(viewer) || typeof head !== 'string' || head === '') return [];
-  const out = [];
-  const seen = new Set();
+  // Each author's latest verdict on the head, in the forge's list order, which is the order they were given: an
+  // approval, or a request for changes that takes an earlier approval back.
+  const latest = new Map();
   for (const review of Array.isArray(reviews) ? reviews : []) {
-    if (review?.state !== 'APPROVED' || review.commit_id !== head) continue;
+    if (!['APPROVED', 'CHANGES_REQUESTED'].includes(review?.state) || review.commit_id !== head) continue;
     const login = review.user?.login;
     if (!isLogin(login) || same(login, viewer)) continue;
+    latest.set(login.toLowerCase(), review);
+  }
+  const out = [];
+  const seen = new Set();
+  for (const review of latest.values()) {
+    if (review.state !== 'APPROVED') continue;
+    const login = review.user.login;
     const named = namedIn(review.body);
     for (const flow of flows ?? []) {
       for (const invariant of flow.invariants ?? []) {

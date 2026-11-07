@@ -32,6 +32,16 @@ test('an approval counts only as APPROVED, on the head, by a listed approver who
   assert.deepEqual(match([review(), review({ id: 2 })]), ['look/matches-design@amy-designer'], 'one entry per invariant and approver');
 });
 
+test('an approval counts only while it is its author`s latest verdict on the head', () => {
+  const changes = (more = {}) => review({ id: 9, state: 'CHANGES_REQUESTED', body: 'The spacing is off.', ...more });
+  assert.deepEqual(match([review(), changes()]), [], 'a later request for changes on the head takes the approval back');
+  assert.deepEqual(match([changes(), review()]), ['look/matches-design@amy-designer'], 'an approval after a request for changes counts');
+  assert.deepEqual(match([review(), review({ id: 3, state: 'COMMENTED', body: 'nit' })]), ['look/matches-design@amy-designer'], 'a comment-only review changes nothing');
+  assert.deepEqual(match([review(), changes({ commit_id: 'b'.repeat(40) })]), ['look/matches-design@amy-designer'], 'a verdict on another commit is not one on the head');
+  assert.deepEqual(match([review(), review({ id: 4, body: 'Approved again, no line.' })]), [], 'the latest approval must hold the line itself');
+  assert.deepEqual(match([review(), changes({ user: { login: 'bo-design' } })]), ['look/matches-design@amy-designer'], 'another author`s verdict is their own');
+});
+
 test('flowState: an approved id leaves unverified, never open', () => {
   const ok = () => null;
   const verdicts = [{ invariant: 'a', verdict: 'cannot_verify', evidence: 'x', reviewer: 'r' }, { invariant: 'b', verdict: 'violated', evidence: 'x', reviewer: 'r' }];

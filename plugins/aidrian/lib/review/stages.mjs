@@ -74,8 +74,15 @@ export async function runStages(s) {
         const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
+          // A finding the reviewer returned as already ruled (lib/review/settled.mjs) counts among the findings, never as
+          // open, and stays on the record as `ruled`, which the summary comment lists and the next head reads as settled.
+          // The carried rulings the pass was offered, an anchored residual's among them, stay as `carried` whether or not
+          // it repeated them, so a head with no repeat does not end them.
+          const ruled = Array.isArray(outcome.ruled) ? outcome.ruled : [];
+          const carried = Array.isArray(outcome.carried) ? outcome.carried : [];
           state.passes[pass.id] = {
-            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
+            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: outcome.findings.length + ruled.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
+            ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
           };
           recorded = true;

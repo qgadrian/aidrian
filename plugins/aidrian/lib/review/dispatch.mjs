@@ -6,6 +6,7 @@ import { showPrefix } from '../git.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
 import { blocks } from './findings.mjs';
 import { belowRootBrief, flowBaseBrief, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
+import { recordSettled, residualTexts } from './settled.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
 import { inBaseWorktree, runHook } from './base-worktree.mjs';
@@ -50,9 +51,11 @@ export async function captureAndAttach(s) {
   state.visual = { head, status: manifest.status, mode, visibility, captured: manifest.entries.filter((entry) => entry.sha256).length, of: manifest.entries.length, ...(manifest.reason ? { reason: manifest.reason } : {}), ...(uploadError ? { error: uploadError } : {}) };
 }
 
-// The input every reviewer of a pass reads.
+// The input every reviewer of a pass reads. An exec pass also reads what is settled (lib/review/settled.mjs): the
+// record's accepted findings, its own last rulings, and the raised findings a residual names among `priorFindings`, and
+// the pull request body's accepted residuals as `acceptedResiduals`, so it does not re-raise them.
 export function passInput(s, pass, stage) {
-  const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
+  const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual, map, info } = s;
   const recorded = state.passes[pass.id];
   const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
   const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
@@ -76,10 +79,13 @@ export function passInput(s, pass, stage) {
     } : {}),
   } : {};
   const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
+  const residuals = map?.[pass.reviewer]?.kind === 'exec' ? residualTexts(info?.body, config.github.pullRequest?.residuals?.section) : null;
   return {
     ...split,
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
-    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(state, pass)],
+    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows,
+    priorFindings: [...(prior?.list ?? []), ...keptFindings(state, pass), ...(residuals ? recordSettled(state, prior, residuals) : [])],
+    ...(residuals ? { acceptedResiduals: residuals } : {}),
     ...(scope ? { remerge: head } : {}),
     // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
     // judged on the delta, a narrowing an earlier push made reads as a weakening, and a new head hides a violation.

@@ -422,6 +422,7 @@ The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr 
 
 `aidrian decisions residuals` reads `residuals.section` too, to set each residual against the decisions on record
 ([Accepted residuals against decisions](review.md#accepted-residuals-against-decisions)).
+The review step reads it as well, and gives its items to exec reviewers as settled residuals ([Reviewers](review.md#reviewers)).
 
 A title is checked only when the command sets one, so a body-only `gh pr edit` never blocks on a title written before the rule.
 The items of a section are its list items; prose under the heading, and a bullet indented under an item, are not items.

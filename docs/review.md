@@ -467,10 +467,54 @@ A project adds its own in `review.reviewers`:
 }
 ```
 
-- `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`) and prints
-  `{ "findings": [{ file, line, title, body, severity }], "verdicts": [...] }`. It runs with no session, override, or
-  git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL. Output that does not parse is a failure, never a pass;
-  malformed findings are dropped and named. A failure is `incomplete` and retried; the third is `stuck`.
+- `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`,
+  `acceptedResiduals`) and prints `{ "findings": [{ file, line, title, body, severity, already_ruled }], "verdicts": [...] }`;
+  a finding keeps only those keys, and `already_ruled` may be left out. It runs with no session, override, or
+  git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL.
+  Output that does not parse is a failure, never a pass; malformed findings are dropped and named.
+  A failure is `incomplete` and retried; the third is `stuck`.
+- Settled findings: an exec pass's `priorFindings` add every finding the record holds as accepted that no longer
+  blocks, with the pass that accepted it as `settled_by`, and the pass's own last rulings on such a finding; only an
+  entry with a file and a severity the disposition table knows can settle a repeat. `acceptedResiduals` holds the items
+  of the pull request body's accepted residuals section (`github.pullRequest.residuals.section`, at most 20, 300
+  characters each). A finding that repeats one sets `already_ruled` to that entry's title, or the residual's text,
+  verbatim; any other finding sets it empty. A prior entry settles only a finding in its own file at its severity or
+  lower, and never above `medium`: a `high` or `critical` repeat is weighed again. A residual settles only a `low`
+  finding, unless it is anchored (below), and a prior entry of the same title takes precedence over it. A repeat that
+  passes goes on the pass record as `ruled` (title, file, line, severity, `already_ruled`, `from`: `prior` or `residual`,
+  and for a prior entry `settled_severity`, its severity, and `settled_by` when known; for an anchored residual
+  `settled_severity` and `residual`, its text), counts among the findings but never as open, and the
+  summary comment lists each pass's waived count and titles, each with who settled it, every reviewer-supplied text as
+  inline code, so none renders as a link, an image, or emphasis. One that fails stays a new, blocking finding, named in
+  the pass's `dropped` notes. An accepted entry settles only while no pass lists a finding of that title in that file
+  that is fixed, open, or otherwise blocking. A ruling on a prior entry carries to later heads at `settled_severity`:
+  the pass record keeps the carried rulings its input offered as `carried`, shaped like `ruled`, whether or not the
+  pass repeated them, so a ruling holds after the entry leaves the record and across a head with no repeat. A carried
+  ruling holds only while no pass lists a finding of that title in that file, in any state: a listed one governs
+  instead, at its own severity when it is accepted. A ruling on a residual that names no raised finding is not carried.
+  On the `--findings-file` path a repeat whose own disposition is `fix_now`, or any other that cannot be accepted, keeps
+  no `already_ruled` and stays open; `aidrian pr attest` passes no settled list yet, so there every `already_ruled` is
+  left out and the finding read as it stands.
+- Anchored residuals: a residual settles a repeat up to `medium` only when it names a finding a reviewer raised on this
+  pull request's review record, in that finding's file and no more severe than it, and never above `medium`, even when
+  the raised finding is `high`. Anything else stays capped at `low`. This takes no step of its own: no documented step
+  makes an exec reviewer's finding accepted on the record, since it reaches the record with no state,
+  `aidrian pr disposition` only classifies, and the `accepted_residual` route ends in the body. The body's line naming the
+  finding is what settles it.
+  - It names one when the residual's text is the finding's title, exactly, alone or before a colon: `<title>: <why>`,
+    the line the [body template](../plugins/aidrian/skills/pr-write/references/body-template.md) writes, with the title copied as the
+    finding gives it. A near copy (another case, markup around the title, other punctuation) names nothing and stays at `low`.
+    The longest matching title wins. A line that opens with two titles names neither: each takes its own line. One title
+    raised in two files is named in both, each settling its own file. A finding only the body mentions is not raised.
+  - The input offers each as a `priorFindings` entry with its `residual`: `state` accepted, the raised finding's title,
+    file, and severity. A repeat sets `already_ruled` to that title or to the residual's text; `ruled` records the title
+    either way. Once anchored, the residual's text settles nothing in another file, even a `low` repeat.
+  - A waived repeat leaves the pass's `list`, so the pass record keeps every offered anchor as `carried`, `from` residual,
+    whether or not the pass repeated it. A raised finding is one a pass lists now, or, when no pass lists that title in
+    that file, one any pass record keeps in `carried`. The anchor holds across a head with no repeat.
+  - It ends on the next head the pass runs when the body no longer names the finding, or when any pass lists that title in
+    that file with a `state` that is fixed or blocks. Only a `state` can end it: an exec reviewer's finding has none, so
+    it is the anchor, not a reopening of itself. A listing that neither is fixed nor blocks governs at its own severity.
 - A project's own exec reviewer runs from a temporary checkout of the base, like the plan command, and reads the head
   through git: a pull request that edits its script cannot run its own version, and the edit triggers
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
@@ -582,7 +626,9 @@ every row is null, or when the body has no such section or an empty one. The ski
 only on 0. Dropping means the residual leaves the body because the defect no longer ships, or because it is shown to be no defect,
 with one line of why left in the body; deleting the bullet while the defect still ships is never a fix. A decision found out of
 date is revised only through its own route, never reworded on the branch to let a residual pass.
-The review engine is not involved: nothing here changes a round or a verdict.
+The decisions check changes no round or verdict. The review step reads the same items as settled residuals: for an exec
+reviewer's repeat, one waives a `low` repeat, or, when it names a finding raised on the review record, a repeat up to that
+finding's severity and `medium`, in that finding's file ([Reviewers](#reviewers)).
 
 ### Out of quota
 

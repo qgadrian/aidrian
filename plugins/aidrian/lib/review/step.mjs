@@ -224,7 +224,8 @@ export async function prepareStep(s) {
     if (!deltaCache.has(from)) deltaCache.set(from, sinceFor(from));
     return deltaCache.get(from);
   };
-  // Whether the change since `from` is quiet (quietChange). A merge from the base branch is not.
+  // Whether the change since `from` is quiet (quietChange). A merge scoped to its own changes (`scope`) is not; any
+  // other merge is judged by its change, as a push is.
   const quietCache = new Map();
   const quietSince = (from) => {
     if (!quietCache.has(from)) {
@@ -304,10 +305,17 @@ export async function prepareStep(s) {
   // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
   // The checks measure a round from the head it first reviewed, so what a quiet push added is that round's fix, never
   // part of what the pull request first changed. The rounds they read back stand on the head each moved to: that is
-  // the head the round reviewed, which says whether the head at the cap is one no round reviewed.
+  // the head the round reviewed, which says whether the head at the cap is one no round reviewed. A fix no round
+  // reviewed is sized from that same head: the last round's `reviewed_fix`, kept non-enumerable so the signals and the
+  // judge's history carry only the first-head `fix`.
   const planHistory = () => {
     const read = buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.quiet?.[0]?.from ?? round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
-    return { ...read, rounds: read.rounds.map((round, i) => ({ ...round, head: state.rounds[i].head })) };
+    const rounds = read.rounds.map((round, i) => ({ ...round, head: state.rounds[i].head }));
+    const last = state.rounds.at(-1);
+    if (last?.quiet?.length && !sameCommit(last.head, head)) {
+      Object.defineProperty(rounds.at(-1), 'reviewed_fix', { value: buildHistory({ root, rounds: [{ head: last.head }], baseTip, head, review }).rounds[0].fix });
+    }
+    return { ...read, rounds };
   };
   const extensionLog = extensionLogger(project, config, { pr: n, repo, env });
   if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });

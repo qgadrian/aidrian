@@ -1446,6 +1446,17 @@ test('extra rounds: a round is measured from its first head, so what a quiet pus
   const loud = r.commit('a fix no round reviewed');
   const past = await r.step({ exec: seen.exec });
   assert.deepEqual([past.extension.unreviewed_head?.head, past.extension.unreviewed_head?.from], [loud, lastQuiet], 'it names the head the last round reviewed');
+  assert.deepEqual(past.extension.unreviewed_head.fix, { added: 1, removed: 0, files: ['src/app.js'], code_added: 1 }, 'its fix is that push alone, not what the quiet push before it added');
+  assert.equal(past.extension.history.at(-1).fix.added, 21, 'the signals still measure the round from its first head');
+  assert.equal(past.extension.signals.evidence.bloating.fix_added, 171);
+  assert.equal(JSON.stringify(past.extension.history).includes('reviewed_fix'), false, 'the judge reads one fix per round');
+
+  r.write('src/app.js', lines(10, 'first') + lines(50, 'fix'));
+  r.write('test/app.test.js', lines(100, 'check'));
+  r.commit('drop what the last quiet push added');
+  const undone = await r.step({ exec: seen.exec });
+  assert.deepEqual(undone.extension.unreviewed_head.fix, { added: 0, removed: 20, files: ['test/app.test.js'], code_added: 0 }, 'a push that deletes reviewed lines is no empty fix');
+  assert.equal(undone.extension.history.at(-1).fix.added, 0, 'against the first head it reads as nothing');
 });
 
 test('extra rounds: a grant whose round has not opened goes back to the judge when the next head raises a red flag', async (t) => {

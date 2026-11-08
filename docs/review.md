@@ -520,11 +520,13 @@ in it is one of:
   constraint such as `//go:build`, a compiler reference, or an interpreter line.
 
 Never quiet: a deleted file, prose included; a code file with no changed lines (a binary or a mode change) or with an
-extension the table in `lib/review/diff.mjs` does not know; a test that lost a line; a merge from the base branch; and
-any change to a file that decides how the project is reviewed (the config, or a file the plan command, a visual hook,
+extension the table in `lib/review/diff.mjs` does not know; a test that lost a line; a merge from the base branch
+after a `received` outcome, whose clean form carries the review and dispatches no reviewer, and whose own changes open
+a round; and any change to a file that decides how the project is reviewed (the config, or a file the plan command, a visual hook,
 or a reviewer command names), to a flow's invariants doc or a doc an invariant cites, or that selects a flow by itself:
 a changed file in its `files` that is not prose or ignored (a doc there selects no flow), an added line, prose
-included, that matches its `added`, or a file its `content` selects.
+included, that matches its `added`, or a file its `content` selects. Any other merge, such as one from the base after
+`fix_required` or one from another branch, is judged by its change like a push: one that brings only docs is quiet.
 
 A quiet push is still reviewed: every pass it touches, a pass of all files included, re-reviews the change in `delta`
 context, as after any push. Quiet decides only whether the push counts against the round cap; it never decides whether
@@ -689,7 +691,8 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
      bloat, since rewording a doc across rounds is normal review work. A docs-only pull request never bloats.
 
    Drifting and bloating measure a round from the head it first reviewed, so what a [quiet push](#rounds) added is that
-   round's fix, and a file it added is not one the pull request first changed.
+   round's fix, and a file it added is not one the pull request first changed. The history's `fix` is measured the same
+   way; only `unreviewed_head.fix` starts from the head the last round moved to.
 
    A signal the history cannot read, such as looping when the reviewers recorded counts and no findings, is unknown,
    not red. A history with no readable signal is a red flag.
@@ -715,7 +718,7 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
 round for it, and `aidrian pr await-review --request` reaches its cap only on a head the bot has not reviewed. Against
 the new code, the last round's findings read as fixed, so the question changes. When the last round of the history
 is on another head, `extension.unreviewed_head` carries `{ head, from, fix }`: the head, the last round's head, and
-the fix between them. The judge then decides whether the last round's findings were valid and at least medium, read at
+the fix between them, that push's own size even after a quiet push moved the round. The judge then decides whether the last round's findings were valid and at least medium, read at
 `from`, and the fix is small and answers them; `extend` means "review this fix". The red flags and
 `github.maxExtraRounds` still bound it, and nothing grants a round by itself. Under `"ask"` the `question` names the
 fix head, and keeps `#<PR>` and `round <N>` as the only pull request and round it names. When the cap still stands,

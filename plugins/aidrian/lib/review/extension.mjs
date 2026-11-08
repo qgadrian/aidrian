@@ -300,7 +300,7 @@ function noteUnreviewed(entry, last, head) {
     return null;
   }
   entry.unreviewed = { head, from: last.head };
-  return { head, from: last.head, fix: last.fix ?? null };
+  return { head, from: last.head, fix: last.reviewed_fix ?? last.fix ?? null };
 }
 
 const trimRound = (round) => ({

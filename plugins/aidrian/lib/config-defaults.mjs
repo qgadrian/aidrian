@@ -41,8 +41,11 @@ export const DEFAULTS = deepFreeze({
     reviewGate: { enabled: false, checklist: null },
     // The team's ceiling on auto-merge: no machine merges a pull request unless `allow` is true. `strategy: null` leaves
     // the choice to pr-merge-when-green's order: squash, then merge, then rebase, among those the repository allows.
-    // A machine opts in under it from the local file (resolveAutoMerge).
-    autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false },
+    // A machine opts in under it from the local file (resolveAutoMerge). `includeGuardedPaths` lets a pull request that
+    // changes a guarded path (project.mjs GUARDED_PATHS) through the paths gate, but never one of the files the gate
+    // reads its policy from, including a folder the pointer file names; the team accepts that risk on both branches
+    // (pr-auto-merge.mjs).
+    autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false },
     // The team's ceiling on a recorded judge verdict standing in for the Human's "Merge anyway" at the merge guard
     // (lib/review/waiver.mjs). A machine opts in under it from the local file (resolveUnattendedWaiver); no team default.
     unattendedWaiver: { allow: false },

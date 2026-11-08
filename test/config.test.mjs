@@ -111,20 +111,21 @@ test('github.reviewLoop: "auto" by default, so the review loop starts after pr-w
 });
 
 test('github.autoMerge: the team ceiling is off by default, with no strategy and no cleanup', () => {
-  assert.deepEqual(DEFAULTS.github.autoMerge, { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false });
+  assert.deepEqual(DEFAULTS.github.autoMerge, { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false });
   assert.deepEqual(resolveAutoMerge(DEFAULTS.github, 'off'), { effective: false, reason: 'team' });
 });
 
 test('github.autoMerge: strategy is null, "squash", "merge", or "rebase"; a team sets any key of the group', (t) => {
   for (const strategy of [null, 'squash', 'merge', 'rebase']) {
     const { config, errors } = loadConfig(project(t, { version: 1, github: { autoMerge: { allow: true, strategy } } }));
-    assert.deepEqual([errors, config.github.autoMerge], [[], { allow: true, default: 'off', strategy, deleteBranch: false, deleteWorktree: false }]);
+    assert.deepEqual([errors, config.github.autoMerge], [[], { allow: true, default: 'off', strategy, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false }]);
   }
-  const bad = loadConfig(project(t, { version: 1, github: { autoMerge: { strategy: 'fast-forward', deleteBranch: 'yes', when: 'green' } } }));
+  const bad = loadConfig(project(t, { version: 1, github: { autoMerge: { strategy: 'fast-forward', deleteBranch: 'yes', when: 'green', includeGuardedPaths: 'yes' } } }));
   assert.deepEqual(bad.errors, [
     '.aidrian/config.json: unknown key "github.autoMerge.when"',
     '.aidrian/config.json: "github.autoMerge.strategy" must be null, "squash", "merge", or "rebase"',
     '.aidrian/config.json: "github.autoMerge.deleteBranch" must be true or false',
+    '.aidrian/config.json: "github.autoMerge.includeGuardedPaths" must be true or false',
   ]);
   assert.deepEqual(bad.config.github.autoMerge, DEFAULTS.github.autoMerge);
 });

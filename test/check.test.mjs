@@ -108,6 +108,9 @@ test('check passes on a config without tracker, and names the key of each tracke
     const { status, stdout, stderr } = check({ tracker });
     assert.deepEqual([status, stdout, stderr], [1, '', `.aidrian/config.json: ${problem}\n`], JSON.stringify(tracker));
   }
+  const guarded = check({ github: { autoMerge: { includeGuardedPaths: 'yes' } } });
+  assert.equal(guarded.status, 1);
+  assert.match(guarded.stderr, /"github\.autoMerge\.includeGuardedPaths" must be true or false/u);
 });
 
 test('check flags each write tool no read can clear, and only while the read rule applies', (t) => {

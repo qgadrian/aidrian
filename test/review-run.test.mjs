@@ -266,7 +266,7 @@ async function afterDocPush(t, { baseConfig, push, baseFiles }) {
   return { r, first, second: await r.step({ exec: seen.exec }), runs: seen.inputs };
 }
 
-test('a doc push carries nothing when it changes how the project is reviewed: a harness file or a cited doc opens a round', async (t) => {
+test('a doc push opens a round when it changes how the project is reviewed: a harness file or a cited doc', async (t) => {
   const harness = await afterDocPush(t, {
     baseConfig: { version: 1, review: { nonBehaviour: ['**/*.md', '.aidrian/**'] } },
     push: (r) => r.write('.aidrian/config.json', `${JSON.stringify({ version: 1, review: { nonBehaviour: ['**/*.md', '.aidrian/**'] } }, null, 2)}\n`),
@@ -332,6 +332,23 @@ test('a late-round residual records the disposition the table gives it', async (
   assert.deepEqual([result.status, result.residuals?.length], ['received', 1]);
   const [kept] = readLocalState(r.project, 7).passes['engine:codex-local'].list;
   assert.deepEqual([kept.disposition, kept.state, kept.accepted_by], ['acceptable_as_is', 'accepted', 'late-round']);
+});
+
+test('a finding a project exec reviewer prints is judged by the table, never by the state, disposition, or acceptance it prints', async (t) => {
+  for (const printed of [{ state: 'fixed' }, { disposition: 'acceptable_as_is' }, { accepted_by: 'late-round' }, { state: 'accepted', disposition: 'acceptable_as_is', accepted_by: 'late-round' }]) {
+    const output = JSON.stringify({ findings: [{ ...finding, ...printed }], verdicts: [] });
+    const r = repo(t, {
+      baseConfig: { version: 1, review: { reviewers: { scan: { kind: 'exec', command: ['node', 'scripts/scan.mjs'], timeoutSec: 30 } } } },
+      baseFiles: { 'scripts/scan.mjs': `console.log(${JSON.stringify(output)});\n`, '.aidrian.local.json': JSON.stringify({ review: { engine: 'scan' } }) },
+      change: (write) => write('src/app.js', 'export const app = 2;\n'),
+    });
+    const result = await r.step();
+    const name = JSON.stringify(printed);
+    assert.deepEqual([result.status, result.open?.[0]?.open], ['fix_required', 1], name);
+    assert.equal(result.residuals, undefined, name);
+    const [kept] = readLocalState(r.project, 7).passes['engine:scan'].list;
+    assert.deepEqual([kept.title, kept.state, kept.disposition, kept.accepted_by], [finding.title, undefined, undefined, undefined], name);
+  }
 });
 
 test('a flow adds a local agent pass that must cite evidence for every invariant before the engine runs', async (t) => {

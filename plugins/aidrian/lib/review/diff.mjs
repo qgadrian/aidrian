@@ -83,8 +83,8 @@ function parseUnified(text) {
 }
 
 // A quiet delta: a change that touches only prose, tests, or code comments, which the review step lets keep its round
-// (lib/review/run.mjs). Every rule errs toward loud, as it reads lines without their context. These rules decide only
-// round accounting: a pass the change touches still re-reviews it (run.mjs resultFor), so a miss here costs one round
+// (lib/review/stages.mjs). Every rule errs toward loud, as it reads lines without their context. These rules decide only
+// round accounting: a pass the change touches still re-reviews it (step.mjs resultFor), so a miss here costs one round
 // of cap, never a review. The table grows when a project asks for a language, and is never kept complete.
 //
 // The comment syntax of each code extension: `line`, the markers a comment line starts with; `block`, the block comment

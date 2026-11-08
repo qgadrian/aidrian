@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { blocks, parseFindings } from '../plugins/aidrian/lib/review/findings.mjs';
+import { blocks, parseFindings, settledMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { settledEntries } from '../plugins/aidrian/lib/review/settled.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/run.mjs';
@@ -250,6 +250,25 @@ test('stderrTail: the last lines, not only the runtime version, with tokens mask
   assert.match(tail, /Node\.js v24\.1\.0$/u);
   assert.doesNotMatch(tail, /ghp_/u);
   assert.ok(stderrTail('x'.repeat(5000)).length <= 803);
+});
+
+test('an exec reviewer\'s title is one line, capped', () => {
+  const titles = (...list) => cleanOutput({ findings: list.map((title) => ({ file: 'a.js', line: 1, title, severity: 'low' })), verdicts: [] }).findings.map((each) => each.title);
+  assert.deepEqual(titles('Nit\n- Other title: why', '  a\r\n\r\n  b\u2028c\u2029d  ', 'two  spaces stay'), ['Nit - Other title: why', 'a b c d', 'two  spaces stay']);
+  const long = 'x'.repeat(250);
+  const [capped] = titles(long);
+  assert.equal(capped.length, 200);
+  // settledMatch reads `already_ruled` as printed, so a capped title neither stops nor starts a match on a real entry.
+  const entry = { title: capped, file: 'a.js', severity: 'medium' };
+  const repeat = { file: 'a.js', severity: 'low' };
+  assert.equal(settledMatch(repeat, capped, [entry]).entry, entry, 'a repeat naming the title it reads matches');
+  assert.equal(settledMatch(repeat, long, [entry]).entry, null, 'the uncapped text does not newly match');
+  const recorded = { title: long, file: 'a.js', severity: 'medium' };
+  assert.equal(settledMatch(repeat, long, [recorded]).entry, recorded, 'an entry already on a record keeps matching');
+  const [oneLine] = titles('Nit\nmore');
+  assert.equal(settledMatch(repeat, oneLine, [{ ...entry, title: oneLine }]).entry?.title, 'Nit more');
+  assert.equal(settledMatch(repeat, 'Nit\nmore', [{ ...entry, title: oneLine }]).entry, null);
+  assert.equal(cleanOutput({ findings: [{ file: 'a.js', line: 1, title: 't', severity: 'low', already_ruled: long }], verdicts: [] }).findings[0].already_ruled, long, 'already_ruled is not a title: it stays as printed');
 });
 
 test('cleanOutput: a finding keeps only the schema\'s keys, and a missing body or already_ruled stays missing', () => {

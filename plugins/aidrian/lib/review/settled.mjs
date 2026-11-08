@@ -129,8 +129,59 @@ export function residualTexts(body, section) {
 // The same finding's key across passes: its title and its file.
 export const where = (finding) => JSON.stringify([trim(finding.title), trim(finding.file)]);
 
-// What one pass record holds as rulings: those it made (`ruled`) and those it was offered (`carried`).
-const rulingsOf = (result) => ['ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : []));
+// What one pass record holds: the rulings it made (`ruled`) and those it was offered (`carried`), an ended waiver among them.
+const onRecord = (result) => ['ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : []));
+// The rulings that still count as rulings: an ended waiver only holds the merge, so it settles, anchors, and shadows nothing.
+const rulingsOf = (result) => onRecord(result).filter((each) => !each?.ended);
+const everyEntry = (state) => Object.values(state?.passes ?? {}).flatMap(onRecord);
+
+const aboveLow = (word) => severityOf(word) !== 'low';
+// A waiver above low: an entry with a residual whose severity or cap is above low. An unknown word counts as above, so a
+// record this cannot weigh waits for the Human too.
+const waiverAboveLow = (each) => Boolean(each?.residual) && (aboveLow(each.severity) || ('settled_severity' in each && aboveLow(each.settled_severity)));
+// The finding a waiver names, however the reviewer worded its repeat.
+const waiverKey = (each) => where({ title: each.already_ruled ?? each.title, file: each.file });
+// The title and file of every finding a pass lists as fixed. Only `aidrian pr attest` writes that state: the step strips
+// it from an exec reviewer's output.
+const fixedListings = (state) => new Set(Object.values(state?.passes ?? {}).flatMap((result) => (Array.isArray(result?.list) ? result.list : []))
+  .filter((finding) => isObject(finding) && finding.state === 'fixed').map(where));
+
+// The waiver above low that holds auto-merge, or null: the first any pass record holds, on any head, ended or standing, but
+// an ended one only until a listing holds its title and file as fixed.
+export function heldWaiver(state) {
+  const fixed = fixedListings(state);
+  return everyEntry(state).find((each) => waiverAboveLow(each) && !(each.ended && fixed.has(waiverKey(each)))) ?? null;
+}
+
+// One entry for each finding a waiver above low on any pass record names, except what `offered` still holds above low and
+// what a listing holds as fixed. A lower anchor of that finding does not count as offered. Read from every record, so a
+// slice a repack deletes leaves its waivers on the passes that ran.
+function unofferedWaivers(state, offered) {
+  const fixed = fixedListings(state);
+  const seen = new Set(offered.filter(waiverAboveLow).map(waiverKey));
+  return everyEntry(state).filter(waiverAboveLow).filter((each) => {
+    const key = waiverKey(each);
+    if (fixed.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// A re-run pass's `carried`: what its input offered (offeredCarried), then, marked `ended`, each waiver above low it neither
+// ruled on nor was offered (unofferedWaivers), so the hold outlives the anchor (heldWaiver). An ended entry keeps no
+// `accepted_by`: nothing lists it as a late-round row.
+export function withEndedWaivers(state, ruled, carried) {
+  const ended = unofferedWaivers(state, [...ruled, ...carried]);
+  return [...carried, ...ended.map(({ accepted_by: _acceptedBy, settled_by: _settledBy, ...entry }) => ({ ...entry, ended: true }))];
+}
+
+// The waivers above low that this pass's input no longer offers, as context copies, so a reviewer weighs each again: title,
+// file, line, and the severity it was waived at, with nothing on them that settles (settledEntries, offeredCarried).
+function endedContext(state, anchored) {
+  return unofferedWaivers(state, anchored).map(({ title, already_ruled: name, file, line, severity, settled_severity: cap }) => ({
+    title: trim(name ?? title), file, ...(line ? { line } : {}), severity: severityOf(cap) ?? severity,
+  }));
+}
 
 // The accepted entries an anchored residual gives: one per raised finding it names (namedBy), at that finding's severity,
 // marked `residual` and `carried`. A raised finding is one a pass lists now or, while no pass lists that title in that
@@ -144,7 +195,9 @@ const rulingsOf = (result) => ['ruled', 'carried'].flatMap((key) => (Array.isArr
 // blocking, and only while it is listed: a reviewer cannot print one (cleanOutput keeps no such key), and the state the
 // late-round rule sets is accepted, which neither is fixed nor blocks, so a reviewer's finding is the anchor, never a
 // reopening of itself. A low ruling on a residual naming nothing is not an anchor: an entry with `from` residual counts only
-// with its `residual`, and the body's item must name it again on each head, so dropping the item ends the waiver.
+// with its `residual`, and the body's item must name it again on each head, so dropping the item ends the waiver. An ended
+// waiver is no kept entry (rulingsOf): shadowing a round entry could only keep a line's cap below what that entry holds, and
+// a line back on an ended waiver anchors on what a listing or a round entry holds, or stays at low.
 function anchoredResiduals(state, listed, residuals) {
   const findings = listed.map(({ finding }) => finding);
   const ended = new Set(findings.filter((finding) => FINDING_STATES.includes(finding.state) && (finding.state === 'fixed' || blocks(finding))).map(where));
@@ -175,7 +228,8 @@ function anchoredResiduals(state, listed, residuals) {
 // absent: while any pass lists a finding of that title in that file, in any state, that finding governs (accepted at its
 // severity now, or not at all). A finding ruled on a residual is not carried: the residual settles it again while the
 // body lists it, and stops when the body drops it. At most MAX_SETTLED, each title, file, and severity once, an anchored
-// residual apart (anchoredResiduals, last).
+// residual apart (anchoredResiduals, after them): the cut takes only the accepted and carried entries, never an anchor.
+// After them, outside the cap, the waivers above low no longer offered, as context copies (endedContext), which settle nothing.
 export function recordSettled(state, prior, residuals = []) {
   const listed = Object.entries(state?.passes ?? {}).flatMap(([id, result]) => (Array.isArray(result?.list) ? result.list : [])
     .filter(isObject).map((finding) => ({ id, finding })));
@@ -192,12 +246,15 @@ export function recordSettled(state, prior, residuals = []) {
     }))
     .filter((finding) => !present.has(where(finding)));
   const seen = new Set();
-  return [...accepted, ...carried, ...anchoredResiduals(state, listed, residuals)].filter((finding) => {
+  const once = [...accepted, ...carried, ...anchoredResiduals(state, listed, residuals)].filter((finding) => {
     const key = JSON.stringify([trim(finding.title), trim(finding.file), severityOf(finding.severity), Boolean(finding.residual)]);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).slice(0, MAX_SETTLED);
+  });
+  const anchored = once.filter((finding) => finding.residual);
+  const room = Math.max(0, MAX_SETTLED - anchored.length);
+  return [...once.filter((finding) => !finding.residual).slice(0, room), ...anchored, ...endedContext(state, anchored)];
 }
 
 // The carried rulings an exec pass was offered among its priorFindings (recordSettled marks each `carried`), as `ruled`
@@ -243,11 +300,11 @@ function passLine(id, result, what, entries, describe) {
 // The summary comment's lines on what each exec pass waived: a blank line, the heading, then per pass one line with the
 // count and titles of its repeats waived as already ruled (`ruled`), each with its severity, what it repeats, and who
 // settled that, and one with the accepted residuals it holds as standing (`carried` entries with a `residual`), written
-// on each head whether or not the reviewer repeated them; nothing when no pass holds either.
+// on each head whether or not the reviewer repeated them, an ended one not among them; nothing when no pass holds either.
 export function ruledLines(state) {
   const lines = Object.entries(state?.passes ?? {}).flatMap(([id, result]) => {
     const ruled = Array.isArray(result?.ruled) ? result.ruled : [];
-    const standing = (Array.isArray(result?.carried) ? result.carried : []).filter((each) => trim(each?.residual));
+    const standing = (Array.isArray(result?.carried) ? result.carried : []).filter((each) => trim(each?.residual) && !each.ended);
     return [
       ...(ruled.length ? [passLine(id, result, 'waived as already ruled, never counted open', ruled, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}repeats ${code(each?.already_ruled)}, ${settledBy(each)})`)] : []),
       ...(standing.length ? [passLine(id, result, 'standing on an accepted residual', standing, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}${settledBy(each)})`)] : []),

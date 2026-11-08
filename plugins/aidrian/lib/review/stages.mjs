@@ -8,6 +8,7 @@ import { computeVerdict } from '../pr-checks.mjs';
 import { lateRoundResidual } from '../finding-disposition.mjs';
 import { isClean, resolve } from './diff.mjs';
 import { blocks } from './findings.mjs';
+import { withEndedWaivers } from './settled.mjs';
 import { dedupe } from './split.mjs';
 import { approveLine } from './approvals.mjs';
 import * as quota from './quota.mjs';
@@ -106,9 +107,10 @@ export async function runStages(s) {
           // A finding the reviewer returned as already ruled (lib/review/settled.mjs) counts among the findings, never as
           // open, and stays on the record as `ruled`, which the summary comment lists and the next head reads as settled.
           // The carried rulings the pass was offered, an anchored residual's among them, stay as `carried` whether or not
-          // it repeated them, so a head with no repeat does not end them.
+          // it repeated them, so a head with no repeat does not end them. A waiver above low it was no longer offered stays
+          // there too, marked ended, so the hold on auto-merge outlives the anchor.
           const ruled = Array.isArray(outcome.ruled) ? outcome.ruled : [];
-          const carried = Array.isArray(outcome.carried) ? outcome.carried : [];
+          const carried = withEndedWaivers(state, ruled, Array.isArray(outcome.carried) ? outcome.carried : []);
           state.passes[pass.id] = {
             head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),

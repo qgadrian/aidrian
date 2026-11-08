@@ -511,6 +511,11 @@ A project adds its own in `review.reviewers`:
   with no standing here, or an answer that cannot be read) passes no `acceptedResiduals`, so its body's lines waive nothing
   and anchor nothing. While any pass record holds such a waiver above `low`, as `ruled` or `carried`, on any head,
   `aidrian pr auto-merge` refuses, naming the residual, and the merge waits for the Human.
+  - The hold outlives the line. A pass that re-runs and is no longer offered a waiver above `low`, whatever ended the
+    anchor, keeps it in `carried`, marked `ended`, as one entry for that title and file. It ends only when a listing holds
+    that title and file as `fixed`, and a reviewer cannot print that state, so on an exec-only review the merge waits for
+    the Human. An ended entry settles nothing and anchors nothing, and the summary comment does not call it standing. The
+    pass input gives it among `priorFindings` as a context copy with nothing that settles, so a reviewer weighs it again.
   - It names one when the residual's text opens with the finding's exact title, a colon, and a reason: `<title>: <why>`,
     the shape the [body template](../plugins/aidrian/skills/pr-write/references/body-template.md) gives a residual line,
     the title copied as the finding gives it. A title alone, or a near copy (another case, markup around the title,
@@ -523,14 +528,14 @@ A project adds its own in `review.reviewers`:
     either way. Once anchored, the residual's text settles nothing in another file, even a `low` repeat.
   - A waived repeat leaves the pass's `list`, so the pass record keeps every offered anchor as `carried`, `from` residual,
     whether or not the pass repeated it. A raised finding is one a pass lists now, or, when no pass lists that title in
-    that file, one any pass record holds as an anchor or as a ruling on a prior finding, in `ruled` or `carried`, or,
-    when none holds it either, one any round entry holds, so a slice record that a repack deleted leaves the anchor
+    that file, one any pass record holds as an anchor or as a ruling on a prior finding, in `ruled` or `carried`, not
+    marked `ended`, or, when none holds it either, one any round entry holds, so a slice record that a repack deleted leaves the anchor
     standing. What a pass record holds governs over a round entry of its title and file, so an earlier round's more severe
     entry raises no cap on the line, whether a less severe finding has the line already or only a ruling. A repack keeps
     the anchor but can lose its low cap: once no record holds the low, the round entry's severity governs, and so it does
     for a late low that left the record with no ruling and no line. The anchor holds across a head with no repeat.
   - A body edit takes effect on the next head a pass runs: a pass that already has a result on this head does not run
-    again for it. The anchor ends then when the body no longer names the finding. A fix or a blocking listing ends the
+    again for it. The anchor ends then when the body no longer names the finding, and its hold on auto-merge stays. A fix or a blocking listing ends the
     anchor while that listing stands: any pass listing that title in that file with a `state` that is fixed or blocks. Only
     a `state` that is fixed or blocks can end it, and a reviewer cannot print one, so its own finding is the anchor, not a
     reopening of itself. A listing that neither is fixed nor blocks governs at its own severity.

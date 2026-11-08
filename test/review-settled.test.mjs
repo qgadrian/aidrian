@@ -11,7 +11,8 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { passInput } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { lateResiduals, recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
-import { contextFindings, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled } from '../plugins/aidrian/lib/review/settled.mjs';
+import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { contextFindings, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const body = (items, section = 'Accepted residuals') => `## Summary\n\nWhy.\n\n## ${section}\n\n${items.map((item) => `- ${item}`).join('\n')}\n\n## Tests\n\n- npm test\n`;
@@ -630,8 +631,184 @@ test('the review step: removing the residual from the body ends the waiver on th
   const h3 = await run([FILE_REPEAT], '1\n2\n3\n4\n');
   assert.equal(h3.result.status, 'fix_required', 'the repeat blocks again');
   assert.deepEqual([h3.record.open, h3.record.list.map((each) => each.title)], [1, ['Retry loop unbounded']], 'it comes back as new');
-  assert.ok(!('carried' in h3.record), 'the anchor leaves the record');
+  assert.deepEqual(h3.record.carried.map((each) => [each.already_ruled, each.ended]), [[RAISED, true]], 'the anchor ends, and only the hold stays');
   assert.match(h3.record.dropped.join('\n'), /names no settled finding/u);
+});
+
+// Round 1's medium finding, then on round 2 the body's line on it and a waived repeat: the record holds a waiver above low.
+async function waivedAboveLow(t, { line = RESIDUAL, github = { maxReviewRounds: 7 }, deps = {}, options = {} } = {}) {
+  const r = repo(t, body([]), github, options);
+  const { run, inputs } = scripted(t, r, deps);
+  await run([FILE_RAISED]);
+  r.setBody(body([line]));
+  const waived = await run([FILE_REPEAT], '1\n2\n3\n');
+  assert.equal(waived.result.status, 'received', 'the repeat is waived');
+  const hold = () => reviewProblem(readLocalState(r.project, 7), r.head());
+  assert.match(hold() ?? '', /waived a finding above low severity/u, 'the waiver holds the merge');
+  return { r, run, inputs, hold };
+}
+const COMMENT_PUSH = '1\n2\n3\n// a comment\n';
+const endedOn = (record) => (record.carried ?? []).filter((each) => each.ended).map((each) => [each.already_ruled, each.settled_severity, each.residual]);
+const contextCopies = (input) => input.priorFindings.filter((each) => each.title === RAISED && each.state === undefined);
+
+test('the auto-merge hold stays after a waiver above low ends without a fix', async (t) => {
+  for (const maxReviewRounds of [7, 2]) {
+    const { r, run, inputs, hold } = await waivedAboveLow(t, { github: { maxReviewRounds } });
+    const rounds = readLocalState(r.project, 7).rounds.length;
+    r.setBody(body([]));
+    const h3 = await run([], COMMENT_PUSH);
+    assert.equal(h3.result.status, 'received');
+    assert.equal(readLocalState(r.project, 7).rounds.length, rounds, 'the push opens no round');
+    assert.match(hold() ?? '', /waived a finding above low severity and no listing holds it fixed, so the merge waits for the Human/u);
+    assert.deepEqual(endedOn(h3.record), [[RAISED, 'medium', RESIDUAL]]);
+    assert.deepEqual(contextCopies(inputs.at(-1)).map(({ title, file, severity, ...rest }) => [title, file, severity, Object.keys(rest).filter((key) => key !== 'line')]), [[RAISED, 'src/a.js', 'medium', []]], 'the input names the finding, with nothing that settles');
+    assert.deepEqual(settledEntries(inputs.at(-1)), [], 'it settles nothing');
+    assert.deepEqual(offeredCarried(inputs.at(-1)), [], 'and it is offered as nothing');
+
+    const h4 = await run([], '1\n2\n3\n// a comment\n// another\n');
+    assert.equal(h4.result.status, 'received');
+    assert.match(hold() ?? '', /no listing holds it fixed/u, 'it stays on the next head');
+    assert.deepEqual(endedOn(h4.record), [[RAISED, 'medium', RESIDUAL]], 'as one entry');
+    assert.equal(contextCopies(inputs.at(-1)).length, 1, 'and the next input names it again');
+    assert.doesNotMatch(ruledLines(readLocalState(r.project, 7)).join('\n'), /standing on an accepted residual/u, 'the summary does not call it standing');
+  }
+});
+
+test('the auto-merge hold ends when a listing holds that title and file as fixed', async (t) => {
+  const { r, run, inputs, hold } = await waivedAboveLow(t);
+  r.setBody(body([]));
+  await run([], COMMENT_PUSH);
+  assert.ok(hold());
+  const attest = (file) => recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'agent:code-reviewer', head: r.head(), reviewer: 'code-reviewer', findingsText: JSON.stringify([{ title: RAISED, file, state: 'fixed', severity: 'medium', likelihood: 'plausible', affects: 'internal', cost: 'bounded' }]) });
+  attest('src/b.js');
+  assert.ok(hold(), 'a listing of another file ends nothing');
+  attest('src/a.js');
+  assert.equal(hold(), null, 'the hold ends');
+  const h4 = await run([], '1\n2\n3\n// a comment\n// another\n');
+  assert.equal(h4.result.status, 'received');
+  assert.deepEqual([endedOn(h4.record), contextCopies(inputs.at(-1))], [[], []], 'the entry leaves the record and the input');
+  assert.equal(hold(), null, 'and the hold stays ended');
+});
+
+test('the auto-merge hold stays after a waiver above low ends without a fix: the residual limit', async (t) => {
+  const { r, run, hold } = await waivedAboveLow(t);
+  r.setBody(body([...Array.from({ length: MAX_RESIDUALS }, (_, i) => `Unrelated ${i}: why`), RESIDUAL]));
+  const h3 = await run([], COMMENT_PUSH);
+  assert.equal(h3.result.status, 'received');
+  assert.deepEqual(endedOn(h3.record), [[RAISED, 'medium', RESIDUAL]]);
+  assert.match(hold() ?? '', /no listing holds it fixed/u);
+});
+
+test('the auto-merge hold stays after a waiver above low ends without a fix: a lower listing', async (t) => {
+  const { run, inputs, hold } = await waivedAboveLow(t, { deps: { dispositionTable: SECOND_ROUND_TABLE } });
+  const h3 = await run([{ ...FILE_RAISED, severity: 'low' }], '1\n2\n3\n4\n');
+  assert.equal(h3.result.status, 'received');
+  assert.ok(hold());
+  const h4 = await run([], '1\n2\n3\n4\n5\n');
+  assert.equal(h4.result.status, 'received');
+  assert.deepEqual(endedOn(h4.record), [[RAISED, 'medium', RESIDUAL]], 'the lower anchor does not replace it');
+  assert.ok(h4.record.carried.some((each) => !each.ended && each.settled_severity === 'low'), 'the line now anchors at low');
+  assert.match(hold() ?? '', /no listing holds it fixed/u);
+  assert.ok(contextCopies(inputs.at(-1)).some((each) => each.severity === 'medium'), 'the input names it at the severity it was waived at');
+  const h5 = await run([FILE_REPEAT], '1\n2\n3\n4\n5\n6\n');
+  assert.deepEqual([h5.result.status, h5.record.open, h5.record.ruled], ['fix_required', 1, undefined], 'and it waives no medium repeat');
+});
+
+test('the auto-merge hold stays after a waiver above low ends without a fix: a second file', async (t) => {
+  const { run, hold } = await waivedAboveLow(t, { line: `${RAISED}: every caller already times out first`, deps: { dispositionTable: SECOND_ROUND_TABLE } });
+  await run([{ ...FILE_RAISED, file: 'src/b.js', severity: 'low' }], '1\n2\n3\n4\n');
+  const h4 = await run([], '1\n2\n3\n4\n5\n');
+  assert.equal(h4.result.status, 'received');
+  assert.deepEqual(endedOn(h4.record).map(([title, cap]) => [title, cap]), [[RAISED, 'medium']]);
+  assert.match(hold() ?? '', /no listing holds it fixed/u);
+});
+
+for (const [label, answer] of [
+  ['an unread standing', () => { throw new Error('forge down'); }],
+  ['an outside standing', () => ({ author_association: 'NONE', base: { repo: { fork: false } } })],
+]) {
+  test(`the auto-merge hold stays after a waiver above low ends without a fix: ${label}`, async (t) => {
+    let standing = () => INSIDE;
+    const { run, inputs, hold } = await waivedAboveLow(t, { options: { pull: () => standing() } });
+    standing = answer;
+    const h3 = await run([], COMMENT_PUSH);
+    assert.equal(h3.result.status, 'received');
+    assert.deepEqual(endedOn(h3.record), [[RAISED, 'medium', RESIDUAL]]);
+    assert.match(hold() ?? '', /no listing holds it fixed/u);
+    assert.deepEqual(inputs.at(-1).acceptedResiduals, [], 'no residual reaches the pass');
+
+    const repeat = await run([FILE_REPEAT], '1\n2\n3\n// a comment\n// another\n');
+    assert.deepEqual([repeat.result.status, repeat.record.open, repeat.record.ruled], ['fix_required', 1, undefined], 'the ended entry settles nothing');
+    assert.deepEqual(settledEntries(inputs.at(-1)), [], 'and anchors nothing');
+    assert.deepEqual(endedOn(repeat.record), [[RAISED, 'medium', RESIDUAL]]);
+
+    standing = () => INSIDE;
+    const back = await run([FILE_REPEAT], '1\n2\n3\n4\n');
+    assert.equal(back.result.status, 'received', 'the line stands again once the author reads as inside');
+    assert.deepEqual(endedOn(back.record), [], 'so the offered anchor holds it');
+    assert.match(hold() ?? '', /waived a finding above low severity, so the merge waits for the Human/u);
+  });
+}
+
+test('the auto-merge hold stays after a waiver above low ends without a fix: the settled limit', async (t) => {
+  const { run, inputs, hold } = await waivedAboveLow(t, { deps: { dispositionTable: SECOND_ROUND_TABLE } });
+  const many = Array.from({ length: MAX_SETTLED }, (_, i) => ({ file: 'src/a.js', line: 2, title: `nit ${i}`, body: 'b', severity: 'low', already_ruled: '' }));
+  assert.equal((await run(many, '1\n2\n3\n4\n')).result.status, 'received');
+  const h4 = await run([], '1\n2\n3\n4\n5\n');
+  assert.equal(h4.result.status, 'received');
+  assert.ok(settledEntries(inputs.at(-1)).some((each) => each.residual === RESIDUAL), 'the anchor is still offered');
+  assert.ok(hold());
+});
+
+test('an ended waiver settles nothing, anchors nothing, and shadows no round entry', () => {
+  const ended = { title: 'Retry loop unbounded', file: 'a.js', line: 1, severity: 'medium', already_ruled: RAISED, from: 'residual', settled_severity: 'medium', residual: RESIDUAL, ended: true };
+  const noted = { title: RAISED, file: 'a.js', line: 2, severity: 'medium' };
+  const input = (rounds, residuals) => {
+    const state = { rounds, passes: { 'engine:codex-local': { head: 'h3', list: [], carried: [ended] } } };
+    return { priorFindings: recordSettled(state, state.passes['engine:codex-local'], residuals), acceptedResiduals: residuals };
+  };
+  const copy = { title: RAISED, file: 'a.js', line: 1, severity: 'medium' };
+  assert.deepEqual(input([], []).priorFindings, [copy], 'with no line, a context copy alone');
+  assert.deepEqual(settledEntries(input([], [])), []);
+  assert.deepEqual(offeredCarried(input([], [])), []);
+  assert.deepEqual(input([], [RESIDUAL]).priorFindings, [copy], 'with the line back and nothing raised, it anchors nothing');
+  assert.deepEqual(settledEntries(input([], [RESIDUAL])), [{ title: RESIDUAL }], 'so the line stays capped at low');
+  assert.deepEqual(settledEntries(input([{ head: 'h1', findings: [{ ...noted, severity: 'high' }] }], [RESIDUAL])), [{ title: RESIDUAL }], 'a more severe round entry governs: it shadows nothing');
+  const onRound = input([{ head: 'h1', findings: [noted] }], [RESIDUAL]);
+  assert.deepEqual(settledEntries(onRound).map((each) => [each.title, each.severity]), [[RAISED, 'medium'], [RESIDUAL, 'medium']], 'a round entry anchors as it would with no ended entry');
+  assert.deepEqual(contextCopies(onRound), [], 'and the anchor stands for the copy');
+  const lower = input([{ head: 'h1', findings: [{ ...noted, severity: 'low' }] }], [RESIDUAL]);
+  assert.deepEqual([...new Set(settledEntries(lower).map((each) => each.severity))], ['low'], 'a lower round entry stays lower');
+  assert.deepEqual(contextCopies(lower), [copy], 'and the copy stays');
+  const fromPrior = { passes: { p: { head: 'h3', carried: [{ ...ended, from: 'prior' }] } } };
+  assert.deepEqual(recordSettled(fromPrior, null).filter((each) => each.state), [], 'whatever its `from` says');
+  assert.deepEqual(ruledLines({ passes: { p: { head: 'h3', carried: [ended] } } }), [], 'and no summary line calls it standing');
+});
+
+test('withEndedWaivers: each waiver above low a pass was not offered, once, and nothing else', () => {
+  const entry = { title: RAISED, file: 'a.js', severity: 'medium', already_ruled: RAISED, from: 'residual', settled_severity: 'medium', residual: RESIDUAL };
+  const passes = (...carried) => ({ passes: { p: { head: 'h2', carried }, q: { head: 'h2', ruled: carried } } });
+  assert.deepEqual(withEndedWaivers(passes(entry), [], []), [{ ...entry, ended: true }], 'read from every record, once');
+  assert.deepEqual(withEndedWaivers(passes({ ...entry, accepted_by: 'late-round', settled_by: 'p' }), [], []), [{ ...entry, ended: true }], 'with no row or settler of its own');
+  assert.deepEqual(withEndedWaivers(passes(entry), [], [entry]), [entry], 'an offered anchor stays as it is');
+  assert.deepEqual(withEndedWaivers(passes(entry), [{ ...entry, severity: 'low' }], []), [], 'a low repeat under the anchor holds it');
+  const low = { ...entry, severity: 'low', settled_severity: 'low' };
+  assert.deepEqual(withEndedWaivers(passes(entry), [], [low]), [low, { ...entry, ended: true }], 'a lower anchor does not replace it');
+  assert.deepEqual(withEndedWaivers(passes(low), [], []), [], 'a waiver at low holds nothing');
+  assert.deepEqual(withEndedWaivers(passes({ ...entry, residual: undefined, from: 'prior' }), [], []), [], 'nor does a ruling on a prior finding');
+  const fixed = { passes: { ...passes(entry).passes, a: { head: 'h2', list: [{ title: RAISED, file: 'a.js', state: 'fixed' }] } } };
+  assert.deepEqual(withEndedWaivers(fixed, [], []), [], 'a fixed listing ends it');
+  assert.deepEqual(lateResiduals([{ id: 'p' }], () => ({ carried: withEndedWaivers(passes({ ...entry, accepted_by: 'late-round' }), [], []) })), [], 'it is no late-round row');
+});
+
+test('the settled list never cuts an anchored entry', () => {
+  const lows = Array.from({ length: MAX_SETTLED + 10 }, (_, i) => ({ title: `t${i}`, file: 'a.js', severity: 'low', state: 'accepted', disposition: 'drop_unless_cited' }));
+  const state = { passes: { p: { head: 'h1', list: [...lows, codexFinding()] } } };
+  const settled = recordSettled(state, null, [RESIDUAL]);
+  assert.equal(settled.length, MAX_SETTLED, 'the list keeps its cap');
+  assert.deepEqual(settled.at(-1).residual, RESIDUAL, 'the anchored entry stays, last');
+  assert.equal(settled.filter((each) => each.residual).length, 1);
+  assert.deepEqual(settledEntries({ priorFindings: settled, acceptedResiduals: [RESIDUAL] }).filter((each) => each.title === RESIDUAL).map((each) => each.severity), ['medium']);
 });
 
 test('the review step: an agent pass listing the finding as fixed ends the waiver on the next head', async (t) => {
@@ -914,7 +1091,7 @@ for (const [label, options] of [
   });
 }
 
-test('a medium raised over a low the record holds stands on the line once the author rewords it', async (t) => {
+test('a medium raised over a low the record holds governs the line that names it, here a reworded one', async (t) => {
   const reworded = `${RAISED}: every caller times out first, and the comment at src/a.js marks it`;
   for (const start of [lowAcceptedOverMedium, lowRuledOverMedium]) {
     const { run, r: held } = await start(t);

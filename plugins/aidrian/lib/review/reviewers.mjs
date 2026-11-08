@@ -126,6 +126,9 @@ export function satisfies(word, passes, map) {
   return false;
 }
 
+// The longest title a finding keeps, as parseFindings caps it.
+const MAX_TITLE = 200;
+
 // The problems with one finding or verdict list an exec reviewer printed; findings that fail are dropped and named.
 export function cleanOutput(raw) {
   const dropped = [];
@@ -138,7 +141,9 @@ export function cleanOutput(raw) {
       return [];
     }
     // Only the schema's keys: a key the schema does not name, such as a `state` or a `disposition`, never reaches the record.
-    const kept = { file: finding.file, line: finding.line, title: finding.title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity };
+    // The title reaches the summary comment and a body's residual row, so it is one line, at the length parseFindings caps.
+    const title = finding.title.replace(/\s*[\n\v\f\r\u0085\u2028\u2029]+\s*/gu, ' ').trim().slice(0, MAX_TITLE);
+    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity };
     if (typeof finding.already_ruled === 'string') return [{ ...kept, already_ruled: finding.already_ruled }];
     // A bad `already_ruled` never loses the finding: it is read as a new one.
     if (finding.already_ruled !== undefined) dropped.push(`findings[${i}].already_ruled is not a string: kept as a new finding`);

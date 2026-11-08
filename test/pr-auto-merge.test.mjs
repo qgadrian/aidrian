@@ -852,6 +852,22 @@ test('reviewProblem: a finding above low that an accepted residual waived waits 
   ]) assert.equal(reviewProblem(received(passes), HEAD), null, label);
 });
 
+test('reviewProblem: a waiver above low that ended holds until a listing holds its title and file as fixed', () => {
+  const received = (passes) => ({ passes, pending: [], outcome: { status: 'received', head: HEAD } });
+  const residual = 'The retry loop has no cap: every caller times out first';
+  const anchor = { title: 'Repeat', file: 'a.js', severity: 'medium', settled_severity: 'medium', already_ruled: 'The retry loop has no cap', from: 'residual', residual };
+  const ended = { ...anchor, ended: true };
+  const listing = (title, file, state = 'fixed') => ({ q: { head: HEAD, list: [{ title, file, state }] } });
+  const problem = (entry, other) => reviewProblem(received({ p: { head: HEAD, carried: [entry] }, ...other }), HEAD);
+  assert.match(problem(ended) ?? '', /waived a finding above low severity and no listing holds it fixed, so the merge waits for the Human/u);
+  assert.equal(problem(ended, listing('The retry loop has no cap', 'a.js')), null, 'a fixed listing of the raised title and its file ends it');
+  assert.match(problem(ended, listing('Repeat', 'a.js')) ?? '', /no listing holds it fixed/u, 'the repeat\'s wording is not the finding');
+  assert.match(problem(ended, listing('The retry loop has no cap', 'b.js')) ?? '', /no listing holds it fixed/u, 'nor is another file');
+  assert.match(problem(ended, listing('The retry loop has no cap', 'a.js', 'open')) ?? '', /no listing holds it fixed/u, 'nor is any other state');
+  assert.match(problem(anchor, listing('The retry loop has no cap', 'a.js')) ?? '', /waived a finding above low severity, so the merge waits/u, 'a standing waiver holds until a pass re-runs');
+  assert.equal(problem({ ...ended, severity: 'low', settled_severity: 'low' }), null, 'one at low holds nothing');
+});
+
 test('auto-merge refuses a head whose record holds a residual waiver above low', (t) => {
   const r = repo(t);
   r.record((state) => {

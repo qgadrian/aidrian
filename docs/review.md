@@ -523,9 +523,12 @@ A project adds its own in `review.reviewers`:
     either way. Once anchored, the residual's text settles nothing in another file, even a `low` repeat.
   - A waived repeat leaves the pass's `list`, so the pass record keeps every offered anchor as `carried`, `from` residual,
     whether or not the pass repeated it. A raised finding is one a pass lists now, or, when no pass lists that title in
-    that file, one any pass record keeps in `carried`, or, when none keeps it either, one any round entry holds, so a slice
-    record that a repack deleted loses nothing. A kept anchor's severity governs over a round entry of its title and file,
-    so an earlier round's more severe entry raises no cap on the line. The anchor holds across a head with no repeat.
+    that file, one any pass record holds as an anchor or as a ruling on a prior finding, in `ruled` or `carried`, or,
+    when none holds it either, one any round entry holds, so a slice record that a repack deleted leaves the anchor
+    standing. What a pass record holds governs over a round entry of its title and file, so an earlier round's more severe
+    entry raises no cap on the line, whether a less severe finding has the line already or only a ruling. A repack keeps
+    the anchor but can lose its low cap: once no record holds the low, the round entry's severity governs, and so it does
+    for a late low that left the record with no ruling and no line. The anchor holds across a head with no repeat.
   - A body edit takes effect on the next head a pass runs: a pass that already has a result on this head does not run
     again for it. The anchor ends then when the body no longer names the finding. A fix or a blocking listing ends the
     anchor while that listing stands: any pass listing that title in that file with a `state` that is fixed or blocks. Only
@@ -643,8 +646,9 @@ unless its fix is trivial: a trivial-cost medium is `fix_now` in every round.
 The step records an exec reviewer's late low findings that way itself: each is `accepted`, blocks nothing, and is
 listed in `residuals` (`pass`, `title`, `file`, `line`, `severity`) on every result for a head its pass counts for,
 which the session writes into the body's Accepted residuals. It stays listed, once, under the title the record accepted,
-when a later head's reviewer returns it as already ruled or the pass only carries the ruling, until the body names it:
-once the body's line names the finding, the line holds it and the row may go. A printed `accepted_by` adds nothing.
+when a later head's reviewer returns it as already ruled or the pass only carries the ruling.
+A row goes when the body's line lands before any ruling on it; once a pass holds a ruling on it the row stays,
+so a session skips it. A printed `accepted_by` adds nothing.
 A row is one per title and file, and `pass` is the first pass holding it. A carried row stays on later heads, because a
 carried ruling cannot see a real fix, so a session skips a row whose defect is fixed or that already has its body line.
 A low finding recorded with

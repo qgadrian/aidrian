@@ -129,25 +129,29 @@ export function residualTexts(body, section) {
 // The same finding's key across passes: its title and its file.
 export const where = (finding) => JSON.stringify([trim(finding.title), trim(finding.file)]);
 
+// What one pass record holds as rulings: those it made (`ruled`) and those it was offered (`carried`).
+const rulingsOf = (result) => ['ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : []));
+
 // The accepted entries an anchored residual gives: one per raised finding it names (namedBy), at that finding's severity,
 // marked `residual` and `carried`. A raised finding is one a pass lists now or, while no pass lists that title in that
-// file, an anchor a pass record kept as `carried` or a finding a round entry holds: a waived repeat leaves the pass's
-// `list`, and a repacked slice's record goes (prunePasses), so `carried`, written on every head the anchor is offered, and
-// the round entries, which can be null or capped, hold it between them. A kept anchor shadows a round entry of its title
-// and file, as a listing does, so its severity governs: an earlier round's more severe entry raises no cap on the line.
+// file, an anchor or a ruling on a prior finding a pass record holds, or a finding a round entry holds: a waived repeat
+// leaves the pass's `list`, and a repacked slice's record goes (prunePasses), so `carried`, written on every head the
+// anchor is offered, and the round entries, which can be null or capped, hold it between them. A kept entry shadows a round
+// entry of its title and file, as a listing does, so its severity governs: an earlier round's more severe entry raises no
+// cap on the line, whether the less severe finding sits on the line already or only as a ruling.
 // A raised finding above PRIOR_CAP anchors nothing:
 // the author's word never waives a repeat of it past RESIDUAL_CAP. Only a finding with a `state` can end it, fixed or
 // blocking, and only while it is listed: a reviewer cannot print one (cleanOutput keeps no such key), and the state the
 // late-round rule sets is accepted, which neither is fixed nor blocks, so a reviewer's finding is the anchor, never a
-// reopening of itself. A low ruling on a residual naming nothing is not an anchor: only `carried` holds
-// one, and only with its `residual`, and the body's item must name it again on each head, so dropping the item ends the waiver.
+// reopening of itself. A low ruling on a residual naming nothing is not an anchor: an entry with `from` residual counts only
+// with its `residual`, and the body's item must name it again on each head, so dropping the item ends the waiver.
 function anchoredResiduals(state, listed, residuals) {
   const findings = listed.map(({ finding }) => finding);
   const ended = new Set(findings.filter((finding) => FINDING_STATES.includes(finding.state) && (finding.state === 'fixed' || blocks(finding))).map(where));
   const present = new Set(findings.map(where));
-  const kept = Object.values(state?.passes ?? {}).flatMap((result) => (Array.isArray(result?.carried) ? result.carried : []))
-    .filter((each) => isObject(each) && trim(each.residual))
-    .map(({ already_ruled: title, file, line, settled_severity: severity }) => ({ title, file, line, severity }))
+  const kept = Object.values(state?.passes ?? {}).flatMap(rulingsOf)
+    .filter((each) => isObject(each) && (trim(each.residual) || each.from === 'prior'))
+    .map(({ already_ruled: title, file, line, severity, settled_severity: cap }) => ({ title, file, line, severity: severityOf(cap) ?? severity }))
     .filter((each) => !present.has(where(each)));
   const shadowed = new Set([...present, ...kept.map(where)]);
   const rounds = (Array.isArray(state?.rounds) ? state.rounds : []).flatMap((round) => (Array.isArray(round?.findings) ? round.findings : []))
@@ -177,7 +181,7 @@ export function recordSettled(state, prior, residuals = []) {
     .filter(isObject).map((finding) => ({ id, finding })));
   const present = new Set(listed.map(({ finding }) => where(finding)));
   const live = new Set(listed.filter(({ finding }) => finding.state !== 'accepted' || blocks(finding)).map(({ finding }) => where(finding)));
-  const rulings = [prior, ...Object.values(state?.passes ?? {})].flatMap((result) => ['ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : [])))
+  const rulings = [prior, ...Object.values(state?.passes ?? {})].flatMap(rulingsOf)
     .filter((finding) => isObject(finding) && finding.from === 'prior' && trim(finding.already_ruled));
   const ruledOn = new Set(rulings.map((finding) => where({ title: finding.already_ruled, file: finding.file })));
   const accepted = listed.filter(({ finding }) => finding.state === 'accepted' && !blocks(finding) && !live.has(where(finding)))

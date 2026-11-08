@@ -851,7 +851,7 @@ async function lowAcceptedOverMedium(t) {
   const h3 = await run([], '1\n2\n3\n4\n');
   assert.deepEqual(h3.record.carried.map((each) => [each.already_ruled, each.settled_severity, each.residual]), [[RAISED, 'low', RESIDUAL]], 'round 3: the line anchors at low');
   assert.deepEqual(readLocalState(r.project, 7).rounds.flatMap((round) => round.findings ?? []).map((each) => [each.title, each.severity]), [[RAISED, 'medium']], 'the round entry still holds the medium');
-  return { run, inputs };
+  return { run, inputs, r };
 }
 
 test('a line on a late-round low anchors at low: an earlier round entry at medium waives no medium repeat', async (t) => {
@@ -867,6 +867,81 @@ test('a line on a late-round low still waives a low repeat, with an earlier roun
   const h4 = await run([{ ...FILE_REPEAT, severity: 'low' }], '1\n2\n3\n4\n5\n');
   assert.deepEqual([h4.result.status, h4.record.open], ['received', 0]);
   assert.deepEqual(h4.record.ruled.map((each) => [each.already_ruled, each.settled_severity, each.residual]), [[RAISED, 'low', RESIDUAL]]);
+});
+
+// A second finding of another title, which blocks a head on its own.
+const FILE_OTHER = { file: 'src/a.js', line: 4, title: 'Another defect', body: 'b', severity: 'medium', already_ruled: '' };
+const LOW_REPEAT = { ...FILE_REPEAT, severity: 'low' };
+const LOW_FINDING = { ...FILE_RAISED, severity: 'low' };
+// Round 1's medium finding, round 2's low of its title and file, which the late-round rule accepts, and round 3's reviewer
+// returning the low as already ruled, all with no line in the body: the record then holds a ruling at low and a round entry
+// at medium. `extraHead` adds a head that only carries the ruling; `other` makes round 2 block on another finding.
+async function lowRuledOverMedium(t, { extraHead = false, other = false } = {}) {
+  const r = repo(t, body([]), { maxReviewRounds: 7 });
+  const { run, inputs } = scripted(t, r, { dispositionTable: SECOND_ROUND_TABLE });
+  assert.equal((await run([FILE_RAISED])).result.status, 'fix_required', 'round 1: the medium finding blocks');
+  const h2 = await run([LOW_FINDING, ...(other ? [FILE_OTHER] : [])], '1\n2\n3\n');
+  assert.deepEqual([h2.result.status, h2.record.list[0].accepted_by], [other ? 'fix_required' : 'received', 'late-round'], 'round 2: the rule accepts the low');
+  const h3 = await run([LOW_REPEAT], '1\n2\n3\n4\n');
+  assert.deepEqual([h3.result.status, h3.record.list, h3.record.ruled.map((each) => [each.already_ruled, each.from, each.settled_severity, each.accepted_by])], ['received', [], [[RAISED, 'prior', 'low', 'late-round']]], 'round 3: ruled, off the list');
+  if (extraHead) {
+    const h4 = await run([], '1\n2\n3\n4\n5\n');
+    assert.deepEqual([h4.record.ruled, h4.record.carried.map((each) => [each.already_ruled, each.from, each.settled_severity])], [undefined, [[RAISED, 'prior', 'low']]], 'a head that only carries the ruling');
+  }
+  assert.deepEqual(readLocalState(r.project, 7).rounds.flatMap((round) => round.findings ?? []).filter((each) => each.title === RAISED).map((each) => each.severity), ['medium'], 'the round entry still holds the medium');
+  r.setBody(body([RESIDUAL]));
+  return { run, inputs, r };
+}
+
+for (const [label, options] of [
+  ['the ruling made on the head before the line', {}],
+  ['a head that only carries the ruling', { extraHead: true }],
+  ['the low\'s head blocked on another finding', { other: true }],
+]) {
+  test(`a line on a low the record holds as a ruling stays at low over a medium round entry: ${label}`, async (t) => {
+    const { run, inputs } = await lowRuledOverMedium(t, options);
+    const repeat = await run([FILE_REPEAT], '1\n2\n3\n4\n5\n6\n');
+    assert.deepEqual([repeat.result.status, repeat.record.open, repeat.record.ruled], ['fix_required', 1, undefined], 'the medium repeat blocks');
+    assert.deepEqual([...new Set(settledEntries(inputs.at(-1)).filter((each) => each.file).map((each) => each.severity))], ['low'], 'the input offers it at low alone');
+    assert.match(repeat.record.dropped.join('\n'), /less severe than it/u);
+  });
+
+  test(`a line on a low the record holds as a ruling still waives a low repeat: ${label}`, async (t) => {
+    const { run } = await lowRuledOverMedium(t, options);
+    const repeat = await run([LOW_REPEAT], '1\n2\n3\n4\n5\n6\n');
+    assert.deepEqual([repeat.result.status, repeat.record.open, repeat.record.ruled.map((each) => each.settled_severity)], ['received', 0, ['low']]);
+    assert.deepEqual(repeat.result.residuals.map((each) => [each.title, each.severity]), [[RAISED, 'low']], 'the ruling keeps its row, which a session skips');
+  });
+}
+
+test('a medium raised over a low the record holds stands on the line once the author rewords it', async (t) => {
+  const reworded = `${RAISED}: every caller times out first, and the comment at src/a.js marks it`;
+  for (const start of [lowAcceptedOverMedium, lowRuledOverMedium]) {
+    const { run, r: held } = await start(t);
+    const raised = await run([FILE_RAISED], '1\n2\n3\n4\n5\n6\n');
+    assert.deepEqual([raised.result.status, raised.record.open], ['fix_required', 1], 'the new medium blocks');
+    held.setBody(body([reworded]));
+    const waived = await run([FILE_REPEAT], '1\n2\n3\n4\n5\n6\n7\n');
+    assert.deepEqual([waived.result.status, waived.record.ruled.map((each) => [each.already_ruled, each.settled_severity, each.residual])], ['received', [[RAISED, 'medium', reworded]]], 'the listing governs at medium');
+    const again = await run([FILE_REPEAT], '1\n2\n3\n4\n5\n6\n7\n8\n');
+    assert.deepEqual([again.result.status, again.record.ruled.map((each) => each.settled_severity)], ['received', ['medium']], 'and the anchor keeps its severity on the next head');
+  }
+});
+
+test('any ruling on a prior finding governs over a round entry, in ruled or carried; a ruling on an unnamed residual does not', () => {
+  const noted = { title: RAISED, file: 'a.js', line: 2, severity: 'medium' };
+  const ruling = { title: 'Other words', file: 'a.js', line: 3, severity: 'low', already_ruled: RAISED, from: 'prior', settled_severity: 'low' };
+  const severities = (record) => {
+    const state = { rounds: [{ head: 'h1', findings: [noted] }], passes: { 'engine:codex-local': { head: 'h2', list: [], ...record } } };
+    return [...new Set(settledEntries({ priorFindings: recordSettled(state, state.passes['engine:codex-local'], [RESIDUAL]), acceptedResiduals: [RESIDUAL] }).filter((each) => each.file).map((each) => each.severity))];
+  };
+  assert.deepEqual(severities({}), ['medium'], 'with no ruling, the round entry anchors');
+  assert.deepEqual(severities({ ruled: [ruling] }), ['low'], 'a ruling the pass made');
+  assert.deepEqual(severities({ carried: [ruling] }), ['low'], 'a ruling the pass carries');
+  assert.deepEqual(severities({ ruled: [{ ...ruling, accepted_by: 'late-round' }] }), ['low'], 'a late-round ruling');
+  assert.deepEqual(severities({ ruled: [{ ...ruling, settled_severity: undefined }] }), ['low'], 'with no cap on record, the ruling\'s own severity');
+  assert.deepEqual(severities({ ruled: [{ ...ruling, from: 'residual' }] }), ['medium'], 'a ruling on a residual with no text is no anchor');
+  assert.deepEqual(severities({ ruled: [null, 'x'], carried: 'x' }), ['medium'], 'malformed entries read as nothing');
 });
 
 test('a late-round residual two arrays or two passes hold is one row per title and file, named for the first pass holding it', () => {

@@ -3534,7 +3534,7 @@ function markedProject(t, config = productConfig({ autoStart: true, approval: 'r
   const { marker } = MARKED.provisional;
   write(d.root, '.aidrian/config.json', JSON.stringify({ version: 1, ...config }));
   write(d.root, '.aidrian/knowledge/10-docs.json', JSON.stringify({ dir: 'docs', description: 'The rules.', docs: { 'decided.md': { summary: 'decided rules', tags: [] } } }));
-  write(d.root, 'docs/decided.md', `# Decided\n\nOne ledger holds it.\n<!-- aidrian:decision id=${marker} status=unconfirmed class=copy domain=product date=2026-11-01 pr=none -->\n<!-- aidrian:decision-new id=${marker} text="One ledger holds it." -->\n`);
+  write(d.root, 'docs/decided.md', `# Decided\n\nOne ledger holds it.\n<!-- aidrian:decision id=${marker} status=unconfirmed class=copy domain=product date=${new Date().toISOString().slice(0, 10)} pr=none -->\n<!-- aidrian:decision-new id=${marker} text="One ledger holds it." -->\n`);
   d.git('add', '.aidrian', 'docs');
   d.git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'project');
   d.git('checkout', '-q', '-b', 'feature');
@@ -3580,7 +3580,7 @@ test('quorum route --ledger: a provisional ledger continues only while its marke
   // Any copy the Human settled counts, whichever the scan reads first.
   const twice = markedProject(t);
   write(twice.root, '.aidrian/knowledge/10-docs.json', JSON.stringify({ dir: 'docs', description: 'The rules.', docs: { 'decided.md': { summary: 'decided rules', tags: [] }, 'other.md': { summary: 'other rules', tags: [] } } }));
-  write(twice.root, 'docs/other.md', `# Other\n\nAnother line.\n<!-- aidrian:decision id=${MARKED.provisional.marker} status=confirmed class=copy domain=product date=2026-11-01 pr=none -->\n<!-- aidrian:decision-new id=${MARKED.provisional.marker} text="Another line." -->\n`);
+  write(twice.root, 'docs/other.md', `# Other\n\nAnother line.\n<!-- aidrian:decision id=${MARKED.provisional.marker} status=confirmed class=copy domain=product date=${new Date().toISOString().slice(0, 10)} pr=none -->\n<!-- aidrian:decision-new id=${MARKED.provisional.marker} text="Another line." -->\n`);
   assert.equal(twice.check(carrying()).status, 0);
   assert.deepEqual(pickRoute(twice.route()), ['human', true], 'one settled copy');
 

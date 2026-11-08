@@ -233,7 +233,8 @@ test('a quiet push whose review fails gives the round back as it was: its head, 
   assert.deepEqual(readLocalState(r.project, 7).rounds, moved, 'a quiet list it had stays as it was');
 });
 
-// Every pass of the built-in plan reads all files, so only a plan command's pass with a file list can miss a quiet push.
+// A built-in plan that reviews anything holds a pass of all files, which any push touches: only a plan of a plan
+// command's file-list passes alone can miss a quiet push.
 test('a quiet push no pass touches runs no review, and still moves the round to its head', async (t) => {
   const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'independent',passes:[{id:'extra:lint',reviewer:'lint',kind:'exec',files:['docs/guide.md']}]}]})))";
   const r = repo(t, {

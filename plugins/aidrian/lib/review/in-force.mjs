@@ -8,9 +8,9 @@ import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { committedConfig, loadConfig, stateDirProblem } from '../config.mjs';
-import { isWithin, resolvedPath } from '../fs.mjs';
+import { isDirectory, isWithin, resolvedPath } from '../fs.mjs';
 import { currentRoot, runGit } from '../git.mjs';
-import { committedConfigFile, repoRoot, stateDir } from '../project.mjs';
+import { committedConfigFile, stateDir } from '../project.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { changedFiles, fileAt, resolve } from './diff.mjs';
 import { flowsInForce } from './plan.mjs';
@@ -35,28 +35,43 @@ const onDisk = (file) => {
   }
 };
 
-// The state folder's paths from the top of this checkout, as named and with its links followed, '' at the top itself; none
-// when it lies outside.
-function stateFolderInCheckout(project, working, read) {
-  const folder = stateDir(project, { config: working });
-  const top = currentRoot(project.root, read) ?? repoRoot(project);
-  const tops = [top, onDisk(top)].filter(Boolean);
-  const paths = [folder, onDisk(folder), resolvedPath(folder)].filter(Boolean);
-  const inside = paths.flatMap((each) => tops.filter((from) => isWithin(from, each)).map((from) => path.relative(from, each).split(path.sep).join('/')));
-  return [...new Set(inside.map(spelled))];
+// The nearest existing folder at or above `from` that `fits`, or the top of the disk.
+function nearestFolder(from, fits = () => true) {
+  let dir = from;
+  while (!(isDirectory(dir) && fits(dir)) && path.dirname(dir) !== dir) dir = path.dirname(dir);
+  return dir;
 }
 
-// The record is this machine's, so a state folder in the checkout holds nothing git tracks: no entry at the folder, under
-// it, or at a folder above it, in any case. { problem }, null when it holds, with `unread` when git could not say.
+// The checkouts that hold the state folder, which need not be this one: a relative state.dir in a linked worktree is the
+// main checkout's. The one its links lead to, and the one it is named in, which differ only on a link out of a checkout.
+// Each { top, folders }: its top folder, and the folder's paths from there, as named and with its links followed, '' at
+// the top itself. None when no checkout holds it.
+function stateFolderCheckouts(project, working, git) {
+  const folder = stateDir(project, { config: working });
+  const real = resolvedPath(folder);
+  const paths = [folder, onDisk(folder), real].filter(Boolean);
+  const starts = new Set([nearestFolder(real ?? folder), nearestFolder(folder, (dir) => resolvedPath(dir) === dir)]);
+  const tops = new Set([...starts].map((dir) => currentRoot(dir, git())).filter(Boolean));
+  const holder = (top) => {
+    const froms = [top, onDisk(top)].filter(Boolean);
+    const inside = paths.flatMap((each) => froms.filter((from) => isWithin(from, each)).map((from) => path.relative(from, each).split(path.sep).join('/')));
+    return { top, folders: [...new Set(inside.map(spelled))] };
+  };
+  return [...tops].map(holder).filter(({ folders }) => folders.length);
+}
+
+// The record is this machine's, so a state folder in a checkout holds nothing git tracks there: no entry at the folder,
+// under it, or at a folder above it, in any case. { problem }, null when it holds, with `unread` when git could not say.
 function trackedState(project, working, git) {
   if (!working.state.dir) return { problem: null };
-  const folders = stateFolderInCheckout(project, working, git());
-  if (!folders.length) return { problem: null };
-  const listed = runGit(['ls-files', '-z', '--full-name', '--', ':/'], project.root, { maxBuffer: 256 * 1024 * 1024, ...git() });
-  if (listed.status !== 0) return { problem: UNLISTED, unread: true };
-  const names = listed.stdout.split('\0').filter(Boolean).map(spelled);
-  const holds = (name) => folders.some((folder) => folder === '' || name === folder || name.startsWith(`${folder}/`) || folder.startsWith(`${name}/`));
-  return { problem: names.some(holds) ? TRACKED : null };
+  for (const { top, folders } of stateFolderCheckouts(project, working, git)) {
+    const listed = runGit(['ls-files', '-z', '--full-name', '--', ':/'], top, { maxBuffer: 256 * 1024 * 1024, ...git() });
+    if (listed.status !== 0) return { problem: UNLISTED, unread: true };
+    const names = listed.stdout.split('\0').filter(Boolean).map(spelled);
+    const holds = (name) => folders.some((folder) => folder === '' || name === folder || name.startsWith(`${folder}/`) || folder.startsWith(`${name}/`));
+    if (names.some(holds)) return { problem: TRACKED };
+  }
+  return { problem: null };
 }
 
 // The working copy against the config `baseTip` commits: { committed, problem }, with `problem` null when it holds, and

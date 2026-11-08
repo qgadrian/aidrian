@@ -457,7 +457,8 @@ export async function runIngest(args, project, config = null, { forge, env = pro
   const head = runGit(['rev-parse', '--verify', `${flags.head}^{commit}`], project.root).stdout.trim();
   // The repository is not stored, since the capture folder is per pull request; it names where the captures comment is.
   const repo = prRepo(project, pr, flags.repo, forge);
-  const held = await holdToNamedBase(project, config, repo, namedBase(project, pr, repo, forge));
+  const base = namedBase(project, pr, repo, forge);
+  const held = await holdToNamedBase(project, config, repo, base);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
   // The session kind, from the host layer: an AI session when it detects a host, so an agent's ingest is never
   // recorded as the Human's own; the agent when the host names one.
@@ -475,8 +476,10 @@ export async function runIngest(args, project, config = null, { forge, env = pro
     const given = files.find((file) => path.resolve(file) === entry.source.path) ?? entry.source.path;
     console.log(`ingested ${given} as capture:${entry.key} of ${sha} from ${entry.source.origin} by ${entry.source.by}${entry.source.session === 'ai' ? (entry.source.agent ? ` via ${entry.source.agent}` : ' in an AI session, agent unknown') : ''}`);
   }
-  // With the review record local, the review posts no captures comment, so the pull request is not read.
-  if (held?.review?.record === 'local') console.log('the review record is local, so no captures comment shows the ingest');
+  // A command publishes only after the hold, and with no base it never ran. With the review record local, the review
+  // posts no captures comment, so the pull request is not read.
+  if (!base) console.log('the forge named no base branch, so the ingest stays on this machine and no captures comment shows it');
+  else if (held?.review?.record === 'local') console.log('the review record is local, so no captures comment shows the ingest');
   else await showIngest({ project, pr, repo, manifest, forge: forge ?? forgeFor(project.root), visual });
   console.log('Run `aidrian pr review` again.');
   return 0;

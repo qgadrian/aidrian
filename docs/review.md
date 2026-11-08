@@ -316,7 +316,7 @@ comment that capture posts. A later one rewrites that comment when this machine'
 member or the session's own account posted, whose heading names that head. Where another machine captured the head,
 the comment is left as it is: the ingest lives in this machine's state folder and counts only here, and ingesting the
 same images on the machine that captured the head shows them on the pull request. With `review.record: "local"` there
-is no captures comment to rewrite;
+is no captures comment to rewrite; a forge that names no base branch leaves the comment unread, and the ingest stays on this machine;
 a forge failure is a warning, and the ingest stays recorded. The review summary's visual line names an ingest made
 before a visual reviewer is dispatched, unless that capture took every image, as many entries as fit the line whole
 and the count of the rest.
@@ -782,7 +782,7 @@ branch before it reads the record. Each refuses a checkout where:
 - its project folder differs from the base branch's, or the base's `.aidrian.json` cannot be read:
   `the working copy's project folder differs from <owner/name> <base>, and the review record is read from it`.
   A base with no config at all stays allowed, for the pull request that adopts aidrian;
-- the state folder is inside the checkout and git tracks a path at it, under it, or at a folder above it, such as a link, in any case:
+- the state folder is in a checkout and git tracks a path at it there, under it, or at a folder above it, such as a link, in any case:
   `the state folder holds files git tracks at this checkout, and the review record is read from it`; or git cannot list it:
   `git cannot list the state folder at this checkout, and the review record is read from it`.
 
@@ -796,10 +796,12 @@ A head behind a base that moved `state.dir` merges the base first.
 Tracked files in a state folder, with `state.dir` `.` among them, since the checkout itself then holds tracked files:
 untrack them, or use a folder git ignores. That answers `the state folder holds files git tracks at this checkout, and
 the review record is read from it`. `git cannot list the state folder at this checkout, and the review record is read from it`
-clears once git can list the folder.
+clears once git can list the folder. The check reads the checkout that holds the state folder, whichever it is: a relative
+`state.dir` lies in the main checkout, also from a linked worktree. When the main checkout tracks it, put the main checkout
+back on a branch that does not track it.
 
-A command publishes only after the hold. `extend` with no answer from the forge keeps its write on this machine, and
-`waive` refuses without the base. `attest` and the long form of `signoff` hold only when the forge names the base, so
+A command publishes only after the hold. `extend` and `ingest` with no answer from the forge keep their write on this
+machine, and `waive` refuses without the base. `attest` and the long form of `signoff` hold only when the forge names the base, so
 offline they still write this machine's record and publish nothing; so does `request`, which reads the forge only when
 `--head` or `--repo` is missing. Auto-merge and product feedback make the same `state.dir` comparison against the default
 branch read from GitHub. The [merge guard](hooks.md#merge-guard) makes all three from local git before it reads the

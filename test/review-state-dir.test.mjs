@@ -329,6 +329,68 @@ const tracking = (r) => {
 };
 const unused = () => assert.fail('the merge names its head: no view');
 
+// A project at a new linked worktree of `r`, detached at `commit`, and the hold from there.
+function linkedAt(t, r, commit) {
+  const folder = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-linked-')));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const worktree = path.join(folder, 'worktree');
+  r.git('worktree', 'add', '-q', '--detach', worktree, commit);
+  const project = projectAt(worktree);
+  const config = loadConfig(project).config;
+  return { project, config, hold: () => holdToBase(project, config, { repo: 'o/r', base: 'main' }) };
+}
+
+const TRACKED = /^Error: the state folder holds files git tracks at this checkout, and the review record is read from it$/u;
+
+test('a state folder in the main checkout is listed there from a linked worktree', async (t) => {
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { 'state/reviews/pr-7-review.json': `${JSON.stringify(emptyState(7, 'o/r'))}\n` } });
+  tracking(r);
+
+  // The main checkout tracks a file in the state folder: refused from a linked worktree on the base.
+  const linked = linkedAt(t, r, 'main');
+  assert.throws(linked.hold, TRACKED);
+  const step = reviewStep({ pr: '7' }, { project: linked.project, config: linked.config, forge: r.forge, codex: () => ({ ok: true }), exec: clean });
+  await assert.rejects(step, TRACKED);
+  assert.equal(r.comments.length, 0);
+  assert.match(judgeMerge({ project: linked.project, pr: 7, head: r.head, viewPr: unused }), /the state folder holds files git tracks at this checkout/u);
+
+  // The main checkout clean: it holds, from a linked worktree on the base and from one that tracks the same path.
+  r.git('switch', '-q', 'main');
+  assert.equal(linked.hold().committed.state.dir, 'state');
+  assert.equal(judgeMerge({ project: linked.project, pr: 7, head: r.head, viewPr: unused }), null);
+  assert.equal(linkedAt(t, r, r.head).hold().committed.state.dir, 'state');
+});
+
+test('a link on the state folder\'s path in the main checkout is compared there from a linked worktree', (t) => {
+  const team = { version: 1, state: { dir: 'shared/state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { 'elsewhere/keep.txt': 'x\n' }, links: { shared: 'elsewhere' } });
+  assert.throws(linkedAt(t, r, 'main').hold, TRACKED);
+});
+
+test('a link that leads out of the checkout on the state folder\'s path is refused', (t) => {
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-out-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  mkdirSync(path.join(outside, 'state'));
+  for (const [dir, link] of [['state', 'state'], ['shared/state', 'shared']]) {
+    const team = { version: 1, state: { dir } };
+    const r = repo(t, { baseConfig: team, headConfig: team, links: { [link]: outside } });
+    assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), TRACKED, `in the checkout, at ${dir}`);
+    assert.throws(linkedAt(t, r, 'main').hold, TRACKED, `from a linked worktree, at ${dir}`);
+  }
+  // The same link in no index is allowed: nothing git tracks is on the path.
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { '.gitignore': 'state\n' } });
+  symlinkSync(outside, path.join(r.dir, 'state'));
+  assert.equal(holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }).committed.state.dir, 'state');
+});
+
+test('a broken link at the state folder in the main checkout is compared there from a linked worktree', (t) => {
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, links: { state: 'gone' } });
+  assert.throws(linkedAt(t, r, 'main').hold, TRACKED);
+});
+
 test('the merge guard denies a checkout whose state.dir differs from the base branch\'s, even with a finished record there', (t) => {
   const r = repo(t, {
     baseConfig: { version: 1, state: { dir: 'state' } },

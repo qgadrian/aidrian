@@ -200,11 +200,13 @@ test('aidrian pr extend: its arguments are checked before anything is recorded',
 
 // A project with a review record whose round-2 check waits for the Human, and a transcript file for the hook payload.
 function guarded(t, { asking = true } = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-extend-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-extend-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   execFileSync('git', ['init', '-q'], { cwd: dir });
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' } }));
   const project = projectAt(dir);
   const state = emptyState(12, 'o/r');
   state.extensions = [{ source: 'plan', round: 2, head: 'abc', status: asking ? 'asking' : 'judging', judge: asking ? { verdict: 'extend', reason: 'r', at: '2026-11-01T10:00:00.000Z' } : undefined }];
@@ -348,10 +350,12 @@ const onPr42 = (n) => {
 // request's conversation comments live in `issue` across runs, as on GitHub, so a summary comment one run writes is the
 // record the next run, or another machine, reads.
 function botProject(t, config = {}) {
-  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-botcap-')));
-  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-botcap-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const base = path.join(root, 'repo');
+  mkdirSync(base);
   mkdirSync(path.join(base, '.aidrian'));
-  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, ...config }));
+  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, ...config }));
   const project = projectAt(base);
   const log = t.mock.method(console, 'log', () => {});
   const T = (m) => `2026-08-23T07:${String(m).padStart(2, '0')}:00Z`;
@@ -396,7 +400,7 @@ function botProject(t, config = {}) {
     forge: { change: () => ({ headRefOid: head }), conversationComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
   });
   // Another machine: this one's state folder is gone, and only the pull request's comments remain.
-  const forget = () => rmSync(path.join(base, 'state'), { recursive: true, force: true });
+  const forget = () => rmSync(path.join(base, '../state'), { recursive: true, force: true });
   // A push GitHub reports before any command runs on it.
   const move = (at) => { head = at; };
   return { project, run, extend, forget, move, issue };
@@ -571,8 +575,10 @@ test('aidrian report reviews counts each check at the cap once, by its last deci
 // A git repository whose `main` commits `config`, and a `feat` branch of three commits, one per bot review, and a
 // fix after the third, as `aidrian pr await-review --request` sees it. Requests the run posts join the conversation, as on GitHub.
 function gitBot(t, config, { working = null } = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gitbot-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gitbot-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   const write = (file, text) => {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
@@ -581,8 +587,7 @@ function gitBot(t, config, { working = null } = {}) {
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@example.com');
   git('config', 'user.name', 'Tester');
-  write('.gitignore', 'state/\n');
-  write('.aidrian/config.json', JSON.stringify({ version: 1, state: { dir: 'state' }, ...config }));
+  write('.aidrian/config.json', JSON.stringify({ version: 1, state: { dir: '../state' }, ...config }));
   write('src/a.js', 'export const a = 0;\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
@@ -591,7 +596,7 @@ function gitBot(t, config, { working = null } = {}) {
   const heads = [commit('export const a = 1;\n'), commit('export const a = 2;\n'), commit('export const a = 3;\n')];
   const fix = commit('export const a = 4;\n');
   // An uncommitted edit of the working copy's config: the base branch's config is the one in force.
-  if (working) write('.aidrian/config.json', JSON.stringify({ version: 1, state: { dir: 'state' }, ...working }));
+  if (working) write('.aidrian/config.json', JSON.stringify({ version: 1, state: { dir: '../state' }, ...working }));
   const project = projectAt(dir);
   const log = t.mock.method(console, 'log', () => {});
   let minute = 0;
@@ -716,11 +721,13 @@ test('await-review: a grant adds to an explicit --max-rounds as to the base cap,
 });
 
 test('await-review without --request reads GitHub alone: no base branch in the checkout is needed; a request still needs it', async (t) => {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-nobase-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-nobase-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   execFileSync('git', ['init', '-q', '-b', 'feat'], { cwd: dir });
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' } }));
   const project = projectAt(dir);
   const nothingPosted = () => {
     throw new Error('nothing is posted');

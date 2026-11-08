@@ -433,8 +433,9 @@ function inMainCheckout(root, roots = checkoutRoots(root)) {
 // The machine-local state folder: plans, handoffs, the lesson inbox, and the dispatch log.
 // `$XDG_STATE_HOME/aidrian/projects/<project id>/`, with `~/.local/state` when that variable is unset or relative, so
 // git never sees it and every worktree and clone of a repository shares it. config.json `state.dir` moves it.
-export function stateDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
-  if (config.state.dir) return localPath(project, config.state.dir);
+// `read` holds the options of the git read a relative `state.dir` needs, for a caller under a deadline.
+export function stateDir(project, { config = loadConfig(project).config, env = process.env, read } = {}) {
+  if (config.state.dir) return localPath(project, config.state.dir, read);
   return path.join(stateRoot(env), 'projects', projectId(project));
 }
 
@@ -451,8 +452,8 @@ export function worktreesDir(project, { config = loadConfig(project).config } = 
 }
 
 // The main checkout's top folder, which every worktree shares; the project root outside git.
-export function repoRoot(project) {
-  return mainRoot(project.root) ?? project.root;
+export function repoRoot(project, read) {
+  return mainRoot(project.root, read) ?? project.root;
 }
 
 // `<repository name>-<8 hex digits>`: the name and a hash of the normalized `origin` URL, so every clone agrees.
@@ -497,9 +498,9 @@ export function normalizeRemote(url) {
 }
 
 // A configured local path: a leading `~` is the home folder, and a relative path starts at the repository root.
-function localPath(project, value) {
+function localPath(project, value, read) {
   if (/^~(?=$|\/)/.test(value)) return path.join(homedir(), value.slice(1));
-  return path.resolve(repoRoot(project), value);
+  return path.resolve(repoRoot(project, read), value);
 }
 
 function realPath(file) {

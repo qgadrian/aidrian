@@ -24,21 +24,23 @@ const RECORDED = JSON.parse(readFileSync(path.join(ROOT, 'test/fixtures/hosts/co
 const HEAD = 'a'.repeat(40);
 const LATER = 'b'.repeat(40);
 const ON = { auto: true, files: ['src/ui/**'] };
-const configText = (feedback, extra = {}) => JSON.stringify({ version: 1, state: { dir: 'state' }, ...(feedback ? { review: { productFeedback: feedback } } : {}), ...extra });
+const configText = (feedback, extra = {}) => JSON.stringify({ version: 1, state: { dir: '../state' }, ...(feedback ? { review: { productFeedback: feedback } } : {}), ...extra });
 const commitAll = (git, message, ...flags) => git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', ...flags, '-m', message);
 
-// A temporary repository whose default branch commits `feedback`, with its state folder inside. `refs` is how git names
+// A temporary repository whose default branch commits `feedback`, with its state folder beside it. `refs` is how git names
 // that branch on origin: 'main', origin/main with origin/HEAD naming it; 'master', a master branch with origin/master and
 // no origin/HEAD; or 'none'. `extra` adds to the committed config.
 function repo(t, { feedback = ON, local = null, refs = 'main', extra = {} } = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-ready-hold-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-ready-hold-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q', '-b', refs === 'master' ? 'master' : 'main');
   git('remote', 'add', 'origin', 'git@github.com:acme/notes.git');
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), configText(feedback, extra));
-  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\nstate/\nbin/\nspec.json\n');
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\nbin/\nspec.json\n');
   git('add', '.');
   commitAll(git, 'config');
   if (refs === 'main') {
@@ -47,7 +49,7 @@ function repo(t, { feedback = ON, local = null, refs = 'main', extra = {} } = {}
   }
   if (refs === 'master') git('update-ref', 'refs/remotes/origin/master', 'HEAD');
   if (local !== null) writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ review: { productFeedback: { auto: local } } }));
-  mkdirSync(path.join(dir, 'state/tmp'), { recursive: true });
+  mkdirSync(path.join(dir, '../state/tmp'), { recursive: true });
   return dir;
 }
 
@@ -86,7 +88,7 @@ function feedback(dir, head, ...argv) {
 
 // A record with one product-manager defect, PF1, found at HEAD.
 function recordDefect(dir) {
-  const items = path.join(dir, 'state/tmp/items.json');
+  const items = path.join(dir, '../state/tmp/items.json');
   writeFileSync(items, JSON.stringify([{ source: 'product-manager', title: 'The absence list loses its filter on reload', kind: 'defect' }]));
   assert.equal(feedback(dir, HEAD, 'record', URL7, '--items', items), 0);
 }
@@ -344,7 +346,7 @@ test('a defect answered fix-now, fixed, and re-checked confirmed reaches ready; 
 
 test('an open product choice holds the draft, and the deny says the choice is the Human\'s', (t) => {
   const dir = repo(t);
-  const items = path.join(dir, 'state/tmp/items.json');
+  const items = path.join(dir, '../state/tmp/items.json');
   writeFileSync(items, JSON.stringify([{ source: 'product-manager', title: 'Whether a cancelled absence frees its shift', kind: 'choice' }]));
   assert.equal(feedback(dir, HEAD, 'record', URL7, '--items', items), 0);
   const denied = owedNow(dir).reason('gh pr ready 7') ?? '';
@@ -417,7 +419,7 @@ test('the committed config is found where each ref puts it, and only off at ever
   assert.match(owedNow(headOn).reason('gh pr ready 7') ?? '', /still owed/u, 'HEAD raises');
   // Every ref off, and the state folder keeps product feedback: GitHub decides.
   const kept = repo(t, { feedback: null });
-  mkdirSync(path.join(kept, 'state/product-feedback'));
+  mkdirSync(path.join(kept, '../state/product-feedback'));
   const keptCalls = owedNow(kept);
   assert.match(keptCalls.reason('gh pr ready 7') ?? '', /still owed/u, 'a state folder that keeps product feedback raises');
 });

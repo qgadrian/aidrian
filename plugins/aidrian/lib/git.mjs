@@ -20,14 +20,14 @@ export function runGit(args, cwd, options = {}) {
   return result;
 }
 
-function firstLine(args, cwd) {
-  const result = runGit(args, cwd);
+function firstLine(args, cwd, options) {
+  const result = runGit(args, cwd, options);
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-// The main checkout, which every worktree of the repository shares.
-export function mainRoot(cwd) {
-  return checkoutRoots(cwd)?.main ?? null;
+// The main checkout, which every worktree of the repository shares. `options` are runGit's.
+export function mainRoot(cwd, options) {
+  return checkoutRoots(cwd, options)?.main ?? null;
 }
 
 // The top folder of the checkout that `cwd` is in: the main checkout or one of its worktrees.
@@ -45,8 +45,8 @@ export function showPrefix(cwd) {
 // `git init --separate-git-dir` put that folder. A linked worktree has only the common folder's place to go by: the
 // main checkout holds it as `.git`. A separate git folder records no main checkout (`git worktree list` names the
 // folder itself), so from a linked worktree of such a repository `main` is that folder's parent.
-export function checkoutRoots(cwd) {
-  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir', '--show-toplevel'], cwd)?.split('\n');
+export function checkoutRoots(cwd, options) {
+  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir', '--show-toplevel'], cwd, options)?.split('\n');
   if (lines?.length !== 3) return null;
   const [commonDir, gitDir, current] = lines;
   return { main: gitDir === commonDir ? current : path.dirname(commonDir), current };

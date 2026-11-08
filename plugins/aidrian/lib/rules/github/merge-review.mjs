@@ -18,13 +18,15 @@
 // refuses a request whose pull request it cannot read: `--match-head-commit <sha>` names it.
 // A record from another machine is not read here: that is the known limit, as for review-extend.
 // Before it reads the record, a merge of this repository (one that names none, or one of this checkout's remotes) holds
-// the working copy to the config the base branch commits (review/in-force.mjs baseProblem), from local git alone. A merge
-// naming its number compares with origin's default branch first, before any read; once a view is made, with the base
-// it names. With neither ref here, a read that fails, or no time left, the guard goes on as it would, since a hook lets
-// the action run when it cannot read. Each read is stopped after 1 s, or at the 4 s deadline below if sooner.
-// The Human waives it with an AskUserQuestion answer, given at or after the head's outcome and every entry still owed, to
-// a question naming `#<PR>` and the head's first 7 characters, whose chosen option starts with "Merge anyway". Without a
-// transcript the host writes in that shape (Codex), the Human merges in their own shell.
+// the working copy to the config the base branch commits, and refuses a state folder inside a checkout of this repository
+// (review/in-force.mjs baseProblem), from local git alone. A merge naming its number compares with origin's default branch
+// first, before any read; once a view is made, with the base it names. With neither ref here, a read that fails, or no
+// time left, the guard goes on as it would, since a hook lets the action run when it cannot read. Every git read of this
+// hold is stopped after 1 s, or at the 4 s deadline below if sooner. This hold applies with no record too, and neither of
+// the waivers below reaches it.
+// The Human waives the record's denial with an AskUserQuestion answer, given at or after the head's outcome and every
+// entry still owed, to a question naming `#<PR>` and the head's first 7 characters, whose chosen option starts with
+// "Merge anyway". Without a transcript the host writes in that shape (Codex), the Human merges in their own shell.
 // An unattended run's judge verdict (`aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
 // for `round_limit` on the merge's own head, nothing owed, and only under both switches:
 // `github.unattendedWaiver.allow` on the default and base branches, read from GitHub, and the main checkout's local switch.
@@ -40,7 +42,7 @@ import { readFileSync } from 'node:fs';
 import { forgeFor } from '../../forges/index.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
-import { baseProblem, boundedReads } from '../../review/in-force.mjs';
+import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
 import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { guardWaiver, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
@@ -172,7 +174,7 @@ function heldReason({ project, pr, repo, base, deadline, now }) {
   } catch {}
   if (!problem) return null;
   const merge = pr === null ? 'a pull request' : `pull request #${pr}`;
-  return `Blocked: this merges ${merge}, but ${problem}. Merge from a checkout on the base branch, or the Human merges in their own shell.`;
+  return `Blocked: this merges ${merge}, but ${problem.replace(/\.$/u, '')}. ${recourse(problem)}`;
 }
 
 // The deny reason for a merge of `pr` at `head` in `project`, or null. `pr` or `head` null is read through

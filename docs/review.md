@@ -782,28 +782,28 @@ branch before it reads the record. Each refuses a checkout where:
 - its project folder differs from the base branch's, or the base's `.aidrian.json` cannot be read:
   `the working copy's project folder differs from <owner/name> <base>, and the review record is read from it`.
   A base with no config at all stays allowed, for the pull request that adopts aidrian;
-- a checkout around the state folder, innermost or outer, tracks a path at it, under it, or at a folder above it, such as a link, in any case:
-  `the state folder holds files git tracks at this checkout, and the review record is read from it`; or git cannot find or list those checkouts:
-  `git cannot list the state folder at this checkout, and the review record is read from it`.
+- the state folder is inside a checkout of the repository, the main one or a linked worktree, as named or through a link:
+  ``the state folder is inside this repository's checkout <top>, and the review record is read from it: in <config>, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, move the old folder's contents to the folder `aidrian state` prints.``
+  or git cannot list the checkouts: `git cannot list this repository's checkouts, and the review record is read from it`.
 
 A base branch this checkout does not have stops the command: `git fetch` first.
 
-What to do about a refusal: a pull request that moves `state.dir` is reviewed from a checkout on the base branch, which
+What to do about the moved state.dir refusal, for a pull request that moves `state.dir` between two folders outside the
+repository: it is reviewed from a checkout on the base branch, which
 plans the same review of the same head, with the `self` engine in `.aidrian.local.json`. A local reviewer, `codex-local`
 (or `auto` with Codex available) or any `exec` reviewer, reads the checkout at the head, so it cannot finish from there.
 The `self` recourse does not apply when `config.json` pins `review.engine`, which wins over the machine's.
 A head behind a base that moved `state.dir` merges the base first.
-Tracked files in a state folder, with `state.dir` `.` among them, since the checkout itself then holds tracked files:
-untrack them, or use a folder git ignores. That answers `the state folder holds files git tracks at this checkout, and
-the review record is read from it`. `git cannot list the state folder at this checkout, and the review record is read from it`
-clears once git can list the folder; a state folder inside a git folder never can, so it goes elsewhere. The check reads
-every checkout around the state folder, and a checkout inside another answers to both indexes: a relative
-`state.dir` lies in the main checkout, also from a linked worktree. When the main checkout tracks it, put the main checkout
-back on a branch that does not track it.
 
-Any tracked entry counts, so this check has limits. A machine that keeps its state folder as its own repository with
-commits is refused: untrack them, or use a folder git ignores. A project whose checkout is tracked by a checkout around it
-is refused with its state folder inside: use a folder outside the outer checkout.
+Moving a state folder out of the repository: the state folder goes outside every checkout of the repository. A folder
+outside them is allowed, inside another repository's checkout, an outer repository that tracks this checkout, or this
+repository's separate git dir included. A relative `state.dir` lies in the main checkout, also from a linked worktree.
+The pull request that moves it out gets no local record on any checkout, the [merge guard](hooks.md#merge-guard)'s hold
+applies with no review record too, and the `Merge anyway` answer does not waive it, so the Human merges it. With product
+feedback on, marking that pull request ready from its own head meets the ready hold's `state_dir` status, so it is marked
+ready from a checkout on the base branch or by the Human on the forge. Once it lands, each machine moves its own old
+folder's contents to the folder `aidrian state` prints, since the guard reads only the local record and a copy on the pull
+request's comment does not stand in. The `.gitignore` line for the old folder goes once every machine has moved.
 
 A command publishes only after the hold. `extend` and `ingest` with no answer from the forge keep their write on this
 machine, and `waive` refuses without the base. `attest` and the long form of `signoff` hold only when the forge names the base, so

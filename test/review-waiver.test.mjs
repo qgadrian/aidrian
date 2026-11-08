@@ -28,14 +28,16 @@ const ALLOW = { version: 1, github: { unattendedWaiver: { allow: true } } };
 // three commits no ref names: `A`, `B` a child of A, and `C` a sibling of A, so a head the review did not cover can
 // descend from the reviewed one or not: neither is waived.
 function repo(t, { config = {}, local = null } = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-waiver-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-waiver-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   const id = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false'];
   git('init', '-q');
   git('remote', 'add', 'origin', 'git@github.com:Acme/Notes.git');
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, ...config }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, ...config }));
   git('add', '.');
   git(...id, 'commit', '-qm', 'init');
   const tree = git('rev-parse', 'HEAD^{tree}');
@@ -616,12 +618,12 @@ test('a subagent may not set the waiver switch in the local file; the main sessi
 
 test('aidrian check warns, and still passes, when the waiver switch is on and the team does not allow it', (t) => {
   const r = repo(t, { local: ON });
-  writeFileSync(path.join(r.dir, '.gitignore'), `${LOCAL}\nstate/\n.worktrees/\n`);
+  writeFileSync(path.join(r.dir, '.gitignore'), `${LOCAL}\n.worktrees/\n`);
   const aidrianCheck = () => spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['check'], { cwd: r.dir, encoding: 'utf8' });
   const warned = aidrianCheck();
   assert.equal(warned.status, 0, warned.stderr);
   assert.match(warned.stderr, /^warning: unattended waiver is on locally but the team does not allow it$/mu);
-  writeFileSync(path.join(r.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { unattendedWaiver: { allow: true } } }));
+  writeFileSync(path.join(r.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, github: { unattendedWaiver: { allow: true } } }));
   const allowed = aidrianCheck();
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.doesNotMatch(allowed.stderr, /unattended waiver/u, 'allowed by the team: nothing to say');

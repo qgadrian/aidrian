@@ -17,6 +17,8 @@ const REPOSITORY = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/plug
 const run = (args, cwd) => spawnSync(CLI, args, { cwd, encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: XDG } });
 const ok = (stdout) => stdout.split('\n')[0];
 const stateLine = (stdout) => stdout.split('\n')[1].replace(/^state: /, '');
+// The record commands' refusal, which the check prints as a warning.
+const insideText = (top) => `the state folder is inside this repository's checkout ${top}, and the review record is read from it: in .aidrian/config.json, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, move the old folder's contents to the folder \`aidrian state\` prints.`;
 
 // A git repository with the example consumer's project folder, docs, and .gitignore copied in.
 function exampleRepo(t) {
@@ -182,8 +184,9 @@ test('check names the missing .gitignore line for the local sources file, and fo
   assert.deepEqual([status, stdout], [1, '']);
   assert.equal(
     stderr,
-    '.aidrian.local.json is not git-ignored: add the line ".aidrian.local.json" to .gitignore, or run aidrian init\n' +
-      '.state/ is not git-ignored: add the line ".state/" to .gitignore, or run aidrian init\n' +
+    `warning: ${insideText(dir)}\n` +
+      '.aidrian.local.json is not git-ignored: add the line ".aidrian.local.json" to .gitignore, or run aidrian init\n' +
+      '.state/ is not git-ignored: in .aidrian/config.json set "state": { "dir": null } to move the state folder out of the repository, or while it stays add the line ".state/" to .gitignore, or run aidrian init\n' +
       '.worktrees/ is not git-ignored: add the line ".worktrees/" to .gitignore, or run aidrian init\n',
   );
   assert.match(run(['init'], dir).stdout, /^added to \.gitignore: \.aidrian\.local\.json, \.state\/, \.worktrees\/\n/);
@@ -200,7 +203,61 @@ test('a nested project ignores a state folder outside it in the repository root 
   assert.equal(init.stdout, 'added to .gitignore: .aidrian.local.json\nadded to ../.gitignore: .state/, .worktrees/\n' +
     'next: add a knowledge index with aidrian-knowledge init <folder of docs>, then run aidrian check\n');
   assert.equal(readFileSync(path.join(dir, '.gitignore'), 'utf8'), '.state/\n.worktrees/\n');
-  assert.equal(run(['check'], path.join(dir, 'app')).status, 0);
+  const checked = run(['check'], path.join(dir, 'app'));
+  assert.equal(checked.status, 0);
+  assert.equal(checked.stderr, `warning: ${insideText(dir)}\n`);
+});
+
+test('check warns with the refusal\'s text on a state folder inside the repository, and still passes', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.state' } }));
+  run(['init'], dir);
+  const { status, stdout, stderr } = run(['check'], dir);
+  assert.equal(status, 0, stderr);
+  assert.equal(stderr, `warning: ${insideText(dir)}\n`);
+  assert.deepEqual([ok(stdout), stateLine(stdout)], ['ok: .aidrian (2 buckets, 8 docs)', path.join(dir, '.state')]);
+  // A folder outside the repository, or none set, says nothing.
+  for (const config of [{ version: 1 }, { version: 1, state: { dir: null } }, { version: 1, state: { dir: '../elsewhere' } }]) {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify(config));
+    assert.equal(run(['check'], dir).stderr, '', JSON.stringify(config));
+  }
+});
+
+test('check from a linked worktree warns about a relative state folder in the main checkout', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const main = path.join(dir, 'main');
+  const git = (...args) => execFileSync('git', ['-C', main, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args]);
+  execFileSync('git', ['init', '-q', '-b', 'main', main]);
+  mkdirSync(path.join(main, '.aidrian'));
+  writeFileSync(path.join(main, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.state' } }));
+  writeFileSync(path.join(main, '.gitignore'), '.aidrian.local.json\n.worktrees/\n.state/\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'init');
+  const tree = path.join(dir, 'tree');
+  git('worktree', 'add', '-q', '-b', 'task', tree);
+  const { status, stderr, stdout } = run(['check'], tree);
+  assert.equal(status, 0, stderr);
+  assert.equal(stderr, `warning: ${insideText(main)}\n`, 'the warning names the main checkout, and the ignore check adds no error');
+  assert.equal(stateLine(stdout), path.join(main, '.state'));
+});
+
+test('check says nothing of a state folder when git cannot list the checkouts', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.state' } }));
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n.state/\n');
+  const outside = run(['check'], dir);
+  assert.deepEqual([outside.status, outside.stderr], [0, ''], 'outside a repository');
+
+  execFileSync('git', ['init', '-q', dir]);
+  const bin = path.join(dir, 'bin');
+  mkdirSync(bin);
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" worktree list "*) exit 1;; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
+  const stopped = spawnSync(CLI, ['check'], { cwd: dir, encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: XDG, PATH: `${bin}:${process.env.PATH}` } });
+  assert.deepEqual([stopped.status, stopped.stderr], [0, ''], 'a list git cannot answer');
 });
 
 test('init in a linked worktree writes only inside that worktree, never the main checkout .gitignore', (t) => {

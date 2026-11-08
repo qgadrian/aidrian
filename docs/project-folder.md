@@ -67,7 +67,7 @@ next: add a knowledge index with aidrian-knowledge init <folder of docs>, then r
 ```
 
 It writes `config.json` with `version` alone, and adds each `.gitignore` line for an entry git does not ignore yet:
-`.aidrian.local.json`, the [worktrees folder](#task-worktrees), and the [state folder](#local-state) when config.json puts it in the repository.
+`.aidrian.local.json`, the [worktrees folder](#task-worktrees), and the [state folder](#local-state) when config.json puts it in the repository, which `aidrian check` warns about and the review-record commands refuse ([review.md](review.md#the-record)).
 Init writes only inside the checkout it runs in.
 In a linked worktree, a folder that resolves into the main checkout, such as the default `.worktrees`, is left to the main checkout's own `.gitignore`.
 It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set up`.
@@ -133,7 +133,7 @@ Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugi
 ## Local state
 
 The plugin writes plans, session handoff briefs, agents' machine handoffs, review state, quorum ledgers, persona audits, pull request body drafts, the lesson inbox,
-and the dispatch log on each machine. They live in one state folder per project, outside the repository, so git never sees them:
+and the dispatch log on each machine. They live in one state folder per project, outside the repository, so git never sees them; the review-record commands and the merge guard refuse a state folder inside the repository's checkouts:
 
 ```text
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
@@ -160,7 +160,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   A project in a subfolder of the repository adds that subfolder's path to the hash, so two projects in one repository
   get two state folders; a project at the repository root keeps the id above.
 - `"state": { "dir": "<path>" }` in config.json moves the folder; [config.md](config.md) lists the key.
-  A relative path starts at the repository root, and `aidrian check` then requires git to ignore it.
+  A relative path starts at the repository root, inside the repository: `aidrian check` warns about such a folder, the review-record commands and the merge guard refuse it ([review.md](review.md#the-record)), and while it stays, check requires git to ignore it.
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
 the orchestrator uses it to name each background agent's handoff file.

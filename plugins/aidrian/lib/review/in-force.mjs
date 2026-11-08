@@ -8,8 +8,8 @@ import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { committedConfig, loadConfig, stateDirProblem } from '../config.mjs';
-import { isDirectory, isWithin, resolvedPath } from '../fs.mjs';
-import { runGit } from '../git.mjs';
+import { isDirectory, isFile, isWithin, resolvedPath } from '../fs.mjs';
+import { checkoutRoots, runGit } from '../git.mjs';
 import { committedConfigFile, stateDir } from '../project.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { changedFiles, fileAt, resolve } from './diff.mjs';
@@ -20,81 +20,69 @@ import { touchedCitations } from './cited.mjs';
 // ref, or else its own branch.
 const baseTipOf = (root, base, read) => resolve(root, `refs/remotes/origin/${base}`, read) ?? resolve(root, `refs/heads/${base}`, read);
 
-const TRACKED = 'the state folder holds files git tracks at this checkout, and the review record is read from it';
-const UNLISTED = 'git cannot list the state folder at this checkout, and the review record is read from it';
+const INSIDE = "the state folder is inside this repository's checkout ";
+const UNLISTED = "git cannot list this repository's checkouts, and the review record is read from it";
 
-// A path as a disk that ignores case or Unicode form reads it, for comparing with a tracked name.
+// A path as a disk that ignores case or Unicode form reads it.
 const spelled = (name) => name.normalize('NFC').toLowerCase();
 
-// The real path of `file`, as the disk spells it, or null.
-const onDisk = (file) => {
-  try {
-    return realpathSync.native(file);
-  } catch {
-    return null;
+// `file` as the disk spells it: the real path of its nearest existing part, then the parts that do not exist yet. Null
+// when that part is a broken link.
+function onDiskPath(file) {
+  if (resolvedPath(file) === null) return null;
+  const tail = [];
+  for (let current = file; ; current = path.dirname(current)) {
+    try {
+      return path.join(realpathSync.native(current), ...tail);
+    } catch {
+      tail.unshift(path.basename(current));
+    }
   }
-};
-
-// The nearest existing folder at or above `from` that `fits`, or the top of the disk.
-function nearestFolder(from, fits = () => true) {
-  let dir = from;
-  while (!(isDirectory(dir) && fits(dir)) && path.dirname(dir) !== dir) dir = path.dirname(dir);
-  return dir;
 }
 
-// git's words when no repository encloses a folder, in the one language they are read in. A git file that leads nowhere
-// also says "not a git repository", and stops the search short of any checkout around it, so it is a failed read.
-const NO_REPOSITORY = /not a git repository \(or any/u;
+// A path as named and on disk, each in the spelling the comparison reads.
+const spellings = (file) => [file, onDiskPath(file)].filter(Boolean).map(spelled);
 
-// The top folder of the checkout `dir` is in, null when no repository encloses it. Throws on any other answer, a git that
-// was stopped or refused the folder included, so that a command refuses and a hook skips the hold.
-function checkoutAt(dir, options) {
-  const found = runGit(['rev-parse', '--show-toplevel'], dir, { ...options, env: { ...process.env, LC_ALL: 'C' } });
-  if (found.status === 0) return found.stdout.trim();
-  if (found.status === 128 && NO_REPOSITORY.test(found.stderr)) return null;
-  throw new Error(UNLISTED);
+// Whether git keeps a work tree at `dir`. A repository whose git folder lies apart has that folder listed as its main
+// entry, and a worktree whose folder is gone stays listed: neither is a checkout.
+const holdsCheckout = (dir) => isFile(path.join(dir, '.git')) || isDirectory(path.join(dir, '.git'));
+
+// Every checkout of this repository: the listed ones, and the one the project is in. Null when git cannot answer. git runs
+// only at the project root, where it meets the checkout's own `.git` first, so no answer depends on the state folder.
+function repositoryCheckouts(project, git) {
+  const listed = runGit(['worktree', 'list', '--porcelain'], project.root, git());
+  const roots = listed.status === 0 ? checkoutRoots(project.root, git()) : null;
+  if (!roots) return null;
+  const entries = listed.stdout.split('\n\n').filter((entry) => !entry.split('\n').includes('bare'));
+  const paths = entries.map((entry) => /^worktree (.+)$/mu.exec(entry)?.[1]).filter((dir) => dir && holdsCheckout(dir));
+  return [...new Set([roots.current, ...paths])];
 }
 
-// Every checkout around `from`, innermost first. One read each and one to end the walk, each under `git`'s options.
-function checkoutsAround(from, git) {
-  const tops = [];
-  for (let top = checkoutAt(from, git()); top && !tops.includes(top); top = checkoutAt(path.dirname(top), git())) tops.push(top);
-  return tops;
-}
-
-// The checkouts around the state folder, which need not be this one: a relative state.dir in a linked worktree is the
-// main checkout's, and a checkout inside another answers to both indexes. Around the folder its links lead to, and around
-// the one it is named in, which differ only on a link out of a checkout.
-// Each { top, folders }: its top folder, and the folder's paths from there, as named and with its links followed, '' at
-// the top itself. None when no checkout holds it.
-function stateFolderCheckouts(project, working, git) {
-  const folder = stateDir(project, { config: working });
-  const real = resolvedPath(folder);
-  const paths = [folder, onDisk(folder), real].filter(Boolean);
-  const starts = new Set([nearestFolder(real ?? folder), nearestFolder(folder, (dir) => resolvedPath(dir) === dir)]);
-  const tops = new Set([...starts].flatMap((dir) => checkoutsAround(dir, git)));
-  const holder = (top) => {
-    const froms = [top, onDisk(top)].filter(Boolean);
-    const inside = paths.flatMap((each) => froms.filter((from) => isWithin(from, each)).map((from) => path.relative(from, each).split(path.sep).join('/')));
-    return { top, folders: [...new Set(inside.map(spelled))] };
-  };
-  return [...tops].map(holder).filter(({ folders }) => folders.length);
-}
-
-// The record is this machine's, so a state folder in a checkout holds nothing git tracks there: no entry of any checkout
-// around it at the folder, under it, or at a folder above it, in any case. { problem }, null when it holds, with `unread`
-// when git could not list one.
-function trackedState(project, working, git) {
+// The record is this machine's, and a head puts its files in its checkout, so the state folder lies outside every checkout
+// of this repository, as named and with its links followed, in any case. Elsewhere is allowed: this repository's head puts
+// no file in another repository, an outer one, or a git folder apart. { problem }, null when it holds, with `unread` when
+// git could not answer. `aidrian check` warns with the same answer.
+export function insideCheckout(project, working, git) {
   if (!working.state.dir) return { problem: null };
-  for (const { top, folders } of stateFolderCheckouts(project, working, git)) {
-    const listed = runGit(['ls-files', '-z', '--full-name', '--', ':/'], top, { maxBuffer: 256 * 1024 * 1024, ...git() });
-    if (listed.status !== 0) return { problem: UNLISTED, unread: true };
-    const names = listed.stdout.split('\0').filter(Boolean).map(spelled);
-    const holds = (name) => folders.some((folder) => folder === '' || name === folder || name.startsWith(`${folder}/`) || folder.startsWith(`${name}/`));
-    if (names.some(holds)) return { problem: TRACKED };
+  let folder;
+  let tops;
+  try {
+    folder = spellings(stateDir(project, { config: working, read: git() }));
+    tops = repositoryCheckouts(project, git);
+  } catch {
+    tops = null;
   }
-  return { problem: null };
+  if (!tops) return { problem: UNLISTED, unread: true };
+  const top = tops.find((dir) => spellings(dir).some((from) => folder.some((each) => isWithin(from, each))));
+  if (!top) return { problem: null };
+  return { problem: `${INSIDE}${top}, and the review record is read from it: in ${project.paths.config}, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, move the old folder's contents to the folder \`aidrian state\` prints.` };
 }
+
+// What the merge guard says to do about `problem`: a state folder inside a checkout is refused at the base branch too, so
+// a checkout there is no way forward.
+export const recourse = (problem) => (problem.startsWith(INSIDE)
+  ? 'Move the state folder first; until that lands, the Human merges in their own shell.'
+  : 'Merge from a checkout on the base branch, or the Human merges in their own shell.');
 
 // The working copy against the config `baseTip` commits: { committed, problem }, with `problem` null when it holds, and
 // `unread` when the problem is a read that failed, not a real difference. A base with no config at all has no project
@@ -106,7 +94,7 @@ function againstBase(project, working, baseTip, where, git) {
   if (file !== project.paths.config && fileAt(project.root, baseTip, file, git()) !== null) return { committed: null, problem: folderMoved };
   const committed = committedConfig(project, baseTip, [], git());
   const moved = stateDirProblem(working, committed, where);
-  return moved ? { committed, problem: moved } : { committed, ...trackedState(project, working, git) };
+  return moved ? { committed, problem: moved } : { committed, ...insideCheckout(project, working, git) };
 }
 
 // The base branch as this checkout has it, and its committed config: { committed, baseTip }. The review record is read

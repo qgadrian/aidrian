@@ -15,6 +15,7 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
@@ -141,6 +142,195 @@ test('zero config: codex-local reviews once; a finding is fix_required until a n
   assert.equal(second.round, 2);
   assert.equal(r.comments.length, 1, 'one summary comment, edited in place');
   assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 2);
+});
+
+// An exec reviewer that keeps each input, and answers with `answers` in turn, then clean.
+const scripted = (...answers) => {
+  const inputs = [];
+  return { inputs, exec: async (_reviewer, input) => (inputs.push(input), answers[inputs.length - 1] ?? { status: 'done', findings: [], verdicts: [], dropped: [] }) };
+};
+const found = (...findings) => ({ status: 'done', findings, verdicts: [], dropped: [] });
+
+test('a comment-, doc-, or test-only push keeps its round, and the passes it touches re-review it in delta context', async (t) => {
+  for (const [what, push] of [
+    ['comment', (r) => r.write('src/app.js', '// note: the app number\nexport const app = 2;\n')],
+    ['doc', (r) => r.write('docs/guide.md', 'hello\n')],
+    ['test', (r) => r.write('test/app.test.js', 'test("app", () => {\n  assert.ok(app);\n});\n')],
+  ]) {
+    const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+    const seen = scripted();
+    const first = await r.step({ exec: seen.exec });
+    assert.deepEqual([first.status, first.round], ['received', 1], what);
+    push(r);
+    const pushed = r.commit();
+    const second = await r.step({ exec: seen.exec });
+    assert.deepEqual([second.status, second.round, seen.inputs.length], ['received', 1, 2], `a ${what}-only push is reviewed, and opens no round`);
+    assert.deepEqual([seen.inputs[1].context, seen.inputs[1].base, seen.inputs[1].head], ['delta', first.head, pushed], `${what}: only the change since the round's head`);
+    assert.match(second.plan.reasons.join('\n'), /a comment, doc, or test-only change since [0-9a-f]{7}: the round stays open; the passes it touches re-review it/u, what);
+    const state = readLocalState(r.project, 7);
+    assert.equal(state.passes['engine:codex-local'].head, pushed, `${what}: the result is the new head's`);
+    assert.deepEqual([state.rounds.length, state.rounds[0].head, state.rounds[0].quiet.map((each) => each.from)], [1, pushed, [first.head]], `${what}: the round moved to the new head`);
+  }
+});
+
+// A file the default review.nonBehaviour calls prose can still hold behaviour (a pinned dependency): quiet keeps the
+// round, but the pass it touches reviews it.
+test('a fix push to a file review.nonBehaviour calls prose is re-reviewed on the new head in the same round', async (t) => {
+  const r = repo(t, { change: (write) => (write('src/app.js', 'export const app = 2;\n'), write('requirements.txt', 'requests==2.31.0\n')) });
+  const seen = scripted();
+  const first = await r.step({ exec: seen.exec });
+  assert.deepEqual([first.status, first.round], ['received', 1]);
+  r.write('requirements.txt', 'requests==2.32.0\n');
+  const pushed = r.commit();
+  const second = await r.step({ exec: seen.exec });
+  assert.deepEqual([second.status, second.round, seen.inputs.length], ['received', 1, 2], 'the pinned dependency is reviewed, and no round opens');
+  assert.deepEqual([seen.inputs[1].context, seen.inputs[1].base, seen.inputs[1].head], ['delta', first.head, pushed]);
+  assert.equal(readLocalState(r.project, 7).passes['engine:codex-local'].head, pushed, 'the result is the new head\'s');
+});
+
+test('a quiet push with open findings re-reviews the delta; a test that lost a line opens a round', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const seen = scripted(found(finding));
+  const first = await r.step({ exec: seen.exec });
+  assert.deepEqual([first.status, first.round], ['fix_required', 1]);
+  r.write('src/app.js', '// note: the app number\nexport const app = 2;\n');
+  r.write('test/app.test.js', 'test("app", () => {\n  assert.ok(app);\n  assert.equal(app, 2);\n});\n');
+  r.commit();
+  const second = await r.step({ exec: seen.exec });
+  assert.deepEqual([second.status, second.round, seen.inputs.map((input) => input.context)], ['received', 1, ['full', 'delta']], 'only a reviewer says a finding is fixed');
+  r.write('test/app.test.js', 'test("app", () => {\n  assert.equal(app, 2);\n});\n');
+  r.commit();
+  const third = await r.step({ exec: seen.exec });
+  assert.deepEqual([third.round, seen.inputs.length], [2, 3], 'a test that lost a line is loud: a new round reviews it');
+});
+
+test('in the last round a quiet fix is reviewed without reaching round_limit', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 1, extraRounds: 'off' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const seen = scripted(found(finding));
+  assert.deepEqual([(await r.step({ exec: seen.exec })).status, readLocalState(r.project, 7).rounds[0].final], ['round_limit', true], 'a fix would need another round');
+  r.write('src/app.js', '// why the app is two\nexport const app = 2;\n');
+  r.commit();
+  const fixed = await r.step({ exec: seen.exec });
+  assert.deepEqual([fixed.status, fixed.round, seen.inputs.length], ['received', 1, 2]);
+  assert.equal(readLocalState(r.project, 7).rounds[0].final, true, 'the round keeps its last-round flag');
+});
+
+test('a quiet push whose review fails gives the round back as it was: its head, its time, and its quiet list', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  await r.step({ exec: clean });
+  const before = readLocalState(r.project, 7).rounds;
+  r.write('src/app.js', '// one\nexport const app = 2;\n');
+  r.commit();
+  const failed = await r.step({ exec: async () => ({ status: 'failed', reason: 'crashed' }) });
+  assert.equal(failed.status, 'incomplete');
+  assert.deepEqual(readLocalState(r.project, 7).rounds, before, 'no quiet list, the old head and time');
+  await r.step({ exec: clean });
+  const moved = readLocalState(r.project, 7).rounds;
+  assert.equal(moved[0].quiet.length, 1);
+  r.write('src/app.js', '// one\n// two\nexport const app = 2;\n');
+  r.commit();
+  await r.step({ exec: async () => ({ status: 'failed', reason: 'crashed' }) });
+  assert.deepEqual(readLocalState(r.project, 7).rounds, moved, 'a quiet list it had stays as it was');
+});
+
+// Every pass of the built-in plan reads all files, so only a plan command's pass with a file list can miss a quiet push.
+test('a quiet push no pass touches runs no review, and still moves the round to its head', async (t) => {
+  const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'independent',passes:[{id:'extra:lint',reviewer:'lint',kind:'exec',files:['docs/guide.md']}]}]})))";
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { planCommand: 'node scripts/plan.mjs', reviewers: { lint: { kind: 'exec', command: ['node', 'scripts/lint.mjs'], stage: 'independent' } } } },
+    baseFiles: { 'scripts/plan.mjs': planner, 'scripts/lint.mjs': '\n' },
+    change: (write) => write('docs/guide.md', 'hello\n'),
+  });
+  const seen = scripted();
+  const first = await r.step({ exec: seen.exec });
+  assert.deepEqual([first.status, first.round, seen.inputs.length], ['received', 1, 1]);
+  r.write('docs/other.md', 'outside the pass\'s files\n');
+  const pushed = r.commit();
+  const second = await r.step({ exec: seen.exec });
+  assert.deepEqual([second.status, second.round, seen.inputs.length], ['received', 1, 1], 'the pass carries: no new run, no new round');
+  const state = readLocalState(r.project, 7);
+  assert.equal(state.passes['extra:lint'].head, first.head, 'the pass\'s result is still the first head\'s');
+  assert.deepEqual([state.rounds.length, state.rounds[0].head, state.rounds[0].quiet.map((each) => each.from)], [1, pushed, [first.head]], 'the round moved to the new head');
+});
+
+// A step on `change`, then one on a doc push `push` makes, with an engine that finds nothing: the second result, and
+// how many times the engine ran.
+async function afterDocPush(t, { baseConfig, push, baseFiles }) {
+  const r = repo(t, { baseConfig, baseFiles, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const seen = scripted();
+  const first = await r.step({ exec: seen.exec });
+  assert.equal(first.round, 1);
+  push(r);
+  r.commit();
+  return { r, first, second: await r.step({ exec: seen.exec }), runs: seen.inputs };
+}
+
+test('a doc push carries nothing when it changes how the project is reviewed: a harness file or a cited doc opens a round', async (t) => {
+  const harness = await afterDocPush(t, {
+    baseConfig: { version: 1, review: { nonBehaviour: ['**/*.md', '.aidrian/**'] } },
+    push: (r) => r.write('.aidrian/config.json', `${JSON.stringify({ version: 1, review: { nonBehaviour: ['**/*.md', '.aidrian/**'] } }, null, 2)}\n`),
+  });
+  assert.deepEqual([harness.second.round, harness.runs.length, harness.runs[1]?.context], [2, 2, 'delta'], 'the config file decides how the project is reviewed');
+  const cited = await afterDocPush(t, {
+    baseConfig: { version: 1, review: { flows: { booking: { files: ['src/booking/**'], invariants: 'docs/flows/booking.md' } } } },
+    push: (r) => r.write('docs/flows/booking.md', '# Booking\n\n## No double booking\nTwo bookings may share a slot.\n'),
+  });
+  assert.equal(cited.second.round, 2, 'a flow\'s invariants doc is part of the review');
+  assert.ok(cited.second.plan.flows.includes('harness-config'));
+});
+
+test('a quiet push that selects a flow by an added line or by its content opens a round', async (t) => {
+  const added = await afterDocPush(t, {
+    baseConfig: { version: 1, review: { flows: { pay: { files: ['src/pay/**'], added: ['refund\\('] } } } },
+    push: (r) => r.write('docs/guide.md', 'Call refund(order) to pay back.\n'),
+  });
+  assert.equal(added.second.round, 2, 'a doc line the flow\'s pattern matches');
+  assert.ok(added.second.plan.flows.includes('pay'));
+  const content = await afterDocPush(t, {
+    baseConfig: { version: 1, review: { flows: { pay: { files: ['src/pay/**'], content: { roots: ['src'], probes: ['chargeCard'] } } } } },
+    baseFiles: { 'src/billing.js': 'export const pay = () => chargeCard();\n' },
+    push: (r) => r.write('src/billing.js', '// pays the order\nexport const pay = () => chargeCard();\n'),
+  });
+  assert.equal(content.second.round, 2, 'a comment-only change to a file whose content is the flow\'s');
+  assert.ok(content.second.plan.flows.includes('pay'));
+});
+
+test('a doc push a rule reviews keeps its round, but a pass with nothing open re-reviews it', async (t) => {
+  for (const rule of [{ depth: 'single', when: { anyFiles: ['docs/**'] } }, { require: ['independent-model'], when: { anyFiles: ['docs/**'] } }]) {
+    const { second, runs } = await afterDocPush(t, { baseConfig: { version: 1, review: { rules: [rule] } }, push: (r) => r.write('docs/guide.md', 'hello\n') });
+    assert.deepEqual([second.status, second.round, runs.length, runs[1]?.context], ['received', 1, 2, 'delta'], JSON.stringify(rule));
+  }
+});
+
+test('from round N, an exec reviewer\'s low finding is an accepted residual the step lists, and the step passes', async (t) => {
+  const N = loadTable().lateRoundFrom;
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 8, extraRounds: 'off' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  let calls = 0;
+  const exec = async () => (calls += 1, { status: 'done', findings: [calls <= N - 2 ? finding : { ...finding, severity: 'low' }], verdicts: [], dropped: [] });
+  for (let round = 1; round < N - 1; round += 1) {
+    assert.deepEqual([(await r.step({ exec })).status, calls], ['fix_required', round]);
+    r.write('src/app.js', `export const app = ${100 + round};\n`);
+    r.commit();
+  }
+  const early = await r.step({ exec });
+  assert.deepEqual([early.status, early.round, early.open[0].open], ['fix_required', N - 1, 1], 'before N a low finding still blocks');
+  assert.equal(early.residuals, undefined);
+  r.write('src/app.js', `export const app = ${100 + N};\n`);
+  r.commit();
+  const late = await r.step({ exec });
+  assert.deepEqual([late.status, late.round], ['received', N]);
+  assert.deepEqual(late.residuals, [{ pass: 'engine:codex-local', title: 'off by one', file: 'src/app.js', line: 1, severity: 'low' }]);
+  const pass = readLocalState(r.project, 7).passes['engine:codex-local'];
+  assert.deepEqual([pass.open, pass.findings, pass.list[0].state, pass.list[0].disposition], [0, 1, 'accepted', 'accepted_residual']);
+});
+
+test('a late-round residual records the disposition the table gives it', async (t) => {
+  const table = { ...loadTable(), lateRoundFrom: 1, lateRound: { severities: ['low'], disposition: 'acceptable_as_is' } };
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const result = await r.step({ exec: async () => found({ ...finding, severity: 'low' }), dispositionTable: table });
+  assert.deepEqual([result.status, result.residuals?.length], ['received', 1]);
+  const [kept] = readLocalState(r.project, 7).passes['engine:codex-local'].list;
+  assert.deepEqual([kept.disposition, kept.state, kept.accepted_by], ['acceptable_as_is', 'accepted', 'late-round']);
 });
 
 test('a flow adds a local agent pass that must cite evidence for every invariant before the engine runs', async (t) => {

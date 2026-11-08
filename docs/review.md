@@ -507,6 +507,34 @@ when nothing is left to fix, and stops at the cap when a fix would need another 
 its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass
 the change does not touch carries forward.
 
+**A quiet push.** A push whose change since the round's head is quiet opens no round: the round keeps its number,
+cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list. That holds in
+the last round too, so a quiet fix there is reviewed without reaching `round_limit`. A change is quiet when every file
+in it is one of:
+
+- prose or ignored, by `review.nonBehaviour` and `review.ignore`;
+- a test, by `**/*.test.*`, `**/*.spec.*`, `**/*_test.*`, a `test/`, `tests/`, `__tests__/`, or `spec/` folder, or a
+  flow's `tests`, that only gained lines, none of which focuses or skips tests (`.only`, `.skip`, `fit`, `xit`, ...);
+- a code file whose every added and removed line is blank or a comment by its extension's syntax, with each hunk's
+  block comments opened and closed in order, and no comment a tool reads: a lint, type, or coverage switch, a build
+  constraint such as `//go:build`, a compiler reference, or an interpreter line.
+
+Never quiet: a deleted file, prose included; a code file with no changed lines (a binary or a mode change) or with an
+extension the table in `lib/review/diff.mjs` does not know; a test that lost a line; a merge from the base branch; and
+any change to a file that decides how the project is reviewed (the config, or a file the plan command, a visual hook,
+or a reviewer command names), to a flow's invariants doc or a doc an invariant cites, or that selects a flow by itself:
+a changed file in its `files` that is not prose or ignored (a doc there selects no flow), an added line, prose
+included, that matches its `added`, or a file its `content` selects.
+
+A quiet push is still reviewed: every pass it touches, a pass of all files included, re-reviews the change in `delta`
+context, as after any push. Quiet decides only whether the push counts against the round cap; it never decides whether
+a pass runs.
+
+The comment and test rules decide only whether a push counts against the round cap. They read lines without their
+context, so a line inside a string that looks like a comment, or a C-style line that starts with a `*` operator, reads
+as a comment; a miss like that costs one round of cap and never a review. The syntax table grows when a project asks
+for a language; it is not kept complete.
+
 `--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
 earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
 than the one under review counts for nothing. A flow's required checks are read for that commit too.
@@ -541,6 +569,20 @@ merge review as before. So does a merge git cannot read this way, such as under 
 `git merge-tree --write-tree`: the step reviews the whole change and says why in the plan's reasons. The limit: two
 sides that each passed review can still break together with no textual conflict, and no reviewer sees that; CI still
 runs on the merge head.
+
+### Late rounds
+
+The late phase starts at review round N, `lateRoundFrom` in the
+[disposition table](../plugins/aidrian/lib/finding-disposition.json), 5 today. The round of a finding is the review
+round it arrived in, `round` of `aidrian pr review`, or the bot's own review count for its comments, and
+`aidrian pr disposition` takes it as `--round` with `--source bot`. From round N, a low finding is `accepted_residual`
+whatever its cost or citation (`lateRound` in the table), and so is a medium, plausible finding for users or operators,
+unless its fix is trivial: a trivial-cost medium is `fix_now` in every round.
+The step records an exec reviewer's late low findings that way itself: each is `accepted`, blocks nothing, and is
+listed in `residuals` (`pass`, `title`, `file`, `line`, `severity`) on every result for a head its pass counts for,
+which the session writes into the body's Accepted residuals. A finding recorded with `--findings-file` keeps its own
+state: the session classifies it with `aidrian pr disposition`, writes the residual into the body, and attests it
+`accepted`. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
 
 ### Product feedback in the rounds
 
@@ -770,6 +812,8 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   finished. A carried `received` runs none of them and writes no `running`: it posts the record, and answers no owed
   review. A merge git cannot read is no error: the step reviews it as before. The
   [merge guard](hooks.md#merge-guard) reads the outcome.
+- **Quiet pushes.** A round's `quiet` list holds the heads it moved from on [quiet pushes](#rounds), each `{ from, at }`
+  with the time the round was opened on that head. A round without the list never moved.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head

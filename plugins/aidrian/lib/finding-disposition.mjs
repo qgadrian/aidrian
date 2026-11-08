@@ -8,9 +8,11 @@
 //   aidrian pr disposition --vocab            # every word, defined
 //
 // Severity takes the reviewer scale (critical/high/medium/low) and the feedback scale (blocker/major/minor/nit).
-// `affects` is the worst-hit audience. `cost` (trivial | bounded | structural) defaults to bounded. `round` is the bot's
-// review count when the finding arrived (`codex_rounds` from `aidrian pr await-review`), for a bot finding only; from
-// `lateRoundFrom` on, a medium, plausible finding for users or operators becomes a residual instead of a fix.
+// `affects` is the worst-hit audience. `cost` (trivial | bounded | structural) defaults to bounded. `round` is the
+// review round the finding arrived in, for a bot finding only: `round` of `aidrian pr review`, or `codex_rounds` from
+// `aidrian pr await-review` for the bot's own comments. From `lateRoundFrom` on, a medium, plausible finding for users
+// or operators, unless its cost is trivial (still fix_now), and any low finding whatever its cost or citation
+// (`lateRound`), become residuals instead of fixes.
 // Output: { disposition, rule, reason }, one of fix_now | accepted_residual | drop_unless_cited | acceptable_as_is.
 // A bot finding with no axis is acceptable_as_is until someone classifies it; a person's is needs_axis. Exit 2 when
 // a word is not in the vocabulary.
@@ -23,18 +25,27 @@ export const TABLE_PATH = path.join(import.meta.dirname, 'finding-disposition.js
 export const loadTable = () => JSON.parse(readFileSync(TABLE_PATH, 'utf8'));
 
 const norm = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : undefined);
+const severityOf = (value, table) => table.severitySynonyms?.[norm(value)] ?? norm(value);
+const isLate = ({ source, round }, table) => source === 'bot' && Number.isInteger(round) && round >= (table.lateRoundFrom ?? Infinity);
 
 // Every vocabulary word with its one-line definition, and its calibration examples when it has any.
 export const vocabulary = (table = loadTable()) =>
   Object.fromEntries(
-    [...table.severities, ...table.likelihoods, ...table.affects, ...(table.costs ?? []), ...(table.phases ?? []), ...new Set([...table.rules.map((r) => r.disposition), table.default, table.botSourceWithoutAxis, 'needs_axis'])]
+    [...table.severities, ...table.likelihoods, ...table.affects, ...(table.costs ?? []), ...(table.phases ?? []), ...new Set([...table.rules.map((r) => r.disposition), table.default, table.botSourceWithoutAxis, ...(table.lateRound ? [table.lateRound.disposition] : []), 'needs_axis'])]
       .map((w) => [w, table.examples?.[w] ? { definition: table.definitions[w] ?? null, examples: table.examples[w] } : (table.definitions[w] ?? null)]),
   );
 
+// The late-round residual: from review round `lateRoundFrom`, a bot finding of a `lateRound` severity, with or without
+// axes, cost, or citation. `{ disposition, rule, reason }`, or null when the rule does not apply. `round` is a number;
+// the review step calls this for an exec reviewer's findings, which carry a severity and nothing else.
+export const lateRoundResidual = ({ severity, source, round }, table = loadTable()) => {
+  if (!table.lateRound || !isLate({ source, round }, table) || !table.lateRound.severities.includes(severityOf(severity, table))) return null;
+  return { disposition: table.lateRound.disposition, rule: 'lateRound', reason: `a ${severityOf(severity, table)} bot finding from review round ${table.lateRoundFrom} on is a residual, whatever its cost or citation` };
+};
+
 // The decision; `table` defaults to the committed JSON.
 export const decideDisposition = (input, table = loadTable()) => {
-  const rawSeverity = norm(input.severity);
-  const severity = table.severitySynonyms?.[rawSeverity] ?? rawSeverity;
+  const severity = severityOf(input.severity, table);
   const likelihood = norm(input.likelihood);
   const affects = norm(input.affects);
   const cost = norm(input.cost) ?? table.defaultCost;
@@ -47,13 +58,15 @@ export const decideDisposition = (input, table = loadTable()) => {
   if (affects !== undefined && !table.affects.includes(affects)) bad.push('affects');
   if (!table.costs.includes(cost)) bad.push('cost');
   if (bad.length > 0) return { disposition: 'invalid', rule: null, reason: `invalid ${bad.join(', ')}` };
+  const late = lateRoundResidual({ severity, source, round }, table);
+  if (late) return late;
   if (likelihood === undefined || affects === undefined) {
     if (source === 'bot') {
       return { disposition: table.botSourceWithoutAxis, rule: 'botSourceWithoutAxis', reason: 'bot finding with no likelihood/affects axis stays acceptable as-is until classified' };
     }
     return { disposition: 'needs_axis', rule: null, reason: 'likelihood and affects are required' };
   }
-  const phase = source === 'bot' && round >= (table.lateRoundFrom ?? Infinity) ? 'late' : 'early';
+  const phase = isLate({ source, round }, table) ? 'late' : 'early';
   const facts = { severity, likelihood, affects, cost, phase };
   for (const [i, rule] of table.rules.entries()) {
     if (Object.entries(rule.when).every(([k, vs]) => vs.includes(facts[k]))) return { disposition: rule.disposition, rule: i, reason: JSON.stringify(rule.when) };

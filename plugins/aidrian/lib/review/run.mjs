@@ -38,12 +38,13 @@ import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { currentRoot, runGit, showPrefix } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
-import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, parents, resolve } from './diff.mjs';
+import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, parents, QUIET_TEST_FILES, quietDelta, resolve } from './diff.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { blocks, parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
 import { approveLine, approvalsSwitch, hasApprovers, overruleRefusal, readApprovals } from './approvals.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
+import { lateRoundResidual, loadTable } from '../finding-disposition.mjs';
 import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
@@ -225,7 +226,27 @@ function trackedAt(root, commit) {
 // Whether the change from `from` to `to` touches `files` (null: any reviewed file).
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
-// The whole step. `deps` replaces the forge, the image upload, the engine check, the reviewers, and the bot wait in tests.
+// Whether `since`, the change from `from` to `head`, is quiet (diff.mjs quietDelta: prose, tests that only gained
+// lines, comment-only code). Quiet decides round accounting alone: the round on `from` stays open on `head`, with its
+// number, cap, and last-round flag. It never decides whether a pass runs: a quiet push is reviewed by every pass it
+// touches, as any push is, so a misread change costs a round of cap, never a review. A change to a file that decides
+// how the project is reviewed, to a doc a flow cites, or one that selects a flow by itself is not quiet: it changes
+// what the round's passes were asked to judge.
+function quietChange({ root, from, head, since, review, harnessFiles }) {
+  const lines = diffLines(root, from, head);
+  const sorted = classify(since, review);
+  const prose = new Set([...sorted.ignored, ...sorted.nonBehaviour]);
+  const tests = [...QUIET_TEST_FILES, ...Object.values(review.flows ?? {}).flatMap((flow) => flow.tests ?? [])].map(pathPattern);
+  // The cheap line check first: a loud change needs no guard.
+  if (!quietDelta({ changes: since, ...lines }, { prose: (file) => prose.has(file), test: (file) => tests.some((pattern) => pattern.test(file)) }).quiet) return false;
+  const sincePaths = new Set(since.map((change) => change.file));
+  if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths).length) return false;
+  if (detectFlows(review.flows, { sorted, addedLines: lines.addedLines, removedFiles: lines.removedFiles }).length) return false;
+  return contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows }).length === 0;
+}
+
+// The whole step. `deps` replaces the forge, the image upload, the engine check, the reviewers, the bot wait, and the
+// disposition table in tests.
 // A step that throws after it marked its head `running`, such as a plan command that fails or a bot wait that errs,
 // leaves `error` as the head's outcome, so the merge guard keeps refusing the head.
 export async function reviewStep(opts, deps = {}) {
@@ -241,7 +262,7 @@ export async function reviewStep(opts, deps = {}) {
   }
 }
 
-async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = (repo, files) => ghImage(repo, files, forge), exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
+async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = (repo, files) => ghImage(repo, files, forge), exec = runExec, awaitBot = null, codex, captureSpawn, dispositionTable = loadTable() } = {}, run) {
   const root = project.root;
   const cleanEnv = isolate({ ...env });
   const info = forge.change(opts.pr, CHANGE_FIELDS);
@@ -401,6 +422,15 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
     if (!deltaCache.has(from)) deltaCache.set(from, sinceFor(from));
     return deltaCache.get(from);
   };
+  // Whether the change since `from` is quiet (quietChange). A merge from the base branch is not.
+  const quietCache = new Map();
+  const quietSince = (from) => {
+    if (!quietCache.has(from)) {
+      const since = scope ? null : delta(from);
+      quietCache.set(from, since ? quietChange({ root, from, head, since, review, harnessFiles }) : false);
+    }
+    return quietCache.get(from);
+  };
   // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
   // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
   const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
@@ -537,16 +567,26 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // waits for every earlier pass.
   const finalStage = [...plan.stages].reverse().find((stage) => stage.passes.every((pass) => map[pass.reviewer]?.kind !== 'remote')) ?? null;
   const current = state.rounds.at(-1);
-  const newRound = current?.head !== head;
+  // A quiet push since the round's head keeps the round: it moves to this head, its number, cap, and last-round flag
+  // as they were, and the heads it moved from go in its `quiet` list. The passes it touches still re-review it.
+  const quiet = Boolean(current) && current.head !== head && quietSince(current.head);
+  const newRound = current?.head !== head && !quiet;
   // The last round runs the final stage first, so an independent review always happens before the cap. A round that
   // started as the last one stays the last one on every later call for the same head, unless an extra round was
   // granted since: then a fix may have a new head again.
   const lastRound = newRound ? state.rounds.length + 1 === maxRounds : Boolean(current?.final) && state.rounds.length >= maxRounds;
   const roundsBefore = state.rounds.length;
-  let opened = !newRound;
+  const roundBefore = current ? { head: current.head, at: current.at, quiet: current.quiet } : null;
+  let opened = current?.head === head;
   let recorded = false;
   const openRound = () => {
     if (opened) return null;
+    if (quiet) {
+      current.quiet = [...(current.quiet ?? []), { from: current.head, at: current.at }];
+      Object.assign(current, { head, at: new Date().toISOString() });
+      opened = true;
+      return null;
+    }
     if (state.rounds.length >= maxRounds) return 'round_limit';
     state.rounds.push({ head, at: new Date().toISOString(), ...(lastRound ? { final: true } : {}) });
     if (lastRound && plan.stages.length > 1 && finalStage) state.overrides = [...new Set([...state.overrides, `round ${maxRounds} ran the ${finalStage.name} stage first`])];
@@ -556,7 +596,16 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // A run that produced nothing (a failure, a quota stop) gives its round back.
   const undoRound = () => {
     if (newRound && !recorded) state.rounds.length = roundsBefore;
+    if (quiet && !recorded) {
+      Object.assign(current, roundBefore);
+      if (roundBefore.quiet === undefined) delete current.quiet;
+    }
   };
+  // A quiet push moves the round to this head before any pass runs, so a step whose passes all carry still moves it.
+  if (quiet) {
+    openRound();
+    plan.reasons = [...plan.reasons, `a comment, doc, or test-only change since ${roundBefore.head.slice(0, 7)}: the round stays open; the passes it touches re-review it`];
+  }
 
   // In the last round the final stage runs first and is judged last, once the earlier stages' verdicts are in.
   const order = lastRound && plan.stages.length > 1 && finalStage ? [{ stage: finalStage, runOnly: true }, ...plan.stages.map((stage) => ({ stage }))] : plan.stages.map((stage) => ({ stage }));
@@ -585,8 +634,14 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
         const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
+          // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks
+          // nothing, and `residuals` names it for the pull request body.
+          const list = outcome.findings.map((finding) => {
+            const late = lateRoundResidual({ severity: finding.severity, source: 'bot', round: state.rounds.length }, dispositionTable);
+            return late ? { ...finding, disposition: late.disposition, state: 'accepted', accepted_by: 'late-round' } : finding;
+          });
           state.passes[pass.id] = {
-            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
+            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
           };
           recorded = true;
@@ -913,6 +968,9 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
     answerRequests();
     noteFindings(extra);
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+    // The late-round residuals of the passes that count for this head, for the body's Accepted residuals.
+    const residuals = passes.flatMap((pass) => (resultFor(pass)?.list ?? []).filter((finding) => finding.accepted_by === 'late-round').map(({ title, file, line, severity }) => ({ pass: pass.id, title, file, line, severity })));
+    if (residuals.length) result.residuals = residuals;
     // Every result on a head whose review a fallback replaced says so.
     if (fallbacks.length) result.quota_fallback = fallbacks.map((stop) => ({ stage: stop.stage, replaces: stop.reviewer, choice: stop.choice, signed_off_by: stop.signoff?.by ?? null, note: quota.describe(stop) }));
     // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of

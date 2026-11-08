@@ -9,7 +9,7 @@ import path from 'node:path';
 
 import { committedConfig, loadConfig, stateDirProblem } from '../config.mjs';
 import { isDirectory, isWithin, resolvedPath } from '../fs.mjs';
-import { currentRoot, runGit } from '../git.mjs';
+import { runGit } from '../git.mjs';
 import { committedConfigFile, stateDir } from '../project.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { changedFiles, fileAt, resolve } from './diff.mjs';
@@ -42,8 +42,29 @@ function nearestFolder(from, fits = () => true) {
   return dir;
 }
 
-// The checkouts that hold the state folder, which need not be this one: a relative state.dir in a linked worktree is the
-// main checkout's. The one its links lead to, and the one it is named in, which differ only on a link out of a checkout.
+// git's words when no repository encloses a folder, in the one language they are read in. A git file that leads nowhere
+// also says "not a git repository", and stops the search short of any checkout around it, so it is a failed read.
+const NO_REPOSITORY = /not a git repository \(or any/u;
+
+// The top folder of the checkout `dir` is in, null when no repository encloses it. Throws on any other answer, a git that
+// was stopped or refused the folder included, so that a command refuses and a hook skips the hold.
+function checkoutAt(dir, options) {
+  const found = runGit(['rev-parse', '--show-toplevel'], dir, { ...options, env: { ...process.env, LC_ALL: 'C' } });
+  if (found.status === 0) return found.stdout.trim();
+  if (found.status === 128 && NO_REPOSITORY.test(found.stderr)) return null;
+  throw new Error(UNLISTED);
+}
+
+// Every checkout around `from`, innermost first. One read each and one to end the walk, each under `git`'s options.
+function checkoutsAround(from, git) {
+  const tops = [];
+  for (let top = checkoutAt(from, git()); top && !tops.includes(top); top = checkoutAt(path.dirname(top), git())) tops.push(top);
+  return tops;
+}
+
+// The checkouts around the state folder, which need not be this one: a relative state.dir in a linked worktree is the
+// main checkout's, and a checkout inside another answers to both indexes. Around the folder its links lead to, and around
+// the one it is named in, which differ only on a link out of a checkout.
 // Each { top, folders }: its top folder, and the folder's paths from there, as named and with its links followed, '' at
 // the top itself. None when no checkout holds it.
 function stateFolderCheckouts(project, working, git) {
@@ -51,7 +72,7 @@ function stateFolderCheckouts(project, working, git) {
   const real = resolvedPath(folder);
   const paths = [folder, onDisk(folder), real].filter(Boolean);
   const starts = new Set([nearestFolder(real ?? folder), nearestFolder(folder, (dir) => resolvedPath(dir) === dir)]);
-  const tops = new Set([...starts].map((dir) => currentRoot(dir, git())).filter(Boolean));
+  const tops = new Set([...starts].flatMap((dir) => checkoutsAround(dir, git)));
   const holder = (top) => {
     const froms = [top, onDisk(top)].filter(Boolean);
     const inside = paths.flatMap((each) => froms.filter((from) => isWithin(from, each)).map((from) => path.relative(from, each).split(path.sep).join('/')));
@@ -60,8 +81,9 @@ function stateFolderCheckouts(project, working, git) {
   return [...tops].map(holder).filter(({ folders }) => folders.length);
 }
 
-// The record is this machine's, so a state folder in a checkout holds nothing git tracks there: no entry at the folder,
-// under it, or at a folder above it, in any case. { problem }, null when it holds, with `unread` when git could not say.
+// The record is this machine's, so a state folder in a checkout holds nothing git tracks there: no entry of any checkout
+// around it at the folder, under it, or at a folder above it, in any case. { problem }, null when it holds, with `unread`
+// when git could not list one.
 function trackedState(project, working, git) {
   if (!working.state.dir) return { problem: null };
   for (const { top, folders } of stateFolderCheckouts(project, working, git)) {

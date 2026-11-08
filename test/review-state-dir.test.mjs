@@ -391,6 +391,66 @@ test('a broken link at the state folder in the main checkout is compared there f
   assert.throws(linkedAt(t, r, 'main').hold, TRACKED);
 });
 
+// A repository of its own at `folder` in `r`, with one empty commit: { git, commit }.
+function nestedAt(r, folder) {
+  const dir = path.join(r.dir, folder);
+  mkdirSync(dir, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.email=t@example.com', '-c', 'user.name=Tester', ...args], { cwd: dir, encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'one');
+  return { git, commit: git('rev-parse', 'HEAD') };
+}
+
+test('every checkout around the state folder is listed', (t) => {
+  const hold = (r) => () => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' });
+  const merge = (r) => judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused });
+
+  // A nested checkout at the folder, with no index around it naming the folder: it holds. The outer index's entry at the
+  // folder is a tracked path there.
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { '.gitignore': 'state/\n' } });
+  tracking(r);
+  const { commit } = nestedAt(r, 'state');
+  assert.equal(hold(r)().committed.state.dir, 'state');
+  assert.equal(merge(r), null);
+  r.git('update-index', '--add', '--cacheinfo', `160000,${commit},state`);
+  assert.throws(hold(r), TRACKED);
+  assert.match(merge(r), /the state folder holds files git tracks at this checkout/u);
+
+  // Two checkouts in from the outer one: its entry at a folder above the state folder counts too.
+  const deep = { version: 1, state: { dir: 'a/b/state' } };
+  const d = repo(t, { baseConfig: deep, headConfig: deep, files: { '.gitignore': 'a/\n' } });
+  const middle = nestedAt(d, 'a');
+  nestedAt(d, 'a/b/state');
+  assert.equal(hold(d)().committed.state.dir, 'a/b/state');
+  d.git('update-index', '--add', '--cacheinfo', `160000,${middle.commit},a`);
+  assert.throws(hold(d), TRACKED);
+});
+
+test('files the outer checkout tracks at the state folder are refused with a nested repository there', async (t) => {
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { '.gitignore': 'state/\n' } });
+  tracking(r);
+  nestedAt(r, 'state');
+  const record = 'state/reviews/pr-7-review.json';
+  mkdirSync(path.join(r.dir, 'state/reviews'));
+  writeFileSync(path.join(r.dir, record), `${JSON.stringify(emptyState(7, 'o/r'))}\n`);
+  r.git('update-index', '--add', '--cacheinfo', `100644,${r.git('rev-parse', 'HEAD:src/app.js')},${record}`);
+  await assert.rejects(r.step(), TRACKED);
+  assert.equal(r.comments.length, 0);
+  assert.match(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), /the state folder holds files git tracks at this checkout/u);
+});
+
+test('a state folder that is its own repository with commits is refused', (t) => {
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { '.gitignore': 'state/\n' } });
+  const own = nestedAt(r, 'state');
+  writeFileSync(path.join(r.dir, 'state/keep.txt'), 'x\n');
+  own.git('add', 'keep.txt');
+  own.git('commit', '-q', '-m', 'two');
+  assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), TRACKED);
+});
+
 test('the merge guard denies a checkout whose state.dir differs from the base branch\'s, even with a finished record there', (t) => {
   const r = repo(t, {
     baseConfig: { version: 1, state: { dir: 'state' } },
@@ -476,6 +536,40 @@ test('a list git cannot answer stops a command, and lets a merge go on', (t) => 
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
 });
 
+test('a checkout lookup git cannot answer stops a command, lets a merge go on, and no repository around is no failure', (t) => {
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { '.gitignore': 'state/\n' } });
+  tracking(r);
+  const before = process.env.PATH;
+  t.after(() => (process.env.PATH = before));
+  const lookup = '*" rev-parse --show-toplevel "*';
+  for (const [name, act] of [
+    ['an owner git refuses', 'echo "fatal: detected dubious ownership in repository" >&2; exit 128'],
+    ['a git file that leads nowhere', 'echo "fatal: not a git repository: /gone" >&2; exit 128'],
+    ['another status', 'echo "not a git repository (or any of the parent directories): .git" >&2; exit 1'],
+    ['a read that was stopped', 'kill -9 $$'],
+  ]) {
+    process.env.PATH = fakeGit(t, lookup, act);
+    assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), /git cannot list the state folder at this checkout/u, name);
+    assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null, name);
+  }
+  process.env.PATH = before;
+
+  // A folder in no work tree, with git itself answering.
+  const inGit = { version: 1, state: { dir: '.git/state' } };
+  const g = repo(t, { baseConfig: inGit, headConfig: inGit });
+  mkdirSync(path.join(g.dir, '.git/state'));
+  assert.throws(() => holdToBase(g.project, g.config, { repo: 'o/r', base: 'main' }), /git cannot list the state folder at this checkout/u);
+
+  // No repository around the folder, whatever language the machine reads git in.
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-out-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const out = { version: 1, state: { dir: outside } };
+  const o = repo(t, { baseConfig: out, headConfig: out });
+  process.env.PATH = fakeGit(t, lookup, '[ "$LC_ALL" = C ] || { echo "Schwerwiegend: Kein Git-Repository" >&2; exit 128; }');
+  assert.equal(holdToBase(o.project, o.config, { repo: 'o/r', base: 'main' }).committed.state.dir, outside);
+});
+
 test('a base pointer that cannot be read stops a command, and lets a merge go on', (t) => {
   const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 }, baseFiles: { '.aidrian.json': 'not json' }, files: { '.aidrian.json': pointer('.aidrian') } });
   tracking(r);
@@ -495,6 +589,7 @@ for (const [name, match, make] of [
   ['the base ref', '*refs/remotes/origin*', moved],
   ['the base\'s config', '*" show "*', moved],
   ['the list of tracked files', '*" ls-files "*', (t) => repo(t, { baseConfig: { version: 1, state: { dir: 'state' } }, headConfig: { version: 1, state: { dir: 'state' } } })],
+  ['the checkout lookup', '*" rev-parse --show-toplevel "*', (t) => repo(t, { baseConfig: { version: 1, state: { dir: 'state' } }, headConfig: { version: 1, state: { dir: 'state' } } })],
 ]) {
   test(`a git that stalls on ${name} lets the merge go on inside the hook's 5 s`, (t) => {
     const r = make(t);

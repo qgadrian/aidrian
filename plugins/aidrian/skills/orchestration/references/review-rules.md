@@ -28,6 +28,20 @@ A finding that says a project knowledge doc is wrong is a conflict between two s
 cites once, then fix nothing and report it to the Human as disputed, naming the doc's owner (`harness-librarian`).
 A premise that does not hold is `does not apply`, answered with the file and line that show it.
 
+## Check the proposed fix
+
+A true premise does not make the reviewer's fix safe. Before a fix goes to its owner, compare what it would change with:
+
+- each condition an approval or sign-off on this pull request set, and each flow invariant in the review record;
+- each fix brief, verdict, and decision of an earlier round on this pull request;
+- the test it touches: a suggested test change must still fail on the mistake the test catches.
+
+A fix that would weaken any of these is a conflict, not a `fix_now`: send it, with both sources, to the agent that set
+the condition or made the decision, such as `product-manager` for a product condition or `security-engineer` for a
+security one, and fix nothing until that agent answers. If it keeps its position, the finding is disputed.
+Set `affects` from what the fix puts at risk as well as what the finding describes, and use the higher one:
+a bot or engine finding carries only a severity, so its other axes are yours to set.
+
 ## Fix passes
 
 A finding or a failing check gets at most 2 passes: the fix, and one corrective pass when the review or the check says

@@ -23,8 +23,8 @@
 // `residuals` exits 0 with the pairing, and with `--judged` exits 1 on any contradiction or invalid row. Only a body with no
 // such section, or an empty one, exits 0 whatever `--judged` holds, and so does a pairing that lists no decision and no ADR
 // line. With no project folder the record is the ADR lines alone, and a superseded ADR adds none, as a note says. A scan
-// problem (an index problem, a doc that does not read, a failed git scan) prints as a note, and forces exit 1 only where the
-// pairing would otherwise say nothing is on record. It exits 1 too when `--adr` names no folder or `--project` no project.
+// problem (an index problem, a doc, an ADR, or an ADR folder that is there but does not read, a failed git scan) prints as a
+// note, and forces exit 1 only where the pairing would otherwise say nothing is on record. It exits 1 too when `--adr` names no folder or `--project` no project.
 // `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` and `quorum provisional` add `resolve`'s;
 // docs/dispatch-log.md describes them.
 
@@ -411,24 +411,24 @@ function residuals(args) {
   // A marker whose class no list holds is still a decision on record, as `list` and the domain pause count it.
   const scanned = project ? scanDecisions(project) : null;
   const decisions = scanned ? [...scanned.decisions, ...scanned.unlisted] : [];
-  // A broken index, a doc that does not read, or a scan git could not finish leaves part of the record unknown: each is a note,
-  // and it never lets an empty pairing say that nothing is owed.
-  const unread = (scanned?.problems ?? []).filter(({ line }) => line === null);
-  const notes = scanned ? [...scanned.notes, ...unread.map((each) => (each.doc === null ? each.problem : `${place(each)}: ${each.problem}`))] : [NO_FOLDER];
-  const partial = unread.length > 0 || (scanned?.notes.length ?? 0) > 0;
   const adrDir = values.adr === undefined ? path.join(root, 'docs/adr') : path.resolve(values.adr);
-  const { folder, adrs, skipped } = adrConsequences(adrDir, values.adr, root);
+  const { folder, adrs, skipped, problems: adrProblems } = adrConsequences(adrDir, values.adr, root);
   if (folder === null && values.adr !== undefined) return fail(`no ADR folder at ${adrDir}`);
+  // A broken index, a doc or an ADR that does not read, or a scan git could not finish leaves part of the record unknown:
+  // each is a note, and it never lets an empty pairing say that nothing is owed.
+  const unread = [...(scanned?.problems ?? []).filter(({ line }) => line === null), ...adrProblems];
+  const scanNotes = scanned ? scanned.notes : [NO_FOLDER];
   const skippedNotes = skipped.map((each) => `skipped superseded ADR ${each}`);
-  notes.push(...skippedNotes);
+  const notes = [...scanNotes, ...unread.map(problemNote), ...skippedNotes];
+  const partial = unread.length > 0 || (scanned?.notes.length ?? 0) > 0;
   const pairs = pairResiduals(items, decisions, adrs);
   // With no decision and no ADR line on record, no residual can contradict one: nothing is owed, --judged or not.
   const nothing = pairs.every((pair) => pair.decisions.length === 0 && pair.adrs.length === 0);
   if (nothing && partial) {
-    const why = 'the decisions on record could not all be read, so an empty record proves nothing: fix the problems above, then run this again';
+    const why = 'the decisions and ADRs on record could not all be read, so an empty record proves nothing: fix the problems above, then run this again';
     if (values.json) console.log(JSON.stringify({ residuals: pairs, section, adrFolder: folder, nothing: false, problems: unread, notes }));
     else console.log([...unread.map((each) => ['problem', ...(each.doc === null ? [] : [place(each)]), each.problem].join('\t')),
-      ...[...scanned.notes, ...skippedNotes].map((note) => `note\t${note}`), why].join('\n'));
+      ...[...scanNotes, ...skippedNotes].map((note) => `note\t${note}`), why].join('\n'));
     return 1;
   }
   if (values.judged === undefined || nothing) {
@@ -468,34 +468,55 @@ function residuals(args) {
   return status;
 }
 
-// The `## Consequences` lines of each `*.md` file directly in `dir`, by name: { folder, adrs }, with `folder` the path read,
-// as written from `root` (writtenFromRoot), or null when `dir` is no directory, and each ADR's `path` that folder joined with
-// its name. A folder outside `root` keeps the `--adr` spelling. A file that does not read is passed over, and a superseded
-// ADR (supersededAdr) goes in `skipped`, by path.
-function adrConsequences(dir, spelled, root) {
-  let names;
+// A problem row, as readMarkers gives one, printed as a note.
+const problemNote = (each) => (each.doc === null ? each.problem : `${place(each)}: ${each.problem}`);
+
+// The `*.md` file names directly in `dir`, sorted, or null when `dir` is not there or is no directory. A folder that is
+// there but does not read throws: that is a record left unread, not an empty one.
+function adrNames(dir) {
   try {
-    if (!statSync(dir).isDirectory()) return { folder: null, adrs: [], skipped: [] };
-    names = readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith('.md')).map(({ name }) => name).sort();
-  } catch {
-    return { folder: null, adrs: [], skipped: [] };
+    if (!statSync(dir).isDirectory()) return null;
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
   }
+  return readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith('.md')).map(({ name }) => name).sort();
+}
+
+const unreadAdr = (doc, what, error) => ({ doc, line: null, problem: `cannot read the ${what}: ${error.code ?? error.message}` });
+
+// The `## Consequences` lines of each `*.md` file directly in `dir`, by name: { folder, adrs, skipped, problems }, with `folder`
+// the path read, as written from `root` (writtenFromRoot), or null when `dir` is no directory, and each ADR's `path` that
+// folder joined with its name. A folder outside `root` keeps the `--adr` spelling. A superseded ADR (supersededAdr) goes in
+// `skipped`, by path. A folder or an ADR that is there but does not read is a problem, { doc, line: null, problem }, as a
+// knowledge doc that does not read is in readMarkers.
+function adrConsequences(dir, spelled, root) {
+  let names = [];
+  let unreadable = null;
+  try {
+    names = adrNames(dir);
+  } catch (error) {
+    unreadable = error;
+  }
+  if (names === null) return { folder: null, adrs: [], skipped: [], problems: [] };
   const folder = writtenFromRoot(real(root), dir) ?? (spelled ?? dir).replace(/\/+$/u, '');
+  if (unreadable) return { folder, adrs: [], skipped: [], problems: [unreadAdr(folder, 'ADR folder', unreadable)] };
   const adrs = [];
   const skipped = [];
+  const problems = [];
   for (const name of names) {
     const shown = folder === '.' ? name : `${folder}/${name}`;
     let text;
     try {
       text = readFileSync(path.join(dir, name), 'utf8');
-    } catch {
-      // An ADR that does not read adds no line; the pairing goes on with the rest.
+    } catch (error) {
+      problems.push(unreadAdr(shown, 'ADR', error));
       continue;
     }
     if (supersededAdr(text)) skipped.push(shown);
     else adrs.push({ path: shown, lines: consequenceLines(text) });
   }
-  return { folder, adrs, skipped };
+  return { folder, adrs, skipped, problems };
 }
 
 function set(args) {

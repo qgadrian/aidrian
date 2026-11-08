@@ -299,7 +299,7 @@ test('a skill that runs the pr-review-loop skill says when it marks the pull req
     assert.match(text, /gh pr ready <n>/, `${skill} marks the pull request ready`);
     assert.match(text, /github\.markReady/, `${skill} reads github.markReady`);
   }
-  // markReady is "auto" by default (lib/config.mjs), so every skill that marks ready names that default, and
+  // markReady is "auto" by default (lib/config-defaults.mjs), so every skill that marks ready names that default, and
   // pr-merge-when-green marks a signed-off draft ready instead of always asking.
   for (const file of ['pr-review-loop/SKILL.md', 'autopilot/references/phases.md', 'orchestration/SKILL.md', 'pr-merge-when-green/SKILL.md']) {
     const text = readFileSync(path.join(PLUGIN, 'skills', file), 'utf8').replace(/\s+/g, ' ');
@@ -785,7 +785,9 @@ test('the docs say what the route does to a provisional ruling, a marker, and a 
   assert.doesNotMatch(ledger, /never resolves under another's answer/);
   assert.match(ledger, /`ruling\.domain`: optional\. The decision's domain\. The route after a ruling continues only when this matches the domain the caller names, and `resolve` judges the class/);
   assert.doesNotMatch(flat('docs/project-folder.md'), /a `ux` ruling never resolves under `product`'s answer/);
-  const code = readFileSync(path.join(PLUGIN, 'lib/quorum.mjs'), 'utf8');
+  // lib/quorum.mjs and the modules under lib/quorum/ it re-exports.
+  const quorumFiles = ['lib/quorum.mjs', ...readdirSync(path.join(PLUGIN, 'lib/quorum')).filter((name) => name.endsWith('.mjs')).sort().map((name) => `lib/quorum/${name}`)];
+  const code = quorumFiles.map((file) => readFileSync(path.join(PLUGIN, file), 'utf8')).join('\n');
   assert.doesNotMatch(code, /so it never resolves under that domain's answer/);
   assert.match(code, /the route continues only when they match, and resolve judges the class/);
   assert.match(flat('docs/personas.md'), /review later/);
@@ -1348,4 +1350,18 @@ test('the pr-product-feedback evals seed their run folder, with a gh that posts 
   for (const args of [['pr', 'view', '5', '--repo', 'github.com/acme/bike-shop'], ['api', '--hostname', 'github.com', 'repos/acme/bike-shop/pulls/5']]) {
     assert.equal(spawnSync('gh', args, { cwd: dir, env, encoding: 'utf8' }).status, 1, `the fixture answers github.invalid alone: ${args.join(' ')}`);
   }
+});
+
+test('a review finding\'s proposed fix is checked against approval conditions and earlier decisions before dispatch', () => {
+  // A true premise with a harmful fix was dispatched as fix_now: the fix broke a product approval condition and undid an
+  // earlier round's decision, and the bot finding's affects axis was set from the finding, not from what the fix risked.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const rules = read('skills/orchestration/references/review-rules.md');
+  assert.match(rules, /## Check the proposed fix/);
+  assert.match(rules, /each condition an approval or sign-off on this pull request set, and each flow invariant/);
+  assert.match(rules, /each fix brief, verdict, and decision of an earlier round/);
+  assert.match(rules, /a suggested test change must still fail on the mistake the test catches/);
+  assert.match(rules, /is a conflict, not a `fix_now`/);
+  assert.match(rules, /Set `affects` from what the fix puts at risk/);
+  assert.match(read('skills/orchestration/SKILL.md'), /§ Check the proposed fix/);
 });

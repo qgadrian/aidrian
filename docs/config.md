@@ -50,7 +50,7 @@ In a group such as `github`, set only the keys you change; the others keep their
       "duplicateBody": false
     },
     "reviewGate": { "enabled": false, "checklist": null },
-    "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false },
+    "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false, "includeGuardedPaths": false },
     "unattendedWaiver": { "allow": false }
   },
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
@@ -156,6 +156,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.strategy` | How auto-merge merges: `"squash"`, `"merge"`, or `"rebase"`. `null`, the default: the one strategy the repository allows, or with several, `squash`, then `merge`, then `rebase`. Read from the default branch. |
 | `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
 | `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
+| `github.autoMerge.includeGuardedPaths` | `true` lets a pull request that changes a guarded path (the fixed list under `paths` in [Auto-merge](#auto-merge)) pass the `paths` check, but never a policy file: the files the gate reads its policy from, including a folder `.aidrian.json` names, and `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay refused. `false`, the default, keeps a guarded path off. It counts only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout. Every other check stays. Read the risk under [Auto-merge](#auto-merge) before setting it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's "Merge anyway", at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
 | `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
@@ -272,10 +273,31 @@ A local file with an error, or one git tracks, counts as `enabled: false`.
 `aidrian check` warns when the machine opts in and the team does not allow it.
 It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
 The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
+Read from a worktree, the main checkout's file gets every check it gets when read there, and its errors are reported the same:
+an error anywhere in it reads an unset switch `"off"`, so it never follows a team default of on, whatever the worktree's copy holds.
 A subagent may not write `autoMerge` into that file: [the config guard](hooks.md#agent-gates).
 
 A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
 since an older plugin rejects the key.
+
+`includeGuardedPaths` is a team-wide acceptance of a real risk.
+With it on, a session can open, review, and merge a pull request that edits what steers and checks it:
+the instructions (`AGENTS.md`, `CLAUDE.md`, a skill, an agent) and the `.aidrian/` knowledge;
+the hook and permission settings in a host's folder, such as `.claude/` and `.codex/`; `CODEOWNERS`;
+the plugin code that decides this gate and the merge guard;
+and the CI workflows, which once merged run with the repository's secrets on pushes to the default branch, such as a release.
+The review that approved such a change may have been shaped by it.
+The files the gate reads its policy from, including a folder `.aidrian.json` names, stay refused with the key on or off,
+and so do `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself.
+A config that is already a symbolic link on the default branch is an accepted gap: an edit of its target is not refused.
+Before setting the key, require on the default branch a review that no session can give, in a branch protection rule or a ruleset:
+a Code Owners review, with a `CODEOWNERS` file that covers the guarded paths and itself, and code owners that no session or bot
+holds a token for; or an approving review from an account that no session or bot holds a token for.
+In the same rule, turn on "Dismiss stale pull request approvals when new commits are pushed"
+or "Require approval of the most recent reviewable push", so an approval does not carry over to a later push,
+and turn on "Do not allow bypassing the above settings", or leave a ruleset's bypass list empty.
+The gate does not check that this protection exists: it reads only the key.
+An older plugin rejects the key as unknown, so set `requires.aidrian` as above.
 
 ### When it is on
 
@@ -288,14 +310,15 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | `reason` | What must hold |
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
-| `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
-| `paths` | gh lists every changed file with its `changeType`: `gh pr view` lists at most 100, so past that the gate reads the whole list through the paged files route, which GitHub caps at 3000, maps each REST `status` to its `changeType` (`unchanged` reads as `MODIFIED`), and reads the head again after it. A list whose count is not `changedFiles`, that fails, holds an entry with no path or no known status, lists a path twice, leaves out a file the view gave, or was read while the head moved keeps it off, with that reason. None is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. The plugin's own code that decides auto-merge is on the list too, so the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). |
+| `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`), unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base. This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
+| `paths` | gh lists every changed file with its `changeType`: `gh pr view` lists at most 100, so past that the gate reads the whole list through the paged files route, which GitHub caps at 3000, maps each REST `status` to its `changeType` (`unchanged` reads as `MODIFIED`), and reads the head again after it. A list whose count is not `changedFiles`, that fails, holds an entry with no path or no known status, lists a path twice, leaves out a file the view gave, or was read while the head moved keeps it off, with that reason. None is `RENAMED`, since gh does not give the old path, and none is on this fixed list, unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base (see the end of this row): `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. The plugin's own code that decides auto-merge is on the list too, so with that key off the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). With `github.autoMerge.includeGuardedPaths` true on both the default branch and the base, read from GitHub like `allow`, the fixed-list refusal is skipped, but never for a policy file: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay off, with their own reason. The count, rename, change-type, and project-folder refusals of this row stay too. With the key on or off, no file is one of the files the gate reads its policy from, including a folder `.aidrian.json` names: the pointer file and the `config.json` it located, on the default branch and on the base, compared ignoring case. |
 | `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
 | `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. A pull request that needed no review, `none_needed`, such as plain docs, waits for the Human. |
 
-`strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only. The base counts only for `allow`.
+`strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only.
+The base counts only for `allow` and `includeGuardedPaths`.
 So a checkout whose lists differ from the default branch's does not auto-merge, including one behind them until it catches up.
 
 ### What a run does
@@ -317,7 +340,8 @@ The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the cho
 - Name every check that matters in `requiredChecks`. An unnamed check that starts only once a pull request is ready is not waited for.
 - A required check that runs only on ready pull requests keeps the caller's ready step from passing, so auto-merge will not fire for it.
 - `deleteBranch` conflicts with a merge queue.
-- The `paths` list is fixed: it misses a project folder that `.aidrian.json` moves elsewhere.
+- The `paths` list is fixed: in a project folder that `.aidrian.json` moves elsewhere, it refuses only the `config.json` the gate reads,
+  not the knowledge beside it.
   It also misses other files that instruct a session,
   such as a knowledge doc under `docs/`, a doc `CLAUDE.md` imports, a nested `.claude` folder, or `CLAUDE.local.md`.
   In a pull request that also changes code, only the review reads those.
@@ -361,7 +385,8 @@ Each machine that takes part opts in with `.aidrian.local.json` in its main chec
 ```
 
 The team value is read from GitHub, never from the working copy, so a pull request cannot turn it on.
-The machine switch reads off when git tracks the local file or the file has any error, even with `enabled: true`.
+The machine switch reads off when git tracks the local file or the file has any error, even with `enabled: true`,
+read from a task worktree too: there the main checkout's file gets every check, whatever the worktree's own copy holds.
 A subagent may not write it ([the config guard](hooks.md#agent-gates)).
 `aidrian check` warns when the machine switch is on and the team's is not.
 Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an older plugin rejects it.

@@ -1,6 +1,6 @@
 // The tracker write guard's pure logic: reading a tool response for the connected workspace, and judging a write against
 // `tracker` in config.json (docs/config.md#tracker). It touches no file and names no tracker: every tool, field, and
-// value comes from the config, which config.mjs `checkTracker` has already validated.
+// value comes from the config, which config-merge.mjs `checkTracker` has already validated.
 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { nameMatches } from './agent-gates.mjs';
 import { UNKNOWN_HOST } from './hosts/index.mjs';
 
-// An issue key, <KEY>-<n>. The prefix follows config.mjs `teamKey`: no hyphen and no whitespace.
+// An issue key, <KEY>-<n>. The prefix follows config-types.mjs `teamKey`: no hyphen and no whitespace.
 const ISSUE_KEY = /^([^\s-]+)-\d+$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
@@ -46,12 +46,12 @@ export function judgeTrackerWrite({ tracker, names }, tool, input, record, { ski
 // ones. A server whose own name holds a double underscore reads as the part before it.
 export const serverPrefix = (tool) => (typeof tool === 'string' ? (/^mcp__.+?__/u.exec(tool)?.[0] ?? null) : null);
 
-// The server of a name from the key, which a project may have written as its host sends it. config.mjs reads a key by this too,
+// The server of a name from the key, which a project may have written as its host sends it. config-tracker.mjs reads a key by this too,
 // so its check and the guard agree on which read clears which write.
 export const keyServer = (name) => serverPrefix(UNKNOWN_HOST.toolName(name));
 
 // The refusal of a write on `server` with no read to count. Only one that a listed read clears is routine: the two cases no
-// read clears, which config.mjs `checkTracker` reports, are a key to correct, and repeat until someone does.
+// read clears, which config-merge.mjs `checkTracker` reports, are a key to correct, and repeat until someone does.
 function noReadRefusal(readTools, server, human, host) {
   const why = 'this session has not read the connected workspace';
   if (server === null) return refused(why, `tracker.writeTools names this tool with no server, so no read can clear it. Ask ${human} to correct that entry, and do not edit the key`);

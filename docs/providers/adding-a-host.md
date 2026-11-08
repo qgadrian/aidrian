@@ -90,7 +90,8 @@ Only a live session with the hooks running proves a guard holds.
 ### What else a new host has to check by hand
 
 - **The auto-merge guard.** `GUARDED_PATHS` in `lib/project.mjs` lists the folders that instruct a host, such as `.codex/`.
-  A change to one keeps auto-merge off.
+  A change to one keeps auto-merge off, unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base;
+  the policy files of [Auto-merge](../config.md#auto-merge) stay off even then.
   It takes the host's folder by hand, since it is one rule over every path. The conformance suite fails on a `projectFolders` entry it does not cover.
 - **A separator that does not say where the server ends.** A host that joins server and tool with one underscore needs the known server names to find it,
   longest first. No shipped host does, so `toolName` takes only the name, and such a host adds that lookup with its adapter:

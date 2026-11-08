@@ -475,15 +475,17 @@ A project adds its own in `review.reviewers`:
   A failure is `incomplete` and retried; the third is `stuck`.
 - Settled findings: an exec pass's `priorFindings` add every finding the record holds as accepted that no longer
   blocks, with the pass that accepted it as `settled_by`, and the pass's own last rulings on such a finding; only an
-  entry with a file and a severity the disposition table knows can settle a repeat. `acceptedResiduals` holds the items
+  entry with a file and a severity the disposition table knows can settle a repeat. A pass's own last findings and a
+  fallback's kept findings arrive as context copies with no accepted state or settling marks, and only the entries this
+  bullet lists settle. `acceptedResiduals` holds the items
   of the pull request body's accepted residuals section (`github.pullRequest.residuals.section`, at most 20, 300
   characters each). A finding that repeats one sets `already_ruled` to that entry's title, or the residual's text,
   verbatim; any other finding sets it empty. A prior entry settles only a finding in its own file at its severity or
   lower, and never above `medium`: a `high` or `critical` repeat is weighed again. A residual settles only a `low`
   finding, unless it is anchored (below), and a prior entry of the same title takes precedence over it. A repeat that
   passes goes on the pass record as `ruled` (title, file, line, severity, `already_ruled`, `from`: `prior` or `residual`,
-  and for a prior entry `settled_severity`, its severity, and `settled_by` when known; for an anchored residual
-  `settled_severity` and `residual`, its text), counts among the findings but never as open, and the
+  and for a prior entry `settled_severity`, its severity, `settled_by` when known, and `accepted_by` when the record's
+  entry has it; for an anchored residual `settled_severity` and `residual`, its text), counts among the findings but never as open, and the
   summary comment lists each pass's waived count and titles, each with who settled it, every reviewer-supplied text as
   inline code, so none renders as a link, an image, or emphasis. Each line gives the repeat's severity and
   `settled_severity`, and a second line per pass lists the anchored residuals it holds as standing, on each head, whether
@@ -638,7 +640,9 @@ whatever its cost or citation (`lateRound` in the table), and so is a medium, pl
 unless its fix is trivial: a trivial-cost medium is `fix_now` in every round.
 The step records an exec reviewer's late low findings that way itself: each is `accepted`, blocks nothing, and is
 listed in `residuals` (`pass`, `title`, `file`, `line`, `severity`) on every result for a head its pass counts for,
-which the session writes into the body's Accepted residuals. A low finding recorded with
+which the session writes into the body's Accepted residuals. It stays listed, once, under the title the record accepted,
+when a later head's reviewer returns it as already ruled or the pass only carries the ruling; a printed `accepted_by`
+adds nothing. A low finding recorded with
 `--findings-file` keeps its own state: the session classifies it with `aidrian pr disposition`, writes the residual
 into the body, and attests it `accepted`. Attestation decides from the finding's axes with no round, so a late medium
 the command calls a residual still reads `fix_now` there and blocks until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.

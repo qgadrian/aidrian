@@ -40,10 +40,10 @@ export function namedBy(text, raised) {
   return titled.filter((each) => holdsPath(text, each.file));
 }
 
-// The settled entries a finding's `already_ruled` may name (settledMatch): { title, file, severity, settled_by? } for
-// each prior finding accepted on the record that no longer blocks (blocks) and names its file, `settled_by` the pass that
-// accepted it when the record says (recordSettled), then { title } for each residual the
-// pull request body lists as accepted. A finding labelled accepted whose disposition cannot be accepted still blocks, so
+// The settled entries a finding's `already_ruled` may name (settledMatch): { title, file, severity, settled_by?, accepted_by? }
+// for each prior finding accepted on the record that no longer blocks (blocks) and names its file, `settled_by` the pass
+// that accepted it when the record says (recordSettled), `accepted_by` the rule that accepted it, then { title } for each
+// residual the pull request body lists as accepted. A finding labelled accepted whose disposition cannot be accepted still blocks, so
 // it settles nothing; nor does a fixed one, since a fix that did not hold must come back as a new finding, nor one with a
 // severity the table does not know, which no finding could be weighed against, nor one with no file, which no finding
 // could be in the same file as. A residual that names a raised finding (recordSettled marks that entry `residual`) has
@@ -53,7 +53,7 @@ export function namedBy(text, raised) {
 export function settledEntries(input) {
   const prior = (Array.isArray(input.priorFindings) ? input.priorFindings : [])
     .filter((finding) => isObject(finding) && finding.state === 'accepted' && !blocks(finding) && trim(finding.title) && trim(finding.file) && severityOf(finding.severity))
-    .map((finding) => ({ title: trim(finding.title), file: trim(finding.file), severity: severityOf(finding.severity), ...(trim(finding.settled_by) ? { settled_by: trim(finding.settled_by) } : {}), ...(trim(finding.residual) ? { residual: trim(finding.residual) } : {}) }));
+    .map((finding) => ({ title: trim(finding.title), file: trim(finding.file), severity: severityOf(finding.severity), ...(trim(finding.settled_by) ? { settled_by: trim(finding.settled_by) } : {}), ...(trim(finding.accepted_by) ? { accepted_by: trim(finding.accepted_by) } : {}), ...(trim(finding.residual) ? { residual: trim(finding.residual) } : {}) }));
   const anchored = prior.filter((entry) => entry.residual);
   const residuals = (Array.isArray(input.acceptedResiduals) ? input.acceptedResiduals : []).filter(trim).flatMap((each) => {
     const text = trim(each);
@@ -64,12 +64,23 @@ export function settledEntries(input) {
   return [...prior, ...residuals];
 }
 
+// One recorded finding as an exec pass reads it for context (contextFindings). An accepted one also loses the words that
+// say so, `accepted_by` and a disposition that can be accepted; a fix_now stays, since the finding still has to be fixed.
+function contextCopy({ state, already_ruled: _ruled, carried: _carried, residual: _residual, settled_by: _by, ...finding }) {
+  if (state === undefined) return finding;
+  if (state !== 'accepted') return { ...finding, state };
+  const { accepted_by: _acceptedBy, ...copy } = finding;
+  if (!ACCEPTABLE_DISPOSITIONS.includes(copy.disposition)) return copy;
+  const { disposition: _disposition, ...plain } = copy;
+  return plain;
+}
+
 // Recorded findings as an exec pass reads them for context: copies with nothing on them that settledEntries or
-// offeredCarried reads as settled, an accepted `state` included, so a repeat is waived only by what recordSettled, with
-// its record-wide checks, offers. A `state` of fixed or open stays: it settles nothing, and tells the reviewer where the
-// finding stands.
+// offeredCarried reads as settled, or that reads as an acceptance in the prompt, so a repeat is waived only by what
+// recordSettled, with its record-wide checks, offers. A `state` of fixed or open stays: it settles nothing, and tells the
+// reviewer where the finding stands.
 export function contextFindings(findings) {
-  return findings.filter(isObject).map(({ state, already_ruled: _ruled, carried: _carried, residual: _residual, settled_by: _by, ...finding }) => (state === undefined || state === 'accepted' ? finding : { ...finding, state }));
+  return findings.filter(isObject).map(contextCopy);
 }
 
 // The prompt's rule for settled findings. It names the input's fields, never their texts: those stay in the JSON input,
@@ -80,10 +91,10 @@ export function settledBrief(settled) {
 }
 
 // Splits an exec reviewer's findings into new ones, without the key, and `ruled` ones, whose `already_ruled` names an
-// entry of `settled` (settledMatch): { title, file, line, severity, already_ruled, from, settled_severity?, settled_by? },
+// entry of `settled` (settledMatch): { title, file, line, severity, already_ruled, from, settled_severity?, settled_by?, accepted_by? },
 // `from` saying whether a prior finding or a residual settled it. A prior finding's ruling keeps that finding's severity
-// as `settled_severity`, the cap a carried ruling keeps (recordSettled), and the pass that accepted it as `settled_by`
-// when known. A ruling on a residual that names a raised finding has `from` residual, repeats that finding's title
+// as `settled_severity`, the cap a carried ruling keeps (recordSettled), the pass that accepted it as `settled_by` when
+// known, and the entry's `accepted_by`, never one on the finding: a printed value reaches no record. A ruling on a residual that names a raised finding has `from` residual, repeats that finding's title
 // whichever name the reviewer copied, and keeps the residual's text as `residual`. A value that names nothing settled,
 // or fails the file or severity test, cannot wave a finding through: it stays new, noted.
 export function splitRuled(findings, settled) {
@@ -96,7 +107,7 @@ export function splitRuled(findings, settled) {
       const from = capped && !entry.residual ? 'prior' : 'residual';
       out.ruled.push({
         title, file, line, severity, already_ruled: entry.raised ?? entry.title, from,
-        ...(capped ? { settled_severity: entry.severity } : {}), ...(entry.settled_by ? { settled_by: entry.settled_by } : {}), ...(entry.residual ? { residual: entry.residual } : {}),
+        ...(capped ? { settled_severity: entry.severity } : {}), ...(entry.settled_by ? { settled_by: entry.settled_by } : {}), ...(entry.accepted_by ? { accepted_by: entry.accepted_by } : {}), ...(entry.residual ? { residual: entry.residual } : {}),
       });
       continue;
     }
@@ -115,7 +126,8 @@ export function residualTexts(body, section) {
   return [...new Set(texts)].slice(0, MAX_RESIDUALS);
 }
 
-const where = (finding) => JSON.stringify([trim(finding.title), trim(finding.file)]);
+// The same finding's key across passes: its title and its file.
+export const where = (finding) => JSON.stringify([trim(finding.title), trim(finding.file)]);
 
 // The accepted entries an anchored residual gives: one per raised finding it names (namedBy), at that finding's severity,
 // marked `residual` and `carried`. A raised finding is one a pass lists now or, while no pass lists that title in that
@@ -148,7 +160,8 @@ function anchoredResiduals(state, listed, residuals) {
 // finding that `prior` (this pass's last result) or any pass record holds, so a slice whose file list changed keeps them,
 // `ruled` (made by that pass) and `carried` (offered to it, kept whether or not it repeated them; a record written before
 // `carried` has `ruled` alone), under the title it named, at that finding's severity (`settled_severity`, else the
-// repeat's), and marked `carried`, so a ruling holds on every later head instead of only while the reviewer repeats it.
+// repeat's), with the `accepted_by` the ruling kept, and marked `carried`, so a ruling holds on every later head instead
+// of only while the reviewer repeats it.
 // A direct acceptance settles only while no pass lists a finding of that title in that file that is not accepted, or
 // that blocks (fixed, reopened, or fix_now); one a ruling names is marked `already_ruled` and `carried` too, so the ruling
 // stays on the record while the acceptance stays listed and outlives it. A carried ruling holds only while its source is
@@ -167,8 +180,8 @@ export function recordSettled(state, prior, residuals = []) {
   const accepted = listed.filter(({ finding }) => finding.state === 'accepted' && !blocks(finding) && !live.has(where(finding)))
     .map(({ id, finding }) => ({ ...finding, settled_by: id, ...(ruledOn.has(where(finding)) ? { already_ruled: trim(finding.title), carried: true } : {}) }));
   const carried = rulings
-    .map(({ file, line, severity, settled_severity: cap, settled_by: by, already_ruled: name }) => ({
-      title: trim(name), file, ...(line ? { line } : {}), severity: severityOf(cap) ?? severity, state: 'accepted', already_ruled: trim(name), carried: true, ...(trim(by) ? { settled_by: trim(by) } : {}),
+    .map(({ file, line, severity, settled_severity: cap, settled_by: by, accepted_by: acceptedBy, already_ruled: name }) => ({
+      title: trim(name), file, ...(line ? { line } : {}), severity: severityOf(cap) ?? severity, state: 'accepted', already_ruled: trim(name), carried: true, ...(trim(by) ? { settled_by: trim(by) } : {}), ...(trim(acceptedBy) ? { accepted_by: trim(acceptedBy) } : {}),
     }))
     .filter((finding) => !present.has(where(finding)));
   const seen = new Set();
@@ -181,14 +194,14 @@ export function recordSettled(state, prior, residuals = []) {
 }
 
 // The carried rulings an exec pass was offered among its priorFindings (recordSettled marks each `carried`), as `ruled`
-// entries: { title, file, line?, severity, already_ruled, from, settled_severity, settled_by?, residual? }, `from` residual
+// entries: { title, file, line?, severity, already_ruled, from, settled_severity, settled_by?, accepted_by?, residual? }, `from` residual
 // with the residual's text for an anchored residual, else prior. The pass record keeps them as `carried`, so the next
 // head reads them again whether or not this pass repeated them.
 export function offeredCarried(input) {
   return (Array.isArray(input?.priorFindings) ? input.priorFindings : [])
     .filter((finding) => isObject(finding) && finding.carried === true && trim(finding.already_ruled) && severityOf(finding.severity))
-    .map(({ file, line, severity, already_ruled: name, settled_by: by, residual }) => ({
-      title: trim(name), file, ...(line ? { line } : {}), severity: severityOf(severity), already_ruled: trim(name), from: trim(residual) ? 'residual' : 'prior', settled_severity: severityOf(severity), ...(trim(by) ? { settled_by: trim(by) } : {}), ...(trim(residual) ? { residual: trim(residual) } : {}),
+    .map(({ file, line, severity, already_ruled: name, settled_by: by, accepted_by: acceptedBy, residual }) => ({
+      title: trim(name), file, ...(line ? { line } : {}), severity: severityOf(severity), already_ruled: trim(name), from: trim(residual) ? 'residual' : 'prior', settled_severity: severityOf(severity), ...(trim(by) ? { settled_by: trim(by) } : {}), ...(trim(acceptedBy) ? { accepted_by: trim(acceptedBy) } : {}), ...(trim(residual) ? { residual: trim(residual) } : {}),
     }));
 }
 

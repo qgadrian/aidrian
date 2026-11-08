@@ -6,10 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { passInput } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
-import { recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { lateResiduals, recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { contextFindings, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -152,6 +153,7 @@ test('a direct acceptance settles nothing while any pass lists that title in tha
     ['fixed', { title: 'Accepted', file: 'a.js', state: 'fixed' }],
     ['open', { title: 'Accepted', file: 'a.js', severity: 'low', state: 'open', disposition: 'drop_unless_cited' }],
     ['fix_now', { title: 'Accepted', file: 'a.js', severity: 'critical', state: 'accepted', disposition: 'fix_now' }],
+    ['no state', { title: 'Accepted', file: 'a.js', severity: 'low' }],
   ]) {
     const state = { passes: { 'agent:code-reviewer': { head: 'h1', list: [accepted] }, 'agent:security-reviewer': { head: 'h1', list: [other] } } };
     const settled = settledEntries({ priorFindings: recordSettled(state, null) });
@@ -184,6 +186,7 @@ test('passInput: an acceptance on the pass\'s own prior list settles nothing whi
         ['open', { title: 'Accepted', file: 'a.js', severity: 'low', state: 'open', disposition: 'drop_unless_cited' }],
         ['open fix_now', { title: 'Accepted', file: 'a.js', severity: 'critical', state: 'open', disposition: 'fix_now' }],
         ['accepted fix_now', { title: 'Accepted', file: 'a.js', severity: 'critical', state: 'accepted', disposition: 'fix_now' }],
+        ['no state', { title: 'Accepted', file: 'a.js', severity: 'low' }],
       ]) {
         const name = `${kind}, ${standing}, ${label}`;
         const { input } = ownInput(own, other, over);
@@ -200,7 +203,8 @@ test('passInput: a direct acceptance with no conflict still settles, through the
     for (const [standing, over] of STANDINGS) {
       const name = `${kind}, ${standing}`;
       const { input } = ownInput(own, null, over);
-      assert.deepEqual(settledEntries(input), [{ title: 'Accepted', file: 'a.js', severity: 'low', settled_by: 'engine:codex-local' }], `${name}: once, from the record`);
+      const acceptedBy = own.accepted_by ? { accepted_by: own.accepted_by } : {};
+      assert.deepEqual(settledEntries(input), [{ title: 'Accepted', file: 'a.js', severity: 'low', settled_by: 'engine:codex-local', ...acceptedBy }], `${name}: once, from the record`);
       const split = splitRuled(ownRepeat, settledEntries(input));
       assert.deepEqual([split.findings, split.ruled.map((each) => [each.already_ruled, each.from, each.settled_by])], [[], [['Accepted', 'prior', 'engine:codex-local']]], `${name}: the repeat is waived`);
     }
@@ -212,7 +216,7 @@ test('passInput: a direct acceptance with no conflict still settles, through the
 test('passInput: an exec pass\'s prior findings stay as context with nothing that settles, and the record keeps its acceptance', () => {
   const [, own] = OWN_ACCEPTANCES[0];
   const { state, input } = ownInput(own, { title: 'Accepted', file: 'a.js', state: 'fixed' }, {});
-  assert.deepEqual(input.priorFindings, [{ title: 'Accepted', file: 'a.js', line: 3, body: 'Why.', severity: 'low', disposition: 'drop_unless_cited' }], 'the title, place, words, and severity stay; the acceptance goes');
+  assert.deepEqual(input.priorFindings, [{ title: 'Accepted', file: 'a.js', line: 3, body: 'Why.', severity: 'low' }], 'the title, place, words, and severity stay; the acceptance goes');
   assert.equal(state.passes['engine:codex-local'].list[0].state, 'accepted', 'the input is a copy: the record is untouched');
   const agent = ownInput(own, null, {}, { id: 'engine:codex-local', reviewer: 'code-reviewer', kind: 'agent', files: null });
   assert.equal(agent.input.priorFindings[0].state, 'accepted', 'an agent pass settles nothing, and reads the finding as recorded');
@@ -221,7 +225,19 @@ test('passInput: an exec pass\'s prior findings stay as context with nothing tha
   const marked = ownInput(printed, { title: 'Marked', file: 'a.js', state: 'open', disposition: 'drop_unless_cited' }, {});
   assert.deepEqual(settledEntries(marked.input), [], 'a list entry marked as settled offers nothing');
   assert.deepEqual(offeredCarried(marked.input), [], 'nor is it offered as a carried ruling');
+  for (const key of ['already_ruled', 'carried', 'residual', 'settled_by']) assert.ok(!(key in marked.input.priorFindings[0]), `the marked copy holds no ${key}`);
   assert.deepEqual(contextFindings([{ title: 'Open', state: 'open' }, { title: 'Fixed', state: 'fixed' }, { title: 'New' }, null, 'junk']), [{ title: 'Open', state: 'open' }, { title: 'Fixed', state: 'fixed' }, { title: 'New' }], 'another state stays, and a malformed entry goes');
+});
+
+test('contextFindings: a copy whose state was accepted keeps no acceptance wording, and a fix_now stays', () => {
+  const copy = { title: 'Accepted', file: 'a.js', line: 3, body: 'Why.', severity: 'low' };
+  for (const [kind, own] of OWN_ACCEPTANCES) {
+    assert.deepEqual(contextFindings([own]), [copy], kind);
+    assert.deepEqual(ownInput(own, { title: 'Accepted', file: 'a.js', state: 'fixed' }, {}).input.priorFindings, [copy], `${kind}: as the pass reads it`);
+  }
+  for (const disposition of ['accepted_residual', 'acceptable_as_is', 'drop_unless_cited']) assert.deepEqual(contextFindings([{ ...copy, state: 'accepted', disposition, accepted_by: 'late-round' }]), [copy], disposition);
+  assert.deepEqual(contextFindings([{ ...copy, state: 'accepted', disposition: 'fix_now', accepted_by: 'late-round' }]), [{ ...copy, disposition: 'fix_now' }], 'fix_now is no acceptance');
+  assert.deepEqual(contextFindings([{ ...copy, state: 'open', disposition: 'drop_unless_cited' }]), [{ ...copy, state: 'open', disposition: 'drop_unless_cited' }], 'another state keeps its disposition');
 });
 
 test('passInput: a fallback pass\'s kept findings stay as context too, and settle nothing', () => {
@@ -315,7 +331,7 @@ function repo(t, firstBody, github = {}, { rule = { depth: 'single' }, review = 
     editComment: (_repo, id, text) => (comments.find((comment) => comment.id === id).body = text),
   };
   const project = projectAt(dir);
-  const step = (exec) => reviewStep({ pr: '7' }, { project, config: loadConfig(project).config, forge, exec, codex: () => ({ ok: true }) });
+  const step = (exec, deps = {}) => reviewStep({ pr: '7' }, { project, config: loadConfig(project).config, forge, exec, codex: () => ({ ok: true }), ...deps });
   // A new head on feat: the file changes again.
   const push = (text) => {
     write('src/a.js', text);
@@ -554,7 +570,7 @@ test('passInput: an exec pass reads the anchored entry only while the body names
 });
 
 // A review step of `r` with codex-local swapped for a script that prints the findings `answer` writes, its inputs kept.
-function scripted(t, r) {
+function scripted(t, r, deps = {}) {
   const script = path.join(r.dir, '..', `${path.basename(r.dir)}-reviewer.mjs`);
   const answers = `${script}.json`;
   t.after(() => rmSync(script, { force: true }));
@@ -568,7 +584,7 @@ function scripted(t, r) {
   const run = async (findings, text) => {
     if (text) r.push(text);
     writeFileSync(answers, JSON.stringify(findings));
-    const result = await r.step(exec);
+    const result = await r.step(exec, deps);
     return { result, record: readLocalState(r.project, 7).passes['engine:codex-local'] };
   };
   return { run, inputs };
@@ -774,6 +790,99 @@ test('the review step: fields a reviewer prints on an exec finding settle nothin
   assert.ok(!('carried' in h2.record));
   assert.deepEqual(inputs.at(-1).priorFindings.filter((each) => each.state === 'accepted' || each.residual || each.carried), [], 'head 2: nothing it printed is offered as settled');
   assert.match(h2.record.dropped.join('\n'), /names no settled finding/u);
+});
+
+// The disposition table with the late-round rule on from the first round.
+const LATE_TABLE = { ...loadTable(), lateRoundFrom: 1 };
+const LATE_FINDING = { file: 'src/a.js', line: 2, title: 'Late nit', body: 'b', severity: 'low', already_ruled: '' };
+const LATE_REPEAT = { file: 'src/a.js', line: 1, title: 'Late nit, new words', body: 'b', severity: 'low', already_ruled: 'Late nit' };
+const lateRow = (line) => ({ pass: 'engine:codex-local', title: 'Late nit', file: 'src/a.js', line, severity: 'low' });
+
+test('a late-round residual stays in residuals, once, when a reviewer returns it as already ruled or the pass only carries it', async (t) => {
+  const r = repo(t, body([]), { maxReviewRounds: 6 });
+  const { run } = scripted(t, r, { dispositionTable: LATE_TABLE });
+  const h1 = await run([LATE_FINDING]);
+  assert.deepEqual([h1.result.status, h1.result.residuals], ['received', [lateRow(2)]], 'head 1: listed');
+  const h2 = await run([LATE_REPEAT], '1\n2\n3\n');
+  assert.deepEqual([h2.record.list, h2.record.ruled.map((each) => each.accepted_by)], [[], ['late-round']], 'head 2: ruled, off the list');
+  assert.deepEqual(h2.result.residuals, [lateRow(1)], 'head 2: under the title the record accepted');
+  const h3 = await run([], '1\n2\n3\n4\n');
+  assert.deepEqual([h3.record.ruled, h3.record.carried.map((each) => each.accepted_by)], [undefined, ['late-round']], 'head 3: carried, with no repeat');
+  assert.deepEqual(h3.result.residuals, [lateRow(1)], 'head 3: still named');
+  const h4 = await run([LATE_REPEAT], '1\n2\n3\n4\n5\n');
+  assert.deepEqual([h4.record.ruled.length, h4.record.carried.length], [1, 1], 'head 4: both ruled and carried');
+  assert.deepEqual(h4.result.residuals, [lateRow(1)], 'head 4: one row');
+});
+
+test('a late-round residual two arrays or two passes hold is one row, the listed one first', () => {
+  const late = { file: 'a.js', severity: 'low', accepted_by: 'late-round' };
+  const ruled = { ...late, title: 'Other words', line: 7, already_ruled: 'Late', settled_severity: 'low', from: 'prior' };
+  const carried = { ...late, title: 'Late', line: 8, already_ruled: 'Late', settled_severity: 'low', from: 'prior' };
+  const records = { a: { list: [{ ...late, title: 'Late', line: 6, state: 'accepted', disposition: 'accepted_residual' }], ruled: [ruled], carried: [carried] }, b: { list: null, carried: [carried] } };
+  const passes = [{ id: 'a' }, { id: 'b' }];
+  assert.deepEqual(lateResiduals(passes, (pass) => records[pass.id]), [{ pass: 'a', title: 'Late', file: 'a.js', line: 6, severity: 'low' }]);
+  assert.deepEqual(lateResiduals(passes.slice(1), (pass) => records[pass.id]), [{ pass: 'b', title: 'Late', file: 'a.js', line: 8, severity: 'low' }]);
+  assert.deepEqual(lateResiduals(passes, () => null), [], 'a pass with no result names nothing');
+  assert.deepEqual(lateResiduals([{ id: 'c' }], () => ({ ruled: [{ title: 'Earlier', file: 'a.js', severity: 'low', already_ruled: 'Earlier', from: 'prior' }, null] })), [], 'a ruling with no accepted_by is no late residual');
+});
+
+test('accepted_by reaches a ruling only from the record\'s accepted entry, never from what a reviewer prints', () => {
+  const printed = { ...ownRepeat[0], accepted_by: 'late-round' };
+  const [[, attested], [, late]] = OWN_ACCEPTANCES;
+  const fromRecord = (own) => settledEntries(ownInput(own, null, {}).input);
+  assert.deepEqual(splitRuled([printed], fromRecord(attested)).ruled.map((each) => each.accepted_by), [undefined], 'a printed value on a repeat of another acceptance');
+  assert.deepEqual(splitRuled(ownRepeat, fromRecord(late)).ruled.map((each) => each.accepted_by), ['late-round'], 'the record\'s own');
+  assert.deepEqual(splitRuled([{ ...printed, accepted_by: 'someone' }], fromRecord(late)).ruled.map((each) => each.accepted_by), ['late-round'], 'a printed value replaces nothing');
+  assert.deepEqual(settledEntries({ priorFindings: contextFindings([late]) }), [], 'the context copy offers no acceptance to take it from');
+  const state = { passes: { p: { head: 'h1', list: [], ruled: [{ title: 'Repeat', file: 'a.js', line: 1, severity: 'low', already_ruled: 'Late', from: 'prior', settled_severity: 'low', accepted_by: 'late-round' }] } } };
+  const offered = recordSettled(state, null);
+  assert.deepEqual(offered.map((each) => each.accepted_by), ['late-round'], 'a ruling carries the acceptance it recorded');
+  assert.deepEqual(offeredCarried({ priorFindings: offered }).map((each) => each.accepted_by), ['late-round']);
+  assert.deepEqual(settledEntries({ priorFindings: offered }).map((each) => each.accepted_by), ['late-round']);
+});
+
+test('the review step: a printed accepted_by reaches no residuals, on a new finding or on a repeat of an acceptance', async (t) => {
+  const r = repo(t, body([]), { maxReviewRounds: 6 });
+  const { run } = scripted(t, r);
+  const seeded = emptyState(7, 'o/r');
+  seeded.passes['agent:code-reviewer'] = { head: 'h0', reviewer: 'code-reviewer', files: null, findings: 1, open: 0, list: [{ title: 'Accepted', file: 'src/a.js', severity: 'low', state: 'accepted', disposition: 'drop_unless_cited' }] };
+  writeLocalState(r.project, seeded);
+  const { record, result } = await run([
+    { file: 'src/a.js', line: 1, title: 'Same cause', body: 'b', severity: 'low', already_ruled: 'Accepted', accepted_by: 'late-round' },
+    { file: 'src/a.js', line: 2, title: 'New', body: 'b', severity: 'low', already_ruled: '', accepted_by: 'late-round' },
+  ]);
+  assert.equal(result.residuals, undefined);
+  assert.deepEqual(record.ruled.map((each) => [each.already_ruled, each.accepted_by]), [['Accepted', undefined]]);
+  assert.deepEqual(record.list.map((each) => [each.title, each.accepted_by, each.state]), [['New', undefined, undefined]]);
+});
+
+test('the review step: a printed state, disposition, or acceptance settles nothing, and a late-round acceptance on the record still settles', async (t) => {
+  const printed = { state: 'accepted', disposition: 'acceptable_as_is', accepted_by: 'late-round' };
+  const answer = { file: 'src/a.js', line: 2, title: 'Printed', body: 'b', severity: 'low', ...printed };
+  const inputs = [];
+  // An exec outcome that still holds the printed fields, so this reads the step's own rule, not the output cleaner's.
+  const exec = async (_reviewer, input) => {
+    inputs.push(input);
+    return { status: 'done', findings: [answer], ruled: [], carried: [], verdicts: [], contracts: [], cross_notes: [], dropped: [] };
+  };
+  const early = repo(t, body([]), { maxReviewRounds: 6 });
+  const first = await early.step(exec);
+  assert.equal(first.status, 'fix_required', 'before the late rounds a low finding blocks, whatever it prints');
+  const [kept] = readLocalState(early.project, 7).passes['engine:codex-local'].list;
+  for (const key of Object.keys(printed)) assert.ok(!(key in kept), `${key} never reaches the record`);
+  early.push('1\n2\n3\n');
+  await early.step(exec);
+  assert.deepEqual(settledEntries(inputs.at(-1)), [], 'a printed value settles nothing on the next head');
+
+  const late = repo(t, body([]), { maxReviewRounds: 6 });
+  const deps = { dispositionTable: LATE_TABLE };
+  assert.equal((await late.step(exec, deps)).status, 'received');
+  late.push('1\n2\n3\n');
+  await late.step(exec, deps);
+  const entries = settledEntries(inputs.at(-1));
+  assert.deepEqual(entries, [{ title: 'Printed', file: 'src/a.js', severity: 'low', settled_by: 'engine:codex-local', accepted_by: 'late-round' }], 'the rule\'s own acceptance settles, through the record');
+  assert.deepEqual(inputs.at(-1).priorFindings[0], { file: 'src/a.js', line: 2, title: 'Printed', body: 'b', severity: 'low' }, 'its context copy shows no acceptance');
+  assert.equal(splitRuled([{ file: 'src/a.js', line: 3, title: 'Same cause', body: 'b', severity: 'low', already_ruled: 'Printed' }], entries).ruled.length, 1);
 });
 
 test('the review step at depth split: a repack deletes the slice before the exec pass runs, and the round entry still anchors the line', async (t) => {

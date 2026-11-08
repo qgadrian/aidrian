@@ -48,7 +48,8 @@ export function namedBy(text, raised) {
 // severity the table does not know, which no finding could be weighed against, nor one with no file, which no finding
 // could be in the same file as. A residual that names a raised finding (recordSettled marks that entry `residual`) has
 // that entry's file and severity under its own text too, `raised` the title it names, and no bare entry: its text cannot
-// settle a repeat elsewhere. The prompt and the check both read this list.
+// settle a repeat elsewhere. The prompt and the check both read this list. It trusts what it is given: a pass input's
+// entries come from recordSettled, and everything else on its list has been through contextFindings.
 export function settledEntries(input) {
   const prior = (Array.isArray(input.priorFindings) ? input.priorFindings : [])
     .filter((finding) => isObject(finding) && finding.state === 'accepted' && !blocks(finding) && trim(finding.title) && trim(finding.file) && severityOf(finding.severity))
@@ -61,6 +62,14 @@ export function settledEntries(input) {
     return named.map((entry) => ({ ...entry, title: text, raised: entry.title }));
   });
   return [...prior, ...residuals];
+}
+
+// Recorded findings as an exec pass reads them for context: copies with nothing on them that settledEntries or
+// offeredCarried reads as settled, an accepted `state` included, so a repeat is waived only by what recordSettled, with
+// its record-wide checks, offers. A `state` of fixed or open stays: it settles nothing, and tells the reviewer where the
+// finding stands.
+export function contextFindings(findings) {
+  return findings.filter(isObject).map(({ state, already_ruled: _ruled, carried: _carried, residual: _residual, settled_by: _by, ...finding }) => (state === undefined || state === 'accepted' ? finding : { ...finding, state }));
 }
 
 // The prompt's rule for settled findings. It names the input's fields, never their texts: those stay in the JSON input,

@@ -10,7 +10,7 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { passInput } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
-import { MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled } from '../plugins/aidrian/lib/review/settled.mjs';
+import { contextFindings, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const body = (items, section = 'Accepted residuals') => `## Summary\n\nWhy.\n\n## ${section}\n\n${items.map((item) => `- ${item}`).join('\n')}\n\n## Tests\n\n- npm test\n`;
@@ -160,6 +160,77 @@ test('a direct acceptance settles nothing while any pass lists that title in tha
   }
   const elsewhere = { passes: { 'agent:code-reviewer': { head: 'h1', list: [accepted] }, 'agent:security-reviewer': { head: 'h1', list: [{ title: 'Accepted', file: 'b.js', state: 'open' }] } } };
   assert.equal(splitRuled(answer, settledEntries({ priorFindings: recordSettled(elsewhere, null) })).ruled.length, 1, 'the same title in another file leaves the acceptance standing');
+});
+
+// An exec pass's own last result holding an acceptance, as an itemized re-attestation or the late-round rule writes it.
+const OWN_ACCEPTANCES = [
+  ['re-attested', { title: 'Accepted', file: 'a.js', line: 3, body: 'Why.', severity: 'low', state: 'accepted', disposition: 'drop_unless_cited' }],
+  ['late round', { title: 'Accepted', file: 'a.js', line: 3, body: 'Why.', severity: 'low', state: 'accepted', disposition: 'acceptable_as_is', accepted_by: 'late-round' }],
+];
+const STANDINGS = [['inside', {}], ['outside', { cross: true }]];
+const ownInput = (own, other, over, pass = { id: 'engine:codex-local', reviewer: 'codex-local', files: null }) => {
+  const passes = { 'engine:codex-local': { head: 'h1', files: null, list: [own] }, ...(other ? { 'agent:security-reviewer': { head: 'h1', files: null, list: [other] } } : {}) };
+  const state = { ...emptyState(7, 'o/r'), passes };
+  const map = { 'codex-local': { kind: 'exec' }, 'code-reviewer': { kind: 'agent' } };
+  return { state, input: passInput(context({ state, map, info: { body: '' }, ...over }), pass, { name: 'independent', passes: [] }) };
+};
+const ownRepeat = [{ file: 'a.js', line: 3, title: 'The same cause', body: 'b', severity: 'low', already_ruled: 'Accepted' }];
+
+test('passInput: an acceptance on the pass\'s own prior list settles nothing while another pass lists it fixed, open, or blocking, inside or outside', () => {
+  for (const [kind, own] of OWN_ACCEPTANCES) {
+    for (const [standing, over] of STANDINGS) {
+      for (const [label, other] of [
+        ['fixed', { title: 'Accepted', file: 'a.js', state: 'fixed' }],
+        ['open', { title: 'Accepted', file: 'a.js', severity: 'low', state: 'open', disposition: 'drop_unless_cited' }],
+        ['open fix_now', { title: 'Accepted', file: 'a.js', severity: 'critical', state: 'open', disposition: 'fix_now' }],
+        ['accepted fix_now', { title: 'Accepted', file: 'a.js', severity: 'critical', state: 'accepted', disposition: 'fix_now' }],
+      ]) {
+        const name = `${kind}, ${standing}, ${label}`;
+        const { input } = ownInput(own, other, over);
+        assert.deepEqual(settledEntries(input), [], `${name}: the raw copy offers nothing`);
+        const split = splitRuled(ownRepeat, settledEntries(input));
+        assert.deepEqual([split.ruled, split.findings.map((each) => each.title)], [[], ['The same cause']], `${name}: no waiver, the repeat is new`);
+      }
+    }
+  }
+});
+
+test('passInput: a direct acceptance with no conflict still settles, through the record, inside or outside', () => {
+  for (const [kind, own] of OWN_ACCEPTANCES) {
+    for (const [standing, over] of STANDINGS) {
+      const name = `${kind}, ${standing}`;
+      const { input } = ownInput(own, null, over);
+      assert.deepEqual(settledEntries(input), [{ title: 'Accepted', file: 'a.js', severity: 'low', settled_by: 'engine:codex-local' }], `${name}: once, from the record`);
+      const split = splitRuled(ownRepeat, settledEntries(input));
+      assert.deepEqual([split.findings, split.ruled.map((each) => [each.already_ruled, each.from, each.settled_by])], [[], [['Accepted', 'prior', 'engine:codex-local']]], `${name}: the repeat is waived`);
+    }
+  }
+  const elsewhere = ownInput(OWN_ACCEPTANCES[0][1], { title: 'Accepted', file: 'b.js', state: 'open', disposition: 'drop_unless_cited' }, {});
+  assert.equal(splitRuled(ownRepeat, settledEntries(elsewhere.input)).ruled.length, 1, 'the same title in another file leaves the acceptance standing');
+});
+
+test('passInput: an exec pass\'s prior findings stay as context with nothing that settles, and the record keeps its acceptance', () => {
+  const [, own] = OWN_ACCEPTANCES[0];
+  const { state, input } = ownInput(own, { title: 'Accepted', file: 'a.js', state: 'fixed' }, {});
+  assert.deepEqual(input.priorFindings, [{ title: 'Accepted', file: 'a.js', line: 3, body: 'Why.', severity: 'low', disposition: 'drop_unless_cited' }], 'the title, place, words, and severity stay; the acceptance goes');
+  assert.equal(state.passes['engine:codex-local'].list[0].state, 'accepted', 'the input is a copy: the record is untouched');
+  const agent = ownInput(own, null, {}, { id: 'engine:codex-local', reviewer: 'code-reviewer', kind: 'agent', files: null });
+  assert.equal(agent.input.priorFindings[0].state, 'accepted', 'an agent pass settles nothing, and reads the finding as recorded');
+
+  const printed = { ...own, title: 'Marked', already_ruled: 'Marked', carried: true, residual: 'Marked: why', settled_by: 'someone' };
+  const marked = ownInput(printed, { title: 'Marked', file: 'a.js', state: 'open', disposition: 'drop_unless_cited' }, {});
+  assert.deepEqual(settledEntries(marked.input), [], 'a list entry marked as settled offers nothing');
+  assert.deepEqual(offeredCarried(marked.input), [], 'nor is it offered as a carried ruling');
+  assert.deepEqual(contextFindings([{ title: 'Open', state: 'open' }, { title: 'Fixed', state: 'fixed' }, { title: 'New' }, null, 'junk']), [{ title: 'Open', state: 'open' }, { title: 'Fixed', state: 'fixed' }, { title: 'New' }], 'another state stays, and a malformed entry goes');
+});
+
+test('passInput: a fallback pass\'s kept findings stay as context too, and settle nothing', () => {
+  const kept = { title: 'Kept', file: 'a.js', severity: 'high', state: 'accepted', disposition: 'fix_now' };
+  const state = { ...emptyState(7, 'o/r'), passes: { 'agent:stopped': { head: 'h1', files: null, open: 1, list: [kept] } } };
+  const pass = { id: 'engine:codex-local', reviewer: 'codex-local', files: null, fallback: { kept: ['agent:stopped'] } };
+  const input = passInput(context({ state, map: { 'codex-local': { kind: 'exec' } }, info: { body: '' } }), pass, { name: 'independent', passes: [] });
+  assert.deepEqual(input.priorFindings, [{ title: 'Kept', file: 'a.js', severity: 'high', disposition: 'fix_now', pass: 'agent:stopped' }]);
+  assert.deepEqual(settledEntries(input), []);
 });
 
 test('a carried ruling yields to its source while any pass lists it: re-attested lower, the source\'s severity governs', () => {

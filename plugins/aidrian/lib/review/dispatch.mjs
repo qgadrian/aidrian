@@ -7,7 +7,7 @@ import { fromOutside } from '../pr-resolve.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
 import { blocks } from './findings.mjs';
 import { belowRootBrief, flowBaseBrief, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
-import { recordSettled, residualTexts } from './settled.mjs';
+import { contextFindings, recordSettled, residualTexts } from './settled.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
 import { inBaseWorktree, runHook } from './base-worktree.mjs';
@@ -75,8 +75,11 @@ function passResiduals(s, pass) {
 
 // The input every reviewer of a pass reads. An exec pass also reads what is settled (lib/review/settled.mjs): the
 // record's accepted findings, its own last rulings, and the raised findings a residual names among `priorFindings`, and
-// the pull request body's accepted residuals as `acceptedResiduals`, so it does not re-raise them. A pull request from
-// outside gives no residuals and so no anchors (passResiduals).
+// the pull request body's accepted residuals as `acceptedResiduals`, so it does not re-raise them. Its own last findings
+// and a fallback's kept ones stay as context, with nothing on them that settles (contextFindings): only recordSettled's
+// entries can waive a repeat, on any pull request. One from outside gives no residuals and so no anchors (passResiduals),
+// and recordSettled still runs on it, since the record's acceptances are the team's word, not the author's. An agent pass
+// never settles a repeat, so it reads its findings as recorded.
 export function passInput(s, pass, stage) {
   const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
   const recorded = state.passes[pass.id];
@@ -103,11 +106,12 @@ export function passInput(s, pass, stage) {
   } : {};
   const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
   const residuals = passResiduals(s, pass);
+  const earlier = [...(prior?.list ?? []), ...keptFindings(state, pass)];
   return {
     ...split,
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
     pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows,
-    priorFindings: [...(prior?.list ?? []), ...keptFindings(state, pass), ...(residuals ? recordSettled(state, prior, residuals) : [])],
+    priorFindings: residuals ? [...contextFindings(earlier), ...recordSettled(state, prior, residuals)] : earlier,
     ...(residuals ? { acceptedResiduals: residuals } : {}),
     ...(scope ? { remerge: head } : {}),
     // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:

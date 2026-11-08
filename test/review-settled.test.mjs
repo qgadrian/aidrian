@@ -675,19 +675,21 @@ test('the auto-merge hold stays after a waiver above low ends without a fix', as
 });
 
 test('the auto-merge hold ends when a listing holds that title and file as fixed', async (t) => {
-  const { r, run, inputs, hold } = await waivedAboveLow(t);
-  r.setBody(body([]));
-  await run([], COMMENT_PUSH);
-  assert.ok(hold());
-  const attest = (file) => recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'agent:code-reviewer', head: r.head(), reviewer: 'code-reviewer', findingsText: JSON.stringify([{ title: RAISED, file, state: 'fixed', severity: 'medium', likelihood: 'plausible', affects: 'internal', cost: 'bounded' }]) });
-  attest('src/b.js');
-  assert.ok(hold(), 'a listing of another file ends nothing');
-  attest('src/a.js');
-  assert.equal(hold(), null, 'the hold ends');
-  const h4 = await run([], '1\n2\n3\n// a comment\n// another\n');
-  assert.equal(h4.result.status, 'received');
-  assert.deepEqual([endedOn(h4.record), contextCopies(inputs.at(-1))], [[], []], 'the entry leaves the record and the input');
-  assert.equal(hold(), null, 'and the hold stays ended');
+  for (const [pass, reviewer] of [['agent:code-reviewer', 'code-reviewer'], ['engine:codex-local', 'codex-local']]) {
+    const { r, run, inputs, hold } = await waivedAboveLow(t);
+    r.setBody(body([]));
+    await run([], COMMENT_PUSH);
+    assert.ok(hold());
+    const attest = (file) => recordPass(r.project, { pr: 7, repo: 'o/r', pass, head: r.head(), reviewer, findingsText: JSON.stringify([{ title: RAISED, file, state: 'fixed', severity: 'medium', likelihood: 'plausible', affects: 'internal', cost: 'bounded' }]) });
+    attest('src/b.js');
+    assert.ok(hold(), 'a listing of another file ends nothing');
+    attest('src/a.js');
+    assert.equal(hold(), null, `the hold ends, listed under ${pass}`);
+    const h4 = await run([], '1\n2\n3\n// a comment\n// another\n');
+    assert.equal(h4.result.status, 'received');
+    assert.deepEqual([endedOn(h4.record), contextCopies(inputs.at(-1))], [[], []], 'the entry leaves the record and the input');
+    assert.equal(hold(), null, 'and the hold stays ended');
+  }
 });
 
 test('the auto-merge hold stays after a waiver above low ends without a fix: the residual limit', async (t) => {
@@ -782,7 +784,59 @@ test('an ended waiver settles nothing, anchors nothing, and shadows no round ent
   assert.deepEqual(contextCopies(lower), [copy], 'and the copy stays');
   const fromPrior = { passes: { p: { head: 'h3', carried: [{ ...ended, from: 'prior' }] } } };
   assert.deepEqual(recordSettled(fromPrior, null).filter((each) => each.state), [], 'whatever its `from` says');
-  assert.deepEqual(ruledLines({ passes: { p: { head: 'h3', carried: [ended] } } }), [], 'and no summary line calls it standing');
+  assert.doesNotMatch(ruledLines({ passes: { p: { head: 'h3', carried: [ended] } } }).join('\n'), /standing/u, 'and no summary line calls it standing');
+});
+
+test('the summary comment names a waiver that ended without a fix', async (t) => {
+  const anchor = { title: RAISED, file: 'a.js', line: 2, severity: 'medium', already_ruled: RAISED, from: 'residual', settled_severity: 'medium', residual: RESIDUAL };
+  const ended = { ...anchor, title: 'Retry loop unbounded', severity: 'low', ended: true };
+  const named = `\`${RAISED}\` (\`a.js\`, medium, once waived by the accepted residual \`${RESIDUAL.slice(0, 80)}\`)`;
+  assert.deepEqual(ruledLines({ passes: { p: { head: 'abcdef1234', carried: [ended] } } }), ['', RULED_HEADING, `- p on \`abcdef1\`: 1 ended without a fix: ${named}`], 'by the raised title, at the severity it was waived at');
+  const both = ruledLines({ passes: { p: { head: 'abcdef1234', carried: [{ ...anchor, title: 'Other', already_ruled: 'Other' }, ended] } } });
+  assert.deepEqual(both.slice(2).map((line) => line.includes('standing') ? 'standing' : line.includes('ended without a fix') ? 'ended' : 'other'), ['standing', 'ended'], 'a line apart from the standing one');
+  assert.deepEqual(ruledLines({ passes: { p: { head: 'h', carried: [{ title: 'Prior', file: 'a.js', from: 'prior', ended: true }] } } }), [], 'an entry with no residual is no waiver');
+
+  const listing = (title, file, state = 'fixed') => ({ head: 'h', list: [{ title, file, state }] });
+  const withListing = (other) => ruledLines({ passes: { p: { head: 'abcdef1234', carried: [ended] }, a: other } });
+  assert.deepEqual(withListing(listing(RAISED, 'a.js')), [], 'a listing of its title and file as fixed: it did not end without a fix');
+  for (const other of [listing('Retry loop unbounded', 'a.js'), listing(RAISED, 'b.js'), listing(RAISED, 'a.js', 'open')]) assert.match(withListing(other).join('\n'), /1 ended without a fix/u, 'no other listing');
+
+  const hostile = ruledLines({ passes: { p: { head: 'h', carried: [{ ...ended, already_ruled: '[x](https://evil.example) @team', file: '<!-- a.js', residual: '![y](https://evil.example)' }] } } })[2];
+  assert.ok(hostile.includes('`[x](https://evil.example) @\u200dteam`') && hostile.includes('`![y](https://evil.example)`') && !hostile.includes('<!--'), 'reviewer text stays code, mentions nobody, and opens no comment');
+
+  const { r, run } = await waivedAboveLow(t);
+  assert.doesNotMatch(r.comments.at(-1).body, /ended without a fix/u, 'a standing waiver is not named so');
+  r.setBody(body([]));
+  await run([], COMMENT_PUSH);
+  assert.match(r.comments.at(-1).body, new RegExp(`1 ended without a fix: \`${RAISED}\` \\(\`src/a\\.js\`, medium, once waived by`, 'u'), 'the review step posts it');
+});
+
+test('a pass record keeps its waivers when a result is attested over it', async (t) => {
+  const r = repo(t, body([]), { maxReviewRounds: 7 });
+  const { run, inputs } = scripted(t, r);
+  const hold = () => reviewProblem(readLocalState(r.project, 7), r.head());
+  await run([FILE_RAISED]);
+  r.setBody(body([RESIDUAL]));
+  const h2 = await run([FILE_REPEAT, { file: 'src/b.js', line: 1, title: 'A different defect', body: 'b', severity: 'medium', already_ruled: '' }], '1\n2\n3\n');
+  assert.equal(h2.result.status, 'fix_required', 'the other finding blocks');
+  const attest = (fields) => recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'engine:codex-local', head: r.head(), reviewer: 'codex-local', ...fields });
+
+  const attested = attest({ findings: 1, fixed: 0, accepted: 1 });
+  assert.deepEqual([attested.findings, attested.open], [1, 0], 'the counts are the result\'s own, and the waivers change neither');
+  assert.deepEqual([attested.ruled, attested.carried], [h2.record.ruled, h2.record.carried], 'the waivers stay');
+  const asked = inputs.length;
+  const h3 = await run([]);
+  assert.equal(h3.result.status, 'received');
+  assert.equal(inputs.length, asked, 'the reviewer does not run again on that head');
+  assert.match(hold() ?? '', /waived a finding above low severity, so the merge waits for the Human/u);
+
+  r.setBody(body([]));
+  attest({ findingsText: JSON.stringify([{ title: RAISED, file: 'src/a.js', state: 'fixed', severity: 'medium', likelihood: 'plausible', affects: 'internal', cost: 'bounded' }]) });
+  assert.match(hold() ?? '', /so the merge waits for the Human/u, 'a standing waiver holds until the pass runs again');
+  const h4 = await run([], '1\n2\n3\n// a comment\n');
+  assert.equal(h4.result.status, 'received');
+  assert.deepEqual(endedOn(h4.record), [], 'and a fixed listing leaves nothing to hold');
+  assert.equal(hold(), null);
 });
 
 test('withEndedWaivers: each waiver above low a pass was not offered, once, and nothing else', () => {

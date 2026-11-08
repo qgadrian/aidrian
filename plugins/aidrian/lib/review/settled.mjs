@@ -299,15 +299,20 @@ function passLine(id, result, what, entries, describe) {
 
 // The summary comment's lines on what each exec pass waived: a blank line, the heading, then per pass one line with the
 // count and titles of its repeats waived as already ruled (`ruled`), each with its severity, what it repeats, and who
-// settled that, and one with the accepted residuals it holds as standing (`carried` entries with a `residual`), written
-// on each head whether or not the reviewer repeated them, an ended one not among them; nothing when no pass holds either.
+// settled that, one with the accepted residuals it holds as standing (`carried` entries with a `residual`), written on
+// each head whether or not the reviewer repeated them, and one with the waivers it holds as ended that no listing holds as
+// fixed, by the finding's title and at the severity it was waived at; nothing when no pass holds any of them.
 export function ruledLines(state) {
+  const fixed = fixedListings(state);
   const lines = Object.entries(state?.passes ?? {}).flatMap(([id, result]) => {
     const ruled = Array.isArray(result?.ruled) ? result.ruled : [];
-    const standing = (Array.isArray(result?.carried) ? result.carried : []).filter((each) => trim(each?.residual) && !each.ended);
+    const waivers = (Array.isArray(result?.carried) ? result.carried : []).filter((each) => trim(each?.residual));
+    const standing = waivers.filter((each) => !each.ended);
+    const ended = waivers.filter((each) => each.ended && !fixed.has(waiverKey(each)));
     return [
       ...(ruled.length ? [passLine(id, result, 'waived as already ruled, never counted open', ruled, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}repeats ${code(each?.already_ruled)}, ${settledBy(each)})`)] : []),
       ...(standing.length ? [passLine(id, result, 'standing on an accepted residual', standing, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}${settledBy(each)})`)] : []),
+      ...(ended.length ? [passLine(id, result, 'ended without a fix', ended, (each) => `${code(each?.already_ruled ?? each?.title)} (${code(each?.file)}, ${severityOf(each?.settled_severity) ?? severityOf(each?.severity) ?? 'unknown severity'}, once waived by the accepted residual ${code(each.residual)})`)] : []),
     ];
   });
   return lines.length ? ['', RULED_HEADING, ...lines] : [];

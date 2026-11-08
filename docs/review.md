@@ -512,9 +512,10 @@ A project adds its own in `review.reviewers`:
   and anchor nothing. While any pass record holds such a waiver above `low`, as `ruled` or `carried`, on any head,
   `aidrian pr auto-merge` refuses, naming the residual, and the merge waits for the Human.
   - The hold outlives the line. A pass that re-runs and is no longer offered a waiver above `low`, whatever ended the
-    anchor, keeps it in `carried`, marked `ended`, as one entry for that title and file. It ends only when a listing holds
-    that title and file as `fixed`, and a reviewer cannot print that state, so on an exec-only review the merge waits for
-    the Human. An ended entry settles nothing and anchors nothing, and the summary comment does not call it standing. The
+    anchor, keeps it in `carried`, marked `ended`, as one entry for that title and file. A result attested over a pass
+    keeps that record's `ruled` and `carried`. A reviewer's output cannot end the hold; a listing of that title and file as
+    `fixed` does: at once for an ended entry, and at the pass's next run for a standing one. An ended entry settles nothing
+    and anchors nothing, and until such a listing the summary comment names it as ended without a fix, never as standing. The
     pass input gives it among `priorFindings` as a context copy with nothing that settles, so a reviewer weighs it again.
   - It names one when the residual's text opens with the finding's exact title, a colon, and a reason: `<title>: <why>`,
     the shape the [body template](../plugins/aidrian/skills/pr-write/references/body-template.md) gives a residual line,

@@ -26,7 +26,8 @@
 //   7. review: nobody's latest review requests changes, and this machine's review record (lib/review/state.mjs), scoped
 //      to the pull request's repository, holds the outcome `received` on exactly the pull request's current head,
 //      and nothing is owed. A waiver above low through an accepted residual, on any pass record, keeps it off too, also
-//      after the waiver ends, until a listing holds the finding as fixed (settled.mjs heldWaiver).
+//      after the waiver ends. A reviewer's output cannot end that hold; a listing of the finding's title and file as
+//      fixed does (settled.mjs heldWaiver).
 //      `none_needed` is no review, so a pull request that needed none waits for the Human.
 // gh reads, each through the forge facade (lib/forges): one `gh pr view` for the number, head, base, author, URL, files,
 // and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the

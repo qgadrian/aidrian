@@ -350,6 +350,47 @@ test('a merge that edits a file it had no conflict in reviews that edit', async 
   assert.deepEqual([result.status, result.round, seen.inputs[0].files, seen.inputs[0].remerge], ['received', 2, ['src/evil.js'], merge]);
 });
 
+test('a merge whose own edit is only a comment opens a round: a merge from the base branch after a received outcome is never quiet', async (t) => {
+  const { r, merge } = await reviewedThenMerged(t, (r) => {
+    r.git('merge', '-q', '--no-commit', '--no-ff', 'main');
+    r.write('src/app.js', '// why the app is two\nexport const app = 2;\n');
+    r.commit('merge main');
+  });
+  assert.deepEqual(baseMergeOf(r.dir, merge, { priorHead: r.first, base: 'main' }).scope.changes.map((change) => change.file), ['src/app.js']);
+  const seen = recorder();
+  const result = await r.step({ exec: seen.exec });
+  assert.deepEqual([result.status, result.round, seen.inputs[0]?.remerge], ['received', 2, merge]);
+  assert.equal(readLocalState(r.project(), 7).rounds.at(-1).quiet, undefined);
+});
+
+// With no received outcome, or from another branch, nothing marks the merge as the base branch's: what it brought is
+// its change, judged as a push's is. The passes it touches run either way.
+test('any other merge is judged by its change like a push: one bringing only docs keeps the round, one bringing code opens one', async (t) => {
+  const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
+  for (const [what, files, round] of [['docs', { 'docs/guide.md': 'hello\n' }, 1], ['code', { 'src/lib.js': 'export const lib = 1;\n' }, 2]]) {
+    const r = repo(t);
+    assert.equal((await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) })).status, 'fix_required', what);
+    const merge = r.mergeMain(files);
+    const seen = recorder();
+    const result = await r.step({ exec: seen.exec });
+    assert.deepEqual([result.round, result.carried_from, seen.inputs.length, seen.inputs[0].context, seen.inputs[0].remerge], [round, undefined, 1, 'delta', undefined], `${what} from main after fix_required`);
+    const { rounds } = readLocalState(r.project(), 7);
+    assert.deepEqual([rounds.length, rounds.at(-1).head, rounds[0].quiet?.[0].from], [round, merge, round === 1 ? r.first : undefined], what);
+  }
+
+  const r = repo(t);
+  assert.equal((await r.step({ exec: recorder().exec })).status, 'received');
+  r.git('switch', '-q', '-c', 'side', 'main');
+  r.write('docs/side.md', 'hello\n');
+  r.commit('side');
+  r.git('switch', '-q', 'feat');
+  r.git('merge', '-q', '--no-edit', 'side');
+  const seen = recorder();
+  const result = await r.step({ exec: seen.exec });
+  assert.deepEqual([result.round, result.carried_from, seen.inputs[0]?.context], [1, undefined, 'delta'], 'docs from another branch after received');
+  assert.deepEqual(readLocalState(r.project(), 7).rounds[0].quiet.map((each) => each.from), [r.first]);
+});
+
 test('a merge with -s ours, which drops what main brought, is no clean merge, and its reviewer runs on the drop', async (t) => {
   const { r, merge } = await reviewedThenMerged(t, (r) => r.git('merge', '-q', '--no-edit', '-s', 'ours', 'main'));
   assert.equal(r.git('rev-parse', `${merge}^{tree}`), r.git('rev-parse', `${r.first}^{tree}`), 'the merge has the reviewed head\'s tree');

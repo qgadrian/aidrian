@@ -38,7 +38,8 @@ function fileList(numstat, names) {
   return out;
 }
 
-// The added lines per file, and the files that lost lines, from one unified diff with no context.
+// The added lines per file, the files that lost lines and the lines they lost, and each file's hunks, from one unified
+// diff with no context.
 export function diffLines(root, from, to, files = null) {
   // Unquoted paths (core.quotePath=false), so a header names `src/café.ts` as the file list does; no external diff or
   // text conversion, so the lines are the file's own.
@@ -48,7 +49,12 @@ export function diffLines(root, from, to, files = null) {
 function parseUnified(text) {
   const addedLines = {};
   const removedFiles = new Set();
+  const removedLines = {};
+  // `{ [file]: [{ added, removed }] }`: unchanged code lies between two hunks, so a comment that opens in one and closes
+  // in the next can hide it (quietDelta).
+  const hunks = {};
   let file = null;
+  let hunk = null;
   let old = null;
   let header = false;
   // `--- ` and `+++ ` are headers only between `diff --git` and the first hunk: a removed `-- comment` line reads `--- comment`.
@@ -59,12 +65,120 @@ function parseUnified(text) {
     } else if (header && line.startsWith('--- ')) old = line === '--- /dev/null' ? null : line.slice('--- a/'.length);
     // A deleted file has no new path: its removed lines count against the old one.
     else if (header && line.startsWith('+++ ')) file = line === '+++ /dev/null' ? old : line.slice('+++ b/'.length);
-    else if (line.startsWith('@@')) header = false;
-    else if (header) continue;
-    else if (line.startsWith('+') && file) (addedLines[file] ??= []).push(line.slice(1));
-    else if (line.startsWith('-') && file) removedFiles.add(file);
+    else if (line.startsWith('@@')) {
+      header = false;
+      hunk = { added: [], removed: [] };
+      if (file) (hunks[file] ??= []).push(hunk);
+    } else if (header) continue;
+    else if (line.startsWith('+') && file) {
+      (addedLines[file] ??= []).push(line.slice(1));
+      hunk?.added.push(line.slice(1));
+    } else if (line.startsWith('-') && file) {
+      removedFiles.add(file);
+      (removedLines[file] ??= []).push(line.slice(1));
+      hunk?.removed.push(line.slice(1));
+    }
   }
-  return { addedLines, removedFiles };
+  return { addedLines, removedFiles, removedLines, hunks };
+}
+
+// A quiet delta: a change that touches only prose, tests, or code comments, which the review step lets keep its round
+// (lib/review/stages.mjs). Every rule errs toward loud, as it reads lines without their context. These rules decide only
+// round accounting: a pass the change touches still re-reviews it (step.mjs resultFor), so a miss here costs one round
+// of cap, never a review. The table grows when a project asks for a language, and is never kept complete.
+//
+// The comment syntax of each code extension: `line`, the markers a comment line starts with; `block`, the block comment
+// delimiters the language has, which every comment line's hunk must keep balanced; `starts`, whether a line that
+// starts with the block's open, close, or `interior` marker is a comment line; `loud`, a line no comment rule may pass.
+const C_BLOCK = Object.freeze({ open: '/*', close: '*/', interior: '*', token: /\/\*|\*\//gu });
+// In CSS, `*` is the universal selector, so a line starting with it is a rule, not a block comment's interior.
+const CSS_BLOCK = Object.freeze({ ...C_BLOCK, interior: null });
+const HTML_BLOCK = Object.freeze({ open: '<!--', close: '-->', interior: null, token: /<!--|-->/gu });
+const syntax = (line, { block = null, starts = false, loud = null } = {}) => Object.freeze({ line, block, starts, loud });
+const each = (extensions, spec) => extensions.map((extension) => [extension, spec]);
+export const COMMENT_SYNTAX = Object.freeze(Object.fromEntries([
+  ...each(['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'java', 'kt', 'kts', 'swift', 'cs', 'scala', 'dart', 'groovy'], syntax(['//'], { block: C_BLOCK, starts: true })),
+  ...each(['scss', 'less'], syntax(['//'], { block: CSS_BLOCK, starts: true })),
+  ...each(['css'], syntax([], { block: CSS_BLOCK, starts: true })),
+  ...each(['go', 'rs', 'c', 'h', 'cc', 'cpp', 'hpp', 'm', 'mm'], syntax(['//'], { block: C_BLOCK })),
+  // No `#` for PHP: a PHP 8 attribute, such as `#[IsGranted('ROLE_ADMIN')]`, starts with it.
+  ...each(['php'], syntax(['//'], { block: C_BLOCK })),
+  ...each(['py', 'pyi', 'rb', 'sh', 'bash', 'zsh', 'yml', 'yaml', 'toml', 'pl', 'r', 'ex', 'exs'], syntax(['#'])),
+  ...each(['sql'], syntax(['--'], { block: C_BLOCK })),
+  ...each(['lua'], syntax(['--'], { loud: /\[=*\[|\]=*\]/u })),
+  ...each(['hs', 'elm'], syntax(['--'], { loud: /\{-|-\}/u })),
+  ...each(['clj', 'cljs', 'el', 'lisp', 'ini'], syntax([';'])),
+  ...each(['erl', 'tex'], syntax(['%'])),
+  ...each(['html', 'htm', 'xml', 'vue', 'svelte'], syntax([], { block: HTML_BLOCK, starts: true })),
+]));
+
+// A comment a tool reads, which changes what it builds, checks, or runs: a lint, type, or coverage switch, a build
+// constraint, a compiler reference, an interpreter line.
+const DIRECTIVE = /\b(?:eslint|jshint|ts-ignore|ts-expect-error|ts-nocheck|ts-check|noqa|nolint|nosec|pragma|nocheck|istanbul|c8|coverage|prettier-ignore|biome-ignore|rubocop|pylint|mypy|pyright|shellcheck|frozen_string_literal|type:\s*ignore|fmt:\s*(?:off|on|skip)|(?:en)?coding[:=])|@(?:ts-|flow\b|jsx)|\bgo:\w|\+build\b|<reference\b|<amd-|^\/\*\s*globals?\s|sourceMappingURL|webpack[A-Z]|vite-ignore/iu;
+// An added test line that focuses or skips tests, so the rest of the suite stops running.
+const TEST_WEAKENING = /\.(?:only|skip|Skip|SkipNow|todo)\b|\b(?:only|skip|todo)\s*:|\b(?:fit|fdescribe|xit|xdescribe|xtest)\s*\(|#\[ignore\]/u;
+
+export const QUIET_TEST_FILES = Object.freeze(['**/*.test.*', '**/*.spec.*', '**/*_test.*', '**/test/**', '**/tests/**', '**/__tests__/**', '**/spec/**']);
+
+const syntaxOf = (file) => {
+  const name = file.split('/').at(-1);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? (COMMENT_SYNTAX[name.slice(dot + 1).toLowerCase()] ?? null) : null;
+};
+
+// Whether one changed line of `file` is blank or a comment by its extension's syntax, and no tool directive. False for
+// an unknown extension. A block comment's interior line is `*` then a space or the line's end, so a generator method
+// (`*items()`) is code; code after a block's close on the same line is code.
+export function isCommentLine(file, line) {
+  const text = line.trim();
+  if (text === '') return true;
+  const spec = syntaxOf(file);
+  if (!spec || text.startsWith('#!') || DIRECTIVE.test(text) || spec.loud?.test(text)) return false;
+  if (spec.line.some((marker) => text.startsWith(marker))) return true;
+  const block = spec.starts ? spec.block : null;
+  if (!block) return false;
+  const interior = block.interior !== null && (text === block.interior || text.startsWith(`${block.interior} `) || text.startsWith(block.close));
+  if (!interior && !text.startsWith(block.open) && !text.startsWith(block.close)) return false;
+  const end = text.indexOf(block.close, text.startsWith(block.open) ? block.open.length : 0);
+  return end === -1 || text.slice(end + block.close.length).trim() === '';
+}
+
+// Whether one side of a hunk opens and closes its block comments in order, so the unchanged code around it reads the
+// same comment state before and after.
+function balanced(lines, block) {
+  if (!block) return true;
+  let depth = 0;
+  for (const line of lines) {
+    for (const [found] of line.matchAll(block.token)) {
+      depth += found === block.open ? 1 : -1;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
+}
+
+const commentOnly = (file, hunks) => {
+  const spec = syntaxOf(file);
+  const lines = hunks.flatMap((hunk) => [...hunk.added, ...hunk.removed]);
+  return Boolean(spec) && lines.length > 0 && lines.every((line) => isCommentLine(file, line))
+    && hunks.every((hunk) => balanced(hunk.added, spec.block) && balanced(hunk.removed, spec.block));
+};
+
+// `{ quiet, loud }` for a delta: `changes` as changedFiles, `addedLines` and `removedLines` as diffLines, and `hunks`
+// when known (without them, each file's lines are one hunk). `prose(file)` and `test(file)` say what a file is. A
+// deleted file is loud, prose included. A file is quiet when it is prose; a test that only gained lines, none focusing
+// or skipping tests; or a code file whose every changed line is blank or a comment (isCommentLine), with each hunk's
+// block comments balanced. `loud` lists the rest; an empty delta is not quiet.
+export function quietDelta({ changes, addedLines = {}, removedLines = {}, hunks = null }, { prose, test }) {
+  const loud = changes.filter(({ file, status }) => {
+    if (status === 'D') return true;
+    if (prose(file)) return false;
+    const added = addedLines[file] ?? [];
+    const removed = removedLines[file] ?? [];
+    if (test(file)) return removed.length > 0 || added.some((line) => TEST_WEAKENING.test(line));
+    return !commentOnly(file, hunks?.[file] ?? [{ added, removed }]);
+  }).map(({ file }) => file);
+  return { quiet: loud.length === 0 && changes.length > 0, loud };
 }
 
 // The parents of `commit`, first parent first: one for an ordinary commit, two or more for a merge.

@@ -34,6 +34,7 @@ import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks } from './findings.mjs';
+import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
 import { atCap } from './extension.mjs';
@@ -55,7 +56,8 @@ export const EXIT = Object.freeze({
   extension_check: 10, extension_ask: 11,
 });
 
-// The whole step. `deps` replaces the forge, the image upload, the engine check, the reviewers, and the bot wait in tests.
+// The whole step. `deps` replaces the forge, the image upload, the engine check, the reviewers, the bot wait, and the
+// disposition table in tests.
 // A step that throws after it marked its head `running`, such as a plan command that fails or a bot wait that errs,
 // leaves `error` as the head's outcome, so the merge guard keeps refusing the head.
 export async function reviewStep(opts, deps = {}) {
@@ -72,8 +74,8 @@ export async function reviewStep(opts, deps = {}) {
 }
 
 // One step on the context `s`: the deps, then what lib/review/step.mjs reads and plans, and the outcome writers.
-async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = (repo, files) => ghImage(repo, files, forge), exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
-  const s = { opts, project, config, env, forge, image, exec, awaitBot, codex, captureSpawn, run };
+async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = (repo, files) => ghImage(repo, files, forge), exec = runExec, awaitBot = null, codex, captureSpawn, dispositionTable = loadTable() } = {}, run) {
+  const s = { opts, project, config, env, forge, image, exec, awaitBot, codex, captureSpawn, dispositionTable, run };
   Object.assign(s, {
     settle: (result) => settle(s, result),
     finish: (status, extra) => finish(s, status, extra),
@@ -151,10 +153,13 @@ function answerRequests({ project, root, repo, n, state, passes, map, resultFor 
 }
 
 function finish(s, status, extra) {
-  const { forge, repo, n, head, base, onPr, summary, state, plan, fallbacks, keptSignoffs, maxRounds, flowStatus, outsideClosed, approvalPath, approvals } = s;
+  const { forge, repo, n, head, base, onPr, summary, state, plan, passes, resultFor, fallbacks, keptSignoffs, maxRounds, flowStatus, outsideClosed, approvalPath, approvals } = s;
   answerRequests(s);
   noteFindings(s, extra);
   const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+  // The late-round residuals of the passes that count for this head, for the body's Accepted residuals.
+  const residuals = passes.flatMap((pass) => (resultFor(pass)?.list ?? []).filter((finding) => finding.accepted_by === 'late-round').map(({ title, file, line, severity }) => ({ pass: pass.id, title, file, line, severity })));
+  if (residuals.length) result.residuals = residuals;
   // Every result on a head whose review a fallback replaced says so.
   if (fallbacks.length) result.quota_fallback = fallbacks.map((stop) => ({ stage: stop.stage, replaces: stop.reviewer, choice: stop.choice, signed_off_by: stop.signoff?.by ?? null, note: quota.describe(stop) }));
   // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of

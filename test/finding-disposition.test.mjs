@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { decideDisposition, loadTable, vocabulary } from '../plugins/aidrian/lib/finding-disposition.mjs';
+import { isCommentLine, quietDelta } from '../plugins/aidrian/lib/review/diff.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const d = (i) => decideDisposition(i).disposition;
@@ -107,6 +108,8 @@ test('the table vocabulary is closed and every rule uses it', () => {
       for (const v of vs) assert.ok(allowed.includes(v), `${k}=${v} not in vocabulary`);
     }
   }
+  for (const severity of t.lateRound.severities) assert.ok(t.severities.includes(severity), `lateRound severity ${severity} not in vocabulary`);
+  assert.ok(t.definitions[t.lateRound.disposition], 'the lateRound disposition has a definition');
 });
 
 test('from bot review round 5, a medium plausible bot finding for users or operators is a residual', () => {
@@ -139,4 +142,60 @@ test('the command prints the decision, exits 2 on an unknown word, and --vocab p
   assert.deepEqual([fix.status, JSON.parse(fix.stdout).disposition], [0, 'fix_now']);
   assert.equal(run(['--severity', 'P2', '--likelihood', 'routine', '--affects', 'users']).status, 2);
   assert.equal(JSON.parse(run(['--vocab']).stdout).users, loadTable().definitions.users);
+});
+
+test('from review round N, a low finding is a residual whatever its cost or citation; a bot low with no axes too', () => {
+  const N = loadTable().lateRoundFrom;
+  const low = { severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', source: 'bot' };
+  assert.equal(d({ ...low, round: N - 1 }), 'drop_unless_cited', 'before N a cited low is still a fix');
+  assert.equal(d({ ...low, round: N }), 'accepted_residual');
+  assert.deepEqual([d({ ...low, round: 7 }), decideDisposition({ ...low, round: 7 }).rule], ['accepted_residual', 'lateRound']);
+  assert.equal(d({ severity: 'nit', source: 'bot', round: 7 }), 'accepted_residual', 'an exec finding has no axes: the table decides it unaided');
+  assert.equal(d({ severity: 'low', likelihood: 'routine', affects: 'users', round: 7 }), 'invalid', 'a person\'s round is still refused');
+  assert.equal(d({ severity: 'medium', likelihood: 'plausible', affects: 'revenue', source: 'bot', round: 9 }), 'fix_now', 'nothing above low changes');
+  const out = spawnSync(CLI, ['pr', 'disposition', '--severity', 'low', '--cost', 'trivial', '--source', 'bot', '--round', '7'], { encoding: 'utf8' });
+  assert.deepEqual([out.status, JSON.parse(out.stdout).disposition, JSON.parse(out.stdout).rule], [0, 'accepted_residual', 'lateRound']);
+});
+
+test('a delta is quiet only when every file is prose, a test that only gained lines, or a comment-only code change', () => {
+  const prose = (file) => file.startsWith('docs/');
+  const test_ = (file) => /\.test\./u.test(file);
+  const quiet = (file, added = [], removed = [], status = 'M') => quietDelta({ changes: [{ file, status }], addedLines: added.length ? { [file]: added } : {}, removedLines: removed.length ? { [file]: removed } : {} }, { prose, test: test_ });
+  assert.equal(quiet('docs/x.md', ['hello']).quiet, true);
+  assert.equal(quiet('test/a.test.mjs', ['assert.ok(true);']).quiet, true);
+  assert.deepEqual(quiet('test/a.test.mjs', ['x'], ['assert.ok(y);']), { quiet: false, loud: ['test/a.test.mjs'] }, 'a removed test line may weaken it');
+  assert.equal(quiet('test/a.test.mjs', ['test.only(\'x\', () => {});']).quiet, false, 'a focus or skip marker weakens the rest of the suite');
+  assert.equal(quiet('test/a.test.mjs', [], [], 'D').quiet, false, 'a deleted test is loud');
+  assert.equal(quiet('src/a.mjs', ['// note', '/**', ' * doc', ' */', '']).quiet, true);
+  assert.equal(quiet('src/a.mjs', ['// eslint-disable-next-line']).quiet, false, 'a tool directive is behaviour');
+  assert.equal(quiet('src/a.mjs', ['/* start']).quiet, false, 'a comment left open hides the code after it');
+  assert.equal(quiet('src/a.mjs', [], [' */']).quiet, false, 'a removed close opens the code after it to the comment');
+  assert.equal(quiet('src/a.mjs', ['/* note */ run();']).quiet, false, 'code after a closed comment is code');
+  assert.equal(quiet('src/a.mjs', ['*items() { yield 1; }']).quiet, false, 'a generator method is no comment interior');
+  assert.equal(quiet('src/a.go', [' * p = 1']).quiet, false, 'block interiors are not comments in Go');
+  assert.equal(quiet('src/a.go', ['//go:build linux']).quiet, false, 'a build constraint is behaviour');
+  assert.equal(quiet('src/a.py', ['#!/usr/bin/env python2']).quiet, false, 'a shebang picks the interpreter');
+  assert.equal(quiet('src/a.py', ['# why it waits']).quiet, true);
+  assert.equal(quiet('src/a.lua', ['--[[']).quiet, false);
+  assert.equal(quiet('src/a.wasm').quiet, false, 'an unknown extension with no lines is loud');
+  assert.equal(quiet('src/a.mjs', ['const x = 1;']).quiet, false);
+  assert.equal(quiet('src/a.mjs', ['// a'], [], 'D').quiet, false, 'a deleted file is loud');
+  assert.equal(quiet('src/a.mjs').quiet, false, 'a file with no changed lines, such as a mode change, is loud');
+  assert.equal(quietDelta({ changes: [], addedLines: {}, removedLines: {} }, { prose, test: test_ }).quiet, false, 'an empty change list is not quiet');
+  const hunks = { 'src/a.mjs': [{ added: ['/* a'], removed: [] }, { added: [' */'], removed: [] }] };
+  assert.equal(quietDelta({ changes: [{ file: 'src/a.mjs', status: 'M' }], addedLines: { 'src/a.mjs': ['/* a', ' */'] }, removedLines: {}, hunks }, { prose, test: test_ }).quiet, false, 'a comment opened in one hunk and closed in another hides the code between');
+  assert.equal(quiet('docs/x.md', [], ['hello'], 'D').quiet, false, 'a deleted doc is loud, prose or not');
+  assert.equal(quiet('src/a.php', ["#[IsGranted('ROLE_ADMIN')]"]).quiet, false, 'a PHP 8 attribute is code');
+  assert.equal(quiet('src/a.php', [], ["#[Route('/admin')]"]).quiet, false, 'so is removing one');
+  assert.equal(quiet('src/a.php', ['// why']).quiet, true);
+  for (const file of ['src/a.css', 'src/a.scss', 'src/a.less']) {
+    assert.equal(quiet(file, ['* { margin: 0 }']).quiet, false, `the universal selector is a rule in ${file}`);
+    assert.equal(quiet(file, ['* + p { margin: 0 }']).quiet, false);
+    assert.equal(quiet(file, ['/* spacing */']).quiet, true);
+  }
+  // By design, not a hole: a `#` line inside a Python string reads as a comment. The rules decide only whether a push
+  // counts against the round cap; the passes the push touches still re-review it, so the miss costs a round of cap.
+  assert.equal(quiet('src/a.py', ['# inside a triple-quoted string']).quiet, true);
+  assert.equal(isCommentLine('src/a.ts', '/// <reference path="x" />'), false);
+  assert.equal(isCommentLine('src/a.rs', '/// docs'), true);
 });

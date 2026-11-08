@@ -5,7 +5,9 @@
 import { markerFor } from '../review-gate.mjs';
 import { ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
+import { lateRoundResidual } from '../finding-disposition.mjs';
 import { isClean, resolve } from './diff.mjs';
+import { blocks } from './findings.mjs';
 import { dedupe } from './split.mjs';
 import { approveLine } from './approvals.mjs';
 import * as quota from './quota.mjs';
@@ -20,22 +22,32 @@ const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.stat
 
 // Runs the stages of the step that lib/review/step.mjs planned into `s`, and returns the step's result.
 export async function runStages(s) {
-  const { opts, config, env, forge, exec, awaitBot, root, cleanEnv, repo, n, head, baseTip, review, state, plan, map, resultFor, fallbacks, keptSignoffs, visualEntries, isVisual, passes, removedTests, maxRounds, grantFloor, flowStatus, finish, capReached, quotaStop } = s;
+  const { opts, config, env, forge, exec, awaitBot, root, cleanEnv, repo, n, head, baseTip, review, state, plan, map, resultFor, quietSince, dispositionTable, fallbacks, keptSignoffs, visualEntries, isVisual, passes, removedTests, maxRounds, grantFloor, flowStatus, finish, capReached, quotaStop } = s;
 
   // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
   // waits for every earlier pass.
   const finalStage = [...plan.stages].reverse().find((stage) => stage.passes.every((pass) => map[pass.reviewer]?.kind !== 'remote')) ?? null;
   const current = state.rounds.at(-1);
-  const newRound = current?.head !== head;
+  // A quiet push since the round's head keeps the round: it moves to this head, its number, cap, and last-round flag
+  // as they were, and the heads it moved from go in its `quiet` list. The passes it touches still re-review it.
+  const quiet = Boolean(current) && current.head !== head && quietSince(current.head);
+  const newRound = current?.head !== head && !quiet;
   // The last round runs the final stage first, so an independent review always happens before the cap. A round that
   // started as the last one stays the last one on every later call for the same head, unless an extra round was
   // granted since: then a fix may have a new head again.
   const lastRound = newRound ? state.rounds.length + 1 === maxRounds : Boolean(current?.final) && state.rounds.length >= maxRounds;
   const roundsBefore = state.rounds.length;
-  let opened = !newRound;
+  const roundBefore = current ? { head: current.head, at: current.at, quiet: current.quiet } : null;
+  let opened = current?.head === head;
   let recorded = false;
   const openRound = () => {
     if (opened) return null;
+    if (quiet) {
+      current.quiet = [...(current.quiet ?? []), { from: current.head, at: current.at }];
+      Object.assign(current, { head, at: new Date().toISOString() });
+      opened = true;
+      return null;
+    }
     if (state.rounds.length >= maxRounds) return 'round_limit';
     state.rounds.push({ head, at: new Date().toISOString(), ...(lastRound ? { final: true } : {}) });
     if (lastRound && plan.stages.length > 1 && finalStage) state.overrides = [...new Set([...state.overrides, `round ${maxRounds} ran the ${finalStage.name} stage first`])];
@@ -45,7 +57,16 @@ export async function runStages(s) {
   // A run that produced nothing (a failure, a quota stop) gives its round back.
   const undoRound = () => {
     if (newRound && !recorded) state.rounds.length = roundsBefore;
+    if (quiet && !recorded) {
+      Object.assign(current, roundBefore);
+      if (roundBefore.quiet === undefined) delete current.quiet;
+    }
   };
+  // A quiet push moves the round to this head before any pass runs, so a step whose passes all carry still moves it.
+  if (quiet) {
+    openRound();
+    plan.reasons = [...plan.reasons, `a comment, doc, or test-only change since ${roundBefore.head.slice(0, 7)}: the round stays open; the passes it touches re-review it`];
+  }
 
   // In the last round the final stage runs first and is judged last, once the earlier stages' verdicts are in.
   const order = lastRound && plan.stages.length > 1 && finalStage ? [{ stage: finalStage, runOnly: true }, ...plan.stages.map((stage) => ({ stage }))] : plan.stages.map((stage) => ({ stage }));
@@ -74,8 +95,15 @@ export async function runStages(s) {
         const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
+          // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks
+          // nothing, and `residuals` names it for the pull request body. A reviewer's output keeps any extra field, so the
+          // three this rule sets are dropped first: a printed `state: 'fixed'` closes nothing.
+          const list = outcome.findings.map(({ state: _state, disposition: _disposition, accepted_by: _acceptedBy, ...finding }) => {
+            const late = lateRoundResidual({ severity: finding.severity, source: 'bot', round: state.rounds.length }, dispositionTable);
+            return late ? { ...finding, disposition: late.disposition, state: 'accepted', accepted_by: 'late-round' } : finding;
+          });
           state.passes[pass.id] = {
-            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
+            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
           };
           recorded = true;

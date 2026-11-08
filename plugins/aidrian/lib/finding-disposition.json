@@ -1,5 +1,5 @@
 {
-  "$comment": "Lookup table for lib/finding-disposition.mjs (aidrian pr disposition): severity x likelihood x affects [x cost] [x phase] -> disposition. What real users and operators hit routinely outranks contrived exploits; a trivial fix is always worth taking, while a structural one must earn its place. First matching rule wins. Change the table, not a prompt.",
+  "$comment": "Lookup table for lib/finding-disposition.mjs (aidrian pr disposition): severity x likelihood x affects [x cost] [x phase] -> disposition. What real users and operators hit routinely outranks contrived exploits; a trivial fix is always worth taking, while a structural one must earn its place. First matching rule wins, after `lateRound`: from review round `lateRoundFrom` a bot finding of a `lateRound` severity takes its disposition before any axis or rule, so a late nit costs no round. Change the table, not a prompt.",
   "severities": [
     "critical",
     "high",
@@ -44,8 +44,8 @@
     "trivial": "a few lines, local, no new state or migration; cheaper to fix than to discuss",
     "bounded": "a contained change within the touched module, tests included",
     "structural": "new persisted state, a migration, a cross-module contract change, or a redesign",
-    "early": "a person's finding, or a bot finding that arrived while the pull request had 1 to 4 bot reviews",
-    "late": "a bot finding that arrived once the pull request had 5 or more bot reviews, when fixes start adding new edge cases"
+    "early": "a person's finding, or a bot finding that arrived in review rounds 1 to 4: the round is `round` of `aidrian pr review`, or the bot's own review count for a bot comment",
+    "late": "a bot finding that arrived in review round 5 or later, when fixes start adding new edge cases: from then a low finding is a residual whatever its cost or citation"
   },
   "rules": [
     {
@@ -205,5 +205,11 @@
     "early",
     "late"
   ],
-  "lateRoundFrom": 5
+  "lateRoundFrom": 5,
+  "lateRound": {
+    "severities": [
+      "low"
+    ],
+    "disposition": "accepted_residual"
+  }
 }

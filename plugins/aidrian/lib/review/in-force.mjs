@@ -10,7 +10,7 @@ import path from 'node:path';
 import { committedConfig, loadConfig, stateDirProblem } from '../config.mjs';
 import { isDirectory, isFile, isWithin, resolvedPath } from '../fs.mjs';
 import { checkoutRoots, runGit } from '../git.mjs';
-import { committedConfigFile, stateDir } from '../project.mjs';
+import { committedConfigFile, recordsFolder, stateDir } from '../project.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { changedFiles, fileAt, resolve } from './diff.mjs';
 import { flowsInForce } from './plan.mjs';
@@ -21,6 +21,7 @@ import { touchedCitations } from './cited.mjs';
 const baseTipOf = (root, base, read) => resolve(root, `refs/remotes/origin/${base}`, read) ?? resolve(root, `refs/heads/${base}`, read);
 
 const INSIDE = "the state folder is inside this repository's checkout ";
+const RECORDS_CHECKOUT = 'the folder the review records go in is a checkout, ';
 const UNLISTED = "git cannot list this repository's checkouts, and the review record is read from it";
 
 // A path as a disk that ignores case or Unicode form reads it.
@@ -60,14 +61,24 @@ function repositoryCheckouts(project, git) {
 
 // The record is this machine's, and a head puts its files in its checkout, so the state folder lies outside every checkout
 // of this repository, as named and with its links followed, in any case. Elsewhere is allowed: this repository's head puts
-// no file in another repository, an outer one, or a git folder apart. { problem }, null when it holds, with `unread` when
-// git could not answer. `aidrian check` warns with the same answer.
+// no file in another repository, an outer one, or a git folder apart. The folder the records go in holds no checkout of
+// any repository, wherever the state folder is, the default one included; a checkout elsewhere under the state folder is
+// allowed. { problem }, null when it holds, with `unread` when git could not answer. `aidrian check` warns with the same
+// answer.
 export function insideCheckout(project, working, git) {
+  let state;
+  try {
+    state = stateDir(project, { config: working, read: git });
+  } catch {
+    return { problem: UNLISTED, unread: true };
+  }
+  const records = recordsFolder(state);
+  if (holdsCheckout(records)) return { problem: `${RECORDS_CHECKOUT}${records}, and the review record is read from it: move or remove that checkout on this machine, so only this machine's records stay there.` };
   if (!working.state.dir) return { problem: null };
   let folder;
   let tops;
   try {
-    folder = spellings(stateDir(project, { config: working, read: git() }));
+    folder = spellings(state);
     tops = repositoryCheckouts(project, git);
   } catch {
     tops = null;
@@ -75,14 +86,16 @@ export function insideCheckout(project, working, git) {
   if (!tops) return { problem: UNLISTED, unread: true };
   const top = tops.find((dir) => spellings(dir).some((from) => folder.some((each) => isWithin(from, each))));
   if (!top) return { problem: null };
-  return { problem: `${INSIDE}${top}, and the review record is read from it: in ${project.paths.config}, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, move the old folder's contents to the folder \`aidrian state\` prints.` };
+  return { problem: `${INSIDE}${top}, and the review record is read from it: in ${project.paths.config}, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.` };
 }
 
-// What the merge guard says to do about `problem`: a state folder inside a checkout is refused at the base branch too, so
-// a checkout there is no way forward.
-export const recourse = (problem) => (problem.startsWith(INSIDE)
-  ? 'Move the state folder first; until that lands, the Human merges in their own shell.'
-  : 'Merge from a checkout on the base branch, or the Human merges in their own shell.');
+// What the merge guard says to do about `problem`: a state folder inside a checkout, or a checkout at the folder the
+// records go in, is refused at the base branch too, so a checkout there is no way forward.
+export function recourse(problem) {
+  if (problem.startsWith(RECORDS_CHECKOUT)) return 'Move that checkout first; until it is gone, the Human merges in their own shell.';
+  if (problem.startsWith(INSIDE)) return 'Move the state folder first; until that lands, the Human merges in their own shell.';
+  return 'Merge from a checkout on the base branch, or the Human merges in their own shell.';
+}
 
 // The working copy against the config `baseTip` commits: { committed, problem }, with `problem` null when it holds, and
 // `unread` when the problem is a read that failed, not a real difference. A base with no config at all has no project

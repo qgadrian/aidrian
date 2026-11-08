@@ -18,7 +18,7 @@ const run = (args, cwd) => spawnSync(CLI, args, { cwd, encoding: 'utf8', env: { 
 const ok = (stdout) => stdout.split('\n')[0];
 const stateLine = (stdout) => stdout.split('\n')[1].replace(/^state: /, '');
 // The record commands' refusal, which the check prints as a warning.
-const insideText = (top) => `the state folder is inside this repository's checkout ${top}, and the review record is read from it: in .aidrian/config.json, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, move the old folder's contents to the folder \`aidrian state\` prints.`;
+const insideText = (top) => `the state folder is inside this repository's checkout ${top}, and the review record is read from it: in .aidrian/config.json, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.`;
 
 // A git repository with the example consumer's project folder, docs, and .gitignore copied in.
 function exampleRepo(t) {

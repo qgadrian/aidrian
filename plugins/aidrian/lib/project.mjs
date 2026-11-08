@@ -16,6 +16,8 @@ import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
 const LOCAL = '.aidrian.local.json';
+// A git read with runGit's own options.
+const defaultRead = () => undefined;
 // The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and
 // what decides CI's verdict, and this plugin's own code that decides auto-merge, so the gate never approves a change to
 // itself. Not configurable. Under plugins/aidrian/: bin/; the module each bin/ script starts (lib/cli.mjs,
@@ -433,11 +435,15 @@ function inMainCheckout(root, roots = checkoutRoots(root)) {
 // The machine-local state folder: plans, handoffs, the lesson inbox, and the dispatch log.
 // `$XDG_STATE_HOME/aidrian/projects/<project id>/`, with `~/.local/state` when that variable is unset or relative, so
 // git never sees it and every worktree and clone of a repository shares it. config.json `state.dir` moves it.
-// `read` holds the options of the git read a relative `state.dir` needs, for a caller under a deadline.
-export function stateDir(project, { config = loadConfig(project).config, env = process.env, read } = {}) {
+// `read` gives the options of each git read it makes, for a caller under a deadline, and may throw to stop it.
+export function stateDir(project, { config = loadConfig(project).config, env = process.env, read = defaultRead } = {}) {
   if (config.state.dir) return localPath(project, config.state.dir, read);
-  return path.join(stateRoot(env), 'projects', projectId(project));
+  return path.join(stateRoot(env), 'projects', projectId(project, read));
 }
+
+// The folder under the state folder `state` that review records go in: the record's readers and writers and the check that
+// holds them all ask here.
+export const recordsFolder = (state) => path.join(state, 'reviews');
 
 // `$XDG_STATE_HOME/aidrian`, with `~/.local/state` when that variable is unset or relative: the folder that holds every
 // project's state folder, and what no config.json can move (lib/gate-snapshot.mjs keeps its files there).
@@ -459,10 +465,11 @@ export function repoRoot(project, read) {
 // `<repository name>-<8 hex digits>`: the name and a hash of the normalized `origin` URL, so every clone agrees.
 // Without an origin, the main checkout's folder name and absolute path. A project below the repository root adds its
 // path from that root to the hash, so two projects in one repository keep apart; a project at the root keeps its id.
-export function projectId(project) {
-  const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root);
-  const repository = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project));
-  const prefix = runGit(['rev-parse', '--show-prefix'], project.root);
+// `read` gives the options of each git read, as for stateDir.
+export function projectId(project, read = defaultRead) {
+  const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root, read());
+  const repository = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project, read()));
+  const prefix = runGit(['rev-parse', '--show-prefix'], project.root, read());
   const below = prefix.status === 0 ? prefix.stdout.replace(/\/?\n$/u, '') : '';
   return repositoryId(repository, below);
 }
@@ -498,9 +505,9 @@ export function normalizeRemote(url) {
 }
 
 // A configured local path: a leading `~` is the home folder, and a relative path starts at the repository root.
-function localPath(project, value, read) {
+function localPath(project, value, read = defaultRead) {
   if (/^~(?=$|\/)/.test(value)) return path.join(homedir(), value.slice(1));
-  return path.resolve(repoRoot(project, read), value);
+  return path.resolve(repoRoot(project, read()), value);
 }
 
 function realPath(file) {

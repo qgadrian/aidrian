@@ -209,7 +209,10 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `tracker` | The workspace, team, and project MCP tracker writes belong to, off by default: [Tracker](#tracker). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
-A state folder inside the repository's checkouts keeps the plans, lessons, and audits, and `aidrian check` warns about it, but the review-record commands and the merge guard refuse it ([The record](review.md#the-record)): put it outside, or leave `state.dir` null.
+A state folder inside the repository's checkouts keeps the plans, lessons, and audits, and `aidrian check` warns about it,
+but the review-record commands and the merge guard refuse it ([The record](review.md#the-record)):
+put it outside, or leave `state.dir` null.
+They refuse a checkout at the folder the records go in the same way, with `state.dir` set or unset, and the check warns about that too.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.

@@ -160,7 +160,11 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   A project in a subfolder of the repository adds that subfolder's path to the hash, so two projects in one repository
   get two state folders; a project at the repository root keeps the id above.
 - `"state": { "dir": "<path>" }` in config.json moves the folder; [config.md](config.md) lists the key.
-  A relative path starts at the repository root, inside the repository: `aidrian check` warns about such a folder, the review-record commands and the merge guard refuse it ([review.md](review.md#the-record)), and while it stays, check requires git to ignore it.
+  A relative path starts at the repository root, inside the repository: `aidrian check` warns about such a folder,
+  the review-record commands and the merge guard refuse it ([review.md](review.md#the-record)),
+  and while it stays, check requires git to ignore it.
+- A checkout at the folder the review records go in gets the same warning and refusal, wherever the state folder is.
+  A checkout elsewhere under the state folder does not.
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
 the orchestrator uses it to name each background agent's handoff file.

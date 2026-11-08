@@ -12,7 +12,7 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { isWithin } from '../plugins/aidrian/lib/fs.mjs';
 import { DEFAULT_REVIEWER } from '../plugins/aidrian/lib/pr-await-review.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { runAttest, runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
@@ -278,9 +278,27 @@ function linkedAt(t, r, commit) {
 }
 
 // The refusal for a state folder in the checkout `top`, and the merge guard's denial with it.
-const insideText = (top) => `the state folder is inside this repository's checkout ${top}, and the review record is read from it: in .aidrian/config.json, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, move the old folder's contents to the folder \`aidrian state\` prints.`;
+const insideText = (top) => `the state folder is inside this repository's checkout ${top}, and the review record is read from it: in .aidrian/config.json, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.`;
 const insideDenial = (top) => `Blocked: this merges pull request #7, but ${insideText(top).slice(0, -1)}. Move the state folder first; until that lands, the Human merges in their own shell.`;
 const UNLISTED = "git cannot list this repository's checkouts, and the review record is read from it";
+
+// The refusal for a checkout at the folder the records go in, and the merge guard's denial with it.
+const recordsText = (records) => `the folder the review records go in is a checkout, ${records}, and the review record is read from it: move or remove that checkout on this machine, so only this machine's records stay there.`;
+const recordsDenial = (records) => `Blocked: this merges pull request #7, but ${recordsText(records).slice(0, -1)}. Move that checkout first; until it is gone, the Human merges in their own shell.`;
+
+// A repository with `state.dir` set, or unset under a temporary state home, and its state folder, which lies outside the checkout.
+const stateSet = (t) => {
+  const r = repo(t, { baseConfig: TEAM, headConfig: TEAM });
+  return { r, state: path.join(r.root, 'state') };
+};
+const stateUnset = (t) => {
+  const home = process.env.XDG_STATE_HOME;
+  t.after(() => (home === undefined ? delete process.env.XDG_STATE_HOME : (process.env.XDG_STATE_HOME = home)));
+  process.env.XDG_STATE_HOME = folderFor(t);
+  const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 } });
+  return { r, state: stateDir(r.project) };
+};
+const eachState = [['state.dir set', stateSet], ['state.dir unset', stateUnset]];
 
 const refused = (r, top) => assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), { message: insideText(top) });
 const allowed = (r, dir) => assert.equal(holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }).committed.state.dir, dir);
@@ -510,11 +528,12 @@ test('the folder of a bare repository is no checkout, so a state folder there is
   assert.equal(linked.hold().committed.state.dir, path.join(r.dir, 'state'));
 });
 
-test('a null state.dir clears the refusal in every shape, with no git read', (t) => {
+test('a null state.dir clears the refusal in every shape, with no list of the checkouts', (t) => {
   for (const team of [{ version: 1 }, { version: 1, state: { dir: null } }]) {
     const r = repo(t, { baseConfig: team, headConfig: team, files: { 'state/keep.txt': 'x\n' } });
     tracking(r);
-    assert.deepEqual(insideCheckout(r.project, r.config, () => assert.fail('no git read')), { problem: null });
+    const calls = gitCalls(t, () => assert.deepEqual(insideCheckout(r.project, r.config, () => ({})), { problem: null }));
+    assert.deepEqual(calls.filter((call) => call.includes(' worktree list ')), []);
     allowed(r, null);
     assert.equal(linkedAt(t, r, 'main').hold().committed.state.dir, null);
     assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
@@ -678,6 +697,8 @@ test('a hold with no time left has no answer', (t) => {
     return reads > 1 ? late() : {};
   };
   assert.deepEqual(insideCheckout(r.project, r.config, lateAtTheList), { problem: UNLISTED, unread: true });
+  const { r: unset } = stateUnset(t);
+  assert.deepEqual(insideCheckout(unset.project, unset.config, late), { problem: UNLISTED, unread: true }, 'with state.dir unset');
 });
 
 test('the checkouts are listed from the project root, never from the state folder', (t) => {
@@ -704,13 +725,72 @@ test('the checkouts are listed from the project root, never from the state folde
 });
 
 test('every git read in the hold takes the caller\'s options', (t) => {
-  const r = repo(t, { baseConfig: TEAM, headConfig: TEAM });
-  tracking(r);
   const git = () => ({ env: { ...process.env, AIDRIAN_HOLD_READ: 'held' } });
-  const calls = gitCalls(t, () => assert.equal(baseProblem(r.project, { repo: 'o/r', git }), null), '"${AIDRIAN_HOLD_READ:-unheld}" "$*"');
+  const reads = (r) => gitCalls(t, () => assert.equal(baseProblem(r.project, { repo: 'o/r', git }), null), '"${AIDRIAN_HOLD_READ:-unheld}" "$*"');
+  const set = repo(t, { baseConfig: TEAM, headConfig: TEAM });
+  tracking(set);
+  const calls = reads(set);
   assert.ok(calls.some((call) => call.includes(' worktree list ')), 'the checkout list');
   assert.ok(calls.filter((call) => call.includes(' --git-common-dir ')).length >= 2, 'the main checkout lookup and this checkout\'s');
   for (const call of calls) assert.match(call, /^held /u);
+  const { r: unset } = stateUnset(t);
+  tracking(unset);
+  const own = reads(unset);
+  assert.ok(own.some((call) => call.includes(' --get remote.origin.url')), 'the origin the state folder is named by');
+  assert.ok(own.some((call) => call.includes(' --git-common-dir ')), 'the main checkout the state folder is named by, with no origin');
+  assert.ok(own.some((call) => call.includes(' --show-prefix')), 'the project\'s folder in the repository');
+  for (const call of own) assert.match(call, /^held /u);
+});
+
+test('a checkout at the folder the records go in is refused', async (t) => {
+  for (const [name, make] of eachState) {
+    const { r, state } = make(t);
+    tracking(r);
+    const records = path.join(state, 'reviews');
+    const refusal = { message: recordsText(records) };
+    mkdirSync(state, { recursive: true });
+    r.git('worktree', 'add', '-q', '--detach', records, 'main');
+    const linked = linkedAt(t, r, 'main');
+    let warned = '';
+    const calls = gitCalls(t, () => {
+      assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), refusal, name);
+      assert.throws(linked.hold, refusal, name);
+      assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), recordsDenial(records), name);
+      assert.equal(judgeMerge({ project: linked.project, pr: 7, head: r.head, viewPr: unused }), recordsDenial(records), name);
+      warned = spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env }).stderr;
+    });
+    assert.ok(warned.includes(`warning: ${recordsText(records)}`), `${name}: the check gives the same answer`);
+    for (const call of calls) assert.equal(isWithin(state, call.split(' ')[0]), false, `${name}: ${call}`);
+    await assert.rejects(r.step(), refusal, name);
+    assert.equal(r.comments.length, 0, name);
+
+    // Gone, the folder is allowed again, and the other kinds of checkout there are refused the same.
+    r.git('worktree', 'remove', '--force', records);
+    assert.doesNotThrow(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), name);
+    mkdirSync(records);
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: records });
+    assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), refusal, `${name}: a repository of its own`);
+    rmSync(records, { recursive: true });
+    symlinkSync(linked.project.root, records);
+    assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), refusal, `${name}: through a link`);
+  }
+});
+
+test('a folder the records go in that holds no checkout stays allowed, and so does a checkout elsewhere under the state folder', (t) => {
+  for (const [name, make] of eachState) {
+    const { r, state } = make(t);
+    tracking(r);
+    writeLocalState(r.project, emptyState(7, 'o/r'));
+    assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review.json')), `${name}: the folder these tests name is the one the record goes in`);
+    r.git('worktree', 'add', '-q', '--detach', path.join(state, 'trees', 'one'), 'main');
+    r.git('worktree', 'add', '-q', '--detach', path.join(state, 'trees', 'reviews'), 'main');
+    r.git('worktree', 'add', '-q', '--detach', path.join(state, 'reviews', 'pr-7'), 'main');
+    assert.doesNotThrow(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), name);
+    assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null, name);
+    assert.deepEqual(insideCheckout(r.project, r.config, () => ({})), { problem: null }, name);
+    const { stderr } = spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env });
+    assert.ok(!stderr.includes('records go in'), `${name}: ${stderr}`);
+  }
 });
 
 test('a base pointer that cannot be read stops a command, and lets a merge go on', (t) => {
@@ -731,6 +811,7 @@ for (const [name, match, make, bound] of [
   ['the base ref', '*refs/remotes/origin*', moved, 5000],
   ['the base\'s config', '*" show "*', moved, 5000],
   ['the checkout list', '*" worktree list "*', (t) => repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM }), 4000],
+  ['the state folder\'s name', '*" --show-prefix "*', (t) => stateUnset(t).r, 5000],
 ]) {
   test(`a git that stalls on ${name} lets the merge go on within ${bound} ms`, (t) => {
     const r = make(t);

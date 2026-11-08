@@ -783,8 +783,15 @@ branch before it reads the record. Each refuses a checkout where:
   `the working copy's project folder differs from <owner/name> <base>, and the review record is read from it`.
   A base with no config at all stays allowed, for the pull request that adopts aidrian;
 - the state folder is inside a checkout of the repository, the main one or a linked worktree, as named or through a link:
-  ``the state folder is inside this repository's checkout <top>, and the review record is read from it: in <config>, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, move the old folder's contents to the folder `aidrian state` prints.``
-  or git cannot list the checkouts: `git cannot list this repository's checkouts, and the review record is read from it`.
+  `the state folder is inside this repository's checkout <top>, and the review record is read from it:`
+  `in <config>, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository,`
+  `and commit that change alone in its own pull request, which gets no local review record, so the Human merges it.`
+  ``Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder `aidrian state` prints.``
+  Or git cannot list the checkouts: `git cannot list this repository's checkouts, and the review record is read from it`;
+- the folder the records go in is itself a checkout of any repository, through a link too, with `state.dir` set or unset:
+  `the folder the review records go in is a checkout, <folder>, and the review record is read from it:`
+  `move or remove that checkout on this machine, so only this machine's records stay there.`
+  A checkout elsewhere under the state folder stays allowed.
 
 A base branch this checkout does not have stops the command: `git fetch` first.
 
@@ -801,9 +808,10 @@ repository's separate git dir included. A relative `state.dir` lies in the main 
 The pull request that moves it out gets no local record on any checkout, the [merge guard](hooks.md#merge-guard)'s hold
 applies with no review record too, and the `Merge anyway` answer does not waive it, so the Human merges it. With product
 feedback on, marking that pull request ready from its own head meets the ready hold's `state_dir` status, so it is marked
-ready from a checkout on the base branch or by the Human on the forge. Once it lands, each machine moves its own old
-folder's contents to the folder `aidrian state` prints, since the guard reads only the local record and a copy on the pull
-request's comment does not stand in. The `.gitignore` line for the old folder goes once every machine has moved.
+ready from a checkout on the base branch or by the Human on the forge. Once it lands, each machine, from a clean checkout on
+the base branch, moves its own old folder's contents to the folder `aidrian state` prints, since the guard reads only the
+local record and a copy on the pull request's comment does not stand in. The `.gitignore` line for the old folder goes once
+every machine has moved.
 
 A command publishes only after the hold. `extend` and `ingest` with no answer from the forge keep their write on this
 machine, and `waive` refuses without the base. `attest` and the long form of `signoff` hold only when the forge names the base, so

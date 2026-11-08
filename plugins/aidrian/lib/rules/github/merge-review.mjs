@@ -19,7 +19,7 @@
 // A record from another machine is not read here: that is the known limit, as for review-extend.
 // Before it reads the record, a merge of this repository (one that names none, or one of this checkout's remotes) holds
 // the working copy to the config the base branch commits, and refuses a state folder inside a checkout of this repository
-// (review/in-force.mjs baseProblem), from local git alone. A merge naming its number compares with origin's default branch
+// and a checkout at the folder the records go in (review/in-force.mjs baseProblem), from local git alone. A merge naming its number compares with origin's default branch
 // first, before any read; once a view is made, with the base it names. With neither ref here, a read that fails, or no
 // time left, the guard goes on as it would, since a hook lets the action run when it cannot read. Every git read of this
 // hold is stopped after 1 s, or at the 4 s deadline below if sooner. This hold applies with no record too, and neither of

@@ -420,7 +420,9 @@ working copy to [the base branch's config](review.md#the-record) from local git 
 with `refs/remotes/origin/HEAD` first, and with the base the head lookup names once it makes one. A difference refuses the
 merge, whatever the record says, and says to merge from a checkout on the base branch or that the Human merges in their
 own shell. The hold also refuses a state folder inside a checkout of the repository: that denial says to move the folder
-first, and that the Human merges until the move lands. The hold applies with no review record too, and the `Merge anyway`
+first, and that the Human merges until the move lands. It refuses a checkout at the folder the review records go in too,
+with `state.dir` set or unset: that denial says to move that checkout first, and that the Human merges until it is gone.
+The hold applies with no review record too, and the `Merge anyway`
 answer of the waiver paragraph below does not waive it. With neither ref here, a read that fails, or no time left, it goes on.
 
 It reads only this machine's [review record](review.md#the-record), and decides in this order:

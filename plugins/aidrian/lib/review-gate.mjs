@@ -17,7 +17,7 @@ import path from 'node:path';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
-import { normalizeRemote, stateDir } from './project.mjs';
+import { normalizeRemote, recordsFolder, stateDir } from './project.mjs';
 import { HUMAN } from './review/quota.mjs';
 import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit } from './review/state.mjs';
 
@@ -57,7 +57,7 @@ export function prNumber(value) {
   return match ? Number(match[1]) : null;
 }
 
-const recordFile = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}.json`);
+const recordFile = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}.json`);
 
 // The record for a pull request, or null when there is none or it is not a well-formed one for it: corrupt local state
 // never passes the gate. A review names its head and reviewer; an override is marked as one.

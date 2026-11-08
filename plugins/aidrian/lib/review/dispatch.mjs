@@ -3,6 +3,7 @@
 // lib/review/run.mjs.
 
 import { showPrefix } from '../git.mjs';
+import { fromOutside } from '../pr-resolve.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
 import { blocks } from './findings.mjs';
 import { belowRootBrief, flowBaseBrief, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
@@ -51,11 +52,33 @@ export async function captureAndAttach(s) {
   state.visual = { head, status: manifest.status, mode, visibility, captured: manifest.entries.filter((entry) => entry.sha256).length, of: manifest.entries.length, ...(manifest.reason ? { reason: manifest.reason } : {}), ...(uploadError ? { error: uploadError } : {}) };
 }
 
+// Whether the step's pull request comes from inside the team, read once a step: the body's residuals are its author's
+// word, so an outsider's waive nothing. The review step's CHANGE_FIELDS holds neither answer fromOutside needs. A failed
+// read, or an answer it cannot read, counts as outside.
+function fromInside(s) {
+  if (s.inside !== undefined) return s.inside;
+  try {
+    const { forge, repo, n } = s;
+    s.inside = fromOutside(forge.change(String(n), 'isCrossRepository', { repo })?.isCrossRepository, forge.pull(repo, n)) === false;
+  } catch {
+    s.inside = false;
+  }
+  return s.inside;
+}
+
+// The accepted residuals an exec pass reads: the items of the pull request body's section, or none when the pull request
+// comes from outside. Null for any other reviewer.
+function passResiduals(s, pass) {
+  if (s.map?.[pass.reviewer]?.kind !== 'exec') return null;
+  return fromInside(s) ? residualTexts(s.info?.body, s.config.github.pullRequest?.residuals?.section) : [];
+}
+
 // The input every reviewer of a pass reads. An exec pass also reads what is settled (lib/review/settled.mjs): the
 // record's accepted findings, its own last rulings, and the raised findings a residual names among `priorFindings`, and
-// the pull request body's accepted residuals as `acceptedResiduals`, so it does not re-raise them.
+// the pull request body's accepted residuals as `acceptedResiduals`, so it does not re-raise them. A pull request from
+// outside gives no residuals and so no anchors (passResiduals).
 export function passInput(s, pass, stage) {
-  const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual, map, info } = s;
+  const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
   const recorded = state.passes[pass.id];
   const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
   const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
@@ -79,7 +102,7 @@ export function passInput(s, pass, stage) {
     } : {}),
   } : {};
   const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
-  const residuals = map?.[pass.reviewer]?.kind === 'exec' ? residualTexts(info?.body, config.github.pullRequest?.residuals?.section) : null;
+  const residuals = passResiduals(s, pass);
   return {
     ...split,
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.

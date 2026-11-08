@@ -485,36 +485,48 @@ A project adds its own in `review.reviewers`:
   and for a prior entry `settled_severity`, its severity, and `settled_by` when known; for an anchored residual
   `settled_severity` and `residual`, its text), counts among the findings but never as open, and the
   summary comment lists each pass's waived count and titles, each with who settled it, every reviewer-supplied text as
-  inline code, so none renders as a link, an image, or emphasis. One that fails stays a new, blocking finding, named in
-  the pass's `dropped` notes. An accepted entry settles only while no pass lists a finding of that title in that file
+  inline code, so none renders as a link, an image, or emphasis. Each line gives the repeat's severity and
+  `settled_severity`, and a second line per pass lists the anchored residuals it holds as standing, on each head, whether
+  or not the pass repeated them. Under `review.record: "local"` no summary is posted, so the pull request body's line is
+  the only trace on the pull request. One that fails stays a new, blocking finding, named in the pass's `dropped` notes,
+  which each entry of a `fix_required` result's `open` list repeats. An accepted entry settles only while no pass lists a finding of that title in that file
   that is fixed, open, or otherwise blocking. A ruling on a prior entry carries to later heads at `settled_severity`:
   the pass record keeps the carried rulings its input offered as `carried`, shaped like `ruled`, whether or not the
-  pass repeated them, so a ruling holds after the entry leaves the record and across a head with no repeat. A carried
-  ruling holds only while no pass lists a finding of that title in that file, in any state: a listed one governs
-  instead, at its own severity when it is accepted. A ruling on a residual that names no raised finding is not carried.
+  pass repeated them, so a ruling holds after the entry leaves the record and across a head with no repeat, also when the
+  entry stays listed on that head; rulings are read from every pass record, so a slice whose file list changed keeps
+  them. A carried ruling holds only while no pass lists a finding of that title in that file, in any state: a listed one
+  governs instead, at its own severity when it is accepted. A ruling on a residual that names no raised finding is not carried.
   On the `--findings-file` path a repeat whose own disposition is `fix_now`, or any other that cannot be accepted, keeps
   no `already_ruled` and stays open; `aidrian pr attest` passes no settled list yet, so there every `already_ruled` is
   left out and the finding read as it stands.
 - Anchored residuals: a residual settles a repeat up to `medium` only when it names a finding a reviewer raised on this
-  pull request's review record, in that finding's file and no more severe than it, and never above `medium`, even when
-  the raised finding is `high`. Anything else stays capped at `low`. This takes no step of its own: no documented step
-  makes an exec reviewer's finding accepted on the record, since it reaches the record with no state,
+  pull request's review record, in that finding's file and no more severe than it. A raised finding above `medium` anchors
+  nothing: a residual naming it stays capped at `low`, as does anything else. This takes no step of its own: above low,
+  no documented step makes an exec reviewer's finding accepted on the record, since it reaches the record with no state,
   `aidrian pr disposition` only classifies, and the `accepted_residual` route ends in the body. The body's line naming the
-  finding is what settles it.
-  - It names one when the residual's text is the finding's title, exactly, alone or before a colon: `<title>: <why>`,
-    the line the [body template](../plugins/aidrian/skills/pr-write/references/body-template.md) writes, with the title copied as the
-    finding gives it. A near copy (another case, markup around the title, other punctuation) names nothing and stays at `low`.
-    The longest matching title wins. A line that opens with two titles names neither: each takes its own line. One title
-    raised in two files is named in both, each settling its own file. A finding only the body mentions is not raised.
+  finding is what settles it. A pull request from outside (another repository's branch, a base that is a fork, an author
+  with no standing here, or an answer that cannot be read) passes no `acceptedResiduals`, so its body's lines waive nothing
+  and anchor nothing. While any pass record holds such a waiver above `low`, as `ruled` or `carried`, on any head,
+  `aidrian pr auto-merge` refuses, naming the residual, and the merge waits for the Human.
+  - It names one when the residual's text opens with the finding's exact title, a colon, and a reason: `<title>: <why>`,
+    the shape the [body template](../plugins/aidrian/skills/pr-write/references/body-template.md) gives a residual line,
+    the title copied as the finding gives it. A title alone, or a near copy (another case, markup around the title,
+    other punctuation), names nothing and stays at `low`. The longest matching title wins. A line that opens with two titles
+    names neither: each takes its own line. A title raised in two files is named only in the files whose path the line
+    holds, and in none when it holds no path, so a second file raised later ends a line that names no path. A finding only
+    the body mentions is not raised.
   - The input offers each as a `priorFindings` entry with its `residual`: `state` accepted, the raised finding's title,
     file, and severity. A repeat sets `already_ruled` to that title or to the residual's text; `ruled` records the title
     either way. Once anchored, the residual's text settles nothing in another file, even a `low` repeat.
   - A waived repeat leaves the pass's `list`, so the pass record keeps every offered anchor as `carried`, `from` residual,
     whether or not the pass repeated it. A raised finding is one a pass lists now, or, when no pass lists that title in
-    that file, one any pass record keeps in `carried`. The anchor holds across a head with no repeat.
-  - It ends on the next head the pass runs when the body no longer names the finding, or when any pass lists that title in
-    that file with a `state` that is fixed or blocks. Only a `state` can end it: an exec reviewer's finding has none, so
-    it is the anchor, not a reopening of itself. A listing that neither is fixed nor blocks governs at its own severity.
+    that file, one any pass record keeps in `carried` or any round entry holds, so a slice record that a repack deleted
+    loses nothing. The anchor holds across a head with no repeat.
+  - A body edit takes effect on the next head a pass runs: a pass that already has a result on this head does not run
+    again for it. The anchor ends then when the body no longer names the finding. A fix or a blocking listing ends the
+    anchor while that listing stands: any pass listing that title in that file with a `state` that is fixed or blocks. Only
+    a `state` that is fixed or blocks can end it, and a reviewer cannot print one, so its own finding is the anchor, not a
+    reopening of itself. A listing that neither is fixed nor blocks governs at its own severity.
 - A project's own exec reviewer runs from a temporary checkout of the base, like the plan command, and reads the head
   through git: a pull request that edits its script cannot run its own version, and the edit triggers
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
@@ -627,8 +639,9 @@ only on 0. Dropping means the residual leaves the body because the defect no lon
 with one line of why left in the body; deleting the bullet while the defect still ships is never a fix. A decision found out of
 date is revised only through its own route, never reworded on the branch to let a residual pass.
 The decisions check changes no round or verdict. The review step reads the same items as settled residuals: for an exec
-reviewer's repeat, one waives a `low` repeat, or, when it names a finding raised on the review record, a repeat up to that
-finding's severity and `medium`, in that finding's file ([Reviewers](#reviewers)).
+reviewer's repeat, one waives a `low` repeat, or, when it names a finding of `medium` severity or lower raised on the review
+record, a repeat up to that finding's severity, in that finding's file ([Reviewers](#reviewers)). A pull request from outside
+gives the review step no residuals.
 
 ### Out of quota
 

@@ -65,7 +65,7 @@ Fix every finding a review identified; never leave one silently open. Do not go 
 | Action | Meaning |
 | --- | --- |
 | `fix_now` | Fixed in this pull request, by its owner. |
-| `accepted_residual` | No code fix: a short code comment at the line, and a line in the body's Accepted residuals section. |
+| `accepted_residual` | No code fix: a short code comment at the line, and a line in the body's Accepted residuals section, through the `pr-write` skill. |
 | `acceptable_as_is` | No fix: a reply with the reason. |
 | `drop_unless_cited` | No fix unless it cites a written project rule: a reply with the reason. |
 | `needs_axis` | A person's comment lacks likelihood or affects: set them from the comment and the code, or ask its author. |

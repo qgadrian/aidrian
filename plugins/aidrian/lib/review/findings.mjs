@@ -25,7 +25,7 @@ export function severityOf(value) {
 }
 
 // Whether severity `a` is no higher than `b`: the table lists them most severe first. An unknown word never is.
-function noHigher(a, b) {
+export function noHigher(a, b) {
   const [rankA, rankB] = [a, b].map((value) => SEVERITIES.indexOf(severityOf(value)));
   return rankA >= 0 && rankB >= 0 && rankA >= rankB;
 }

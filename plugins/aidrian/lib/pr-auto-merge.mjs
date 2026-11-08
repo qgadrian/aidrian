@@ -22,7 +22,8 @@
 //      issue, is not seen.
 //   7. review: nobody's latest review requests changes, and this machine's review record (lib/review/state.mjs), scoped
 //      to the pull request's repository, holds the outcome `received` on exactly the pull request's current head,
-//      and nothing is owed. `none_needed` is no review, so a pull request that needed none waits for the Human.
+//      and nothing is owed. A waiver above low through an accepted residual, on any pass record, keeps it off too.
+//      `none_needed` is no review, so a pull request that needed none waits for the Human.
 // gh reads, each through the forge facade (lib/forges): one `gh pr view` for the number, head, base, author, URL, files,
 // and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the
 // contents API, at `refs/heads/<branch>` (once when the base is the default branch); and, only when the team, the checks,
@@ -42,6 +43,7 @@ import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
+import { severityOf } from './review/findings.mjs';
 import { owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
 
@@ -228,7 +230,17 @@ export function changesRequested({ reviewDecision, latestReviews }) {
   return reviewDecision === 'CHANGES_REQUESTED' ? 'its review decision is changes requested' : null;
 }
 
-// Why the review keeps auto-merge off, or null when the record holds a `received` review of exactly `head` and nothing is owed.
+// The first entry any pass record, on any head, holds as `ruled` or `carried` with a `residual` and a severity above low.
+// An unknown severity counts as above low, so a record this cannot weigh waits for the Human too.
+function waivedAboveLow(state) {
+  const entries = Object.values(state.passes ?? {}).flatMap((result) => ['ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : [])));
+  const aboveLow = (word) => severityOf(word) !== 'low';
+  return entries.find((each) => each?.residual && (aboveLow(each.severity) || ('settled_severity' in each && aboveLow(each.settled_severity)))) ?? null;
+}
+
+// Why the review keeps auto-merge off, or null when the record holds a `received` review of exactly `head` and nothing is
+// owed. A finding above low that an accepted residual waived is the author's word on a reviewer's finding, so the merge
+// waits for the Human, whatever the review's outcome.
 export function reviewProblem(state, head) {
   if (!state) return 'this machine holds no review record for it: run `aidrian pr review`';
   const owing = owed(state);
@@ -237,7 +249,8 @@ export function reviewProblem(state, head) {
   if (outcome === null) return 'its review record holds no finished review';
   if (outcome.head !== head) return `the last review covered ${String(outcome.head).slice(0, 7)}, not head ${head.slice(0, 7)}`;
   if (outcome.status !== 'received') return `the review of head ${head.slice(0, 7)} is \`${outcome.status}\``;
-  return null;
+  const waived = waivedAboveLow(state);
+  return waived ? `the accepted residual ${JSON.stringify(String(waived.residual).slice(0, 120))} waived a finding above low severity, so the merge waits for the Human` : null;
 }
 
 // Why the check policy keeps auto-merge off, or null. `config` is the default branch's config, `working` is loadConfig's

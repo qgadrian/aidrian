@@ -3,13 +3,13 @@
 // lib/review/dispatch.mjs), the prompt states the rule (settledBrief), runExec holds each answer to it (splitRuled) and
 // hands back the carried rulings it was offered (offeredCarried), and the summary comment lists what was waived (ruledLines). settledMatch in findings.mjs is the one test all of them apply.
 // A residual on its own is the author's word and waives only a low repeat; one that names a finding a reviewer raised on
-// the record (anchoredResiduals) settles up to that finding's severity, in that finding's file.
+// the record (anchoredResiduals), at PRIOR_CAP or lower, settles up to that finding's severity, in that finding's file.
 // docs/review.md#reviewers describes it.
 
 import { isObject } from '../fs.mjs';
 import { residualItems } from '../decisions.mjs';
 import { LIST_ITEM } from '../markdown-sections.mjs';
-import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, PRIOR_CAP, RESIDUAL_CAP, settledMatch, severityOf } from './findings.mjs';
+import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, noHigher, PRIOR_CAP, RESIDUAL_CAP, settledMatch, severityOf } from './findings.mjs';
 // A call-time cycle (state.mjs imports ruledLines): neither module reads the other's bindings while it loads.
 import { clip } from './state.mjs';
 
@@ -22,13 +22,22 @@ const MAX_LISTED = 10;
 
 const trim = (value) => (typeof value === 'string' ? value.trim() : '');
 
-// The raised findings a residual names: its text is a finding's title, exactly, alone or followed by a colon, the shape
-// `<defect>: <why>` the pull request body template writes. The longest title wins, so a title that opens another title
-// does not name that one's finding. Findings of that title in several files are all named, each settling its own file.
+// Whether `text` holds `file` as a whole path, not inside a longer path or file name: `a.js` is not in `data.js`.
+function holdsPath(text, file) {
+  const literal = trim(file).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return Boolean(literal) && new RegExp(`(?<![\\w./-])${literal}(?![\\w/-]|\\.\\w)`, 'u').test(text);
+}
+
+// The raised findings a residual names: its text opens with a finding's exact title, a colon, and a reason, the shape
+// `<title>: <why>` the pull request body template writes. The longest title wins, so a title that opens another title
+// does not name that one's finding. A title raised in one file is named there. Raised in several, the line names only the
+// files whose path it holds, and none when it holds no path: a second file raised later must not widen an earlier line.
 export function namedBy(text, raised) {
-  const named = raised.filter((each) => text === trim(each.title) || text.startsWith(`${trim(each.title)}:`));
+  const named = raised.filter((each) => text.startsWith(`${trim(each.title)}:`) && trim(text.slice(trim(each.title).length + 1)));
   const longest = Math.max(...named.map((each) => trim(each.title).length));
-  return named.filter((each) => trim(each.title).length === longest);
+  const titled = named.filter((each) => trim(each.title).length === longest);
+  if (new Set(titled.map((each) => trim(each.file))).size < 2) return titled;
+  return titled.filter((each) => holdsPath(text, each.file));
 }
 
 // The settled entries a finding's `already_ruled` may name (settledMatch): { title, file, severity, settled_by? } for
@@ -49,7 +58,7 @@ export function settledEntries(input) {
     const text = trim(each);
     const named = namedBy(text, anchored);
     if (!named.length) return [{ title: text }];
-    return named.filter((entry) => entry.title !== text).map((entry) => ({ ...entry, title: text, raised: entry.title }));
+    return named.map((entry) => ({ ...entry, title: text, raised: entry.title }));
   });
   return [...prior, ...residuals];
 }
@@ -100,12 +109,15 @@ export function residualTexts(body, section) {
 const where = (finding) => JSON.stringify([trim(finding.title), trim(finding.file)]);
 
 // The accepted entries an anchored residual gives: one per raised finding it names (namedBy), at that finding's severity,
-// marked `residual` and `carried`. A raised finding is one a pass lists now, or an anchor a pass record kept as `carried`
-// while no pass lists that title in that file: a waived repeat leaves the pass's `list`, so `carried`, written on every
-// head the anchor is offered, whether or not the reviewer repeats it, is what holds it. Only a finding with a `state` can
-// end it, fixed or blocking: an exec reviewer's finding has none (cleanOutput keeps no such key), so it is the anchor,
-// never a reopening of itself. A low ruling on a residual naming nothing is not an anchor: only `carried` holds one, and
-// only with its `residual`, and the body's item must name it again on each head, so dropping the item ends the waiver.
+// marked `residual` and `carried`. A raised finding is one a pass lists now or, while no pass lists that title in that
+// file, an anchor a pass record kept as `carried` or a finding a round entry holds: a waived repeat leaves the pass's
+// `list`, and a repacked slice's record goes (prunePasses), so `carried`, written on every head the anchor is offered, and
+// the round entries, which can be null or capped, hold it between them. A raised finding above PRIOR_CAP anchors nothing:
+// the author's word never waives a repeat of it past RESIDUAL_CAP. Only a finding with a `state` can end it, fixed or
+// blocking, and only while it is listed: a reviewer cannot print one (cleanOutput keeps no such key), and the state the
+// late-round rule sets is accepted, which neither is fixed nor blocks, so a reviewer's finding is the anchor, never a
+// reopening of itself. A low ruling on a residual naming nothing is not an anchor: only `carried` holds
+// one, and only with its `residual`, and the body's item must name it again on each head, so dropping the item ends the waiver.
 function anchoredResiduals(state, listed, residuals) {
   const findings = listed.map(({ finding }) => finding);
   const ended = new Set(findings.filter((finding) => FINDING_STATES.includes(finding.state) && (finding.state === 'fixed' || blocks(finding))).map(where));
@@ -114,7 +126,9 @@ function anchoredResiduals(state, listed, residuals) {
     .filter((each) => isObject(each) && trim(each.residual))
     .map(({ already_ruled: title, file, line, settled_severity: severity }) => ({ title, file, line, severity }))
     .filter((each) => !present.has(where(each)));
-  const raised = [...findings, ...kept].filter((each) => trim(each.title) && trim(each.file) && severityOf(each.severity) && !ended.has(where(each)));
+  const rounds = (Array.isArray(state?.rounds) ? state.rounds : []).flatMap((round) => (Array.isArray(round?.findings) ? round.findings : []))
+    .filter((each) => isObject(each) && !present.has(where(each)));
+  const raised = [...findings, ...kept, ...rounds].filter((each) => trim(each.title) && trim(each.file) && noHigher(each.severity, PRIOR_CAP) && !ended.has(where(each)));
   return residuals.flatMap((text) => namedBy(text, raised).map(({ title, file, line, severity }) => ({
     title: trim(title), file: trim(file), ...(line ? { line } : {}), severity: severityOf(severity), state: 'accepted', already_ruled: trim(title), carried: true, residual: text,
   })));
@@ -122,25 +136,28 @@ function anchoredResiduals(state, listed, residuals) {
 
 // The settled entries of the review record an exec pass reads among its priorFindings: each finding a pass recorded as
 // accepted that no longer blocks, with its state and axes and the pass as `settled_by`, then each ruling on a prior
-// finding that `prior` (this pass's last result) holds, `ruled` (made by that pass) and `carried` (offered to it, kept
-// whether or not it repeated them; a record written before `carried` has `ruled` alone), under the title it named, at
-// that finding's severity (`settled_severity`, else the repeat's), and marked `carried`, so a ruling holds on every
-// later head instead of only while the reviewer repeats it. A direct acceptance settles only while no pass lists a
-// finding of that title in that file that is not accepted, or that blocks (fixed, reopened, or fix_now). A carried
-// ruling holds only while its source is absent: once any pass lists a finding of that title in that file, in any state,
-// that finding governs (accepted at its severity now, or not at all) and the ruling is dropped. A finding ruled on a
-// residual is not carried: the residual settles it again while the body lists it, and stops when the body drops it. At
-// most MAX_SETTLED, each title, file, and severity once, an anchored residual apart (anchoredResiduals, last).
+// finding that `prior` (this pass's last result) or any pass record holds, so a slice whose file list changed keeps them,
+// `ruled` (made by that pass) and `carried` (offered to it, kept whether or not it repeated them; a record written before
+// `carried` has `ruled` alone), under the title it named, at that finding's severity (`settled_severity`, else the
+// repeat's), and marked `carried`, so a ruling holds on every later head instead of only while the reviewer repeats it.
+// A direct acceptance settles only while no pass lists a finding of that title in that file that is not accepted, or
+// that blocks (fixed, reopened, or fix_now); one a ruling names is marked `already_ruled` and `carried` too, so the ruling
+// stays on the record while the acceptance stays listed and outlives it. A carried ruling holds only while its source is
+// absent: while any pass lists a finding of that title in that file, in any state, that finding governs (accepted at its
+// severity now, or not at all). A finding ruled on a residual is not carried: the residual settles it again while the
+// body lists it, and stops when the body drops it. At most MAX_SETTLED, each title, file, and severity once, an anchored
+// residual apart (anchoredResiduals, last).
 export function recordSettled(state, prior, residuals = []) {
   const listed = Object.entries(state?.passes ?? {}).flatMap(([id, result]) => (Array.isArray(result?.list) ? result.list : [])
     .filter(isObject).map((finding) => ({ id, finding })));
   const present = new Set(listed.map(({ finding }) => where(finding)));
   const live = new Set(listed.filter(({ finding }) => finding.state !== 'accepted' || blocks(finding)).map(({ finding }) => where(finding)));
+  const rulings = [prior, ...Object.values(state?.passes ?? {})].flatMap((result) => ['ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : [])))
+    .filter((finding) => isObject(finding) && finding.from === 'prior' && trim(finding.already_ruled));
+  const ruledOn = new Set(rulings.map((finding) => where({ title: finding.already_ruled, file: finding.file })));
   const accepted = listed.filter(({ finding }) => finding.state === 'accepted' && !blocks(finding) && !live.has(where(finding)))
-    .map(({ id, finding }) => ({ ...finding, settled_by: id }));
-  const rulings = ['ruled', 'carried'].flatMap((key) => (Array.isArray(prior?.[key]) ? prior[key] : []));
+    .map(({ id, finding }) => ({ ...finding, settled_by: id, ...(ruledOn.has(where(finding)) ? { already_ruled: trim(finding.title), carried: true } : {}) }));
   const carried = rulings
-    .filter((finding) => isObject(finding) && finding.from === 'prior' && trim(finding.already_ruled))
     .map(({ file, line, severity, settled_severity: cap, settled_by: by, already_ruled: name }) => ({
       title: trim(name), file, ...(line ? { line } : {}), severity: severityOf(cap) ?? severity, state: 'accepted', already_ruled: trim(name), carried: true, ...(trim(by) ? { settled_by: trim(by) } : {}),
     }))
@@ -175,6 +192,12 @@ const plain = (text, max = 80) => clip(String(text ?? '').slice(0, max)).replace
 // emphasis in reviewer text renders.
 const code = (text, max) => `\`${plain(text, max).replaceAll('`', "'")}\``;
 
+// A waived repeat's severity, and the severity it settled up to when that is on record, as the summary comment names them.
+function weighed(each) {
+  const cap = severityOf(each?.settled_severity);
+  return [severityOf(each?.severity), cap ? `settled at ${cap}` : null].filter(Boolean).map((word) => `${word}, `).join('');
+}
+
 // Who settled one waived repeat, as the summary comment names it.
 function settledBy(each) {
   if (trim(each?.residual)) return `settled by the accepted residual ${code(each.residual)}`;
@@ -182,15 +205,24 @@ function settledBy(each) {
   return `settled by ${trim(each?.settled_by) ? code(each.settled_by) : 'a prior finding'}`;
 }
 
-// The summary comment's lines on what each exec pass waived as already ruled (`ruled` on its record): a blank line, the
-// heading, then one line per pass with its count and titles, each with what it repeats and who settled that; nothing
-// when no pass waived one.
+// One pass's line of the summary comment: `what` and its count, then the entries `describe` writes, at most MAX_LISTED.
+function passLine(id, result, what, entries, describe) {
+  const more = entries.length > MAX_LISTED ? `; and ${entries.length - MAX_LISTED} more` : '';
+  return `- ${plain(id)} on \`${String(result.head).slice(0, 7)}\`: ${entries.length} ${what}: ${entries.slice(0, MAX_LISTED).map(describe).join('; ')}${more}`;
+}
+
+// The summary comment's lines on what each exec pass waived: a blank line, the heading, then per pass one line with the
+// count and titles of its repeats waived as already ruled (`ruled`), each with its severity, what it repeats, and who
+// settled that, and one with the accepted residuals it holds as standing (`carried` entries with a `residual`), written
+// on each head whether or not the reviewer repeated them; nothing when no pass holds either.
 export function ruledLines(state) {
-  const passes = Object.entries(state?.passes ?? {}).filter(([, result]) => Array.isArray(result?.ruled) && result.ruled.length);
-  if (!passes.length) return [];
-  return ['', RULED_HEADING, ...passes.map(([id, result]) => {
-    const named = result.ruled.slice(0, MAX_LISTED).map((each) => `${code(each?.title)} (${code(each?.file)}, repeats ${code(each?.already_ruled)}, ${settledBy(each)})`);
-    const more = result.ruled.length > MAX_LISTED ? `; and ${result.ruled.length - MAX_LISTED} more` : '';
-    return `- ${plain(id)} on \`${String(result.head).slice(0, 7)}\`: ${result.ruled.length} waived as already ruled, never counted open: ${named.join('; ')}${more}`;
-  })];
+  const lines = Object.entries(state?.passes ?? {}).flatMap(([id, result]) => {
+    const ruled = Array.isArray(result?.ruled) ? result.ruled : [];
+    const standing = (Array.isArray(result?.carried) ? result.carried : []).filter((each) => trim(each?.residual));
+    return [
+      ...(ruled.length ? [passLine(id, result, 'waived as already ruled, never counted open', ruled, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}repeats ${code(each?.already_ruled)}, ${settledBy(each)})`)] : []),
+      ...(standing.length ? [passLine(id, result, 'standing on an accepted residual', standing, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}${settledBy(each)})`)] : []),
+    ];
+  });
+  return lines.length ? ['', RULED_HEADING, ...lines] : [];
 }

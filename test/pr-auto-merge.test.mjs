@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { pathsProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { pathsProblem, reviewProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -688,4 +688,38 @@ test('the gate never approves a change to what decides auto-merge', () => {
     assert.ok(existsSync(path.join(import.meta.dirname, '..', file)), `${file} is a real file, so the list has not gone stale`);
   }
   for (const file of [`${lib}/report-health.mjs`, `${lib}/quorum.mjs`, 'docs/config.md', 'test/pr-auto-merge.test.mjs', 'src/lib/review/a.js']) assert.equal(off(file), null, file);
+});
+
+test('reviewProblem: a finding above low that an accepted residual waived waits for the Human, on any head and for any entry it cannot weigh', () => {
+  const received = (passes) => ({ passes, pending: [], outcome: { status: 'received', head: HEAD } });
+  const residual = 'The retry loop has no cap: every caller times out first';
+  const anchor = { title: 'The retry loop has no cap', file: 'a.js', severity: 'medium', settled_severity: 'medium', already_ruled: 'The retry loop has no cap', from: 'residual', residual };
+  for (const [label, entry, key] of [
+    ['a ruled repeat', anchor, 'ruled'],
+    ['a carried anchor', anchor, 'carried'],
+    ['a low repeat under a medium anchor', { ...anchor, severity: 'low' }, 'ruled'],
+    ['an unknown severity', { ...anchor, severity: 'dire', settled_severity: undefined }, 'carried'],
+    ['no severity', { title: 't', residual }, 'carried'],
+    ['an unknown cap', { ...anchor, severity: 'low', settled_severity: 'dire' }, 'ruled'],
+  ]) {
+    const problem = reviewProblem(received({ 'slice:codex-local:0123456789': { head: 'an-older-head', [key]: [entry] } }), HEAD);
+    assert.match(problem ?? '', /accepted residual "The retry loop has no cap: every caller times out first" waived a finding above low severity, so the merge waits for the Human/u, label);
+  }
+  for (const [label, passes] of [
+    ['no waiver', { p: { head: HEAD, list: [] } }],
+    ['a low anchor', { p: { head: HEAD, carried: [{ ...anchor, severity: 'low', settled_severity: 'low' }] } }],
+    ['a low bare residual', { p: { head: HEAD, ruled: [{ title: 't', file: 'a.js', severity: 'low', already_ruled: 'x', from: 'residual' }] } }],
+    ['a ruling on a prior finding', { p: { head: HEAD, ruled: [{ title: 't', file: 'a.js', severity: 'medium', settled_severity: 'medium', already_ruled: 'x', from: 'prior' }] } }],
+  ]) assert.equal(reviewProblem(received(passes), HEAD), null, label);
+});
+
+test('auto-merge refuses a head whose record holds a residual waiver above low', (t) => {
+  const r = repo(t);
+  r.record((state) => {
+    finished(state);
+    state.passes['engine:codex-local'] = { head: HEAD, carried: [{ title: 'T', file: 'a.js', severity: 'medium', settled_severity: 'medium', already_ruled: 'T', from: 'residual', residual: 'T: why' }] };
+  });
+  const { code, out, err } = run(t, r, ['7']);
+  assert.equal(code, 1);
+  assert.match([...out, ...err].join('\n'), /accepted residual "T: why" waived a finding above low severity/u);
 });

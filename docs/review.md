@@ -772,7 +772,41 @@ masked. The command and its files are the base branch's, like the rest of the re
 ## The record
 
 The review config of the pull request is read from its head commit, so a step run from another branch plans the
-same review. Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
+same review. Where the record lives is the base branch's, as this checkout has it (its tracking ref `origin/<base>`, else
+its own branch `<base>`, by full ref names): `aidrian pr review`, `attest`, `signoff`, `extend`, `waive`, `request`, `ingest`,
+and `await-review --request` read `review.record` as that branch commits it, and each holds the working copy to that
+branch before it reads the record. Each refuses a checkout where:
+
+- `state.dir` in its `.aidrian/config.json`, committed or not, differs from the base branch's:
+  `the working copy's state.dir differs from <owner/name> <base>, and the review record is read from it`;
+- its project folder differs from the base branch's, or the base's `.aidrian.json` cannot be read:
+  `the working copy's project folder differs from <owner/name> <base>, and the review record is read from it`.
+  A base with no config at all stays allowed, for the pull request that adopts aidrian;
+- the state folder is inside the checkout and git tracks a file at it, under it, or at a folder above it, such as a link:
+  `the state folder holds files git tracks at this checkout, and the review record is read from it`; or git cannot list it:
+  `git cannot list the state folder at this checkout, and the review record is read from it`.
+
+A base branch this checkout does not have stops the command: `git fetch` first.
+
+What to do about a refusal: a pull request that moves `state.dir` is reviewed from a checkout on the base branch, which
+plans the same review of the same head, with the `self` engine in `.aidrian.local.json`. A local reviewer, `codex-local`
+(or `auto` with Codex available) or any `exec` reviewer, reads the checkout at the head, so it cannot finish from there.
+The `self` recourse does not apply when `config.json` pins `review.engine`, which wins over the machine's.
+A head behind a base that moved `state.dir` merges the base first.
+Tracked files in a state folder, with `state.dir` `.` among them, since the checkout itself then holds tracked files:
+untrack them, or use a folder git ignores. That answers both `the state folder holds files git tracks at this checkout, and
+the review record is read from it` and `git cannot list the state folder at this checkout, and the review record is read from it`,
+the second once git can list it again.
+
+A command publishes only after the hold. `extend` with no answer from the forge keeps its write on this machine, and
+`waive` refuses without the base. `attest` and the long form of `signoff` hold only when the forge names the base, so
+offline they still write this machine's record and publish nothing; so does `request`, which reads the forge only when
+`--head` or `--repo` is missing. Auto-merge and product feedback make the same `state.dir` comparison against the default
+branch read from GitHub. The [merge guard](hooks.md#merge-guard) makes all three from local git before it reads the
+record, for a merge of this repository: a merge naming its number compares with origin's default branch first, and with
+the base the head lookup names once it makes one. It goes on as it would with neither ref, a read that fails, or no time left.
+
+Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
 place: the rounds, each pass's result per head, the verdicts, the sign-offs, and the overrides used. Another machine
 reads it from the comment, and only from a comment whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`:
 a stranger's comment supplies no record, and is never edited. It is the reviewers' word, not proof, and it is all visible on the pull request.

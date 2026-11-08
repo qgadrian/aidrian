@@ -20,8 +20,8 @@ export function runGit(args, cwd, options = {}) {
   return result;
 }
 
-function firstLine(args, cwd) {
-  const result = runGit(args, cwd);
+function firstLine(args, cwd, options) {
+  const result = runGit(args, cwd, options);
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
@@ -31,8 +31,8 @@ export function mainRoot(cwd) {
 }
 
 // The top folder of the checkout that `cwd` is in: the main checkout or one of its worktrees.
-export function currentRoot(cwd) {
-  return firstLine(['rev-parse', '--show-toplevel'], cwd);
+export function currentRoot(cwd, options) {
+  return firstLine(['rev-parse', '--show-toplevel'], cwd, options);
 }
 
 // `cwd` from the top of its checkout, with a trailing slash: '' at the top, or when git cannot answer.

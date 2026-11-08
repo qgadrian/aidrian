@@ -582,7 +582,7 @@ test('a working copy whose state.dir differs from the default branch\'s is off (
   r.record((state) => finished(state));
   const elsewhere = { 'acme/notes@main:.aidrian/config.json': configText(TEAM, CHECKS, { dir: null }) };
   assert.deepEqual(reasonOf(t, r, { files: elsewhere }), [1, 'checks']);
-  assert.match(run(t, r, ['7'], { files: elsewhere }).out[0], /working copy's state\.dir differs from acme\/notes main/u);
+  assert.ok(run(t, r, ['7'], { files: elsewhere }).out[0].includes("the working copy's state.dir differs from acme/notes main, and the review record is read from it"));
 });
 
 test('review: requested changes are off, from the decision or from anyone\'s latest review, whatever the record says', (t) => {

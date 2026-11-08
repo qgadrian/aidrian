@@ -26,7 +26,8 @@ import * as processKill from '../lib/rules/process-kill.mjs';
 // Which rules start a process. Every rule first reads the command alone, and most stop there. A rule that needs the
 // project finds it (findProject), which runs git once inside a project folder. Past that, only these start one, and only
 // for a command they matched: attribution, git for a commit's trailers; pr-body, gh for the open pull requests, bounded
-// at 3 s; merge-review, one gh pr view, bounded at 3 s, and, only under the unattended waiver's local switch for a merge
+// at 3 s; merge-review, git for the hold against the base branch, each read bounded at 1 s (lib/review/in-force.mjs
+// baseProblem), one gh pr view, bounded at 3 s, and, only under the unattended waiver's local switch for a merge
 // it could waive, one git call and up to six gh calls, none begun 4 s after this process started (each stopped
 // at that deadline at the latest; lib/review/waiver.mjs); ready-hold, git for the committed config and then, when the
 // project may run product feedback, gh under one deadline for all its calls, which ends 4 s after this process started

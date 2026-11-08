@@ -155,9 +155,14 @@ test('aidrian pr attest records the review and prints the marker; --check reads 
   assert.equal(readRecord(project, 7).head, head);
 });
 
+test('no test reads a real pull request', () => {
+  const gh = spawnSync('gh', ['--version'], { encoding: 'utf8' });
+  assert.deepEqual([gh.status, gh.stdout], [1, '']);
+});
+
 test('aidrian pr attest --pass --verdicts - reads the agent`s JSON from stdin and stores its evidence as written', (t) => {
   const { dir, head, project } = repo(t, { ...GATE, review: { record: 'local' } });
-  // --repo keeps the pull request's repository off the forge, so the test reads no network.
+  // --repo names the repository, which the forge cannot here: the suite's gh always fails, so the test reads no network.
   const attest = (pass, input, ...more) => spawnSync(process.execPath, [CLI, 'pr', 'attest', '7', '--pass', pass, '--head', head, '--reviewer', 'product-manager', ...more, '--repo', 'Acme/Notes'], { cwd: dir, encoding: 'utf8', env: process.env, input });
   const counted = ['--findings', '0', '--fixed', '0'];
   const recorded = (pass) => readLocalState(project, 7)?.passes[pass];

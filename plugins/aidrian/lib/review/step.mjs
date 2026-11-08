@@ -2,7 +2,6 @@
 // the review, and refuse a plan that cannot run. It fills the step context `s` that lib/review/run.mjs builds, which the
 // stages (lib/review/stages.mjs) then run.
 
-import { committedConfig } from '../config.mjs';
 import { roundCapProblem } from '../pr-await-review.mjs';
 import { runGit } from '../git.mjs';
 import { isolate } from './env.mjs';
@@ -20,7 +19,7 @@ import * as quota from './quota.mjs';
 import { readManifest, visualMatrix, visualRoutes } from './visual.mjs';
 import { headToReview } from './pushed.mjs';
 import { runPlanCommand, stderrTail } from './base-worktree.mjs';
-import { baseReviewAt, baseReviewMoved, commandFiles, reviewInForce } from './in-force.mjs';
+import { baseReviewAt, baseReviewMoved, commandFiles, holdToBase, reviewInForce } from './in-force.mjs';
 import { evidenceOf, keptSignoffsOf } from './evidence.mjs';
 
 export const MAX_LINES = 20000;
@@ -75,12 +74,11 @@ export async function prepareStep(s) {
   const head = at.head;
   if (at.unpushed) return { status: 'incomplete', pr: n, repo, head, local_head: at.unpushed, reason: `this checkout's HEAD ${at.unpushed.slice(0, 7)} is past ${head.slice(0, 7)}, the head of pull request #${n}: push, then run the step again`, retry_recommended: true };
   if (!resolve(root, head)) throw new Error(`the head ${head.slice(0, 7)} of pull request #${n} is not in this checkout: git fetch first`);
-  const baseTip = resolve(root, `origin/${info.baseRefName}`) ?? resolve(root, info.baseRefName);
-  if (!baseTip) throw new Error(`the base branch ${info.baseRefName} is not in this checkout: git fetch first`);
-  const base = mergeBase(root, baseTip, head);
   // The round cap is the base branch's: an edit to the working copy's config, committed or not, cannot raise it. So is
-  // what happens at it: github.extraRounds and its ceiling, github.maxExtraRounds.
-  const committed = committedConfig(project, baseTip);
+  // what happens at it: github.extraRounds and its ceiling, github.maxExtraRounds. So are where the record is read from,
+  // state.dir, and whether it goes on the pull request, review.record.
+  const { committed, baseTip } = holdToBase(project, config, { repo, base: info.baseRefName });
+  const base = mergeBase(root, baseTip, head);
   const cap = committed.github.maxReviewRounds;
   const policy = policyOf(committed.github);
   const capped = opts.maxRounds === undefined ? null : roundCapProblem(opts.maxRounds, cap, env);
@@ -98,10 +96,10 @@ export async function prepareStep(s) {
   const reviewCommands = [review.planCommand, review.visual?.login, review.visual?.preview, ...Object.values(baseReview?.reviewers ?? {}).map((reviewer) => (reviewer.command ?? []).join(' '))];
   const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
 
-  // The record so far: the newer of this machine's and the pull request's. With config.json `review.record: "local"`
-  // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
+  // The record so far: the newer of this machine's and the pull request's. With `review.record: "local"` on the base
+  // branch the pull request is never read or written: the record is this machine's state folder only. A comment that holds
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
-  const onPr = config.review.record !== 'local';
+  const onPr = committed.review.record !== 'local';
   const comments = onPr ? forge.conversationComments(repo, n) : [];
   const summary = summaryToEdit(comments, () => forge.viewer());
   const record = readRecord(project, n, comments, repo);

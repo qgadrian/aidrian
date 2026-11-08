@@ -178,11 +178,13 @@ test('a local file git tracks reads the waiver switch "off" with the tracked-fil
 // ---- the command (AC7)
 
 // runWaive as the CLI runs it, over a fake forge whose pull request is at `head` and whose comments are `issue`.
-// `change` replaces the head read, which runs between the record's read and its write.
-function waive(t, r, args, { head = HEAD, change = null, issue = [], record = 'comment' } = {}) {
+// `change` replaces the head read, which runs between the record's read and its write. The base read before it names
+// this checkout's own branch, or `base` when given: its config holds the same state.dir.
+function waive(t, r, args, { head = HEAD, change = null, issue = [], record = 'comment', base = r.git('branch', '--show-current') } = {}) {
   const log = t.mock.method(console, 'log', () => {});
+  const headRead = change ?? ((ref, fields) => (assert.equal(fields, 'number,headRefOid,url'), { number: Number(ref), headRefOid: head, url: URL }));
   const forge = {
-    change: change ?? ((ref, fields) => (assert.equal(fields, 'number,headRefOid,url'), { number: Number(ref), headRefOid: head, url: URL })),
+    change: (ref, fields) => (fields === 'baseRefName' ? { baseRefName: base } : headRead(ref, fields)),
     conversationComments: () => issue,
     postComment: (_repo, _n, body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', body }), issue.at(-1)),
     editComment: (_repo, id, body) => (issue.find((comment) => comment.id === id).body = body),
@@ -205,6 +207,14 @@ test('aidrian pr waive records a round_cap verdict on the current head, visible 
   assert.equal(issue.length, 1, 'posted the summary comment');
   assert.equal(stateFromComment(issue[0].body, 5).waivers[0].head, HEAD, 'the comment carries the record');
   assert.match(issue[0].body, new RegExp(`${WAIVER_HEADING.replace(/\*/gu, '\\*')}\\n- round_cap on \`abcdef1\`: waive by unknown: the three open findings are style nits \\(an audit entry, not proof\\)`, 'u'));
+});
+
+test('aidrian pr waive refuses a failed head read after the base read, and a base it cannot read', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, roundLimit);
+  await assert.rejects(waive(t, r, ['--verdict', 'refuse', '--reason', 'nits'], { change: () => { throw new Error('HTTP 502'); } }), /cannot read the pull request's head/u);
+  await assert.rejects(waive(t, r, ['--verdict', 'refuse', '--reason', 'nits'], { base: null }), /cannot read the pull request's base branch/u);
+  assert.equal(readLocalState(r.project(), 5).waivers, undefined);
 });
 
 test('a second verdict rewrites the waiver list in the summary comment, not a second one', async (t) => {

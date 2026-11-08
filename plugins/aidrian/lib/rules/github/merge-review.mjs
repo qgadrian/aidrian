@@ -17,6 +17,11 @@
 // pull request and a record may apply, and bounded at 3 s, or at the command's deadline below if sooner (none past it). A merge whose head it then cannot read is refused, as the review gate
 // refuses a request whose pull request it cannot read: `--match-head-commit <sha>` names it.
 // A record from another machine is not read here: that is the known limit, as for review-extend.
+// Before it reads the record, a merge of this repository (one that names none, or one of this checkout's remotes) holds
+// the working copy to the config the base branch commits (review/in-force.mjs baseProblem), from local git alone. A merge
+// naming its number compares with origin's default branch first, before any read; once a view is made, with the base
+// it names. With neither ref here, a read that fails, or no time left, the guard goes on as it would, since a hook lets
+// the action run when it cannot read. Each read is stopped after 1 s, or at the 4 s deadline below if sooner.
 // The Human waives it with an AskUserQuestion answer, given at or after the head's outcome and every entry still owed, to
 // a question naming `#<PR>` and the head's first 7 characters, whose chosen option starts with "Merge anyway". Without a
 // transcript the host writes in that shape (Codex), the Human merges in their own shell.
@@ -34,7 +39,8 @@ import { readFileSync } from 'node:fs';
 
 import { forgeFor } from '../../forges/index.mjs';
 import { findProject } from '../../project.mjs';
-import { originRepo, prNumber, repoName } from '../../review-gate.mjs';
+import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
+import { baseProblem, boundedReads } from '../../review/in-force.mjs';
 import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { guardWaiver, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
@@ -155,6 +161,20 @@ export function scoped(state, project, repo) {
   return { ...state, pending: owed(state).filter((entry) => ours(repoName(entry.repo ?? null) ?? home)), outcome: mine ? state.outcome : null, rounds: mine ? state.rounds : [] };
 }
 
+// The deny reason when a merge of this repository finds the working copy not held to `base` (baseProblem), or null. A
+// merge of a repository this checkout has no remote for reads no record of it through this working copy's config.
+function heldReason({ project, pr, repo, base, deadline, now }) {
+  const git = boundedReads(deadline, now);
+  const name = repoName(repo);
+  let problem = null;
+  try {
+    if (name === null || remoteRepos(project, git()).includes(name)) problem = baseProblem(project, { repo: name ?? 'origin', base, git });
+  } catch {}
+  if (!problem) return null;
+  const merge = pr === null ? 'a pull request' : `pull request #${pr}`;
+  return `Blocked: this merges ${merge}, but ${problem}. Merge from a checkout on the base branch, or the Human merges in their own shell.`;
+}
+
 // The deny reason for a merge of `pr` at `head` in `project`, or null. `pr` or `head` null is read through
 // `viewPr(target, repo)`; `answers` are the Human's AskUserQuestion answers in this session.
 // `waiverForge` is the test seam for the unattended waiver's reads (lib/review/waiver.mjs guardWaiver, budgetedForge's
@@ -166,6 +186,9 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const named = head !== null;
   // A number the rule cannot read is refused whatever the target: no record can say the merge is another's.
   if (unreadable) return unresolved(null, how);
+  const held = (base) => heldReason({ project, pr, repo, base, deadline: startedAt + WAIVER_DEADLINE_MS, now });
+  const before = pr === null ? null : held(null);
+  if (before) return before;
   let state = pr === null ? null : scoped(readLocalState(project, pr), project, repo);
   if (pr !== null && !guards(state)) return null;
   let view = null;
@@ -175,6 +198,8 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
     const left = Math.floor(startedAt + WAIVER_DEADLINE_MS - now());
     view = left > 0 ? viewPr(pr ?? target, repo, { timeoutMs: Math.min(VIEW_TIMEOUT_MS, left) }) : null;
     if (!view) return unresolved(pr, how);
+    const denied = held(view.baseRefName ?? null);
+    if (denied) return denied;
     if (pr === null) {
       pr = view.number;
       state = scoped(readLocalState(project, pr), project, repo);

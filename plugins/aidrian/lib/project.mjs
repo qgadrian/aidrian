@@ -175,8 +175,8 @@ export function configFiles(project) {
 // folder's when that commit has none; null when its `.aidrian.json` cannot be read or names no usable folder. What a
 // working copy's `.aidrian.json` says, committed later or never, cannot move a lookup at the base branch. Throws when
 // git itself fails, stopped by a timeout or the like. 128 is git saying the commit has no such file.
-export function committedConfigFile(project, commit) {
-  const shown = runGit(['show', `${commit}:./${OVERRIDE}`], project.root);
+export function committedConfigFile(project, commit, options) {
+  const shown = runGit(['show', `${commit}:./${OVERRIDE}`], project.root, options);
   if (shown.status === 128) return `${DEFAULT_DIR}/config.json`;
   if (shown.status !== 0) throw new Error(`git show ${commit}:./${OVERRIDE} failed`);
   let raw;

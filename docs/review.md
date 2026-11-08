@@ -580,9 +580,10 @@ whatever its cost or citation (`lateRound` in the table), and so is a medium, pl
 unless its fix is trivial: a trivial-cost medium is `fix_now` in every round.
 The step records an exec reviewer's late low findings that way itself: each is `accepted`, blocks nothing, and is
 listed in `residuals` (`pass`, `title`, `file`, `line`, `severity`) on every result for a head its pass counts for,
-which the session writes into the body's Accepted residuals. A finding recorded with `--findings-file` keeps its own
-state: the session classifies it with `aidrian pr disposition`, writes the residual into the body, and attests it
-`accepted`. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
+which the session writes into the body's Accepted residuals. A low finding recorded with
+`--findings-file` keeps its own state: the session classifies it with `aidrian pr disposition`, writes the residual
+into the body, and attests it `accepted`. Attestation decides from the finding's axes with no round, so a late medium
+the command calls a residual still reads `fix_now` there and blocks until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
 
 ### Product feedback in the rounds
 

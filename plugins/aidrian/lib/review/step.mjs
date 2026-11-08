@@ -302,7 +302,13 @@ export async function prepareStep(s) {
 
   // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still
   // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
-  const planHistory = () => buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
+  // The checks measure a round from the head it first reviewed, so what a quiet push added is that round's fix, never
+  // part of what the pull request first changed. The rounds they read back stand on the head each moved to: that is
+  // the head the round reviewed, which says whether the head at the cap is one no round reviewed.
+  const planHistory = () => {
+    const read = buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.quiet?.[0]?.from ?? round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
+    return { ...read, rounds: read.rounds.map((round, i) => ({ ...round, head: state.rounds[i].head })) };
+  };
   const extensionLog = extensionLogger(project, config, { pr: n, repo, env });
   if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
   const { maxRounds, grantFloor } = roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) });

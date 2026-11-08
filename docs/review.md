@@ -688,6 +688,9 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
      code counts as fix growth: lines added to `review.nonBehaviour` files, such as Markdown and `docs/**`, are no
      bloat, since rewording a doc across rounds is normal review work. A docs-only pull request never bloats.
 
+   Drifting and bloating measure a round from the head it first reviewed, so what a [quiet push](#rounds) added is that
+   round's fix, and a file it added is not one the pull request first changed.
+
    A signal the history cannot read, such as looping when the reviewers recorded counts and no findings, is unknown,
    not red. A history with no readable signal is a red flag.
 3. **Judge.** The status is `extension_check` (exit 10). It carries `extension`: each round's open findings,

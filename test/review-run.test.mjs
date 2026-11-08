@@ -1412,6 +1412,42 @@ test('extra rounds: a push after the judge`s extend is read again; a new red fla
   assert.match(back.dispatch[0].record, new RegExp(`--head ${small}$`, 'u'));
 });
 
+// A quiet push moves a round to a new head. The checks at the cap still measure the round from the head it first
+// reviewed, and still read the head it stands on now as the one it reviewed.
+test('extra rounds: a round is measured from its first head, so what a quiet push added is its fix', async (t) => {
+  const lines = (n, tag) => Array.from({ length: n }, (_, i) => `${tag}(${i});\n`).join('');
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, extraRounds: 'ask' } }, change: (write) => write('src/app.js', lines(10, 'first')) });
+  const inTest = { file: 'test/app.test.js', line: 1, title: 'a test asserts nothing', body: 'x', severity: 'high' };
+  const seen = scripted(found(finding), found(), found(inTest), found(inTest));
+  assert.equal((await r.step({ exec: seen.exec })).status, 'fix_required');
+
+  r.write('test/app.test.js', lines(100, 'check'));
+  const quiet = r.commit('a quiet push');
+  assert.deepEqual([(await r.step({ exec: seen.exec })).round, readLocalState(r.project, 7).rounds[0].head], [1, quiet], 'the round moved');
+
+  r.write('src/app.js', lines(10, 'first') + lines(50, 'fix'));
+  const fix = r.commit('the fix');
+  const capped = await r.step({ exec: seen.exec });
+  assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
+  assert.deepEqual(capped.extension.original_files, ['src/app.js'], 'a file the quiet push added is not one the pull request first changed');
+  assert.deepEqual(capped.extension.signals.evidence.bloating, { fix_added: 150, fix_added_all: 150, original_added: 10, limit: 40 }, 'the quiet lines are fix growth');
+  assert.deepEqual([capped.extension.signals.bloating, capped.extension.signals.drifting], [true, true]);
+  assert.deepEqual(capped.extension.history.map((round) => [round.round, round.head, round.fix.added]), [[1, quiet, 150], [2, fix, 0]]);
+
+  r.write('test/app.test.js', lines(100, 'check') + lines(20, 'more'));
+  const lastQuiet = r.commit('a quiet push in the last round');
+  const moved = await r.step({ exec: seen.exec });
+  assert.equal(moved.status, 'extension_check', JSON.stringify(moved.extension?.reasons));
+  assert.deepEqual(moved.extension.history.map((round) => [round.round, round.head, round.fix.added]), [[1, quiet, 150], [2, lastQuiet, 20]], 'each fix ends at the next round\'s first head');
+  assert.ok(!('unreviewed_head' in moved.extension), 'the last round reviewed the head it moved to');
+  assert.equal(readLocalState(r.project, 7).extensions[0].unreviewed, undefined);
+
+  r.write('src/app.js', lines(10, 'first') + lines(51, 'fix'));
+  const loud = r.commit('a fix no round reviewed');
+  const past = await r.step({ exec: seen.exec });
+  assert.deepEqual([past.extension.unreviewed_head?.head, past.extension.unreviewed_head?.from], [loud, lastQuiet], 'it names the head the last round reviewed');
+});
+
 test('extra rounds: a grant whose round has not opened goes back to the judge when the next head raises a red flag', async (t) => {
   const { r } = await toTheCap(t, { extraRounds: 'auto' });
   await extend(t, r, ['--verdict', 'extend', '--reason', 'valid']);

@@ -6,13 +6,13 @@ import { committedConfig } from '../config.mjs';
 import { roundCapProblem } from '../pr-await-review.mjs';
 import { runGit } from '../git.mjs';
 import { isolate } from './env.mjs';
-import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, mergeBase, parents, resolve } from './diff.mjs';
+import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, mergeBase, parents, QUIET_TEST_FILES, quietDelta, resolve } from './diff.mjs';
 import { checkReview } from './config.mjs';
 import { invariantsOf } from './flows.mjs';
 import { packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
-import { buildPlan, classify, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
+import { buildPlan, classify, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, publishState, readRecord, sameCommit, summaryToEdit } from './state.mjs';
@@ -41,6 +41,25 @@ function trackedAt(root, commit) {
 
 // Whether the change from `from` to `to` touches `files` (null: any reviewed file).
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
+
+// Whether `since`, the change from `from` to `head`, is quiet (diff.mjs quietDelta: prose, tests that only gained
+// lines, comment-only code). Quiet decides round accounting alone: the round on `from` stays open on `head`, with its
+// number, cap, and last-round flag. It never decides whether a pass runs: a quiet push is reviewed by every pass it
+// touches, as any push is, so a misread change costs a round of cap, never a review. A change to a file that decides
+// how the project is reviewed, to a doc a flow cites, or one that selects a flow by itself is not quiet: it changes
+// what the round's passes were asked to judge.
+function quietChange({ root, from, head, since, review, harnessFiles }) {
+  const lines = diffLines(root, from, head);
+  const sorted = classify(since, review);
+  const prose = new Set([...sorted.ignored, ...sorted.nonBehaviour]);
+  const tests = [...QUIET_TEST_FILES, ...Object.values(review.flows ?? {}).flatMap((flow) => flow.tests ?? [])].map(pathPattern);
+  // The cheap line check first: a loud change needs no guard.
+  if (!quietDelta({ changes: since, ...lines }, { prose: (file) => prose.has(file), test: (file) => tests.some((pattern) => pattern.test(file)) }).quiet) return false;
+  const sincePaths = new Set(since.map((change) => change.file));
+  if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths).length) return false;
+  if (detectFlows(review.flows, { sorted, addedLines: lines.addedLines, removedFiles: lines.removedFiles }).length) return false;
+  return contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows }).length === 0;
+}
 
 // Plans the step into `s`. Returns the step's result when it ends here, or null when the stages run next.
 export async function prepareStep(s) {
@@ -205,6 +224,16 @@ export async function prepareStep(s) {
     if (!deltaCache.has(from)) deltaCache.set(from, sinceFor(from));
     return deltaCache.get(from);
   };
+  // Whether the change since `from` is quiet (quietChange). A merge scoped to its own changes (`scope`) is not; any
+  // other merge is judged by its change, as a push is.
+  const quietCache = new Map();
+  const quietSince = (from) => {
+    if (!quietCache.has(from)) {
+      const since = scope ? null : delta(from);
+      quietCache.set(from, since ? quietChange({ root, from, head, since, review, harnessFiles }) : false);
+    }
+    return quietCache.get(from);
+  };
   // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
   // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
   const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
@@ -274,12 +303,25 @@ export async function prepareStep(s) {
 
   // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still
   // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
-  const planHistory = () => buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
+  // The checks measure a round from the head it first reviewed, so what a quiet push added is that round's fix, never
+  // part of what the pull request first changed. The rounds they read back stand on the head each moved to: that is
+  // the head the round reviewed, which says whether the head at the cap is one no round reviewed. A fix no round
+  // reviewed is sized from that same head: the last round's `reviewed_fix`, kept non-enumerable so the signals and the
+  // judge's history carry only the first-head `fix`.
+  const planHistory = () => {
+    const read = buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.quiet?.[0]?.from ?? round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
+    const rounds = read.rounds.map((round, i) => ({ ...round, head: state.rounds[i].head }));
+    const last = state.rounds.at(-1);
+    if (last?.quiet?.length && !sameCommit(last.head, head)) {
+      Object.defineProperty(rounds.at(-1), 'reviewed_fix', { value: buildHistory({ root, rounds: [{ head: last.head }], baseTip, head, review }).rounds[0].fix });
+    }
+    return { ...read, rounds };
+  };
   const extensionLog = extensionLogger(project, config, { pr: n, repo, env });
   if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
   const { maxRounds, grantFloor } = roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) });
 
-  Object.assign(s, { changes, scope, plan, map, resultFor, sameFiles, fallbacks, keptSignoffs, visual, visualEntries, manifest, isVisual, passes, removedTests, planHistory, extensionLog, maxRounds, grantFloor });
+  Object.assign(s, { changes, scope, plan, map, resultFor, sameFiles, quietSince, fallbacks, keptSignoffs, visual, visualEntries, manifest, isVisual, passes, removedTests, planHistory, extensionLog, maxRounds, grantFloor });
   Object.assign(s, evidenceOf(s));
   return null;
 }

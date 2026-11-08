@@ -82,7 +82,7 @@ A round is one review of the current head: the bot's, or the `pr-review` skill's
 and check it raises answered. config.json `github.maxReviewRounds` (default 3) caps these rounds.
 The bot count is another number: `codex_rounds` in the `aidrian pr await-review` JSON counts the bot's reviews on the pull request,
 including any before this run. `aidrian pr await-review` holds that count to the same cap and reports `round_limit` (exit 4)
-there, which can arrive before the round count reaches it. Only `--round` of `aidrian pr disposition` takes `codex_rounds`.
+there, which can arrive before the round count reaches it. `--round` of `aidrian pr disposition` takes the review round the finding arrived in: `round` of `aidrian pr review`, or `codex_rounds` for the bot's own comments.
 
 At the cap, with config.json `github.extraRounds` on, `aidrian pr await-review --request` and `aidrian pr review` may
 return `extension_check` (exit 10) or `extension_ask` (exit 11) instead of `round_limit`. Run the judge the status

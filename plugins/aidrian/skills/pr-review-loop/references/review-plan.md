@@ -71,7 +71,9 @@ crosses them.
 - `checks_failing[]`: a check the flow requires failed or was skipped on the head.
 
 Fix, commit, push, and run the step again. The next round reviews only what changed, and carries forward every pass
-the change does not touch.
+the change does not touch. A push that touches only comments, docs, or tests keeps its round, and the passes it touches
+still re-review it, in delta context; a quiet push changes only the round count. `residuals` on any result lists the
+late-round low findings the step accepted, which go into the body's Accepted residuals.
 
 ## Stops
 

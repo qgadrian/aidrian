@@ -15,7 +15,7 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 
 - `git rev-parse --is-inside-work-tree` and `gh auth status` must pass; otherwise stop and say which.
 - Run the branch preflight of the `orchestration` skill's `references/review-rules.md`.
-  Follow it whole: its § A ready pull request says when a ready pull request stops after step 3's triage.
+  Follow it whole: its § A ready pull request says when one stops after step 3's triage.
 - The Human asks for a bot review: run `aidrian pr request <n>` at once (`references/review-plan.md`).
 - Alone on a draft, before step 1: the `pr-product-feedback` skill's `references/in-a-flow.md` § After the draft opens.
   It runs that skill only on `not_run`: step 7's ready step owns the re-check.
@@ -34,7 +34,7 @@ Act on `status`, then run it again, until it stops:
 | `dispatch` | run each `dispatch[]` entry as its read-only `agent`, briefed with the entry as `references/review-plan.md` says; record each with its `record` command |
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
 | `running`, `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
-| `received`, `none_needed` | go to step 2 for comments people or the bot left, then step 7 |
+| `received`, `none_needed` | copy `residuals` to the body's Accepted residuals; step 2 for comments people or the bot left, then step 7 |
 | `extension_check` | run `dispatch[0]`, the judge, briefed with `extension`; record its verdict with its `record` |
 | `extension_ask` | ask the Human `question` with AskUserQuestion and `options`; record the answer with `record` |
 | `blocked_quota` | ask `question` with AskUserQuestion and `options`; run the pick's `run` |
@@ -89,7 +89,7 @@ mistake, and fix every copy in the same commit. A copy outside the pull request'
 
 Pick each fix's owner by the `knowledge` skill's agent rule, and give it its files and findings.
 A session the Human runs directly may make a fix itself; under the `orchestrator`, every fix goes to an owner.
-In one worktree, one fixing agent works at a time. Each finding gets at most 2 fix passes, as the review rules say.
+One fixing agent per worktree at a time; each finding gets at most 2 fix passes, per the review rules.
 Fix the root cause the comment points at, not its literal wording, and nothing unrelated.
 
 ## 5. Verify and commit
@@ -105,12 +105,12 @@ The agent that made the fix verifies, commits, and pushes it, then returns the S
 
 - Before the first post, read `references/replies.md`: one shape per verdict, and where each reply goes.
 - Resolve a bot's thread the fix addressed. A person's thread gets the reply and stays open: its author resolves it.
-- Check the response of every post. A failed post means the thread is not addressed; say so in the summary.
+- Check each post's response: a failed post leaves its thread unaddressed; say so in the summary.
 
 ## 7. Summary
 
 Report, in this order: the triage table; what changed per file with its triage numbers; the exact verification
-commands with pass or fail; the replies posted, and any that failed; and a sign-off naming the addressed,
+commands, pass or fail; the replies posted, and any that failed; and a sign-off naming the addressed,
 not applicable, accepted, and blocked rows, the residual risks, and whether the pull request is ready for another review.
 On a draft, when config.json `github.markReady` is `"auto"`, the default, or the Human asked in this session,
 once a review of the current head signed off with no blocked row and `aidrian pr checks <n>` says ready, run

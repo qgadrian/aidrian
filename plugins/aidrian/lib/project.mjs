@@ -185,7 +185,8 @@ export function committedConfigFile(project, commit, options) {
   } catch {
     return null;
   }
-  const dir = insidePath(project.root, '', raw?.dir);
+  // The commit's own text, with no read of this disk: what the working tree holds at that name cannot change the answer.
+  const dir = joinedInside('', raw?.dir);
   return dir ? `${dir}/config.json` : null;
 }
 

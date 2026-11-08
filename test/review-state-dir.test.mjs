@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -209,6 +209,21 @@ test('a working copy whose project folder differs from the base branch\'s is ref
   assert.equal(r.comments.length, 0);
 });
 
+test('a head that relocates the project folder is refused before the plan, so the base branch\'s flows stay in force', async (t) => {
+  const flows = { booking: { files: ['src/**'], invariants: 'docs/flows/booking.md' } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { flows } },
+    headConfig: null,
+    baseFiles: { 'docs/flows/booking.md': '# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n' },
+    files: { '.aidrian.json': pointer('other'), 'other/config.json': JSON.stringify({ version: 1 }) },
+  });
+  let ran = 0;
+  const project = projectAt(r.dir);
+  const step = reviewStep({ pr: '7' }, { project, config: loadConfig(project).config, forge: r.forge, codex: () => ({ ok: true }), exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  await assert.rejects(step, /project folder differs from o\/r main/u);
+  assert.deepEqual([ran, r.comments.length, readLocalState(project, 7)], [0, 0, null]);
+});
+
 test('a base branch whose pointer file cannot be read refuses the working copy', (t) => {
   const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 }, baseFiles: { '.aidrian.json': 'not json' }, files: { '.aidrian.json': pointer('.aidrian') } });
   assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), /project folder differs from o\/r main/u);
@@ -262,6 +277,42 @@ test('state.dir "." is refused, since the checkout holds tracked files', (t) => 
   assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), /the state folder holds files git tracks at this checkout/u);
 });
 
+// Whether this disk reads a name in another case as the same file.
+const caseSensitiveDisk = (() => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-case-'));
+  writeFileSync(path.join(dir, 'probe'), '');
+  const sensitive = !existsSync(path.join(dir, 'PROBE'));
+  rmSync(dir, { recursive: true, force: true });
+  return sensitive;
+})();
+
+test('a tracked path the disk reads as the state folder is refused', { skip: caseSensitiveDisk }, (t) => {
+  const team = { version: 1, state: { dir: 'state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { 'STATE/reviews/pr-7-review.json': `${JSON.stringify(emptyState(7, 'o/r'))}\n` } });
+  const refused = () => assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), /the state folder holds files git tracks at this checkout/u);
+  refused();
+  // With the disk spelling the folder as state.dir names it, the tracked name alone differs in case.
+  renameSync(path.join(r.dir, 'STATE'), path.join(r.dir, 'renaming'));
+  renameSync(path.join(r.dir, 'renaming'), path.join(r.dir, 'state'));
+  refused();
+});
+
+test('a tracked path reached through a link on the state folder\'s path is refused', (t) => {
+  const team = { version: 1, state: { dir: 'alias/state' } };
+  const r = repo(t, { baseConfig: team, headConfig: team, files: { '.gitignore': 'alias\n', 'real/state/keep.json': '{}\n' } });
+  symlinkSync('real', path.join(r.dir, 'alias'));
+  assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), /the state folder holds files git tracks at this checkout/u);
+});
+
+test('a broken link on the path of a state folder outside the checkout is not listed', (t) => {
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-out-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  symlinkSync(path.join(outside, 'gone'), path.join(outside, 'broken'));
+  const team = { version: 1, state: { dir: path.join(outside, 'broken/state') } };
+  const r = repo(t, { baseConfig: team, headConfig: team });
+  assert.equal(holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }).committed.state.dir, team.state.dir);
+});
+
 test('a state folder outside the checkout is not listed', (t) => {
   const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-out-')));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
@@ -309,6 +360,18 @@ test('the merge guard denies a project folder the base branch does not name', (t
   const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 }, files: { '.aidrian.json': pointer('other'), 'other/config.json': JSON.stringify({ version: 1 }) } });
   tracking(r);
   assert.match(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), /project folder differs from/u);
+});
+
+test('the merge guard denies a working tree that replaces the base branch\'s project folder with a link', (t) => {
+  const at = JSON.stringify({ version: 1, state: { dir: 'state' } });
+  const r = repo(t, { baseConfig: null, headConfig: null, baseFiles: { '.aidrian.json': pointer('cfg'), 'cfg/config.json': at } });
+  tracking(r);
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cfg-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(path.join(outside, 'config.json'), JSON.stringify({ version: 1, state: { dir: 'head-state' } }));
+  rmSync(path.join(r.dir, 'cfg'), { recursive: true });
+  symlinkSync(outside, path.join(r.dir, 'cfg'));
+  assert.match(judgeMerge({ project: projectAt(r.dir), pr: 7, head: r.head, viewPr: unused }), /project folder differs from/u);
 });
 
 test('the merge guard, with the same state.dir and no record, still allows', (t) => {
@@ -472,6 +535,19 @@ test('the long form of signoff takes review.record from the base branch', async 
   assert.equal(await signoffReadsComments(t, offHead), false);
   const onHead = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1, review: { record: 'local' } } });
   assert.equal(await signoffReadsComments(t, onHead), true);
+});
+
+test('signoff --last takes review.record from the base branch', async (t) => {
+  quiet(t);
+  const reads = async (baseRecord, headRecord) => {
+    const r = repo(t, { baseConfig: { version: 1, review: { record: baseRecord } }, headConfig: { version: 1, review: { record: headRecord } } });
+    let count = 0;
+    const forge = { ...r.forge, conversationComments: () => (count += 1, []) };
+    await assert.rejects(runSignoff(['7', '--last'], r.project, r.config, { forge }), /no review of o\/r#7 ran/u);
+    return count;
+  };
+  assert.equal(await reads('local', 'comment'), 0, 'a local base stays off the pull request');
+  assert.equal(await reads('comment', 'local'), 1, 'a local head does not');
 });
 
 // `await-review --request` with the bot's rounds at the cap, and a member's summary comment that holds a newer record.

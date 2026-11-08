@@ -4,6 +4,7 @@
 // makes against the base branch.
 // lib/review/run.mjs re-exports reviewInForce.
 
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { committedConfig, loadConfig, stateDirProblem } from '../config.mjs';
@@ -22,26 +23,39 @@ const baseTipOf = (root, base, read) => resolve(root, `refs/remotes/origin/${bas
 const TRACKED = 'the state folder holds files git tracks at this checkout, and the review record is read from it';
 const UNLISTED = 'git cannot list the state folder at this checkout, and the review record is read from it';
 
-// The state folder's path from the top of this checkout, '' at the top itself, or null when it lies outside.
+// A path as a disk that ignores case or Unicode form reads it, for comparing with a tracked name.
+const spelled = (name) => name.normalize('NFC').toLowerCase();
+
+// The real path of `file`, as the disk spells it, or null.
+const onDisk = (file) => {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    return null;
+  }
+};
+
+// The state folder's paths from the top of this checkout, as named and with its links followed, '' at the top itself; none
+// when it lies outside.
 function stateFolderInCheckout(project, working, read) {
   const folder = stateDir(project, { config: working });
   const top = currentRoot(project.root, read) ?? repoRoot(project);
-  const inside = [folder, resolvedPath(folder)].find((each) => isWithin(top, each));
-  return inside === undefined ? null : path.relative(top, inside).split(path.sep).join('/');
+  const tops = [top, onDisk(top)].filter(Boolean);
+  const paths = [folder, onDisk(folder), resolvedPath(folder)].filter(Boolean);
+  const inside = paths.flatMap((each) => tops.filter((from) => isWithin(from, each)).map((from) => path.relative(from, each).split(path.sep).join('/')));
+  return [...new Set(inside.map(spelled))];
 }
 
 // The record is this machine's, so a state folder in the checkout holds nothing git tracks: no entry at the folder, under
-// it, or at a folder above it. { problem }, null when it holds, with `unread` when git could not say.
+// it, or at a folder above it, in any case. { problem }, null when it holds, with `unread` when git could not say.
 function trackedState(project, working, git) {
   if (!working.state.dir) return { problem: null };
-  const folder = stateFolderInCheckout(project, working, git());
-  if (folder === null) return { problem: null };
-  const first = folder.split('/')[0];
-  const scope = folder === '' ? [] : [`:(top,literal)${first}`];
-  const listed = runGit(['ls-files', '-z', '--full-name', '--', ...scope], project.root, { maxBuffer: 256 * 1024 * 1024, ...git() });
+  const folders = stateFolderInCheckout(project, working, git());
+  if (!folders.length) return { problem: null };
+  const listed = runGit(['ls-files', '-z', '--full-name', '--', ':/'], project.root, { maxBuffer: 256 * 1024 * 1024, ...git() });
   if (listed.status !== 0) return { problem: UNLISTED, unread: true };
-  const names = listed.stdout.split('\0').filter(Boolean);
-  const holds = (name) => folder === '' || name === folder || name.startsWith(`${folder}/`) || folder.startsWith(`${name}/`);
+  const names = listed.stdout.split('\0').filter(Boolean).map(spelled);
+  const holds = (name) => folders.some((folder) => folder === '' || name === folder || name.startsWith(`${folder}/`) || folder.startsWith(`${name}/`));
   return { problem: names.some(holds) ? TRACKED : null };
 }
 

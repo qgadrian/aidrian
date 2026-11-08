@@ -466,8 +466,12 @@ before its first read, and its later reads are held to the deadline alone. The g
 held to 1.5 seconds, only to the deadline: once it has passed, the lookup is not made, and a merge that names no head
 is refused and told to name it.
 The hold's git reads share the same deadline, each stopped after 1 second, and a read asked for once it has passed skips the hold.
-So every call the guard makes, its own view included, ends within 4 seconds of the hook's start, however many merges
-one command holds, inside the hook's 5 seconds.
+The state folder's own lookup keeps git's 2 second default, not that deadline, as do the guard's git reads outside the
+hold, such as the one that finds the record.
+A call held to the deadline, the guard's own view included, ends within 4 seconds of the hook's start, however many merges
+one command holds. A call on git's default can begin as the deadline comes and end up to 2 seconds later, so up to
+6 seconds after the hook's start, past the hook's 5 seconds. Once one is stopped, the later ones on that default do not
+wait, so that bound holds for a git that stops answering; a git that answers just inside each 2 seconds takes longer.
 A read that fails or would begin too late keeps the denial, which then says the team's value could not be read in time.
 With both switches on, the denial names `aidrian pr waive` as a second route.
 

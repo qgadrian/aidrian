@@ -782,7 +782,7 @@ branch before it reads the record. Each refuses a checkout where:
 - its project folder differs from the base branch's, or the base's `.aidrian.json` cannot be read:
   `the working copy's project folder differs from <owner/name> <base>, and the review record is read from it`.
   A base with no config at all stays allowed, for the pull request that adopts aidrian;
-- the state folder is inside the checkout and git tracks a file at it, under it, or at a folder above it, such as a link:
+- the state folder is inside the checkout and git tracks a path at it, under it, or at a folder above it, such as a link, in any case:
   `the state folder holds files git tracks at this checkout, and the review record is read from it`; or git cannot list it:
   `git cannot list the state folder at this checkout, and the review record is read from it`.
 
@@ -794,9 +794,9 @@ plans the same review of the same head, with the `self` engine in `.aidrian.loca
 The `self` recourse does not apply when `config.json` pins `review.engine`, which wins over the machine's.
 A head behind a base that moved `state.dir` merges the base first.
 Tracked files in a state folder, with `state.dir` `.` among them, since the checkout itself then holds tracked files:
-untrack them, or use a folder git ignores. That answers both `the state folder holds files git tracks at this checkout, and
-the review record is read from it` and `git cannot list the state folder at this checkout, and the review record is read from it`,
-the second once git can list it again.
+untrack them, or use a folder git ignores. That answers `the state folder holds files git tracks at this checkout, and
+the review record is read from it`. `git cannot list the state folder at this checkout, and the review record is read from it`
+clears once git can list the folder.
 
 A command publishes only after the hold. `extend` with no answer from the forge keeps its write on this machine, and
 `waive` refuses without the base. `attest` and the long form of `signoff` hold only when the forge names the base, so

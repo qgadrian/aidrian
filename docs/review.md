@@ -490,9 +490,10 @@ A project adds its own in `review.reviewers`:
   inline code, so none renders as a link, an image, or emphasis. Each line gives the repeat's severity and
   `settled_severity`, and a second line per pass lists the anchored residuals it holds as standing, on each head, whether
   or not the pass repeated them. Under `review.record: "local"` no summary is posted, so the pull request body's line is
-  the only trace on the pull request. One that fails stays a new, blocking finding, named in the pass's `dropped` notes,
-  which each entry of a `fix_required` result's `open` list repeats. An accepted entry settles only while no pass lists a finding of that title in that file
-  that is fixed, open, or otherwise blocking. A ruling on a prior entry carries to later heads at `settled_severity`:
+  the only trace on the pull request. One that fails stays a new finding, which blocks unless the
+  [late-round rule](#late-rounds) accepts it, named in the pass's `dropped` notes, which each entry of a `fix_required` result's `open` list repeats.
+  An accepted entry settles only while no pass lists a finding of that title in that file that is fixed, open, or otherwise blocking.
+  A ruling on a prior entry carries to later heads at `settled_severity`:
   the pass record keeps the carried rulings its input offered as `carried`, shaped like `ruled`, whether or not the
   pass repeated them, so a ruling holds after the entry leaves the record and across a head with no repeat, also when the
   entry stays listed on that head; rulings are read from every pass record, so a slice whose file list changed keeps
@@ -522,8 +523,9 @@ A project adds its own in `review.reviewers`:
     either way. Once anchored, the residual's text settles nothing in another file, even a `low` repeat.
   - A waived repeat leaves the pass's `list`, so the pass record keeps every offered anchor as `carried`, `from` residual,
     whether or not the pass repeated it. A raised finding is one a pass lists now, or, when no pass lists that title in
-    that file, one any pass record keeps in `carried` or any round entry holds, so a slice record that a repack deleted
-    loses nothing. The anchor holds across a head with no repeat.
+    that file, one any pass record keeps in `carried`, or, when none keeps it either, one any round entry holds, so a slice
+    record that a repack deleted loses nothing. A kept anchor's severity governs over a round entry of its title and file,
+    so an earlier round's more severe entry raises no cap on the line. The anchor holds across a head with no repeat.
   - A body edit takes effect on the next head a pass runs: a pass that already has a result on this head does not run
     again for it. The anchor ends then when the body no longer names the finding. A fix or a blocking listing ends the
     anchor while that listing stands: any pass listing that title in that file with a `state` that is fixed or blocks. Only
@@ -641,8 +643,11 @@ unless its fix is trivial: a trivial-cost medium is `fix_now` in every round.
 The step records an exec reviewer's late low findings that way itself: each is `accepted`, blocks nothing, and is
 listed in `residuals` (`pass`, `title`, `file`, `line`, `severity`) on every result for a head its pass counts for,
 which the session writes into the body's Accepted residuals. It stays listed, once, under the title the record accepted,
-when a later head's reviewer returns it as already ruled or the pass only carries the ruling; a printed `accepted_by`
-adds nothing. A low finding recorded with
+when a later head's reviewer returns it as already ruled or the pass only carries the ruling, until the body names it:
+once the body's line names the finding, the line holds it and the row may go. A printed `accepted_by` adds nothing.
+A row is one per title and file, and `pass` is the first pass holding it. A carried row stays on later heads, because a
+carried ruling cannot see a real fix, so a session skips a row whose defect is fixed or that already has its body line.
+A low finding recorded with
 `--findings-file` keeps its own state: the session classifies it with `aidrian pr disposition`, writes the residual
 into the body, and attests it `accepted`. Attestation decides from the finding's axes with no round, so a late medium
 the command calls a residual still reads `fix_now` there and blocks until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.

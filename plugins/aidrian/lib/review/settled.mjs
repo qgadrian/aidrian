@@ -133,7 +133,9 @@ export const where = (finding) => JSON.stringify([trim(finding.title), trim(find
 // marked `residual` and `carried`. A raised finding is one a pass lists now or, while no pass lists that title in that
 // file, an anchor a pass record kept as `carried` or a finding a round entry holds: a waived repeat leaves the pass's
 // `list`, and a repacked slice's record goes (prunePasses), so `carried`, written on every head the anchor is offered, and
-// the round entries, which can be null or capped, hold it between them. A raised finding above PRIOR_CAP anchors nothing:
+// the round entries, which can be null or capped, hold it between them. A kept anchor shadows a round entry of its title
+// and file, as a listing does, so its severity governs: an earlier round's more severe entry raises no cap on the line.
+// A raised finding above PRIOR_CAP anchors nothing:
 // the author's word never waives a repeat of it past RESIDUAL_CAP. Only a finding with a `state` can end it, fixed or
 // blocking, and only while it is listed: a reviewer cannot print one (cleanOutput keeps no such key), and the state the
 // late-round rule sets is accepted, which neither is fixed nor blocks, so a reviewer's finding is the anchor, never a
@@ -147,8 +149,9 @@ function anchoredResiduals(state, listed, residuals) {
     .filter((each) => isObject(each) && trim(each.residual))
     .map(({ already_ruled: title, file, line, settled_severity: severity }) => ({ title, file, line, severity }))
     .filter((each) => !present.has(where(each)));
+  const shadowed = new Set([...present, ...kept.map(where)]);
   const rounds = (Array.isArray(state?.rounds) ? state.rounds : []).flatMap((round) => (Array.isArray(round?.findings) ? round.findings : []))
-    .filter((each) => isObject(each) && !present.has(where(each)));
+    .filter((each) => isObject(each) && !shadowed.has(where(each)));
   const raised = [...findings, ...kept, ...rounds].filter((each) => trim(each.title) && trim(each.file) && noHigher(each.severity, PRIOR_CAP) && !ended.has(where(each)));
   return residuals.flatMap((text) => namedBy(text, raised).map(({ title, file, line, severity }) => ({
     title: trim(title), file: trim(file), ...(line ? { line } : {}), severity: severityOf(severity), state: 'accepted', already_ruled: trim(title), carried: true, residual: text,

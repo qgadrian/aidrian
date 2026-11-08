@@ -96,8 +96,9 @@ export async function runStages(s) {
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
           // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks
-          // nothing, and `residuals` names it for the pull request body. A reviewer's output keeps any extra field, so the
-          // three this rule sets are dropped first: a printed `state: 'fixed'` closes nothing.
+          // nothing, and `residuals` names it for the pull request body. cleanOutput (reviewers.mjs) already limits a
+          // reviewer's output to the schema's keys; this strip is the step's own rule for any exec outcome, so the three
+          // this rule sets are dropped first: a printed `state: 'fixed'` closes nothing.
           const list = outcome.findings.map(({ state: _state, disposition: _disposition, accepted_by: _acceptedBy, ...finding }) => {
             const late = lateRoundResidual({ severity: finding.severity, source: 'bot', round: state.rounds.length }, dispositionTable);
             return late ? { ...finding, disposition: late.disposition, state: 'accepted', accepted_by: 'late-round' } : finding;

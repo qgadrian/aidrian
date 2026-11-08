@@ -814,7 +814,62 @@ test('a late-round residual stays in residuals, once, when a reviewer returns it
   assert.deepEqual(h4.result.residuals, [lateRow(1)], 'head 4: one row');
 });
 
-test('a late-round residual two arrays or two passes hold is one row, the listed one first', () => {
+// A residual line as the session writes it from a late row, naming the finding by its title.
+const LATE_LINE = 'Late nit: only reached at boot; the comment at src/a.js marks it';
+
+test('a late-round residual whose line the body holds may leave residuals: the line holds it, and a low repeat stays waived', async (t) => {
+  const r = repo(t, body([]), { maxReviewRounds: 6 });
+  const { run } = scripted(t, r, { dispositionTable: LATE_TABLE });
+  const h1 = await run([LATE_FINDING]);
+  assert.deepEqual([h1.result.status, h1.result.residuals], ['received', [lateRow(2)]], 'head 1: the row names it for the body');
+  r.setBody(body([LATE_LINE]));
+  const h2 = await run([], '1\n2\n3\n');
+  assert.equal(h2.result.status, 'received');
+  assert.equal(h2.result.residuals, undefined, 'head 2: the row goes');
+  assert.deepEqual(h2.record.carried.map((each) => [each.already_ruled, each.from, each.settled_severity, each.residual]), [['Late nit', 'residual', 'low', LATE_LINE]], 'head 2: the line holds it');
+  const h3 = await run([LATE_REPEAT], '1\n2\n3\n4\n');
+  assert.deepEqual([h3.result.status, h3.record.open, h3.record.ruled.map((each) => each.residual)], ['received', 0, [LATE_LINE]], 'head 3: the repeat is waived on the line');
+  assert.equal(h3.result.residuals, undefined, 'head 3: no row comes back');
+  r.setBody(body([]));
+  const h4 = await run([], '1\n2\n3\n4\n5\n');
+  assert.equal(h4.record.carried, undefined, 'head 4: dropping the line ends it');
+});
+
+// The late-round rule on from the second round, so a first round's medium finding blocks and a low one after it is accepted.
+const SECOND_ROUND_TABLE = { ...loadTable(), lateRoundFrom: 2 };
+// A medium finding on round 1, a low of its title and file the late-round rule accepts on round 2, the body's line on it
+// with no repeat on round 3: the record then holds a carried low anchor and a round entry at medium.
+async function lowAcceptedOverMedium(t) {
+  const r = repo(t, body([]), { maxReviewRounds: 6 });
+  const { run, inputs } = scripted(t, r, { dispositionTable: SECOND_ROUND_TABLE });
+  const h1 = await run([FILE_RAISED]);
+  assert.equal(h1.result.status, 'fix_required', 'round 1: the medium finding blocks');
+  const h2 = await run([{ ...FILE_RAISED, severity: 'low' }], '1\n2\n3\n');
+  assert.deepEqual([h2.result.status, h2.record.list.map((each) => each.accepted_by)], ['received', ['late-round']], 'round 2: the rule accepts the low');
+  assert.deepEqual(h2.result.residuals.map((each) => [each.title, each.severity]), [[RAISED, 'low']], 'round 2: its row names it');
+  r.setBody(body([RESIDUAL]));
+  const h3 = await run([], '1\n2\n3\n4\n');
+  assert.deepEqual(h3.record.carried.map((each) => [each.already_ruled, each.settled_severity, each.residual]), [[RAISED, 'low', RESIDUAL]], 'round 3: the line anchors at low');
+  assert.deepEqual(readLocalState(r.project, 7).rounds.flatMap((round) => round.findings ?? []).map((each) => [each.title, each.severity]), [[RAISED, 'medium']], 'the round entry still holds the medium');
+  return { run, inputs };
+}
+
+test('a line on a late-round low anchors at low: an earlier round entry at medium waives no medium repeat', async (t) => {
+  const { run, inputs } = await lowAcceptedOverMedium(t);
+  const h4 = await run([FILE_REPEAT], '1\n2\n3\n4\n5\n');
+  assert.deepEqual([h4.result.status, h4.record.open, h4.record.ruled], ['fix_required', 1, undefined], 'the medium repeat blocks');
+  assert.deepEqual([...new Set(settledEntries(inputs.at(-1)).map((each) => each.severity))], ['low'], 'the input offers it at low alone');
+  assert.match(h4.record.dropped.join('\n'), /less severe than it/u);
+});
+
+test('a line on a late-round low still waives a low repeat, with an earlier round entry at medium', async (t) => {
+  const { run } = await lowAcceptedOverMedium(t);
+  const h4 = await run([{ ...FILE_REPEAT, severity: 'low' }], '1\n2\n3\n4\n5\n');
+  assert.deepEqual([h4.result.status, h4.record.open], ['received', 0]);
+  assert.deepEqual(h4.record.ruled.map((each) => [each.already_ruled, each.settled_severity, each.residual]), [[RAISED, 'low', RESIDUAL]]);
+});
+
+test('a late-round residual two arrays or two passes hold is one row per title and file, named for the first pass holding it', () => {
   const late = { file: 'a.js', severity: 'low', accepted_by: 'late-round' };
   const ruled = { ...late, title: 'Other words', line: 7, already_ruled: 'Late', settled_severity: 'low', from: 'prior' };
   const carried = { ...late, title: 'Late', line: 8, already_ruled: 'Late', settled_severity: 'low', from: 'prior' };
@@ -822,6 +877,7 @@ test('a late-round residual two arrays or two passes hold is one row, the listed
   const passes = [{ id: 'a' }, { id: 'b' }];
   assert.deepEqual(lateResiduals(passes, (pass) => records[pass.id]), [{ pass: 'a', title: 'Late', file: 'a.js', line: 6, severity: 'low' }]);
   assert.deepEqual(lateResiduals(passes.slice(1), (pass) => records[pass.id]), [{ pass: 'b', title: 'Late', file: 'a.js', line: 8, severity: 'low' }]);
+  assert.deepEqual(lateResiduals([{ id: 'c' }], () => ({ carried: [{ ...late, title: 'Repeat', line: 9, already_ruled: 'Capped', settled_severity: 'medium', from: 'prior' }] })), [{ pass: 'c', title: 'Capped', file: 'a.js', line: 9, severity: 'medium' }], 'a row names the severity the record accepted, not the repeat\'s');
   assert.deepEqual(lateResiduals(passes, () => null), [], 'a pass with no result names nothing');
   assert.deepEqual(lateResiduals([{ id: 'c' }], () => ({ ruled: [{ title: 'Earlier', file: 'a.js', severity: 'low', already_ruled: 'Earlier', from: 'prior' }, null] })), [], 'a ruling with no accepted_by is no late residual');
 });

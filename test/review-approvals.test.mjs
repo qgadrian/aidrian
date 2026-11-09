@@ -134,3 +134,24 @@ test('overruleRefusal names both routes for an invariant unverified on the head,
     ['no review record of the invariants', { invariants: undefined }],
   ]) assert.equal(refuse(more), today(more.flow ?? 'look', more.invariant ?? 'matches-design'), why);
 });
+
+test('aidrian pr settle refuses with a switch off, on the harness flow, and for anything but a ruling', async () => {
+  const { runSettle } = await import('../plugins/aidrian/lib/review-gate.mjs');
+  const on = { localUnattendedSignoff: 'on', paths: { local: '.aidrian.local.json' } };
+  const allow = { review: { unattendedSignoff: { allow: true } } };
+  const ruling = ['7', '--flow', 'look', '--accept', 'fit', '--evidence', 'https://x/y', '--reason', 'r', '--head', HEAD];
+  await assert.rejects(runSettle(ruling, on, allow), /needs --judge/u);
+  await assert.rejects(runSettle([...ruling, '--judge', 'critic'], on, { review: {} }), /review\.unattendedSignoff\.allow is not true/u);
+  await assert.rejects(runSettle([...ruling, '--judge', 'critic'], { paths: { local: 'l' } }, allow), /unattendedSignoff is not "on"/u);
+  await assert.rejects(runSettle(['7', '--flow', 'look', '--head', HEAD, '--judge', 'critic'], on, allow), /stay with the Human/u);
+  await assert.rejects(runSettle(['7', '--last', '--accept', 'x', '--judge', 'critic'], on, allow), /stay with the Human/u);
+  await assert.rejects(runSettle(['7', '--flow', 'harness-config', '--accept', 'x', '--judge', 'critic'], on, allow), /only the Human settles it/u);
+});
+
+test('the team and machine unattended sign-off switches parse strictly', () => {
+  const bad = [];
+  assert.deepEqual(checkReview({ unattendedSignoff: { allow: true } }, 'c.json', bad).unattendedSignoff, { allow: true });
+  assert.deepEqual(checkReview({}, 'c.json', bad).unattendedSignoff, { allow: false });
+  checkReview({ unattendedSignoff: 'on' }, 'c.json', bad);
+  assert.match(bad.join(), /"review\.unattendedSignoff" must be/u);
+});

@@ -30,6 +30,18 @@ export function approvalsSwitch(review, project) {
   return { on: true, off: null };
 }
 
+// A judge's ruling (`aidrian pr settle`) is recorded as an acceptance or an overruling whose `by` starts with this.
+export const JUDGE_PREFIX = 'judge:';
+export const isJudgeRuling = (entry) => String(entry?.by ?? '').startsWith(JUDGE_PREFIX);
+
+// Whether a judge's ruling counts here: { on, off }, as approvalsSwitch. The review step reads the base branch's config,
+// so a branch cannot raise it for itself.
+export function settleSwitch(review, project) {
+  if (review?.unattendedSignoff?.allow !== true) return { on: false, off: 'the team does not allow it: review.unattendedSignoff.allow is not true on the base branch' };
+  if (project?.localUnattendedSignoff !== 'on') return { on: false, off: `this machine has not turned it on: unattendedSignoff is not "on" in ${project?.paths?.local ?? 'the local settings file'}` };
+  return { on: true, off: null };
+}
+
 // Whether any invariant of `flows` names approvers.
 export const hasApprovers = (flows) => (flows ?? []).some((flow) => (flow.invariants ?? []).some((invariant) => Array.isArray(invariant.approvers) && invariant.approvers.length > 0));
 

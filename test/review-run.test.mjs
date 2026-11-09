@@ -370,7 +370,7 @@ test('a flow adds a local agent pass that must cite evidence for every invariant
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'product-manager', findings: 0, fixed: 0, verdictsText: verdicts('src/booking/book.js:99') });
   const uncited = await r.step({ exec });
   assert.equal(uncited.status, 'fix_required');
-  assert.deepEqual(uncited.flows, [{ flow: 'booking', violated: [], unverified: ['no-double-booking'], next: [unverifiedNext('booking', 'no-double-booking', head)] }], 'a citation to a line that is not there does not count');
+  assert.deepEqual(uncited.flows, [{ flow: 'booking', violated: [], unverified: ['no-double-booking'], next: [unverifiedNext('booking', 'no-double-booking', head, ['product-manager answered holds, but its evidence does not count (src/booking/book.js has no line 99): dispatch that reviewer again to cite path:line, test:<name>, or capture:<key>, which closes this with no sign-off'])] }], 'a citation to a line that is not there does not count');
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'product-manager', findings: 0, fixed: 0, verdictsText: verdicts('src/booking/book.js:2') });
   const done = await r.step({ exec: async (_reviewer, input) => {
     assert.deepEqual(input.flows[0].earlierVerdicts.map((each) => each.verdict), ['holds', 'not_affected'], 'the independent reviewer sees the local verdicts to challenge');
@@ -1103,7 +1103,7 @@ test('the visual capture runs before the visual reviewers, attaches on a private
   assert.deepEqual(blocked.flows, [], 'a capture of this head is evidence');
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--768--default--default') });
   const unknown = await step({ exec: clean });
-  assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'], next: [unverifiedNext('ui', 'fit', first.head)] }], 'a capture key the manifest does not have is no evidence; with captures of the head, no capture line');
+  assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'], next: [unverifiedNext('ui', 'fit', first.head, [`designer answered holds, but its evidence does not count (no capture "dashboard-89347b--768--default--default" of ${first.head.slice(0, 7)}): dispatch that reviewer again to cite path:line, test:<name>, or capture:<key>, which closes this with no sign-off`])] }], 'a capture key the manifest does not have is no evidence; with captures of the head, no capture line');
   assert.match(r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body, /visual capture of `[0-9a-f]{7}`: captured \(2 of 2\); attach \*\*auto\*\*, private repository/u);
 
   // A clean pass whose verdict cites a capture carries forward over a push that touches nothing of it, and still
@@ -1838,6 +1838,40 @@ test('the Human accepts an unverified invariant on outside evidence for one head
   ]) });
   const moved = await r.step({ exec: clean });
   assert.deepEqual(moved.flows.map((flow) => [flow.flow, flow.unverified]), [['look', ['matches-design']]], 'an acceptance holds for its head only');
+});
+
+test('a judge`s ruling closes an unverified invariant only with both switches on, and never on the harness flow', async (t) => {
+  const { r, head } = await unverifiedDesign(t, { flows: APPROVED_FLOWS, unattendedSignoff: { allow: true } });
+  const evidence = 'https://github.com/o/r/pull/7#issuecomment-99';
+  recordAccept(r.project, { pr: 7, repo: 'o/r', flow: 'look', invariant: 'matches-design', head, by: 'judge:critic', reason: 'the diff renders nothing new', evidence, checkEvidence: () => 'comment' });
+  const off = await r.step({ exec: clean });
+  assert.deepEqual([off.status, off.flows[0].unverified], ['fix_required', ['matches-design']], 'the machine switch is off: the ruling counts for nothing');
+  assert.equal(off.flows[0].next[0].settle, undefined);
+  r.write('.aidrian.local.json', JSON.stringify({ unattendedSignoff: 'on' }));
+  const on = await r.step({ exec: clean });
+  assert.equal(on.status, 'received');
+  assert.match(summaryOf(r), /look\/matches-design: accepted by judge:critic/u, 'the summary names the judge');
+});
+
+test('a judge`s ruling counts for nothing when the base branch does not allow it, and next offers no settle route', async (t) => {
+  const { r, head } = await unverifiedDesign(t, { flows: APPROVED_FLOWS });
+  r.write('.aidrian.local.json', JSON.stringify({ unattendedSignoff: 'on' }));
+  recordAccept(r.project, { pr: 7, repo: 'o/r', flow: 'look', invariant: 'matches-design', head, by: 'judge:critic', reason: 'r', evidence: 'https://github.com/o/r/pull/7#issuecomment-99', checkEvidence: () => 'comment' });
+  const step = await r.step({ exec: clean });
+  assert.deepEqual([step.flows[0].unverified, step.flows[0].next[0].settle], [['matches-design'], undefined]);
+});
+
+test('with both switches on, next prints the settle route, and evidence that fails its citation is named as the reviewer`s to fix', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, review: { flows: APPROVED_FLOWS, unattendedSignoff: { allow: true } } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  r.write('.aidrian.local.json', JSON.stringify({ unattendedSignoff: 'on' }));
+  const first = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'not_affected', evidence: 'The change adds no markup.' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+  ]) });
+  const [next] = (await r.step({ exec: clean })).flows[0].next;
+  assert.match(next.settle, /^aidrian pr settle 7 --flow look --accept matches-design /u);
+  assert.match(next.notes[0], /code-reviewer answered not_affected, but its evidence does not count .*dispatch that reviewer again/u);
 });
 
 // The ingest route beside the --accept route of #122 above (issue #139): images taken outside the tool, ingested as

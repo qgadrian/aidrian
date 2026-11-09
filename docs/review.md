@@ -223,9 +223,10 @@ not every feature. The warning never blocks.
 
 ### Sign-off by the Human
 
-`signoff: "human"` adds `aidrian pr signoff <PR> --flow <id> --head <sha>`, run by the Human in their own shell (`!`
-in a Claude Code prompt, or another terminal). The `review-signoff` rule ([hooks.md](hooks.md#bash-rules)) blocks an
-agent that runs it. It is still an audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
+`signoff: "human"` adds `aidrian pr signoff <PR> --flow <id> --head <sha>`, run on the Human's word. The `review-signoff` rule
+([hooks.md](hooks.md#bash-rules)) blocks an agent that runs it, unless the session holds the Human's
+[answer to it](#answering-in-the-session); on a host without one, the Human runs it in their own shell (`!` in a Claude
+Code prompt, or another terminal). It is still an audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
 override is listed in the review summary on the pull request, or only in the local record with `review.record:
 "local"`. For proof, protect the branch with a required review from a second account.
 Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
@@ -295,6 +296,34 @@ The acceptance holds for that head only, and the review summary lists it apart f
 `accepted by <name> on <sha7> on outside evidence: <url>: <reason>`. The command refuses an invariant the last review
 of that head does not list as unverified, a violated one above all, an evidence URL GitHub cannot find on the pull
 request, and an acceptance with no reason. Like every sign-off, it is an audit entry, not proof.
+
+#### Answering in the session
+
+A long-form sign-off, `--accept`, or `--overrule` runs from the session once the Human answered it with AskUserQuestion:
+the question names `#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, or
+`<flow>/signoff`, and the chosen option starts with "Approve". The latest answer naming it decides, and a push asks
+again. The command is written with no shell variables or repeated flags. `--stage` and `--last` stay in the Human's
+shell, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
+
+#### Unattended rulings
+
+With both switches on, an independent judge settles what would otherwise wait for the Human:
+`aidrian pr settle <PR> --flow <id> --accept <invariant> --evidence <url> --reason "<what it shows>" --head <sha> --judge <agent>`,
+or `--overrule <invariant> --reason "<why>"` in place of the accept. Each flow's `next` prints the command as `settle`.
+
+```json
+{ "version": 1, "review": { "unattendedSignoff": { "allow": true } } }
+```
+
+The team switch is read from the base branch; this machine's is `"unattendedSignoff": "on"` in `.aidrian.local.json`,
+which only the main session sets. A ruling takes the same refusals as the matching sign-off, holds for one head, and
+shows in the summary as `judge:<agent>`. It never clears an undisputed violated invariant, signs a whole flow or stage,
+or touches `harness-config`, so a `signoff: "human"` flow and a change to the review's own config still ask the Human.
+Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.
+
+**Rejected evidence.** A `holds` or `not_affected` verdict whose `evidence` is not a checkable citation counts as
+`cannot_verify`. `aidrian pr attest` warns as it records the pass, and `next[].notes` names the reviewer, so the session
+sends it back to cite one rather than asking the Human.
 
 **Ingesting images.** Screenshots taken outside the tool, such as the ones an end-to-end run took while no app runs
 for the visual capture, become captures of one head:

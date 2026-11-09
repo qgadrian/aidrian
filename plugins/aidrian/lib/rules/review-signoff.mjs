@@ -9,20 +9,49 @@
 // is the dry run, which records nothing, and runs; a `--check` the shell builds at run time, such as one glued to a
 // substitution, is no dry run. An `aidrian` whose subcommand the shell builds at run time (`aidrian "$@"`) is denied
 // too, since it may be a sign-off.
+// A long-form sign-off also runs when this session's transcript holds the Human's answer to it: an AskUserQuestion whose
+// question names the pull request (`#<PR>`), the head's first seven characters, and what is signed (`<flow>/<invariant>`,
+// `<flow>/*` for every --accept of the flow, or `<flow>/signoff`), with a chosen option that starts with "Approve". The
+// host writes that answer, not the agent; a push changes the head, so it asks again. Without such a transcript the
+// command stays the Human's to run. Any word the shell builds at run time, a repeated flag, --stage, and --last get no such route.
 
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
+import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 export const REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, recorded under their name, and only the Human runs it, `--last` included. ' +
-  'Stop, and hand the Human a command for their own shell (`!` in the prompt, or another terminal). ' +
+  'Stop, and ask the Human first with AskUserQuestion, in their terms: a question that also names `#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every --accept of the flow, or `<flow>/signoff`, with a recommended option that starts with "Approve"; on that answer the long-form command runs here, written out with no shell variables. ' +
+  'On a host with no such question, hand the Human a command for their own shell (`!` in the prompt, or another terminal). ' +
   'At human_required naming one flow, once `aidrian pr signoff <PR> --last --check` exits 0, hand over the short form `aidrian pr signoff <PR> --last`, ' +
   'short enough to type from a phone, naming the flow and short head that `--check` printed. ' +
   'At a disputed flow\'s overrule, or any other stop, hand over the command the review step printed. ' +
   'To try a command first, run it with `--check`, which records nothing.';
 
-// The deny reason for `command`, or null. On only inside a project.
-export function check(command, { cwd = process.cwd() } = {}) {
+// Whether `answers` hold the Human's approval of the sign-off `words`. The latest answer naming it decides.
+export function answered(words, answers) {
+  if (words.some((word) => word.dynamic)) return false;
+  const flags = {};
+  for (let i = 3; i < words.length; i += 1) {
+    const flag = words[i].text;
+    if (!flag.startsWith('--') || Object.hasOwn(flags, flag)) return false;
+    flags[flag] = words[(i += 1)]?.text;
+  }
+  const pr = words[2]?.text?.replace('#', '');
+  const [flow, head] = [flags['--flow'], flags['--head']];
+  if (!/^\d+$/u.test(pr ?? '') || !flow || !/^[0-9a-f]{7,}$/iu.test(head ?? '') || flags['--stage'] !== undefined || flags['--last'] !== undefined) return false;
+  const invariant = flags['--accept'] ?? flags['--overrule'];
+  const tokens = [`${flow}/${invariant ?? 'signoff'}`, ...(flags['--accept'] ? [`${flow}/*`] : [])];
+  const namesToken = (question) => tokens.some((token) => {
+    const at = question.indexOf(token);
+    return at !== -1 && !/[\w-]/u.test(question[at + token.length] ?? '') && !/[\w-]/u.test(question[at - 1] ?? '');
+  });
+  const matching = answers.filter(({ question }) => new RegExp(`#${pr}(?!\\d)`, 'u').test(question) && question.includes(head.slice(0, 7)) && namesToken(question));
+  return /^\s*approve\b/iu.test(matching.at(-1)?.answer ?? '');
+}
+
+// The deny reason for `command`, or null. On only inside a project. `input` is the hook payload, for its transcript.
+export function check(command, { cwd = process.cwd(), input = {} } = {}) {
   if (!findProject(cwd)) return null;
   for (const { invocation, unread } of walkCommands(command, null)) {
     if (unread !== undefined && /\bpr\s+signoff\b/u.test(unread)) return REASON;
@@ -33,7 +62,9 @@ export function check(command, { cwd = process.cwd() } = {}) {
     // `--check` records nothing (lib/review-gate.mjs runSignoff), and the command takes no value that starts with `--`,
     // so a plain word `--check` is always the dry run: an agent may try a command before it hands it to the Human. A
     // dynamic word is not: `printf …`--check may expand to a value that swallows it, or to nothing.
-    if (words[0]?.text === 'pr' && words[1]?.text === 'signoff' && !words.some((word) => !word.dynamic && word.text === '--check')) return REASON;
+    if (words[0]?.text === 'pr' && words[1]?.text === 'signoff' && !words.some((word) => !word.dynamic && word.text === '--check')) {
+      if (!answered(words, transcriptAnswers(readTranscript(input?.transcript_path)))) return REASON;
+    }
   }
   return null;
 }

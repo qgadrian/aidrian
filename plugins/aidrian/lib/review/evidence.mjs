@@ -3,7 +3,7 @@
 
 import { changedFiles, diffLines, isAncestor } from './diff.mjs';
 import { citationProblem, flowState } from './flows.mjs';
-import { approvalsSwitch, hasApprovers, readApprovals } from './approvals.mjs';
+import { approvalsSwitch, hasApprovers, isJudgeRuling, readApprovals, settleSwitch } from './approvals.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { classify, detectFlows, HARNESS_FLOW, pathPattern } from './plan.mjs';
@@ -57,15 +57,18 @@ export function evidenceOf(s) {
   // A capture is evidence for the head it was taken of: a verdict carried forward from an earlier head cites that
   // head's captures. The keys live in the review record too, so another machine without the images can check them.
   const capturesOf = (at) => new Set([...(state.captured?.[at] ?? []), ...captureKeys(at === head ? s.manifest : readManifest(project, n, at))]);
+  // A judge's ruling counts only while both switches are on, and never on the flow that guards the review's own config.
+  const settle = settleSwitch(review, project);
+  const stands = (each) => !isJudgeRuling(each) || (settle.on && each.flow !== HARNESS_FLOW);
   // The invariants the Human overruled on this head: a violated verdict another reviewer disputes with evidence.
-  const overruledOn = (flowId) => new Set((state.overrulings ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head)).map((each) => each.invariant));
+  const overruledOn = (flowId) => new Set((state.overrulings ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head) && stands(each)).map((each) => each.invariant));
   // Evidence outside the tool (lib/review/approvals.mjs): a named approver's review of this head, read once per step,
   // and only when an invariant names approvers and both switches are on. A failed read closes nothing.
   const approvalPath = hasApprovers(plan.flows) ? approvalsSwitch(review, project) : null;
   let approvalRead = null;
   const approvals = () => (approvalRead ??= approvalPath?.on ? readApprovals(forge, repo, n, { head, flows: plan.flows }) : { approvals: [], error: null });
   // The Human's acceptances on this head (`aidrian pr signoff --accept`), each on outside evidence they named.
-  const acceptedOn = (flowId) => (state.acceptances ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head));
+  const acceptedOn = (flowId) => (state.acceptances ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head) && stands(each));
   const approvedOn = (flowId) => new Set([...approvals().approvals.filter((each) => each.flow === flowId), ...acceptedOn(flowId)].map((each) => each.invariant));
   const flowStatus = (flow, { outside = true } = {}) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }), overruledOn(flow.id), outside ? approvedOn(flow.id) : new Set());
   // The outside evidence that closed an invariant on this head, of the ones the reviewers left unverified: the approvals,
@@ -78,5 +81,11 @@ export function evidenceOf(s) {
       acceptances: plan.flows.flatMap((flow) => acceptedOn(flow.id)).filter(closes).map(({ flow, invariant, by, evidence, reason, at }) => ({ flow, invariant, by, evidence, reason, at })),
     };
   };
-  return { verdictsFor, approvalPath, approvals, flowStatus, outsideClosed };
+  // The verdicts on an invariant that said holds or not_affected but whose evidence does not count, and why: a reviewer's
+  // judgement that a new pass with a checkable citation closes, with no sign-off.
+  const rejectedVerdicts = (flowId, invariant) => verdictsFor(flowId)
+    .filter((verdict) => verdict.invariant === invariant && ['holds', 'not_affected'].includes(verdict.verdict))
+    .map((verdict) => ({ reviewer: verdict.reviewer, verdict: verdict.verdict, problem: citationProblem(verdict.evidence, { root, head, captures: capturesOf(verdict.at ?? head) }) }))
+    .filter((each) => each.problem !== null);
+  return { verdictsFor, approvalPath, approvals, flowStatus, outsideClosed, rejectedVerdicts, settle };
 }

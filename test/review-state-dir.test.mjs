@@ -282,6 +282,10 @@ const insideText = (top) => `the state folder is inside this repository's checko
 const insideDenial = (top) => `Blocked: this merges pull request #7, but ${insideText(top).slice(0, -1)}. Move the state folder first; until that lands, the Human merges in their own shell.`;
 const UNLISTED = "git cannot list this repository's checkouts, and the review record is read from it";
 
+// The same with `state.dir` unset, where the config has nothing to clear.
+const defaultText = (top) => `the default state folder is inside this repository's checkout ${top}, and the review record is read from it: in .aidrian/config.json, set "state": { "dir": "<path>" } to a folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it, or set this machine's state root, \`$XDG_STATE_HOME\`, to a folder outside them. Once it is outside, on each machine whose folder moved, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.`;
+const defaultDenial = (top) => `Blocked: this merges pull request #7, but ${defaultText(top).slice(0, -1)}. Move the state folder first; until it is outside, the Human merges in their own shell.`;
+
 // The refusal for a checkout at the folder the records go in, and the merge guard's denial with it.
 const recordsText = (records) => `the folder the review records go in is a checkout, ${records}, and the review record is read from it: move or remove that checkout on this machine, so only this machine's records stay there.`;
 const recordsDenial = (records) => `Blocked: this merges pull request #7, but ${recordsText(records).slice(0, -1)}. Move that checkout first; until it is gone, the Human merges in their own shell.`;
@@ -291,9 +295,9 @@ const stateSet = (t) => {
   const r = repo(t, { baseConfig: TEAM, headConfig: TEAM });
   return { r, state: path.join(r.root, 'state') };
 };
+const SUITE_STATE_HOME = process.env.XDG_STATE_HOME;
 const stateUnset = (t) => {
-  const home = process.env.XDG_STATE_HOME;
-  t.after(() => (home === undefined ? delete process.env.XDG_STATE_HOME : (process.env.XDG_STATE_HOME = home)));
+  t.after(() => (SUITE_STATE_HOME === undefined ? delete process.env.XDG_STATE_HOME : (process.env.XDG_STATE_HOME = SUITE_STATE_HOME)));
   process.env.XDG_STATE_HOME = folderFor(t);
   const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 } });
   return { r, state: stateDir(r.project) };
@@ -528,15 +532,145 @@ test('the folder of a bare repository is no checkout, so a state folder there is
   assert.equal(linked.hold().committed.state.dir, path.join(r.dir, 'state'));
 });
 
-test('a null state.dir clears the refusal in every shape, with no list of the checkouts', (t) => {
+// With the default folder outside the checkouts, a null state.dir clears the refusal for a folder a config once named,
+// from every checkout. It no longer skips the compare: the checkouts are listed, once, from the project root.
+test('a null state.dir, with the default state folder outside every checkout, clears the refusal in every shape, and the checkouts are still listed', (t) => {
   for (const team of [{ version: 1 }, { version: 1, state: { dir: null } }]) {
     const r = repo(t, { baseConfig: team, headConfig: team, files: { 'state/keep.txt': 'x\n' } });
     tracking(r);
+    assert.equal(isWithin(r.dir, stateDir(r.project)), false);
     const calls = gitCalls(t, () => assert.deepEqual(insideCheckout(r.project, r.config, () => ({})), { problem: null }));
-    assert.deepEqual(calls.filter((call) => call.includes(' worktree list ')), []);
+    assert.deepEqual(calls.filter((call) => call.includes(' worktree list ')), [`${r.dir} worktree list --porcelain`]);
     allowed(r, null);
     assert.equal(linkedAt(t, r, 'main').hold().committed.state.dir, null);
     assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
+  }
+});
+
+test('a project with state.dir unset and its default folder outside every checkout sees no refusal, no warning, and the default path', async (t) => {
+  const { r, state } = stateUnset(t);
+  quiet(t);
+  tracking(r);
+  assert.equal(state, path.join(process.env.XDG_STATE_HOME, 'aidrian', 'projects', path.basename(state)));
+  assert.equal(spawnSync(CLI, ['state'], { cwd: r.dir, encoding: 'utf8', env: process.env }).stdout.trim(), state);
+  assert.deepEqual(insideCheckout(r.project, r.config, () => ({})), { problem: null });
+  assert.equal(baseProblem(r.project, { repo: 'o/r', base: 'main', git: () => ({}) }), null);
+  await r.step();
+  assert.equal(r.comments.length, 1, 'the step ran and published');
+  assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review.json')), 'the record is in the default folder');
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
+  const { stderr } = spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env });
+  assert.doesNotMatch(stderr, /state folder|records go in|review record/u);
+});
+
+// ---- both folders, whichever way state.dir is set
+
+// A repository with `state.dir` unset whose state root lies in a folder of its checkout.
+const defaultInCheckout = (t) => {
+  const { r } = stateUnset(t);
+  process.env.XDG_STATE_HOME = path.join(r.dir, 'local-state');
+  return { r, state: stateDir(r.project) };
+};
+
+// The hold, the merge guard, and the check all give the refusal for `top`, git runs at no folder under `folders`, and the
+// step writes nothing.
+async function refusedWith(t, r, text, denial, top, folders) {
+  tracking(r);
+  const merge = () => judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused });
+  let warned = '';
+  const calls = gitCalls(t, () => {
+    assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), { message: text(top) });
+    assert.equal(merge(), denial(top));
+    warned = spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env }).stderr;
+  });
+  assert.ok(warned.includes(`warning: ${text(top)}`), warned);
+  for (const call of calls) for (const folder of folders) assert.equal(isWithin(folder, call.split(' ')[0]), false, call);
+  await assert.rejects(r.step(), { message: text(top) });
+  assert.equal(r.comments.length, 0);
+}
+
+// The hold, the merge guard, and the check all let it through.
+function passes(r) {
+  tracking(r);
+  assert.deepEqual(insideCheckout(r.project, r.config, () => ({})), { problem: null });
+  assert.doesNotThrow(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }));
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
+  assert.doesNotMatch(spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env }).stderr, /state folder|records go in/u);
+}
+
+// Each way of setting state.dir with the refusal it gives.
+const eachRefusal = [['state.dir set', stateSet, insideText, insideDenial], ['state.dir unset', stateUnset, defaultText, defaultDenial]];
+
+test('the state and records folders are compared whichever way state.dir is set', async (t) => {
+  quiet(t);
+  // The default folder inside the main checkout.
+  const inMain = defaultInCheckout(t);
+  await refusedWith(t, inMain.r, defaultText, defaultDenial, inMain.r.dir, [inMain.state, path.join(inMain.state, 'reviews')]);
+  assert.throws(linkedAt(t, inMain.r, 'main').hold, { message: defaultText(inMain.r.dir) }, 'from a linked worktree');
+
+  // The default folder at a linked worktree, and under one.
+  const at = stateUnset(t);
+  at.r.git('worktree', 'add', '-q', '--detach', at.state, 'main');
+  await refusedWith(t, at.r, defaultText, defaultDenial, at.state, [at.state]);
+  const under = stateUnset(t);
+  const above = path.dirname(path.dirname(under.state));
+  under.r.git('worktree', 'add', '-q', '--detach', above, 'main');
+  await refusedWith(t, under.r, defaultText, defaultDenial, above, [above]);
+
+  for (const [name, make, text, denial] of eachRefusal) {
+    await t.test(name, async (s) => {
+      // A link at the records folder into a folder of the checkout.
+      const link = make(s);
+      const records = path.join(link.state, 'reviews');
+      mkdirSync(link.state, { recursive: true });
+      symlinkSync(path.join(link.r.dir, 'src'), records);
+      await refusedWith(s, link.r, text, denial, link.r.dir, [link.state, path.join(link.r.dir, 'src')]);
+
+      // A state folder that is a link into the checkout, with a records folder that links back out of it.
+      const out = make(s);
+      const away = path.join(folderFor(s), 'away');
+      mkdirSync(away);
+      mkdirSync(path.join(out.r.dir, 'held'));
+      symlinkSync(away, path.join(out.r.dir, 'held', 'reviews'));
+      mkdirSync(path.dirname(out.state), { recursive: true });
+      symlinkSync(path.join(out.r.dir, 'held'), out.state);
+      await refusedWith(s, out.r, text, denial, out.r.dir, [out.state, away]);
+    });
+  }
+});
+
+test('a records folder outside every checkout stays allowed, plain or through a link, whichever way state.dir is set', (t) => {
+  for (const [, make] of eachState) {
+    const plain = make(t);
+    mkdirSync(path.join(plain.state, 'reviews'), { recursive: true });
+    passes(plain.r);
+
+    const linked = make(t);
+    const away = path.join(folderFor(t), 'away');
+    mkdirSync(away);
+    mkdirSync(linked.state, { recursive: true });
+    symlinkSync(away, path.join(linked.state, 'reviews'));
+    passes(linked.r);
+
+    const other = make(t);
+    const elsewhere = folderFor(t);
+    execFileSync('git', ['init', '-q', '-b', 'main', elsewhere]);
+    mkdirSync(path.join(elsewhere, 'sub'));
+    mkdirSync(other.state, { recursive: true });
+    symlinkSync(path.join(elsewhere, 'sub'), path.join(other.state, 'reviews'));
+    passes(other.r);
+  }
+});
+
+test('plain state use stays unrefused with the default folder inside a checkout', (t) => {
+  const { r, state } = defaultInCheckout(t);
+  const run = (...args) => spawnSync(CLI, args, { cwd: r.dir, encoding: 'utf8', env: process.env });
+  const printed = run('state');
+  assert.deepEqual([printed.status, printed.stdout.trim()], [0, state]);
+  for (const args of [['audits', 'list'], ['lesson', 'list']]) {
+    const { status, stderr } = run(...args);
+    assert.equal(status, 0, stderr);
+    assert.doesNotMatch(stderr, /review record/u, args.join(' '));
   }
 });
 
@@ -722,6 +856,18 @@ test('the checkouts are listed from the project root, never from the state folde
   const lists = calls.filter((call) => call.endsWith(' worktree list --porcelain'));
   assert.deepEqual(lists.map((call) => call.split(' ')[0]), [r.dir, linked.project.root, r.dir, linked.project.root, r.dir]);
   for (const call of calls) assert.equal(isWithin(state, call.split(' ')[0]), false, call);
+
+  // The default folder, a repository of its own inside the checkout.
+  const unset = defaultInCheckout(t);
+  tracking(unset.r);
+  mkdirSync(unset.state, { recursive: true });
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: unset.state });
+  const own = gitCalls(t, () => {
+    assert.throws(() => holdToBase(unset.r.project, unset.r.config, { repo: 'o/r', base: 'main' }), { message: defaultText(unset.r.dir) });
+    assert.equal(merge(unset.r.project), defaultDenial(unset.r.dir));
+  });
+  assert.deepEqual(own.filter((call) => call.endsWith(' worktree list --porcelain')).map((call) => call.split(' ')[0]), [unset.r.dir, unset.r.dir]);
+  for (const call of own) assert.equal(isWithin(unset.state, call.split(' ')[0]), false, call);
 });
 
 test('every git read in the hold takes the caller\'s options', (t) => {
@@ -739,6 +885,7 @@ test('every git read in the hold takes the caller\'s options', (t) => {
   assert.ok(own.some((call) => call.includes(' --get remote.origin.url')), 'the origin the state folder is named by');
   assert.ok(own.some((call) => call.includes(' --git-common-dir ')), 'the main checkout the state folder is named by, with no origin');
   assert.ok(own.some((call) => call.includes(' --show-prefix')), 'the project\'s folder in the repository');
+  assert.ok(own.some((call) => call.includes(' worktree list ')), 'the checkout list, with state.dir unset too');
   for (const call of own) assert.match(call, /^held /u);
 });
 
@@ -812,6 +959,7 @@ for (const [name, match, make, bound] of [
   ['the base\'s config', '*" show "*', moved, 5000],
   ['the checkout list', '*" worktree list "*', (t) => repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM }), 4000],
   ['the state folder\'s name', '*" --show-prefix "*', (t) => stateUnset(t).r, 5000],
+  ['the checkout list, with state.dir unset', '*" worktree list "*', (t) => stateUnset(t).r, 5000],
 ]) {
   test(`a git that stalls on ${name} lets the merge go on within ${bound} ms`, (t) => {
     const r = make(t);

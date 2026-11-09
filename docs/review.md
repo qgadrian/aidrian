@@ -782,11 +782,18 @@ branch before it reads the record. Each refuses a checkout where:
 - its project folder differs from the base branch's, or the base's `.aidrian.json` cannot be read:
   `the working copy's project folder differs from <owner/name> <base>, and the review record is read from it`.
   A base with no config at all stays allowed, for the pull request that adopts aidrian;
-- the state folder is inside a checkout of the repository, the main one or a linked worktree, as named or through a link:
+- the state folder or the folder the records go in is inside a checkout of the repository, the main one or a linked worktree,
+  as named or through a link, whichever way `state.dir` is set. With `state.dir` set:
   `the state folder is inside this repository's checkout <top>, and the review record is read from it:`
   `in <config>, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository,`
   `and commit that change alone in its own pull request, which gets no local review record, so the Human merges it.`
   ``Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder `aidrian state` prints.``
+  With `state.dir` unset, where the config has nothing to clear:
+  `the default state folder is inside this repository's checkout <top>, and the review record is read from it:`
+  `in <config>, set "state": { "dir": "<path>" } to a folder outside every checkout of this repository,`
+  `and commit that change alone in its own pull request, which gets no local review record, so the Human merges it,`
+  ``or set this machine's state root, `$XDG_STATE_HOME`, to a folder outside them.``
+  ``Once it is outside, on each machine whose folder moved, from a clean checkout on the base branch, move the old folder's contents to the folder `aidrian state` prints.``
   Or git cannot list the checkouts: `git cannot list this repository's checkouts, and the review record is read from it`;
 - the folder the records go in is itself a checkout of any repository, through a link too, with `state.dir` set or unset:
   `the folder the review records go in is a checkout, <folder>, and the review record is read from it:`

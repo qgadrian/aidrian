@@ -223,6 +223,22 @@ test('check warns with the refusal\'s text on a state folder inside the reposito
   }
 });
 
+test('check gives the default state folder inside the repository its own words, and sets no null state.dir as the way out', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const env = { ...process.env, XDG_STATE_HOME: path.join(dir, '.machine') };
+  const checked = () => spawnSync(CLI, ['check'], { cwd: dir, encoding: 'utf8', env });
+  const warning = `warning: the default state folder is inside this repository's checkout ${dir}, and the review record is read from it: in .aidrian/config.json, set "state": { "dir": "<path>" } to a folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it, or set this machine's state root, \`$XDG_STATE_HOME\`, to a folder outside them. Once it is outside, on each machine whose folder moved, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.\n`;
+  const unignored = checked();
+  assert.equal(unignored.status, 1);
+  assert.ok(unignored.stderr.startsWith(warning), unignored.stderr);
+  assert.match(unignored.stderr, /^\.machine\/aidrian\/projects\/\S+\/ is not git-ignored: add the line /mu);
+  assert.doesNotMatch(unignored.stderr, /"dir": null/u);
+  writeFileSync(path.join(dir, '.gitignore'), `${readFileSync(path.join(dir, '.gitignore'), 'utf8')}\n.machine/\n`);
+  const passing = checked();
+  assert.deepEqual([passing.status, passing.stderr], [0, warning]);
+});
+
 test('check from a linked worktree warns about a relative state folder in the main checkout', (t) => {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

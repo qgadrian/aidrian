@@ -419,8 +419,9 @@ Before it reads the record, a merge of this repository, one that names none or o
 working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
 with `refs/remotes/origin/HEAD` first, and with the base the head lookup names once it makes one. A difference refuses the
 merge, whatever the record says, and says to merge from a checkout on the base branch or that the Human merges in their
-own shell. The hold also refuses a state folder inside a checkout of the repository: that denial says to move the folder
-first, and that the Human merges until the move lands. It refuses a checkout at the folder the review records go in too,
+own shell. The hold also refuses a state folder, or a folder the review records go in, inside a checkout of the repository,
+with `state.dir` set or unset: that denial says to move the folder first, and that the Human merges until the move lands,
+or with `state.dir` unset until the folder is outside. It refuses a checkout at the folder the review records go in too,
 with `state.dir` set or unset: that denial says to move that checkout first, and that the Human merges until it is gone.
 The hold applies with no review record too, and the `Merge anyway`
 answer of the waiver paragraph below does not waive it. With neither ref here, a read that fails, or no time left, it goes on.
@@ -469,7 +470,7 @@ deadline if that comes first. The waiver starts reading only when at most 1.5 se
 before its first read, and its later reads are held to the deadline alone. The guard's own head lookup above is not
 held to 1.5 seconds, only to the deadline: once it has passed, the lookup is not made, and a merge that names no head
 is refused and told to name it.
-The hold's git reads, the checkout list included, share the deadline, each stopped after 1 second, and a read asked for once it has passed skips the hold.
+The hold's git reads, the checkout list included with `state.dir` set or unset, all run at the project root and share the deadline, each stopped after 1 second, and a read asked for once it has passed skips the hold.
 The guard's git reads outside the hold, such as the one that finds the project and the one that reads the record, keep
 git's 2 second default; one that begins as the deadline comes can end up to 2 seconds later, and once one is stopped
 the later ones do not wait.

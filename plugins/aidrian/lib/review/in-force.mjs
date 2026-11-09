@@ -21,6 +21,7 @@ import { touchedCitations } from './cited.mjs';
 const baseTipOf = (root, base, read) => resolve(root, `refs/remotes/origin/${base}`, read) ?? resolve(root, `refs/heads/${base}`, read);
 
 const INSIDE = "the state folder is inside this repository's checkout ";
+const DEFAULT_INSIDE = "the default state folder is inside this repository's checkout ";
 const RECORDS_CHECKOUT = 'the folder the review records go in is a checkout, ';
 const UNLISTED = "git cannot list this repository's checkouts, and the review record is read from it";
 
@@ -59,12 +60,22 @@ function repositoryCheckouts(project, git) {
   return [...new Set([roots.current, ...paths])];
 }
 
-// The record is this machine's, and a head puts its files in its checkout, so the state folder lies outside every checkout
-// of this repository, as named and with its links followed, in any case. Elsewhere is allowed: this repository's head puts
-// no file in another repository, an outer one, or a git folder apart. The folder the records go in holds no checkout of
-// any repository, wherever the state folder is, the default one included; a checkout elsewhere under the state folder is
-// allowed. { problem }, null when it holds, with `unread` when git could not answer. `aidrian check` warns with the same
-// answer.
+// The refusal for a state folder inside the checkout `top`. A folder the config names moves by the config. The default
+// folder has nothing in the config to clear, so it moves by the config or by this machine's state root.
+function insideProblem(project, working, top) {
+  const why = `${top}, and the review record is read from it: in ${project.paths.config}, set "state": { "dir":`;
+  const alone = 'commit that change alone in its own pull request, which gets no local review record, so the Human merges it';
+  const copy = "from a clean checkout on the base branch, move the old folder's contents to the folder `aidrian state` prints.";
+  if (working.state.dir) return `${INSIDE}${why} null } for the default folder, or any folder outside every checkout of this repository, and ${alone}. Once it lands, on each machine, ${copy}`;
+  return `${DEFAULT_INSIDE}${why} "<path>" } to a folder outside every checkout of this repository, and ${alone}, or set this machine's state root, \`$XDG_STATE_HOME\`, to a folder outside them. Once it is outside, on each machine whose folder moved, ${copy}`;
+}
+
+// The record is this machine's, and a head puts its files in its checkout, so the state folder and the folder the records
+// go in lie outside every checkout of this repository, as named and with their links followed, in any case, whichever way
+// `state.dir` is set. Elsewhere is allowed: this repository's head puts no file in another repository, an outer one, or a
+// git folder apart. The folder the records go in holds no checkout of any repository either; a checkout elsewhere under
+// the state folder is allowed. { problem }, null when it holds, with `unread` when git could not answer. `aidrian check`
+// warns with the same answer.
 export function insideCheckout(project, working, git) {
   let state;
   try {
@@ -74,25 +85,25 @@ export function insideCheckout(project, working, git) {
   }
   const records = recordsFolder(state);
   if (holdsCheckout(records)) return { problem: `${RECORDS_CHECKOUT}${records}, and the review record is read from it: move or remove that checkout on this machine, so only this machine's records stay there.` };
-  if (!working.state.dir) return { problem: null };
   let folder;
   let tops;
   try {
-    folder = spellings(state);
+    folder = [...spellings(state), ...spellings(records)];
     tops = repositoryCheckouts(project, git);
   } catch {
     tops = null;
   }
   if (!tops) return { problem: UNLISTED, unread: true };
   const top = tops.find((dir) => spellings(dir).some((from) => folder.some((each) => isWithin(from, each))));
-  if (!top) return { problem: null };
-  return { problem: `${INSIDE}${top}, and the review record is read from it: in ${project.paths.config}, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.` };
+  return { problem: top ? insideProblem(project, working, top) : null };
 }
 
 // What the merge guard says to do about `problem`: a state folder inside a checkout, or a checkout at the folder the
-// records go in, is refused at the base branch too, so a checkout there is no way forward.
+// records go in, is refused at the base branch too, so a checkout there is no way forward. The default folder can move on
+// this machine alone, with nothing to land.
 export function recourse(problem) {
   if (problem.startsWith(RECORDS_CHECKOUT)) return 'Move that checkout first; until it is gone, the Human merges in their own shell.';
+  if (problem.startsWith(DEFAULT_INSIDE)) return 'Move the state folder first; until it is outside, the Human merges in their own shell.';
   if (problem.startsWith(INSIDE)) return 'Move the state folder first; until that lands, the Human merges in their own shell.';
   return 'Merge from a checkout on the base branch, or the Human merges in their own shell.';
 }

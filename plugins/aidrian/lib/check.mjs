@@ -65,7 +65,7 @@ export const commands = {
       const floor = versionFloorProblem(config);
       if (floor) errors.push(floor);
       for (const { line, gitignore, state } of unignored(project, config)) {
-        const move = state ? `in ${project.paths.config} set "state": { "dir": null } to move the state folder out of the repository, or while it stays ` : '';
+        const move = state && config.state.dir ? `in ${project.paths.config} set "state": { "dir": null } to move the state folder out of the repository, or while it stays ` : '';
         errors.push(`${line} is not git-ignored: ${move}add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
       // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. With the

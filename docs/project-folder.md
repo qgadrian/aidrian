@@ -163,6 +163,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   A relative path starts at the repository root, inside the repository: `aidrian check` warns about such a folder,
   the review-record commands and the merge guard refuse it ([review.md](review.md#the-record)),
   and while it stays, check requires git to ignore it.
+- The default folder gets the same warning and refusal when it lies inside a checkout, and so does a folder the review
+  records go in that leads into one through a link, whichever way `state.dir` is set.
+  Plans, lessons, and audits keep using the folder either way.
 - A checkout at the folder the review records go in gets the same warning and refusal, wherever the state folder is.
   A checkout elsewhere under the state folder does not.
 

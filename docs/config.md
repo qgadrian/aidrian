@@ -212,6 +212,7 @@ A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder
 A state folder inside the repository's checkouts keeps the plans, lessons, and audits, and `aidrian check` warns about it,
 but the review-record commands and the merge guard refuse it ([The record](review.md#the-record)):
 put it outside, or leave `state.dir` null.
+The default folder counts too: with `state.dir` null, a default folder inside a checkout gets the same warning and refusal, in words of its own that say to point it outside by `state.dir` or by this machine's state root.
 They refuse a checkout at the folder the records go in the same way, with `state.dir` set or unset, and the check warns about that too.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 

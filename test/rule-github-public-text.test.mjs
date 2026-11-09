@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { bannedPatterns } from '../scripts/banned-terms.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config-defaults.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
@@ -165,4 +166,95 @@ test('the Bash hook runs the rule and records it as public-text', (t) => {
   const row = rows.find((each) => each.event === 'hook_deny');
   assert.equal(row.rule, 'public-text');
   assert.doesNotMatch(JSON.stringify(row), /Placeholder Word/, 'the row never holds the text');
+});
+
+// The private words file, with placeholder words only. `NO_PATTERNS` leaves the file as the only source.
+const NO_PATTERNS = { version: 1, github: { requiredSections: [] } };
+const PRIVATE_PATTERN = 'privateplaceholder-\\d+';
+const PRIVATE_FILE = `# a comment\n\n${PRIVATE_PATTERN}\n`;
+const PRIVATE_TEXT = 'leading PrivatePlaceholder-7 trailing';
+const FILE = '.banned-terms.local';
+const assertNothingPrivate = (text) => {
+  for (const leak of [/privateplaceholder/iu, /leading/u, /trailing/u, /\\d/u]) assert.doesNotMatch(text, leak);
+};
+
+test('the private words file alone turns the rule on, and says which of body or title matched', (t) => {
+  const run = project(t, NO_PATTERNS, { [FILE]: PRIVATE_FILE });
+  const body = run(`gh issue comment 3 --body '${PRIVATE_TEXT}'`);
+  assert.match(body, /^Blocked: a private word from `\.banned-terms\.local` matched in the body\. Reword it/);
+  assertNothingPrivate(body);
+  const title = run(`gh pr create --title '${PRIVATE_TEXT}' --body fine`);
+  assert.match(title, /^Blocked: a private word from `\.banned-terms\.local` matched in the title\. Reword it/);
+  assertNothingPrivate(title);
+  assert.equal(run(`gh issue comment 3 --body '${GOOD}'`), null);
+  assert.match(run('gh issue comment 3 --body "$UNREAD"'), /^Blocked: the body is one this rule cannot read/, 'an active rule refuses what it cannot read');
+  assert.equal(run(`gh issue comment 3 --body '${PRIVATE_TEXT}'`, { [OVERRIDE]: '1' }), null);
+});
+
+test('a file with no usable pattern leaves the rule off, with no refusal', (t) => {
+  for (const text of ['', '# only a comment\n\n', '(unclosed\n']) {
+    const run = project(t, NO_PATTERNS, { [FILE]: text });
+    assert.equal(run('gh issue comment 3 --body "$UNREAD"'), null, JSON.stringify(text));
+    assert.equal(run('gh issue create --title x'), null, JSON.stringify(text));
+  }
+});
+
+test('a bad line drops only itself: other lines and the config patterns still hold', (t) => {
+  const run = project(t, WITH_PATTERNS, { [FILE]: `(unclosed\n${PRIVATE_PATTERN}\n[also bad\n` });
+  assert.match(run(`gh issue comment 3 --body '${PRIVATE_TEXT}'`), /^Blocked: a private word/);
+  assert.match(run(`gh issue comment 3 --body '${BAD}'`), /^Blocked: the body matches the config\.json/);
+  assert.equal(run(`gh issue comment 3 --body '${GOOD}'`), null);
+});
+
+test("this repository's git hooks still stop on a bad line, so a word cannot slip out unnoticed", (t) => {
+  const run = project(t, NO_PATTERNS, { [FILE]: '(unclosed\n' });
+  assert.throws(() => bannedPatterns(run.dir), SyntaxError);
+});
+
+test('a hit from the file on a call naming another repository answers to no rule here', (t) => {
+  const run = project(t, NO_PATTERNS, { [FILE]: PRIVATE_FILE }, 'https://github.com/acme/notes.git');
+  assert.equal(run(`gh issue comment 3 -R other/repo --body '${PRIVATE_TEXT}'`), null);
+  assert.equal(run(`gh issue comment https://github.com/other/repo/issues/3 --body '${PRIVATE_TEXT}'`), null);
+  assert.match(run(`gh issue comment 3 -R acme/notes --body '${PRIVATE_TEXT}'`), /^Blocked: a private word/);
+});
+
+test("a linked worktree reads the main checkout's file, and its own beside it", (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-publictext-wt-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = clean(t);
+  const main = path.join(dir, 'main');
+  const tree = path.join(dir, 'tree');
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: main, env, stdio: 'ignore' });
+  execFileSync('git', ['init', '-q', main], { env });
+  mkdirSync(path.join(main, '.aidrian'));
+  writeFileSync(path.join(main, '.aidrian/config.json'), JSON.stringify(NO_PATTERNS));
+  git('add', '.aidrian/config.json');
+  git('commit', '-q', '-m', 'init');
+  git('worktree', 'add', '-q', tree);
+  const run = (command, cwd = tree) => check(command, { cwd, env: {} });
+  assert.equal(run(`gh issue comment 3 --body '${PRIVATE_TEXT}'`), null, 'no file anywhere');
+  writeFileSync(path.join(main, FILE), PRIVATE_FILE);
+  assert.match(run(`gh issue comment 3 --body '${PRIVATE_TEXT}'`), /^Blocked: a private word/, "the main checkout's file");
+  writeFileSync(path.join(tree, FILE), 'otherplaceholder\n');
+  assert.match(run("gh issue comment 3 --body 'an OtherPlaceholder here'"), /^Blocked: a private word/, 'its own copy');
+  assert.match(run(`gh issue comment 3 --body '${PRIVATE_TEXT}'`), /^Blocked: a private word/, 'and still the main checkout\'s');
+  assert.equal(run("gh issue comment 3 --body 'an OtherPlaceholder here'", main), null, 'the main checkout does not read a worktree\'s copy');
+});
+
+test('the Bash hook records a hit from the file with neither the word nor its pattern', (t) => {
+  const run = project(t, NO_PATTERNS, { [FILE]: PRIVATE_FILE });
+  const env = clean(t);
+  const hook = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-bash.mjs')], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: `gh issue comment 3 --body '${PRIVATE_TEXT}'` }, cwd: run.dir, session_id: 'public-text-private' }),
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(hook.status, 2);
+  assertNothingPrivate(hook.stderr);
+  const state = spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['state'], { cwd: run.dir, encoding: 'utf8', env }).stdout.trim();
+  const log = readFileSync(path.join(state, 'dispatch-log.jsonl'), 'utf8');
+  assertNothingPrivate(log);
+  const row = log.trim().split('\n').map((line) => JSON.parse(line)).find((each) => each.event === 'hook_deny');
+  assert.equal(row.rule, 'public-text');
+  assert.match(row.reason, /private word from `\.banned-terms\.local` matched in the body/);
 });

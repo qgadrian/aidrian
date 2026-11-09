@@ -13,27 +13,16 @@
 // `make hooks` installs the git hooks; the Claude Code hook goes in the git-ignored `.claude/settings.json`.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { bannedLines } from '../plugins/aidrian/lib/banned-terms.mjs';
 import { GIT_VALUE_GLOBALS, isLongOption, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-// The patterns of `.banned-terms.local`, read from `root` and from the main checkout: the file is
-// git-ignored, so a linked worktree has no copy of its own.
+// The patterns of `.banned-terms.local`. A bad line throws, which stops the git hook: a word must not slip out unnoticed.
 export function bannedPatterns(root = ROOT) {
-  const roots = new Set([root, mainCheckout(root)].filter(Boolean));
-  const local = [...roots].map((dir) => path.join(dir, '.banned-terms.local')).filter((file) => existsSync(file))
-    .flatMap((file) => readFileSync(file, 'utf8').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#')));
-  return [...new Set(local)].map((line) => new RegExp(line, 'iu'));
-}
-
-function mainCheckout(root) {
-  try {
-    return path.dirname(path.resolve(root, execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()));
-  } catch {
-    return null;
-  }
+  return bannedLines(root).map((line) => new RegExp(line, 'iu'));
 }
 
 // The patterns `text` matches, as strings.

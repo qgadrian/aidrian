@@ -150,7 +150,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
-| `github.publicText.patterns` | The case-insensitive regular expressions no issue, pull request, or comment text may match ([Public text](#public-text)); `[]`, the default, is off. |
+| `github.publicText.patterns` | The case-insensitive regular expressions no issue, pull request, or comment text may match ([Public text](#public-text)); `[]`, the default, adds none. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
 | `github.autoMerge.allow` | `true` lets a machine opt in to [auto-merge](#auto-merge); `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. Read at the base branch, with `decide-reversible`, it also stops a yes on `reachesUsersUnreviewed` from asking: [rule 3 under Decisions](#decisions). |
@@ -486,7 +486,12 @@ so detail that must stay private has to be stopped before the first post.
 { "github": { "publicText": { "patterns": ["\\binternal codename\\b"] } } }
 ```
 
-The empty list, the default, turns the rule off. The rule never looks up whether the repository is public: listing patterns is the signal.
+The rule also reads the git-ignored `.banned-terms.local` when it exists, for words a tracked file must not name:
+one case-insensitive regular expression per line, with `#` comments and blank lines skipped.
+Its deny and its recorded row name only the file and whether the body or the title matched, never the word or its pattern.
+The rule is on when either source gives a pattern, and off with neither. It never looks up whether the repository is public: giving a pattern is the signal.
+The rule reads the file from the project root and from the main checkout, and uses both when both exist, so a linked worktree needs no copy.
+A line in the file that does not compile drops only that line, with no report: `aidrian check` does not read the file.
 `aidrian check` reports a pattern that does not compile, and until it is fixed the hook reads the list as empty, so the session keeps running.
 `AIDRIAN_ALLOW_PUBLIC_TEXT=1`, set in the Human's own shell, lets a call through.
 

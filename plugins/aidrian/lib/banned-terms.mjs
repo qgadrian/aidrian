@@ -3,7 +3,7 @@
 // and so does the public text rule (lib/rules/github/public-text.mjs). `aidrian check` reports what is wrong with it, and
 // never prints what it holds.
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { isIgnored, mainRoot } from './git.mjs';
@@ -18,11 +18,19 @@ const MAX_BYTES = 64 * 1024;
 const copies = (root) => [...new Set([root, mainRoot(root)].filter(Boolean))].map((dir) => path.join(dir, BANNED_FILE)).filter((file) => existsSync(file));
 
 // The file's lines that hold a pattern, as { line, source }. Throws on anything but a regular file of modest size: reading
-// a pipe or a device could stop the caller for good.
+// a pipe or a device could stop the caller for good. One descriptor, opened without blocking, is both checked and read, so
+// the file cannot change between the two.
 function entries(file) {
-  const stat = statSync(file);
-  if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error(`${file} is not a regular file of at most ${MAX_BYTES / 1024} KiB`);
-  return readFileSync(file, 'utf8').split('\n').flatMap((raw, index) => {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  let text;
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error(`${file} is not a regular file of at most ${MAX_BYTES / 1024} KiB`);
+    text = readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
+  }
+  return text.split('\n').flatMap((raw, index) => {
     const source = raw.trim();
     return source && !source.startsWith('#') ? [{ line: index + 1, source }] : [];
   });

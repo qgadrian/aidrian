@@ -504,6 +504,7 @@ A line in the file that does not compile drops only that line in the hook, and `
 Each run of whitespace counts as one space, so a phrase wrapped across lines matches; write a space in a pattern, not `\n`.
 Keep patterns plain. All the patterns of one command, from both sources, share a time budget of 600 ms, each search at most 200 ms,
 ended 2 s after the hook started: a pattern that runs out is dropped, as a bad line is, so a slow one checks nothing.
+Private words run first, on every call of the command, so a slow config pattern never leaves them unchecked.
 
 A pattern catches only obvious wording and is no substitute for writing rules only: rewrite the text as the rule or limit,
 and keep the detail in the state folder. The [Bash rules](hooks.md#bash-rules) list what the rule does not read.

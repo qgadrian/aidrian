@@ -239,6 +239,7 @@ What each rule matches:
   modest size, so a link to one works; a copy it cannot read drops only itself. A line that does not compile drops only itself in the hook,
   and `aidrian check` names its line number, and fails on a copy git does not ignore, never printing what the file holds.
   The patterns of one command share a time budget, and one that runs out is dropped, as a bad line is.
+  Private words are checked on every call of the command before any config pattern runs, so config patterns never use up their time.
   A rule of this hook that fails lets the command through that rule only; the later rules still run.
   A body or title the rule cannot read is refused, with the two steps that pass for a body, and that includes a device or a pipe given as the body file, and so is a call with no body flag whose text would come
   from an editor, a prompt, a template, or the commit messages. `--fill` with no `--title` is refused the same way.

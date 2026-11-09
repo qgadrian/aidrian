@@ -482,3 +482,10 @@ test('aidrian check reports a private file git would track, and bad lines by num
   assert.match(unignored.stderr, /\.banned-terms\.local is tracked or not git-ignored, so its words could be published: add the line "\.banned-terms\.local" to \.gitignore/);
   assertNothingPrivate(unignored.stderr + unignored.stdout);
 });
+
+test('slow config patterns on an earlier call leave private words checked on a later call of the same command', (t) => {
+  const slow = [SLOW, '((a+)+)+$', '(a+)+b', '(a|aa)+$'];
+  const run = project(t, { version: 1, github: { requiredSections: [], publicText: { patterns: slow } } }, { [FILE]: PRIVATE_FILE });
+  const command = `gh issue comment 3 --body '${SLOW_TEXT}' && gh issue comment 4 --body '${PRIVATE_TEXT}'`;
+  assert.match(run(command) ?? '', /^Blocked: a private word from `\.banned-terms\.local` matched in the body/);
+});

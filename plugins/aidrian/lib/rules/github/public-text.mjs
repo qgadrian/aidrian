@@ -18,6 +18,7 @@
 // whitespace counts as one space, so a wrapped phrase matches. This reads wording only; docs/hooks.md says what it cannot catch.
 //
 // Patterns run under one time budget per command (lib/bounded-regexp.mjs). One that runs out is dropped, as a bad line is.
+// Private words run first, on every call of the command, so slow config patterns can never use up their time.
 
 import { BANNED_FILE, usableBannedLines } from '../../banned-terms.mjs';
 import { boundedSearch, timeBudget } from '../../bounded-regexp.mjs';
@@ -52,7 +53,7 @@ function budgetFor(startedAt) {
 // The deny reason for `command`, or null.
 export function check(command, { cwd = process.cwd(), env = process.env, startedAt } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  let budget;
+  const calls = [];
   for (const { call, entry, written } of bodyCalls(command, cwd, readBodyCall, TEXT_HEREDOC)) {
     if (call.help || call.dryRun || call.deleteLast) continue;
     const project = findProject(entry.chained ?? cwd);
@@ -60,12 +61,19 @@ export function check(command, { cwd = process.cwd(), env = process.env, started
     const patterns = config?.github.publicText.patterns ?? [];
     const words = project ? usableBannedLines(project.root) : [];
     if (!patterns.length && !words.length) continue;
-    budget ??= budgetFor(startedAt);
+    // Read now: `written` holds what the line wrote before this call, and changes as the walk goes on.
     const body = readBody(call, entry.folder, written);
     const title = call.title && !call.title.dynamic ? call.title.text : null;
     const texts = [[bodyName(call), body], [titleName(call), title]].filter(([, raw]) => raw !== null);
+    calls.push({ call, entry, project, config, patterns, words, body, texts });
+  }
+  if (!calls.length) return null;
+  const budget = budgetFor(startedAt);
+  for (const { texts, words } of calls) {
     const hit = privateHit(texts, words, budget);
     if (hit) return hit;
+  }
+  for (const { call, entry, project, config, patterns, body, texts } of calls) {
     if (targetsAnotherRepo(call, project, invocationRepo(entry.invocation.environment, env))) continue;
     // A closing comment has no file form, so its steps post the comment first, through the command that has one.
     const stepCall = isClosing(call) ? { ...call, subcommand: 'comment' } : call;

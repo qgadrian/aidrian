@@ -10,6 +10,7 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { escapedFixes } from '../plugins/aidrian/lib/review/bench.mjs';
 import { dedupe, packageRoots, partition, sliceKey, splitPasses } from '../plugins/aidrian/lib/review/split.mjs';
+import { emptyState, prunePasses, readLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const change = (file, lines = 10) => ({ file, added: lines, removed: 0, status: 'M' });
 
@@ -41,6 +42,22 @@ test('splitPasses: a pass per slice, the cross pass after all of them, and a twi
   assert.deepEqual(passes.at(-1).after, [passes[0].id, passes[1].id]);
   const halved = splitPasses('codex-local', slices, { kind: 'exec', halved: { [passes[0].id]: true } });
   assert.deepEqual(halved.map((pass) => pass.files), [['a1', 'a2'], ['a3'], ['b1'], null]);
+  const again = splitPasses('codex-local', slices, { kind: 'exec', halved: { [passes[0].id]: true, [`${passes[0].id}.a`]: true } });
+  assert.deepEqual(again.map((pass) => pass.files), [['a1'], ['a2'], ['a3'], ['b1'], null]);
+  assert.deepEqual(again.slice(0, 3).map((pass) => pass.id), [`${passes[0].id}.a.a`, `${passes[0].id}.a.b`, `${passes[0].id}.b`]);
+  assert.deepEqual(again.at(-1).after, again.slice(0, -1).map((pass) => pass.id));
+  const oneFile = splitPasses('codex-local', slices, { kind: 'exec', halved: { [passes[1].id]: true } });
+  assert.deepEqual(oneFile.map((pass) => pass.id), passes.map((pass) => pass.id), 'one file has nothing to split');
+});
+
+test('prunePasses: the live halves of a half stay, and they go once a fix repacks the slice', () => {
+  const slices = [{ key: 'src/a', files: ['a1', 'a2', 'a3'] }];
+  const [whole] = splitPasses('codex-local', slices);
+  const halved = { [whole.id]: true, [`${whole.id}.a`]: true };
+  const live = splitPasses('codex-local', slices, { halved }).filter((pass) => pass.role === 'slice');
+  const record = () => ({ ...emptyState(7, 'o/r'), halved, passes: Object.fromEntries(live.map((pass) => [pass.id, { head: 'h', files: [...pass.files], findings: 0, open: 0 }])) });
+  assert.deepEqual(Object.keys(prunePasses(record(), slices).passes).sort(), live.map((pass) => pass.id).sort());
+  assert.deepEqual(Object.keys(prunePasses(record(), [{ key: 'src/a', files: ['z1'] }]).passes), [], 'no result of the old packing can count again');
 });
 
 test('dedupe: one finding per mistake across passes, at its highest severity', () => {
@@ -133,6 +150,117 @@ test('a slice that fails twice runs as two halves; a partial review is never rec
   assert.equal(statuses.at(-1), 'received');
   assert.ok(statuses.slice(0, -1).every((status) => status !== 'received'), 'nothing passes while a slice is missing');
   assert.equal(reasons.filter((reason) => /runs as two halves next/u.test(reason)).length, 2, 'each two-file slice was halved after its second failure');
+});
+
+const answered = { status: 'done', findings: [], verdicts: [], contracts: [], cross_notes: [], dropped: [] };
+
+// The fixture with src/a changing four files, so its slice can be cut twice.
+function fourFileSlice(t) {
+  const r = repo(t, { split: { sliceLines: 1000, parallel: 8, maxSlices: 8 } });
+  for (const name of ['w', 'y', 'z']) r.write(`src/a/${name}.js`, '1\n');
+  r.commit();
+  return r;
+}
+
+// Steps the review until it stops asking for another, and counts how often each slice's files ran.
+async function runReview(r, exec, steps = 24) {
+  const runs = new Map();
+  const results = [];
+  const counted = async (reviewer, input) => {
+    if (input.role === 'slice') runs.set(input.files.join(' '), (runs.get(input.files.join(' ')) ?? 0) + 1);
+    return exec(reviewer, input);
+  };
+  for (let step = 0; step < steps; step += 1) {
+    results.push(await r.step(counted));
+    if (!['running', 'incomplete'].includes(results.at(-1).status)) break;
+  }
+  return { runs, results, last: results.at(-1) };
+}
+
+test('a slice that times out runs as two halves on the next step, every slice of the step at once', async (t) => {
+  // maxSlices 2 merges the four folders into two slices of two files each, and both time out in one step.
+  const r = repo(t, { split: { sliceLines: 1000, parallel: 8, maxSlices: 2 } });
+  const exec = async (_reviewer, input) => (input.role === 'slice' && input.files.length > 1 ? { status: 'timed_out', reason: 'no answer in 1 s' } : answered);
+  const { runs, results, last } = await runReview(r, exec);
+  assert.equal(last.status, 'received');
+  assert.deepEqual([...runs.values()], [1, 1, 1, 1, 1, 1], 'each whole slice ran once, then each half once');
+  const halving = results.filter((result) => /runs as two halves next/u.test(result.reason ?? ''));
+  assert.ok(halving.length > 0 && halving.every((result) => result.attempts === 1), 'the first timeout halves');
+});
+
+test('a half that times out splits again, down to one file', async (t) => {
+  const r = fourFileSlice(t);
+  const exec = async (_reviewer, input) => (input.role === 'slice' && input.files.length > 1 ? { status: 'timed_out', reason: 'no answer in 1 s' } : answered);
+  const { runs, last } = await runReview(r, exec);
+  assert.equal(last.status, 'received');
+  assert.deepEqual([...runs.keys()].filter((files) => files.includes(' ')).sort(), ['src/a/w.js src/a/x.js', 'src/a/w.js src/a/x.js src/a/y.js src/a/z.js', 'src/a/y.js src/a/z.js']);
+  assert.ok([...runs.values()].every((count) => count === 1), `every input ran once: ${JSON.stringify([...runs])}`);
+  const suffixes = Object.keys(readLocalState(projectAt(r.dir), 3).passes).map((id) => /\.[ab]\.[ab]$/u.exec(id)?.[0]).filter(Boolean).sort();
+  assert.deepEqual(suffixes, ['.a.a', '.a.b', '.b.a', '.b.b'], 'the record holds the four one-file passes');
+});
+
+test('a failure that is no timeout keeps the second-failure rule, at every level', async (t) => {
+  const r = fourFileSlice(t);
+  const exec = async (_reviewer, input) => (input.role === 'slice' && input.files.length > 1 ? { status: 'failed', reason: 'too big' } : answered);
+  const { runs, last } = await runReview(r, exec);
+  assert.equal(last.status, 'received');
+  assert.equal(runs.get('src/a/w.js src/a/x.js src/a/y.js src/a/z.js'), 2, 'the whole slice ran twice');
+  assert.equal(runs.get('src/a/w.js src/a/x.js'), 2, 'a half that fails is cut at its second failure too, never stuck with files to split');
+});
+
+test('a timeout splits its slice even when another slice`s plain failure comes first in the step', async (t) => {
+  const r = repo(t, { split: { sliceLines: 1000, parallel: 8, maxSlices: 2 } });
+  const exec = async (_reviewer, input) => {
+    if (input.role !== 'slice' || input.files.length < 2) return answered;
+    return input.files.includes('src/a/x.js') ? { status: 'failed', reason: 'too big' } : { status: 'timed_out', reason: 'no answer in 1 s' };
+  };
+  const { runs, results, last } = await runReview(r, exec);
+  assert.equal(last.status, 'received');
+  assert.equal(runs.get('src/c/x.js src/d/x.js'), 1, 'the slice that timed out ran whole once');
+  assert.equal(runs.get('src/a/x.js src/b/x.js'), 2, 'the slice that failed ran whole twice');
+  assert.equal(results[0].attempts, 1);
+  assert.match(results[0].reason, /too big after \d+ s; slice:.*no answer in 1 s after \d+ s; it runs as two halves next/u, 'the reason names both');
+});
+
+test('a one-file slice or the cross pass that times out has nothing to split and is stuck on its third attempt', async (t) => {
+  const single = repo(t, { split: { sliceLines: 100, parallel: 8, maxSlices: 8 } });
+  const alone = await runReview(single, async (_reviewer, input) => (input.files?.[0] === 'src/a/x.js' ? { status: 'timed_out', reason: 'no answer in 1 s' } : answered));
+  assert.deepEqual([alone.last.status, alone.last.attempts, alone.runs.get('src/a/x.js')], ['stuck', 3, 3]);
+  assert.ok(alone.results.every((result) => !/two halves/u.test(result.reason ?? '')));
+
+  const cross = repo(t, { split: { sliceLines: 100, parallel: 8, maxSlices: 8 } });
+  const last = await runReview(cross, async (_reviewer, input) => (input.role === 'cross' ? { status: 'timed_out', reason: 'no answer in 1 s' } : answered));
+  assert.deepEqual([last.last.status, last.last.attempts], ['stuck', 3]);
+  assert.ok(last.results.every((result) => !/two halves/u.test(result.reason ?? '')));
+});
+
+test('a plan command`s own slice pass cannot be cut, so a timeout still ends stuck on its third attempt', async (t) => {
+  const r = repo(t, { planCommand: 'node plan.mjs' });
+  const own = { id: 'slice:own:partition', reviewer: 'codex-local', kind: 'exec', role: 'slice', slice: 'own', files: ['src/a/x.js', 'src/b/x.js'], context: 'full' };
+  const planner = `let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'local',passes:[${JSON.stringify(own)}]}]})))`;
+  r.git('switch', '-q', 'main');
+  r.write('plan.mjs', planner);
+  r.commit();
+  r.git('switch', '-q', 'feat');
+  r.git('rebase', '-q', 'main');
+  const { last, results } = await runReview(r, async (_reviewer, input) => (input.slice === 'own' ? { status: 'timed_out', reason: 'no answer in 1 s' } : answered), 6);
+  assert.deepEqual(results.at(-1).reason?.includes('slice:own:partition'), true, JSON.stringify(last));
+  assert.deepEqual([last.status, last.attempts], ['stuck', 3]);
+});
+
+test('a pass records its whole seconds, and a failure says how long it ran', async (t) => {
+  const r = repo(t, { split: { sliceLines: 100, parallel: 8, maxSlices: 8 } });
+  const slow = async (_reviewer, input) => {
+    if (input.files?.[0] === 'src/a/x.js') return { status: 'failed', reason: 'boom' };
+    await new Promise((done) => setTimeout(done, 1100));
+    return answered;
+  };
+  const failed = await r.step(slow);
+  assert.match(failed.reason, /: boom after \d+ s$/u);
+  const state = readLocalState(projectAt(r.dir), 3);
+  const entries = Object.values(state.passes);
+  assert.equal(entries.length, 3);
+  for (const entry of entries) assert.ok(Number.isInteger(entry.seconds) && entry.seconds >= 1, JSON.stringify(entry));
 });
 
 test('the self engine splits too: one agent dispatch per slice, then the cross pass', async (t) => {

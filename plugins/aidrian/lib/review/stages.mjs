@@ -23,6 +23,27 @@ export const MAX_ATTEMPTS = 3;
 // The check runs of one commit as `gh pr checks` rows: the evidence must be for the head under review.
 const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' }));
 
+// A pass that can still run as two halves. A plan command's own slice pass is cut once on the record and never runs as
+// halves, so the record's mark ends its cutting and the attempt limit still stops it.
+const canHalve = (state, pass) => pass.role === 'slice' && (pass.files?.length ?? 0) > 1 && !state.halved?.[pass.id];
+
+// Counts a step's failed passes on the record and cuts the ones that should run as two halves: the step's first failure
+// of any kind, and every other timeout that can be cut, or that slice would run whole once more for nothing.
+// A timeout cuts at once, since the same input again costs another full time limit; any other failure may pass on a
+// retry, so it cuts at the second. Returns each counted failure's { halve, attempts, reason }.
+function countFailures(state, head, failures) {
+  const counted = failures.filter(([pass, outcome], index) => index === 0 || (outcome.status === 'timed_out' && canHalve(state, pass)));
+  return counted.map(([pass, outcome, seconds]) => {
+    const key = `${head}:${pass.id}`;
+    state.failures[key] = (state.failures[key] ?? 0) + 1;
+    const strikes = outcome.status === 'timed_out' ? 1 : 2;
+    const halve = canHalve(state, pass) && state.failures[key] >= strikes;
+    if (halve) state.halved = { ...(state.halved ?? {}), [pass.id]: true };
+    const next = halve ? '; it runs as two halves next' : '';
+    return { halve, attempts: state.failures[key], reason: `${pass.id}: ${outcome.reason} after ${seconds} s${next}` };
+  });
+}
+
 // Runs the stages of the step that lib/review/step.mjs planned into `s`, and returns the step's result.
 export async function runStages(s) {
   const { opts, config, env, forge, exec, awaitBot, root, cleanEnv, repo, n, head, baseTip, review, state, plan, map, resultFor, quietSince, dispositionTable, fallbacks, keptSignoffs, visualEntries, isVisual, passes, removedTests, maxRounds, grantFloor, flowStatus, finish, capReached, quotaStop } = s;
@@ -95,10 +116,11 @@ export async function runStages(s) {
         // through git (its input names both commits).
         const run = (tree) => Promise.all(execs.map((pass) => {
           const reviewer = map[pass.reviewer];
-          return exec(reviewer, passInput(s, pass, stage), { root: reviewer.builtIn ? root : tree, env: cleanEnv }).then((outcome) => [pass, outcome]);
+          const started = Date.now();
+          return exec(reviewer, passInput(s, pass, stage), { root: reviewer.builtIn ? root : tree, env: cleanEnv }).then((outcome) => [pass, outcome, Math.round((Date.now() - started) / 1000)]);
         }));
         const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
-        for (const [pass, outcome] of outcomes) {
+        for (const [pass, outcome, seconds] of outcomes) {
           if (outcome.status !== 'done') continue;
           // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks
           // nothing, and `residuals` names it for the pull request body. cleanOutput (reviewers.mjs) already limits a
@@ -116,7 +138,7 @@ export async function runStages(s) {
           const ruled = Array.isArray(outcome.ruled) ? outcome.ruled : [];
           const carried = withEndedWaivers(state, ruled, Array.isArray(outcome.carried) ? outcome.carried : []);
           state.passes[pass.id] = {
-            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
+            head, reviewer: pass.reviewer, seconds, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
           };
@@ -127,16 +149,12 @@ export async function runStages(s) {
           undoRound();
           return quotaStop(outOfQuota[0], stage, outOfQuota[1].reason);
         }
-        const failed = outcomes.find(([, outcome]) => outcome.status !== 'done');
-        if (failed) {
-          const key = `${head}:${failed[0].id}`;
-          state.failures[key] = (state.failures[key] ?? 0) + 1;
-          // A slice that fails twice is cut in half on the next step: a smaller slice is likelier to fit.
-          const halve = failed[0].role === 'slice' && state.failures[key] === 2 && (failed[0].files?.length ?? 0) > 1 && !failed[0].id.match(/\.[ab]$/u);
-          if (halve) state.halved = { ...(state.halved ?? {}), [failed[0].id]: true };
-          const stuck = state.failures[key] >= MAX_ATTEMPTS && !halve;
+        const failures = outcomes.filter(([, outcome]) => outcome.status !== 'done');
+        if (failures.length) {
+          const counted = countFailures(state, head, failures);
+          const stuck = counted[0].attempts >= MAX_ATTEMPTS && !counted[0].halve;
           undoRound();
-          return finish(stuck ? 'stuck' : 'incomplete', { reason: `${failed[0].id}: ${failed[1].reason}${halve ? '; it runs as two halves next' : ''}`, attempts: state.failures[key], retry_recommended: !stuck });
+          return finish(stuck ? 'stuck' : 'incomplete', { reason: counted.map((each) => each.reason).join('; '), attempts: counted[0].attempts, retry_recommended: !stuck });
         }
         // Passes still without a result, a cross pass included, keep the stage open: a partial review never passes.
         const left = stage.passes.filter((pass) => !resultFor(pass) && map[pass.reviewer]?.kind === 'exec');

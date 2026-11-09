@@ -9,6 +9,7 @@ import { bannedPatterns } from '../scripts/banned-terms.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config-defaults.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { check as prBody } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/github/public-text.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -257,4 +258,111 @@ test('the Bash hook records a hit from the file with neither the word nor its pa
   const row = log.trim().split('\n').map((line) => JSON.parse(line)).find((each) => each.event === 'hook_deny');
   assert.equal(row.rule, 'public-text');
   assert.match(row.reason, /private word from `\.banned-terms\.local` matched in the body/);
+});
+
+// Bare words the merge guard and other rules would read as commands stay inside strings: these run only through check().
+const OTHER = 'https://github.com/other/repo';
+
+test('a target counts as another repository only as a URL of its kind, with scheme and host', (t) => {
+  const run = project(t, WITH_PATTERNS, {}, 'https://github.com/acme/notes.git');
+  for (const command of [
+    `gh pr edit ${OTHER}/pull/3 --body '${BAD}'`,
+    `gh pr close ${OTHER}/pull/3 --comment '${BAD}'`,
+    `gh pr reopen ${OTHER}/pull/3 --comment '${BAD}'`,
+    `gh pr merge ${OTHER}/pull/3 --body '${BAD}'`,
+    `gh pr comment ${OTHER}/pull/3 --body '${BAD}'`,
+    `gh pr comment ${OTHER}/issues/3 --body '${BAD}'`,
+    `gh issue edit ${OTHER}/issues/3 --body '${BAD}'`,
+    `gh issue close ${OTHER}/issues/3 --comment '${BAD}'`,
+  ]) assert.equal(run(command), null, command);
+  for (const command of [
+    `gh pr edit ${OTHER}/issues/3 --body '${BAD}'`,
+    `gh pr merge ${OTHER}/issues/3 --body '${BAD}'`,
+    `gh pr close ${OTHER}/issues/3 --comment '${BAD}'`,
+    `gh pr edit other/repo/pull/3 --body '${BAD}'`,
+    `gh pr edit github.com/other/repo/pull/3 --body '${BAD}'`,
+    `gh pr comment team/pull/3 --body '${BAD}'`,
+    `gh pr comment team/issues/3 --body '${BAD}'`,
+  ]) assert.match(run(command) ?? '', /^Blocked: the \w+ matches/, command);
+});
+
+test('close, reopen, and merge text is read, and each posts none unless given it', (t) => {
+  const run = project(t, WITH_PATTERNS, { 'bad.md': BAD });
+  for (const command of [
+    `gh issue close 3 --comment '${BAD}'`, `gh issue close 3 -c '${BAD}'`, `gh issue reopen 3 --comment='${BAD}'`, `gh pr close 3 -c '${BAD}'`, `gh pr reopen 3 -c '${BAD}'`,
+    `gh issue close 3 --comment "$(cat <<'EOF'\n${BAD}\nEOF\n)"`,
+  ]) assert.match(run(command) ?? '', /^Blocked: the comment matches/, command);
+  for (const command of [`gh pr merge 3 --body '${BAD}'`, `gh pr merge 3 -b '${BAD}'`, 'gh pr merge 3 -F bad.md', `gh pr merge 3 --squash --body "$(cat <<'EOF'\n${BAD}\nEOF\n)"`]) {
+    assert.match(run(command) ?? '', /^Blocked: the body matches/, command);
+  }
+  for (const command of [`gh pr merge 3 --subject '${BAD}'`, `gh pr merge 3 -t '${BAD}'`, `gh pr merge -s 3 -t '${BAD}'`, `gh pr merge 3 -m --subject '${BAD}'`, `gh pr merge 3 -sd --subject='${BAD}'`]) {
+    assert.match(run(command) ?? '', /^Blocked: the subject matches/, command);
+  }
+  for (const command of ['gh issue close 3', 'gh issue reopen 3', 'gh pr close 3 -d', 'gh pr reopen 3', 'gh pr merge 3 --squash', 'gh pr merge 3 -m --auto', 'gh pr merge 3 --match-head-commit abc1234', `gh issue close 3 -r '${BAD}'`, `gh issue close 3 --reason '${BAD}'`]) {
+    assert.equal(run(command), null, command);
+  }
+  const unread = run('gh issue close 3 --comment "$UNREAD"');
+  assert.match(unread, /^Blocked: the comment is one this rule cannot read/);
+  assert.match(unread, /2\. run `gh issue comment 3 --body-file .*comment-body-/u);
+  assert.match(unread, /Then run `gh issue close` without --comment/);
+  assert.match(run('gh pr merge 3 --body "$UNREAD"'), /`.*merge-body-<branch>\.md`/u);
+  assert.match(run('gh pr merge 3 --subject "$UNREAD"'), /^Blocked: the subject is one this rule cannot read/);
+});
+
+test('the pull request body rule still reads only pr create and pr edit', (t) => {
+  const dir = project(t, { version: 1 }).dir;
+  for (const command of ['gh pr merge 3 --body x', 'gh pr close 3 --comment x', 'gh issue close 3 -c x', 'gh pr comment 3 --body x', 'gh issue create --title x --body y']) {
+    assert.equal(prBody(command, { cwd: dir, env: {} }), null, command);
+  }
+  assert.match(prBody('gh pr edit 3 --body x', { cwd: dir, env: {} }), /^Blocked: the body has no/);
+});
+
+test('whitespace runs count as one space, so a wrapped phrase matches, in config patterns and private lines', (t) => {
+  const run = project(t, { version: 1, github: { requiredSections: [], publicText: { patterns: ['second (form|shape)'] } } }, { [FILE]: 'two private words\n', 'wrapped.md': 'a second\n   shape here\n' });
+  assert.match(run('gh issue comment 3 -F wrapped.md'), /^Blocked: the body matches/);
+  assert.match(run("gh issue comment 3 --body 'a second\t\tform'"), /^Blocked: the body matches/);
+  assert.match(run("gh issue comment 3 --body 'two\n  private\r\n words'"), /^Blocked: a private word/);
+  assert.match(run("gh issue create --body x --title 'two   private  words'"), /^Blocked: a private word from `\.banned-terms\.local` matched in the title/);
+  assert.equal(run("gh issue comment 3 --body 'two different words'"), null);
+});
+
+test('a device or a pipe is no body: the hook refuses it, fed through a real pipe', (t) => {
+  const run = project(t);
+  const env = clean(t);
+  execFileSync('mkfifo', [path.join(run.dir, 'fifo')]);
+  const hookThroughPipe = (command) => spawnSync('sh', ['-c', 'printf %s "$HOOK_INPUT" | "$NODE" "$HOOK"'], {
+    encoding: 'utf8',
+    timeout: 15000,
+    env: { ...env, NODE: process.execPath, HOOK: path.join(ROOT, 'plugins/aidrian/scripts/hook-bash.mjs'), HOOK_INPUT: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: run.dir, session_id: 'public-text-pipe' }) },
+  });
+  for (const command of ['gh issue comment 3 --body-file /dev/stdin', 'gh issue comment 3 --body-file fifo', 'cp fifo made.md && gh issue comment 3 --body-file made.md']) {
+    const hook = hookThroughPipe(command);
+    assert.equal(hook.status, 2, command);
+    assert.match(hook.stderr, /^Blocked: the body is one this rule cannot read/, command);
+  }
+});
+
+test('the value of a gh issue option is never read as the target', (t) => {
+  const run = project(t, WITH_PATTERNS, {}, 'https://github.com/acme/notes.git');
+  const options = ['--type', '--parent', '--blocked-by', '--blocking', '--add-blocked-by', '--add-blocking', '--remove-blocked-by', '--remove-blocking', '--add-sub-issue', '--remove-sub-issue'];
+  for (const option of options) {
+    const command = `gh issue edit ${option} ${OTHER}/issues/9 3 --body`;
+    assert.match(run(`${command} '${BAD}'`) ?? '', /^Blocked: the body matches/, 'a URL value is no target');
+    assert.match(run(`${command} "$UNREAD"`) ?? '', /2\. run `gh issue edit 3 --body-file /u, 'the advice names the issue');
+  }
+});
+
+test('--fill with no title is refused as unread text', (t) => {
+  const run = project(t);
+  for (const command of ['gh pr create --fill --body x', 'gh pr create -f -b x', 'gh pr create --fill-first --body x']) {
+    assert.match(run(command) ?? '', /^Blocked: `--fill` with no --title takes the title from the commit messages/, command);
+  }
+  assert.equal(run('gh pr create --fill --title x --body y'), null);
+  assert.equal(run('gh pr create --fill --web'), null, 'a person posts from the browser');
+});
+
+test('attachments: alone they are refused as no body, and with a body their alt text is the stated limit', (t) => {
+  const run = project(t);
+  assert.match(run("gh pr comment 3 --attach './x.png#alt'"), /has no --body or --body-file/);
+  assert.equal(run(`gh pr comment 3 --body '${GOOD}' --attach './x.png#${BAD}'`), null);
 });

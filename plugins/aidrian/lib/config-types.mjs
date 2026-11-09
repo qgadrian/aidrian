@@ -12,27 +12,19 @@ const SEMVER = /^\d+\.\d+\.\d+$/u;
 const isAuditLabel = (value) => isText(value) && [...value.matchAll(/[{}]/gu)].length === 2 * [...value.matchAll(/\{(\w+)\}/gu)].filter(([, field]) => AUDIT_LABEL_FIELDS.includes(field)).length;
 export const isText = (value) => typeof value === 'string' && value.trim() !== '';
 export const isTexts = (value) => Array.isArray(value) && value.every(isText);
+const compiles = (source, flags) => {
+  try {
+    new RegExp(source, flags);
+    return true;
+  } catch {
+    return false;
+  }
+};
 // A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
 // (lib/rules/github/pr-body.mjs), so they are checked filled with a plain word.
-const isPattern = (value) => {
-  if (!isText(value)) return false;
-  try {
-    new RegExp(value.replaceAll('{types}', 'x').replaceAll('{issueKey}', 'x'), 'u');
-    return true;
-  } catch {
-    return false;
-  }
-};
+const isPattern = (value) => isText(value) && compiles(value.replaceAll('{types}', 'x').replaceAll('{issueKey}', 'x'), 'u');
 // A case-insensitive regular expression a project writes as a string, compiled as lib/rules/github/public-text.mjs compiles it.
-const isInsensitivePattern = (value) => {
-  if (!isText(value)) return false;
-  try {
-    new RegExp(value, 'iu');
-    return true;
-  } catch {
-    return false;
-  }
-};
+const isInsensitivePattern = (value) => isText(value) && compiles(value, 'iu');
 // A doc, section, or folder from the project root, as `decisions.escalateDocs` lists them (lib/decisions.mjs).
 const isDocPath = (value) => {
   if (!isText(value)) return false;

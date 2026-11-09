@@ -41,13 +41,25 @@ export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
 const FOOTER = /Generated with \[Claude Code\]/u;
 const FILL = new Set(['--fill', '--fill-first', '--fill-verbose', '-f']);
-// The short options of `gh pr create` and `gh pr edit` that take a value; -d, -e, -f, and -w are switches.
+// The short options of `gh pr` and `gh issue` create, edit, and comment that take a value; -d, -e, -f, and -w are switches.
 const SHORT_VALUES = new Set(['-a', '-B', '-b', '-F', '-H', '-l', '-m', '-p', '-r', '-R', '-T', '-t']);
+// Close, reopen, and merge read the same letters differently: `gh pr merge` has -d, -m, -r, and -s as switches.
+const CLOSE_SHORT_VALUES = new Set(['-c', '-r', '-R']);
+const MERGE_SHORT_VALUES = new Set(['-A', '-b', '-F', '-R', '-t']);
+const VERB_SHORT_VALUES = new Map([['close', CLOSE_SHORT_VALUES], ['reopen', CLOSE_SHORT_VALUES], ['merge', MERGE_SHORT_VALUES]]);
+// The gh commands whose text readBodyCall reads.
+const TEXT_VERBS = new Map([
+  ['pr', new Set(['create', 'edit', 'comment', 'close', 'reopen', 'merge'])],
+  ['issue', new Set(['create', 'edit', 'comment', 'close', 'reopen'])],
+]);
 // The canonical heredoc form, `--body "$(cat <<'EOF' … EOF)"`, and only it, since another command may print something
 // else, read from the raw command: the token holding it is
 // dynamic, and its text has lost the body's quotes. -b takes it attached too, or at the end of a cluster. The
 // substitution must be the whole word and hold only the heredoc. Group 4 is the body.
-const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)(?<quote>"?)\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\2\r?\n([\s\S]*?)\r?\n[ \t]*\3[ \t]*\r?\n?[ \t]*\)\k<quote>(?=\s|$|[;&|)])/gu;
+const HEREDOC_WORD = String.raw`(?<quote>"?)\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\2\r?\n([\s\S]*?)\r?\n[ \t]*\3[ \t]*\r?\n?[ \t]*\)\k<quote>(?=\s|$|[;&|)])`;
+const BODY_HEREDOC = new RegExp(String.raw`(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)` + HEREDOC_WORD, 'gu');
+// The same for a call whose text may be a closing comment: the pull request rules count only body heredocs.
+export const TEXT_HEREDOC = new RegExp(String.raw`(?:--(?:body|comment)(?:=|\s+)|-[A-Za-z]*[bc]=?\s*)` + HEREDOC_WORD, 'gu');
 
 // Shared temp folders: concurrent sessions write the same names there, and one session's body can publish as another's.
 const SHARED_TEMP = ['/tmp/', '/private/tmp/', '/var/tmp/', '/private/var/tmp/', '/var/folders/', '/private/var/folders/'];
@@ -70,15 +82,15 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 // substitutions and inline shells too: `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and
 // project. In a folder this rule cannot know, the project is the session's and a relative body file is unreadable. After
 // a later `cd` joined by `&&`, `chained` still names the project, though a relative body file stays unreadable. Each call
-// takes its own heredoc from its line, and `written` holds the files the line wrote before it (`lineWrites`).
-export function* bodyCalls(command, cwd, read = readPrCall) {
+// takes its own heredoc from its line, as `heredocs` finds them, and `written` holds the files the line wrote before it (`lineWrites`).
+export function* bodyCalls(command, cwd, read = readPrCall, heredocs = BODY_HEREDOC) {
   const pending = new Map();
   const writes = lineWrites(command);
   for (const entry of walkCommands(command, cwd)) {
     const { segment, line } = entry;
     if (read(segment)) {
       // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
-      if (!pending.get(line)?.length) pending.set(line, callsOn(line, read));
+      if (!pending.get(line)?.length) pending.set(line, callsOn(line, read, heredocs));
       const call = pending.get(line).shift();
       if (call) {
         call.stdin = stdinBody(entry);
@@ -226,9 +238,10 @@ const isDirectory = (file) => {
   }
 };
 
+// A regular file's text, or null. A device or a FIFO is no body: reading one can hang the hook, or read as empty and pass.
 const readText = (file) => {
   try {
-    return readFileSync(file, 'utf8');
+    return statSync(file).isFile() ? readFileSync(file, 'utf8') : null;
   } catch {
     return null;
   }
@@ -244,10 +257,10 @@ export const unchangedHeredoc = (match) => (match[2] || !/[$`\\]/u.test(match[4]
 // delimiter that holds `$`, a backtick, or a backslash is expanded by bash, so it is not read either.
 export const readPrCalls = (line) => callsOn(line, readPrCall);
 
-function callsOn(line, read) {
+function callsOn(line, read, pattern = BODY_HEREDOC) {
   const calls = lexCommand(line).map((segment) => read(segment)).filter(Boolean);
   const dynamic = calls.filter((call) => call.body?.dynamic);
-  const heredocs = [...line.matchAll(BODY_HEREDOC)].map(unchangedHeredoc);
+  const heredocs = [...line.matchAll(pattern)].map(unchangedHeredoc);
   dynamic.forEach((call, i) => {
     call.heredoc = heredocs.length === dynamic.length ? heredocs[i] : null;
   });
@@ -257,12 +270,13 @@ function callsOn(line, read) {
 // A `gh [-R repo] pr create|edit …` segment, as readBodyCall reads it, else null.
 export function readPrCall(segment) {
   const call = readBodyCall(segment);
-  return call?.noun === 'pr' && call.subcommand !== 'comment' ? call : null;
+  return call?.noun === 'pr' && ['create', 'edit'].includes(call.subcommand) ? call : null;
 }
 
-// { noun, subcommand, fill, draft, body, bodyFile, title, repo, target, head, base, dryRun, deleteLast } for a
-// `gh [-R repo] pr|issue create|edit|comment …` segment, else null. Later flags win, as in gh. `title`, `repo`, `head`, and
-// `base` are tokens; `target` is the first positional (the issue or pull request an edit or a comment names).
+// { noun, subcommand, fill, draft, body, bodyFile, title, repo, target, head, base, dryRun, deleteLast } for a segment
+// of `gh [-R repo] pr|issue create|edit|comment|close|reopen …` or `gh pr merge …`, else null. Later flags win, as in gh.
+// `title`, `repo`, `head`, and `base` are tokens; `target` is the first positional (the issue or pull request named). A
+// closing comment is the `body`, and the subject of a merge the `title`.
 export function readBodyCall(segment) {
   const { program, args } = readInvocation(segment);
   if (program !== 'gh') return null;
@@ -280,7 +294,9 @@ export function readBodyCall(segment) {
   }
   // `gh pr new` and `gh issue new` are gh's built-in aliases for `create`.
   if (words[1] === 'new') words[1] = 'create';
-  if (!['pr', 'issue'].includes(words[0]) || !['create', 'edit', 'comment'].includes(words[1])) return null;
+  if (!TEXT_VERBS.get(words[0])?.has(words[1])) return null;
+  const shorts = VERB_SHORT_VALUES.get(words[1]) ?? SHORT_VALUES;
+  const closing = ['close', 'reopen'].includes(words[1]);
   const call = { noun: words[0], subcommand: words[1], fill: false, draft: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null, dryRun: false, deleteLast: false };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
@@ -294,8 +310,8 @@ export function readBodyCall(segment) {
       // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`. A switch ending a cluster takes an
       // explicit value after `=`, as pflag reads it: `-w=0` and `-dw=false` are web off.
       const split = /^-([^=]+)=(.*)$/u.exec(text);
-      const explicit = split && !readShortOptions(`-${split[1]}`, SHORT_VALUES).value ? split : null;
-      const { options, value } = readShortOptions(explicit ? `-${explicit[1]}` : text, SHORT_VALUES);
+      const explicit = split && !readShortOptions(`-${split[1]}`, shorts).value ? split : null;
+      const { options, value } = readShortOptions(explicit ? `-${explicit[1]}` : text, shorts);
       const last = options.at(-1);
       const on = (option) => options.includes(option) && (option !== last || !explicit || isTrue(explicit[2], dynamic));
       // --fill is refused unless it is statically off; --web and --help exempt only when statically on.
@@ -313,28 +329,35 @@ export function readBodyCall(segment) {
     else if (flag === '--dry-run') call.dryRun = isTrue(inline, dynamic);
     else if (flag === '--help') call.help = isTrue(inline, dynamic);
     else if (flag === '--delete-last') call.deleteLast = isTrue(inline, dynamic);
-    else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
+    else if (flag === '--body' || flag === '-b' || (closing && (flag === '--comment' || flag === '-c'))) [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
-    else if (flag === '--title' || flag === '-t') call.title = value();
+    else if (flag === '--title' || flag === '-t' || (call.subcommand === 'merge' && flag === '--subject')) call.title = value();
     else if (flag === '--head' || flag === '-H') call.head = value();
     else if (flag === '--base' || flag === '-B') call.base = value();
     else if (flag === '--repo' || flag === '-R') call.repo = value();
-    else if (SHORT_VALUES.has(flag) || LONG_VALUES.has(flag)) value();
+    else if (shorts.has(flag) || LONG_VALUES.has(flag)) value();
     else if (!text.startsWith('-') && call.target === null) call.target = args[i];
   }
   return call;
 }
 
-// Whether the call names a repository other than those of `project`'s checkout: by -R, the URL an edit or a comment names,
+// Whether the call names a repository other than those of `project`'s checkout: by -R, the URL it targets (`targetUrl`),
 // or else `ghRepo`, the GH_REPO in force (review-request `invocationRepo`). A value the rule cannot read, or a checkout
 // with no remote to compare, is not another repository, so the project's rules hold.
 export function targetsAnotherRepo(call, project, ghRepo) {
-  const url = call.subcommand !== 'create' && call.target && !call.target.dynamic && /\/(?:pull|issues)\/\d+/u.test(call.target.text) ? call.target : null;
-  const named = call.repo ?? url ?? { text: ghRepo, dynamic: false };
+  const named = call.repo ?? targetUrl(call) ?? { text: ghRepo, dynamic: false };
   const repo = named.dynamic ? null : repoName(named.text);
   if (repo === null) return false;
   const own = remoteRepos(project);
   return own.length > 0 && !own.includes(repo);
+}
+
+// The target when it is a URL gh reads as one: scheme and host are required, since `gh pr edit team/pull/3` names a branch.
+// A pull request call takes only a pull request's URL; an issue or a comment call takes an issue's too.
+function targetUrl(call) {
+  if (call.subcommand === 'create' || !call.target || call.target.dynamic) return null;
+  const kinds = call.noun === 'issue' || call.subcommand === 'comment' ? 'pull|issues' : 'pull';
+  return new RegExp(String.raw`^https?://[^/\s]+/[^/\s]+/[^/\s]+/(?:${kinds})/\d+(?:[/?#]|$)`, 'iu').test(call.target.text) ? call.target : null;
 }
 
 // A boolean option's value as gh (pflag) reads it: bare or a pflag true word is on, a false word is off. A value the
@@ -342,11 +365,14 @@ export function targetsAnotherRepo(call, project, ghRepo) {
 const isTrue = (inline, dynamic = false) => inline === null || (!dynamic && /^(?:true|1|t|TRUE|True|T)$/u.test(inline));
 const isFalse = (inline, dynamic = false) => inline !== null && !dynamic && /^(?:false|0|f|FALSE|False|F)$/u.test(inline);
 
-// The long options of `gh pr create` and `gh pr edit` that take a value, so their value is never read as the target.
+// The long options of the commands readBodyCall reads that take a value, so their value is never read as the target.
 const LONG_VALUES = new Set([
   '--assignee', '--base', '--head', '--label', '--milestone', '--project', '--reviewer', '--template', '--recover', '--attach',
   '--add-assignee', '--remove-assignee', '--add-label', '--remove-label', '--add-project', '--remove-project',
   '--add-reviewer', '--remove-reviewer',
+  '--type', '--parent', '--blocked-by', '--blocking', '--add-blocked-by', '--add-blocking', '--remove-blocked-by', '--remove-blocking',
+  '--add-sub-issue', '--remove-sub-issue',
+  '--reason', '--duplicate-of', '--author-email', '--match-head-commit',
 ]);
 
 function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, env, written = new Map(), listOpenPrs }) {
@@ -538,7 +564,7 @@ export function bodyFilePath(state, call, cwd) {
     const result = runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd);
     branch = result.status === 0 ? result.stdout.trim() || null : null;
   }
-  const stem = call.subcommand === 'comment' ? 'comment-body' : call.noun === 'issue' ? 'issue-body' : 'pr-body';
+  const stem = { comment: 'comment-body', merge: 'merge-body' }[call.subcommand] ?? (call.noun === 'issue' ? 'issue-body' : 'pr-body');
   const file = `${stem}-${branch ? branch.replaceAll('/', '-') : '<branch>'}.md`;
   const notes = [state ? null : '`<state>` is the folder `aidrian state` prints', branch ? null : '`<branch>` is the branch name with each `/` replaced by `-`'];
   const known = notes.filter(Boolean);
@@ -549,7 +575,7 @@ export function bodyFilePath(state, call, cwd) {
 // that path written out. The heredoc form is the one `lineWrites` reads in the same command.
 export function twoSteps({ file, note }, call) {
   const target = call.subcommand !== 'create' && call.target && !call.target.dynamic ? ` ${call.target.text}` : '';
-  const skill = call.noun === 'pr' && call.subcommand !== 'comment' ? ' (the pr-write skill)' : '';
+  const skill = call.noun === 'pr' && ['create', 'edit'].includes(call.subcommand) ? ' (the pr-write skill)' : '';
   return `Do this instead: 1. write the body to \`${file}\`${note}, with the file tool or with \`cat > ${file} <<'EOF'\` ` +
     `earlier in this command; 2. run \`gh ${call.noun} ${call.subcommand}${target} --body-file ${file}\`, the path written out${skill}.`;
 }
@@ -583,7 +609,7 @@ export function readBody(call, cwd, written = new Map()) {
   try {
     // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh opens the operand.
     const file = call.bodyFile.text;
-    return readFileSync(path.isAbsolute(file) ? file : `${cwd}/${file}`, 'utf8');
+    return readText(path.isAbsolute(file) ? file : `${cwd}/${file}`);
   } catch {
     return null;
   }

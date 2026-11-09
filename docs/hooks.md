@@ -222,8 +222,10 @@ What each rule matches:
   run `gh pr create --body-file` with that path. The footer deny says this project's rule takes precedence over the host's
   attribution instructions, that the `attribution.pullRequest` lines replace it when set, and that Claude Code's
   `attribution.pr` setting set to `""` stops the host from asking. The [start lines](#start-lines) say the same up front.
-- Public text: with a pattern from config.json `github.publicText.patterns` or the git-ignored `.banned-terms.local`, `gh issue create|edit|comment` and `gh pr create|edit|comment` whose body or
-  `--title` matches a pattern. GitHub keeps the old text in a public edit history that no API deletes, so this stops it before the first post.
+- Public text: with a pattern from config.json `github.publicText.patterns` or the git-ignored `.banned-terms.local`,
+  `gh issue create|edit|comment|close|reopen` and `gh pr create|edit|comment|close|reopen|merge` whose text matches a pattern:
+  `--body` or `--body-file`, `--title`, the `--comment` of a close or a reopen, and the `--subject` of a merge.
+  Each run of whitespace counts as one space, so a phrase wrapped across lines matches. GitHub keeps the old text in a public edit history that no API deletes, so this stops it before the first post.
   The body is read as the pull request body rule reads it, heredoc and `--body-file -` included, and a call that names another repository
   gets no rule here. The deny for a config pattern names the pattern, never the text around the match, and says to rewrite the text as the rule or limit,
   keep the detail in the state folder, and that an edit does not remove what was already posted.
@@ -232,12 +234,14 @@ What each rule matches:
   The rule reads the file from the project root and from the main checkout, and uses both when both exist, as `scripts/banned-terms.mjs` does:
   git does not copy an ignored file, so a linked worktree normally has none. A line that does not compile drops only itself, silently;
   `aidrian check` does not read the file, so it reports no such line.
-  A body or title the rule cannot read is refused, with the two steps that pass for a body, and so is a call with no body flag whose text would come
-  from an editor, a prompt, a template, or the commit messages. `--web`, `--dry-run`, `--help`, `--delete-last`, and an edit with no body flag pass.
-  With no pattern from either, the default, the rule refuses nothing, and it never asks whether the repository is public: a project opting in is the signal.
-  It still looks for the file on each of these calls, which runs git once.
+  A body or title the rule cannot read is refused, with the two steps that pass for a body, and that includes a device or a pipe given as the body file, and so is a call with no body flag whose text would come
+  from an editor, a prompt, a template, or the commit messages. `--fill` with no `--title` is refused the same way.
+  `--web`, `--dry-run`, `--help`, `--delete-last`, and an edit, close, reopen, or merge with no text flag pass.
+  With no pattern from either, the default, the rule refuses nothing: it reads only the config and looks for the file, which runs git once,
+  and it looks up no remotes and reads no body. It never asks whether the repository is public: a project opting in is the signal.
   A pattern catches only obvious wording. It is no substitute for writing rules only: text that avoids the listed words passes.
-  The rule reads only these commands: `gh api`, `gh pr review`, and the GitHub MCP tools are not checked.
+  The rule reads only these commands: `gh api`, `gh pr review`, and the GitHub MCP tools are not checked,
+  and neither is the alt text of an `--attach` file. A comment with attachments and no body flag is refused as having no body.
   The pull request body rule has no MCP counterpart in the GitHub MCP hook either, so a post through an MCP tool goes unread by both.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.

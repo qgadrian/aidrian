@@ -495,6 +495,9 @@ A line in the file that does not compile drops only that line, with no report: `
 `aidrian check` reports a pattern that does not compile, and until it is fixed the hook reads the list as empty, so the session keeps running.
 `AIDRIAN_ALLOW_PUBLIC_TEXT=1`, set in the Human's own shell, lets a call through.
 
+Each run of whitespace counts as one space, so a phrase wrapped across lines matches; write a space in a pattern, not `\n`.
+Keep patterns plain: a pattern that backtracks badly can stall the hook.
+
 A pattern catches only obvious wording and is no substitute for writing rules only: rewrite the text as the rule or limit,
 and keep the detail in the state folder. The [Bash rules](hooks.md#bash-rules) list what the rule does not read.
 

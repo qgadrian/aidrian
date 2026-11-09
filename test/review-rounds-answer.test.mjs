@@ -43,3 +43,11 @@ test('a raise approved for another repository does not run here', (t) => {
   const context = setup(t, [{ 'Raise the cap on fork/r#12 to --max-rounds 4?': 'Approve' }]);
   assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4', context), OVERRIDE_REASON);
 });
+
+test('an approved raise aimed elsewhere, or in a checkout with several remotes, stays denied', (t) => {
+  const context = setup(t, [{ 'Raise the cap on o/r#12 to --max-rounds 4?': 'Approve' }]);
+  const raise = 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4';
+  for (const aimed of [`cd /other && ${raise}`, `env -C /other ${raise}`, `GH_REPO=x/y ${raise}`]) assert.equal(check(aimed, context), OVERRIDE_REASON, aimed);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
+  assert.equal(check(raise, context), OVERRIDE_REASON);
+});

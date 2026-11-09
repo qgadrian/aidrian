@@ -19,9 +19,8 @@ import { loadConfig } from '../../config.mjs';
 import { ROUNDS_OVERRIDE } from '../../pr-await-review.mjs';
 import { findProject } from '../../project.mjs';
 import { aidrianArgs, assignsVariable, commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
-import { originRepo } from '../../review-gate.mjs';
 import { readTranscript, transcriptAnswers } from '../review-extend.mjs';
-import { namesChange } from '../review-signoff.mjs';
+import { approvalRepo, namesChange } from '../review-signoff.mjs';
 import { readRequests } from './review-request.mjs';
 
 export const OVERRIDE_REASON =
@@ -63,7 +62,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input =
   for (const line of commandLines(command)) {
     for (const segment of lexCommand(line)) {
       const invocation = readInvocation(segment);
-      if (setsOverride(invocation) && !approvedRaise(invocation, transcriptAnswers(readTranscript(input?.transcript_path)), originRepo(project))) return OVERRIDE_REASON;
+      if (setsOverride(invocation) && !approvedRaise(invocation, transcriptAnswers(readTranscript(input?.transcript_path)), approvalRepo(project, command, cwd, `${ROUNDS_OVERRIDE}=1\\s+`))) return OVERRIDE_REASON;
       if (readRequests(invocation, config.github.reviewer, read, env).length > 0) return REQUEST_REASON;
     }
   }

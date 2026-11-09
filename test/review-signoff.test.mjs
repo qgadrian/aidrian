@@ -171,3 +171,13 @@ test('an answer naming another repository`s pull request approves nothing here',
     assert.equal(check(command, { cwd, input: transcript(t, [{ [question]: 'Approve' }]) }), REASON, question);
   }
 });
+
+test('an approved command aimed elsewhere, or a checkout with several remotes, gets no in-session route', (t) => {
+  const cwd = project(t);
+  const command = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
+  const input = transcript(t, [{ 'o/r#9 at abc1234: ui/fit?': 'Approve' }]);
+  assert.equal(check(command, { cwd, input }), null);
+  for (const aimed of [`cd /other && ${command}`, `env -C /other ${command}`, `GH_REPO=x/y ${command}`, `${command}; true`]) assert.equal(check(aimed, { cwd, input }), REASON, aimed);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd });
+  assert.equal(check(command, { cwd, input }), REASON, 'the forge default may be the parent');
+});

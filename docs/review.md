@@ -302,7 +302,7 @@ request, and an acceptance with no reason. Like every sign-off, it is an audit e
 A long-form sign-off, `--accept`, or `--overrule` runs from the session once the Human answered it with AskUserQuestion:
 the question names `<owner>/<name>#<PR>` of this checkout's origin, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
 `stage:<name>/signoff`, and the chosen option starts with "Approve". The latest answer naming it decides, and a push asks
-again. The command is written with no shell variables or repeated flags. `--last` stays in the Human's
+again. The command is one plain `aidrian pr` call with no shell variables, repeated flags, `cd`, `env -C`, or chain, in a checkout with one remote repository. `--last` stays in the Human's
 shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
 
 #### Unattended rulings

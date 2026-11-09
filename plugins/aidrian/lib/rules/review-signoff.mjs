@@ -17,17 +17,27 @@
 
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
-import { originRepo } from '../review-gate.mjs';
+import { originRepo, remoteRepos } from '../review-gate.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 export const REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, recorded under their name, and only the Human runs it, `--last` included. ' +
-  'Stop, and ask the Human first with AskUserQuestion, in their terms: a question that also names `<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff`, with a recommended option that starts with "Approve"; on that answer the long-form command runs here, written out with no shell variables. ' +
+  'Stop, and ask the Human first with AskUserQuestion, in their terms: a question that also names `<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff`, with a recommended option that starts with "Approve"; on that answer the long-form command runs here, written out as one plain command with no shell variables, `cd`, or chain, from the checkout of that pull request; a checkout with several remotes has no such route. ' +
   'On a host with no such question, hand the Human a command for their own shell (`!` in the prompt, or another terminal). ' +
   'At human_required naming one flow, once `aidrian pr signoff <PR> --last --check` exits 0, hand over the short form `aidrian pr signoff <PR> --last`, ' +
   'short enough to type from a phone, naming the flow and short head that `--check` printed. ' +
   'At a disputed flow\'s overrule, or any other stop, hand over the command the review step printed. ' +
   'To try a command first, run it with `--check`, which records nothing.';
+
+// The one repository an approved command can only mean, or null. Only a single plain `aidrian pr ...` qualifies: a chain,
+// `cd`, `env -C`, or an environment prefix such as GH_REPO may aim it elsewhere. A checkout with several remotes qualifies
+// neither, since the forge's default may be a parent, not origin. `allowed` is the one prefix the caller's own rule permits.
+export function approvalRepo(project, command, cwd, allowed = '') {
+  const plain = new RegExp(`^\\s*${allowed}(?:[^\\s;&|()]*/)?aidrian\\s+pr\\s`, 'u').test(command);
+  if (!plain || walkCommands(command, cwd).length !== 1) return null;
+  if (new Set(remoteRepos(project)).size !== 1) return null;
+  return originRepo(project);
+}
 
 // Whether `question` names pull request `pr` of `repo`, as `owner/name#pr`.
 export const namesChange = (question, repo, pr) => new RegExp(`(?<![\\w./-])${repo.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}#${pr}(?!\\d)`, 'iu').test(question);
@@ -69,7 +79,7 @@ export function check(command, { cwd = process.cwd(), input = {} } = {}) {
     // dynamic word is not: `printf …`--check may expand to a value that swallows it, or to nothing.
     if (words[0]?.text === 'pr' && words[1]?.text === 'signoff' && !words.some((word) => !word.dynamic && word.text === '--check')) {
       const answers = transcriptAnswers(readTranscript(input?.transcript_path));
-      if (!answers.length || !answered(words, answers, originRepo(project))) return REASON;
+      if (!answers.length || !answered(words, answers, approvalRepo(project, command, cwd))) return REASON;
     }
   }
   return null;

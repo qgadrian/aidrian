@@ -21,18 +21,20 @@ export function committedConfig(project, commit, errors = [], options = {}) {
   return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config, errors);
 }
 
-// The commit of origin's default branch, from names the working copy cannot set: origin/HEAD, then the plugin's default
-// branch name on origin, never the `git.defaultBranch` a working copy's config names. Null when neither resolves. Throws
-// when git fails on one, whose answer the next ref must not replace: for rev-parse, 1 is git saying no such ref.
-// `git` gives each read's options.
-export function originDefaultTip(root, git = () => undefined) {
-  for (const ref of ['refs/remotes/origin/HEAD', `refs/remotes/origin/${DEFAULTS.git.defaultBranch}`]) {
+// The commit of the first of `refs`, full ref names, that resolves, or null when none does. Throws when git fails on one,
+// whose answer the next ref must not replace: for rev-parse, 1 is git saying no such ref. `git` gives each read's options.
+export function firstTip(root, refs, git) {
+  for (const ref of refs) {
     const tip = runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], root, git());
     if (tip.status === 0) return tip.stdout.trim();
     if (tip.status !== 1) throw new Error(`git rev-parse ${ref} failed`);
   }
   return null;
 }
+
+// The commit of origin's default branch, from names the working copy cannot set: origin/HEAD, then the plugin's default
+// branch name on origin, never the `git.defaultBranch` a working copy's config names. Null and throws as firstTip does.
+export const originDefaultTip = (root, git = () => undefined) => firstTip(root, ['refs/remotes/origin/HEAD', `refs/remotes/origin/${DEFAULTS.git.defaultBranch}`], git);
 
 // Why a record read through the working copy's `state.dir` is not the one the committed config names, or null. `working`
 // and `committed` are configs, `where` names the commit's branch in the message, and `record` the record the reader reads.

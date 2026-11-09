@@ -7,18 +7,18 @@
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { committedConfig, loadConfig, originDefaultTip, stateDirProblem } from '../config.mjs';
+import { committedConfig, firstTip, loadConfig, originDefaultTip, stateDirProblem } from '../config.mjs';
 import { isDirectory, isFile, isWithin, resolvedPath } from '../fs.mjs';
 import { checkoutRoots, runGit } from '../git.mjs';
 import { committedConfigFile, recordsFolder, stateDir } from '../project.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
-import { changedFiles, fileAt, resolve } from './diff.mjs';
+import { changedFiles, fileAt } from './diff.mjs';
 import { flowsInForce } from './plan.mjs';
 import { touchedCitations } from './cited.mjs';
 
 // The base branch's tip in this checkout, by full ref names, so the answer does not depend on other refs: its tracking
-// ref, or else its own branch. `git` gives each read's options.
-const baseTipOf = (root, base, git) => resolve(root, `refs/remotes/origin/${base}`, git()) ?? resolve(root, `refs/heads/${base}`, git());
+// ref, or with no such ref its own branch. Null and throws as firstTip does. `git` gives each read's options.
+const baseTipOf = (root, base, git) => firstTip(root, [`refs/remotes/origin/${base}`, `refs/heads/${base}`], git);
 
 // Each git read with its own default options, for a command with no deadline.
 const defaultGit = () => undefined;

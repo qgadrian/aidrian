@@ -1023,6 +1023,31 @@ test('a read git fails on leaves the next ref out of the guard\'s default branch
   assert.equal(baseProblem(r.project, { repo: 'o/r', git: () => ({}) }), null);
 });
 
+test('a read git fails on leaves the local branch out of the base\'s tip', async (t) => {
+  quiet(t);
+  const before = process.env.PATH;
+  t.after(() => (process.env.PATH = before));
+  for (const failed of ['exit 128', 'kill -9 $$']) {
+    // A command: the tracking ref differs from the head, and a local branch of the base's name holds the head's value.
+    const command = movedOutside(t);
+    tracking(command);
+    command.git('update-ref', 'refs/heads/main', command.head);
+    const { project, config, forge } = command;
+    const extend = () => runExtend(['7', '--verdict', 'stop', '--reason', 'why'], project, config, { forge, repo: 'o/r' });
+    await assert.rejects(extend, /state\.dir differs from o\/r main/u, 'the tracking ref answers');
+    process.env.PATH = fakeGit(t, '*refs/remotes/origin/main*', failed);
+    await assert.rejects(extend, { message: 'git rev-parse refs/remotes/origin/main failed' }, failed);
+    process.env.PATH = before;
+
+    // The guard: the local branch differs from the head, so its answer would deny where the guard's rule is to go on.
+    const guard = movedOutside(t);
+    assert.match(baseProblem(guard.project, { repo: 'o/r', base: 'main', git: () => ({}) }), /state\.dir differs from o\/r main/u, 'with no such ref, the local branch answers');
+    process.env.PATH = fakeGit(t, '*refs/remotes/origin/main*', failed);
+    assert.equal(baseProblem(guard.project, { repo: 'o/r', base: 'main', git: () => ({}) }), null, failed);
+    process.env.PATH = before;
+  }
+});
+
 for (const [name, base] of [['a named base', 'main'], ['the default branch', null]]) {
   test(`a stopped read of ${name} leaves no later read past the deadline`, (t) => {
     const r = movedOutside(t);

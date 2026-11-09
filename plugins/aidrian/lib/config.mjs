@@ -18,7 +18,7 @@ import { older, pluginVersion, versionProblem } from './config-version.mjs';
 import { isFile, readJson } from './fs.mjs';
 import { checkLocalReview, checkLocalVisual } from './review/config.mjs';
 
-export { committedAuthority, committedConfig, committedDecisions, committedQuorumProduct, configFromText, originDefaultTip, stateDirProblem, strictConfigFromText } from './config-committed.mjs';
+export { committedAuthority, committedConfig, committedDecisions, committedQuorumProduct, configFromText, firstTip, originDefaultTip, stateDirProblem, strictConfigFromText } from './config-committed.mjs';
 export { DEFAULTS } from './config-defaults.mjs';
 export { localDecisions, resolveAutoMerge, resolveUnattendedWaiver } from './config-local.mjs';
 export { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, MAX_PLAN_OBJECTIONS, NO_REVIEWER, PR_FIELDS, VERSION } from './config-schema.mjs';

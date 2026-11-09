@@ -772,8 +772,8 @@ masked. The command and its files are the base branch's, like the rest of the re
 ## The record
 
 The review config of the pull request is read from its head commit, so a step run from another branch plans the
-same review. Where the record lives is the base branch's, as this checkout has it (its tracking ref `origin/<base>`, else
-its own branch `<base>`, by full ref names): `aidrian pr review`, `attest`, `signoff`, `extend`, `waive`, `ingest`,
+same review. Where the record lives is the base branch's, as this checkout has it (its tracking ref `origin/<base>`, or with
+no such ref its own branch `<base>`, by full ref names): `aidrian pr review`, `attest`, `signoff`, `extend`, `waive`, `ingest`,
 and `await-review --request` read `review.record` as that branch commits it. Each of them, and `request`, which writes only
 this machine's record, holds the working copy to that branch first. These read the record with no such hold, and that is
 their limit: `attest --check`, the review gate's read of it, and `await-review` without `--request`.

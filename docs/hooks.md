@@ -124,6 +124,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
+| Public text | Off unless config.json lists `github.publicText.patterns` |
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
 | [Tracker write guard](config.md#tracker) | Off unless config.json sets `"tracker": { "enabled": true }`, with the keys that key needs |
@@ -149,6 +150,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
+| Public text, when turned on | An issue, pull request, or comment whose text matches [`github.publicText.patterns`](config.md#public-text), or that the rule cannot read | `AIDRIAN_ALLOW_PUBLIC_TEXT=1` |
 | Attribution, when turned on | An agent's commit or new pull request without the [attribution](config.md#attribution) lines | `AIDRIAN_ALLOW_UNATTRIBUTED=1` |
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
@@ -220,6 +222,17 @@ What each rule matches:
   run `gh pr create --body-file` with that path. The footer deny says this project's rule takes precedence over the host's
   attribution instructions, that the `attribution.pullRequest` lines replace it when set, and that Claude Code's
   `attribution.pr` setting set to `""` stops the host from asking. The [start lines](#start-lines) say the same up front.
+- Public text: with config.json `github.publicText.patterns` set, `gh issue create|edit|comment` and `gh pr create|edit|comment` whose body or
+  `--title` matches a pattern. GitHub keeps the old text in a public edit history that no API deletes, so this stops it before the first post.
+  The body is read as the pull request body rule reads it, heredoc and `--body-file -` included, and a call that names another repository
+  gets no rule here. The deny names the pattern, never the text around the match, and says to rewrite the text as the rule or limit,
+  keep the detail in the state folder, and that an edit does not remove what was already posted.
+  A body or title the rule cannot read is refused, with the two steps that pass for a body, and so is a call with no body flag whose text would come
+  from an editor, a prompt, a template, or the commit messages. `--web`, `--dry-run`, `--help`, `--delete-last`, and an edit with no body flag pass.
+  With no patterns, the default, the rule looks nothing up, and it never asks whether the repository is public: a project opting in is the signal.
+  A pattern catches only obvious wording. It is no substitute for writing rules only: text that avoids the listed words passes.
+  The rule reads only these commands: `gh api`, `gh pr review`, and the GitHub MCP tools are not checked.
+  The pull request body rule has no MCP counterpart in the GitHub MCP hook either, so a post through an MCP tool goes unread by both.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
@@ -398,7 +411,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
+`grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.

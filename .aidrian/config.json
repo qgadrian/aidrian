@@ -10,6 +10,7 @@
   "github": {
     "extraRounds": "auto",
     "requiredChecks": ["Check (Node 22)", "Check (Node 24)", "Check (Node 26)", "Conventional Commit title"],
+    "publicText": { "patterns": ["\\bexploit\\b", "\\bproof of concept\\b", "\\battack (route|path)\\b"] },
     "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true }
   },
   "review": { "engine": "codex-local", "record": "local" }

@@ -58,33 +58,38 @@ const LIST_TIMEOUT_MS = 3000;
 // of the one check that leaves the process.
 export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  // Each gh call with the folder it runs in (shell-lex `walkCommands`), in substitutions and inline shells too:
-  // `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and project. In a folder this rule
-  // cannot know, the project is the session's and a relative body file is unreadable. After a later `cd` joined by
-  // `&&`, `chained` still names the project, though a relative body file stays unreadable. Each call takes its own
-  // heredoc from readPrCalls on its line.
+  for (const { call, entry, written } of bodyCalls(command, cwd)) {
+    const { folder, chained, line } = entry;
+    const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained) });
+    if (reason) return reason;
+  }
+  return null;
+}
+
+// Each gh call `read` matches, as { call, entry, written }, with the folder it runs in (shell-lex `walkCommands`), in
+// substitutions and inline shells too: `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and
+// project. In a folder this rule cannot know, the project is the session's and a relative body file is unreadable. After
+// a later `cd` joined by `&&`, `chained` still names the project, though a relative body file stays unreadable. Each call
+// takes its own heredoc from its line, and `written` holds the files the line wrote before it (`lineWrites`).
+export function* bodyCalls(command, cwd, read = readPrCall) {
   const pending = new Map();
   const writes = lineWrites(command);
   for (const entry of walkCommands(command, cwd)) {
-    const { segment, folder, chained, line } = entry;
-    if (!readPrCall(segment)) {
-      writes.note(entry);
-      continue;
+    const { segment, line } = entry;
+    if (read(segment)) {
+      // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
+      if (!pending.get(line)?.length) pending.set(line, callsOn(line, read));
+      const call = pending.get(line).shift();
+      if (call) {
+        call.stdin = stdinBody(entry);
+        call.bodyFile = writes.token(call.bodyFile, entry);
+        call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
+        yield { call, entry, written: writes.files };
+      }
     }
-    // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
-    if (!pending.get(line)?.length) pending.set(line, readPrCalls(line));
-    const call = pending.get(line).shift();
-    if (call) {
-      call.stdin = stdinBody(entry);
-      call.bodyFile = writes.token(call.bodyFile, entry);
-      call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
-      const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written: writes.files, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained) });
-      if (reason) return reason;
-    }
-    // Its own output can rewrite a body file a later gh call reads: `gh pr create … > b.md`.
+    // A gh call's own output can rewrite a body file a later gh call reads: `gh pr create … > b.md`.
     writes.note(entry);
   }
-  return null;
 }
 
 // What the command line `top` sets up before a later command on it runs, as { files, token, note }. `files` maps each
@@ -237,8 +242,10 @@ export const unchangedHeredoc = (match) => (match[2] || !/[$`\\]/u.test(match[4]
 // heredoc its dynamic --body holds. The n-th dynamic body takes the line's n-th body heredoc, and only when the counts
 // match: otherwise no dynamic body is read, so one call's heredoc never stands in for another's. A heredoc under a bare
 // delimiter that holds `$`, a backtick, or a backslash is expanded by bash, so it is not read either.
-export function readPrCalls(line) {
-  const calls = lexCommand(line).map((segment) => readPrCall(segment)).filter(Boolean);
+export const readPrCalls = (line) => callsOn(line, readPrCall);
+
+function callsOn(line, read) {
+  const calls = lexCommand(line).map((segment) => read(segment)).filter(Boolean);
   const dynamic = calls.filter((call) => call.body?.dynamic);
   const heredocs = [...line.matchAll(BODY_HEREDOC)].map(unchangedHeredoc);
   dynamic.forEach((call, i) => {
@@ -247,10 +254,16 @@ export function readPrCalls(line) {
   return calls;
 }
 
-// { subcommand, fill, draft, body, bodyFile, title, repo, target, head, base, dryRun } for a `gh [-R repo] pr create|edit …` segment, else null.
-// Later flags win, as in gh. `title`, `repo`, `head`, and `base` are tokens; `target` is the first positional (the pull request an edit
-// names).
+// A `gh [-R repo] pr create|edit …` segment, as readBodyCall reads it, else null.
 export function readPrCall(segment) {
+  const call = readBodyCall(segment);
+  return call?.noun === 'pr' && call.subcommand !== 'comment' ? call : null;
+}
+
+// { noun, subcommand, fill, draft, body, bodyFile, title, repo, target, head, base, dryRun, deleteLast } for a
+// `gh [-R repo] pr|issue create|edit|comment …` segment, else null. Later flags win, as in gh. `title`, `repo`, `head`, and
+// `base` are tokens; `target` is the first positional (the issue or pull request an edit or a comment names).
+export function readBodyCall(segment) {
   const { program, args } = readInvocation(segment);
   if (program !== 'gh') return null;
   let i = 0;
@@ -265,10 +278,10 @@ export function readPrCall(segment) {
     else if (text.startsWith('--repo=')) repo = { text: text.slice('--repo='.length), dynamic };
     else if (!text.startsWith('-')) words.push(text);
   }
-  // `gh pr new` is gh's built-in alias for `gh pr create`.
+  // `gh pr new` and `gh issue new` are gh's built-in aliases for `create`.
   if (words[1] === 'new') words[1] = 'create';
-  if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, draft: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null, dryRun: false };
+  if (!['pr', 'issue'].includes(words[0]) || !['create', 'edit', 'comment'].includes(words[1])) return null;
+  const call = { noun: words[0], subcommand: words[1], fill: false, draft: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null, dryRun: false, deleteLast: false };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     // After `--` every word is a positional: no flag, but still the pull request an edit names.
@@ -299,6 +312,7 @@ export function readPrCall(segment) {
     else if (flag === '--draft') call.draft = isTrue(inline, dynamic);
     else if (flag === '--dry-run') call.dryRun = isTrue(inline, dynamic);
     else if (flag === '--help') call.help = isTrue(inline, dynamic);
+    else if (flag === '--delete-last') call.deleteLast = isTrue(inline, dynamic);
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
     else if (flag === '--title' || flag === '-t') call.title = value();
@@ -311,11 +325,11 @@ export function readPrCall(segment) {
   return call;
 }
 
-// Whether the call names a repository other than those of `project`'s checkout: by -R, a pull request URL an edit names,
+// Whether the call names a repository other than those of `project`'s checkout: by -R, the URL an edit or a comment names,
 // or else `ghRepo`, the GH_REPO in force (review-request `invocationRepo`). A value the rule cannot read, or a checkout
 // with no remote to compare, is not another repository, so the project's rules hold.
 export function targetsAnotherRepo(call, project, ghRepo) {
-  const url = call.subcommand === 'edit' && call.target && !call.target.dynamic && /\/pull\/\d+/u.test(call.target.text) ? call.target : null;
+  const url = call.subcommand !== 'create' && call.target && !call.target.dynamic && /\/(?:pull|issues)\/\d+/u.test(call.target.text) ? call.target : null;
   const named = call.repo ?? url ?? { text: ghRepo, dynamic: false };
   const repo = named.dynamic ? null : repoName(named.text);
   if (repo === null) return false;
@@ -506,7 +520,7 @@ function isSharedTemp(text, cwd, env, root, state = () => null) {
 }
 
 // The project's state folder (`aidrian state`), or null when it cannot be read: a deny message never fails.
-function stateFolder(project, config, env) {
+export function stateFolder(project, config, env) {
   try {
     return stateDir(project, { config, env });
   } catch {
@@ -516,7 +530,7 @@ function stateFolder(project, config, env) {
 
 // The body file the pr-write skill writes, `<state>/tmp/pr-body-<branch>.md`, as { file, note }: the literal path, and
 // what its placeholders mean, or ''. The branch is the call's static --head, or the one checked out where gh runs. A part
-// it cannot know stays a placeholder.
+// it cannot know stays a placeholder. An issue or a comment gets its own file, so it never overwrites a pull request's body.
 export function bodyFilePath(state, call, cwd) {
   const head = call.head && !call.head.dynamic ? call.head.text.replace(/^[^:]*:/u, '') : null;
   let branch = head || null;
@@ -524,7 +538,8 @@ export function bodyFilePath(state, call, cwd) {
     const result = runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd);
     branch = result.status === 0 ? result.stdout.trim() || null : null;
   }
-  const file = `pr-body-${branch ? branch.replaceAll('/', '-') : '<branch>'}.md`;
+  const stem = call.subcommand === 'comment' ? 'comment-body' : call.noun === 'issue' ? 'issue-body' : 'pr-body';
+  const file = `${stem}-${branch ? branch.replaceAll('/', '-') : '<branch>'}.md`;
   const notes = [state ? null : '`<state>` is the folder `aidrian state` prints', branch ? null : '`<branch>` is the branch name with each `/` replaced by `-`'];
   const known = notes.filter(Boolean);
   return { file: state ? path.join(state, 'tmp', file) : `<state>/tmp/${file}`, note: known.length ? ` (${known.join('; ')})` : '' };
@@ -532,10 +547,11 @@ export function bodyFilePath(state, call, cwd) {
 
 // The two steps that pass, for a deny about where the body comes from: write the body to the one file, then hand gh
 // that path written out. The heredoc form is the one `lineWrites` reads in the same command.
-function twoSteps({ file, note }, call) {
-  const target = call.subcommand === 'edit' && call.target && !call.target.dynamic ? ` ${call.target.text}` : '';
+export function twoSteps({ file, note }, call) {
+  const target = call.subcommand !== 'create' && call.target && !call.target.dynamic ? ` ${call.target.text}` : '';
+  const skill = call.noun === 'pr' && call.subcommand !== 'comment' ? ' (the pr-write skill)' : '';
   return `Do this instead: 1. write the body to \`${file}\`${note}, with the file tool or with \`cat > ${file} <<'EOF'\` ` +
-    `earlier in this command; 2. run \`gh pr ${call.subcommand}${target} --body-file ${file}\`, the path written out (the pr-write skill).`;
+    `earlier in this command; 2. run \`gh ${call.noun} ${call.subcommand}${target} --body-file ${file}\`, the path written out${skill}.`;
 }
 
 // The forge the open pull request lookup reads through: every call bounded at LIST_TIMEOUT_MS. `options` are the

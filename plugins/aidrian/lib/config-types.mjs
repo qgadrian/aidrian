@@ -23,6 +23,16 @@ const isPattern = (value) => {
     return false;
   }
 };
+// A case-insensitive regular expression a project writes as a string, compiled as lib/rules/github/public-text.mjs compiles it.
+const isInsensitivePattern = (value) => {
+  if (!isText(value)) return false;
+  try {
+    new RegExp(value, 'iu');
+    return true;
+  } catch {
+    return false;
+  }
+};
 // A doc, section, or folder from the project root, as `decisions.escalateDocs` lists them (lib/decisions.mjs).
 const isDocPath = (value) => {
   if (!isText(value)) return false;
@@ -42,6 +52,7 @@ export const TYPES = {
   someTexts: [(value) => isTexts(value) && value.length > 0, 'a non-empty list of non-empty strings'],
   textsOrNull: [(value) => value === null || isTexts(value), 'a list of non-empty strings, or null'],
   patternOrNull: [(value) => value === null || isPattern(value), 'a regular expression as a string, or null'],
+  patterns: [(value) => Array.isArray(value) && value.every(isInsensitivePattern), 'a list of valid regular expressions as strings'],
   deferralsOrNull: [
     (value) => value === null || (hasOnly(value, ['section', 'field', 'reasons', 'neverValid']) && isText(value.section) && isText(value.field) &&
       isTexts(value.reasons) && value.reasons.length > 0 && (value.neverValid === undefined || isTexts(value.neverValid))),

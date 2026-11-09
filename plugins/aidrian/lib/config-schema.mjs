@@ -87,6 +87,7 @@ export const SCHEMA = {
       sharedTempBodyFile: 'boolean',
       duplicateBody: 'boolean',
     },
+    publicText: { patterns: 'patterns' },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
     autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean', includeGuardedPaths: 'boolean' },
     unattendedWaiver: { allow: 'boolean' },

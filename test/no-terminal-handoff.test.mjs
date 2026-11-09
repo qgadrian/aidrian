@@ -14,6 +14,7 @@ const BREAK_GLASS = new Set([
   'lib/rules/attribution.mjs',
   'lib/rules/git-amend.mjs',
   'lib/rules/github/pr-body.mjs',
+  'lib/rules/github/public-text.mjs',
   'lib/rules/main-checkout/checkout.mjs',
   'lib/rules/process-kill.mjs',
 ]);

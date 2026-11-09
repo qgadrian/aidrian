@@ -22,8 +22,10 @@ import { runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
 function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = {} } = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => {
     const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
     if (r.status !== 0) throw new Error(r.stderr);
@@ -93,7 +95,7 @@ test('the review step of a non-member edits their own summary comment, and it su
 });
 
 test('a stranger\'s summary comment supplies no record: the reviewer still runs, and auto-merge stays off', async (t) => {
-  const team = { version: 1, state: { dir: 'state' }, github: { requiredChecks: ['test'], autoMerge: { allow: true, strategy: 'squash' } } };
+  const team = { version: 1, state: { dir: '../state' }, github: { requiredChecks: ['test'], autoMerge: { allow: true, strategy: 'squash' } } };
   const r = repo(t, { baseConfig: team, change: (write) => write('src/app.js', 'export const app = 2;\n') });
   r.git('remote', 'add', 'origin', 'git@github.com:o/r.git');
   r.write('.aidrian.local.json', JSON.stringify({ github: { autoMerge: 'on' } }));

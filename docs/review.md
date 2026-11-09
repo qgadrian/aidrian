@@ -349,7 +349,7 @@ comment that capture posts. A later one rewrites that comment when this machine'
 member or the session's own account posted, whose heading names that head. Where another machine captured the head,
 the comment is left as it is: the ingest lives in this machine's state folder and counts only here, and ingesting the
 same images on the machine that captured the head shows them on the pull request. With `review.record: "local"` there
-is no captures comment to rewrite;
+is no captures comment to rewrite; a forge that names no base branch leaves the comment unread, and the ingest stays on this machine;
 a forge failure is a warning, and the ingest stays recorded. The review summary's visual line names an ingest made
 before a visual reviewer is dispatched, unless that capture took every image, as many entries as fit the line whole
 and the count of the rest.
@@ -805,7 +805,91 @@ masked. The command and its files are the base branch's, like the rest of the re
 ## The record
 
 The review config of the pull request is read from its head commit, so a step run from another branch plans the
-same review. Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
+same review. Where the record lives is the base branch's, as this checkout has it (its tracking ref `origin/<base>`, or with
+no such ref its own branch `<base>`, by full ref names): `aidrian pr review`, `attest`, `signoff`, `settle`, `extend`,
+`waive`, `ingest`, and `await-review --request` read `review.record` as that branch commits it. Each of them, and `request`,
+which writes only this machine's record, holds the working copy to that branch first. These read the record with no such hold,
+and that is their limit: `attest --check`, the review gate's read of it, and `await-review` without `--request`.
+A command that holds refuses a checkout where:
+
+- `state.dir` in its `.aidrian/config.json`, committed or not, differs from the base branch's:
+  `the working copy's state.dir differs from <owner/name> <base>, and the review record is read from it`;
+- its project folder differs from the base branch's, or the base's `.aidrian.json` cannot be read:
+  `the working copy's project folder differs from <owner/name> <base>, and the review record is read from it`.
+  A base with no config at all stays allowed, for the pull request that adopts aidrian;
+- the state folder or the folder the records go in is inside a checkout of the repository, the main one or a linked worktree,
+  as named or through a link, whichever way `state.dir` is set. The compare folds case and Unicode form on every disk, so on a
+  disk that keeps case apart, a folder differing from a checkout only in case is refused too, and the refusal names that checkout.
+  With `state.dir` set:
+  `the state folder is inside this repository's checkout <top>, and the review record is read from it:`
+  `in <config>, set "state": { "dir": null } for the default folder, or any folder outside every checkout of this repository,`
+  `and commit that change alone in its own pull request, which gets no local review record, so the Human merges it.`
+  ``Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder `aidrian state` prints.``
+  With `state.dir` unset, where the config has nothing to clear:
+  `the default state folder is inside this repository's checkout <top>, and the review record is read from it:`
+  `in <config>, set "state": { "dir": "<path>" } to a folder outside every checkout of this repository,`
+  `and commit that change alone in its own pull request, which gets no local review record, so the Human merges it,`
+  ``or set this machine's state root, `$XDG_STATE_HOME`, to a folder outside them.``
+  `Once it is outside, on each machine whose folder moved, from a clean checkout on the base branch,`
+  ``move the old folder's contents to the folder `aidrian state` prints.``
+  The hold reads each listed checkout as git prints it.
+  Or git cannot list the checkouts: `git cannot list this repository's checkouts, and the review record is read from it`;
+- the path of the state folder or of the folder the records go in holds a line break, as named or through a link, wherever it lies,
+  since git's list of checkouts cannot show such a path, with or without an answer from git:
+  `the path of the state folder or of the folder the review records go in holds a line break,`
+  `which git's list of checkouts cannot show, and the review record is read from it:`
+  followed by the same move as above, to a folder whose path holds none;
+- the folder the records go in is itself a checkout of any repository, through a link too, with `state.dir` set or unset:
+  `the folder the review records go in is a checkout, <folder>, and the review record is read from it:`
+  `move or remove that checkout on this machine, so only this machine's records stay there.`
+  A checkout elsewhere under the state folder stays allowed.
+
+A base branch this checkout does not have stops the command: `git fetch` first.
+
+The `state.dir` difference and the project folder difference end with the next step:
+`Run the review from a checkout on the base branch. A local reviewer reads the checkout at the head, so it cannot finish from there:`
+``with one as this machine's engine, set `review.engine` to `self` in `.aidrian.local.json` for this review, and put it back after.``
+`A head behind that base merges it first.`
+A base whose `.aidrian.json` cannot be read gets no step, since a checkout on it reads no more. The merge guard gives its own recourse.
+
+What to do about the moved state.dir refusal, for a pull request that moves `state.dir` between two folders outside the
+repository: it is reviewed from a checkout on the base branch, which
+plans the same review of the same head, with the `self` engine in `.aidrian.local.json`. A local reviewer, `codex-local`
+(or `auto` with Codex available) or any `exec` reviewer, reads the checkout at the head, so it cannot finish from there.
+From that checkout, when the head's committed `state.dir` or project folder differs from the base's, `aidrian pr review`
+with such a reviewer returns `incomplete` with `retry_recommended: false` and the same limit, not a step to check out the head.
+A head behind a base that moved `state.dir` merges the base first.
+
+The `self` recourse does not apply when `config.json` pins `review.engine`, which wins over the machine's. When the pin,
+read from the base branch's config and never the working copy's, resolves to a local reviewer, both messages end instead:
+``The base branch's config.json pins `review.engine` to a local reviewer, which reads the checkout at the head, where the hold refuses,``
+`so no review finishes on this pull request: the Human merges it in their own shell.`
+A base that pins `self` finishes from its own checkout, and `auto` is a local reviewer only when Codex can run on that machine.
+
+Moving a state folder out of the repository: the state folder goes outside every checkout of the repository. A folder
+outside them is allowed, inside another repository's checkout, an outer repository that tracks this checkout, or this
+repository's separate git dir included. A relative `state.dir` that stays inside the repository lies in the main checkout,
+also from a linked worktree.
+The pull request that moves it out gets no local record on any checkout, the [merge guard](hooks.md#merge-guard)'s hold
+applies with no review record too, and the `Merge anyway` answer does not waive it, so the Human merges it. With product
+feedback on, marking that pull request ready from its own head meets the ready hold's `state_dir` status, so it is marked
+ready from a checkout on the base branch or by the Human on the forge. Once it lands, each machine, from a clean checkout on
+the base branch, moves its own old folder's contents to the folder `aidrian state` prints, since the guard reads only the
+local record and a copy on the pull request's comment does not stand in. The `.gitignore` line for the old folder goes once
+every machine has moved.
+
+A command publishes only after the hold. `extend`, `ingest`, and `await-review --request` with no base from the forge keep
+their write on this machine, and `waive` refuses without the base.
+`attest` and `signoff` hold only when the forge names the base,
+so with none they read no comment, keep this machine's record, and publish nothing; `request`, which reads the forge only when
+`--head` or `--repo` is missing, keeps that record and publishes nothing too.
+Auto-merge and product feedback make the same `state.dir` comparison against the default
+branch read from GitHub. The [merge guard](hooks.md#merge-guard) makes all three from local git before it reads the
+record, for a merge of this repository: a merge naming its number compares with origin's default branch first, and with
+the base the head lookup names once it makes one. With neither ref it makes only the comparison with the checkouts, which needs no base.
+It goes on as it would with a read that fails, or no time left.
+
+Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
 place: the rounds, each pass's result per head, the verdicts, the sign-offs, and the overrides used. Another machine
 reads it from the comment, and only from a comment whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`:
 a stranger's comment supplies no record, and is never edited. It is the reviewers' word, not proof, and it is all visible on the pull request.

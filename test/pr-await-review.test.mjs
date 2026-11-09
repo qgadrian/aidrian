@@ -986,16 +986,17 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
   assert.equal(covered.posts.length, 0);
 });
 
-// A project whose own config keeps the inbox in `base/state`, away from the developer's state folder, and a run of
+// A project whose own config keeps the inbox in `<root>/state`, beside its checkout and away from the developer's state folder, and a run of
 // `await-review --request` on a pull request with `reviews` bot reviews, at the default limit of 3.
 function roundsProject(t) {
-  const base = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
-  t.after(() => rmSync(base, { recursive: true, force: true }));
-  mkdirSync(path.join(base, '.aidrian'));
-  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { extraRounds: 'off' } }));
+  const root = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const base = path.join(root, 'repo');
+  mkdirSync(path.join(base, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, github: { extraRounds: 'off' } }));
   const project = projectAt(base);
   const { config } = loadConfig(project);
-  assert.equal(inboxPath(project, config), path.join(base, 'state/lessons/inbox.jsonl'));
+  assert.equal(inboxPath(project, config), path.join(root, 'state/lessons/inbox.jsonl'));
   const log = t.mock.method(console, 'log', () => {});
   const run = ({ reviews = 3, args = [], settings = config, proj = project } = {}) => {
     const rounds = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));

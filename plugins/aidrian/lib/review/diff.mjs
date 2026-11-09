@@ -255,8 +255,8 @@ export function baseMergeOf(root, head, { priorHead, base }) {
 export const cleanBaseMerge = (root, head, opts) => baseMergeOf(root, head, opts)?.clean === true;
 
 // The text of `file` at `commit`, or null when it is not there.
-export function fileAt(root, commit, file) {
-  const result = runGit(['show', `${commit}:./${file}`], root, TIMEOUT);
+export function fileAt(root, commit, file, options = TIMEOUT) {
+  const result = runGit(['show', `${commit}:./${file}`], root, options);
   return result.status === 0 ? result.stdout : null;
 }
 
@@ -264,8 +264,8 @@ export function fileAt(root, commit, file) {
 export const isAncestor = (root, a, b) => runGit(['merge-base', '--is-ancestor', a, b], root, TIMEOUT).status === 0;
 
 // The commit `ref` names, or null.
-export function resolve(root, ref) {
-  const result = runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], root, TIMEOUT);
+export function resolve(root, ref, options = TIMEOUT) {
+  const result = runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], root, options);
   return result.status === 0 ? result.stdout.trim() : null;
 }
 

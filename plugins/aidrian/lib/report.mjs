@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { coverage, coverageLines, readLog } from './dispatch-log.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { projectAt, stateDir } from './project.mjs';
+import { projectAt, recordsFolder, stateDir } from './project.mjs';
 import { formatReport, summarize } from './report-agents.mjs';
 import { formatDocs, knowledgeOf, summarizeDocs } from './report-docs.mjs';
 import { formatSessions, summarizeSessions } from './report-sessions.mjs';
@@ -71,7 +71,7 @@ export const commands = {
       if (view === 'findings') {
         // Every manifest by default: they hold no times of their own, so --since reads a manifest's modification time.
         const { formatFindings, readManifests, summarizeFindings } = await import('./report-findings.mjs');
-        const dir = path.join(stateDir(project), 'reviews');
+        const dir = recordsFolder(stateDir(project));
         const label = values.since ?? null;
         const summary = summarizeFindings(readManifests(dir, { sinceMs: label === null ? null : sinceMs }));
         console.log(values.json ? JSON.stringify({ dir, since: label, ...summary }) : formatFindings(summary, { dir, since: label }));

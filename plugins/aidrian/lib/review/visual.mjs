@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { isFile, isObject, isWithin, resolvedPath } from '../fs.mjs';
 import { forgeFor } from '../forges/index.mjs';
-import { stateDir } from '../project.mjs';
+import { recordsFolder, stateDir } from '../project.mjs';
 import { pathPattern } from './plan.mjs';
 import { clip } from './state.mjs';
 import { VISUAL_PER_RUN } from './config.mjs';
@@ -111,7 +111,7 @@ export function visualMatrix(visual, routes) {
 // leaves out is never signed in, so its missing credentials cannot stop a capture that does not need it.
 export const signedVariants = (visual, entries) => visual.variants.filter((variant) => variant.account && entries.some((entry) => entry.variant === variant.id));
 
-export const captureDir = (project, pr, head) => path.join(stateDir(project), 'reviews', `pr-${pr}`, 'captures', head);
+export const captureDir = (project, pr, head) => path.join(recordsFolder(stateDir(project)), `pr-${pr}`, 'captures', head);
 
 // The manifest a capture wrote for `head`, or null.
 export function readManifest(project, pr, head) {

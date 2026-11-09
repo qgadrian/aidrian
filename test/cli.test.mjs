@@ -1303,8 +1303,10 @@ function renamedPolicy(t) {
   mkdirSync(path.join(dir, 'bin'));
   writeFileSync(path.join(dir, 'bin/gh'), `#!/bin/sh\necho '${JSON.stringify([{ name: 'e2e', state: 'SKIPPED' }])}'\n`);
   chmodSync(path.join(dir, 'bin/gh'), 0o755);
-  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\nbin/\nstate/\n');
-  const env = { ...process.env, PATH: `${path.join(dir, 'bin')}${path.delimiter}${process.env.PATH}`, XDG_STATE_HOME: path.join(dir, 'state') };
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\nbin/\n');
+  const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-state-')));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const env = { ...process.env, PATH: `${path.join(dir, 'bin')}${path.delimiter}${process.env.PATH}`, XDG_STATE_HOME: state };
   return { dir, config, env };
 }
 

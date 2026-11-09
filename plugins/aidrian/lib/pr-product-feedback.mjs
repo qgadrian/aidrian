@@ -28,7 +28,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { decisionProblem, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today } from './audits.mjs';
-import { commandConfig, DEFAULTS, loadConfig, strictConfigFromText } from './config.mjs';
+import { commandConfig, DEFAULTS, loadConfig, stateDirProblem, strictConfigFromText } from './config.mjs';
 import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { isDirectory, isFile, isObject, isWithin } from './fs.mjs';
@@ -263,7 +263,8 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
   if (!hidden && !matches) return clear('not_user_facing');
 
   const working = loadConfig(project).config;
-  if (working.state.dir !== onMain.config.state.dir) return say(2, 'owed', 'state_dir', `the working copy's state.dir differs from the default branch's, and the record is read from it`);
+  const moved = stateDirProblem(working, onMain.config, "the default branch's", 'the record');
+  if (moved) return say(2, 'owed', 'state_dir', moved);
   const state = stateDir(project, { config: working });
   const record = readRecord(recordPath(state, pr.repo, pr.number), pr);
   // An empty record counts only when a run stands behind it: a report, or a read that named itself.

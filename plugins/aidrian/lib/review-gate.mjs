@@ -17,7 +17,7 @@ import path from 'node:path';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
-import { normalizeRemote, stateDir } from './project.mjs';
+import { normalizeRemote, recordsFolder, stateDir } from './project.mjs';
 import { HUMAN } from './review/quota.mjs';
 import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit } from './review/state.mjs';
 
@@ -57,7 +57,7 @@ export function prNumber(value) {
   return match ? Number(match[1]) : null;
 }
 
-const recordFile = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}.json`);
+const recordFile = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}.json`);
 
 // The record for a pull request, or null when there is none or it is not a well-formed one for it: corrupt local state
 // never passes the gate. A review names its head and reviewer; an override is marked as one.
@@ -109,8 +109,8 @@ export function originRepo(project) {
 }
 
 // The `owner/name` of every remote of this checkout, so a fork's parent counts with its origin. Empty when it has none.
-export function remoteRepos(project) {
-  const { status, stdout } = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root);
+export function remoteRepos(project, options) {
+  const { status, stdout } = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root, options);
   if (status !== 0) return [];
   return stdout.split('\n').map((line) => repoName(line.slice(line.indexOf(' ') + 1))).filter(Boolean);
 }
@@ -171,6 +171,25 @@ export function prRepo(project, pr, given, forge = forgeFor(project.root)) {
   return name;
 }
 
+// The base branch the forge names for `pr`, or null when it cannot answer.
+function namedBase(project, pr, repo, forge) {
+  try {
+    return (forge ?? forgeFor(project.root)).change(pr, 'baseRefName', { repo })?.baseRefName ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Holds the working copy's state.dir to `base` before a command reads the review record (lib/review/in-force.mjs), and
+// returns the config whose `review.record` applies: the one `base` commits. With no base, from a forge that cannot answer,
+// the record stays local, whatever the working copy says: the command reads no comment, keeps this machine's record, and
+// publishes nothing.
+async function holdToNamedBase(project, config, repo, base) {
+  if (!base) return { ...config, review: { ...config?.review, record: 'local' } };
+  const { holdToBase } = await import('./review/in-force.mjs');
+  return holdToBase(project, config, { repo, base }).committed;
+}
+
 // `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>] [--repo OWNER/NAME]`, or `--check`.
 // With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs), and
 // `--verdicts FILE|-` records the pass's verdicts: `-` reads them from stdin, so an agent's final JSON is piped as it is.
@@ -213,11 +232,12 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
     throw new Error(`--head ${flags.head} is not a commit in this repository`);
   }
   const repo = prRepo(project, pr, flags.repo, forge);
+  const held = await holdToNamedBase(project, config, repo, namedBase(project, pr, repo, forge));
   if (flags.pass !== undefined) {
     const { recordPass, remoteState } = await import('./review/run.mjs');
     const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts === '-' ? 0 : flags.verdicts, 'utf8');
     const findingsText = flags['findings-file'] === undefined ? null : readFileSync(flags['findings-file'], 'utf8');
-    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, config) });
+    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, held) });
     console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);
     // A verdict with evidence the review cannot check leaves its invariant unverified: say so while the reviewer can still fix it.
     const { citationProblem } = await import('./review/flows.mjs');
@@ -359,12 +379,13 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     const remotes = remoteRepos(project);
     if (remotes.length && !remotes.includes(repo)) throw new Error(`--last signs off a pull request of this checkout's repositories only (${[...new Set(remotes)].join(', ')}), not ${repo}: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha> --repo ${repo}`);
     const where = forge ?? forgeFor(project.root);
-    let current = null;
+    let view = null;
     try {
-      current = where.change(pr, 'headRefOid', { repo })?.headRefOid ?? null;
+      view = where.change(pr, 'headRefOid,baseRefName', { repo });
     } catch {}
+    const current = view?.headRefOid ?? null;
     if (typeof current !== 'string' || !SHA.test(current)) throw new Error(`could not read the head of ${repo}#${pr} from the forge: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha>`);
-    const remote = remoteState(repo, pr, forge, config);
+    const remote = remoteState(repo, pr, forge, await holdToNamedBase(project, config, repo, view.baseRefName));
     const record = readReviewRecord(project, pr, remote ?? [], repo);
     if (record.held !== undefined) throw new Error(heldMessage(pr, record.held));
     if (record.state.repo && repoName(record.state.repo) !== repo) throw new Error(`the review record of #${pr} is for ${repoName(record.state.repo) ?? record.state.repo}, not ${repo}: --last signs off the pull request that record names. Give --repo ${repoName(record.state.repo) ?? record.state.repo}, or the long form`);
@@ -375,8 +396,9 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     recordSignoff(project, { pr, repo, flow, head, by, remote, dryRun });
     return done(`${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
   }
+  const held = await holdToNamedBase(project, config, repo, namedBase(project, pr, repo, forge));
   if (flags.overrule) {
-    recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, config), dryRun });
+    recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, held), dryRun });
     return done(`${by}'s ruling on invariant ${flags.overrule} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s ruling: invariant ${flags.overrule} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the reviewer evidence that it holds. Run \`aidrian pr review\` again.`);
   }
   if (flags.accept) {
@@ -397,14 +419,14 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
       if (!kind) throw new Error(`--evidence ${url} is not a comment, review, or review comment of ${repo}#${pr} that the forge can find: cite the URL of the comment or review that holds an attachment, never the attachment's own URL`);
       return kind;
     };
-    recordAccept(project, { pr, repo, flow: flags.flow, invariant: flags.accept, head: flags.head, by, reason: flags.reason, evidence: flags.evidence, checkEvidence, remote: remoteState(repo, pr, undefined, config), dryRun });
+    recordAccept(project, { pr, repo, flow: flags.flow, invariant: flags.accept, head: flags.head, by, reason: flags.reason, evidence: flags.evidence, checkEvidence, remote: remoteState(repo, pr, undefined, held), dryRun });
     return done(`${by}'s acceptance of invariant ${flags.accept} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s acceptance: invariant ${flags.accept} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the outside evidence ${flags.evidence}. Run \`aidrian pr review\` again.`);
   }
   if (flags.stage) {
-    recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, config), dryRun });
+    recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), dryRun });
     return done(`${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}, in place of the reviewer that ran out of quota. Run \`aidrian pr review\` again.`);
   }
-  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, config), dryRun });
+  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), dryRun });
   return done(`${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
 }
 
@@ -464,6 +486,8 @@ export async function runIngest(args, project, config = null, { forge, env = pro
   const head = runGit(['rev-parse', '--verify', `${flags.head}^{commit}`], project.root).stdout.trim();
   // The repository is not stored, since the capture folder is per pull request; it names where the captures comment is.
   const repo = prRepo(project, pr, flags.repo, forge);
+  const base = namedBase(project, pr, repo, forge);
+  const held = await holdToNamedBase(project, config, repo, base);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
   // The session kind, from the host layer: an AI session when it detects a host, so an agent's ingest is never
   // recorded as the Human's own; the agent when the host names one.
@@ -481,8 +505,10 @@ export async function runIngest(args, project, config = null, { forge, env = pro
     const given = files.find((file) => path.resolve(file) === entry.source.path) ?? entry.source.path;
     console.log(`ingested ${given} as capture:${entry.key} of ${sha} from ${entry.source.origin} by ${entry.source.by}${entry.source.session === 'ai' ? (entry.source.agent ? ` via ${entry.source.agent}` : ' in an AI session, agent unknown') : ''}`);
   }
-  // With the review record local, the review posts no captures comment, so the pull request is not read.
-  if (config?.review?.record === 'local') console.log('the review record is local, so no captures comment shows the ingest');
+  // A command publishes only after the hold, and with no base it never ran. With the review record local, the review
+  // posts no captures comment, so the pull request is not read.
+  if (!base) console.log('the forge named no base branch, so the ingest stays on this machine and no captures comment shows it');
+  else if (held?.review?.record === 'local') console.log('the review record is local, so no captures comment shows the ingest');
   else await showIngest({ project, pr, repo, manifest, forge: forge ?? forgeFor(project.root), visual });
   console.log('Run `aidrian pr review` again.');
   return 0;

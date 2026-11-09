@@ -40,7 +40,7 @@
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 // A failed read of the full file list, or of the head after it, is off (paths): the paths check names it.
 
-import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
+import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
@@ -270,8 +270,7 @@ export function checksProblem({ github: policy, state }, working, where) {
   const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
   const differing = CHECK_LISTS.filter((key) => !same(policy[key], working.config.github[key]));
   if (differing.length) return `the working copy's ${differing.map((key) => `github.${key}`).join(' and ')} differ from ${where}, and aidrian pr checks reads the working copy`;
-  if (working.config.state.dir !== state.dir) return `the working copy's state.dir differs from ${where}, and the review record is read from it`;
-  return null;
+  return stateDirProblem(working.config, { state }, where);
 }
 
 const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, ${team.deleteWorktree ? 'delete' : 'keep'} the worktree`;

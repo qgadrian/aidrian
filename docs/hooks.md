@@ -413,8 +413,31 @@ On a host with no SessionEnd it is never recorded.
 A session must not merge a pull request while a review of its head is still open, or while a review the Human asked for
 was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, reads `gh pr merge`, a `gh api` PUT or POST
 to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull_request`, and on Codex
-[the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project,
-reads only this machine's [review record](review.md#the-record), and decides in this order:
+[the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project.
+
+Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
+working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
+with origin's default branch first, and with the base the head lookup names once it makes one. Origin's default branch is
+`refs/remotes/origin/HEAD`, else `refs/remotes/origin/main`, the plugin's default branch; the `git.defaultBranch` a
+working copy sets is never read here. A difference refuses the merge, whatever the record says, and its recourse says which
+compare failed. A difference from the base the lookup names says to merge from a checkout on the base branch or that the
+Human merges in their own shell. A difference from the default branch says to merge from a clean checkout at that branch's
+tip when it is the pull request's base, and that with another base, or no such checkout, the Human merges in their own shell:
+a long-lived base that differs from the default branch stays refused from its own checkout.
+The hold also refuses a state folder, or a folder the review records go in, inside a checkout of the repository,
+with `state.dir` set or unset: that denial says to move the folder first, and that the Human merges until the move lands,
+or with `state.dir` unset until the folder is outside. It refuses a checkout at the folder the review records go in too,
+with `state.dir` set or unset: that denial says to move that checkout first, and that the Human merges until it is gone.
+It refuses a state folder whose path holds a line break the same way, which git's list of checkouts cannot show:
+that denial says to move the folder first, and that the Human merges until its path holds none.
+The hold applies with no review record too, and the `Merge anyway`
+answer of the waiver paragraph below does not waive it. With neither default-branch ref here it makes only the refusals about
+a checkout, which need no base. So a repository with no `refs/remotes/origin/HEAD` whose default branch is not `main`
+gets no compare of `state.dir` or the project folder from a merge naming its number, unless a head lookup names the base;
+`git remote set-head origin --auto` sets that ref.
+With a read that fails, or no time left, it goes on.
+
+It reads only this machine's [review record](review.md#the-record), and decides in this order:
 
 1. An owed review, one `aidrian pr request` recorded and no answer has marked since, refuses the merge, whatever the
    head or the outcome: a bot review sent is owed until the bot answers. Its reason says how to send it or wait for
@@ -458,8 +481,12 @@ deadline if that comes first. The waiver starts reading only when at most 1.5 se
 before its first read, and its later reads are held to the deadline alone. The guard's own head lookup above is not
 held to 1.5 seconds, only to the deadline: once it has passed, the lookup is not made, and a merge that names no head
 is refused and told to name it.
-So every call the guard makes, its own view included, ends within 4 seconds of the hook's start, however many merges
-one command holds, inside the hook's 5 seconds.
+The hold's git reads, the checkout list included with `state.dir` set or unset, all run at the project root and share the deadline, each stopped after 1 second, and a read asked for once it has passed skips the hold.
+The guard's git reads outside the hold, such as the one that finds the project and the one that reads the record, keep
+git's 2 second default; one that begins as the deadline comes can end up to 2 seconds later, and once one is stopped
+the later ones do not wait.
+A call held to the deadline, the guard's own view included, ends within 4 seconds of the hook's start, however many merges
+one command holds.
 A read that fails or would begin too late keeps the denial, which then says the team's value could not be read in time.
 With both switches on, the denial names `aidrian pr waive` as a second route.
 

@@ -322,6 +322,7 @@ test('a working copy state.dir that differs from the default branch\'s exits 2 w
   const r = repo(t, { config: JSON.stringify({ version: 1, state: { dir: 'elsewhere' } }) });
   const result = status(t, r);
   assert.deepEqual([result.code, result.json.reason], [2, 'state_dir']);
+  assert.equal(result.json.why, "the working copy's state.dir differs from the default branch's, and the record is read from it");
   assert.equal(status(t, r, { view: { files: [{ path: 'docs/a.md', changeType: 'MODIFIED' }] } }).json.reason, 'not_user_facing', 'nothing is read from the state folder, so nothing is owed');
 });
 

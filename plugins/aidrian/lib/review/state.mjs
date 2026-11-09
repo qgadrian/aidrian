@@ -23,7 +23,7 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
-import { stateDir } from '../project.mjs';
+import { recordsFolder, stateDir } from '../project.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { splitPasses } from './split.mjs';
 
@@ -115,7 +115,7 @@ export function mergePending(a, b) {
   return [...out.values()];
 }
 
-const file = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}-review.json`);
+const file = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}-review.json`);
 
 function wellFormed(state, pr) {
   return isObject(state) && state.version === 1 && state.pr === pr && Array.isArray(state.rounds) && isObject(state.passes) && isObject(state.signoffs);

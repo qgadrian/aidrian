@@ -1,5 +1,6 @@
 // A stop that needs the Human asks in the session. Text that sends the Human to a shell must also name the question that
-// makes the shell unnecessary, or be listed here as a break-glass override no normal run reaches.
+// makes the shell unnecessary, or be listed here. The list holds break-glass overrides no normal run reaches,
+// and a refusal no session answer may waive.
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import test from 'node:test';
 const ROOT = path.resolve(import.meta.dirname, '../plugins/aidrian');
 const BREAK_GLASS = new Set([
   'lib/review-gate.mjs',
+  'lib/review/in-force.mjs',
   'lib/review/visual.mjs',
   'lib/rules/attribution.mjs',
   'lib/rules/git-amend.mjs',

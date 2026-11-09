@@ -13,6 +13,7 @@ import { checkoutRoots, isIgnored, runGit } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
 import { ROUTED_DOMAINS } from './quorum.mjs';
+import { insideCheckout } from './review/in-force.mjs';
 import { trackerWarnings } from './tracker-check.mjs';
 import { loadTerms } from './terms.mjs';
 
@@ -63,9 +64,14 @@ export const commands = {
       errors.push(...(loadTerms(project, config)?.errors ?? []));
       const floor = versionFloorProblem(config);
       if (floor) errors.push(floor);
-      for (const { line, gitignore } of unignored(project, config)) {
-        errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
+      for (const { line, gitignore, state } of unignored(project, config)) {
+        const move = state && config.state.dir ? `in ${project.paths.config} set "state": { "dir": null } to move the state folder out of the repository, or while it stays ` : '';
+        errors.push(`${line} is not git-ignored: ${move}add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
+      // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. With the
+      // checkouts unlisted, as outside a repository, the check says nothing new.
+      const inside = insideCheckout(project, config, () => ({}));
+      if (inside.problem && !inside.unread) warnings.push(inside.problem);
       // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
       if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
       if (project.localUnattendedWaiver === 'on' && !config.github.unattendedWaiver.allow) warnings.push('unattended waiver is on locally but the team does not allow it');
@@ -143,9 +149,10 @@ export const commands = {
   },
 };
 
-// What git must ignore, as { line, gitignore }: the local sources file, and the state and worktrees folders when they are
-// inside the checkout the project is in. A line goes in the project root's .gitignore, or the checkout root's when it
-// lies outside the project; `gitignore` is that file's path from the project root.
+// What git must ignore, as { line, gitignore, state }: the local sources file, and the state and worktrees folders when
+// they are inside the checkout the project is in, with `state` true for the state folder. A line goes in the project
+// root's .gitignore, or the checkout root's when it lies outside the project; `gitignore` is that file's path from the
+// project root.
 // In a linked worktree the checkout is that worktree, not the main checkout: a folder that resolves into the main
 // checkout, such as the default `.worktrees`, is the main checkout's to ignore, and init never writes there.
 function localEntries(project, config) {
@@ -157,7 +164,7 @@ function localEntries(project, config) {
     const home = isWithin(project.root, file) ? project.root : repo;
     const line = `${path.relative(home, file).split(path.sep).join('/')}${suffix}`;
     // The probe keeps the trailing slash: git matches a folder pattern to a path it knows is a folder.
-    return { probe: `${file}${suffix}`, line, gitignore: path.relative(project.root, path.join(home, '.gitignore')).split(path.sep).join('/') };
+    return { probe: `${file}${suffix}`, line, gitignore: path.relative(project.root, path.join(home, '.gitignore')).split(path.sep).join('/'), state: file === state };
   };
   return [entry(path.join(project.root, project.paths.local), ''), ...folders.map((dir) => entry(dir, '/'))];
 }

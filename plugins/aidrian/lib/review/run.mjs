@@ -37,6 +37,7 @@ import { blocks } from './findings.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
+import { where } from './settled.mjs';
 import { atCap } from './extension.mjs';
 import { answerPending, emptyState, mergePending, noteOutcome, prunePasses, readLocalState, summaryBody, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
@@ -152,13 +153,29 @@ function answerRequests({ project, root, repo, n, state, passes, map, resultFor 
   for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
 }
 
+// The late-round residuals of the passes that count for this head, for the body's Accepted residuals, each finding once.
+// A repeat the reviewer returned as already ruled, or a ruling the pass carries, has left `list`: it keeps the record's
+// `accepted_by` (lib/review/settled.mjs), and is named by the title and at the severity the record accepted.
+export function lateResiduals(passes, resultFor) {
+  const seen = new Set();
+  return passes.flatMap((pass) => {
+    const result = resultFor(pass);
+    return ['list', 'ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : []))
+      .filter((finding) => finding?.accepted_by === 'late-round')
+      .map(({ title, file, line, severity, already_ruled: ruled, settled_severity: cap }) => ({ pass: pass.id, title: ruled ?? title, file, line, severity: cap ?? severity }));
+  }).filter((row) => {
+    if (seen.has(where(row))) return false;
+    seen.add(where(row));
+    return true;
+  });
+}
+
 function finish(s, status, extra) {
   const { forge, repo, n, head, base, onPr, summary, state, plan, passes, resultFor, fallbacks, keptSignoffs, maxRounds, flowStatus, outsideClosed, approvalPath, approvals } = s;
   answerRequests(s);
   noteFindings(s, extra);
   const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
-  // The late-round residuals of the passes that count for this head, for the body's Accepted residuals.
-  const residuals = passes.flatMap((pass) => (resultFor(pass)?.list ?? []).filter((finding) => finding.accepted_by === 'late-round').map(({ title, file, line, severity }) => ({ pass: pass.id, title, file, line, severity })));
+  const residuals = lateResiduals(passes, resultFor);
   if (residuals.length) result.residuals = residuals;
   // Every result on a head whose review a fallback replaced says so.
   if (fallbacks.length) result.quota_fallback = fallbacks.map((stop) => ({ stage: stop.stage, replaces: stop.reviewer, choice: stop.choice, signed_off_by: stop.signoff?.by ?? null, note: quota.describe(stop) }));

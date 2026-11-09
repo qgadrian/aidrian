@@ -25,6 +25,7 @@ import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
+import { ruledLines } from './settled.mjs';
 import { splitPasses } from './split.mjs';
 
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
@@ -234,6 +235,7 @@ export function summaryBody(state, plan, status) {
   }
   lines.push(...outsideLines(state, plan?.head));
   lines.push(...quotaLines(state));
+  lines.push(...ruledLines(state));
   lines.push(...carriedLines(state));
   lines.push(...extensionLines(state));
   lines.push(...waiverLines(state));

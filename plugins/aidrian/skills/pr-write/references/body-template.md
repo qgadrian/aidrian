@@ -28,7 +28,7 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
 
 ## Accepted residuals
 
-- <a real defect consciously not fixed>: <why the fix is not worth it now; the code comment that marks it>
+- <the finding's exact title when a reviewer raised it, else a real defect consciously not fixed>: <why the fix is not worth it now; the code comment that marks it>
 
 ## Follow-up for a person
 

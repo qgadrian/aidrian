@@ -31,7 +31,9 @@ export function remoteState(repo, pr, forge = forgeFor(undefined), config = null
 
 // `aidrian pr attest <PR> --pass <id> ...`: one pass's result, for this head, into the review record.
 // With `findingsText` (--findings-file), the counts come from the findings one by one, and the disposition table
-// decides which stay open (lib/review/findings.mjs).
+// decides which stay open (lib/review/findings.mjs). The result replaces the pass's counts and list, and keeps the waivers
+// the record held (`ruled`, `carried`), which no count reads: only a pass that re-runs, or a listing of the finding as
+// fixed, ends one (lib/review/settled.mjs).
 export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null }) {
   const itemized = findingsText === null ? null : parseFindings(findingsText);
   if (itemized) ({ findings, fixed, accepted } = itemized);
@@ -47,7 +49,7 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
   const state = current(project, pr, repo, remote);
   const before = state.passes[pass];
   const files = state.dispatched?.[pass]?.files ?? null;
-  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null) };
+  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
   writeLocalState(project, state);
   return state.passes[pass];
 }

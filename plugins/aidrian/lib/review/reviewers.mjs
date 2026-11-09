@@ -1,6 +1,8 @@
 // Reviewers: who does one pass of a review plan. Every reviewer is an entry in one map: the built-ins below, then the
 // project's `review.reviewers`. Three kinds:
 //   exec    a command: the pass's input as JSON on stdin, findings as JSON on stdout (FINDINGS_SCHEMA). run.mjs runs it.
+//           A finding whose `already_ruled` names a settled entry of the input (lib/review/settled.mjs) is returned in
+//           `ruled`, never among the new findings.
 //   agent   a Claude agent: a command cannot start one, so `aidrian pr review` returns a `dispatch` action and the
 //           review skill runs the agent, then records its result with `aidrian pr attest`.
 //   remote  the review bot on the pull request (lib/pr-await-review.mjs). Built in only, for now.
@@ -13,8 +15,10 @@ import path from 'node:path';
 
 import { isObject } from '../fs.mjs';
 import { showPrefix } from '../git.mjs';
+import { offeredCarried, settledBrief, settledEntries, splitRuled } from './settled.mjs';
 
-// The schema every exec reviewer's stdout follows, and the one Codex is held to with --output-schema.
+// The schema Codex is held to strictly, with --output-schema. A project's exec reviewer prints the same shape, and
+// cleanOutput lets it leave out `already_ruled` and `body`, and keeps no other key.
 export const FINDINGS_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
@@ -28,13 +32,15 @@ export const FINDINGS_SCHEMA = Object.freeze({
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['file', 'line', 'title', 'body', 'severity'],
+        required: ['file', 'line', 'title', 'body', 'severity', 'already_ruled'],
         properties: {
           file: { type: 'string' },
           line: { type: 'integer' },
           title: { type: 'string' },
           body: { type: 'string' },
           severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+          // Empty for a new finding, else the settled entry it repeats, verbatim (settledEntries).
+          already_ruled: { type: 'string' },
         },
       },
     },
@@ -120,15 +126,28 @@ export function satisfies(word, passes, map) {
   return false;
 }
 
+// The longest title a finding keeps, as parseFindings caps it.
+const MAX_TITLE = 200;
+
 // The problems with one finding or verdict list an exec reviewer printed; findings that fail are dropped and named.
 export function cleanOutput(raw) {
   const dropped = [];
   if (!isObject(raw) || !Array.isArray(raw.findings)) return { findings: [], verdicts: [], dropped: ['the output is not { findings: [...] }'], valid: false };
-  const findings = raw.findings.filter((finding, i) => {
+  const findings = raw.findings.flatMap((finding, i) => {
     const ok = isObject(finding) && typeof finding.file === 'string' && Number.isInteger(finding.line) && typeof finding.title === 'string' &&
       ['critical', 'high', 'medium', 'low'].includes(finding.severity);
-    if (!ok) dropped.push(`findings[${i}] is malformed`);
-    return ok;
+    if (!ok) {
+      dropped.push(`findings[${i}] is malformed`);
+      return [];
+    }
+    // Only the schema's keys: a key the schema does not name, such as a `state` or a `disposition`, never reaches the record.
+    // The title reaches the summary comment and a body's residual row, so it is one line, at the length parseFindings caps.
+    const title = finding.title.replace(/\s*[\n\v\f\r\u0085\u2028\u2029]+\s*/gu, ' ').trim().slice(0, MAX_TITLE);
+    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity };
+    if (typeof finding.already_ruled === 'string') return [{ ...kept, already_ruled: finding.already_ruled }];
+    // A bad `already_ruled` never loses the finding: it is read as a new one.
+    if (finding.already_ruled !== undefined) dropped.push(`findings[${i}].already_ruled is not a string: kept as a new finding`);
+    return [kept];
   });
   const verdicts = (Array.isArray(raw.verdicts) ? raw.verdicts : []).filter((verdict, i) => {
     const ok = isObject(verdict) && typeof verdict.flow === 'string' && typeof verdict.invariant === 'string' &&
@@ -170,6 +189,7 @@ export function reviewPrompt(input, prefix = '') {
         : input.files ? `Report findings only in these files: ${input.files.join(', ')}.` : 'Report findings in any changed file.',
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
+    settledBrief(settledEntries(input)),
     input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
     input.flows.length ? `For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers' verdicts are listed: challenge every "holds" you cannot confirm yourself. Where an invariant has a \`source\`, the section of the project doc it cites, judge against that source: \`text\` is only the question. ${VERDICT_MEANING}` : '',
     input.flowBase ? flowBaseBrief(input) : '',
@@ -183,8 +203,9 @@ export function reviewPrompt(input, prefix = '') {
 
 const lastLine = (text) => text.trim().split('\n').filter(Boolean).at(-1) ?? '';
 
-// Runs one exec reviewer on one pass: resolves to { status: 'done', findings, verdicts, dropped } or
-// { status: 'failed' | 'quota' | 'timed_out', reason }. `env` must already be clean (run.mjs isolates it).
+// Runs one exec reviewer on one pass: resolves to { status: 'done', findings, ruled, carried, verdicts, dropped } or
+// { status: 'failed' | 'quota' | 'timed_out', reason }, `carried` the carried rulings the input offered (offeredCarried).
+// `env` must already be clean (run.mjs isolates it).
 export async function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
   const timeoutSec = reviewer.timeoutSec ?? 600;
   const result = reviewer.builtIn === 'codex'
@@ -192,7 +213,9 @@ export async function runExec(reviewer, input, { root, env, spawnImpl = spawn })
     : await runDetached({ argv: reviewer.command, stdinText: JSON.stringify(input), root, env, timeoutSec, spawnImpl, output: (stdout) => stdout });
   if (result.status !== 'done') return result;
   const clean = cleanOutput(result.raw);
-  return clean.valid ? { status: 'done', findings: clean.findings, verdicts: clean.verdicts, contracts: clean.contracts, cross_notes: clean.cross_notes, dropped: clean.dropped } : { status: 'failed', reason: clean.dropped[0] };
+  if (!clean.valid) return { status: 'failed', reason: clean.dropped[0] };
+  const split = splitRuled(clean.findings, settledEntries(input));
+  return { status: 'done', findings: split.findings, ruled: split.ruled, carried: offeredCarried(input), verdicts: clean.verdicts, contracts: clean.contracts, cross_notes: clean.cross_notes, dropped: [...clean.dropped, ...split.notes] };
 }
 
 // Runs Codex once, read-only, held to `schema` (--output-schema), with `prompt` on stdin: resolves to

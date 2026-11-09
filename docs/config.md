@@ -322,7 +322,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
-| `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. A pull request that needed no review, `none_needed`, such as plain docs, waits for the Human. |
+| `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, an owed review, or a waiver above `low` through an accepted residual, on any pass record, keeps it off, also after the waiver ends: a reviewer's output cannot end that hold, and a listing of the finding's title and file as fixed does. A pull request that needed no review, `none_needed`, such as plain docs, waits for the Human. |
 
 `strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only.
 The base counts only for `allow` and `includeGuardedPaths`.
@@ -451,6 +451,8 @@ The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr 
 
 `aidrian decisions residuals` reads `residuals.section` too, to set each residual against the decisions on record
 ([Accepted residuals against decisions](review.md#accepted-residuals-against-decisions)).
+The review step reads it as well, and gives its items to exec reviewers as settled residuals ([Reviewers](review.md#reviewers)).
+A project's own residual line must open with the finding's title and a colon, or only a `low` repeat settles.
 
 A title is checked only when the command sets one, so a body-only `gh pr edit` never blocks on a title written before the rule.
 The items of a section are its list items; prose under the heading, and a bullet indented under an item, are not items.

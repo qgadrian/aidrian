@@ -8,6 +8,7 @@ import { computeVerdict } from '../pr-checks.mjs';
 import { lateRoundResidual } from '../finding-disposition.mjs';
 import { isClean, resolve } from './diff.mjs';
 import { blocks } from './findings.mjs';
+import { withEndedWaivers } from './settled.mjs';
 import { dedupe } from './split.mjs';
 import { approveLine } from './approvals.mjs';
 import { HARNESS_FLOW } from './plan.mjs';
@@ -100,14 +101,23 @@ export async function runStages(s) {
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
           // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks
-          // nothing, and `residuals` names it for the pull request body. A reviewer's output keeps any extra field, so the
-          // three this rule sets are dropped first: a printed `state: 'fixed'` closes nothing.
+          // nothing, and `residuals` names it for the pull request body. cleanOutput (reviewers.mjs) already limits a
+          // reviewer's output to the schema's keys; this strip is the step's own rule for any exec outcome, so the three
+          // this rule sets are dropped first: a printed `state: 'fixed'` closes nothing.
           const list = outcome.findings.map(({ state: _state, disposition: _disposition, accepted_by: _acceptedBy, ...finding }) => {
             const late = lateRoundResidual({ severity: finding.severity, source: 'bot', round: state.rounds.length }, dispositionTable);
             return late ? { ...finding, disposition: late.disposition, state: 'accepted', accepted_by: 'late-round' } : finding;
           });
+          // A finding the reviewer returned as already ruled (lib/review/settled.mjs) counts among the findings, never as
+          // open, and stays on the record as `ruled`, which the summary comment lists and the next head reads as settled.
+          // The carried rulings the pass was offered, an anchored residual's among them, stay as `carried` whether or not
+          // it repeated them, so a head with no repeat does not end them. A waiver above low it was no longer offered stays
+          // there too, marked ended, so the hold on auto-merge outlives the anchor.
+          const ruled = Array.isArray(outcome.ruled) ? outcome.ruled : [];
+          const carried = withEndedWaivers(state, ruled, Array.isArray(outcome.carried) ? outcome.carried : []);
           state.passes[pass.id] = {
-            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
+            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
+            ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
           };
           recorded = true;
@@ -189,7 +199,7 @@ export async function runStages(s) {
       // A fix needs a new head, and in the last round there is none left: that is the cap, with the work named.
       return (lastRound ? capReached : (extra) => finish('fix_required', extra))({
         stage: stage.name,
-        open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null })),
+        open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null, ...(result.dropped?.length ? { dropped: result.dropped } : {}) })),
         // One entry per mistake when slices and the cross pass report the same one.
         ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
         flows: unsigned.map(([flow, status]) => ({

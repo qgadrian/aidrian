@@ -356,6 +356,11 @@ function botProject(t, config = {}) {
   mkdirSync(base);
   mkdirSync(path.join(base, '.aidrian'));
   writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, ...config }));
+  // The base branch the commands hold to, committing that config.
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: base });
+  git('init', '-q', '-b', 'main');
+  git('add', '.');
+  git('commit', '-qm', 'base');
   const project = projectAt(base);
   const log = t.mock.method(console, 'log', () => {});
   const T = (m) => `2026-08-23T07:${String(m).padStart(2, '0')}:00Z`;
@@ -379,7 +384,7 @@ function botProject(t, config = {}) {
         return body.startsWith('@codex review') ? (requests.push({ body }), {}) : post(body);
       },
       editComment: (_repo, id, body) => edit(Number(id), body),
-      pull: (_repo, n) => (onPr42(n), { title: 'Cap refunds', body: 'Refunds never exceed the charge.', head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } }),
+      pull: (_repo, n) => (onPr42(n), { title: 'Cap refunds', body: 'Refunds never exceed the charge.', base: { ref: 'main' }, head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } }),
       commit: () => ({ commit: { committer: { date: T(1) } } }),
       reviews: (_repo, n) => {
         onPr42(n);
@@ -397,7 +402,7 @@ function botProject(t, config = {}) {
   // `aidrian pr extend` as the CLI runs it, with the review step's forge over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
     repo: 'acme/notes', env: {},
-    forge: { change: () => ({ headRefOid: head }), conversationComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
+    forge: { change: () => ({ headRefOid: head, baseRefName: 'main' }), conversationComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
   });
   // Another machine: this one's state folder is gone, and only the pull request's comments remain.
   const forget = () => rmSync(path.join(base, '../state'), { recursive: true, force: true });

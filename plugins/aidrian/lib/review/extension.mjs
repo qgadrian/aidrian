@@ -522,15 +522,15 @@ export async function runExtend(args, project, config, deps = {}) {
   const forge = deps.forge ?? forgeFor(undefined);
   const repo = deps.repo ?? originRepo(project);
   // The pull request now: a decision is for the head its signals were read on, and the record is read only from the
-  // state.dir its base branch commits. A forge that cannot answer leaves no base to hold to, so the decision stays on
-  // this machine: nothing publishes.
+  // state.dir its base branch commits. A forge that cannot answer, or names no base, leaves no base to hold to, so the
+  // decision stays on this machine: nothing publishes.
   let view = null;
   try {
     view = forge.change(String(opts.pr), 'number,headRefOid,baseRefName,url,title,body');
   } catch {}
   const held = view?.baseRefName ? holdToBase(project, config, { repo, base: view.baseRefName }) : null;
   const current = view?.headRefOid ?? null;
-  const onPr = view !== null && (held?.committed ?? config).review.record !== 'local';
+  const onPr = held !== null && held.committed.review.record !== 'local';
   let comments = [];
   if (onPr) {
     try {
@@ -548,7 +548,7 @@ export async function runExtend(args, project, config, deps = {}) {
     entry = recordHuman(state, { answer: opts.human, by, session: sessionIdentity(env).session, current });
   }
   writeLocalState(project, state);
-  const unposted = view === null ? 'the pull request could not be read, so nothing was posted' : null;
+  const unposted = held === null ? 'the forge named no base branch, so nothing was posted' : null;
   const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `extension ${entry.status}`) : unposted;
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr: opts.pr, repo });

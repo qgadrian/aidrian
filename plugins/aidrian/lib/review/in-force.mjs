@@ -7,7 +7,7 @@
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { committedConfig, loadConfig, stateDirProblem } from '../config.mjs';
+import { committedConfig, loadConfig, originDefaultTip, stateDirProblem } from '../config.mjs';
 import { isDirectory, isFile, isWithin, resolvedPath } from '../fs.mjs';
 import { checkoutRoots, runGit } from '../git.mjs';
 import { committedConfigFile, recordsFolder, stateDir } from '../project.mjs';
@@ -17,8 +17,15 @@ import { flowsInForce } from './plan.mjs';
 import { touchedCitations } from './cited.mjs';
 
 // The base branch's tip in this checkout, by full ref names, so the answer does not depend on other refs: its tracking
-// ref, or else its own branch.
-const baseTipOf = (root, base, read) => resolve(root, `refs/remotes/origin/${base}`, read) ?? resolve(root, `refs/heads/${base}`, read);
+// ref, or else its own branch. `git` gives each read's options.
+const baseTipOf = (root, base, git) => resolve(root, `refs/remotes/origin/${base}`, git()) ?? resolve(root, `refs/heads/${base}`, git());
+
+// Each git read with its own default options, for a command with no deadline.
+const defaultGit = () => undefined;
+
+// What a record command says to do about a difference from the base branch. The merge guard has its own recourse, and
+// auto-merge and product feedback print the difference alone.
+const NEXT_STEP = 'Run the review from a checkout on the base branch; a head behind that base merges it first.';
 
 const INSIDE = "the state folder is inside this repository's checkout ";
 const DEFAULT_INSIDE = "the default state folder is inside this repository's checkout ";
@@ -98,27 +105,31 @@ export function insideCheckout(project, working, git) {
   return { problem: top ? insideProblem(project, working, top) : null };
 }
 
-// What the merge guard says to do about `problem`: a state folder inside a checkout, or a checkout at the folder the
-// records go in, is refused at the base branch too, so a checkout there is no way forward. The default folder can move on
-// this machine alone, with nothing to land.
-export function recourse(problem) {
+// What the merge guard says to do about `problem`, from the compare that found it: `base` the branch the head lookup named,
+// null for origin's default branch. A state folder inside a checkout, or a checkout at the folder the records go in, is
+// refused at the base branch too, so a checkout there is no way forward. The default folder can move on this machine
+// alone, with nothing to land. A difference from the default branch sends no session to a base that is another branch:
+// that base differs from the default branch itself, and from its own checkout this same compare refuses.
+export function recourse(problem, base) {
   if (problem.startsWith(RECORDS_CHECKOUT)) return 'Move that checkout first; until it is gone, the Human merges in their own shell.';
   if (problem.startsWith(DEFAULT_INSIDE)) return 'Move the state folder first; until it is outside, the Human merges in their own shell.';
   if (problem.startsWith(INSIDE)) return 'Move the state folder first; until that lands, the Human merges in their own shell.';
-  return 'Merge from a checkout on the base branch, or the Human merges in their own shell.';
+  if (base) return 'Merge from a checkout on the base branch, or the Human merges in their own shell.';
+  return "Merge from a clean checkout on that branch when it is the pull request's base; with another base, or no such checkout, the Human merges in their own shell.";
 }
 
-// The working copy against the config `baseTip` commits: { committed, problem }, with `problem` null when it holds, and
-// `unread` when the problem is a read that failed, not a real difference. A base with no config at all has no project
-// folder to differ from: that is the pull request that adopts aidrian. `git` gives each read's options.
+// The working copy against the config `baseTip` commits: { committed, problem }, with `problem` null when it holds, `differs`
+// when it is a difference a checkout on the base does not have, and `unread` when it is a read that failed, not a real
+// difference. A base with no config at all has no project folder to differ from: that is the pull request that adopts
+// aidrian. `git` gives each read's options.
 function againstBase(project, working, baseTip, where, git) {
   const folderMoved = `the working copy's project folder differs from ${where}, and the review record is read from it`;
   const file = committedConfigFile(project, baseTip, git());
   if (file === null) return { committed: null, problem: folderMoved, unread: true };
-  if (file !== project.paths.config && fileAt(project.root, baseTip, file, git()) !== null) return { committed: null, problem: folderMoved };
+  if (file !== project.paths.config && fileAt(project.root, baseTip, file, git()) !== null) return { committed: null, problem: folderMoved, differs: true };
   const committed = committedConfig(project, baseTip, [], git());
   const moved = stateDirProblem(working, committed, where);
-  return moved ? { committed, problem: moved } : { committed, ...insideCheckout(project, working, git) };
+  return moved ? { committed, problem: moved, differs: true } : { committed, ...insideCheckout(project, working, git) };
 }
 
 // The base branch as this checkout has it, and its committed config: { committed, baseTip }. The review record is read
@@ -126,10 +137,10 @@ function againstBase(project, working, baseTip, where, git) {
 // base branch's is refused, as auto-merge refuses it. `config` is the working copy's, null to load it. Throws on a base
 // no ref here resolves, and on a read that fails.
 export function holdToBase(project, config, { repo, base }) {
-  const baseTip = baseTipOf(project.root, base);
+  const baseTip = baseTipOf(project.root, base, defaultGit);
   if (!baseTip) throw new Error(`the base branch ${base} is not in this checkout: git fetch first`);
-  const { committed, problem } = againstBase(project, config ?? loadConfig(project).config, baseTip, `${repo} ${base}`, () => undefined);
-  if (problem) throw new Error(problem);
+  const { committed, problem, differs } = againstBase(project, config ?? loadConfig(project).config, baseTip, `${repo} ${base}`, defaultGit);
+  if (problem) throw new Error(differs ? `${problem}. ${NEXT_STEP}` : problem);
   return { committed, baseTip };
 }
 
@@ -143,11 +154,12 @@ export const boundedReads = (deadline, now = Date.now) => () => {
 };
 
 // holdToBase's answer for a hook, from local git alone, each read through `git`: why the working copy differs from `base`,
-// or with none named from origin's default branch, or null. A ref that is not here leaves the compare with the checkouts,
-// which needs no base. A read that fails or has no time left is no answer: a hook lets the action run when it cannot read.
+// or with none named from origin's default branch (originDefaultTip), or null. A ref that is not here leaves the compare
+// with the checkouts, which needs no base. A read that fails or has no time left is no answer: a hook lets the action run
+// when it cannot read.
 export function baseProblem(project, { repo, base = null, git }) {
   try {
-    const baseTip = base ? baseTipOf(project.root, base, git()) : resolve(project.root, 'refs/remotes/origin/HEAD', git());
+    const baseTip = base ? baseTipOf(project.root, base, git) : originDefaultTip(project.root, git);
     const where = base ? `${repo} ${base}` : `${repo}'s default branch`;
     const working = loadConfig(project).config;
     const { problem, unread } = baseTip ? againstBase(project, working, baseTip, where, git) : insideCheckout(project, working, git);

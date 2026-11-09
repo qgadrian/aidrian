@@ -16,7 +16,7 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { runAttest, runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
-import { baseProblem, holdToBase, insideCheckout, recourse } from '../plugins/aidrian/lib/review/in-force.mjs';
+import { baseProblem, boundedReads, holdToBase, insideCheckout, recourse } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -24,6 +24,8 @@ import { runWaive } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { check, judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 const DIFFERS = /the working copy's state\.dir differs from o\/r main, and the review record is read from it/u;
+// What a record command says to do about a difference from the base branch.
+const NEXT_STEP = 'Run the review from a checkout on the base branch; a head behind that base merges it first.';
 const HEAD_RECORD = 'head-state/reviews/pr-7-review.json';
 const HOOK = path.join(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
 const CLI = path.join(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -122,7 +124,7 @@ test('stateDirProblem words the difference, with the record named, and is export
 test('the review step refuses a checkout whose state.dir differs from the base branch\'s, before it reads or writes a record', async (t) => {
   const r = moved(t);
   const before = readFileSync(path.join(r.dir, HEAD_RECORD), 'utf8');
-  await assert.rejects(r.step(), DIFFERS);
+  await assert.rejects(r.step(), { message: `the working copy's state.dir differs from o/r main, and the review record is read from it. ${NEXT_STEP}` });
   assert.equal(r.comments.length, 0);
   assert.equal(readFileSync(path.join(r.dir, HEAD_RECORD), 'utf8'), before, 'no error outcome is written');
 });
@@ -226,7 +228,7 @@ test('a working copy whose project folder differs from the base branch\'s is ref
     headConfig: { version: 1 },
     files: { '.aidrian.json': pointer('other'), 'other/config.json': JSON.stringify({ version: 1 }) },
   });
-  await assert.rejects(r.step(), /^Error: the working copy's project folder differs from o\/r main, and the review record is read from it$/u);
+  await assert.rejects(r.step(), { message: `the working copy's project folder differs from o/r main, and the review record is read from it. ${NEXT_STEP}` });
   assert.equal(r.comments.length, 0);
 });
 
@@ -247,7 +249,8 @@ test('a head that relocates the project folder is refused before the plan, so th
 
 test('a base branch whose pointer file cannot be read refuses the working copy', (t) => {
   const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 }, baseFiles: { '.aidrian.json': 'not json' }, files: { '.aidrian.json': pointer('.aidrian') } });
-  assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), /project folder differs from o\/r main/u);
+  // A checkout on that base cannot read it either, so the message sends no session there.
+  assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), { message: "the working copy's project folder differs from o/r main, and the review record is read from it" });
 });
 
 test('the same relocated project folder on both sides is held by its own config', (t) => {
@@ -270,6 +273,10 @@ const tracking = (r) => {
   r.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
 };
 const unused = () => assert.fail('the merge names its head: no view');
+
+// What the merge guard says to do about a difference: from the base the head lookup named, and from origin's default branch.
+const BASE_RECOURSE = 'Merge from a checkout on the base branch, or the Human merges in their own shell.';
+const DEFAULT_RECOURSE = "Merge from a clean checkout on that branch when it is the pull request's base; with another base, or no such checkout, the Human merges in their own shell.";
 
 // A project at a new linked worktree of `r`, detached at `commit`, and the hold from there.
 function linkedAt(t, r, commit) {
@@ -403,16 +410,7 @@ test('a linked worktree reached through a link is compared where it is', (t) => 
   refused(r, path.join(outside, 'real/tree'));
 });
 
-// Whether this disk reads a name in another case as the same file.
-const caseSensitiveDisk = (() => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-case-'));
-  writeFileSync(path.join(dir, 'probe'), '');
-  const sensitive = !existsSync(path.join(dir, 'PROBE'));
-  rmSync(dir, { recursive: true, force: true });
-  return sensitive;
-})();
-
-test('a state folder named in another case than the checkout is refused', { skip: caseSensitiveDisk }, (t) => {
+test('a state folder named in another case than the checkout is refused, on a disk that keeps case apart too', (t) => {
   const shouted = (dir) => ({ version: 1, state: { dir: path.join(dir.toUpperCase(), 'state') } });
   const r = repo(t, { baseConfig: shouted, headConfig: shouted });
   refused(r, r.dir);
@@ -687,7 +685,8 @@ test('the merge guard denies a state folder inside the checkout and says to move
   const answers = [{ question: `Merge pull request #7 at ${r.head.slice(0, 7)} before its review is finished?`, answer: 'Merge anyway', at: null }];
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused, answers }), insideDenial(r.dir), 'the answer does not waive it');
   assert.equal(check(`gh pr merge 7 --match-head-commit ${r.head}`, { cwd: r.dir, env: {}, viewPr: unused }), insideDenial(r.dir), 'the Bash rule reaches it');
-  assert.equal(recourse('anything else'), 'Merge from a checkout on the base branch, or the Human merges in their own shell.');
+  assert.equal(recourse('anything else', 'main'), BASE_RECOURSE);
+  assert.equal(recourse('anything else', null), DEFAULT_RECOURSE);
 });
 
 test('on the pull request that moves the folder out, neither checkout sends a session back', async (t) => {
@@ -695,7 +694,7 @@ test('on the pull request that moves the folder out, neither checkout sends a se
   tracking(r);
   // The head differs from the base, and sends the session to a checkout on the base branch.
   await assert.rejects(r.step(), DIFFERS);
-  assert.match(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), /state\.dir differs from .*\. Merge from a checkout on the base branch, or the Human merges in their own shell\.$/u);
+  assert.ok(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }).endsWith(`default branch, and the review record is read from it. ${DEFAULT_RECOURSE}`));
   // That checkout says the Human merges.
   const base = linkedAt(t, r, 'main');
   assert.throws(base.hold, { message: insideText(r.dir) });
@@ -711,7 +710,8 @@ test('the merge guard denies a checkout whose state.dir differs from the base br
   writeLocalState(r.project, { ...emptyState(7, 'o/r'), outcome: { status: 'received', head: r.head, at: '2026-11-03T14:00:00.000Z' } });
   const reason = judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused });
   assert.match(reason, /the working copy's state\.dir differs from/u);
-  assert.match(reason, /Merge from a checkout on the base branch, or the Human merges in their own shell/u);
+  assert.ok(reason.endsWith(DEFAULT_RECOURSE));
+  assert.doesNotMatch(reason, new RegExp(NEXT_STEP), 'the guard gives its recourse, not the record commands\' step');
   assert.match(check(`gh pr merge 7 --match-head-commit ${r.head}`, { cwd: r.dir, env: {}, viewPr: unused }), /state\.dir differs from/u, 'the Bash rule reaches it');
 });
 
@@ -986,6 +986,76 @@ test('the merge guard keeps its path when no ref names the base', (t) => {
   assert.match(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), /state\.dir differs/u, 'the base branch\'s ref finds the difference');
 });
 
+test('with no origin/HEAD the merge guard compares with the plugin\'s default branch on origin', (t) => {
+  const r = movedOutside(t);
+  r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
+  assert.match(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), /state\.dir differs from origin's default branch/u);
+  const git = () => ({ env: { ...process.env, AIDRIAN_HOLD_READ: 'held' } });
+  const calls = gitCalls(t, () => assert.match(baseProblem(r.project, { repo: 'o/r', git }), /state\.dir differs from o\/r's default branch/u), '"${AIDRIAN_HOLD_READ:-unheld}" "$*"');
+  assert.ok(calls.some((call) => call.includes(' refs/remotes/origin/HEAD^{commit}')), 'origin/HEAD first');
+  assert.ok(calls.some((call) => call.includes(' refs/remotes/origin/main^{commit}')), 'then the plugin\'s default branch');
+  for (const call of calls) assert.match(call, /^held /u);
+});
+
+test('the merge guard takes origin/HEAD over the plugin\'s default branch', (t) => {
+  const r = movedOutside(t);
+  r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
+  r.git('update-ref', 'refs/remotes/origin/trunk', r.head);
+  r.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
+});
+
+test('the merge guard\'s compare does not read a working copy\'s git.defaultBranch', (t) => {
+  const named = (dir) => ({ version: 1, state: { dir }, git: { defaultBranch: 'feat' } });
+  const r = repo(t, { baseConfig: TEAM, headConfig: named('../head-state') });
+  r.git('update-ref', 'refs/remotes/origin/feat', r.head);
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null, 'the value is not read, and no other ref is here');
+  r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
+  assert.match(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), /state\.dir differs from origin's default branch/u);
+});
+
+test('a read git fails on leaves the next ref out of the guard\'s default branch', (t) => {
+  const r = movedOutside(t);
+  r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
+  const before = process.env.PATH;
+  t.after(() => (process.env.PATH = before));
+  process.env.PATH = fakeGit(t, '*refs/remotes/origin/HEAD*', 'exit 128');
+  assert.equal(baseProblem(r.project, { repo: 'o/r', git: () => ({}) }), null);
+});
+
+for (const [name, base] of [['a named base', 'main'], ['the default branch', null]]) {
+  test(`a stopped read of ${name} leaves no later read past the deadline`, (t) => {
+    const r = movedOutside(t);
+    if (base === null) r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
+    const log = path.join(folderFor(t), 'stalled.log');
+    const before = process.env.PATH;
+    t.after(() => (process.env.PATH = before));
+    process.env.PATH = fakeGit(t, '*" rev-parse "*refs/*', `echo read >> "${log}"; exec sleep 30`);
+    assert.equal(baseProblem(r.project, { repo: 'o/r', base, git: boundedReads(Date.now() + 1000) }), null);
+    // At most one: a busy machine can stop the first before it logs.
+    const reads = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').length : 0;
+    assert.ok(reads <= 1, `the second ref takes its options after the first stopped, and has no time left: ${reads} reads`);
+  });
+}
+
+test('a long-lived base that differs from the default branch sends no session back to itself', (t) => {
+  // `feat` stands for the long-lived base: its state.dir differs from main's, and the record commands pass on it.
+  const r = movedOutside(t);
+  tracking(r);
+  r.git('update-ref', 'refs/remotes/origin/feat', r.head);
+  assert.doesNotThrow(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'feat' }));
+  const own = judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused });
+  assert.match(own, /state\.dir differs from origin's default branch/u);
+  assert.ok(own.endsWith(DEFAULT_RECOURSE));
+  assert.doesNotMatch(own, /checkout on the base branch/u);
+  // A checkout on the default branch finds the difference from the base the lookup names, and that checkout ends above.
+  const onMain = linkedAt(t, r, 'main');
+  const viewPr = () => ({ number: 7, headRefOid: r.head, baseRefName: 'feat', url: 'https://github.com/o/r/pull/7' });
+  const fromMain = judgeMerge({ project: onMain.project, target: 'feat', viewPr });
+  assert.match(fromMain, /state\.dir differs from origin feat/u);
+  assert.ok(fromMain.endsWith(BASE_RECOURSE));
+});
+
 test('the merge guard compares the state folder when no ref names the base', (t) => {
   const r = repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM });
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), insideDenial(r.dir));
@@ -1018,6 +1088,19 @@ test('extend keeps its local write and publishes nothing when the pull request c
   assert.equal(readLocalState(r.project, 7).extensions[0].status, 'stopped');
   assert.equal(r.comments.length, 0);
   assert.match(JSON.parse(lines.at(-1)).summary_error, /nothing was posted/u);
+});
+
+test('extend keeps its local write and publishes nothing when the forge names no base', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 } });
+  quiet(t);
+  judging(r);
+  const unnamed = { ...r.forge, change: () => ({ headRefOid: r.head }), conversationComments: () => assert.fail('no comment is read'), viewer: () => 'someone' };
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  assert.equal(await runExtend(['7', '--verdict', 'stop', '--reason', 'why'], r.project, r.config, { forge: unnamed, repo: 'o/r', env: {} }), 0);
+  assert.equal(readLocalState(r.project, 7).extensions[0].status, 'stopped');
+  assert.equal(r.comments.length, 0);
+  assert.match(JSON.parse(lines.at(-1)).summary_error, /named no base branch, so nothing was posted/u);
 });
 
 test('waive refuses when the pull request names no base, before it reads the record', async (t) => {
@@ -1097,7 +1180,7 @@ test('signoff --last takes review.record from the base branch', async (t) => {
 });
 
 // `await-review --request` with the bot's rounds at the cap, and a member's summary comment that holds a newer record.
-async function awaitAtCap(t, baseRecord, headRecord) {
+async function awaitAtCap(t, baseRecord, headRecord, { base = { ref: 'main' } } = {}) {
   const github = { extraRounds: 'ask' };
   const r = repo(t, { baseConfig: { version: 1, github, review: { record: baseRecord } }, headConfig: { version: 1, github, review: { record: headRecord } } });
   const at = '2026-08-23T08:00:00Z';
@@ -1108,7 +1191,7 @@ async function awaitAtCap(t, baseRecord, headRecord) {
     ...r.forge,
     change: () => ({ number: 7 }),
     viewer: () => 'someone',
-    pull: () => ({ title: 't', body: 'b', base: { ref: 'main' }, head: { sha: r.head, ref: 'feat', repo: { full_name: 'o/r' } } }),
+    pull: () => ({ title: 't', body: 'b', base, head: { sha: r.head, ref: 'feat', repo: { full_name: 'o/r' } } }),
     commit: () => ({ commit: { committer: { date: at } } }),
     reviews: () => reviews,
     reviewComments: () => [],
@@ -1118,7 +1201,8 @@ async function awaitAtCap(t, baseRecord, headRecord) {
   t.mock.method(console, 'log', (line) => lines.push(line));
   await runAwaitReview(['7', '--request', '--timeout-sec', '0'], r.config, r.project, { forge, git: { pushedHead: () => null, behind: () => false }, env: {}, now: () => Date.parse('2026-08-23T09:00:00Z'), sleep: async () => {} });
   t.mock.restoreAll();
-  return { status: JSON.parse(lines.at(-1)).status, overrides: readLocalState(r.project, 7)?.overrides, edited: r.comments[0].body !== body, comments: r.comments.length };
+  const result = JSON.parse(lines.at(-1));
+  return { status: result.status, summaryError: result.summary_error, overrides: readLocalState(r.project, 7)?.overrides, edited: r.comments[0].body !== body, comments: r.comments.length };
 }
 
 test('await-review at the cap takes review.record from the base branch', async (t) => {
@@ -1128,6 +1212,13 @@ test('await-review at the cap takes review.record from the base branch', async (
   const on = await awaitAtCap(t, 'comment', 'local');
   assert.equal(on.status, 'extension_check');
   assert.deepEqual([on.overrides, on.edited], [['FROM-COMMENT'], true], 'a local head does not keep it off');
+});
+
+test('await-review at the cap keeps its local write and publishes nothing when the forge names no base', async (t) => {
+  const none = await awaitAtCap(t, 'comment', 'comment', { base: null });
+  assert.equal(none.status, 'extension_check');
+  assert.deepEqual([none.overrides, none.edited, none.comments], [[], false, 1], 'it neither reads nor writes the comment');
+  assert.match(none.summaryError, /named no base branch, so nothing was posted/u);
 });
 
 // ---- ingest and request

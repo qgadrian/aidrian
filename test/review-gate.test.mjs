@@ -20,10 +20,12 @@ const GATE = { version: 1, github: { reviewGate: { enabled: true, checklist: 'do
 
 // A git repository with an origin and one commit, holding a project folder with `config`.
 function repo(t, config = GATE, origin = 'git@github.com:Acme/Notes.git') {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gate-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  // The state folder is keyed by the origin, which every repository here shares: each gets its own.
-  process.env.XDG_STATE_HOME = path.join(dir, '.state');
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gate-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
+  // The state folder is keyed by the origin, which every repository here shares: each gets its own, beside the checkout.
+  process.env.XDG_STATE_HOME = path.join(root, 'state');
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('remote', 'add', 'origin', origin);
@@ -162,7 +164,7 @@ test('no test reads a real pull request', () => {
 
 test('aidrian pr attest --pass --verdicts - reads the agent`s JSON from stdin and stores its evidence as written', (t) => {
   const { dir, head, project } = repo(t, { ...GATE, review: { record: 'local' } });
-  // --repo names the repository, which the forge cannot here: the suite's gh always fails, so the test reads no network.
+  // --repo names the repository, which the forge cannot here: the suite's forge command always fails, so the test reads no network.
   const attest = (pass, input, ...more) => spawnSync(process.execPath, [CLI, 'pr', 'attest', '7', '--pass', pass, '--head', head, '--reviewer', 'product-manager', ...more, '--repo', 'Acme/Notes'], { cwd: dir, encoding: 'utf8', env: process.env, input });
   const counted = ['--findings', '0', '--fixed', '0'];
   const recorded = (pass) => readLocalState(project, 7)?.passes[pass];

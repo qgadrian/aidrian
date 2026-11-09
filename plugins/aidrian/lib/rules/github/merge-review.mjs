@@ -20,8 +20,9 @@
 // Before it reads the record, a merge of this repository (one that names none, or one of this checkout's remotes) holds
 // the working copy to the config the base branch commits, and refuses a state folder inside a checkout of this repository
 // and a checkout at the folder the records go in (review/in-force.mjs baseProblem), from local git alone. A merge naming its number compares with origin's default branch
-// first, before any read; once a view is made, with the base it names. With neither ref here it makes only the refusals
-// about the checkouts, which need no base. With a read that fails, or no time left, the guard goes on as it would, since
+// first (origin/HEAD, else the plugin's default branch name on origin), before any read; once a view is made, with the base
+// it names. With no such ref here it makes only the refusals about the checkouts, which need no base. Its recourse says
+// which compare failed (recourse). With a read that fails, or no time left, the guard goes on as it would, since
 // a hook lets the action run when it cannot read. Every git read of this
 // hold is stopped after 1 s, or at the 4 s deadline below if sooner. This hold applies with no record too, and neither of
 // the waivers below reaches it.
@@ -175,7 +176,7 @@ function heldReason({ project, pr, repo, base, deadline, now }) {
   } catch {}
   if (!problem) return null;
   const merge = pr === null ? 'a pull request' : `pull request #${pr}`;
-  return `Blocked: this merges ${merge}, but ${problem.replace(/\.$/u, '')}. ${recourse(problem)}`;
+  return `Blocked: this merges ${merge}, but ${problem.replace(/\.$/u, '')}. ${recourse(problem, base)}`;
 }
 
 // The deny reason for a merge of `pr` at `head` in `project`, or null. `pr` or `head` null is read through

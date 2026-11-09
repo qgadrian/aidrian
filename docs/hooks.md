@@ -417,14 +417,21 @@ to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
 working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
-with `refs/remotes/origin/HEAD` first, and with the base the head lookup names once it makes one. A difference refuses the
-merge, whatever the record says, and says to merge from a checkout on the base branch or that the Human merges in their
-own shell. The hold also refuses a state folder, or a folder the review records go in, inside a checkout of the repository,
+with origin's default branch first, and with the base the head lookup names once it makes one. Origin's default branch is
+`refs/remotes/origin/HEAD`, else `refs/remotes/origin/main`, the plugin's default branch; the `git.defaultBranch` a
+working copy sets is never read here. A difference refuses the merge, whatever the record says, and its recourse says which
+compare failed. A difference from the base the lookup names says to merge from a checkout on the base branch or that the
+Human merges in their own shell. A difference from the default branch says to merge from a clean checkout on that branch
+when it is the pull request's base, and that with another base, or no such checkout, the Human merges in their own shell:
+a long-lived base that differs from the default branch stays refused from its own checkout. The hold also refuses a state folder, or a folder the review records go in, inside a checkout of the repository,
 with `state.dir` set or unset: that denial says to move the folder first, and that the Human merges until the move lands,
 or with `state.dir` unset until the folder is outside. It refuses a checkout at the folder the review records go in too,
 with `state.dir` set or unset: that denial says to move that checkout first, and that the Human merges until it is gone.
 The hold applies with no review record too, and the `Merge anyway`
-answer of the waiver paragraph below does not waive it. With neither ref here it makes only the refusals about a checkout, which need no base.
+answer of the waiver paragraph below does not waive it. With neither default-branch ref here it makes only the refusals about
+a checkout, which need no base. So a repository with no `refs/remotes/origin/HEAD` whose default branch is not `main`
+gets no compare of `state.dir` or the project folder from a merge naming its number, unless a head lookup names the base;
+`git remote set-head origin --auto` sets that ref.
 With a read that fails, or no time left, it goes on.
 
 It reads only this machine's [review record](review.md#the-record), and decides in this order:

@@ -7,7 +7,7 @@
 // temporary folder, such as a hook's block counts, goes there too; the process that made the folder deletes it when it
 // exits. Without this, every run left its files behind in the system's temporary folder.
 //
-// Network: a `gh` that always fails comes first on PATH, so no test reads a real pull request. A test's own fake, put
+// Network: a forge command that always fails comes first on PATH, so no test reads a real pull request. A test's own fake, put
 // before it, still wins.
 //
 // Environment: a test sees none of the variables that change what the code under test does, so the suite gives

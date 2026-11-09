@@ -160,9 +160,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   A project in a subfolder of the repository adds that subfolder's path to the hash, so two projects in one repository
   get two state folders; a project at the repository root keeps the id above.
 - `"state": { "dir": "<path>" }` in config.json moves the folder; [config.md](config.md) lists the key.
-  A relative path starts at the repository root, inside the repository: `aidrian check` warns about such a folder,
+  A relative path starts at the repository root. When it stays inside the repository, `aidrian check` warns about the folder,
   the review-record commands and the merge guard refuse it ([review.md](review.md#the-record)),
-  and while it stays, check requires git to ignore it.
+  and while it stays, check requires git to ignore it. A relative path that leaves the repository, such as `../state`, is allowed.
 - The default folder gets the same warning and refusal when it lies inside a checkout, and so does a folder the review
   records go in that leads into one through a link, whichever way `state.dir` is set.
   Plans, lessons, and audits keep using the folder either way.

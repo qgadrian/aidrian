@@ -458,8 +458,8 @@ export function worktreesDir(project, { config = loadConfig(project).config } = 
 }
 
 // The main checkout's top folder, which every worktree shares; the project root outside git.
-export function repoRoot(project, read) {
-  return mainRoot(project.root, read) ?? project.root;
+export function repoRoot(project, options) {
+  return mainRoot(project.root, options) ?? project.root;
 }
 
 // `<repository name>-<8 hex digits>`: the name and a hash of the normalized `origin` URL, so every clone agrees.

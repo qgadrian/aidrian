@@ -443,7 +443,7 @@ async function reviewGate(project, config) {
 // config cannot raise the round cap, loosen what happens at it, or hide files from the extra-rounds signals through
 // review.ignore, as `aidrian pr review` reads them: { github, review, repo, n, baseTip, pr }. The review record is read
 // after this, from the state.dir that base branch commits. GitHub always names the base; a response without one keeps
-// the loaded config, with no base tip.
+// the loaded config, with no base tip, and with no hold nothing publishes (publishes).
 function committedBase(project, opts, forge, config) {
   const repo = opts.repo ?? forge.repo();
   const n = opts.pr ?? String(forge.change(null, CURRENT_FIELDS).number);
@@ -454,12 +454,16 @@ function committedBase(project, opts, forge, config) {
   return { github: committed.github, review: committed.review, repo, n, baseTip, pr };
 }
 
+// Whether the record goes on the pull request: only after the hold, and unless the base branch's `review.record` is "local".
+const publishes = (base) => base.baseTip !== null && base.review.record !== 'local';
+
 // The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs),
 // with `comments`, the pull request's comments as read, for the write back.
-async function reviewRecord(project, forge, { review, repo, n }) {
+async function reviewRecord(project, forge, base) {
   const { heldMessage, readRecord } = await import('./review/state.mjs');
+  const { repo, n } = base;
   let comments = [];
-  if (review.record !== 'local') {
+  if (publishes(base)) {
     try {
       comments = forge.conversationComments(repo, n) ?? [];
     } catch {}
@@ -469,12 +473,12 @@ async function reviewRecord(project, forge, { review, repo, n }) {
   return { state: record.state, comments };
 }
 
-// Writes the record where the review step does: the state folder and, unless the base branch's `review.record` is
-// "local", the pull request's summary comment, so another machine continues from the same checks and grants.
+// Writes the record where the review step does: the state folder and, when it publishes, the pull request's summary
+// comment, so another machine continues from the same checks and grants.
 async function saveRecord(record, { project, forge, base, status }) {
   const { publishState, writeLocalState } = await import('./review/state.mjs');
   writeLocalState(project, record.state);
-  if (base.review.record === 'local') return null;
+  if (!publishes(base)) return base.baseTip === null ? 'the forge named no base branch, so nothing was posted' : null;
   return publishState(record.state, {
     comments: () => record.comments,
     post: (body) => forge.postComment(base.repo, base.n, body),

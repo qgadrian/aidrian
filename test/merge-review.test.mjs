@@ -19,7 +19,7 @@ import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 const NEXT = '1234567890abcdef1234567890abcdef12345678';
 
-// A git repository with an origin and one commit, holding a project whose state folder is inside it (never a real
+// A git repository with an origin and one commit, holding a project whose state folder is beside it (never a real
 // repository's, and no GIT_DIR), and a transcript file for the hook payload.
 function repo(t, config = {}) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-merge-')));

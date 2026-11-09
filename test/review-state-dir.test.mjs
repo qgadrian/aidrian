@@ -99,6 +99,9 @@ function moved(t) {
   });
 }
 
+// The same difference with both state folders outside every checkout.
+const movedOutside = (t) => repo(t, { baseConfig: TEAM, headConfig: { version: 1, state: { dir: '../head-state' } } });
+
 const quiet = (t) => {
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'error', () => {});
@@ -955,7 +958,7 @@ test('the hold is skipped when the guard\'s time is gone', (t) => {
 });
 
 for (const [name, match, make, bound] of [
-  ['the base ref', '*refs/remotes/origin*', moved, 5000],
+  ['the base ref', '*refs/remotes/origin*', movedOutside, 5000],
   ['the base\'s config', '*" show "*', moved, 5000],
   ['the checkout list', '*" worktree list "*', (t) => repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM }), 4000],
   ['the state folder\'s name', '*" --show-prefix "*', (t) => stateUnset(t).r, 5000],
@@ -977,9 +980,25 @@ for (const [name, match, make, bound] of [
 }
 
 test('the merge guard keeps its path when no ref names the base', (t) => {
-  const r = moved(t);
-  rmSync(path.join(r.dir, HEAD_RECORD));
+  const r = movedOutside(t);
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
+  tracking(r);
+  assert.match(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), /state\.dir differs/u, 'the base branch\'s ref finds the difference');
+});
+
+test('the merge guard compares the state folder when no ref names the base', (t) => {
+  const r = repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM });
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), insideDenial(r.dir));
+  const unset = defaultInCheckout(t);
+  assert.equal(judgeMerge({ project: unset.r.project, pr: 7, head: unset.r.head, viewPr: unused }), defaultDenial(unset.r.dir));
+  const git = () => ({ env: { ...process.env, AIDRIAN_HOLD_READ: 'held' } });
+  const calls = gitCalls(t, () => assert.equal(baseProblem(r.project, { repo: 'o/r', git }), insideText(r.dir)), '"${AIDRIAN_HOLD_READ:-unheld}" "$*"');
+  assert.ok(calls.some((call) => call.includes(' worktree list ')), 'the checkout list');
+  for (const call of calls) assert.match(call, /^held /u);
+  const before = process.env.PATH;
+  t.after(() => (process.env.PATH = before));
+  process.env.PATH = fakeGit(t, '*" worktree list "*', 'exit 1');
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null, 'a checkout list git cannot answer is no answer');
 });
 
 // ---- waive and extend publish only after the hold, by the base branch's review.record

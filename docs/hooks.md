@@ -424,7 +424,8 @@ with `state.dir` set or unset: that denial says to move the folder first, and th
 or with `state.dir` unset until the folder is outside. It refuses a checkout at the folder the review records go in too,
 with `state.dir` set or unset: that denial says to move that checkout first, and that the Human merges until it is gone.
 The hold applies with no review record too, and the `Merge anyway`
-answer of the waiver paragraph below does not waive it. With neither ref here, a read that fails, or no time left, it goes on.
+answer of the waiver paragraph below does not waive it. With neither ref here it makes only the refusals about a checkout, which need no base.
+With a read that fails, or no time left, it goes on.
 
 It reads only this machine's [review record](review.md#the-record), and decides in this order:
 

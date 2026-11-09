@@ -10,6 +10,7 @@ import { DEFAULTS, loadConfig, resolveUnattendedWaiver } from '../plugins/aidria
 import { machineSwitchWriteDenial } from '../plugins/aidrian/lib/config-guard.mjs';
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { guardWaiver, MAX_REASON, parseWaive, runWaive, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { check, checkMcp, UNREAD_REASON } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
@@ -387,14 +388,19 @@ test('a clock that crosses the deadline, or a read that throws outside the forge
   // A clock that fails on its third reading, the time left after the view, where no forge call's catch is: the throw is
   // the unread denial, not the hook's catch, which would let the merge run.
   let reads = 0;
+  let failsAt = 3;
   const failing = () => {
     reads += 1;
-    if (reads === 3) throw new RangeError('the clock passed the deadline');
+    if (reads === failsAt) throw new RangeError('the clock passed the deadline');
     return 0;
   };
   assert.deepEqual(guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: failing }), { allow: false, note: ', and the team\'s github.unattendedWaiver could not be read in time', route: '' });
-  // Through the guard: a denial reason, and the merge does not run.
+  // Through the guard: a denial reason, and the merge does not run. The hold reads the clock once a git read, first.
+  let holdReads = 0;
+  baseProblem(project, { repo: 'origin', git: () => ((holdReads += 1), {}) });
+  assert.ok(holdReads > 0, 'the hold makes its reads');
   reads = 0;
+  failsAt = holdReads + 3;
   const reason = merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { startedAt: 0, now: failing });
   assert.match(reason ?? '', /is `round_limit`.*could not be read in time/su);
 });

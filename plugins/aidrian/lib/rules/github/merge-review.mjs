@@ -20,8 +20,9 @@
 // Before it reads the record, a merge of this repository (one that names none, or one of this checkout's remotes) holds
 // the working copy to the config the base branch commits, and refuses a state folder inside a checkout of this repository
 // and a checkout at the folder the records go in (review/in-force.mjs baseProblem), from local git alone. A merge naming its number compares with origin's default branch
-// first, before any read; once a view is made, with the base it names. With neither ref here, a read that fails, or no
-// time left, the guard goes on as it would, since a hook lets the action run when it cannot read. Every git read of this
+// first, before any read; once a view is made, with the base it names. With neither ref here it makes only the refusals
+// about the checkouts, which need no base. With a read that fails, or no time left, the guard goes on as it would, since
+// a hook lets the action run when it cannot read. Every git read of this
 // hold is stopped after 1 s, or at the 4 s deadline below if sooner. This hold applies with no record too, and neither of
 // the waivers below reaches it.
 // The Human waives the record's denial with an AskUserQuestion answer, given at or after the head's outcome and every

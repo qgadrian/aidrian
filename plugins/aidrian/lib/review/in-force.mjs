@@ -143,14 +143,14 @@ export const boundedReads = (deadline, now = Date.now) => () => {
 };
 
 // holdToBase's answer for a hook, from local git alone, each read through `git`: why the working copy differs from `base`,
-// or with none named from origin's default branch, or null. A ref that is not here, or a read that fails or has no time
-// left, is no answer: a hook lets the action run when it cannot read.
+// or with none named from origin's default branch, or null. A ref that is not here leaves the compare with the checkouts,
+// which needs no base. A read that fails or has no time left is no answer: a hook lets the action run when it cannot read.
 export function baseProblem(project, { repo, base = null, git }) {
   try {
     const baseTip = base ? baseTipOf(project.root, base, git()) : resolve(project.root, 'refs/remotes/origin/HEAD', git());
-    if (!baseTip) return null;
     const where = base ? `${repo} ${base}` : `${repo}'s default branch`;
-    const { problem, unread } = againstBase(project, loadConfig(project).config, baseTip, where, git);
+    const working = loadConfig(project).config;
+    const { problem, unread } = baseTip ? againstBase(project, working, baseTip, where, git) : insideCheckout(project, working, git);
     return unread ? null : problem;
   } catch {
     return null;

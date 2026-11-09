@@ -826,7 +826,8 @@ offline they still write this machine's record and publish nothing; so does `req
 `--head` or `--repo` is missing. Auto-merge and product feedback make the same `state.dir` comparison against the default
 branch read from GitHub. The [merge guard](hooks.md#merge-guard) makes all three from local git before it reads the
 record, for a merge of this repository: a merge naming its number compares with origin's default branch first, and with
-the base the head lookup names once it makes one. It goes on as it would with neither ref, a read that fails, or no time left.
+the base the head lookup names once it makes one. With neither ref it makes only the comparison with the checkouts, which needs no base.
+It goes on as it would with a read that fails, or no time left.
 
 Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
 place: the rounds, each pass's result per head, the verdicts, the sign-offs, and the overrides used. Another machine

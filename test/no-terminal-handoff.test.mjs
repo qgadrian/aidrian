@@ -8,6 +8,7 @@ import test from 'node:test';
 const ROOT = path.resolve(import.meta.dirname, '../plugins/aidrian');
 const BREAK_GLASS = new Set([
   'lib/review-gate.mjs',
+  'lib/review/in-force.mjs',
   'lib/review/visual.mjs',
   'lib/rules/attribution.mjs',
   'lib/rules/git-amend.mjs',

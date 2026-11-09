@@ -19,16 +19,18 @@ import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 const NEXT = '1234567890abcdef1234567890abcdef12345678';
 
-// A git repository with an origin and one commit, holding a project whose state folder is inside it (never a real
+// A git repository with an origin and one commit, holding a project whose state folder is beside it (never a real
 // repository's, and no GIT_DIR), and a transcript file for the hook payload.
 function repo(t, config = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-merge-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-merge-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('remote', 'add', 'origin', 'git@github.com:Acme/Notes.git');
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, ...config }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, ...config }));
   git('add', '.');
   git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
   const project = projectAt(dir);

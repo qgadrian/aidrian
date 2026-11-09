@@ -16,6 +16,10 @@ import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
 const LOCAL = '.aidrian.local.json';
+// config.json in the default project folder, where a checkout looks when its `.aidrian.json` names no usable folder.
+export const DEFAULT_CONFIG = `${DEFAULT_DIR}/config.json`;
+// A git read with runGit's own options.
+const defaultRead = () => undefined;
 // The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and
 // what decides CI's verdict, and this plugin's own code that decides auto-merge, so the gate never approves a change to
 // itself. Not configurable. Under plugins/aidrian/: bin/; the module each bin/ script starts (lib/cli.mjs,
@@ -157,6 +161,7 @@ export function openProject(root, roots) {
     localAutoMerge: local.autoMerge,
     localUnattendedWaiver: local.unattendedWaiver,
     localReviewApprovals: local.reviewApprovals,
+    localUnattendedSignoff: local.unattendedSignoff,
     localFeedbackAuto: local.feedbackAuto,
     errors,
     unreadable,
@@ -175,8 +180,8 @@ export function configFiles(project) {
 // folder's when that commit has none; null when its `.aidrian.json` cannot be read or names no usable folder. What a
 // working copy's `.aidrian.json` says, committed later or never, cannot move a lookup at the base branch. Throws when
 // git itself fails, stopped by a timeout or the like. 128 is git saying the commit has no such file.
-export function committedConfigFile(project, commit) {
-  const shown = runGit(['show', `${commit}:./${OVERRIDE}`], project.root);
+export function committedConfigFile(project, commit, options) {
+  const shown = runGit(['show', `${commit}:./${OVERRIDE}`], project.root, options);
   if (shown.status === 128) return `${DEFAULT_DIR}/config.json`;
   if (shown.status !== 0) throw new Error(`git show ${commit}:./${OVERRIDE} failed`);
   let raw;
@@ -185,7 +190,8 @@ export function committedConfigFile(project, commit) {
   } catch {
     return null;
   }
-  const dir = insidePath(project.root, '', raw?.dir);
+  // The commit's own text, with no read of this disk: what the working tree holds at that name cannot change the answer.
+  const dir = joinedInside('', raw?.dir);
   return dir ? `${dir}/config.json` : null;
 }
 
@@ -255,7 +261,7 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals'];
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff'];
 
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, unattendedWaiver, reviewApprovals, feedbackAuto }. A git worktree has no copy of that git-ignored
 // file, so it is read from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with
@@ -265,7 +271,7 @@ const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review
 // Behind such a copy, the main checkout's file gets every check it gets when it is the one loaded, and its errors are
 // reported, so a worktree's copy hides none of them.
 function readLocal(checkouts, errors, unreadable) {
-  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset' };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const main = checkouts.at(-1);
@@ -292,7 +298,8 @@ function checkedLocal(raw, dir) {
   const autoMerge = localAutoMerge(raw, problems);
   const unattendedWaiver = localUnattendedWaiver(raw);
   const reviewApprovals = localReviewApprovals(raw, problems);
-  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, problems };
+  const unattendedSignoff = localUnattendedSignoff(raw, problems);
+  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, problems };
 }
 
 // The main checkout's local file behind a worktree's own copy, through checkedLocal: undefined when there is none, null
@@ -311,15 +318,16 @@ function mainLocal(main, errors) {
 // "off", so it never follows a team default of "on", and the waiver "off" though it says "on": a wrong local file never
 // turns merging on, nor lets a verdict stand in for the Human.
 function machineSwitches(file, main, errors) {
-  if (file === undefined) return { autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset' };
-  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off' };
+  if (file === undefined) return { autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
+  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off' };
   const tracked = [];
   const autoMerge = untrackedSwitch(file.autoMerge, 'github.autoMerge', main, tracked);
   const unattendedWaiver = untrackedSwitch(file.unattendedWaiver, 'github.unattendedWaiver', main, tracked);
   const reviewApprovals = untrackedSwitch(file.reviewApprovals, 'reviewApprovals', main, tracked);
+  const unattendedSignoff = untrackedSwitch(file.unattendedSignoff, 'unattendedSignoff', main, tracked);
   errors.push(...tracked);
   const broken = file.problems.length > 0 || tracked.length > 0;
-  return { autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge, unattendedWaiver: broken ? 'off' : unattendedWaiver, reviewApprovals };
+  return { autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge, unattendedWaiver: broken ? 'off' : unattendedWaiver, reviewApprovals, unattendedSignoff: broken ? 'off' : unattendedSignoff };
 }
 
 // A switch `value` the local file in `main` sets, named `key` in its errors. A local file git tracks travels with a
@@ -408,6 +416,16 @@ function localReviewApprovals(raw, errors) {
   return 'off';
 }
 
+// The local file's `unattendedSignoff` as "on", "off", or "unset": whether this machine lets a judge's ruling close an
+// unverified or disputed invariant, when the team's `review.unattendedSignoff.allow` is true. Anything else is an error
+// and reads "off".
+function localUnattendedSignoff(raw, errors) {
+  if (!Object.hasOwn(raw, 'unattendedSignoff')) return 'unset';
+  if (raw.unattendedSignoff === 'on' || raw.unattendedSignoff === 'off') return raw.unattendedSignoff;
+  errors.push(`${LOCAL}: "unattendedSignoff" must be "on" or "off"`);
+  return 'off';
+}
+
 function localSources(holder, raw, errors) {
   if (!Object.hasOwn(raw, 'sources')) return [];
   if (!Array.isArray(raw.sources) || !raw.sources.every((each) => typeof each === 'string' && each.trim() !== '')) {
@@ -432,10 +450,15 @@ function inMainCheckout(root, roots = checkoutRoots(root)) {
 // The machine-local state folder: plans, handoffs, the lesson inbox, and the dispatch log.
 // `$XDG_STATE_HOME/aidrian/projects/<project id>/`, with `~/.local/state` when that variable is unset or relative, so
 // git never sees it and every worktree and clone of a repository shares it. config.json `state.dir` moves it.
-export function stateDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
-  if (config.state.dir) return localPath(project, config.state.dir);
-  return path.join(stateRoot(env), 'projects', projectId(project));
+// `read` gives the options of each git read it makes, for a caller under a deadline, and may throw to stop it.
+export function stateDir(project, { config = loadConfig(project).config, env = process.env, read = defaultRead } = {}) {
+  if (config.state.dir) return localPath(project, config.state.dir, read);
+  return path.join(stateRoot(env), 'projects', projectId(project, read));
 }
+
+// The folder under the state folder `state` that review records go in: the record's readers and writers and the check that
+// holds them all ask here.
+export const recordsFolder = (state) => path.join(state, 'reviews');
 
 // `$XDG_STATE_HOME/aidrian`, with `~/.local/state` when that variable is unset or relative: the folder that holds every
 // project's state folder, and what no config.json can move (lib/gate-snapshot.mjs keeps its files there).
@@ -450,17 +473,18 @@ export function worktreesDir(project, { config = loadConfig(project).config } = 
 }
 
 // The main checkout's top folder, which every worktree shares; the project root outside git.
-export function repoRoot(project) {
-  return mainRoot(project.root) ?? project.root;
+export function repoRoot(project, options) {
+  return mainRoot(project.root, options) ?? project.root;
 }
 
 // `<repository name>-<8 hex digits>`: the name and a hash of the normalized `origin` URL, so every clone agrees.
 // Without an origin, the main checkout's folder name and absolute path. A project below the repository root adds its
 // path from that root to the hash, so two projects in one repository keep apart; a project at the root keeps its id.
-export function projectId(project) {
-  const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root);
-  const repository = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project));
-  const prefix = runGit(['rev-parse', '--show-prefix'], project.root);
+// `read` gives the options of each git read, as for stateDir.
+export function projectId(project, read = defaultRead) {
+  const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root, read());
+  const repository = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project, read()));
+  const prefix = runGit(['rev-parse', '--show-prefix'], project.root, read());
   const below = prefix.status === 0 ? prefix.stdout.replace(/\/?\n$/u, '') : '';
   return repositoryId(repository, below);
 }
@@ -496,9 +520,9 @@ export function normalizeRemote(url) {
 }
 
 // A configured local path: a leading `~` is the home folder, and a relative path starts at the repository root.
-function localPath(project, value) {
+function localPath(project, value, read = defaultRead) {
   if (/^~(?=$|\/)/.test(value)) return path.join(homedir(), value.slice(1));
-  return path.resolve(repoRoot(project), value);
+  return path.resolve(repoRoot(project, read()), value);
 }
 
 function realPath(file) {

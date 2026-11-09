@@ -161,7 +161,7 @@ export function cleanOutput(raw) {
 
 // What a flow verdict means, whatever the wording of the invariant's question: a reviewer must not map yes or no to a
 // verdict, because a question phrased so that yes is the breach would invert holds and violated.
-export const VERDICT_MEANING = 'A verdict says whether the change keeps the rule, not how the question is worded: holds means the change keeps the rule (its `source`, or the invariant), violated means the change breaks it, whichever answer, yes or no, the question would take.';
+export const VERDICT_MEANING = 'A verdict says whether the change keeps the rule, not how the question is worded: holds means the change keeps the rule (its `source`, or the invariant), violated means the change breaks it, whichever answer, yes or no, the question would take. The `evidence` of holds or not_affected is exactly one of `path:line` at the head, `test:<name>`, or `capture:<key>`, with nothing else in the field: prose there counts as cannot_verify. Put the explanation in `reason`.';
 
 // How a pass that reviews only the change since an earlier head judges its flows: from the merge base.
 export const flowBaseBrief = (input) => `Find bugs in ${input.remerge ? `\`git show --remerge-diff ${input.head}\`` : `${input.base}..${input.head}`}, but judge every flow invariant on the whole change, \`git diff ${input.flowBase} ${input.head}\`: an invariant compares the head with the base branch, so a change an earlier push of this pull request made counts as much as a new one, and narrowing something this pull request itself added weakens nothing the base had.`;

@@ -40,10 +40,11 @@
 // and waits for nothing.
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
-import { committedConfig, DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
+import { DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
+import { holdToBase } from './review/in-force.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
@@ -128,8 +129,8 @@ export const ROUNDS_OVERRIDE = 'AIDRIAN_ALLOW_EXTRA_ROUNDS';
 export function roundCapProblem(maxRounds, cap, env = process.env) {
   if (maxRounds <= cap || env[ROUNDS_OVERRIDE] === '1') return null;
   return `--max-rounds ${maxRounds} goes past config.json github.maxReviewRounds (${cap}). More review rounds are the Human's ` +
-    `decision: stop and ask them to raise the cap, redesign, or stop. To raise it, the Human sets ${ROUNDS_OVERRIDE}=1 in their ` +
-    "own shell before starting the session (agents must never set it on the user's behalf).";
+    `decision: stop and ask them with AskUserQuestion to raise the cap, redesign, or stop, naming the pull request and --max-rounds ${maxRounds}. ` +
+    `On "Approve", ${ROUNDS_OVERRIDE}=1 goes inline on this exact command; an agent sets it on no other ground.`;
 }
 
 // `defaults` carries config.json `github.reviewer` and `github.maxReviewRounds`; flags win.
@@ -440,26 +441,29 @@ async function reviewGate(project, config) {
 
 // The `github` and `review` config as the pull request's base branch commits it, so an edit to the working copy's
 // config cannot raise the round cap, loosen what happens at it, or hide files from the extra-rounds signals through
-// review.ignore, as `aidrian pr review` reads them: { github, review, repo, n, baseTip, pr }. GitHub always names the
-// base; a response without one keeps the loaded config, with no base tip.
+// review.ignore, as `aidrian pr review` reads them: { github, review, repo, n, baseTip, pr }. The review record is read
+// after this, from the state.dir that base branch commits. GitHub always names the base; a response without one keeps
+// the loaded config, with no base tip, and with no hold nothing publishes (publishes).
 function committedBase(project, opts, forge, config) {
   const repo = opts.repo ?? forge.repo();
   const n = opts.pr ?? String(forge.change(null, CURRENT_FIELDS).number);
   const pr = forge.pull(repo, n);
   const ref = pr?.base?.ref;
   if (typeof ref !== 'string' || ref === '') return { github: config.github, review: config.review, repo, n, baseTip: null, pr };
-  const tip = [`origin/${ref}`, ref].map((each) => runGit(['rev-parse', '--verify', '--quiet', `${each}^{commit}`], project.root)).find((r) => r.status === 0)?.stdout.trim();
-  if (!tip) throw new Error(`the base branch ${ref} is not in this checkout: git fetch first`);
-  const committed = committedConfig(project, tip);
-  return { github: committed.github, review: committed.review, repo, n, baseTip: tip, pr };
+  const { committed, baseTip } = holdToBase(project, config, { repo, base: ref });
+  return { github: committed.github, review: committed.review, repo, n, baseTip, pr };
 }
+
+// Whether the record goes on the pull request: only after the hold, and unless the base branch's `review.record` is "local".
+const publishes = (base) => base.baseTip !== null && base.review.record !== 'local';
 
 // The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs),
 // with `comments`, the pull request's comments as read, for the write back.
-async function reviewRecord(project, config, forge, repo, n) {
+async function reviewRecord(project, forge, base) {
   const { heldMessage, readRecord } = await import('./review/state.mjs');
+  const { repo, n } = base;
   let comments = [];
-  if (config.review.record !== 'local') {
+  if (publishes(base)) {
     try {
       comments = forge.conversationComments(repo, n) ?? [];
     } catch {}
@@ -469,12 +473,12 @@ async function reviewRecord(project, config, forge, repo, n) {
   return { state: record.state, comments };
 }
 
-// Writes the record where the review step does: the state folder and, unless config.json `review.record` is "local",
-// the pull request's summary comment, so another machine continues from the same checks and grants.
-async function saveRecord(record, { project, config, forge, base, status }) {
+// Writes the record where the review step does: the state folder and, when it publishes, the pull request's summary
+// comment, so another machine continues from the same checks and grants.
+async function saveRecord(record, { project, forge, base, status }) {
   const { publishState, writeLocalState } = await import('./review/state.mjs');
   writeLocalState(project, record.state);
-  if (config.review.record === 'local') return null;
+  if (!publishes(base)) return base.baseTip === null ? 'the forge named no base branch, so nothing was posted' : null;
   return publishState(record.state, {
     comments: () => record.comments,
     post: (body) => forge.postComment(base.repo, base.n, body),
@@ -512,7 +516,7 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
     },
     log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
   });
-  const summaryError = await saveRecord(record, { project, config, forge, base, status: decision.status });
+  const summaryError = await saveRecord(record, { project, forge, base, status: decision.status });
   return { ...result, ...decision, ...(summaryError ? { summary_error: summaryError } : {}) };
 }
 
@@ -548,7 +552,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
     const { grantedRounds, policyOf, roundCap } = await import('./review/extension.mjs');
     const policy = policyOf(base?.github ?? config.github);
-    const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, forge, base.repo, base.n) : null;
+    const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, forge, base) : null;
     // The baseline: an explicit --max-rounds, held to the base branch's cap unless the Human set the override, else that
     // cap. Grants add to it either way, as in `aidrian pr review`.
     const baseline = args.includes('--max-rounds') ? opts.maxRounds : cap;
@@ -586,7 +590,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     }
     result = { ...result, waited_sec: Math.round((clock() - started) / 1000) };
     if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, forge, base, record, policy, env });
-    else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status });
+    else if (moved) await saveRecord(record, { project, forge, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
     if (result.status === 'review_required') console.error(result.reason);
     // The bot review the Human asked for (`aidrian pr request`): sent once this run posted it, and answered once the

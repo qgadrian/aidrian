@@ -19,15 +19,17 @@ const MATCHER = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/hooks/h
   .find((group) => group.hooks.some(({ command }) => command.includes('hook-mcp-github.mjs'))).matcher;
 const HEAD = RECORDED.merge.tool_input.expected_head_sha;
 
-// A git repository with an origin, holding a project whose state folder is inside it.
+// A git repository with an origin, holding a project whose state folder lies beside it.
 function repo(t, config = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-github-app-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-github-app-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
   git('init', '-q');
   git('remote', 'add', 'origin', 'git@github.com:Acme/Notes.git');
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, ...config }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, ...config }));
   return dir;
 }
 

@@ -57,6 +57,9 @@ function project(t) {
   return { dir, git, write, project: projectAt(dir), head: git('rev-parse', 'HEAD') };
 }
 
+// The base branch the forge names, which every project() here has.
+const named = { change: () => ({ baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }) };
+
 const ingest = (p, more = {}) => ingestCaptures({ project: p.project, pr: 7, head: HEAD, files: [p.write('shots/dashboard 360.png', PNG)], source: 'e2e-runner run 12', by: 'Tester', agent: 'e2e-runner', ...more });
 
 test('ingestCaptures copies each image into the head`s capture folder and records its key, hash, and source apart from the tool`s entries', (t) => {
@@ -169,7 +172,7 @@ test('aidrian pr ingest: --check records nothing, a refusal throws, a short head
   const shot = p.write('shots/look.png', PNG);
   const lines = [];
   t.mock.method(console, 'log', (line) => lines.push(line));
-  const run = (...args) => runIngest(['7', ...args], projectAt(p.dir), null, { forge: { change: () => ({ url: 'https://github.com/o/r/pull/7' }), conversationComments: () => [] }, env: {} });
+  const run = (...args) => runIngest(['7', ...args], projectAt(p.dir), null, { forge: { ...named, conversationComments: () => [] }, env: {} });
   const short = p.head.slice(0, 7);
   assert.equal(await run('--head', short, '--source', 'e2e-runner run 12', '--repo', 'o/r', '--check', shot), 0);
   assert.ok(!existsSync(captureDir(p.project, 7, p.head)), '--check recorded nothing');
@@ -202,11 +205,11 @@ test('aidrian pr ingest: a forge failure on the captures comment loses no ingest
   t.mock.method(console, 'log', (line) => lines.push(line));
   t.mock.method(console, 'error', (line) => warnings.push(line));
   const ingestWith = (forge) => runIngest(['7', '--head', p.head, '--source', 'run 12', '--repo', 'o/r', shot], projectAt(p.dir), null, { forge, env: {} });
-  assert.equal(await ingestWith({ conversationComments: () => { throw new Error('gh: HTTP 502'); } }), 0);
+  assert.equal(await ingestWith({ ...named, conversationComments: () => { throw new Error('gh: HTTP 502'); } }), 0);
   assert.equal(readManifest(p.project, 7, p.head)?.ingested.length, 1, 'the ingest is recorded');
   assert.deepEqual(warnings, ['warning: the captures comment on o/r#7 was not updated (gh: HTTP 502); the ingest is recorded']);
   const other = { id: 5, author_association: 'MEMBER', body: '<!-- aidrian-visual-captures -->\n### Visual capture: `1234567`\n' };
-  assert.equal(await ingestWith({ conversationComments: () => [other], editComment: (...args) => edits.push(args) }), 0);
+  assert.equal(await ingestWith({ ...named, conversationComments: () => [other], editComment: (...args) => edits.push(args) }), 0);
   assert.deepEqual(edits, [], 'the comment shows another head');
   assert.ok(lines.includes('the captures comment on o/r#7 shows another head; it was not edited'), lines.join('\n'));
 });
@@ -217,8 +220,8 @@ test('aidrian pr ingest edits the captures comment only from a manifest this mac
   const lines = [];
   t.mock.method(console, 'log', (line) => lines.push(line));
   const sha = p.head.slice(0, 7);
-  const ingestWith = (comments, edits, more = {}) => runIngest(['7', '--head', p.head, '--source', 'run 12', '--repo', 'o/r', shot], projectAt(p.dir), more.config ?? null, {
-    forge: { viewer: () => 'session-bot', conversationComments: () => comments, editComment: (_repo, id, body) => edits.push([id, body]), ...more.forge }, env: {},
+  const ingestWith = (comments, edits, more = {}) => runIngest(['7', '--head', p.head, '--source', 'run 12', '--repo', 'o/r', shot], projectAt(p.dir), null, {
+    forge: { ...named, viewer: () => 'session-bot', conversationComments: () => comments, editComment: (_repo, id, body) => edits.push([id, body]), ...more.forge }, env: {},
   });
   const comment = (more) => ({ id: 9, author_association: 'MEMBER', user: { login: 'amy' }, body: `<!-- aidrian-visual-captures -->\n### Visual capture: \`${sha}\`\n\nAttach: **auto**, private repository. 1 of 1 captured.`, ...more });
 
@@ -248,10 +251,34 @@ test('aidrian pr ingest edits the captures comment only from a manifest this mac
   assert.deepEqual(foreign, []);
   assert.ok(lines.includes(`the captures comment of ${sha} came from another machine's capture: this ingest counts only on this machine; ingest the same images on the machine that captured the head to show them on the pull request`), lines.join('\n'));
 
-  // With the review record local there is no captures comment: the pull request is not read.
+  // With the review record local on the base branch there is no captures comment: the pull request is not read.
+  p.write('.aidrian/config.json', JSON.stringify({ version: 1, review: { record: 'local' } }));
+  p.git('add', '.aidrian/config.json');
+  p.git('commit', '-q', '-m', 'local record');
   lines.length = 0;
-  assert.equal(await ingestWith(null, [], { config: { review: { record: 'local' } }, forge: { conversationComments: () => assert.fail('read the pull request') } }), 0);
+  assert.equal(await ingestWith(null, [], { forge: { conversationComments: () => assert.fail('read the pull request') } }), 0);
   assert.ok(lines.includes('the review record is local, so no captures comment shows the ingest'), lines.join('\n'));
+});
+
+test('aidrian pr ingest publishes only after the hold: with no base from the forge, working comment calls edit nothing and the ingest stays on this machine', async (t) => {
+  const p = project(t);
+  const shot = p.write('shots/look.png', PNG);
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  await captureVisual({ project: p.project, pr: 7, head: p.head, visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base, spawn: fakeAdapter });
+  const comment = { id: 9, author_association: 'MEMBER', user: { login: 'amy' }, body: `<!-- aidrian-visual-captures -->\n### Visual capture: \`${p.head.slice(0, 7)}\`\n\nAttach: **auto**, private repository. 1 of 1 captured.` };
+  for (const [name, change] of [
+    ['a failed base read', () => { throw new Error('gh: HTTP 502'); }],
+    ['an answer that names no base', () => ({ url: 'https://github.com/o/r/pull/7' })],
+  ]) {
+    const edits = [];
+    lines.length = 0;
+    const forge = { change, viewer: () => 'session-bot', conversationComments: () => [comment], editComment: (...args) => edits.push(args) };
+    assert.equal(await runIngest(['7', '--head', p.head, '--source', 'run 12', '--repo', 'o/r', shot], projectAt(p.dir), null, { forge, env: {} }), 0, name);
+    assert.deepEqual(edits, [], name);
+    assert.ok(lines.includes('the forge named no base branch, so the ingest stays on this machine and no captures comment shows it'), lines.join('\n'));
+  }
+  assert.equal(readManifest(p.project, 7, p.head)?.ingested.length, 1, 'the ingest is recorded');
 });
 
 test('aidrian pr ingest records the session kind: the Human`s shell gives the plain name, an AI session its agent or that it names none', async (t) => {

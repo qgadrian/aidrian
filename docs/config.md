@@ -158,10 +158,11 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
 | `github.autoMerge.includeGuardedPaths` | `true` lets a pull request that changes a guarded path (the fixed list under `paths` in [Auto-merge](#auto-merge)) pass the `paths` check, but never a policy file: the files the gate reads its policy from, including a folder `.aidrian.json` names, and `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay refused. `false`, the default, keeps a guarded path off. It counts only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout. Every other check stays. Read the risk under [Auto-merge](#auto-merge) before setting it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
+| `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`. |
 | `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's "Merge anyway", at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
 | `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
-| `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
+| `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. The record commands read it as the pull request's base branch commits it, not from the working copy; only a command the forge names no base for reads no comment, keeps this machine's record, and publishes nothing. |
 | `review.productFeedback.maxPersonas` | How many personas `persona-audit` [picks for a pull request](personas.md#a-pull-request-link-alone): a whole number from 1 to 10, 2 by default. A run that names personas, or `all`, has no cap. |
 | `review.productFeedback.auto` | `true` makes a pull request that changes a user-facing file owe [product feedback](#product-feedback). `false`, the default. Read from the default branch and the base, never the working copy: it is on when either says true. With neither list below, it is an error here, and `status` reads it as clear. |
 | `review.productFeedback.files` | The globs, or `re:` patterns, of the user-facing files. `null`, the default, uses `review.visual.targets[].files`. Read from the default branch and the base, as their union. |
@@ -209,6 +210,12 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `tracker` | The workspace, team, and project MCP tracker writes belong to, off by default: [Tracker](#tracker). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
+A state folder inside the repository's checkouts keeps the plans, lessons, and audits, and `aidrian check` warns about it,
+but the review-record commands and the merge guard refuse it ([The record](review.md#the-record)):
+put it outside, or leave `state.dir` null.
+The default folder counts too: with `state.dir` null, a default folder inside a checkout gets the same warning and refusal, in words of its own that say to point it outside by `state.dir` or by this machine's state root.
+They refuse a checkout at the folder the records go in the same way, with `state.dir` set or unset, and the check warns about that too.
+A state folder whose path holds a line break gets the same warning and refusal wherever it lies.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.

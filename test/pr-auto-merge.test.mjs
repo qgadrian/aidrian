@@ -16,20 +16,22 @@ const OLD = '1234567890abcdef1234567890abcdef12345678';
 const TEAM = { allow: true, strategy: 'squash', deleteBranch: true, deleteWorktree: false };
 const URL7 = 'https://github.com/acme/notes/pull/7';
 const CHECKS = { requiredChecks: ['e2e'], conditionalChecks: ['docs'], ignoreCancelledChecks: ['preview'] };
-const STATE = { dir: 'state' };
+const STATE = { dir: '../state' };
 const configText = (autoMerge, lists = CHECKS, state = STATE) => JSON.stringify({ version: 1, state, github: { ...lists, autoMerge } });
 
 // A temporary git repository (never a real one, and no GIT_DIR) whose working copy commits `working` as the team's
 // github.autoMerge, with origin at `origin`, and a `.aidrian.local.json` that sets the machine's switch to `local`.
-// The project's state folder is inside it.
+// The project's state folder is beside it.
 function repo(t, { working = { ...TEAM, allow: true }, lists = CHECKS, local = 'on', origin = 'git@github.com:acme/notes.git' } = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main');
   git('remote', 'add', 'origin', origin);
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { ...lists, autoMerge: working } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: STATE, github: { ...lists, autoMerge: working } }));
   git('add', '.aidrian/config.json');
   git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'config');
   if (local !== null) writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(typeof local === 'string' ? { github: { autoMerge: local } } : local));
@@ -582,7 +584,7 @@ test('a working copy whose state.dir differs from the default branch\'s is off (
   r.record((state) => finished(state));
   const elsewhere = { 'acme/notes@main:.aidrian/config.json': configText(TEAM, CHECKS, { dir: null }) };
   assert.deepEqual(reasonOf(t, r, { files: elsewhere }), [1, 'checks']);
-  assert.match(run(t, r, ['7'], { files: elsewhere }).out[0], /working copy's state\.dir differs from acme\/notes main/u);
+  assert.ok(run(t, r, ['7'], { files: elsewhere }).out[0].includes("the working copy's state.dir differs from acme/notes main, and the review record is read from it"));
 });
 
 test('review: requested changes are off, from the decision or from anyone\'s latest review, whatever the record says', (t) => {
@@ -738,7 +740,7 @@ test('a working copy that relaxes a check list, committed or uncommitted, is off
     const uncommitted = repo(t);
     uncommitted.record((state) => finished(state));
     assert.deepEqual(reasonOf(t, uncommitted), [0, null], 'the lists match before the edit');
-    writeFileSync(path.join(uncommitted.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { ...CHECKS, [key]: weaker, autoMerge: TEAM } }));
+    writeFileSync(path.join(uncommitted.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, [key]: weaker, autoMerge: TEAM } }));
     assert.deepEqual(reasonOf(t, uncommitted), [1, 'checks'], `uncommitted ${key}`);
   }
   // A list dropped altogether differs too.
@@ -778,14 +780,16 @@ test('a required check missing from the rows is pending, so a draft\'s partial s
 });
 
 test('a project below the root reads its own auto-merge setting, and a file outside its folder or guarded inside it keeps auto-merge off', (t) => {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const web = path.join(dir, 'apps/web');
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main');
   git('remote', 'add', 'origin', 'git@github.com:acme/notes.git');
   mkdirSync(path.join(web, '.aidrian'), { recursive: true });
-  writeFileSync(path.join(web, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { ...CHECKS, autoMerge: { ...TEAM, allow: true } } }));
+  writeFileSync(path.join(web, '.aidrian/config.json'), JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge: { ...TEAM, allow: true } } }));
   git('add', 'apps/web/.aidrian/config.json');
   git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'config');
   writeFileSync(path.join(web, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));

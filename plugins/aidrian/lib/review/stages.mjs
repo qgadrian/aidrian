@@ -11,10 +11,12 @@ import { blocks } from './findings.mjs';
 import { withEndedWaivers } from './settled.mjs';
 import { dedupe } from './split.mjs';
 import { approveLine } from './approvals.mjs';
+import { HARNESS_FLOW } from './plan.mjs';
 import * as quota from './quota.mjs';
 import { captureKeys } from './visual.mjs';
 import { inBaseWorktree } from './base-worktree.mjs';
 import { captureAndAttach, dispatchFor, passInput } from './dispatch.mjs';
+import { refusedAtHead } from './in-force.mjs';
 
 export const MAX_ATTEMPTS = 3;
 
@@ -85,6 +87,8 @@ export async function runStages(s) {
       if (execs.length) {
         if (resolve(root, 'HEAD') !== head || !isClean(root)) {
           undoRound();
+          const refused = refusedAtHead(s.project, baseTip, head, s.codex);
+          if (refused) return finish('incomplete', { reason: refused, retry_recommended: false });
           return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, retry_recommended: true });
         }
         // Codex reads the checkout at the head; a project's own reviewer runs as the base has it, and reads the head
@@ -200,7 +204,7 @@ export async function runStages(s) {
         ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
         flows: unsigned.map(([flow, status]) => ({
           flow: flow.id, violated: status.open, unverified: status.unverified,
-          // Reviewers disagree: the Human decides, in their own shell, and the invariant then passes on the evidence.
+          // Reviewers disagree: the Human decides, and the invariant then passes on the evidence.
           ...(status.disputed.some((id) => status.open.includes(id)) ? { disputed: status.disputed.filter((id) => status.open.includes(id)), overrule: status.disputed.filter((id) => status.open.includes(id)).map((id) => overruleCommand(s, flow, id)) } : {}),
           next: nextSteps(s, flow, status),
         })),
@@ -241,9 +245,10 @@ function overruleCommand({ n, head }, flow, id) {
 // `commands` holds only `aidrian pr signoff` commands, for the Human's shell once `--check` passes; `notes` holds
 // the rest: the fix to make, the approval to ask for, the capture's status.
 function nextSteps(s, flow, status) {
-  const { n, head, passes, visualEntries, manifest, isVisual, approvalPath } = s;
+  const { n, head, passes, visualEntries, manifest, isVisual, approvalPath, rejectedVerdicts, settle } = s;
+  const judged = settle?.on && flow.id !== HARNESS_FLOW;
   const violated = status.open.map((id) => (status.disputed.includes(id)
-    ? { invariant: id, state: 'disputed', commands: [overruleCommand(s, flow, id)], notes: [] }
+    ? { invariant: id, state: 'disputed', commands: [overruleCommand(s, flow, id)], notes: [], ...(judged ? { settle: `aidrian pr settle ${n} --flow ${flow.id} --overrule ${id} --head ${head} --judge <agent> --reason "<why>"` } : {}) }
     : { invariant: id, state: 'violated', commands: [], notes: ['fix the code'] }));
   const visualFlow = visualEntries.length > 0 && passes.some((pass) => isVisual(pass) && (pass.flows ?? []).includes(flow.id));
   const capture = visualFlow && captureKeys(manifest).size === 0
@@ -255,7 +260,9 @@ function nextSteps(s, flow, status) {
       invariant: id,
       state: 'unverified',
       commands: [`aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}`],
+      ...(judged ? { settle: `aidrian pr settle ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head} --judge <agent>` } : {}),
       notes: [
+        ...(rejectedVerdicts?.(flow.id, id) ?? []).map((each) => `${each.reviewer} answered ${each.verdict}, but its evidence does not count (${each.problem}): dispatch that reviewer again to cite path:line, test:<name>, or capture:<key>, which closes this with no sign-off`),
         ...(approvers.length && approvalPath?.on ? [`ask for an approving review of ${head} by ${approvers.join(' or ')}, whose body holds the line: ${approveLine(flow.id, id)}`] : []),
         ...(capture ? [capture] : []),
       ],

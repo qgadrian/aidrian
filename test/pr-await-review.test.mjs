@@ -986,16 +986,17 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
   assert.equal(covered.posts.length, 0);
 });
 
-// A project whose own config keeps the inbox in `base/state`, away from the developer's state folder, and a run of
+// A project whose own config keeps the inbox in `<root>/state`, beside its checkout and away from the developer's state folder, and a run of
 // `await-review --request` on a pull request with `reviews` bot reviews, at the default limit of 3.
 function roundsProject(t) {
-  const base = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
-  t.after(() => rmSync(base, { recursive: true, force: true }));
-  mkdirSync(path.join(base, '.aidrian'));
-  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { extraRounds: 'off' } }));
+  const root = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const base = path.join(root, 'repo');
+  mkdirSync(path.join(base, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, github: { extraRounds: 'off' } }));
   const project = projectAt(base);
   const { config } = loadConfig(project);
-  assert.equal(inboxPath(project, config), path.join(base, 'state/lessons/inbox.jsonl'));
+  assert.equal(inboxPath(project, config), path.join(root, 'state/lessons/inbox.jsonl'));
   const log = t.mock.method(console, 'log', () => {});
   const run = ({ reviews = 3, args = [], settings = config, proj = project } = {}) => {
     const rounds = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
@@ -1111,6 +1112,8 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr signoff PR --flow ID --accept INVARIANT --evidence URL --reason TEXT --head SHA',
     '               [--repo OWNER/NAME] [--check]',
     '       aidrian pr signoff PR --last [--repo OWNER/NAME] [--check]',
+    '       aidrian pr settle PR --flow ID (--accept INVARIANT --evidence URL | --overrule INVARIANT)',
+    '               --reason TEXT --head SHA --judge AGENT [--repo OWNER/NAME] [--check]',
     '       aidrian pr ingest PR --head SHA --source TEXT [--repo OWNER/NAME] [--check] FILE...',
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
@@ -1169,7 +1172,7 @@ test('localGit: the pushed head is the upstream of the same branch in the same r
 test('raising --max-rounds past the config cap needs the Human override, whatever the reviewer', async () => {
   assert.equal(roundCapProblem(3, 3, {}), null, 'at the cap');
   assert.equal(roundCapProblem(2, 3, {}), null, 'a lower cap always runs');
-  assert.match(roundCapProblem(5, 3, {}) ?? '', /AIDRIAN_ALLOW_EXTRA_ROUNDS=1 in their own shell/);
+  assert.match(roundCapProblem(5, 3, {}) ?? '', /AskUserQuestion.*AIDRIAN_ALLOW_EXTRA_ROUNDS=1 goes inline on this exact command/);
   assert.equal(roundCapProblem(5, 3, { [ROUNDS_OVERRIDE]: '1' }), null);
   const config = { github: { reviewer: 'someone[bot]', maxReviewRounds: 3, reviewGate: { enabled: false } } };
   const forge = new Proxy({}, { get: () => () => {

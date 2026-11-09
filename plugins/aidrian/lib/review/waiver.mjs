@@ -31,6 +31,7 @@ import { sessionIdentity } from '../hosts/index.mjs';
 // other's exports only inside functions, never while it loads: keep it that way.
 import { branchPolicies, refusingBranches } from '../pr-auto-merge.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
+import { holdToBase } from './in-force.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export const VERDICTS = Object.freeze(['waive', 'refuse']);
@@ -206,8 +207,8 @@ const nextStep = (entry, pr, local) => (entry.verdict === 'waive'
   ? `merge with \`gh pr merge ${pr} --match-head-commit ${entry.head}\`: the merge guard accepts this verdict only while github.unattendedWaiver.allow is true on the base and default branches and the switch is on in ${local}`
   : 'the guard stands: the Human merges, or answers "Merge anyway"');
 
-// The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless
-// config.json `review.record` is "local", the pull request's summary comment. The entries owed on this machine are
+// The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless the
+// base branch's `review.record` is "local", the pull request's summary comment. The entries owed on this machine are
 // merged in first, as the review step does, so a newer record from the comment never hides one; and when this machine's
 // record changes before the write, nothing is written. `deps.forge` replaces the forge (change, conversationComments,
 // postComment, editComment, viewer), `deps.repo` the origin, and `deps.env` the environment, in tests.
@@ -218,7 +219,14 @@ export async function runWaive(args, project, config, deps = {}) {
   }
   const forge = deps.forge ?? forgeFor(project.root);
   const repo = deps.repo ?? originRepo(project);
-  const onPr = config.review.record !== 'local';
+  // The record is read only from the state.dir the pull request's base branch commits, so a verdict needs that base.
+  let base = null;
+  try {
+    base = forge.change(String(opts.pr), 'baseRefName')?.baseRefName ?? null;
+  } catch {}
+  if (!base) throw new Error('cannot read the pull request\'s base branch: the review record is read from the state.dir it commits');
+  const { committed } = holdToBase(project, config, { repo, base });
+  const onPr = committed.review.record !== 'local';
   let comments = [];
   if (onPr) {
     try {

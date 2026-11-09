@@ -33,7 +33,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFil
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
+import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions, originDefaultTip } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { ageDays, blockOf, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
@@ -747,22 +747,20 @@ function insideGit(root) {
   }
 }
 
-// The commit of the base branch, from names the working copy cannot set: origin/HEAD, then the plugin's default branch
-// name on origin. A branch that names itself in config.json `git.defaultBranch` is not its own base. With no remote at
-// all, a local branch of that name is the only record of the base; with any remote, whatever its name, a local branch
-// can hold commits no one reviewed, so it never stands in. null when none resolves, or when git fails on one, whose
-// answer the next ref must not replace: for rev-parse, 1 is git saying no such ref.
+// The commit of the base branch, from names the working copy cannot set (originDefaultTip). A branch that names itself in
+// config.json `git.defaultBranch` is not its own base. With no remote at all, a local branch of the plugin's default name
+// is the only record of the base; with any remote, whatever its name, a local branch can hold commits no one reviewed, so
+// it never stands in. null when none resolves, or when git fails on one.
 function baseTip(project) {
-  const branch = DEFAULTS.git.defaultBranch;
-  const tipOf = (ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], project.root);
-  for (const ref of ['refs/remotes/origin/HEAD', `refs/remotes/origin/${branch}`]) {
-    const tip = tipOf(ref);
-    if (tip.status === 0) return tip.stdout.trim();
-    if (tip.status !== 1) return null;
+  try {
+    const origin = originDefaultTip(project.root);
+    if (origin) return origin;
+  } catch {
+    return null;
   }
   const remotes = runGit(['remote'], project.root);
   if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
-  const local = tipOf(`refs/heads/${branch}`);
+  const local = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${DEFAULTS.git.defaultBranch}^{commit}`], project.root);
   return local.status === 0 ? local.stdout.trim() : null;
 }
 

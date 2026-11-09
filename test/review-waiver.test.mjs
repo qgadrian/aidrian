@@ -10,6 +10,7 @@ import { DEFAULTS, loadConfig, resolveUnattendedWaiver } from '../plugins/aidria
 import { machineSwitchWriteDenial } from '../plugins/aidrian/lib/config-guard.mjs';
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { guardWaiver, MAX_REASON, parseWaive, runWaive, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { check, checkMcp, UNREAD_REASON } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
@@ -28,14 +29,16 @@ const ALLOW = { version: 1, github: { unattendedWaiver: { allow: true } } };
 // three commits no ref names: `A`, `B` a child of A, and `C` a sibling of A, so a head the review did not cover can
 // descend from the reviewed one or not: neither is waived.
 function repo(t, { config = {}, local = null } = {}) {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-waiver-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-waiver-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   const id = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false'];
   git('init', '-q');
   git('remote', 'add', 'origin', 'git@github.com:Acme/Notes.git');
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, ...config }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, ...config }));
   git('add', '.');
   git(...id, 'commit', '-qm', 'init');
   const tree = git('rev-parse', 'HEAD^{tree}');
@@ -178,11 +181,13 @@ test('a local file git tracks reads the waiver switch "off" with the tracked-fil
 // ---- the command (AC7)
 
 // runWaive as the CLI runs it, over a fake forge whose pull request is at `head` and whose comments are `issue`.
-// `change` replaces the head read, which runs between the record's read and its write.
-function waive(t, r, args, { head = HEAD, change = null, issue = [], record = 'comment' } = {}) {
+// `change` replaces the head read, which runs between the record's read and its write. The base read before it names
+// this checkout's own branch, or `base` when given: its config holds the same state.dir.
+function waive(t, r, args, { head = HEAD, change = null, issue = [], record = 'comment', base = r.git('branch', '--show-current') } = {}) {
   const log = t.mock.method(console, 'log', () => {});
+  const headRead = change ?? ((ref, fields) => (assert.equal(fields, 'number,headRefOid,url'), { number: Number(ref), headRefOid: head, url: URL }));
   const forge = {
-    change: change ?? ((ref, fields) => (assert.equal(fields, 'number,headRefOid,url'), { number: Number(ref), headRefOid: head, url: URL })),
+    change: (ref, fields) => (fields === 'baseRefName' ? { baseRefName: base } : headRead(ref, fields)),
     conversationComments: () => issue,
     postComment: (_repo, _n, body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', body }), issue.at(-1)),
     editComment: (_repo, id, body) => (issue.find((comment) => comment.id === id).body = body),
@@ -205,6 +210,14 @@ test('aidrian pr waive records a round_cap verdict on the current head, visible 
   assert.equal(issue.length, 1, 'posted the summary comment');
   assert.equal(stateFromComment(issue[0].body, 5).waivers[0].head, HEAD, 'the comment carries the record');
   assert.match(issue[0].body, new RegExp(`${WAIVER_HEADING.replace(/\*/gu, '\\*')}\\n- round_cap on \`abcdef1\`: waive by unknown: the three open findings are style nits \\(an audit entry, not proof\\)`, 'u'));
+});
+
+test('aidrian pr waive refuses a failed head read after the base read, and a base it cannot read', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, roundLimit);
+  await assert.rejects(waive(t, r, ['--verdict', 'refuse', '--reason', 'nits'], { change: () => { throw new Error('HTTP 502'); } }), /cannot read the pull request's head/u);
+  await assert.rejects(waive(t, r, ['--verdict', 'refuse', '--reason', 'nits'], { base: null }), /cannot read the pull request's base branch/u);
+  assert.equal(readLocalState(r.project(), 5).waivers, undefined);
 });
 
 test('a second verdict rewrites the waiver list in the summary comment, not a second one', async (t) => {
@@ -375,14 +388,19 @@ test('a clock that crosses the deadline, or a read that throws outside the forge
   // A clock that fails on its third reading, the time left after the view, where no forge call's catch is: the throw is
   // the unread denial, not the hook's catch, which would let the merge run.
   let reads = 0;
+  let failsAt = 3;
   const failing = () => {
     reads += 1;
-    if (reads === 3) throw new RangeError('the clock passed the deadline');
+    if (reads === failsAt) throw new RangeError('the clock passed the deadline');
     return 0;
   };
   assert.deepEqual(guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: failing }), { allow: false, note: ', and the team\'s github.unattendedWaiver could not be read in time', route: '' });
-  // Through the guard: a denial reason, and the merge does not run.
+  // Through the guard: a denial reason, and the merge does not run. The hold reads the clock once a git read, first.
+  let holdReads = 0;
+  baseProblem(project, { repo: 'origin', git: () => ((holdReads += 1), {}) });
+  assert.ok(holdReads > 0, 'the hold makes its reads');
   reads = 0;
+  failsAt = holdReads + 3;
   const reason = merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { startedAt: 0, now: failing });
   assert.match(reason ?? '', /is `round_limit`.*could not be read in time/su);
 });
@@ -606,12 +624,12 @@ test('a subagent may not set the waiver switch in the local file; the main sessi
 
 test('aidrian check warns, and still passes, when the waiver switch is on and the team does not allow it', (t) => {
   const r = repo(t, { local: ON });
-  writeFileSync(path.join(r.dir, '.gitignore'), `${LOCAL}\nstate/\n.worktrees/\n`);
+  writeFileSync(path.join(r.dir, '.gitignore'), `${LOCAL}\n.worktrees/\n`);
   const aidrianCheck = () => spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['check'], { cwd: r.dir, encoding: 'utf8' });
   const warned = aidrianCheck();
   assert.equal(warned.status, 0, warned.stderr);
   assert.match(warned.stderr, /^warning: unattended waiver is on locally but the team does not allow it$/mu);
-  writeFileSync(path.join(r.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { unattendedWaiver: { allow: true } } }));
+  writeFileSync(path.join(r.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../state' }, github: { unattendedWaiver: { allow: true } } }));
   const allowed = aidrianCheck();
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.doesNotMatch(allowed.stderr, /unattended waiver/u, 'allowed by the team: nothing to say');

@@ -9,6 +9,7 @@ import { forgeFor } from '../forges/index.mjs';
 import { runGit } from '../git.mjs';
 import { originRepo, prNumber, repoName } from '../review-gate.mjs';
 import { isAncestor } from './diff.mjs';
+import { holdToBase } from './in-force.mjs';
 import { answerPending, emptyState, entryId, ofRepo, readLocalState, writeLocalState } from './state.mjs';
 
 const SHA = /^[0-9a-f]{7,40}$/iu;
@@ -66,7 +67,7 @@ export function runRequest(args, project, { forge = forgeFor(project.root) } = {
   let view = null;
   if (flags.head === null || flags.repo === null) {
     try {
-      view = forge.change(pr, 'headRefOid,url');
+      view = forge.change(pr, 'headRefOid,baseRefName,url');
     } catch (error) {
       if (flags.head === null) throw error;
     }
@@ -75,6 +76,8 @@ export function runRequest(args, project, { forge = forgeFor(project.root) } = {
   if (typeof head !== 'string' || !SHA.test(head)) throw new Error(`cannot read the head of pull request #${pr}: pass --head <sha>`);
   // One repository per pull request number, for every kind: the one whose head gh read, as attest resolves it.
   const repo = repoName(flags.repo) ?? repoName(view?.url) ?? originRepo(project);
+  // The entry goes into the review record, which is read from the state.dir the base branch commits.
+  if (view?.baseRefName) holdToBase(project, null, { repo, base: view.baseRefName });
   const by = runGit(['config', 'user.name'], project.root).stdout?.trim() || 'unknown';
   recordPending(project, { pr, repo, kind: flags.kind, head, by });
   console.log(flags.kind === 'request'

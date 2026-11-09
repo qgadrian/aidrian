@@ -8,16 +8,40 @@ import { legacyHandoff, merge } from './config-merge.mjs';
 import { NO_REVIEWER, SCHEMA } from './config-schema.mjs';
 import { versionProblem } from './config-version.mjs';
 import { isObject } from './fs.mjs';
+import { runGit } from './git.mjs';
 
 // The project config as committed at `commit`, with no machine settings: what a pull request cannot change from its
 // own working copy, such as github.maxReviewRounds. A commit with no config, or one that does not parse, gives
 // DEFAULTS; a value that fails its check keeps its default, as loadConfig does, and goes to `errors` when the caller
-// passes that list.
-export function committedConfig(project, commit, errors = []) {
+// passes that list. `options` overrides the spawn's, such as a hook's shorter timeout.
+export function committedConfig(project, commit, errors = [], options = {}) {
   // `./`: the path from project.root, where git runs, so a project below the repository root reads its own file.
-  const shown = spawnSync('git', ['show', `${commit}:./${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
+  const shown = spawnSync('git', ['show', `${commit}:./${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000, ...options });
   if (shown.error || shown.signal) throw new Error(`git show ${commit}:./${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
   return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config, errors);
+}
+
+// The commit of the first of `refs`, full ref names, that resolves, or null when none does. Throws when git fails on one,
+// whose answer the next ref must not replace: for rev-parse, 1 is git saying no such ref. `git` gives each read's options.
+export function firstTip(root, refs, git) {
+  for (const ref of refs) {
+    const tip = runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], root, git());
+    if (tip.status === 0) return tip.stdout.trim();
+    if (tip.status !== 1) throw new Error(`git rev-parse ${ref} failed`);
+  }
+  return null;
+}
+
+// The commit of origin's default branch, from names the working copy cannot set: origin/HEAD, then the plugin's default
+// branch name on origin, never the `git.defaultBranch` a working copy's config names. Null and throws as firstTip does.
+export const originDefaultTip = (root, git = () => undefined) => firstTip(root, ['refs/remotes/origin/HEAD', `refs/remotes/origin/${DEFAULTS.git.defaultBranch}`], git);
+
+// Why a record read through the working copy's `state.dir` is not the one the committed config names, or null. `working`
+// and `committed` are configs, `where` names the commit's branch in the message, and `record` the record the reader reads.
+// Every command that holds does it through this one check.
+export function stateDirProblem(working, committed, where, record = 'the review record') {
+  if (working.state.dir === committed.state.dir) return null;
+  return `the working copy's state.dir differs from ${where}, and ${record} is read from it`;
 }
 
 // The project config committed as `text` at `file`, with no machine settings, by committedConfig's rules: null (no file)

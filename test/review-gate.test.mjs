@@ -20,10 +20,12 @@ const GATE = { version: 1, github: { reviewGate: { enabled: true, checklist: 'do
 
 // A git repository with an origin and one commit, holding a project folder with `config`.
 function repo(t, config = GATE, origin = 'git@github.com:Acme/Notes.git') {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gate-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  // The state folder is keyed by the origin, which every repository here shares: each gets its own.
-  process.env.XDG_STATE_HOME = path.join(dir, '.state');
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gate-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  mkdirSync(dir);
+  // The state folder is keyed by the origin, which every repository here shares: each gets its own, beside the checkout.
+  process.env.XDG_STATE_HOME = path.join(root, 'state');
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('remote', 'add', 'origin', origin);
@@ -155,9 +157,14 @@ test('aidrian pr attest records the review and prints the marker; --check reads 
   assert.equal(readRecord(project, 7).head, head);
 });
 
+test('no test reads a real pull request', () => {
+  const gh = spawnSync('gh', ['--version'], { encoding: 'utf8' });
+  assert.deepEqual([gh.status, gh.stdout], [1, '']);
+});
+
 test('aidrian pr attest --pass --verdicts - reads the agent`s JSON from stdin and stores its evidence as written', (t) => {
   const { dir, head, project } = repo(t, { ...GATE, review: { record: 'local' } });
-  // --repo keeps the pull request's repository off the forge, so the test reads no network.
+  // --repo names the repository, which the forge cannot here: the suite's forge command always fails, so the test reads no network.
   const attest = (pass, input, ...more) => spawnSync(process.execPath, [CLI, 'pr', 'attest', '7', '--pass', pass, '--head', head, '--reviewer', 'product-manager', ...more, '--repo', 'Acme/Notes'], { cwd: dir, encoding: 'utf8', env: process.env, input });
   const counted = ['--findings', '0', '--fixed', '0'];
   const recorded = (pass) => readLocalState(project, 7)?.passes[pass];
@@ -431,10 +438,11 @@ test('aidrian pr signoff --last refuses a review record held on another machine'
   const { dir, project, head } = repo(t, { version: 1 });
   execFileSync('git', ['config', 'user.name', 'Tester'], { cwd: dir });
   writeLocalState(project, { ...emptyState(7, 'acme/notes'), signoffable: { head, flows: ['pay'] }, outcome: { status: 'human_required', head, at: 'x' } });
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: dir });
   const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review.json');
   const before = readFileSync(recordFile, 'utf8');
   const forge = {
-    change: () => ({ url: 'https://github.com/acme/notes/pull/7', headRefOid: head }),
+    change: () => ({ url: 'https://github.com/acme/notes/pull/7', headRefOid: head, baseRefName: 'main' }),
     conversationComments: () => [{ body: `${SUMMARY_MARKER}\n<!-- aidrian-review-state-held:99 -->`, author_association: 'OWNER' }],
   };
   const { config } = loadConfig(project);

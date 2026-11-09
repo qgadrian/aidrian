@@ -405,7 +405,7 @@ export function prunePasses(state, slices, keep = new Set()) {
   if (!Array.isArray(slices)) return state;
   const live = new Map();
   for (const [id, result] of Object.entries(state.passes)) {
-    const reviewer = /^slice:(.+):[0-9a-f]{10}(?:\.[ab])?$/u.exec(id)?.[1];
+    const reviewer = /^slice:(.+):[0-9a-f]{10}(?:\.[ab])*$/u.exec(id)?.[1];
     if (!reviewer || keep.has(id)) continue;
     if (!live.has(reviewer)) live.set(reviewer, new Map(splitPasses(reviewer, slices, { halved: state.halved ?? {} }).filter((pass) => pass.role === 'slice').map((pass) => [pass.id, JSON.stringify([...pass.files].sort())])));
     if (live.get(reviewer).get(id) !== JSON.stringify(result.files ?? null)) delete state.passes[id];

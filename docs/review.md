@@ -64,8 +64,10 @@ diff. `depth: "split"` cuts the change into slices that run in parallel, then on
   interface files a plan command flags, and reports only bugs that cross slices. It always runs again after a fix.
 - **Findings** that two passes report (same file, lines within 3, same title words) are listed once, at the higher
   severity, in `findings_merged`.
-- **Failures**: a slice that fails twice runs as two halves; a slice still failing is `stuck`. A review with a slice
-  or the cross pass missing is never `received`.
+- **Failures**: a slice that times out runs as two halves on the next step, and a half that times out splits again,
+  down to one file; every slice that times out in a step splits on the next. A slice that fails for another reason
+  splits after its second failure. A one-file slice or the cross pass that keeps failing is `stuck` on its third attempt.
+  A review with a slice or the cross pass missing is never `received`.
 - **Steps**: at most `review.split.parallel` (4) slices run per step, so a step fits one shell call; `running` asks
   for the next. After a fix, only the slices the fix touches run again, and the cross pass.
 - The `self` engine splits into one agent dispatch per slice. The review bot cannot split.
@@ -505,7 +507,8 @@ A project adds its own in `review.reviewers`:
   a finding keeps only those keys, and `already_ruled` may be left out. It runs with no session, override, or
   git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL.
   Output that does not parse is a failure, never a pass; malformed findings are dropped and named.
-  A failure is `incomplete` and retried; the third is `stuck`.
+  A failure is `incomplete` and retried; the third is `stuck`; a split slice that times out splits instead ([Split](#split)).
+  A finished pass's record entry holds `seconds`, the whole seconds it ran, and a failure's reason ends `after <seconds> s`.
 - Settled findings: an exec pass's `priorFindings` add every finding the record holds as accepted that no longer
   blocks, with the pass that accepted it as `settled_by`, and the pass's own last rulings on such a finding; only an
   entry with a file and a severity the disposition table knows can settle a repeat. A pass's own last findings and a

@@ -78,18 +78,20 @@ export function partition(changes, roots, { sliceLines = SPLIT_DEFAULTS.sliceLin
 }
 
 // The passes of a split review by one reviewer: a slice pass per slice, then the cross-cutting pass after all of them.
-// `halved` names the slices that failed twice: each runs as two halves instead.
+// `halved` names the passes a failure cut, a half among them: each runs as two halves `<id>.a` and `<id>.b` instead,
+// down to one file.
 export function splitPasses(reviewer, slices, { kind, halved = {} } = {}) {
   const passes = [];
-  for (const slice of slices) {
-    const id = `slice:${reviewer}:${hash(slice.key)}`;
-    if (halved[id] && slice.files.length > 1) {
-      const middle = Math.ceil(slice.files.length / 2);
-      for (const [suffix, files] of [['a', slice.files.slice(0, middle)], ['b', slice.files.slice(middle)]]) {
-        passes.push({ id: `${id}.${suffix}`, reviewer, kind, role: 'slice', slice: `${slice.key} (${suffix})`, files, context: 'full' });
-      }
-    } else passes.push({ id, reviewer, kind, role: 'slice', slice: slice.key, files: slice.files, context: 'full' });
-  }
+  const add = (id, label, files) => {
+    if (!halved[id] || files.length < 2) {
+      passes.push({ id, reviewer, kind, role: 'slice', slice: label, files, context: 'full' });
+      return;
+    }
+    const middle = Math.ceil(files.length / 2);
+    add(`${id}.a`, `${label} (a)`, files.slice(0, middle));
+    add(`${id}.b`, `${label} (b)`, files.slice(middle));
+  };
+  for (const slice of slices) add(`slice:${reviewer}:${hash(slice.key)}`, slice.key, slice.files);
   passes.push({ id: `cross:${reviewer}`, reviewer, kind, role: 'cross', files: null, context: 'full', after: passes.map((pass) => pass.id) });
   return passes;
 }

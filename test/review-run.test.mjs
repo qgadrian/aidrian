@@ -11,6 +11,7 @@ import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '.
 import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
 import { EXIT, recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
@@ -2064,4 +2065,12 @@ test('approvals: a pull request cannot turn the team switch on for its own revie
   const { review, changed } = reviewInForce(base, { ...base, approvals: { allow: true } });
   assert.deepEqual([review.approvals, changed], [{ allow: false }, ['approvals']]);
   assert.deepEqual(reviewInForce(null, { ...base, approvals: { allow: true } }).review.approvals, { allow: false });
+});
+
+test('reviewInForce: a pull request cannot turn on unattended rulings for itself', () => {
+  const base = checkReview({}, 'c.json', []);
+  const head = { ...base, unattendedSignoff: { allow: true } };
+  const { review, changed } = reviewInForce(base, head);
+  assert.deepEqual([review.unattendedSignoff, changed], [{ allow: false }, ['unattendedSignoff']]);
+  assert.deepEqual(reviewInForce(null, head).review.unattendedSignoff, { allow: false }, 'with no base config, the default holds');
 });

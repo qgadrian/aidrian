@@ -134,6 +134,7 @@ test('the Human`s answer naming the pull request, head, and invariant lets exact
     ['another head', accept.replace(HEAD, 'fff1234def')],
     ['a shell variable', accept.replace('--reason ok', '--reason "$R"')],
     ['a repeated flag', `${accept} --accept other`],
+    ['another repository', `${accept} --repo other/repo`],
     ['the short form', 'aidrian pr signoff 9 --last'],
     ['a stage', `aidrian pr signoff 9 --stage local --head ${HEAD}`],
   ]) assert.equal(check(command, { cwd, input }), REASON, why);

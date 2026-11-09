@@ -13,7 +13,7 @@
 // question names the pull request (`#<PR>`), the head's first seven characters, and what is signed (`<flow>/<invariant>`,
 // `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff` for --stage), with a chosen option that starts with "Approve". The
 // host writes that answer, not the agent; a push changes the head, so it asks again. Without such a transcript the
-// command stays the Human's to run. Any word the shell builds at run time, a repeated flag, and --last get no such route: the long form does the same.
+// command stays the Human's to run. Any word the shell builds at run time, a repeated flag, --repo, and --last get no such route: the long form does the same.
 
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
@@ -39,7 +39,7 @@ export function answered(words, answers) {
   }
   const pr = words[2]?.text?.replace('#', '');
   const [flow, stage, head] = [flags['--flow'], flags['--stage'], flags['--head']];
-  if (!/^\d+$/u.test(pr ?? '') || Boolean(flow) === Boolean(stage) || !/^[0-9a-f]{7,}$/iu.test(head ?? '') || Object.hasOwn(flags, '--last')) return false;
+  if (!/^\d+$/u.test(pr ?? '') || Boolean(flow) === Boolean(stage) || !/^[0-9a-f]{7,}$/iu.test(head ?? '') || Object.hasOwn(flags, '--last') || Object.hasOwn(flags, '--repo')) return false;
   const invariant = flags['--accept'] ?? flags['--overrule'];
   const tokens = [stage ? `stage:${stage}/signoff` : `${flow}/${invariant ?? 'signoff'}`, ...(flags['--accept'] ? [`${flow}/*`] : [])];
   const namesToken = (question) => tokens.some((token) => {

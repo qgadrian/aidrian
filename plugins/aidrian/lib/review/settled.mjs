@@ -194,7 +194,9 @@ function endedContext(state, anchored) {
 // the author's word never waives a repeat of it past RESIDUAL_CAP. Only a finding with a `state` can end it, fixed or
 // blocking, and only while it is listed: a reviewer cannot print one (cleanOutput keeps no such key), and the state the
 // late-round rule sets is accepted, which neither is fixed nor blocks, so a reviewer's finding is the anchor, never a
-// reopening of itself. A low ruling on a residual naming nothing is not an anchor: an entry with `from` residual counts only
+// reopening of itself. A line's file scope reads every raised finding first (namedBy); only then does a finding above
+// PRIOR_CAP, fixed, or blocking drop out, so it cannot hand its line to another file.
+// A low ruling on a residual naming nothing is not an anchor: an entry with `from` residual counts only
 // with its `residual`, and the body's item must name it again on each head, so dropping the item ends the waiver. An ended
 // waiver is no kept entry (rulingsOf): shadowing a round entry could only keep a line's cap below what that entry holds, and
 // a line back on an ended waiver anchors on what a listing or a round entry holds, or stays at low.
@@ -209,8 +211,9 @@ function anchoredResiduals(state, listed, residuals) {
   const shadowed = new Set([...present, ...kept.map(where)]);
   const rounds = (Array.isArray(state?.rounds) ? state.rounds : []).flatMap((round) => (Array.isArray(round?.findings) ? round.findings : []))
     .filter((each) => isObject(each) && !shadowed.has(where(each)));
-  const raised = [...findings, ...kept, ...rounds].filter((each) => trim(each.title) && trim(each.file) && noHigher(each.severity, PRIOR_CAP) && !ended.has(where(each)));
-  return residuals.flatMap((text) => namedBy(text, raised).map(({ title, file, line, severity }) => ({
+  const raised = [...findings, ...kept, ...rounds].filter((each) => trim(each.title) && trim(each.file));
+  const anchors = (each) => noHigher(each.severity, PRIOR_CAP) && !ended.has(where(each));
+  return residuals.flatMap((text) => namedBy(text, raised).filter(anchors).map(({ title, file, line, severity }) => ({
     title: trim(title), file: trim(file), ...(line ? { line } : {}), severity: severityOf(severity), state: 'accepted', already_ruled: trim(title), carried: true, residual: text,
   })));
 }

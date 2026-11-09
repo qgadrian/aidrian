@@ -532,8 +532,9 @@ test('a fix or a blocking listing ends the anchor, on the raised list and on the
       assert.deepEqual(split.ruled, []);
     }
   }
-  const elsewhere = settledOn({ others: [{ title: RAISED, file: 'b.js', state: 'fixed' }] });
-  assert.equal(splitRuled([repeatOf()], elsewhere).ruled.length, 1, 'the same title in another file leaves it standing');
+  const onA = `${RAISED}: every caller of a.js already times out first`;
+  const elsewhere = settledOn({ others: [{ title: RAISED, file: 'b.js', state: 'fixed' }], residuals: [onA] });
+  assert.equal(splitRuled([repeatOf()], elsewhere).ruled.length, 1, 'the same title in another file leaves a line that names its file standing');
   const asIs = settledOn({ list: [], carried: kept, others: [{ title: RAISED, file: 'a.js', severity: 'low', state: 'open', disposition: 'acceptable_as_is' }] });
   assert.deepEqual(asIs.map((each) => each.severity), ['low', 'low'], 'a listing that does not block governs at its own severity, over the kept anchor');
   assert.equal(splitRuled([repeatOf()], settledOn({ list: [], carried: kept })).ruled.length, 1, 'with no listing, the kept anchor holds');
@@ -1315,4 +1316,36 @@ test('a round entry anchors only while no pass lists it, under the same cap, and
   assert.deepEqual([...new Set(lower.map((each) => each.severity))], ['low'], 'a listing governs over the round entry');
   const fixed = settledWith([round([noted])], [{ title: RAISED, file: 'a.js', state: 'fixed' }]);
   assert.deepEqual(fixed, [{ title: RESIDUAL }], 'a fix listing ends it while it stands');
+});
+
+test('a residual\'s file scope is resolved against every raised finding before anchor eligibility is applied', () => {
+  const other = codexFinding({ file: 'b.js' });
+  for (const [label, record] of [
+    ['too severe', { list: [codexFinding({ severity: 'high' }), other] }],
+    ['fixed', { list: [codexFinding(), other], others: [{ title: RAISED, file: 'a.js', state: 'fixed' }] }],
+    ['blocking', { list: [codexFinding(), other], others: [{ title: RAISED, file: 'a.js', severity: 'medium', state: 'open' }] }],
+  ]) {
+    for (const [shape, line] of [['a line on a.js', `${RAISED}: accepted only in a.js`], ['a line on no file', `${RAISED}: every caller already times out first`]]) {
+      const settled = settledOn({ ...record, residuals: [line] });
+      assert.deepEqual(settled, [{ title: line }], `${label}, ${shape}: only the bare residual is left`);
+      assert.deepEqual(splitRuled([repeatOf({ file: 'b.js' })], settled).ruled, [], `${label}, ${shape}: a medium repeat in the other file stays new`);
+    }
+  }
+  const held = settledOn({ list: [codexFinding(), codexFinding({ file: 'b.js', severity: 'high' })], residuals: [`${RAISED}: accepted only in a.js`] });
+  assert.deepEqual([...new Set(held.map((each) => each.file))], ['a.js'], 'the line still anchors on its own file while that file can');
+});
+
+test('the review step: a residual\'s file scope holds across heads, before and after its own file is fixed', async (t) => {
+  const r = repo(t, body([]), { maxReviewRounds: 7 });
+  r.add('src/b.js', '1\n');
+  const { run } = scripted(t, r);
+  const line = `${RAISED}: accepted only in src/a.js`;
+  const inB = { ...FILE_REPEAT, file: 'src/b.js' };
+  await run([FILE_RAISED, { ...FILE_RAISED, file: 'src/b.js' }]);
+  r.setBody(body([line]));
+  assert.equal((await run([inB], '1\n2\n3\n')).result.status, 'fix_required', 'the other file\'s repeat blocks while the line stands on its own file');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'agent:code-reviewer', head: r.head(), reviewer: 'code-reviewer', findingsText: JSON.stringify([{ title: RAISED, file: 'src/a.js', state: 'fixed', severity: 'medium', likelihood: 'plausible', affects: 'internal', cost: 'bounded' }]) });
+  const after = await run([inB], '1\n2\n3\n4\n');
+  assert.equal(after.result.status, 'fix_required', 'it still blocks once the line\'s own file is fixed');
+  assert.deepEqual(after.record.ruled ?? [], []);
 });

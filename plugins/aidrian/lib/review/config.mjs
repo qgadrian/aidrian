@@ -30,6 +30,9 @@ export const REVIEW_DEFAULTS = Object.freeze({
   // Whether a named approver's review on the forge may close an invariant no reviewer could verify
   // (lib/review/approvals.mjs). The base branch's value is the one in force, and the machine must turn it on too.
   approvals: Object.freeze({ allow: false }),
+  // Whether a judge's ruling (`aidrian pr settle`) may close an unverified or disputed invariant in place of the Human
+  // (lib/review/approvals.mjs). The base branch's value is the one in force, and the machine must turn it on too.
+  unattendedSignoff: Object.freeze({ allow: false }),
   productFeedback: Object.freeze({ auto: false, files: null, maxPersonas: 2 }),
 });
 
@@ -92,6 +95,10 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'approvals')) {
     if (isObject(value.approvals) && Object.keys(value.approvals).every((key) => key === 'allow') && typeof (value.approvals.allow ?? false) === 'boolean') out.approvals = { allow: value.approvals.allow === true };
     else bad('"review.approvals" must be { "allow": true } or { "allow": false }');
+  }
+  if (Object.hasOwn(value, 'unattendedSignoff')) {
+    if (isObject(value.unattendedSignoff) && Object.keys(value.unattendedSignoff).every((key) => key === 'allow') && typeof (value.unattendedSignoff.allow ?? false) === 'boolean') out.unattendedSignoff = { allow: value.unattendedSignoff.allow === true };
+    else bad('"review.unattendedSignoff" must be { "allow": true } or { "allow": false }');
   }
   if (Object.hasOwn(value, 'productFeedback')) out.productFeedback = checkProductFeedback(value.productFeedback, bad);
   // Nothing says what is user-facing. `auto` stays true, so `aidrian pr product-feedback status` reads it as clear.

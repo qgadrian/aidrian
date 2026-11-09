@@ -1111,6 +1111,8 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr signoff PR --flow ID --accept INVARIANT --evidence URL --reason TEXT --head SHA',
     '               [--repo OWNER/NAME] [--check]',
     '       aidrian pr signoff PR --last [--repo OWNER/NAME] [--check]',
+    '       aidrian pr settle PR --flow ID (--accept INVARIANT --evidence URL | --overrule INVARIANT)',
+    '               --reason TEXT --head SHA --judge AGENT [--repo OWNER/NAME] [--check]',
     '       aidrian pr ingest PR --head SHA --source TEXT [--repo OWNER/NAME] [--check] FILE...',
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
@@ -1169,7 +1171,7 @@ test('localGit: the pushed head is the upstream of the same branch in the same r
 test('raising --max-rounds past the config cap needs the Human override, whatever the reviewer', async () => {
   assert.equal(roundCapProblem(3, 3, {}), null, 'at the cap');
   assert.equal(roundCapProblem(2, 3, {}), null, 'a lower cap always runs');
-  assert.match(roundCapProblem(5, 3, {}) ?? '', /AIDRIAN_ALLOW_EXTRA_ROUNDS=1 in their own shell/);
+  assert.match(roundCapProblem(5, 3, {}) ?? '', /AskUserQuestion.*AIDRIAN_ALLOW_EXTRA_ROUNDS=1 goes inline on this exact command/);
   assert.equal(roundCapProblem(5, 3, { [ROUNDS_OVERRIDE]: '1' }), null);
   const config = { github: { reviewer: 'someone[bot]', maxReviewRounds: 3, reviewGate: { enabled: false } } };
   const forge = new Proxy({}, { get: () => () => {

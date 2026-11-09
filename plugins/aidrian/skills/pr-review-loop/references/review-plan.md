@@ -53,13 +53,24 @@ crosses them.
 - `open[]`: passes with findings still open: `findings` lists them for a local model; the bot's are on the pull request.
 - `flows[]`: flows not signed off: `violated` invariants are findings to fix; `unverified` need a verdict with evidence.
   A `disputed` invariant has a `violated` verdict and another reviewer's `holds` or `not_affected` with evidence.
-  When the fix is wrong, ask the Human which side is right, in their terms. If the Human sides with the evidence,
-  give them its `overrule` command, with their reason in place of `<why>`, alone in a code block for their own shell.
+  When the fix is wrong, settle it through the entry's `settle` route below, else ask the Human which side is right,
+  in their terms, as the sign-off route below says.
   `aidrian pr signoff --flow` without `--overrule` never clears a violated invariant, and the command refuses a flow
   the head does not ask the Human to sign.
   Each flow's `next` lists, per open invariant, the only ways to close it on this head: `commands` for the Human's
   shell, and `notes` for the rest. `fix the code` means fix it; an approval note is a request for the named approver
   to post that review with its `aidrian-approve:` line; a capture note is the capture's status, not a command.
+- Never hand the Human a terminal block while another route is open. In this order:
+  1. A note says a reviewer's evidence does not count: dispatch that reviewer again to cite it. This closes the invariant.
+  2. An entry has `settle`, so this project allows unattended rulings: dispatch an independent read-only agent, such as
+     the critic, as judge, with the diff and the invariant. It rules `accept` only when the diff shows the invariant
+     cannot be affected or a comment of the pull request holds the evidence, and `overrule` only when the reviewer that
+     holds is right. Post its ruling as a comment, and run `settle` with that comment's URL. A change that does alter
+     what is rendered gets a capture or `aidrian pr ingest`, never a ruling. On a refusal, go to the next route.
+  3. Ask the Human with AskUserQuestion, one question per decision, and run the printed long-form command on "Approve":
+     the question names `<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every unverified invariant of
+     the flow, `<flow>/signoff`, or `stage:<name>/signoff`. Write the command with no shell variables, one call per invariant.
+  4. Only on a host with no such question, hand the command over for the Human's own shell.
 - Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or
   `tests_removed[].accept`, each starting with `aidrian pr signoff`, with its placeholders filled. Hand it over only
   after the same command with `--check` added exits 0 in your shell; `--check` records nothing. Never write a sign-off
@@ -78,9 +89,9 @@ late-round low findings the step accepted, which go into the body's Accepted res
 ## Stops
 
 - `human_required`: a flow the Human signs off, or with `stage`, a stage the Human chose to review in place of a
-  reviewer out of quota. Once `command` with `--check` added exits 0, give them `command`,
-  alone in a code block with nothing after it on the line, to run in their own shell (`!` in the prompt, or another terminal); never
-  run it for them, and the `review-signoff` rule blocks it if you try. A flow's sign-off holds across later pushes that
+  reviewer out of quota. Once `command` with `--check` added exits 0, ask with AskUserQuestion as the sign-off route
+  under `fix_required` says, naming `<flow>/signoff` or `stage:<name>/signoff`, and run `command` on "Approve". The
+  `review-signoff` rule blocks it with no such answer. A flow's sign-off holds across later pushes that
   touch nothing of the flow; a stage's holds for its head only.
 - `unsatisfied`: the plan needs a reviewer this machine cannot run, such as `independent-model` with no Codex login.
 - `stuck`: a reviewer failed 3 times on this head. `too_large`: the change is past what one review covers, or its

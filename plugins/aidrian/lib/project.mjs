@@ -161,6 +161,7 @@ export function openProject(root, roots) {
     localAutoMerge: local.autoMerge,
     localUnattendedWaiver: local.unattendedWaiver,
     localReviewApprovals: local.reviewApprovals,
+    localUnattendedSignoff: local.unattendedSignoff,
     localFeedbackAuto: local.feedbackAuto,
     errors,
     unreadable,
@@ -260,7 +261,7 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals'];
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff'];
 
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, unattendedWaiver, reviewApprovals, feedbackAuto }. A git worktree has no copy of that git-ignored
 // file, so it is read from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with
@@ -270,7 +271,7 @@ const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review
 // Behind such a copy, the main checkout's file gets every check it gets when it is the one loaded, and its errors are
 // reported, so a worktree's copy hides none of them.
 function readLocal(checkouts, errors, unreadable) {
-  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset' };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const main = checkouts.at(-1);
@@ -297,7 +298,8 @@ function checkedLocal(raw, dir) {
   const autoMerge = localAutoMerge(raw, problems);
   const unattendedWaiver = localUnattendedWaiver(raw);
   const reviewApprovals = localReviewApprovals(raw, problems);
-  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, problems };
+  const unattendedSignoff = localUnattendedSignoff(raw, problems);
+  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, problems };
 }
 
 // The main checkout's local file behind a worktree's own copy, through checkedLocal: undefined when there is none, null
@@ -316,15 +318,16 @@ function mainLocal(main, errors) {
 // "off", so it never follows a team default of "on", and the waiver "off" though it says "on": a wrong local file never
 // turns merging on, nor lets a verdict stand in for the Human.
 function machineSwitches(file, main, errors) {
-  if (file === undefined) return { autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset' };
-  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off' };
+  if (file === undefined) return { autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
+  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off' };
   const tracked = [];
   const autoMerge = untrackedSwitch(file.autoMerge, 'github.autoMerge', main, tracked);
   const unattendedWaiver = untrackedSwitch(file.unattendedWaiver, 'github.unattendedWaiver', main, tracked);
   const reviewApprovals = untrackedSwitch(file.reviewApprovals, 'reviewApprovals', main, tracked);
+  const unattendedSignoff = untrackedSwitch(file.unattendedSignoff, 'unattendedSignoff', main, tracked);
   errors.push(...tracked);
   const broken = file.problems.length > 0 || tracked.length > 0;
-  return { autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge, unattendedWaiver: broken ? 'off' : unattendedWaiver, reviewApprovals };
+  return { autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge, unattendedWaiver: broken ? 'off' : unattendedWaiver, reviewApprovals, unattendedSignoff: broken ? 'off' : unattendedSignoff };
 }
 
 // A switch `value` the local file in `main` sets, named `key` in its errors. A local file git tracks travels with a
@@ -410,6 +413,16 @@ function localReviewApprovals(raw, errors) {
   if (!Object.hasOwn(raw, 'reviewApprovals')) return 'unset';
   if (raw.reviewApprovals === 'on' || raw.reviewApprovals === 'off') return raw.reviewApprovals;
   errors.push(`${LOCAL}: "reviewApprovals" must be "on" or "off"`);
+  return 'off';
+}
+
+// The local file's `unattendedSignoff` as "on", "off", or "unset": whether this machine lets a judge's ruling close an
+// unverified or disputed invariant, when the team's `review.unattendedSignoff.allow` is true. Anything else is an error
+// and reads "off".
+function localUnattendedSignoff(raw, errors) {
+  if (!Object.hasOwn(raw, 'unattendedSignoff')) return 'unset';
+  if (raw.unattendedSignoff === 'on' || raw.unattendedSignoff === 'off') return raw.unattendedSignoff;
+  errors.push(`${LOCAL}: "unattendedSignoff" must be "on" or "off"`);
   return 'off';
 }
 

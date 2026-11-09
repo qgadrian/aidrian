@@ -239,6 +239,13 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
     const findingsText = flags['findings-file'] === undefined ? null : readFileSync(flags['findings-file'], 'utf8');
     const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, held) });
     console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);
+    // A verdict with evidence the review cannot check leaves its invariant unverified: say so while the reviewer can still fix it.
+    const { citationProblem } = await import('./review/flows.mjs');
+    for (const verdict of result.verdicts) {
+      if (!['holds', 'not_affected'].includes(verdict.verdict) || verdict.evidence.trim().startsWith('capture:')) continue;
+      const problem = citationProblem(verdict.evidence, { root: project.root, head: flags.head });
+      if (problem) console.log(`warning: the ${verdict.verdict} verdict on ${verdict.flow}/${verdict.invariant} counts as cannot_verify: ${problem}. Dispatch the reviewer again to cite path:line, test:<name>, or capture:<key>.`);
+    }
     console.log('Run `aidrian pr review` again for the next step.');
     return 0;
   }
@@ -325,7 +332,7 @@ export function lastSignoff(state, { pr, repo, head }) {
 // `--check` runs every refusal of the same command and records nothing: it prints `ok` and returns 0, or throws the
 // refusal, which `aidrian pr` prints before it exits 1. The review-signoff rule lets an agent run it, so a session can
 // try a command before it hands it to the Human.
-export async function runSignoff(args, project, config = null, { forge } = {}) {
+export async function runSignoff(args, project, config = null, { forge, by: ruledBy = null } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('signoff needs a pull request number');
@@ -355,7 +362,7 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
     if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
   }
   const repo = prRepo(project, pr, flags.repo, forge);
-  const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
+  const by = ruledBy ?? (runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown');
   if (flags.overrule && flags.accept) throw new Error('--overrule and --accept are two rulings: give one');
   if (flags.evidence && !flags.accept) throw new Error('--evidence goes with --accept');
   if (flags.accept && !(flags.flow && flags.evidence && flags.reason)) throw new Error('--accept needs --flow, --evidence, and --reason');
@@ -421,6 +428,27 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
   }
   recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), dryRun });
   return done(`${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
+}
+
+// `aidrian pr settle <PR> --flow <id> (--accept <invariant> --evidence <url> | --overrule <invariant>) --reason <text>
+// --head <sha> --judge <agent> [--repo OWNER/NAME] [--check]`: a judge's ruling in place of the Human's, so an unattended
+// run can finish. It records the same entry as the matching sign-off, with `by` naming the judge, under every refusal
+// of that sign-off. The refusal here is a courtesy: what enforces the switches is the review step, which reads the base
+// branch's config and ignores a ruling while either is off (lib/review/evidence.mjs). A session's word, not proof.
+export async function runSettle(args, project, config = null, { forge } = {}) {
+  const [ref, ...rest] = args;
+  const at = rest.indexOf('--judge');
+  const judge = at === -1 ? undefined : rest[at + 1];
+  if (typeof judge !== 'string' || !/^[\w.-]+$/u.test(judge)) throw new Error('settle needs --judge <agent>: the independent agent that ruled');
+  const passed = [...rest.slice(0, at), ...rest.slice(at + 2)];
+  if (!passed.includes('--accept') && !passed.includes('--overrule')) throw new Error('settle needs --accept or --overrule: a flow sign-off, a stage, and --last stay with the Human');
+  if (passed.includes('--stage') || passed.includes('--last')) throw new Error('settle takes no --stage or --last: those stay with the Human');
+  const { HARNESS_FLOW } = await import('./review/plan.mjs');
+  if (passed[passed.indexOf('--flow') + 1] === HARNESS_FLOW) throw new Error(`flow ${HARNESS_FLOW} guards how the project is reviewed: only the Human settles it`);
+  const { JUDGE_PREFIX, settleSwitch } = await import('./review/approvals.mjs');
+  const { on, off } = settleSwitch(config?.review, project);
+  if (!on) throw new Error(`a judge's ruling does not count here: ${off}. Ask the Human instead`);
+  return runSignoff([ref, ...passed], project, config, { forge, by: `${JUDGE_PREFIX}${judge}` });
 }
 
 // `aidrian pr ingest <PR> --head <sha> --source <text> [--repo OWNER/NAME] [--check] <file>...`: images taken outside

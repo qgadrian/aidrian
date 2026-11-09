@@ -73,6 +73,7 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'autoMerge', valueIn: (parsed) => parsed?.github?.autoMerge, name: 'github.autoMerge', why: 'only the main session may turn merging without a Human on or off', patched: /^[+-].*(?:autoMerge|"enabled"\s*:)/mu }),
   Object.freeze({ key: 'unattendedWaiver', valueIn: (parsed) => parsed?.github?.unattendedWaiver, name: 'github.unattendedWaiver', why: 'only the main session may let a recorded judge verdict waive the merge guard', patched: /^[+-].*(?:unattendedWaiver|"enabled"\s*:)/mu }),
   Object.freeze({ key: 'reviewApprovals', valueIn: (parsed) => parsed?.reviewApprovals, name: 'reviewApprovals', why: 'only the main session may let a named approver\'s review close a flow invariant, or stop it', patched: /^[+-].*reviewApprovals/mu }),
+  Object.freeze({ key: 'unattendedSignoff', valueIn: (parsed) => parsed?.unattendedSignoff, name: 'unattendedSignoff', why: 'only the main session may let a judge\'s ruling close a flow invariant in place of the Human', patched: /^[+-].*unattendedSignoff/mu }),
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
 ]);

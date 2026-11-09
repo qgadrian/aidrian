@@ -30,6 +30,18 @@ export function approvalsSwitch(review, project) {
   return { on: true, off: null };
 }
 
+// A judge's ruling (`aidrian pr settle`) is recorded as an acceptance or an overruling whose `by` starts with this.
+export const JUDGE_PREFIX = 'judge:';
+export const isJudgeRuling = (entry) => String(entry?.by ?? '').startsWith(JUDGE_PREFIX);
+
+// Whether a judge's ruling counts here: { on, off }, as approvalsSwitch. The review step reads the base branch's config,
+// so a branch cannot raise it for itself.
+export function settleSwitch(review, project) {
+  if (review?.unattendedSignoff?.allow !== true) return { on: false, off: 'the team does not allow it: review.unattendedSignoff.allow is not true on the base branch' };
+  if (project?.localUnattendedSignoff !== 'on') return { on: false, off: `this machine has not turned it on: unattendedSignoff is not "on" in ${project?.paths?.local ?? 'the local settings file'}` };
+  return { on: true, off: null };
+}
+
 // Whether any invariant of `flows` names approvers.
 export const hasApprovers = (flows) => (flows ?? []).some((flow) => (flow.invariants ?? []).some((invariant) => Array.isArray(invariant.approvers) && invariant.approvers.length > 0));
 
@@ -100,5 +112,5 @@ export function overruleRefusal({ pr, repo, flow, invariant, head, invariants })
   const unverified = Boolean(invariants) && sameCommit(invariants.head, head) && Array.isArray(invariants.items)
     && invariants.items.some((each) => each?.flow === flow && each?.invariant === invariant && each?.state === 'unverified');
   if (!unverified) return `${lead}: ${rule}. Fix the code, or have a reviewer record its verdict with evidence first`;
-  return `${lead}: it is unverified, and ${rule}. An unverified invariant closes on evidence outside the tool: when the base branch sets review.visual, ingest the images that show it with \`aidrian pr ingest ${pr} --head ${head} --source "<where they came from>" <image>...\` and have a reviewer cite \`capture:<key>\` in its verdict; or the Human accepts it in their own shell with \`aidrian pr signoff ${pr} --flow ${flow} --accept ${invariant} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}\``;
+  return `${lead}: it is unverified, and ${rule}. An unverified invariant closes on evidence outside the tool: when the base branch sets review.visual, ingest the images that show it with \`aidrian pr ingest ${pr} --head ${head} --source "<where they came from>" <image>...\` and have a reviewer cite \`capture:<key>\` in its verdict; or the Human, asked with AskUserQuestion, accepts it with \`aidrian pr signoff ${pr} --flow ${flow} --accept ${invariant} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}\``;
 }

@@ -220,11 +220,11 @@ export function baseProblem(project, { repo, base = null, git }) {
 export function reviewInForce(baseReview, headReview) {
   if (!baseReview) {
     const pending = Object.fromEntries(Object.entries(headReview.reviewers).map(([name, reviewer]) => [name, { ...reviewer, pending: true }]));
-    const none = { reviewers: {}, approvals: REVIEW_DEFAULTS.approvals };
-    return { review: { ...headReview, engine: null, planCommand: null, visual: null, approvals: REVIEW_DEFAULTS.approvals, reviewers: pending }, changed: ['engine', 'planCommand', 'reviewers', 'visual', 'approvals'].filter((key) => JSON.stringify(headReview[key] ?? none[key] ?? null) !== JSON.stringify(none[key] ?? null)) };
+    const none = { reviewers: {}, approvals: REVIEW_DEFAULTS.approvals, unattendedSignoff: REVIEW_DEFAULTS.unattendedSignoff };
+    return { review: { ...headReview, engine: null, planCommand: null, visual: null, approvals: REVIEW_DEFAULTS.approvals, unattendedSignoff: REVIEW_DEFAULTS.unattendedSignoff, reviewers: pending }, changed: ['engine', 'planCommand', 'reviewers', 'visual', 'approvals', 'unattendedSignoff'].filter((key) => JSON.stringify(headReview[key] ?? none[key] ?? null) !== JSON.stringify(none[key] ?? null)) };
   }
   const changed = [];
-  for (const key of ['engine', 'rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual', 'approvals']) {
+  for (const key of ['engine', 'rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual', 'approvals', 'unattendedSignoff']) {
     if (JSON.stringify(baseReview[key] ?? null) !== JSON.stringify(headReview[key] ?? null)) changed.push(key);
   }
   return {
@@ -246,6 +246,8 @@ export function reviewInForce(baseReview, headReview) {
       // Whether an approver's review may close an invariant is the base branch's too: a pull request cannot let
       // approvals close its own invariants.
       approvals: baseReview.approvals ?? REVIEW_DEFAULTS.approvals,
+      // So is whether a judge's ruling may stand in for the Human.
+      unattendedSignoff: baseReview.unattendedSignoff ?? REVIEW_DEFAULTS.unattendedSignoff,
       reviewers: {
         ...Object.fromEntries(Object.entries(headReview.reviewers).filter(([name]) => !Object.hasOwn(baseReview.reviewers, name)).map(([name, reviewer]) => [name, { ...reviewer, pending: true }])),
         ...baseReview.reviewers,

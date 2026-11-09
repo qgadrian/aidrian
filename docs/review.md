@@ -849,7 +849,8 @@ A command publishes only after the hold. `extend`, `ingest`, and `await-review -
 their write on this machine, and `waive` refuses without the base.
 `attest` and `signoff` hold only when the forge names the base,
 so with none they read no comment, keep this machine's record, and publish nothing; `request`, which reads the forge only when
-`--head` or `--repo` is missing, keeps that record and publishes nothing too. Auto-merge and product feedback make the same `state.dir` comparison against the default
+`--head` or `--repo` is missing, keeps that record and publishes nothing too.
+Auto-merge and product feedback make the same `state.dir` comparison against the default
 branch read from GitHub. The [merge guard](hooks.md#merge-guard) makes all three from local git before it reads the
 record, for a merge of this repository: a merge naming its number compares with origin's default branch first, and with
 the base the head lookup names once it makes one. With neither ref it makes only the comparison with the checkouts, which needs no base.

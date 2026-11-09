@@ -16,6 +16,7 @@ import { ROUTED_DOMAINS } from './quorum.mjs';
 import { insideCheckout } from './review/in-force.mjs';
 import { trackerWarnings } from './tracker-check.mjs';
 import { loadTerms } from './terms.mjs';
+import { bannedFileProblems } from './banned-terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
 
@@ -62,6 +63,8 @@ export const commands = {
       const budgets = checkBudgets(project.root, buckets, config.knowledge.budgets);
       errors.push(...budgets.problems);
       errors.push(...(loadTerms(project, config)?.errors ?? []));
+      // The private words file: never its text, only where it is wrong.
+      errors.push(...bannedFileProblems(project.root));
       const floor = versionFloorProblem(config);
       if (floor) errors.push(floor);
       for (const { line, gitignore, state } of unignored(project, config)) {

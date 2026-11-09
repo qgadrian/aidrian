@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -356,4 +357,52 @@ test('two identical inline shells in different folders are each checked', (t) =>
   const inline = (folder) => `env -C ${folder} sh -c 'gh pr create -t x -F body.md'`;
   assert.equal(run(inline('good')), null);
   assert.match(run(`${inline('good')} && ${inline('bad')}`) ?? '', /Blocked/);
+});
+
+test('an edit counts as another repository only for a pull request URL, with scheme and host', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  execFileSync('git', ['init', '-q'], { cwd: dir, env });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/notes.git'], { cwd: dir, env });
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const run = (command) => check(command, { cwd: dir, env: {} });
+  assert.equal(run("gh pr edit https://github.com/other/repo/pull/3 --body 'no sections'"), null);
+  for (const target of ['https://github.com/other/repo/issues/3', 'other/repo/pull/3', 'github.com/other/repo/pull/3', 'team/pull/3']) {
+    assert.match(run(`gh pr edit ${target} --body 'no sections'`) ?? '', /^Blocked: the body has no/, target);
+  }
+});
+
+test('a device or a pipe as the body file is one the rule cannot read', (t) => {
+  const run = project(t);
+  assert.match(run('gh pr create --title x --body-file /dev/null'), /^Blocked: the body is one this rule cannot read/);
+});
+
+test('a heredoc of another command never stands in for an unread body', (t) => {
+  const run = project(t);
+  const reason = run(`python3 -c "$(cat <<'EOF'\nprint(1)\nEOF\n)" && gh pr edit 3 --body "$UNREAD"`);
+  assert.match(reason, /^Blocked: the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, a device or a pipe/);
+  assert.equal(run(`python3 -c "$(cat <<'EOF'\nprint(1)\nEOF\n)" && ${heredoc(GOOD)}`), null, 'its own heredoc is read');
+});
+
+test('a title pattern that runs out of time checks nothing', (t) => {
+  const run = project(t, { version: 1, github: { pullRequest: { title: '^(a+)+$' } } });
+  const start = performance.now();
+  assert.equal(run(`gh pr edit 3 --title '${'a'.repeat(40)}!'`), null);
+  assert.ok(performance.now() - start < 1500);
+  assert.match(run("gh pr edit 3 --title 'b'"), /^Blocked: the title "b" does not match/);
+});
+
+test('a target URL names the repository before -R does', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  execFileSync('git', ['init', '-q'], { cwd: dir, env });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/notes.git'], { cwd: dir, env });
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const run = (command) => check(command, { cwd: dir, env: {} });
+  assert.equal(run("gh pr edit https://github.com/other/repo/pull/3 -R acme/notes --body 'no sections'"), null);
+  assert.match(run("gh pr edit https://github.com/acme/notes/pull/3 -R other/repo --body 'no sections'") ?? '', /^Blocked: the body has no/);
 });

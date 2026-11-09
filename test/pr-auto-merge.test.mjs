@@ -363,7 +363,7 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
     'AGENTS.md', 'CLAUDE.md', 'packages/api/AGENTS.md', 'a/b/CLAUDE.md', 'packages/api/agents.md', '.claude/settings.json', '.claude/agents/x.md',
     '.codex/config.toml', '.aidrian/config.json', '.aidrian/knowledge/rules.md', '.aidrian.json', 'plugins/x/skills/y/SKILL.md', 'SKILL.md',
     '.github/workflows/ci.yml', '.github/actions/setup/action.yml', 'CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS',
-    '.aidrian.local.json', 'wt/.AIDRIAN.LOCAL.JSON', '.claude', '.codex', '.aidrian', '.github/workflows', '.github/actions',
+    '.aidrian.local.json', 'wt/.AIDRIAN.LOCAL.JSON', '.banned-terms.local', 'wt/.banned-terms.local', '.claude', '.codex', '.aidrian', '.github/workflows', '.github/actions',
   ]) {
     assert.deepEqual(reasonOf(t, r, changed('src/app.js', file)), [1, 'paths'], file);
   }

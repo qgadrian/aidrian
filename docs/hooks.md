@@ -124,6 +124,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
+| Public text | Off unless config.json lists `github.publicText.patterns`, or `.banned-terms.local` gives a pattern |
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
 | [Tracker write guard](config.md#tracker) | Off unless config.json sets `"tracker": { "enabled": true }`, with the keys that key needs |
@@ -149,6 +150,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
+| Public text, when turned on | An issue, pull request, or comment whose text matches [`github.publicText.patterns` or `.banned-terms.local`](config.md#public-text), or that the rule cannot read | `AIDRIAN_ALLOW_PUBLIC_TEXT=1` |
 | Attribution, when turned on | An agent's commit or new pull request without the [attribution](config.md#attribution) lines | `AIDRIAN_ALLOW_UNATTRIBUTED=1` |
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
@@ -220,6 +222,35 @@ What each rule matches:
   run `gh pr create --body-file` with that path. The footer deny says this project's rule takes precedence over the host's
   attribution instructions, that the `attribution.pullRequest` lines replace it when set, and that Claude Code's
   `attribution.pr` setting set to `""` stops the host from asking. The [start lines](#start-lines) say the same up front.
+- Public text: with a pattern from config.json `github.publicText.patterns` or the git-ignored `.banned-terms.local`,
+  `gh issue create|edit|comment|close|reopen` and `gh pr create|edit|comment|close|reopen|merge` whose text matches a pattern:
+  `--body` or `--body-file`, `--title`, the `--comment` of a close or a reopen, and the `--subject` of a merge.
+  Each run of whitespace counts as one space, so a phrase wrapped across lines matches. GitHub keeps the old text in a public edit history that no API deletes, so this stops it before the first post.
+  The body is read as the pull request body rule reads it, heredoc and `--body-file -` included, and a call that names another repository
+  answers to the target repository for the config patterns and for text it cannot read. Private words hold for every call.
+  The deny for a config pattern names the pattern, cut at 80 characters, never the text around the match, and says to rewrite the text as the rule or limit,
+  keep the detail in the state folder, and that an edit does not remove what was already posted.
+  A hit from `.banned-terms.local` is denied without the word, the pattern, or the text around it, here and in the recorded row:
+  the deny says a private word from that file matched in the body, the title, the closing comment, or the merge subject,
+  then names the line of the first hit, says to reword it, and says not to open the file.
+  The rule runs before the pull request body rule, whose title deny quotes the title.
+  The rule reads the file from the project root and from the main checkout, and uses both when both exist, as `scripts/banned-terms.mjs` does:
+  git does not copy an ignored file, so a linked worktree normally has none. It reads a copy only when it is a regular file of
+  modest size, so a link to one works; a copy it cannot read drops only itself. A line that does not compile drops only itself in the hook,
+  and `aidrian check` names its line number, and fails on a copy git does not ignore, never printing what the file holds.
+  The patterns of one command share a time budget, and one that runs out is dropped, as a bad line is.
+  Private words are checked on every call of the command before any config pattern runs, so config patterns never use up their time.
+  A rule of this hook that fails lets the command through that rule only; the later rules still run.
+  A body or title the rule cannot read is refused, with the two steps that pass for a body, and that includes a device or a pipe given as the body file, and so is a call with no body flag whose text would come
+  from an editor, a prompt, a template, or the commit messages. `--fill` with no `--title` is refused the same way.
+  `--web`, `--dry-run`, `--help`, `--delete-last`, and an edit, close, reopen, or merge with no text flag pass.
+  With no pattern from either, the default, the rule refuses nothing: it reads only the config and looks for the file, which runs git once,
+  and it looks up no remotes and reads no body. It never asks whether the repository is public: a project opting in is the signal.
+  A pattern catches only obvious wording. It is no substitute for writing rules only: text that avoids the listed words passes.
+  A dynamic body reads only a heredoc in the gh call's own words, never another command's on the same line.
+  The rule reads only these commands: `gh api`, `gh pr review`, gh run through `xargs`, and the GitHub MCP tools are not checked,
+  and neither is the alt text of an `--attach` file. A comment with attachments and no body flag is refused as having no body.
+  The pull request body rule has no MCP counterpart in the GitHub MCP hook either, so a post through an MCP tool goes unread by both.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
@@ -398,7 +429,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
+`grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.

@@ -12,17 +12,19 @@ const SEMVER = /^\d+\.\d+\.\d+$/u;
 const isAuditLabel = (value) => isText(value) && [...value.matchAll(/[{}]/gu)].length === 2 * [...value.matchAll(/\{(\w+)\}/gu)].filter(([, field]) => AUDIT_LABEL_FIELDS.includes(field)).length;
 export const isText = (value) => typeof value === 'string' && value.trim() !== '';
 export const isTexts = (value) => Array.isArray(value) && value.every(isText);
-// A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
-// (lib/rules/github/pr-body.mjs), so they are checked filled with a plain word.
-const isPattern = (value) => {
-  if (!isText(value)) return false;
+const compiles = (source, flags) => {
   try {
-    new RegExp(value.replaceAll('{types}', 'x').replaceAll('{issueKey}', 'x'), 'u');
+    new RegExp(source, flags);
     return true;
   } catch {
     return false;
   }
 };
+// A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
+// (lib/rules/github/pr-body.mjs), so they are checked filled with a plain word.
+const isPattern = (value) => isText(value) && compiles(value.replaceAll('{types}', 'x').replaceAll('{issueKey}', 'x'), 'u');
+// A case-insensitive regular expression a project writes as a string, compiled as lib/rules/github/public-text.mjs compiles it.
+const isInsensitivePattern = (value) => isText(value) && compiles(value, 'iu');
 // A doc, section, or folder from the project root, as `decisions.escalateDocs` lists them (lib/decisions.mjs).
 const isDocPath = (value) => {
   if (!isText(value)) return false;
@@ -42,6 +44,7 @@ export const TYPES = {
   someTexts: [(value) => isTexts(value) && value.length > 0, 'a non-empty list of non-empty strings'],
   textsOrNull: [(value) => value === null || isTexts(value), 'a list of non-empty strings, or null'],
   patternOrNull: [(value) => value === null || isPattern(value), 'a regular expression as a string, or null'],
+  patterns: [(value) => Array.isArray(value) && value.every(isInsensitivePattern), 'a list of valid regular expressions as strings'],
   deferralsOrNull: [
     (value) => value === null || (hasOnly(value, ['section', 'field', 'reasons', 'neverValid']) && isText(value.section) && isText(value.field) &&
       isTexts(value.reasons) && value.reasons.length > 0 && (value.neverValid === undefined || isTexts(value.neverValid))),

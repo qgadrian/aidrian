@@ -37,6 +37,8 @@ export const DEFAULTS = deepFreeze({
     reviewLoop: 'auto',
     // The pull request contract the pull request body rule holds beyond requiredSections (lib/rules/github/pr-body.mjs).
     pullRequest: { title: null, issueKey: null, sections: null, deferrals: null, residuals: null, sharedTempBodyFile: true, duplicateBody: false },
+    // The wording no public issue, pull request, or comment may carry (lib/rules/github/public-text.mjs); [] is off.
+    publicText: { patterns: [] },
     // The review that must be on record before the review bot is asked (lib/review-gate.mjs).
     reviewGate: { enabled: false, checklist: null },
     // The team's ceiling on auto-merge: no machine merges a pull request unless `allow` is true. `strategy: null` leaves

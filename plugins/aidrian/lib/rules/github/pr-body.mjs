@@ -3,7 +3,7 @@
 // gh then writes the body from the commit messages. A non-web `gh pr create` with no --body or --body-file is refused
 // too, when sections are configured: gh then takes the body from an editor, a prompt, or a template, unchecked.
 // `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit). A body flag whose body the
-// rule cannot read (a variable, a substitution, stdin, a missing file) is refused when sections are configured. Runs only inside a project. A
+// rule cannot read (a variable, a substitution, stdin, a missing file, a device or a pipe) is refused when sections are configured. Runs only inside a project. A
 // command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A leading `cd <dir> &&`
 // moves the folder the body file and the project are read from; after any other directory change on the line, a relative
 // body file is one the rule cannot read. A body file the same command line writes first, through `cat > file` or `tee
@@ -34,7 +34,8 @@ import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, stateDir } from '../../project.mjs';
 import { remoteRepos, repoName } from '../../review-gate.mjs';
-import { lexCommand, readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
+import { boundedSearch, timeBudget } from '../../bounded-regexp.mjs';
+import { lexPipeline, readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
 import { invocationRepo } from './review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
@@ -252,19 +253,22 @@ const readText = (file) => {
 export const unchangedHeredoc = (match) => (match[2] || !/[$`\\]/u.test(match[4]) ? match[4] : null);
 
 // Every `gh pr create|edit` call of one command line, in order, as readPrCall reads it, with `heredoc`: the body of the
-// heredoc its dynamic --body holds. The n-th dynamic body takes the line's n-th body heredoc, and only when the counts
-// match: otherwise no dynamic body is read, so one call's heredoc never stands in for another's. A heredoc under a bare
-// delimiter that holds `$`, a backtick, or a backslash is expanded by bash, so it is not read either.
+// heredoc its dynamic --body holds. A call reads only a heredoc in its own words, and only when they hold exactly one:
+// another command's heredoc on the line never stands in for its body. A heredoc under a bare delimiter that holds `$`, a
+// backtick, or a backslash is expanded by bash, so it is not read either.
 export const readPrCalls = (line) => callsOn(line, readPrCall);
 
 function callsOn(line, read, pattern = BODY_HEREDOC) {
-  const calls = lexCommand(line).map((segment) => read(segment)).filter(Boolean);
-  const dynamic = calls.filter((call) => call.body?.dynamic);
-  const heredocs = [...line.matchAll(pattern)].map(unchangedHeredoc);
-  dynamic.forEach((call, i) => {
-    call.heredoc = heredocs.length === dynamic.length ? heredocs[i] : null;
+  const { segments, spans } = lexPipeline(line);
+  return segments.flatMap((segment, i) => {
+    const call = read(segment);
+    if (!call) return [];
+    if (call.body?.dynamic) {
+      const own = [...line.slice(...spans[i]).matchAll(pattern)];
+      call.heredoc = own.length === 1 ? unchangedHeredoc(own[0]) : null;
+    }
+    return [call];
   });
-  return calls;
 }
 
 // A `gh [-R repo] pr create|edit …` segment, as readBodyCall reads it, else null.
@@ -345,7 +349,8 @@ export function readBodyCall(segment) {
 // or else `ghRepo`, the GH_REPO in force (review-request `invocationRepo`). A value the rule cannot read, or a checkout
 // with no remote to compare, is not another repository, so the project's rules hold.
 export function targetsAnotherRepo(call, project, ghRepo) {
-  const named = call.repo ?? targetUrl(call) ?? { text: ghRepo, dynamic: false };
+  // A URL target names its repository, whatever -R says, as gh reads it.
+  const named = targetUrl(call) ?? call.repo ?? { text: ghRepo, dynamic: false };
   const repo = named.dynamic ? null : repoName(named.text);
   if (repo === null) return false;
   const own = remoteRepos(project);
@@ -398,8 +403,8 @@ function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, 
   }
   const body = readBody(call, folderKnown ? cwd : null, written);
   if (body === null && sectioned && (call.body || call.bodyFile)) {
-    return deny('the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, or a file that ' +
-      `does not exist yet. ${steps()} A file that another command on this line edits, such as \`sed -i\` or a script, counts as ` +
+    return deny('the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, a device or a pipe, ' +
+      `or a file that does not exist yet. ${steps()} A file that another command on this line edits, such as \`sed -i\` or a script, counts as ` +
       'not there yet: run gh as its own command after it. Never pass the path through `$(…)` or a variable, or the sections ' +
       'config.json `github.requiredSections` asks for go unchecked.');
   }
@@ -503,17 +508,25 @@ function judgeTitle(token, config) {
   const { title: pattern, issueKey } = config.github.pullRequest;
   if (!pattern || !token || token.dynamic) return null;
   const types = config.git.commits.types.map(escape).join('|');
-  const wanted = new RegExp(pattern.replaceAll('{types}', types).replaceAll('{issueKey}', `(?:${issueKey ?? '(?!)'})`), 'u');
-  if (!wanted.test(token.text)) {
+  const wanted = pattern.replaceAll('{types}', types).replaceAll('{issueKey}', `(?:${issueKey ?? '(?!)'})`);
+  // The project's patterns run under a time limit (lib/bounded-regexp.mjs); one that runs out checks nothing.
+  const budget = timeBudget(TITLE_BUDGET_MS, TITLE_BUDGET_MS);
+  const found = boundedSearch(wanted, 'u', token.text, budget);
+  if (found === null) return null;
+  if (found < 0) {
     return deny(`the title "${token.text}" does not match config.json \`github.pullRequest.title\`: ${pattern} ` +
       `({types} is ${config.git.commits.types.join('|')}${issueKey ? `, {issueKey} is ${issueKey}` : ''}).`);
   }
-  if (issueKeyPattern(issueKey)?.test(token.text.replace(/^\[[^\]]*\]/u, ''))) {
+  const key = issueKeyPattern(issueKey);
+  if (key && (boundedSearch(key.source, 'u', token.text.replace(/^\[[^\]]*\]/u, ''), budget) ?? -1) >= 0) {
     return deny('the title names an issue key outside its leading [...] bracket, which links the pull request to an issue it ' +
       'does not implement. Move the key into the bracket if this pull request implements it; otherwise reword the title without it.');
   }
   return null;
 }
+
+// The time the title pattern and the issue key may take together.
+const TITLE_BUDGET_MS = 300;
 
 // The issue key as a whole word: `XABC-1` and `ABC-1a` are not `ABC-\d+` keys.
 const issueKeyPattern = (key) => (key ? new RegExp(`(?<![A-Za-z0-9])(?:${key})(?![A-Za-z0-9])`, 'u') : null);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -182,10 +182,10 @@ const assertNothingPrivate = (text) => {
 test('the private words file alone turns the rule on, and says which of body or title matched', (t) => {
   const run = project(t, NO_PATTERNS, { [FILE]: PRIVATE_FILE });
   const body = run(`gh issue comment 3 --body '${PRIVATE_TEXT}'`);
-  assert.match(body, /^Blocked: a private word from `\.banned-terms\.local` matched in the body\. Reword it/);
+  assert.match(body, /^Blocked: a private word from `\.banned-terms\.local` matched in the body\. The first hit is on line 1 of the body: reword it/);
   assertNothingPrivate(body);
   const title = run(`gh pr create --title '${PRIVATE_TEXT}' --body fine`);
-  assert.match(title, /^Blocked: a private word from `\.banned-terms\.local` matched in the title\. Reword it/);
+  assert.match(title, /^Blocked: a private word from `\.banned-terms\.local` matched in the title\. The first hit is on line 1 of the title: reword it/);
   assertNothingPrivate(title);
   assert.equal(run(`gh issue comment 3 --body '${GOOD}'`), null);
   assert.match(run('gh issue comment 3 --body "$UNREAD"'), /^Blocked: the body is one this rule cannot read/, 'an active rule refuses what it cannot read');
@@ -212,11 +212,15 @@ test("this repository's git hooks still stop on a bad line, so a word cannot sli
   assert.throws(() => bannedPatterns(run.dir), SyntaxError);
 });
 
-test('a hit from the file on a call naming another repository answers to no rule here', (t) => {
-  const run = project(t, NO_PATTERNS, { [FILE]: PRIVATE_FILE }, 'https://github.com/acme/notes.git');
-  assert.equal(run(`gh issue comment 3 -R other/repo --body '${PRIVATE_TEXT}'`), null);
-  assert.equal(run(`gh issue comment https://github.com/other/repo/issues/3 --body '${PRIVATE_TEXT}'`), null);
-  assert.match(run(`gh issue comment 3 -R acme/notes --body '${PRIVATE_TEXT}'`), /^Blocked: a private word/);
+test('private words hold on a call naming another repository; config patterns and unread text follow the target', (t) => {
+  const run = project(t, WITH_PATTERNS, { [FILE]: PRIVATE_FILE }, 'https://github.com/acme/notes.git');
+  for (const command of [`gh issue comment 3 -R other/repo --body '${PRIVATE_TEXT}'`, `gh issue comment https://github.com/other/repo/issues/3 --body '${PRIVATE_TEXT}'`,
+    `GH_REPO=other/repo gh pr create --title '${PRIVATE_TEXT}' --body x`, `gh issue comment 3 -R acme/notes --body '${PRIVATE_TEXT}'`]) {
+    assert.match(run(command) ?? '', /^Blocked: a private word/, command);
+  }
+  assert.equal(run(`gh issue comment 3 -R other/repo --body '${BAD}'`), null, 'a config pattern follows the target');
+  assert.equal(run('gh issue comment 3 -R other/repo --body "$UNREAD"'), null, 'so does unread text');
+  assert.equal(run('gh issue create -R other/repo --title x'), null);
 });
 
 test("a linked worktree reads the main checkout's file, and its own beside it", (t) => {
@@ -304,7 +308,7 @@ test('close, reopen, and merge text is read, and each posts none unless given it
   const unread = run('gh issue close 3 --comment "$UNREAD"');
   assert.match(unread, /^Blocked: the comment is one this rule cannot read/);
   assert.match(unread, /2\. run `gh issue comment 3 --body-file .*comment-body-/u);
-  assert.match(unread, /Then run `gh issue close` without --comment/);
+  assert.match(unread, /Then run `gh issue close 3` without --comment/);
   assert.match(run('gh pr merge 3 --body "$UNREAD"'), /`.*merge-body-<branch>\.md`/u);
   assert.match(run('gh pr merge 3 --subject "$UNREAD"'), /^Blocked: the subject is one this rule cannot read/);
 });
@@ -365,4 +369,116 @@ test('attachments: alone they are refused as no body, and with a body their alt 
   const run = project(t);
   assert.match(run("gh pr comment 3 --attach './x.png#alt'"), /has no --body or --body-file/);
   assert.equal(run(`gh pr comment 3 --body '${GOOD}' --attach './x.png#${BAD}'`), null);
+});
+
+test('the private deny keeps its first sentence, names the line of the first hit, and says not to open the file', (t) => {
+  const run = project(t, NO_PATTERNS, { [FILE]: PRIVATE_FILE });
+  const reason = run(`gh issue comment 3 --body 'first line\nsecond line\n\n${PRIVATE_TEXT}'`);
+  assert.match(reason, /^Blocked: a private word from `\.banned-terms\.local` matched in the body\. The first hit is on line 4 of the body: reword it/);
+  assert.match(reason, /do not open `\.banned-terms\.local`/);
+  assertNothingPrivate(reason);
+  assert.match(run(`gh issue close 3 --comment '${PRIVATE_TEXT}'`), /matched in the comment\. The first hit is on line 1 of the comment/);
+  assert.match(run(`gh pr merge 3 --subject '${PRIVATE_TEXT}'`), /matched in the subject\./);
+});
+
+test('a long config pattern is cut in the deny', (t) => {
+  const long = `placeholder${'x?'.repeat(60)}`;
+  const reason = project(t, { version: 1, github: { requiredSections: [], publicText: { patterns: [long] } } })("gh issue comment 3 --body 'a placeholder here'");
+  const shown = /pattern `([^`]*)`/u.exec(reason)[1];
+  assert.equal(shown.length, 80);
+  assert.ok(shown.endsWith('…'));
+});
+
+test('a heredoc of another command never stands in for an unread body', (t) => {
+  const run = project(t);
+  const otherSubstitution = `python3 -c "$(cat <<'EOF'\nprint(1)\nEOF\n)" && gh issue comment 3 --body "$UNREAD"`;
+  assert.match(run(otherSubstitution), /^Blocked: the body is one this rule cannot read/);
+  const otherGh = `gh pr review 3 --comment -b "$(cat <<'EOF'\nfine\nEOF\n)" && gh issue close 3 --comment "$UNREAD"`;
+  assert.match(run(otherGh), /^Blocked: the comment is one this rule cannot read/);
+  assert.match(run(`python3 -c "$(cat <<'EOF'\nprint(1)\nEOF\n)" && gh issue comment 3 --body "$(cat <<'EOF'\n${BAD}\nEOF\n)"`), /^Blocked: the body matches/, 'its own heredoc is read');
+  assert.equal(run(`gh issue comment 3 --body "$(cat <<'EOF'\n${GOOD}\nEOF\n)" && gh pr comment 4 --body "$(cat <<'EOF'\n${GOOD}\nEOF\n)"`), null, 'each call its own');
+});
+
+test('a target URL names the repository before -R does', (t) => {
+  const run = project(t, WITH_PATTERNS, {}, 'https://github.com/acme/notes.git');
+  assert.equal(run(`gh pr edit https://github.com/other/repo/pull/3 -R acme/notes --body '${BAD}'`), null);
+  assert.match(run(`gh issue comment https://github.com/acme/notes/issues/3 -R other/repo --body '${BAD}'`) ?? '', /^Blocked: the body matches/);
+});
+
+// A pattern that takes far longer than the budget on this text: a nested repeat with no match at the end.
+const SLOW = '(a+)+$';
+const SLOW_TEXT = `${'a'.repeat(40)}!`;
+
+test('a pattern that runs out of time is dropped, and the others still run within the budget', (t) => {
+  const run = project(t, { version: 1, github: { requiredSections: [], publicText: { patterns: [SLOW, 'placeholder'] } } }, { [FILE]: `${SLOW}\n${PRIVATE_PATTERN}\n` });
+  const timed = (command) => {
+    const start = performance.now();
+    const reason = run(command);
+    return [reason, performance.now() - start];
+  };
+  const [clean, cleanMs] = timed(`gh issue comment 3 --body '${SLOW_TEXT}'`);
+  assert.equal(clean, null);
+  assert.ok(cleanMs < 1500, `took ${cleanMs} ms`);
+  assert.match(timed(`gh issue comment 3 --body '${SLOW_TEXT} PrivatePlaceholder-1'`)[0], /^Blocked: a private word/);
+  assert.match(timed(`gh issue comment 3 --body '${SLOW_TEXT} placeholder'`)[0], /^Blocked: the body matches the config\.json `github\.publicText\.patterns` pattern `placeholder`/);
+});
+
+// What a project folder keeps out of git, the private file included.
+const IGNORED = `.aidrian.local.json\n.worktrees/\n${FILE}\n`;
+
+// A main checkout whose guard is on, with a tracked file a later rule refuses to let a command write.
+function guardedProject(t, files) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-publictext-guard-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = clean(t);
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: dir, env, stdio: 'ignore' });
+  git('init', '-q');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { mainCheckout: { guard: true } }, github: { requiredSections: [], publicText: { patterns: [SLOW] } } }));
+  writeFileSync(path.join(dir, '.gitignore'), `${IGNORED}\n`);
+  writeFileSync(path.join(dir, 'app.js'), 'x\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'init');
+  files(dir);
+  return { dir, env };
+}
+
+const hookRun = (dir, env, command) => {
+  const start = performance.now();
+  const result = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-bash.mjs')], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: dir, session_id: 'public-text-later' }), encoding: 'utf8', env, timeout: 15000,
+  });
+  return { ...result, ms: performance.now() - start };
+};
+
+test('with a pipe for the private file and a slow pattern, the last rule still refuses, inside the hook time', (t) => {
+  const { dir, env } = guardedProject(t, (root) => execFileSync('mkfifo', [path.join(root, FILE)]));
+  const hook = hookRun(dir, env, `gh issue comment 3 --body '${SLOW_TEXT}' && echo y > app.js`);
+  assert.equal(hook.status, 2, hook.stderr);
+  assert.match(hook.stderr, /^Blocked: this command writes 'app\.js', a tracked file in the main checkout/);
+  assert.ok(hook.ms < 5000, `took ${hook.ms} ms`);
+});
+
+test('a link to a regular private file is read', (t) => {
+  const { dir, env } = guardedProject(t, (root) => {
+    writeFileSync(path.join(root, 'words.txt'), `${PRIVATE_PATTERN}\n`);
+    symlinkSync(path.join(root, 'words.txt'), path.join(root, FILE));
+  });
+  assert.match(hookRun(dir, env, `gh issue comment 3 --body '${PRIVATE_TEXT}'`).stderr, /^Blocked: a private word/);
+});
+
+test('aidrian check reports a private file git would track, and bad lines by number, never their text', (t) => {
+  const aidrian = (dir, env) => spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['check'], { cwd: dir, encoding: 'utf8', env });
+  const { dir, env } = guardedProject(t, (root) => writeFileSync(path.join(root, FILE), `# note\n${PRIVATE_PATTERN}\n(unclosed privateplaceholder\n\n[bad\n`));
+  const bad = aidrian(dir, env);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /\.banned-terms\.local: lines 3, 5 do not compile, so the rules skip them/);
+  assertNothingPrivate(bad.stderr + bad.stdout);
+  writeFileSync(path.join(dir, FILE), `${PRIVATE_PATTERN}\n`);
+  assert.equal(aidrian(dir, env).status, 0, aidrian(dir, env).stderr);
+  writeFileSync(path.join(dir, '.gitignore'), IGNORED.replace(`${FILE}\n`, ''));
+  const unignored = aidrian(dir, env);
+  assert.notEqual(unignored.status, 0);
+  assert.match(unignored.stderr, /\.banned-terms\.local is tracked or not git-ignored, so its words could be published: add the line "\.banned-terms\.local" to \.gitignore/);
+  assertNothingPrivate(unignored.stderr + unignored.stdout);
 });

@@ -28,7 +28,8 @@ import * as processKill from '../lib/rules/process-kill.mjs';
 // project finds it (findProject), which runs git once inside a project folder. Past that, only these start one, and only
 // for a command they matched: attribution, git for a commit's trailers; pr-body, gh for the open pull requests, bounded
 // at 3 s; public-text, git for the main checkout, for the private words file, and with any pattern, for the checkout's
-// remotes and the deny's body file path; merge-review, git for the hold against the base branch, each read bounded at
+// remotes and the deny's body file path, with its patterns run under a budget that ends 2 s after this process started
+// (each search in a node:vm context, which starts no process); merge-review, git for the hold against the base branch, each read bounded at
 // 1 s (lib/review/in-force.mjs baseProblem), one gh pr view, bounded at 3 s, and, only under the unattended waiver's local switch for a merge
 // it could waive, one git call and up to six gh calls, none begun 4 s after this process started (each stopped
 // at that deadline at the latest; lib/review/waiver.mjs); ready-hold, git for the committed config and then, when the
@@ -43,8 +44,9 @@ const RULES = [
   ['process-kill', processKill],
   ['grep-exit-chain', grepExitChain],
   ['attribution', attribution],
-  ['pr-body', prBody],
+  // Before the pull request body rule, whose title deny quotes the title: a private word gets this rule's deny first.
   ['public-text', publicText],
+  ['pr-body', prBody],
   ['review-gate', reviewRequest],
   ['review-rounds', reviewRounds],
   ['review-signoff', reviewSignoff],
@@ -67,7 +69,13 @@ await runHook(async (input) => {
   // unattended waiver, ready-hold).
   const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin };
   for (const [name, rule] of RULES) {
-    const reason = rule.check(command, context);
+    // A rule that throws lets the command through that rule alone: the later rules still run.
+    let reason = null;
+    try {
+      reason = rule.check(command, context);
+    } catch {
+      continue;
+    }
     if (reason) await block(input, name, reason);
   }
 });

@@ -95,7 +95,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const body = readBody(call, dir, written);
     if (body === null) {
       return hint('the attribution rule cannot read this pull request body (a variable, a command substitution, stdin, a missing ' +
-        `file, or none), so it cannot check its attribution. Pass a literal --body, a heredoc (--body "$(cat <<'EOF' … EOF)"), ` +
+        `file, a device or a pipe, or none), so it cannot check its attribution. Pass a literal --body, a heredoc (--body "$(cat <<'EOF' … EOF)"), ` +
         'or a --body-file that exists.');
     }
     const head = staticText(call.head) ?? 'HEAD';

@@ -227,20 +227,27 @@ What each rule matches:
   `--body` or `--body-file`, `--title`, the `--comment` of a close or a reopen, and the `--subject` of a merge.
   Each run of whitespace counts as one space, so a phrase wrapped across lines matches. GitHub keeps the old text in a public edit history that no API deletes, so this stops it before the first post.
   The body is read as the pull request body rule reads it, heredoc and `--body-file -` included, and a call that names another repository
-  gets no rule here. The deny for a config pattern names the pattern, never the text around the match, and says to rewrite the text as the rule or limit,
+  answers to the target repository for the config patterns and for text it cannot read. Private words hold for every call.
+  The deny for a config pattern names the pattern, cut at 80 characters, never the text around the match, and says to rewrite the text as the rule or limit,
   keep the detail in the state folder, and that an edit does not remove what was already posted.
   A hit from `.banned-terms.local` is denied without the word, the pattern, or the text around it, here and in the recorded row:
-  the deny says a private word from that file matched in the body or the title, and to reword it.
+  the deny says a private word from that file matched in the body, the title, the closing comment, or the merge subject,
+  then names the line of the first hit, says to reword it, and says not to open the file.
+  The rule runs before the pull request body rule, whose title deny quotes the title.
   The rule reads the file from the project root and from the main checkout, and uses both when both exist, as `scripts/banned-terms.mjs` does:
-  git does not copy an ignored file, so a linked worktree normally has none. A line that does not compile drops only itself, silently;
-  `aidrian check` does not read the file, so it reports no such line.
+  git does not copy an ignored file, so a linked worktree normally has none. It reads a copy only when it is a regular file of
+  modest size, so a link to one works; a copy it cannot read drops only itself. A line that does not compile drops only itself in the hook,
+  and `aidrian check` names its line number, and fails on a copy git does not ignore, never printing what the file holds.
+  The patterns of one command share a time budget, and one that runs out is dropped, as a bad line is.
+  A rule of this hook that fails lets the command through that rule only; the later rules still run.
   A body or title the rule cannot read is refused, with the two steps that pass for a body, and that includes a device or a pipe given as the body file, and so is a call with no body flag whose text would come
   from an editor, a prompt, a template, or the commit messages. `--fill` with no `--title` is refused the same way.
   `--web`, `--dry-run`, `--help`, `--delete-last`, and an edit, close, reopen, or merge with no text flag pass.
   With no pattern from either, the default, the rule refuses nothing: it reads only the config and looks for the file, which runs git once,
   and it looks up no remotes and reads no body. It never asks whether the repository is public: a project opting in is the signal.
   A pattern catches only obvious wording. It is no substitute for writing rules only: text that avoids the listed words passes.
-  The rule reads only these commands: `gh api`, `gh pr review`, and the GitHub MCP tools are not checked,
+  A dynamic body reads only a heredoc in the gh call's own words, never another command's on the same line.
+  The rule reads only these commands: `gh api`, `gh pr review`, gh run through `xargs`, and the GitHub MCP tools are not checked,
   and neither is the alt text of an `--attach` file. A comment with attachments and no body flag is refused as having no body.
   The pull request body rule has no MCP counterpart in the GitHub MCP hook either, so a post through an MCP tool goes unread by both.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;

@@ -43,7 +43,9 @@ test('every rule is wired: process kill and listing, and the grep chain', () => 
 
 test('the pull request body rule is wired, inside a project folder', () => {
   const inExample = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: path.resolve(import.meta.dirname, '../examples/consumer') });
-  assert.match(bashHook(inExample(['gh', 'pr', 'create', '--fill'].join(' '))).stderr, /^Blocked: `--fill` writes the body/);
+  // A body and a title the public text rule reads, so the result is the same with or without a private words file in
+  // the checkout running the suite: that rule runs first, and would refuse a call with neither.
+  assert.match(bashHook(inExample(['gh', 'pr', 'create', '--fill', '--title', 'x', '--body', 'y'].join(' '))).stderr, /^Blocked: `--fill` writes the body/);
 });
 
 test('an allowed command, another tool, and any unreadable stdin exit 0 silently', () => {

@@ -421,12 +421,15 @@ with origin's default branch first, and with the base the head lookup names once
 `refs/remotes/origin/HEAD`, else `refs/remotes/origin/main`, the plugin's default branch; the `git.defaultBranch` a
 working copy sets is never read here. A difference refuses the merge, whatever the record says, and its recourse says which
 compare failed. A difference from the base the lookup names says to merge from a checkout on the base branch or that the
-Human merges in their own shell. A difference from the default branch says to merge from a clean checkout on that branch
-when it is the pull request's base, and that with another base, or no such checkout, the Human merges in their own shell:
-a long-lived base that differs from the default branch stays refused from its own checkout. The hold also refuses a state folder, or a folder the review records go in, inside a checkout of the repository,
+Human merges in their own shell. A difference from the default branch says to merge from a clean checkout at that branch's
+tip when it is the pull request's base, and that with another base, or no such checkout, the Human merges in their own shell:
+a long-lived base that differs from the default branch stays refused from its own checkout.
+The hold also refuses a state folder, or a folder the review records go in, inside a checkout of the repository,
 with `state.dir` set or unset: that denial says to move the folder first, and that the Human merges until the move lands,
 or with `state.dir` unset until the folder is outside. It refuses a checkout at the folder the review records go in too,
 with `state.dir` set or unset: that denial says to move that checkout first, and that the Human merges until it is gone.
+It refuses a state folder whose path holds a line break the same way, which git's list of checkouts cannot show:
+that denial says to move the folder first, and that the Human merges until its path holds none.
 The hold applies with no review record too, and the `Merge anyway`
 answer of the waiver paragraph below does not waive it. With neither default-branch ref here it makes only the refusals about
 a checkout, which need no base. So a repository with no `refs/remotes/origin/HEAD` whose default branch is not `main`

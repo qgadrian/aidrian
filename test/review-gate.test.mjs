@@ -438,10 +438,11 @@ test('aidrian pr signoff --last refuses a review record held on another machine'
   const { dir, project, head } = repo(t, { version: 1 });
   execFileSync('git', ['config', 'user.name', 'Tester'], { cwd: dir });
   writeLocalState(project, { ...emptyState(7, 'acme/notes'), signoffable: { head, flows: ['pay'] }, outcome: { status: 'human_required', head, at: 'x' } });
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: dir });
   const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review.json');
   const before = readFileSync(recordFile, 'utf8');
   const forge = {
-    change: () => ({ url: 'https://github.com/acme/notes/pull/7', headRefOid: head }),
+    change: () => ({ url: 'https://github.com/acme/notes/pull/7', headRefOid: head, baseRefName: 'main' }),
     conversationComments: () => [{ body: `${SUMMARY_MARKER}\n<!-- aidrian-review-state-held:99 -->`, author_association: 'OWNER' }],
   };
   const { config } = loadConfig(project);

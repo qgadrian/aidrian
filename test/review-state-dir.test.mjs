@@ -24,8 +24,11 @@ import { runWaive } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { check, judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 const DIFFERS = /the working copy's state\.dir differs from o\/r main, and the review record is read from it/u;
-// What a record command says to do about a difference from the base branch.
-const NEXT_STEP = 'Run the review from a checkout on the base branch; a head behind that base merges it first.';
+// What a record command says to do about a difference from the base branch, and what it says under a base that pins a local reviewer.
+const BEHIND = 'A head behind that base merges it first.';
+const LOCAL_LIMIT = "A local reviewer reads the checkout at the head, so it cannot finish from there: with one as this machine's engine, set `review.engine` to `self` in `.aidrian.local.json` for this review, and put it back after.";
+const NEXT_STEP = `Run the review from a checkout on the base branch. ${LOCAL_LIMIT} ${BEHIND}`;
+const BASE_PINS = "The base branch's config.json pins `review.engine` to a local reviewer, which reads the checkout at the head, where the hold refuses, so no review finishes on this pull request: the Human merges it in their own shell.";
 const HEAD_RECORD = 'head-state/reviews/pr-7-review.json';
 const HOOK = path.join(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
 const CLI = path.join(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -276,7 +279,7 @@ const unused = () => assert.fail('the merge names its head: no view');
 
 // What the merge guard says to do about a difference: from the base the head lookup named, and from origin's default branch.
 const BASE_RECOURSE = 'Merge from a checkout on the base branch, or the Human merges in their own shell.';
-const DEFAULT_RECOURSE = "Merge from a clean checkout on that branch when it is the pull request's base; with another base, or no such checkout, the Human merges in their own shell.";
+const DEFAULT_RECOURSE = "Merge from a clean checkout at that branch's tip when it is the pull request's base; with another base, or no such checkout, the Human merges in their own shell.";
 
 // A project at a new linked worktree of `r`, detached at `commit`, and the hold from there.
 function linkedAt(t, r, commit) {
@@ -1048,18 +1051,25 @@ test('a read git fails on leaves the local branch out of the base\'s tip', async
   }
 });
 
-for (const [name, base] of [['a named base', 'main'], ['the default branch', null]]) {
-  test(`a stopped read of ${name} leaves no later read past the deadline`, (t) => {
+for (const [name, base, first] of [['a named base', 'main', 'refs/remotes/origin/main'], ['the default branch', null, 'refs/remotes/origin/HEAD']]) {
+  test(`a read of ${name} that answers slowly leaves the next read only the time left`, (t) => {
     const r = movedOutside(t);
     if (base === null) r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
-    const log = path.join(folderFor(t), 'stalled.log');
     const before = process.env.PATH;
     t.after(() => (process.env.PATH = before));
-    process.env.PATH = fakeGit(t, '*" rev-parse "*refs/*', `echo read >> "${log}"; exec sleep 30`);
-    assert.equal(baseProblem(r.project, { repo: 'o/r', base, git: boundedReads(Date.now() + 1000) }), null);
-    // At most one: a busy machine can stop the first before it logs.
-    const reads = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').length : 0;
-    assert.ok(reads <= 1, `the second ref takes its options after the first stopped, and has no time left: ${reads} reads`);
+    // The first ref is not there, which git says slowly. The second never answers.
+    process.env.PATH = fakeGit(t, '*" rev-parse "*refs/*', `case " $* " in *${first}*) sleep 0.3;; *) exec sleep 30;; esac`);
+    const reads = boundedReads(Date.now() + 1000);
+    const timeouts = [];
+    const git = () => {
+      timeouts.push(null);
+      const options = reads();
+      timeouts[timeouts.length - 1] = options.timeout;
+      return options;
+    };
+    assert.equal(baseProblem(r.project, { repo: 'o/r', base, git }), null);
+    assert.equal(timeouts.length, 2, 'each read asks for its own options');
+    assert.ok(timeouts[1] === null || timeouts[1] <= timeouts[0] - 300, `the second read took ${timeouts[1]} ms after the first took ${timeouts[0]} ms and 300 ms passed`);
   });
 }
 
@@ -1094,6 +1104,229 @@ test('the merge guard compares the state folder when no ref names the base', (t)
   t.after(() => (process.env.PATH = before));
   process.env.PATH = fakeGit(t, '*" worktree list "*', 'exit 1');
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null, 'a checkout list git cannot answer is no answer');
+});
+
+// ---- a state folder's path as git lists it
+
+const LINE_BREAK = "the path of the state folder or of the folder the review records go in holds a line break, which git's list of checkouts cannot show, and the review record is read from it: ";
+const breakText = `${LINE_BREAK}in .aidrian/config.json, set "state": { "dir": null } for the default folder, or a folder outside every checkout of this repository whose path holds none, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it. Once it lands, on each machine, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.`;
+const breakTextUnset = `${LINE_BREAK}in .aidrian/config.json, set "state": { "dir": "<path>" } to a folder outside every checkout of this repository whose path holds none, and commit that change alone in its own pull request, which gets no local review record, so the Human merges it, or set this machine's state root, \`$XDG_STATE_HOME\`, to one. Once it is moved, on each machine whose folder moved, from a clean checkout on the base branch, move the old folder's contents to the folder \`aidrian state\` prints.`;
+const BREAK_RECOURSE = 'Move the state folder first; until its path holds none, the Human merges in their own shell.';
+const breakDenial = (text) => `Blocked: this merges pull request #7, but ${text.slice(0, -1)}. ${BREAK_RECOURSE}`;
+const NAMES = ['\n', '\r', '\u2028', '\u2029', '\t', '"', '\\', ' ', '\u00e9'];
+
+test('the hold reads each listed checkout as git prints it, and refuses a state folder whose path holds a line break', async (t) => {
+  for (const each of NAMES) {
+    const name = JSON.stringify(each);
+    const team = (dir) => ({ version: 1, state: { dir: path.join(path.dirname(dir), `tree${each}x`, 'state') } });
+    const r = repo(t, { baseConfig: team, headConfig: team });
+    tracking(r);
+    const tree = path.join(r.root, `tree${each}x`);
+    r.git('worktree', 'add', '-q', '--detach', tree, 'main');
+    const text = each === '\n' ? breakText : insideText(tree);
+    const denial = each === '\n' ? breakDenial(text) : insideDenial(tree);
+    assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), { message: text }, name);
+    assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), denial, name);
+    await assert.rejects(r.step(), { message: text }, name);
+    assert.equal(r.comments.length, 0, name);
+    assert.equal(readLocalState(r.project, 7), null, name);
+  }
+});
+
+test('a state folder whose path holds a line break is refused wherever it lies, however it is named, and the check warns with the same words', (t) => {
+  const elsewhere = (t, make) => {
+    const outside = folderFor(t);
+    const real = path.join(outside, 'line\nbreak');
+    mkdirSync(real);
+    return make(outside, real);
+  };
+  const warns = (r, text) => assert.ok(spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env }).stderr.includes(`warning: ${text}`));
+  const refuses = (r, text, name) => {
+    tracking(r);
+    assert.throws(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }), { message: text }, name);
+    assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), breakDenial(text), name);
+    assert.deepEqual(insideCheckout(r.project, r.config, () => ({})), { problem: text }, name);
+    warns(r, text);
+  };
+
+  elsewhere(t, (_outside, real) => {
+    const team = { version: 1, state: { dir: path.join(real, 'state') } };
+    refuses(repo(t, { baseConfig: team, headConfig: team }), breakText, 'as named');
+  });
+  elsewhere(t, (outside, real) => {
+    const link = path.join(outside, 'plain');
+    symlinkSync(real, link);
+    const team = { version: 1, state: { dir: link } };
+    refuses(repo(t, { baseConfig: team, headConfig: team }), breakText, 'through a link');
+  });
+  {
+    const { r, state } = stateSet(t);
+    elsewhere(t, (_outside, real) => {
+      mkdirSync(state);
+      symlinkSync(real, path.join(state, 'reviews'));
+      refuses(r, breakText, 'the folder the records go in, through a link');
+    });
+  }
+  elsewhere(t, (_outside, real) => {
+    t.after(() => (SUITE_STATE_HOME === undefined ? delete process.env.XDG_STATE_HOME : (process.env.XDG_STATE_HOME = SUITE_STATE_HOME)));
+    process.env.XDG_STATE_HOME = real;
+    refuses(repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 } }), breakTextUnset, 'the default folder');
+  });
+});
+
+test('a line break in the state folder\'s path is a real problem when git cannot list the checkouts', (t) => {
+  const outside = folderFor(t);
+  const team = { version: 1, state: { dir: path.join(outside, 'line\nbreak') } };
+  const r = repo(t, { baseConfig: team, headConfig: team });
+  tracking(r);
+  const before = process.env.PATH;
+  t.after(() => (process.env.PATH = before));
+  process.env.PATH = fakeGit(t, '*" worktree list "*', 'exit 1');
+  assert.deepEqual(insideCheckout(r.project, r.config, () => ({})), { problem: breakText });
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), breakDenial(breakText));
+});
+
+test('a linked worktree with a line break in its name leaves a plain state folder outside it allowed', (t) => {
+  const { r } = stateSet(t);
+  tracking(r);
+  r.git('worktree', 'add', '-q', '--detach', path.join(r.root, 'line\nbreak'), 'main');
+  assert.doesNotThrow(() => holdToBase(r.project, r.config, { repo: 'o/r', base: 'main' }));
+  assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
+});
+
+// ---- a record command that the forge names no base for
+
+test('with no base from the forge, attest and signoff read no comment, and the real record keeps its revision', async (t) => {
+  quiet(t);
+  const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, headConfig: { version: 1, review: { record: 'comment' } } });
+  writeLocalState(r.project, { ...emptyState(7, 'o/r'), revision: 5, overrides: ['LOCAL'] });
+  const revision = readLocalState(r.project, 7).revision;
+  // The lookup fails, and the comments read would answer with a member's summary at a higher revision.
+  const bin = folderFor(t);
+  const seen = path.join(bin, 'seen');
+  const body = summaryBody({ ...emptyState(7, 'o/r'), revision: 99, overrides: ['FROM-COMMENT'] }, null, 'x');
+  writeFileSync(path.join(bin, 'comments.json'), JSON.stringify([[{ id: 1, body, user: { login: 'someone' }, author_association: 'MEMBER' }]]));
+  writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ntouch "${seen}"\ncat "${path.join(bin, 'comments.json')}"\n`, { mode: 0o755 });
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}:${before}`;
+  t.after(() => (process.env.PATH = before));
+  const failing = { change: () => { throw new Error('the lookup failed'); } };
+  const { project, config, head } = r;
+  assert.equal(await runAttest(['7', '--pass', 'p', '--head', head, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0', '--repo', 'o/r'], project, config, { forge: failing }), 0);
+  assert.equal(await runAttest(['7', '--pass', 'q', '--head', head, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0', '--repo', 'o/r'], project, null, { forge: failing }), 0, 'with the working copy\'s config left to load');
+  await assert.rejects(runSignoff(['7', '--flow', 'f', '--head', head, '--repo', 'o/r'], project, config, { forge: failing }), /no review of o\/r#7 ran on/u);
+  assert.equal(existsSync(seen), false, 'no comment is read');
+  const record = readLocalState(project, 7);
+  assert.deepEqual(record.overrides, ['LOCAL']);
+  assert.equal(record.revision, revision + 2, 'its own two writes, on its own revision');
+
+  // The short form of signoff, whose lookup answers a head and no base.
+  let count = 0;
+  const unnamed = { change: () => ({ url: 'https://github.com/o/r/pull/7', headRefOid: head }), conversationComments: () => (count += 1, []) };
+  await assert.rejects(runSignoff(['7', '--last'], project, config, { forge: unnamed }), /no flow|no review/u);
+  assert.equal(count, 0, 'signoff --last reads none either');
+});
+
+// ---- a local reviewer, when a checkout at the head is refused
+
+// A checkout on the base branch, and the review step from it with Codex as `codex` says.
+const stepFrom = (checkout, r, codex = () => ({ ok: true })) => reviewStep({ pr: '7' }, { project: checkout.project, config: loadConfig(checkout.project).config, forge: r.forge, codex, exec: clean });
+const OUTSIDE_HEAD = { version: 1, state: { dir: '../head-state' } };
+const pinned = (engine, state = '../state') => ({ version: 1, state: { dir: state }, review: { engine } });
+
+test('on a pull request whose head differs from its base, a local reviewer walks head, base, head and meets one limit that stops the retries', async (t) => {
+  const r = movedOutside(t);
+  tracking(r);
+  await assert.rejects(r.step(), { message: `the working copy's state.dir differs from o/r main, and the review record is read from it. ${NEXT_STEP}` });
+
+  const base = linkedAt(t, r, 'main');
+  const fromBase = await stepFrom(base, r);
+  assert.equal(fromBase.status, 'incomplete');
+  assert.equal(fromBase.retry_recommended, false);
+  assert.equal(fromBase.reason, `the state.dir or project folder of ${r.head.slice(0, 7)} differs from the base branch's, so the hold refuses a checkout at it. ${LOCAL_LIMIT} ${BEHIND}`);
+  assert.doesNotMatch(fromBase.reason, /check out/u);
+
+  const atHead = linkedAt(t, r, r.head);
+  await assert.rejects(stepFrom(atHead, r), { message: `the working copy's state.dir differs from o/r main, and the review record is read from it. ${NEXT_STEP}` });
+
+  // What the limit names finishes: the `self` engine on this machine, from the checkout on the base branch.
+  writeFileSync(path.join(r.dir, '.aidrian.local.json'), JSON.stringify({ review: { engine: 'self' } }));
+  writeFileSync(path.join(r.dir, '.git/info/exclude'), '.aidrian.local.json\n');
+  const named = await stepFrom({ project: projectAt(base.project.root) }, r);
+  assert.equal(named.status, 'dispatch', JSON.stringify(named));
+});
+
+test('a head that relocates its project folder gets the same limit from the base branch\'s checkout', async (t) => {
+  const r = repo(t, { baseConfig: TEAM, headConfig: null, files: { '.aidrian.json': pointer('other'), 'other/config.json': JSON.stringify(TEAM) } });
+  tracking(r);
+  await assert.rejects(r.step(), { message: `the working copy's project folder differs from o/r main, and the review record is read from it. ${NEXT_STEP}` });
+  const fromBase = await stepFrom(linkedAt(t, r, 'main'), r);
+  assert.deepEqual([fromBase.status, fromBase.retry_recommended], ['incomplete', false]);
+  assert.ok(fromBase.reason.endsWith(`${LOCAL_LIMIT} ${BEHIND}`), fromBase.reason);
+});
+
+test('a head with a pointer no one can read is held by the default folder at its checkout', async (t) => {
+  const r = repo(t, { baseConfig: TEAM, headConfig: TEAM, files: { '.aidrian.json': 'not json' } });
+  tracking(r);
+  const fromBase = await stepFrom(linkedAt(t, r, 'main'), r);
+  assert.deepEqual([fromBase.status, fromBase.retry_recommended], ['incomplete', true]);
+});
+
+test('a dirty or moved checkout with no difference from the base still says to check out the head, and to retry', async (t) => {
+  const r = repo(t, { baseConfig: TEAM, headConfig: TEAM });
+  tracking(r);
+  const fromBase = await stepFrom(linkedAt(t, r, 'main'), r);
+  assert.deepEqual([fromBase.status, fromBase.retry_recommended], ['incomplete', true]);
+  assert.match(fromBase.reason, /check out \S+ with a clean working tree first/u);
+  writeFileSync(path.join(r.dir, 'src/app.js'), 'dirty\n');
+  const dirty = await r.step();
+  assert.deepEqual([dirty.status, dirty.retry_recommended], ['incomplete', true]);
+});
+
+test('a base that pins a local reviewer ends both messages at the Human, by the base\'s pin alone', async (t) => {
+  const ended = (text) => text.endsWith(`${BEHIND} ${BASE_PINS}`);
+  const walk = async (baseEngine, headEngine, codex) => {
+    const r = repo(t, { baseConfig: pinned(baseEngine), headConfig: pinned(headEngine, '../head-state') });
+    tracking(r);
+    const atHead = await reviewStep({ pr: '7' }, { project: r.project, config: r.config, forge: r.forge, codex, exec: clean }).catch((error) => error.message);
+    const fromBase = await stepFrom(linkedAt(t, r, 'main'), r, codex);
+    return { atHead, fromBase };
+  };
+  const yes = () => ({ ok: true });
+  const no = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+
+  for (const [name, engine, codex] of [['codex-local', 'codex-local', yes], ['auto with Codex', 'auto', yes]]) {
+    const { atHead, fromBase } = await walk(engine, engine, codex);
+    assert.ok(ended(atHead), `${name}: ${atHead}`);
+    assert.deepEqual([fromBase.status, fromBase.retry_recommended], ['incomplete', false], name);
+    assert.ok(ended(fromBase.reason), `${name}: ${fromBase.reason}`);
+    assert.ok(!atHead.includes('`self`'), name);
+  }
+
+  // A pin to a project's own command reads the checkout too, and a head's own pin is no pin.
+  const own = { scan: { kind: 'exec', command: ['node', 'scan.mjs'] } };
+  const r = repo(t, { baseConfig: { ...pinned('scan'), review: { engine: 'scan', reviewers: own } }, headConfig: { version: 1, state: { dir: '../head-state' } } });
+  tracking(r);
+  assert.ok(ended(await r.step().catch((error) => error.message)), 'a project\'s exec reviewer');
+
+  for (const [name, baseEngine, headEngine, codex] of [
+    ['a base pinned to self', 'self', null, yes],
+    ['a base pinned to auto with no Codex', 'auto', null, no],
+    ['a head\'s pin under no base pin', null, 'codex-local', yes],
+    ['a head\'s pin under a base pinned to self', 'self', 'codex-local', yes],
+  ]) {
+    const { atHead, fromBase } = await walk(baseEngine, headEngine, codex);
+    assert.equal(ended(atHead), false, name);
+    assert.ok(atHead.endsWith(NEXT_STEP), `${name}: ${atHead}`);
+    if (baseEngine) assert.notEqual(fromBase.status, 'incomplete', name);
+  }
+});
+
+test('a project folder the head relocates does not hide the base\'s pin', async (t) => {
+  const r = repo(t, { baseConfig: pinned('codex-local'), headConfig: null, files: { '.aidrian.json': pointer('other'), 'other/config.json': JSON.stringify({ version: 1, review: { engine: 'self' } }) } });
+  tracking(r);
+  const said = await r.step().catch((error) => error.message);
+  assert.ok(said.endsWith(`${BEHIND} ${BASE_PINS}`), said);
 });
 
 // ---- waive and extend publish only after the hold, by the base branch's review.record

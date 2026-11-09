@@ -14,6 +14,7 @@ import * as quota from './quota.mjs';
 import { captureKeys } from './visual.mjs';
 import { inBaseWorktree } from './base-worktree.mjs';
 import { captureAndAttach, dispatchFor, passInput } from './dispatch.mjs';
+import { refusedAtHead } from './in-force.mjs';
 
 export const MAX_ATTEMPTS = 3;
 
@@ -84,6 +85,8 @@ export async function runStages(s) {
       if (execs.length) {
         if (resolve(root, 'HEAD') !== head || !isClean(root)) {
           undoRound();
+          const refused = refusedAtHead(s.project, baseTip, head, s.codex);
+          if (refused) return finish('incomplete', { reason: refused, retry_recommended: false });
           return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, retry_recommended: true });
         }
         // Codex reads the checkout at the head; a project's own reviewer runs as the base has it, and reads the head

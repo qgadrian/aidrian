@@ -168,6 +168,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   Plans, lessons, and audits keep using the folder either way.
 - A checkout at the folder the review records go in gets the same warning and refusal, wherever the state folder is.
   A checkout elsewhere under the state folder does not.
+- A state folder whose path holds a line break gets a warning and refusal of their own, wherever it lies, since git's list
+  of checkouts cannot show such a path.
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
 the orchestrator uses it to name each background agent's handoff file.

@@ -797,8 +797,15 @@ A command that holds refuses a checkout where:
   `in <config>, set "state": { "dir": "<path>" } to a folder outside every checkout of this repository,`
   `and commit that change alone in its own pull request, which gets no local review record, so the Human merges it,`
   ``or set this machine's state root, `$XDG_STATE_HOME`, to a folder outside them.``
-  ``Once it is outside, on each machine whose folder moved, from a clean checkout on the base branch, move the old folder's contents to the folder `aidrian state` prints.``
+  `Once it is outside, on each machine whose folder moved, from a clean checkout on the base branch,`
+  ``move the old folder's contents to the folder `aidrian state` prints.``
+  The hold reads each listed checkout as git prints it.
   Or git cannot list the checkouts: `git cannot list this repository's checkouts, and the review record is read from it`;
+- the path of the state folder or of the folder the records go in holds a line break, as named or through a link, wherever it lies,
+  since git's list of checkouts cannot show such a path, with or without an answer from git:
+  `the path of the state folder or of the folder the review records go in holds a line break,`
+  `which git's list of checkouts cannot show, and the review record is read from it:`
+  followed by the same move as above, to a folder whose path holds none;
 - the folder the records go in is itself a checkout of any repository, through a link too, with `state.dir` set or unset:
   `the folder the review records go in is a checkout, <folder>, and the review record is read from it:`
   `move or remove that checkout on this machine, so only this machine's records stay there.`
@@ -807,15 +814,24 @@ A command that holds refuses a checkout where:
 A base branch this checkout does not have stops the command: `git fetch` first.
 
 The `state.dir` difference and the project folder difference end with the next step:
-`Run the review from a checkout on the base branch; a head behind that base merges it first.`
+`Run the review from a checkout on the base branch. A local reviewer reads the checkout at the head, so it cannot finish from there:`
+``with one as this machine's engine, set `review.engine` to `self` in `.aidrian.local.json` for this review, and put it back after.``
+`A head behind that base merges it first.`
 A base whose `.aidrian.json` cannot be read gets no step, since a checkout on it reads no more. The merge guard gives its own recourse.
 
 What to do about the moved state.dir refusal, for a pull request that moves `state.dir` between two folders outside the
 repository: it is reviewed from a checkout on the base branch, which
 plans the same review of the same head, with the `self` engine in `.aidrian.local.json`. A local reviewer, `codex-local`
 (or `auto` with Codex available) or any `exec` reviewer, reads the checkout at the head, so it cannot finish from there.
-The `self` recourse does not apply when `config.json` pins `review.engine`, which wins over the machine's.
+From that checkout, when the head's committed `state.dir` or project folder differs from the base's, `aidrian pr review`
+with such a reviewer returns `incomplete` with `retry_recommended: false` and the same limit, not a step to check out the head.
 A head behind a base that moved `state.dir` merges the base first.
+
+The `self` recourse does not apply when `config.json` pins `review.engine`, which wins over the machine's. When the pin,
+read from the base branch's config and never the working copy's, resolves to a local reviewer, both messages end instead:
+``The base branch's config.json pins `review.engine` to a local reviewer, which reads the checkout at the head, where the hold refuses,``
+`so no review finishes on this pull request: the Human merges it in their own shell.`
+A base that pins `self` finishes from its own checkout, and `auto` is a local reviewer only when Codex can run on that machine.
 
 Moving a state folder out of the repository: the state folder goes outside every checkout of the repository. A folder
 outside them is allowed, inside another repository's checkout, an outer repository that tracks this checkout, or this
@@ -830,9 +846,10 @@ local record and a copy on the pull request's comment does not stand in. The `.g
 every machine has moved.
 
 A command publishes only after the hold. `extend`, `ingest`, and `await-review --request` with no base from the forge keep
-their write on this machine, and `waive` refuses without the base. `attest` and the long form of `signoff` hold only when the forge names the base, so
-offline they still write this machine's record and publish nothing; so does `request`, which reads the forge only when
-`--head` or `--repo` is missing. Auto-merge and product feedback make the same `state.dir` comparison against the default
+their write on this machine, and `waive` refuses without the base.
+`attest` and `signoff` hold only when the forge names the base,
+so with none they read no comment, keep this machine's record, and publish nothing; `request`, which reads the forge only when
+`--head` or `--repo` is missing, keeps that record and publishes nothing too. Auto-merge and product feedback make the same `state.dir` comparison against the default
 branch read from GitHub. The [merge guard](hooks.md#merge-guard) makes all three from local git before it reads the
 record, for a merge of this repository: a merge naming its number compares with origin's default branch first, and with
 the base the head lookup names once it makes one. With neither ref it makes only the comparison with the checkouts, which needs no base.

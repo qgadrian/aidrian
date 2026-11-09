@@ -77,7 +77,7 @@ export async function prepareStep(s) {
   // The round cap is the base branch's: an edit to the working copy's config, committed or not, cannot raise it. So is
   // what happens at it: github.extraRounds and its ceiling, github.maxExtraRounds. So are where the record is read from,
   // state.dir, and whether it goes on the pull request, review.record.
-  const { committed, baseTip } = holdToBase(project, config, { repo, base: info.baseRefName });
+  const { committed, baseTip } = holdToBase(project, config, { repo, base: info.baseRefName, codex });
   const base = mergeBase(root, baseTip, head);
   const cap = committed.github.maxReviewRounds;
   const policy = policyOf(committed.github);

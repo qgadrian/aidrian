@@ -182,9 +182,10 @@ function namedBase(project, pr, repo, forge) {
 
 // Holds the working copy's state.dir to `base` before a command reads the review record (lib/review/in-force.mjs), and
 // returns the config whose `review.record` applies: the one `base` commits. With no base, from a forge that cannot answer,
-// the command keeps its stated offline limit, this machine's record with nothing published, and the working copy's config.
+// the record stays local, whatever the working copy says: the command reads no comment, keeps this machine's record, and
+// publishes nothing.
 async function holdToNamedBase(project, config, repo, base) {
-  if (!base) return config;
+  if (!base) return { ...config, review: { ...config?.review, record: 'local' } };
   const { holdToBase } = await import('./review/in-force.mjs');
   return holdToBase(project, config, { repo, base }).committed;
 }

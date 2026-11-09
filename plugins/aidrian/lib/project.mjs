@@ -16,6 +16,8 @@ import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
 const LOCAL = '.aidrian.local.json';
+// config.json in the default project folder, where a checkout looks when its `.aidrian.json` names no usable folder.
+export const DEFAULT_CONFIG = `${DEFAULT_DIR}/config.json`;
 // A git read with runGit's own options.
 const defaultRead = () => undefined;
 // The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and

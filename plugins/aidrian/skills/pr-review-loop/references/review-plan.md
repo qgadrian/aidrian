@@ -68,7 +68,7 @@ crosses them.
      holds is right. Post its ruling as a comment, and run `settle` with that comment's URL. A change that does alter
      what is rendered gets a capture or `aidrian pr ingest`, never a ruling. On a refusal, go to the next route.
   3. Ask the Human with AskUserQuestion, one question per decision, and run the printed long-form command on "Approve":
-     the question names `#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every unverified invariant of
+     the question names `<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every unverified invariant of
      the flow, `<flow>/signoff`, or `stage:<name>/signoff`. Write the command with no shell variables, one call per invariant.
   4. Only on a host with no such question, hand the command over for the Human's own shell.
 - Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or

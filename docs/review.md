@@ -300,7 +300,7 @@ request, and an acceptance with no reason. Like every sign-off, it is an audit e
 #### Answering in the session
 
 A long-form sign-off, `--accept`, or `--overrule` runs from the session once the Human answered it with AskUserQuestion:
-the question names `#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
+the question names `<owner>/<name>#<PR>` of this checkout's origin, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
 `stage:<name>/signoff`, and the chosen option starts with "Approve". The latest answer naming it decides, and a push asks
 again. The command is written with no shell variables or repeated flags. `--last` stays in the Human's
 shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
@@ -321,7 +321,7 @@ shows in the summary as `judge:<agent>`. It never clears an undisputed violated 
 or touches `harness-config`, so a `signoff: "human"` flow and a change to the review's own config still ask the Human.
 Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.
 
-Raising the round cap works the same way. On an answer naming `#<PR>` and `--max-rounds <N>`, the session runs
+Raising the round cap works the same way. On an answer naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, the session runs
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, or the same on `aidrian pr await-review <PR> --request`,
 exactly as written. The `review-rounds` rule refuses the variable in any other form.
 

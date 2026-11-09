@@ -11,6 +11,7 @@ function setup(t, answers) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/o/r.git'], { cwd: dir });
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { reviewer: 'bot[bot]' } }));
   const file = path.join(dir, 't.jsonl');
@@ -19,7 +20,7 @@ function setup(t, answers) {
 }
 
 test('the round override runs only as the exact raise the Human approved in the session', (t) => {
-  const context = setup(t, [{ 'Raise the cap on #12 to --max-rounds 4?': 'Approve (Recommended)' }]);
+  const context = setup(t, [{ 'Raise the cap on o/r#12 to --max-rounds 4?': 'Approve (Recommended)' }]);
   assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4', context), null);
   assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 4', context), null);
   for (const command of [
@@ -34,6 +35,11 @@ test('the round override runs only as the exact raise the Human approved in the 
 
 test('with no Approve answer the round override stays denied', (t) => {
   const command = 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4';
-  assert.equal(check(command, setup(t, [{ 'Raise the cap on #12 to --max-rounds 4?': 'Deny' }])), OVERRIDE_REASON);
+  assert.equal(check(command, setup(t, [{ 'Raise the cap on o/r#12 to --max-rounds 4?': 'Deny' }])), OVERRIDE_REASON);
   assert.equal(check(command, setup(t, [])), OVERRIDE_REASON);
+});
+
+test('a raise approved for another repository does not run here', (t) => {
+  const context = setup(t, [{ 'Raise the cap on fork/r#12 to --max-rounds 4?': 'Approve' }]);
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4', context), OVERRIDE_REASON);
 });

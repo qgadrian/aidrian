@@ -128,8 +128,8 @@ export const ROUNDS_OVERRIDE = 'AIDRIAN_ALLOW_EXTRA_ROUNDS';
 export function roundCapProblem(maxRounds, cap, env = process.env) {
   if (maxRounds <= cap || env[ROUNDS_OVERRIDE] === '1') return null;
   return `--max-rounds ${maxRounds} goes past config.json github.maxReviewRounds (${cap}). More review rounds are the Human's ` +
-    `decision: stop and ask them to raise the cap, redesign, or stop. To raise it, the Human sets ${ROUNDS_OVERRIDE}=1 in their ` +
-    "own shell before starting the session (agents must never set it on the user's behalf).";
+    `decision: stop and ask them with AskUserQuestion to raise the cap, redesign, or stop, naming the pull request and --max-rounds ${maxRounds}. ` +
+    `On "Approve", ${ROUNDS_OVERRIDE}=1 goes inline on this exact command; an agent sets it on no other ground.`;
 }
 
 // `defaults` carries config.json `github.reviewer` and `github.maxReviewRounds`; flags win.

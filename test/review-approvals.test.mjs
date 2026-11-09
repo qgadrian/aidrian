@@ -123,7 +123,7 @@ test('overruleRefusal names both routes for an invariant unverified on the head,
   assert.match(routes, /^invariant matches-design of flow look is not disputed on aaaaaaa of o\/r#7: it is unverified/u);
   assert.ok(routes.includes(`aidrian pr ingest 7 --head ${HEAD} --source "<where they came from>" <image>...`), routes);
   assert.match(routes, /when the base branch sets review\.visual, ingest the images that show it with `aidrian pr ingest /u, 'the ingest route counts only where the review reads captures');
-  assert.match(routes, /and have a reviewer cite `capture:<key>` in its verdict; or the Human accepts it in their own shell with `aidrian pr signoff /u);
+  assert.match(routes, /and have a reviewer cite `capture:<key>` in its verdict; or the Human, asked with AskUserQuestion, accepts it with `aidrian pr signoff /u);
   assert.ok(routes.includes(`aidrian pr signoff 7 --flow look --accept matches-design --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${HEAD}`), routes);
   assert.match(refuse({ head: HEAD.slice(0, 7) }), /aidrian pr ingest 7/u, 'a short spelling of the head is the same commit');
   const today = (flow, invariant) => `invariant ${invariant} of flow ${flow} is not disputed on aaaaaaa of o/r#7: --overrule settles only a violated verdict another reviewer answers holds or not_affected with evidence. Fix the code, or have a reviewer record its verdict with evidence first`;

@@ -152,3 +152,12 @@ test('only an Approve answer counts, the latest wins, and a flow-wide answer cov
   assert.equal(check(`aidrian pr signoff 9 --flow ui --head ${HEAD}`, { cwd, input: transcript(t, [{ '#9 at abc1234: ui/signoff?': 'Approve' }]) }), null);
   assert.equal(check(accept, { cwd, input: { transcript_path: '/no/such/file' } }), REASON, 'no transcript, so the Human`s own shell');
 });
+
+test('a stage sign-off runs on an answer naming that stage, and --last still needs the long form', (t) => {
+  const cwd = project(t);
+  const stage = `aidrian pr signoff 9 --stage independent --head ${HEAD}`;
+  const input = transcript(t, [{ '#9 at abc1234: stage:independent/signoff?': 'Approve' }]);
+  assert.equal(check(stage, { cwd, input }), null);
+  assert.equal(check(stage.replace('independent', 'local'), { cwd, input }), REASON);
+  assert.equal(check('aidrian pr signoff 9 --last', { cwd, input }), REASON);
+});

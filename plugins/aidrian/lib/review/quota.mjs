@@ -64,7 +64,7 @@ export function question({ pr, stop, withBot = false }) {
     question: `${who} is out of quota, so the ${stop.stage} review of pull request #${pr} stopped on head ${stop.head.slice(0, 7)}. How should the second look happen? Either fallback is recorded as a fallback, never as an independent review.`,
     options: [
       { label: `${LABELS.agent} (Recommended)`, description: 'A read-only critic agent reviews the whole change now, faster for a bigger change. Recorded as a same-model fallback, not an independent review.', run: run(`agent:${DEFAULT_AGENT}`) },
-      { label: LABELS.human, description: 'The Human reviews the change, then signs this stage off with a command in their own shell. Recorded as the Human\'s sign-off, not an independent review.', run: run(HUMAN) },
+      { label: LABELS.human, description: 'The Human reviews the change, then signs this stage off by answering in the session. Recorded as the Human\'s sign-off, not an independent review.', run: run(HUMAN) },
       { label: LABELS.wait.replace('quota', `${who === 'Codex' ? 'Codex' : `${who}'s`} quota`), description: `Stop here. A later push runs ${who} again.`, run: null },
     ],
   };

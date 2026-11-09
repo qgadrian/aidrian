@@ -11,9 +11,9 @@
 // too, since it may be a sign-off.
 // A long-form sign-off also runs when this session's transcript holds the Human's answer to it: an AskUserQuestion whose
 // question names the pull request (`#<PR>`), the head's first seven characters, and what is signed (`<flow>/<invariant>`,
-// `<flow>/*` for every --accept of the flow, or `<flow>/signoff`), with a chosen option that starts with "Approve". The
+// `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff` for --stage), with a chosen option that starts with "Approve". The
 // host writes that answer, not the agent; a push changes the head, so it asks again. Without such a transcript the
-// command stays the Human's to run. Any word the shell builds at run time, a repeated flag, --stage, and --last get no such route.
+// command stays the Human's to run. Any word the shell builds at run time, a repeated flag, and --last get no such route: the long form does the same.
 
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
@@ -21,7 +21,7 @@ import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 export const REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, recorded under their name, and only the Human runs it, `--last` included. ' +
-  'Stop, and ask the Human first with AskUserQuestion, in their terms: a question that also names `#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every --accept of the flow, or `<flow>/signoff`, with a recommended option that starts with "Approve"; on that answer the long-form command runs here, written out with no shell variables. ' +
+  'Stop, and ask the Human first with AskUserQuestion, in their terms: a question that also names `#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff`, with a recommended option that starts with "Approve"; on that answer the long-form command runs here, written out with no shell variables. ' +
   'On a host with no such question, hand the Human a command for their own shell (`!` in the prompt, or another terminal). ' +
   'At human_required naming one flow, once `aidrian pr signoff <PR> --last --check` exits 0, hand over the short form `aidrian pr signoff <PR> --last`, ' +
   'short enough to type from a phone, naming the flow and short head that `--check` printed. ' +
@@ -38,10 +38,10 @@ export function answered(words, answers) {
     flags[flag] = words[(i += 1)]?.text;
   }
   const pr = words[2]?.text?.replace('#', '');
-  const [flow, head] = [flags['--flow'], flags['--head']];
-  if (!/^\d+$/u.test(pr ?? '') || !flow || !/^[0-9a-f]{7,}$/iu.test(head ?? '') || flags['--stage'] !== undefined || flags['--last'] !== undefined) return false;
+  const [flow, stage, head] = [flags['--flow'], flags['--stage'], flags['--head']];
+  if (!/^\d+$/u.test(pr ?? '') || Boolean(flow) === Boolean(stage) || !/^[0-9a-f]{7,}$/iu.test(head ?? '') || Object.hasOwn(flags, '--last')) return false;
   const invariant = flags['--accept'] ?? flags['--overrule'];
-  const tokens = [`${flow}/${invariant ?? 'signoff'}`, ...(flags['--accept'] ? [`${flow}/*`] : [])];
+  const tokens = [stage ? `stage:${stage}/signoff` : `${flow}/${invariant ?? 'signoff'}`, ...(flags['--accept'] ? [`${flow}/*`] : [])];
   const namesToken = (question) => tokens.some((token) => {
     const at = question.indexOf(token);
     return at !== -1 && !/[\w-]/u.test(question[at + token.length] ?? '') && !/[\w-]/u.test(question[at - 1] ?? '');

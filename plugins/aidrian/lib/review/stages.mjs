@@ -191,7 +191,7 @@ export async function runStages(s) {
         ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
         flows: unsigned.map(([flow, status]) => ({
           flow: flow.id, violated: status.open, unverified: status.unverified,
-          // Reviewers disagree: the Human decides, in their own shell, and the invariant then passes on the evidence.
+          // Reviewers disagree: the Human decides, and the invariant then passes on the evidence.
           ...(status.disputed.some((id) => status.open.includes(id)) ? { disputed: status.disputed.filter((id) => status.open.includes(id)), overrule: status.disputed.filter((id) => status.open.includes(id)).map((id) => overruleCommand(s, flow, id)) } : {}),
           next: nextSteps(s, flow, status),
         })),

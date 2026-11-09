@@ -69,7 +69,7 @@ crosses them.
      what is rendered gets a capture or `aidrian pr ingest`, never a ruling. On a refusal, go to the next route.
   3. Ask the Human with AskUserQuestion, one question per decision, and run the printed long-form command on "Approve":
      the question names `#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*` for every unverified invariant of
-     the flow, or `<flow>/signoff`. Write the command with no shell variables, one call per invariant.
+     the flow, `<flow>/signoff`, or `stage:<name>/signoff`. Write the command with no shell variables, one call per invariant.
   4. Only on a host with no such question, hand the command over for the Human's own shell.
 - Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or
   `tests_removed[].accept`, each starting with `aidrian pr signoff`, with its placeholders filled. Hand it over only
@@ -89,9 +89,9 @@ late-round low findings the step accepted, which go into the body's Accepted res
 ## Stops
 
 - `human_required`: a flow the Human signs off, or with `stage`, a stage the Human chose to review in place of a
-  reviewer out of quota. Once `command` with `--check` added exits 0, give them `command`,
-  alone in a code block with nothing after it on the line, to run in their own shell (`!` in the prompt, or another terminal); never
-  run it for them, and the `review-signoff` rule blocks it if you try. A flow's sign-off holds across later pushes that
+  reviewer out of quota. Once `command` with `--check` added exits 0, ask with AskUserQuestion as the sign-off route
+  under `fix_required` says, naming `<flow>/signoff` or `stage:<name>/signoff`, and run `command` on "Approve". The
+  `review-signoff` rule blocks it with no such answer. A flow's sign-off holds across later pushes that
   touch nothing of the flow; a stage's holds for its head only.
 - `unsatisfied`: the plan needs a reviewer this machine cannot run, such as `independent-model` with no Codex login.
 - `stuck`: a reviewer failed 3 times on this head. `too_large`: the change is past what one review covers, or its

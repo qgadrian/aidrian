@@ -36,8 +36,8 @@ export const reason = (pr, round, why = null) =>
 // --max-rounds that allows one more round.
 export const noAskReason = (pr, { last = null, next = null, bot = false } = {}) => {
   const rerun = bot ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
-  const override = 'To allow one more round, the Human runs, in their own shell (`!` in the prompt): ' +
-    `\`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${rerun} --max-rounds ${next ?? '<N>'}\`. An agent never sets that variable. ` +
+  const override = `To allow one more round, put the choice to the Human with an AskUserQuestion that names #${pr} and --max-rounds ${next ?? '<N>'}, with a recommended option that starts with "Approve"; ` +
+    `on that answer run exactly \`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${rerun} --max-rounds ${next ?? '<N>'}\`. An agent sets that variable on no other ground. ` +
     'Otherwise report the cap and the findings left open.';
   if (!last) {
     return `${LEAD}, and this machine's review record holds no extension check for pull request #${pr}. When another ` +

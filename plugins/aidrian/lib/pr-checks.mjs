@@ -8,8 +8,8 @@
 //     is an unexpected skip, listed under `unexpected_skips`, and failing.
 //   - `requiredChecks`: every check whose name contains an entry must be SUCCESS, and at least one must exist. Checks
 //     register over time, so a required entry with no check yet is pending, never ready.
-// A skipped row from a superseded workflow run on the same head, and a skipped matrix template row (`${{ ... }}` in its
-// name), are left out before any of these (currentRows).
+// A row from a superseded run of the same workflow file on the same head, and a skipped matrix template row (`${{ ... }}`
+// in its name), are left out before any of these (currentRows).
 // The policy is this checkout's, so `-R` may name only a repository that is a remote of this checkout, by its host and
 // full path (namesRemote; a bare `owner/repo`, an SSH alias remote, or a local remote compares the path alone): for a
 // pull request in another repository, run the command from that repository's checkout.
@@ -23,23 +23,20 @@ const NON_TERMINAL = new Set(['IN_PROGRESS', 'QUEUED', 'PENDING', 'WAITING', 'RE
 const HARD_FAIL = new Set(['FAILURE', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
 const EXIT_BY_VERDICT = { ready: 0, failing: 1, pending: 2 };
 
-// The rows that still speak for the head, before any policy: a skipped or neutral row from an older run of the same
-// workflow and event than the newest one listed is from a superseded run, such as the run started while the pull request
-// was a draft, and a skipped or neutral row whose name still holds an unexpanded `${{ ... }}` expression is a matrix
-// job's template that a skipped run reported under its template name. Both stayed in gh's list beside the run that
-// replaced them and read as an unexpected skip. Only a skip goes: two workflow files may share a display name, so an
-// older run's failure, or any other result, stays. A row with no run, such as an app's status, always stays.
-const SKIPS = new Set(['SKIPPED', 'NEUTRAL']);
+// The rows that still speak for the head, before any policy: a row from an older run of the same workflow file and event
+// than the newest one listed is from a superseded run, such as the run started while the pull request was a draft, and a
+// skipped or neutral row whose name still holds an unexpanded `${{ ... }}` expression is a matrix job's template that a
+// skipped run reported under its template name. Both stayed in gh's list beside the run that replaced them: the first as
+// a stale result, the second as an unexpected skip. The workflow file is `workflowId`, which the forge reads only when
+// one name has several runs: two files may share a display name, so a row without it is never taken for superseded.
+// A row with no run, such as an app's status, always stays.
 export function currentRows(rows) {
   const newest = new Map();
-  const group = (row) => `${row.workflow ?? ''}\u0000${row.event ?? ''}`;
-  for (const row of rows) {
-    if (Number.isInteger(row.run) && row.workflow) newest.set(group(row), Math.max(newest.get(group(row)) ?? row.run, row.run));
-  }
-  const skip = (row) => SKIPS.has(String(row.state ?? '').toUpperCase());
-  const template = (row) => /\$\{\{/u.test(String(row.name));
-  const superseded = (row) => Number.isInteger(row.run) && Boolean(row.workflow) && row.run < newest.get(group(row));
-  return rows.filter((row) => !(skip(row) && (template(row) || superseded(row))));
+  const group = (row) => `${row.workflowId}\u0000${row.event ?? ''}`;
+  const known = (row) => Number.isInteger(row.run) && Number.isInteger(row.workflowId);
+  for (const row of rows) if (known(row)) newest.set(group(row), Math.max(newest.get(group(row)) ?? row.run, row.run));
+  const template = (row) => /\$\{\{/u.test(String(row.name)) && ['SKIPPED', 'NEUTRAL'].includes(String(row.state ?? '').toUpperCase());
+  return rows.filter((row) => !template(row) && !(known(row) && row.run < newest.get(group(row))));
 }
 
 // The verdict over the check rows (forge.checks: `name`, `state`, and the run fields currentRows reads):

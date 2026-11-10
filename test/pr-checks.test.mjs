@@ -60,7 +60,7 @@ test('conditionalChecks: once it has an entry, only a listed check may skip; any
 test('a superseded run and a skipped matrix template row are left out: a draft-then-ready pull request reads ready', () => {
   // The incident: the run started while the pull request was a draft skipped the matrix job under its template name, and
   // the run after it was marked ready, on the same head, passed every expanded shard and the aggregator.
-  const run = (id, name, state, extra = {}) => ({ name, state, workflow: 'E2E', event: 'pull_request', run: id, ...extra });
+  const run = (id, name, state, extra = {}) => ({ name, state, workflow: 'E2E', event: 'pull_request', run: id, workflowId: 7, ...extra });
   const rows = [
     run(100, '🎭 E2E Shard ${{ matrix.shard }}', 'SKIPPED'),
     run(100, 'E2E gate', 'SKIPPED'),
@@ -73,9 +73,15 @@ test('a superseded run and a skipped matrix template row are left out: a draft-t
   assert.deepEqual(currentRows(rows).map((row) => row.name), [...[1, 2, 3, 4, 5, 6].map((shard) => `🎭 E2E Shard ${shard}`), 'E2E gate', 'Vercel']);
   // Without the newer run, the template row is still dropped, and the old run's own skip is still named.
   assert.equal(computeVerdict(rows.slice(0, 2), policy).reason, 'unexpected skip: E2E gate');
-  // Two workflow files may share a display name: an older run's failure is never dropped, only its skip.
-  const shared = [run(100, 'security', 'FAILURE', { workflow: 'CI' }), run(200, 'lint', 'SUCCESS', { workflow: 'CI' })];
-  assert.equal(computeVerdict(shared).verdict, 'failing');
+  // Two workflow files may share a display name: only the same file's newer run supersedes a row, whatever its state.
+  const security = { workflow: 'CI', workflowId: 1 };
+  const lint = { workflow: 'CI', workflowId: 2 };
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', security), run(200, 'lint', 'SUCCESS', lint)]).verdict, 'failing');
+  assert.equal(computeVerdict([run(100, 'security', 'SKIPPED', security), run(200, 'lint', 'SUCCESS', lint)], { conditionalChecks: ['docs'] }).reason,
+    'unexpected skip: security', 'another file`s skip is still unexpected');
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', security), run(200, 'security', 'SUCCESS', security)]).verdict, 'ready', 'a rerun of the same file replaces its failure');
+  // A run whose workflow file the forge could not read is never taken for superseded.
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', { workflowId: null }), run(200, 'security', 'SUCCESS', { workflowId: null })]).verdict, 'failing');
   // Another event's run of the same workflow is no supersession, and a failure under a template name still fails.
   assert.deepEqual(currentRows([run(100, 'lint', 'SUCCESS', { event: 'push' }), run(200, 'lint', 'SUCCESS')]).length, 2);
   assert.equal(computeVerdict([run(300, 'Shard ${{ matrix.shard }}', 'FAILURE')]).verdict, 'failing');

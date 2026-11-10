@@ -294,9 +294,9 @@ test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints w
   ];
   const { forge, args } = recorded(() => JSON.stringify(printed));
   assert.deepEqual(forge.checks('7', { repo: 'github.com/acme/notes' }), [
-    { name: 'e2e', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', run: 42854262636 },
-    { name: 'Vercel', state: 'SUCCESS', workflow: null, event: null, run: null },
-  ], 'the run is the workflow run in the link; an app status has none');
+    { name: 'e2e', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', run: 42854262636, repo: 'acme/notes', workflowId: null },
+    { name: 'Vercel', state: 'SUCCESS', workflow: null, event: null, run: null, repo: null, workflowId: null },
+  ], 'the run is the workflow run in the link; an app status has none; one run per name needs no workflow file read');
   forge.checks('7', { repo: null });
   forge.checks(null);
   const fields = 'name,state,workflow,event,link';
@@ -305,9 +305,19 @@ test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints w
     ['pr', 'checks', '7', '--json', fields],
     ['pr', 'checks', '--json', fields],
   ]);
+  // A name with two runs: each run's workflow file is read, and a run whose record fails keeps null.
+  const link = (id) => `https://github.com/acme/notes/actions/runs/${id}/job/1`;
+  const twice = [100, 200, 300].map((id) => ({ name: `job ${id}`, state: 'SUCCESS', workflow: 'CI', event: 'pull_request', link: link(id) }));
+  const reads = recorded((given) => {
+    if (given[0] === 'pr') return JSON.stringify(twice);
+    if (given[1].endsWith('/300')) throw new Error('HTTP 404');
+    return JSON.stringify({ workflow_id: given[1].endsWith('/100') ? 11 : 22 });
+  });
+  assert.deepEqual(reads.forge.checks('7').map((row) => row.workflowId), [11, 22, null]);
+  assert.deepEqual(reads.args().slice(1).map((each) => each.slice(0, 2)), [100, 200, 300].map((id) => ['api', `repos/acme/notes/actions/runs/${id}`]));
   const pending = [{ name: 'e2e', state: 'PENDING' }];
   const exit8 = createGithubForge({ run: () => { throw Object.assign(new Error('exit 8'), { status: 8, stdout: JSON.stringify(pending) }); } });
-  assert.deepEqual(exit8.checks('7'), [{ name: 'e2e', state: 'PENDING', workflow: null, event: null, run: null }], 'exit 8 with the rows on stdout is an answer');
+  assert.deepEqual(exit8.checks('7'), [{ name: 'e2e', state: 'PENDING', workflow: null, event: null, run: null, repo: null, workflowId: null }], 'exit 8 with the rows on stdout is an answer');
   const missing = createGithubForge({ run: () => { throw new Error('gh: not found'); } });
   assert.throws(() => missing.checks('7'), /gh: not found/u, 'no rows on stdout: gh\'s own error');
   assert.throws(() => recorded(() => 'not json').forge.checks('7'), SyntaxError, 'a success that prints no JSON throws');

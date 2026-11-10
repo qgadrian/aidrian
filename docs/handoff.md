@@ -129,5 +129,7 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
 
 - `session-handoff` writes the brief into `<state>/handoffs/`, where `<state>` is the folder `aidrian state` prints.
   It writes one only when the Human allowed it: the Human asks, a run's `--handoff` flag asks, or `mode` is `"auto"`.
+  The brief says under its title that it is an agent's advice, not a spec, and `aidrian handoff check` fails one that does not.
 - `session-continue`, the first step of the fresh session, reads the newest brief in full, enters its worktree,
-  reads the state fresh, and continues at its next steps.
+  reads the state fresh, and continues at its next steps. It keeps the brief's locked decisions, and checks each other
+  claim a step builds on against the docs and code; where they disagree, the docs and code win.

@@ -1,6 +1,6 @@
 // The commit guard, on while config.json `git.mainCheckout.guard` is: `aidrian pre-commit`, which a project's pre-commit
-// and pre-merge-commit git hooks run to refuse a commit in the main checkout or one that newly stages a git-ignored file,
-// and the session start lines that warn about commits and changes already in the main checkout, and about an override
+// and pre-merge-commit git hooks run to refuse a commit in the main checkout, one that newly stages a git-ignored file,
+// or one whose staged lines add a conflict marker, and the session start lines that warn about commits and changes already in the main checkout, and about an override
 // the session inherited. docs/hooks.md § Commit guard describes the command, § Start lines the warnings.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
@@ -72,7 +72,7 @@ export function unpushedMainLine(project, config) {
 export const commands = {
   'pre-commit': {
     usage: '[--project DIR]',
-    about: 'refuse a commit in the main checkout, or one that newly stages a git-ignored file, while config.json git.mainCheckout.guard is on',
+    about: 'refuse a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker, while config.json git.mainCheckout.guard is on',
     run(args) {
       const { values } = parseArgs({ args, options: { project: { type: 'string' } } });
       if (process.env[OVERRIDE] === '1') return 0;
@@ -198,7 +198,29 @@ export function commitProblems(cwd) {
         'unless another branch already tracks it; then ask the Human',
     );
   }
+  const markers = conflictMarkers(cwd);
+  if (markers === null) unreadable.push('the staged changes');
+  for (const { file, line } of markers ?? []) {
+    problems.push(
+      `${file}:${line} adds a conflict marker; finish resolving the file and stage it again. ` +
+        'A line meant to look like one takes a larger conflict-marker-size for its path in .gitattributes',
+    );
+  }
   return { problems, unreadable };
+}
+
+// Git's report of each staged line that starts like a conflict marker (seven <, =, >, or |, then a space or the end, at
+// the path's conflict-marker-size), as [{ file, line }], or null when git cannot answer. `diff --check` also reports
+// whitespace, left alone here, and exits 2 when it reports anything. A merge diffs against HEAD: its markers count.
+function conflictMarkers(cwd) {
+  const checked = runGit(['diff', '--cached', '--check', '--no-color', '--no-ext-diff'], cwd, { maxBuffer: Infinity });
+  if (checked.status !== 0 && checked.status !== 2) return null;
+  const found = [];
+  for (const text of checked.stdout.split('\n')) {
+    const match = /^(.+):(\d+): leftover conflict marker$/u.exec(text);
+    if (match) found.push({ file: match[1], line: Number(match[2]) });
+  }
+  return found;
 }
 
 // The paths the commit adds that git ignores and no parent tracks, or null when git cannot answer. Only added paths

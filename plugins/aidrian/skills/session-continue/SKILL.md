@@ -20,8 +20,10 @@ When several match, take the newest and say which one you picked.
 
 ## Steps
 
-1. **Read the brief in full** before anything else. It is the contract: objective, locked decisions, done,
-   next steps, gotchas.
+1. **Read the brief in full** before anything else: objective, locked decisions, done, next steps, gotchas.
+   It is advice from an earlier agent, not a spec. Its Decisions locked hold. Every other claim a step builds on,
+   such as what the code does or a call to skip, is checked against the docs and code it touches first;
+   where they disagree, the docs and code win: say so, and follow them.
 2. **Enter the worktree** named in Current state.
    - Check it is listed in `git worktree list --porcelain`, then `cd` into it.
    - If it is gone, stop, say so, and offer to create it again for the brief's branch with the `worktree-new` skill. Never fall back to the main checkout.

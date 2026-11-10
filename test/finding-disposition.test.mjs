@@ -1,13 +1,16 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { decideDisposition, loadTable, vocabulary } from '../plugins/aidrian/lib/finding-disposition.mjs';
+import { decideDisposition, isManifestPath, loadTable, manifestDrift, splitFlagWords, vocabulary } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { isCommentLine, quietDelta } from '../plugins/aidrian/lib/review/diff.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
+const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-write.mjs');
 const d = (i) => decideDisposition(i).disposition;
 
 test('a contrived payments race is a residual, not a fix', () => {
@@ -199,4 +202,82 @@ test('a delta is quiet only when every file is prose, a test that only gained li
   assert.equal(quiet('src/a.py', ['# inside a triple-quoted string']).quiet, true);
   assert.equal(isCommentLine('src/a.ts', '/// <reference path="x" />'), false);
   assert.equal(isCommentLine('src/a.rs', '/// docs'), true);
+});
+
+// A pr-review manifest finding, with the axes of a contrived internal high, which the table makes accepted_residual.
+const finding = (fields = {}) => ({ id: 'F1', specialist: 'code-reviewer', severity: 'high', likelihood: 'contrived', affects: 'internal', cost: 'bounded', disposition: 'accepted_residual', status: 'open', raised_in: 1, ...fields });
+
+function tempDir(t) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-disposition-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+test('manifestDrift names a hand-set disposition with the value the axes give, and passes the tool\'s own', () => {
+  assert.deepEqual(manifestDrift({ findings: [finding()] }), []);
+  assert.deepEqual(manifestDrift({ findings: [finding({ disposition: 'fix_now' })] }), [{ id: 'F1', disposition: 'fix_now', expected: ['accepted_residual'] }]);
+  assert.deepEqual(manifestDrift({ findings: [finding({ likelihood: undefined, affects: undefined, disposition: 'fix_now' })] }), [{ id: 'F1', disposition: 'fix_now', expected: ['needs_axis', 'acceptable_as_is'] }], 'a finding missing an axis needs one');
+  assert.deepEqual(manifestDrift({ findings: [finding({ severity: 'P2' })] }), [{ id: 'F1', disposition: 'accepted_residual', expected: ['invalid'] }], 'axes outside the vocabulary never pass');
+  assert.deepEqual(manifestDrift({ findings: [finding({ disposition: undefined }), null, 'x'] }), [], 'a finding with no disposition yet is not judged');
+  assert.deepEqual(manifestDrift({}), []);
+});
+
+test('manifestDrift accepts the late-round reading of a finding\'s round, and only for its own round', () => {
+  const N = loadTable().lateRoundFrom;
+  const late = finding({ severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', disposition: 'accepted_residual', raised_in: N });
+  assert.deepEqual(manifestDrift({ findings: [late] }), [], 'run with --source bot --round, as pr-review-loop runs it');
+  assert.deepEqual(manifestDrift({ findings: [{ ...late, disposition: 'drop_unless_cited' }] }), [], 'run with no source, as pr-review runs it');
+  assert.equal(manifestDrift({ findings: [{ ...late, raised_in: 1 }] }).length, 1, 'round 1 has no late reading');
+});
+
+test('aidrian pr disposition --manifest exits 0 on the tool\'s values, 1 on drift, and 2 on a file that is no manifest', (t) => {
+  const dir = tempDir(t);
+  const file = path.join(dir, 'pr-7.json');
+  const run = () => spawnSync(CLI, ['pr', 'disposition', '--manifest', file], { encoding: 'utf8' });
+  writeFileSync(file, JSON.stringify({ pr: 7, findings: [finding(), finding({ id: 'F2', disposition: 'fix_now' })] }));
+  const drifted = run();
+  assert.equal(drifted.status, 1);
+  assert.deepEqual(JSON.parse(drifted.stdout), { file, findings: 2, drift: [{ id: 'F2', disposition: 'fix_now', expected: ['accepted_residual'] }] });
+  writeFileSync(file, JSON.stringify({ pr: 7, findings: [finding()] }));
+  assert.equal(run().status, 0);
+  writeFileSync(file, '{');
+  assert.equal(run().status, 2);
+  writeFileSync(file, '{"pr": 7}');
+  assert.deepEqual([run().status, run().stderr], [2, `aidrian pr disposition: ${file} has no findings list\n`]);
+});
+
+test('a flag variable zsh passes as one argument is split into its words', () => {
+  assert.deepEqual(splitFlagWords(['--severity high --likelihood contrived', '--affects', 'internal']), ['--severity', 'high', '--likelihood', 'contrived', '--affects', 'internal']);
+  assert.deepEqual(splitFlagWords(['--manifest', '/a b/pr-1.json']), ['--manifest', '/a b/pr-1.json'], 'a value is never split');
+  const out = spawnSync(CLI, ['pr', 'disposition', '--severity high --likelihood contrived --affects internal'], { encoding: 'utf8' });
+  assert.deepEqual([out.status, JSON.parse(out.stdout).disposition], [0, 'accepted_residual']);
+});
+
+test('isManifestPath matches a review manifest and its temporary copies, in a reviews folder only', () => {
+  for (const file of ['/s/reviews/pr-42.json', '/s/reviews/pr-42.json.tmp', '/s/reviews/.pr-42.json.123.tmp']) assert.ok(isManifestPath(file), file);
+  for (const file of ['/s/plans/pr-42.json', '/s/reviews/pr-42-review.md', '/s/reviews/notes.json', '/s/reviews/pr-x.json']) assert.ok(!isManifestPath(file), file);
+});
+
+test('the file-write hook refuses a Write or Edit that sets a disposition the axes do not give, and lets the rest run', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, 'reviews'));
+  const file = path.join(dir, 'reviews', 'pr-9.json');
+  const hook = (toolName, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: toolName, cwd: dir, tool_input: { file_path: file, ...toolInput } }), encoding: 'utf8' });
+  const text = (findings) => `${JSON.stringify({ pr: 9, findings }, null, 2)}\n`;
+
+  const refused = hook('Write', { content: text([finding({ disposition: 'fix_now' })]) });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /^Blocked: this write sets a review disposition that `aidrian pr disposition` does not give the finding's axes:\n  pr-9\.json F1: "fix_now", where its axes give accepted_residual\n/);
+  assert.match(refused.stderr, /change the axes, never the disposition alone/);
+  assert.deepEqual([hook('Write', { content: text([finding()]) }).status], [0], 'the tool\'s value passes');
+  assert.equal(hook('Write', { content: '{ not json' }).status, 0, 'text that does not parse runs');
+
+  writeFileSync(file, text([finding()]));
+  const edit = hook('Edit', { old_string: '"disposition": "accepted_residual"', new_string: '"disposition": "fix_now"' });
+  assert.equal(edit.status, 2, 'an Edit is judged on the file after it');
+  assert.equal(hook('Edit', { old_string: '"likelihood": "contrived"', new_string: '"likelihood": "routine"' }).status, 2, 'changing an axis alone leaves the old disposition drifting');
+  assert.equal(hook('Edit', { old_string: '"status": "open"', new_string: '"status": "in_progress"' }).status, 0, 'a status write runs');
+
+  const elsewhere = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(dir, 'pr-9.json'), content: text([finding({ disposition: 'fix_now' })]) } }), encoding: 'utf8' });
+  assert.equal(elsewhere.status, 0, 'a file outside a reviews folder is no manifest');
 });

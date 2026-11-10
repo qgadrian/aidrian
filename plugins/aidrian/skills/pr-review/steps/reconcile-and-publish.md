@@ -25,7 +25,7 @@ For each new finding:
 aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>]
 ```
 
-Store its `disposition`. The table behind it does the weighing: a critical finding is always fixed,
+Pass each flag as its own word. Store its `disposition`, never a value of your own. The table behind it does the weighing: a critical finding is always fixed,
 a contrived one becomes an accepted residual, and a low one is reported only when it cites a project rule.
 
 ## 3. Order
@@ -37,6 +37,8 @@ then severity (critical to low), then likelihood (routine to contrived).
 
 Write the round as `references/manifest.md` says: new findings with status `open` (or `follow_up`, on a later round, as the skill's step 2 says) and the next free ids,
 the changed statuses, `round` raised by one, and this round's `head_sha` and `base_sha`.
+Then run `aidrian pr disposition --manifest <file>`: exit 1 lists each finding whose `disposition` its axes do not give.
+Write the first of its `expected` values, or fix the axes when they are wrong, and run it again until it exits 0.
 
 ## 5. Comment
 

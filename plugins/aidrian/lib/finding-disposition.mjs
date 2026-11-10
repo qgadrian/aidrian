@@ -16,6 +16,15 @@
 // Output: { disposition, rule, reason }, one of fix_now | accepted_residual | drop_unless_cited | acceptable_as_is.
 // A bot finding with no axis is acceptable_as_is until someone classifies it; a person's is needs_axis. Exit 2 when
 // a word is not in the vocabulary.
+// An argument that starts with `--` and holds spaces is split into words first: zsh does not split a variable, so
+// `aidrian pr disposition $flags` passes every flag as one argument.
+//
+//   aidrian pr disposition --manifest <state>/reviews/pr-42.json
+//
+// checks a pr-review manifest (skills/pr-review/references/manifest.md): every finding's `disposition` must be a value
+// this table gives its axes (manifestDrift). Output: { file, findings, drift: [{ id, disposition, expected }] }. Exit 0
+// when none drifts, 1 when one does, 2 when the file does not read as a manifest. The file-write hook refuses a write
+// that sets a drifting disposition (docs/hooks.md#review-dispositions).
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -74,15 +83,93 @@ export const decideDisposition = (input, table = loadTable()) => {
   return { disposition: table.default, rule: 'default', reason: 'no rule matched' };
 };
 
+// The dispositions this table gives one manifest finding's axes: the reading with no source, as the pr-review skill runs
+// it, and, for a finding with a round, the reading of an agent's finding in that round (`--source bot --round`), which
+// the late-round rule can change. `['invalid']` when its axes are not in the vocabulary.
+export function toolValues(finding, table = loadTable()) {
+  const axes = { severity: finding.severity, likelihood: finding.likelihood ?? undefined, affects: finding.affects ?? undefined, cost: finding.cost ?? undefined };
+  const values = new Set([decideDisposition(axes, table).disposition]);
+  if (Number.isInteger(finding.raised_in) && finding.raised_in >= 1) values.add(decideDisposition({ ...axes, source: 'bot', round: finding.raised_in }, table).disposition);
+  return [...values];
+}
+
+// The findings of a review manifest whose `disposition` is not a value the table gives their axes, as
+// [{ id, disposition, expected }]: a disposition set by hand, or kept after its axes changed. A finding with no
+// disposition yet is not judged. `manifest` is the parsed file; anything without a findings list has none.
+export function manifestDrift(manifest, table = loadTable()) {
+  const findings = Array.isArray(manifest?.findings) ? manifest.findings : [];
+  const drift = [];
+  for (const finding of findings) {
+    if (finding === null || typeof finding !== 'object' || finding.disposition === undefined || finding.disposition === null) continue;
+    const expected = toolValues(finding, table);
+    if (!expected.includes(finding.disposition)) drift.push({ id: finding.id ?? null, disposition: finding.disposition, expected });
+  }
+  return drift;
+}
+
+// Whether `file` is a review manifest or a temporary copy of one, as the pr-review skill writes them: a file in a
+// `reviews` folder named pr-<n>.json, or a name that starts with it, with or without a leading dot, such as
+// pr-42.json.tmp.
+export const isManifestPath = (file) => path.basename(path.dirname(file)) === 'reviews' && /^\.?pr-\d+\.json(?:\.[\w.-]+)?$/u.test(path.basename(file));
+
+// The refusal for a file write, as one message, or null. `writes` are { file, text } pairs, `text` the file's content
+// after the write, or null when the write does not show it (an apply_patch): such a write, a file that is no manifest,
+// and text that does not parse are let through, as a hook lets through what it cannot read.
+export function manifestWriteProblem(writes, table = loadTable()) {
+  const lines = [];
+  for (const { file, text } of writes) {
+    if (typeof text !== 'string' || !isManifestPath(file)) continue;
+    let manifest;
+    try {
+      manifest = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    for (const { id, disposition, expected } of manifestDrift(manifest, table)) {
+      lines.push(`  ${path.basename(file)} ${id ?? '(no id)'}: ${JSON.stringify(disposition)}, where its axes give ${expected.join(' or ')}`);
+    }
+  }
+  if (!lines.length) return null;
+  return [
+    'Blocked: this write sets a review disposition that `aidrian pr disposition` does not give the finding\'s axes:',
+    ...lines,
+    'Run `aidrian pr disposition` with the finding\'s severity, likelihood, affects, and cost, each flag its own word, and write the disposition it prints.',
+    'A disposition that looks wrong means its axes are wrong: change the axes, never the disposition alone.',
+  ].join('\n');
+}
+
+// One flag word per argument: an argument that starts with `--` and holds whitespace, as zsh passes an unsplit variable,
+// becomes its words. A value never holds a space: every one is a vocabulary word, a number, or a path with none.
+export const splitFlagWords = (args) => args.flatMap((arg) => (arg.startsWith('--') && /\s/u.test(arg) ? arg.trim().split(/\s+/u) : [arg]));
+
 // The CLI body.
 export function runDisposition(args) {
   const word = { type: 'string' };
-  const { values } = parseArgs({ args, options: { severity: word, likelihood: word, affects: word, source: word, cost: word, round: word, vocab: { type: 'boolean' } } });
+  const { values } = parseArgs({ args: splitFlagWords(args), options: { severity: word, likelihood: word, affects: word, source: word, cost: word, round: word, manifest: word, vocab: { type: 'boolean' } } });
   if (values.vocab) {
     console.log(JSON.stringify(vocabulary(), null, 2));
     return 0;
   }
+  if (values.manifest !== undefined) return checkManifest(values.manifest);
   const out = decideDisposition(values);
   console.log(JSON.stringify(out));
   return out.disposition === 'invalid' ? 2 : 0;
+}
+
+// `--manifest FILE`: exit 0 when every disposition is the table's, 1 when one drifts, 2 when the file is no manifest.
+function checkManifest(file) {
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    console.error(`aidrian pr disposition: ${file} does not read as JSON: ${error.message}`);
+    return 2;
+  }
+  if (!Array.isArray(manifest?.findings)) {
+    console.error(`aidrian pr disposition: ${file} has no findings list`);
+    return 2;
+  }
+  const drift = manifestDrift(manifest);
+  console.log(JSON.stringify({ file, findings: manifest.findings.length, drift }));
+  return drift.length ? 1 : 0;
 }

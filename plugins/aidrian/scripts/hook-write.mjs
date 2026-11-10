@@ -1,6 +1,7 @@
 // PreToolUse hook for Edit, Write, NotebookEdit, and Codex's apply_patch: the main-checkout rule for file writes, then
-// the terms rule (lib/terms.mjs) on the lines the write adds. lib/rules/main-checkout.mjs decides the first; anything
-// this hook cannot read lets the write run. A block is recorded as the Bash hook records its blocks (lib/hook-deny.mjs).
+// the review-disposition rule on a review manifest's text after the write (lib/finding-disposition.mjs
+// manifestWriteProblem), then the terms rule (lib/terms.mjs) on the lines the write adds. lib/rules/main-checkout.mjs
+// decides the first; anything this hook cannot read lets the write run. A block is recorded as the Bash hook records its blocks (lib/hook-deny.mjs).
 // A terms hit of severity `warn` lets the write run and tells the agent, through the hook's additional context.
 
 import path from 'node:path';
@@ -16,6 +17,8 @@ const MAX_REPORTED = 10;
 await runHook(async (input) => {
   const reason = checkTool(input);
   if (reason) await block(input, 'main-checkout', reason);
+  const drift = await manifestDrift(input);
+  if (drift) await block(input, 'review-disposition', drift);
   const hits = await termHits(input);
   if (!hits.length) return;
   const { formatHit } = await import('../lib/terms.mjs');
@@ -31,6 +34,20 @@ await runHook(async (input) => {
   const context = [`The write adds ${hits.length} term(s) the project's terms file warns about; use the replacements in a follow-up edit:`, ...shown(hits)].join('\n');
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }));
 });
+
+// The review-disposition refusal for this write, or null. Only a write whose target is a review manifest reads further.
+async function manifestDrift(input) {
+  const target = input.tool_input?.file_path;
+  const { isManifestPath, manifestWriteProblem } = await import('../lib/finding-disposition.mjs');
+  if (typeof target !== 'string' || !isManifestPath(target)) return null;
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const { addedLines } = await import('../lib/terms.mjs');
+  try {
+    return manifestWriteProblem(addedLines(input, cwd).map(({ file, text }) => ({ file: path.resolve(cwd, file), text })));
+  } catch {
+    return null;
+  }
+}
 
 // Every terms hit in the lines the write adds, as { file, hit }, with `file` relative to its project. Each file is
 // judged by its own project, so a patch from a parent folder, or across projects, uses each file's rules. Silent outside

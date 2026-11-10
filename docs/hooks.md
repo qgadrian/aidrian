@@ -930,7 +930,8 @@ do it, and how critical it is. Its second stop always ends.
   such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
   Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
 - An item is a top-level list entry with its continuation lines. The list ends at a heading or at a paragraph after a blank line.
-- A fenced code block, read as the pull request body rules read one (`lib/markdown-sections.mjs`), is skipped: a Markdown example the message quotes is not work handed back, and a code block inside an item does not end its list.
+- A fenced code block, read as the pull request body rule reads one (`lib/markdown-sections.mjs`), is skipped:
+  a Markdown example the message quotes is not work handed back, and a code block inside an item does not end its list.
 - An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
 
 The announce check runs first; a stop it sends back is not checked here.

@@ -1,7 +1,7 @@
 // Reads a Markdown body by its `## ` sections, outside code fences: a body may quote a heading or a list item as an
 // example, and a quoted example is neither a section nor an item. Used by the pull request body rule
 // (lib/rules/github/pr-body.mjs), the review gate (lib/review-gate.mjs), Markdown prose checks (lib/markdown-prose.mjs),
-// and review flows (lib/review/flows.mjs), which share its fence detection. It imports nothing of the plugin's.
+// review flows (lib/review/flows.mjs), and the Stop hook's hand-back check (lib/stop-handback.mjs), which share its fence detection. It imports nothing of the plugin's.
 
 // An ATX level-2 heading: exactly two hashes, whitespace, then the title.
 const HEADING = /^ {0,3}##(?!#)\s+(.+?)\s*$/u;

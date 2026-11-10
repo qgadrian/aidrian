@@ -80,6 +80,10 @@ test('a superseded run and a skipped matrix template row are left out: a draft-t
   assert.equal(computeVerdict([run(100, 'security', 'SKIPPED', security), run(200, 'lint', 'SUCCESS', lint)], { conditionalChecks: ['docs'] }).reason,
     'unexpected skip: security', 'another file`s skip is still unexpected');
   assert.equal(computeVerdict([run(100, 'security', 'FAILURE', security), run(200, 'security', 'SUCCESS', security)]).verdict, 'ready', 'a rerun of the same file replaces its failure');
+  // After review round 5: workflow ids are per installation, so the same id on two hosts is two workflows.
+  const ghe = { workflow: 'CI', workflowId: 1, host: 'ghe.example', repo: 'acme/notes' };
+  const dotcom = { workflow: 'CI', workflowId: 1, host: 'github.com', repo: 'acme/notes' };
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', ghe), run(200, 'security', 'SUCCESS', dotcom)]).verdict, 'failing');
   // A run whose workflow file the forge could not read is never taken for superseded.
   assert.equal(computeVerdict([run(100, 'security', 'FAILURE', { workflowId: null }), run(200, 'security', 'SUCCESS', { workflowId: null })]).verdict, 'failing');
   // Another event's run of the same workflow is no supersession, and a failure under a template name still fails.

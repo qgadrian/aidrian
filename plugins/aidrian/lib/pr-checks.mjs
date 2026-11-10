@@ -32,7 +32,8 @@ const EXIT_BY_VERDICT = { ready: 0, failing: 1, pending: 2 };
 // A row with no run, such as an app's status, always stays.
 export function currentRows(rows) {
   const newest = new Map();
-  const group = (row) => `${row.workflowId}\u0000${row.event ?? ''}`;
+  // A workflow id is unique only within one GitHub installation, so the run's host and repository scope it.
+  const group = (row) => [row.host ?? '', row.repo ?? '', row.workflowId, row.event ?? ''].join('\u0000');
   const known = (row) => Number.isInteger(row.run) && Number.isInteger(row.workflowId);
   for (const row of rows) if (known(row)) newest.set(group(row), Math.max(newest.get(group(row)) ?? row.run, row.run));
   const template = (row) => /\$\{\{/u.test(String(row.name)) && ['SKIPPED', 'NEUTRAL'].includes(String(row.state ?? '').toUpperCase());

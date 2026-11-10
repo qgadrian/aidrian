@@ -6,7 +6,7 @@
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig, pluginRepository } from './config.mjs';
@@ -462,9 +462,27 @@ export const recordsFolder = (state) => path.join(state, 'reviews');
 
 // `$XDG_STATE_HOME/aidrian`, with `~/.local/state` when that variable is unset or relative: the folder that holds every
 // project's state folder, and what no config.json can move (lib/gate-snapshot.mjs keeps its files there).
+// Under node's test runner (`NODE_TEST_CONTEXT`, which it sets for every test file and the processes it spawns), a root in
+// the user's real home folder, outside the temporary folder and the run's test state folder, is refused: a test that
+// reached it would write fixture lessons and state folders into the developer's own inbox. scripts/test-state.mjs gives
+// every test its own root.
 export function stateRoot(env = process.env) {
   const base = path.isAbsolute(env.XDG_STATE_HOME ?? '') ? env.XDG_STATE_HOME : path.join(homedir(), '.local/state');
-  return path.join(base, 'aidrian');
+  const root = path.join(base, 'aidrian');
+  const scratch = [tmpdir(), env.AIDRIAN_TEST_STATE].filter((folder) => typeof folder === 'string' && path.isAbsolute(folder));
+  if (env.NODE_TEST_CONTEXT && realHome(root) && !scratch.some((folder) => isWithin(path.resolve(folder), root))) {
+    throw new Error(`a test reached the real state root ${root}: run it with \`--import ./scripts/test-state.mjs\`, or set XDG_STATE_HOME`);
+  }
+  return root;
+}
+
+// Whether `folder` is in the home folder of the user this process runs as, which no HOME change moves.
+function realHome(folder) {
+  try {
+    return isWithin(path.resolve(userInfo().homedir), path.resolve(folder));
+  } catch {
+    return false;
+  }
 }
 
 // Task worktrees: config.json `git.worktrees.dir`, `.worktrees` at the repository root by default.

@@ -3,6 +3,7 @@
 // machinery that decides it. The test walks the files from those entry points instead of keeping a list, so a new import
 // or a new hook can never fall outside the guard. The walk fails closed: a load it cannot follow fails the test unless
 // EXCEPTIONS names it, with the reason it is safe.
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';

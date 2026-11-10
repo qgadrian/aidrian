@@ -1,5 +1,6 @@
 // The review-fallback rule: an agent passes `aidrian pr review --quota-fallback` only after the Human picked that option.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

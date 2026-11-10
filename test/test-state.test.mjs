@@ -1,6 +1,7 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -49,4 +50,13 @@ test('the test setup keeps the temporary files of a run in its own folder, and d
   assert.equal(run.status, 0, run.stderr);
   assert.ok(run.stdout.startsWith(outer), run.stdout);
   assert.deepEqual(readdirSync(outer), []);
+});
+
+test('every test file imports the setup first, so a file run alone with `node --test` is kept apart too', () => {
+  const dir = import.meta.dirname;
+  const late = readdirSync(dir).filter((name) => name.endsWith('.test.mjs')).filter((name) => {
+    const first = readFileSync(path.join(dir, name), 'utf8').split('\n').find((line) => line.startsWith('import '));
+    return first !== "import '../scripts/test-state.mjs';";
+  });
+  assert.deepEqual(late, [], 'a test file run without --import would write to the developer`s state folder and temporary folder');
 });

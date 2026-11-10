@@ -1,6 +1,7 @@
 // The wrap check must report a long line, and, just as much, stay silent on correct text: a hook that fires on a good
 // write gets ignored.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

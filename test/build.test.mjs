@@ -1,5 +1,6 @@
 // scripts/build.mjs: the neutral agent sources, the provider files, how they merge, and the generated Claude Code agents.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

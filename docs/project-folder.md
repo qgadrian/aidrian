@@ -154,6 +154,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
+  Under node's test runner (`NODE_TEST_CONTEXT` set), a state root in the user's home folder, outside the temporary
+  folder, is refused with an error, so a test can never write into the developer's own state folder or lesson inbox.
 - `<project-id>` is the repository name and a short hash of its `origin` URL, such as `notes-1a2b3c4d`.
   Every worktree and every clone of the repository shares it.
   A repository with no `origin` uses its folder name and a hash of the main checkout's path.

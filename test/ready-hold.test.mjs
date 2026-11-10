@@ -3,6 +3,7 @@
 // program on PATH: nothing reaches GitHub, and no real pull request is marked ready. Each repository is a temporary one,
 // with no GIT_DIR.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

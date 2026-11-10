@@ -1,7 +1,7 @@
 // Bash rule, and the decision of the GitHub MCP merge hook: no merge while a review the Human asked for has no answer,
 // while a gate review is out, or while the review of the pull request's head has not finished. docs/hooks.md#merge-guard.
 // A merge is:
-//   - `gh pr merge` (but `--disable-auto`), `--auto` included;
+//   - `gh pr merge` (but `--disable-auto`, and `--help` or `-h`, which merge nothing), `--auto` included;
 //   - `gh api repos/<owner>/<name>/pulls/<n>/merge` sent as a PUT or a POST;
 //   - the MCP tool `mcp__github__merge_pull_request`, or a host connector's call that stands for it (scripts/hook-mcp-github.mjs).
 // Each is read wherever it runs (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell.
@@ -104,7 +104,8 @@ export function readMerge({ program, args, environment = [] }, env = {}) {
   }
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;
   const { words, flags } = readWords(args, new Set(MERGE_VALUES));
-  if (flags.some((flag) => flag.name === '--disable-auto')) return null;
+  // `--help` prints the command's options and merges nothing, so a read of them is never held.
+  if (flags.some((flag) => ['--disable-auto', '--help', '-h'].includes(flag.name))) return null;
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const target = words[2] ? literal(words[2]) : null;
   const head = literal(last('--match-head-commit'));

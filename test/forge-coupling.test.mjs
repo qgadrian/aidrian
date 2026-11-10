@@ -6,6 +6,7 @@
 // the comparison judges a command, and runs none. The rules' own reads, such as merge-review's and pr-body's, go through
 // forgeFor like any shared code. Any other 'gh' literal is a coupling, since it names the program to something that may run it.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';

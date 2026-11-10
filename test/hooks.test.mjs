@@ -1,5 +1,6 @@
 // Every hook in hooks.json, run with input it cannot use, lets the action run: exit 0 and nothing on stderr.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

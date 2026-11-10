@@ -1,5 +1,6 @@
 // The project's `models` config reaching each host: the Claude Code Agent hook and the Codex role install.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

@@ -15,6 +15,11 @@ npm run check    # what CI runs
 ```
 
 `make` lists the same tasks.
+
+Every test file imports `scripts/test-state.mjs` first, and `test/test-state.test.mjs` fails on one that does not.
+It gives the run its own state folder, temporary folder, and fake `gh`, so a file run alone, `node --test test/<name>.test.mjs`,
+writes no fixture lesson or state folder into this machine's own state folder.
+A probe script that runs a hook or a command by hand takes the same preload: `node --import ./scripts/test-state.mjs probe.mjs`.
 The hooks in `.githooks/` keep the private words of `.banned-terms.local` out of commit messages and branch names,
 and refuse a commit in the main checkout or one that newly stages a git-ignored file ([Commit guard](hooks.md#commit-guard)).
 `make hooks` sets `core.hooksPath` to the main checkout's `.githooks` by absolute path, so git runs them for a commit

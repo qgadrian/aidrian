@@ -2,6 +2,7 @@
 // adding it, and a fixture adapter that is never shipped proves a new host or tracker needs nothing in shared code.
 // A shipped host also needs its recorded payloads in test/fixtures/hosts/<id>/tracker.json.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

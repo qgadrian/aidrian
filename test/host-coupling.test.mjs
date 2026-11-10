@@ -7,6 +7,7 @@
 // the shared code reads, the way mcp__<server>__<tool> is, and a host that names them differently maps to them in `hookInput`.
 // apply_patch is not in that vocabulary: it is one host's file edit, read through `fileEditOf`.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';

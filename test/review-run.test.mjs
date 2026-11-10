@@ -820,6 +820,29 @@ test('--with-bot: the bot is asked in the step that dispatches the agent passes,
   assert.deepEqual([next.status, next.round, calls], ['dispatch', 2, [['bot', true, 0]]], 'a new head is asked about at once');
 });
 
+test('--with-bot: a request the final wait posts is remembered too, so the next step on the head only waits', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
+  const calls = [];
+  // GitHub lagged at the first look, so the early call posted nothing; the final wait posted the request and timed out.
+  const bot = async (opts) => (calls.push(['bot', opts.request, opts.timeoutSec]), { status: 'timed_out', requested: opts.request && opts.timeoutSec > 0, signal: null });
+  assert.equal((await r.step({ exec: clean, awaitBot: bot }, { withBot: true })).status, 'timed_out');
+  assert.deepEqual(calls, [['bot', true, 0], ['bot', true, 840]]);
+  calls.length = 0;
+  await r.step({ exec: clean, awaitBot: bot }, { withBot: true });
+  assert.deepEqual(calls, [['bot', false, 840]], 'the head was asked about: no second request');
+});
+
+test('--with-bot: an early request that went to a newer head ends the step before any reviewer runs, and that head is not asked again', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
+  const newer = 'f'.repeat(40);
+  const calls = [];
+  const bot = async (opts) => (calls.push(['bot', opts.request, opts.timeoutSec]), { status: 'timed_out', requested: true, head_sha: newer, signal: null });
+  const moved = await r.step({ exec: async () => (calls.push(['exec']), clean()), awaitBot: bot }, { withBot: true });
+  assert.deepEqual([moved.status, moved.retry_recommended, moved.round, calls], ['incomplete', true, 0, [['bot', true, 0]]]);
+  assert.match(moved.reason, /moved to fffffff/u);
+  assert.equal(readLocalState(r.project, 7).botRequest.head, newer, 'the request is on record for the head it asked about');
+});
+
 test('--with-bot under the review gate: the bot is asked as soon as the code-reviewer is on record, while the engine still runs', async (t) => {
   const r = repo(t, { baseConfig: { version: 1, github: { reviewGate: { enabled: true, checklist: null } } }, change: (write) => write('src/app.js', 'q\n') });
   const calls = [];

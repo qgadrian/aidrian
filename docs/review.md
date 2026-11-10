@@ -1030,7 +1030,9 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
 - **Quiet pushes.** A round's `quiet` list holds the heads it moved from on [quiet pushes](#rounds), each `{ from, at }`
   with the time the round was opened on that head. A round without the list never moved.
 - **Bot request.** `botRequest` is `{ head, at }`: the head the step last asked the review bot about, so a later
-  step on that head waits for the answer and does not ask again ([Rounds](#rounds)).
+  step on that head waits for the answer and does not ask again ([Rounds](#rounds)). Either call to the bot that posts
+  a request records it, for the head the request names: when the pull request moved past the step's head before the
+  request, the step ends `incomplete` before any reviewer runs, and the newer head is not asked about again.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head

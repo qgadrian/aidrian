@@ -115,6 +115,14 @@ export async function runStages(s) {
     state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
     recorded = true;
   };
+  // A request a wait posted, from either call, is on record for the head it asked about, which the wait reads again
+  // as it posts: the pull request may have moved past this step's head. Returns whether it asked about this head.
+  const noteRequest = (bot) => {
+    if (!bot.requested) return false;
+    const asked = typeof bot.head_sha === 'string' ? bot.head_sha : head;
+    state.botRequest = { head: asked, at: new Date().toISOString() };
+    return sameCommit(asked, head);
+  };
 
   // The bot is asked as soon as a round opens on a head and the gate allows it, so it reviews while this machine's
   // passes, the agents, and CI run. Its stage still comes last: the step awaits its answer only once every earlier
@@ -128,11 +136,13 @@ export async function runStages(s) {
       undoRound();
       return headMoved(asked);
     }
-    if (ANSWERED.has(asked.status) && (!asked.head_sha || sameCommit(asked.head_sha, head))) recordBot(bot, asked);
-    else if (asked.requested) {
-      state.botRequest = { head, at: new Date().toISOString() };
-      recorded = true;
+    // A request for a newer head: this step's head is no longer the pull request's, so no reviewer runs on it.
+    if (asked.requested && !noteRequest(asked)) {
+      undoRound();
+      return finish('incomplete', { reason: `the pull request moved to ${String(asked.head_sha).slice(0, 7)}, and the review bot was asked about that head: run the step again`, retry_recommended: true });
     }
+    if (ANSWERED.has(asked.status) && (!asked.head_sha || sameCommit(asked.head_sha, head))) recordBot(bot, asked);
+    else if (asked.requested) recorded = true;
   }
 
   // In the last round the final stage runs first and is judged last, once the earlier stages' verdicts are in.
@@ -210,6 +220,7 @@ export async function runStages(s) {
         const waiting = plan.stages.slice(0, plan.stages.indexOf(stage)).flatMap((each) => each.passes).filter((pass) => !resultFor(pass));
         if (waiting.length) return finish('incomplete', { reason: `the review bot waits for ${waiting.map((pass) => pass.id).join(', ')}`, retry_recommended: true });
         const bot = await botWait({ request: !sameCommit(state.botRequest?.head, head) });
+        noteRequest(bot);
         if (bot.status === 'head_moved') {
           undoRound();
           return headMoved(bot);

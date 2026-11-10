@@ -67,24 +67,32 @@ const checkRow = (row) => {
 
 // Fills in `workflowId` on every row of a run, once some workflow name and event is reported by more than one run: two
 // workflow files may share a display name, so only the file's id tells a rerun from another workflow. `listRuns(host,
-// repo)` gives the workflow runs of the pull request's head, every page of them, each with its `id` and `workflow_id`.
-// A run it does not list, or a list that fails, keeps null. Returns the rows.
+// repo)` gives the workflow runs of the pull request's head in that repository, every page of them, each with its `id`
+// and `workflow_id`; it is called once for each repository the workflow rows' runs belong to, so a row with no workflow,
+// such as an app's status that links to a run, chooses none. A run no list names, or one whose list fails, keeps null.
+// Returns the rows.
 function workflowIds(rows, listRuns) {
   const runs = new Map();
+  const repos = new Map();
+  const key = (host, repo) => `${host}/${repo}`;
   for (const row of rows) {
     if (row.run === null || !row.workflow) continue;
     const group = `${row.workflow}\u0000${row.event ?? ''}`;
     runs.set(group, (runs.get(group) ?? new Set()).add(row.run));
+    repos.set(key(row.host, row.repo), { host: row.host, repo: row.repo });
   }
-  const first = rows.find((row) => row.run !== null);
-  if (!first || ![...runs.values()].some((each) => each.size > 1)) return rows;
+  if (![...runs.values()].some((each) => each.size > 1)) return rows;
   const ids = new Map();
-  try {
-    for (const run of listRuns(first.host, first.repo)) if (Number.isInteger(run?.id) && Number.isInteger(run.workflow_id)) ids.set(run.id, run.workflow_id);
-  } catch {
-    // Unread: no row is taken for a rerun of another.
+  for (const { host, repo } of repos.values()) {
+    try {
+      for (const run of listRuns(host, repo)) {
+        if (Number.isInteger(run?.id) && Number.isInteger(run.workflow_id)) ids.set(`${key(host, repo)}#${run.id}`, run.workflow_id);
+      }
+    } catch {
+      // Unread: no run of this repository is taken for a rerun of another.
+    }
   }
-  for (const row of rows) row.workflowId = ids.get(row.run) ?? null;
+  for (const row of rows) row.workflowId = row.run === null ? null : ids.get(`${key(row.host, row.repo)}#${row.run}`) ?? null;
   return rows;
 }
 

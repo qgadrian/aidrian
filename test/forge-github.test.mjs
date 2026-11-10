@@ -331,6 +331,28 @@ test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints w
     throw new Error('HTTP 502');
   });
   assert.deepEqual(new Set(failed.forge.checks('7').map((row) => row.workflowId)), new Set([null]), 'a list that fails leaves every run unread');
+  // Review round 4: the lists follow the repositories of the workflow rows' runs, once each, never the first row's alone.
+  const at = (repo, id) => `https://github.com/${repo}/actions/runs/${id}/job/1`;
+  const mixed = [
+    { name: 'Vercel', state: 'SUCCESS', workflow: '', event: '', link: at('acme/app-status', 900) },
+    { name: 'gate', state: 'SKIPPED', workflow: 'CI', event: 'pull_request', link: at('acme/notes', 100) },
+    { name: 'gate', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', link: at('acme/notes', 200) },
+    { name: 'lint', state: 'SUCCESS', workflow: 'Lint', event: 'pull_request', link: at('acme/other', 300) },
+    { name: 'lint', state: 'SUCCESS', workflow: 'Lint', event: 'pull_request', link: at('acme/broken', 400) },
+  ];
+  const lists = { 'acme/notes': [{ id: 100, workflow_id: 1 }, { id: 200, workflow_id: 1 }], 'acme/other': [{ id: 300, workflow_id: 3 }, { id: 400, workflow_id: 3 }] };
+  const listed = recorded((given) => {
+    if (given[1] === 'checks') return JSON.stringify(mixed);
+    if (given[0] === 'pr') return JSON.stringify({ headRefOid: SHA });
+    const repo = /repos\/([^/]+\/[^/]+)\/actions/u.exec(given.find((arg) => arg.startsWith('repos/')))[1];
+    if (!lists[repo]) throw new Error('HTTP 404');
+    return JSON.stringify([{ workflow_runs: lists[repo] }]);
+  });
+  const mixedRows = listed.forge.checks('7');
+  assert.deepEqual(mixedRows.map((row) => row.workflowId), [null, 1, 1, 3, null], 'a run of another repository is not read from this one\'s list, and an unread one keeps null');
+  assert.deepEqual(listed.args().filter((each) => each[0] === 'api').map((each) => /repos\/([^/]+\/[^/]+)\//u.exec(each.find((arg) => arg.startsWith('repos/')))[1]),
+    ['acme/notes', 'acme/other', 'acme/broken'], 'the leading app status chooses no repository');
+  assert.equal(computeVerdict(mixedRows, { conditionalChecks: ['docs'] }).verdict, 'ready', 'the superseded skip goes although an app status leads');
   const pending = [{ name: 'e2e', state: 'PENDING' }];
   const exit8 = createGithubForge({ run: () => { throw Object.assign(new Error('exit 8'), { status: 8, stdout: JSON.stringify(pending) }); } });
   assert.deepEqual(exit8.checks('7'), [{ name: 'e2e', state: 'PENDING', workflow: null, event: null, run: null, host: null, repo: null, workflowId: null }], 'exit 8 with the rows on stdout is an answer');

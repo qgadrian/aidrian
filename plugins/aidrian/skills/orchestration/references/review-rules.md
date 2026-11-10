@@ -1,6 +1,7 @@
 # Review rules
 
-The rules the `pr-review-loop`, `pr-review-fix`, and `autopilot` skills share. Each links here; none keeps a copy.
+The rules the `pr-review-loop`, `pr-review-fix`, and `autopilot` skills share;
+`issue-implement` and `plan-implement` cite § A closure criterion proven elsewhere. Each links here; none keeps a copy.
 
 ## Branch preflight
 
@@ -59,15 +60,19 @@ never change here, and a finding that would change them is a `scope_collision`.
   - in the fix pass already under way, within its round cap, the developer applied `break` and every test in `existing_tests` failed
     by assertion; a suite that failed to load rejects the run;
   - the developer undid only the `break` edit, never with checkout, restore, or stash on a slice file, reran `existing_tests` green,
-    and showed in `commands_run` the same `git diff | git hash-object --stdin` before and after the break;
+    and showed in `commands_run` the same slice hash before the break and after the undo: `git diff <slice base> | git hash-object --stdin`,
+    and `git hash-object` on each file `git ls-files --others --exclude-standard` lists;
   - on a slice that touches a critical flow or had a security review, its gate owner, `product-manager` or `security-engineer`,
-    returned a fresh `sign_off` of `approved`, dispatched with the `plan_change` and the break run.
+    answered fresh, dispatched with the `plan_change` and the break run: from `product-manager`, every `critical_flow[].sign_off`
+    for the flows the slice touches is `approved`; from `security-engineer`, `sign_off` is `approved` with no security `fix_now` open.
 - **`promise`**: a finding or fix proposes dropping or changing behaviour, or a parity row or non-goal of a plan with no issue.
+  A proof that fails a condition above is not a `promise`: the default applies.
   `product-manager` returns `decision_options`, and `knowledge/references/decisions.md` routes it.
 - **Record.** One `planning-agent` dispatch writes the change with all its evidence, and in the same write adds any evidence
   in a later slice to that slice's closure criteria, so the run cannot close without it.
   The change counts as made only once the reread plan shows both. Its revision history entry credits whoever decided it:
-  the coordinating session for `proof`, the decision's owner for `promise`. Phase 7's `pr-write` brief lists it.
+  the coordinating session for `proof`, the decision's owner for `promise`.
+  The next `pr-write` run lists it, a pull request update included.
 
 ## Fix passes
 

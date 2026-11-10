@@ -118,8 +118,10 @@ and the plan path in `artifacts` when a draft exists.
 ## Closure criterion change
 
 A dispatch that changes a slice's closure criterion during a run, as the `orchestration` skill's `references/review-rules.md`
-§ A closure criterion proven elsewhere says, is approved without the Human only when it carries the evidence for every condition there:
-the `plan_change`, the break run with its hashes, any gate owner's `sign_off`, and the later slice's added criterion.
+§ A closure criterion proven elsewhere says, writes only with the evidence for its kind.
+For `proof`: the `plan_change`, the break run with its hashes, the gate owner's answer on a gated slice,
+and the later slice's added criterion when the `plan_change` names evidence there.
+For `promise`: the `decided_provisional` or the Human's answer, and the authority `aidrian decisions resolve` gave.
 Any piece missing: write nothing and return `blocked`, naming it.
 
 ## Critique mode (plan-review)

@@ -87,7 +87,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | Build | What it does |
 | --- | --- |
 | `issue-implement` | Builds one issue to a draft pull request. A closure criterion proven by other tests changes without the Human. |
-| `plan-implement` | Builds a reviewed local plan to a draft pull request. |
+| `plan-implement` | Builds a reviewed local plan to a draft pull request. A closure criterion proven by other tests changes without the Human. |
 | `design-import` | Turns a Claude Design export into a design import and plan. |
 | `worktree-new` | Creates a task worktree and runs the project's bootstrap. |
 | `worktree-integrate` | Lands slice branches in order onto one task branch. |

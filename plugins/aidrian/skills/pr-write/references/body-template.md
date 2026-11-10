@@ -25,6 +25,7 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
 ## Decisions
 
 - `<marker id>` (<class>, <domain>), <replaces a written rule | fills a gap>: <what was decided and why>. Revisit when <its revisit trigger>. Reverts by <how>. <The doc that holds its marker.>
+- Closure criterion, <slice title>: <what the plan asked> is now proven by <the tests>, which failed when <the break>.
 
 ## Accepted residuals
 

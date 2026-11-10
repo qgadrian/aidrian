@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { checkoutRepos, computeVerdict, namesRemote, parseCliArgs, runChecks } from '../plugins/aidrian/lib/pr-checks.mjs';
+import { checkoutRepos, computeVerdict, currentRows, namesRemote, parseCliArgs, runChecks } from '../plugins/aidrian/lib/pr-checks.mjs';
 
 const row = (name, state) => ({ name, state });
 const verdict = (rows, policy) => computeVerdict(rows, policy).verdict;
@@ -55,6 +55,28 @@ test('conditionalChecks: once it has an entry, only a listed check may skip; any
   assert.equal(verdict([row('docs', 'SKIPPED'), row('unit', 'IN_PROGRESS')], { conditionalChecks: ['db'] }), 'failing', 'a skip is final');
   const required = computeVerdict([row('e2e', 'SKIPPED')], { requiredChecks: ['e2e'], conditionalChecks: ['e2e'] });
   assert.deepEqual([required.verdict, required.reason], ['failing', 'e2e=SKIPPED (required)'], 'required wins over conditional');
+});
+
+test('a superseded run and a skipped matrix template row are left out: a draft-then-ready pull request reads ready', () => {
+  // The incident: the run started while the pull request was a draft skipped the matrix job under its template name, and
+  // the run after it was marked ready, on the same head, passed every expanded shard and the aggregator.
+  const run = (id, name, state, extra = {}) => ({ name, state, workflow: 'E2E', event: 'pull_request', run: id, ...extra });
+  const rows = [
+    run(100, '🎭 E2E Shard ${{ matrix.shard }}', 'SKIPPED'),
+    run(100, 'E2E gate', 'SKIPPED'),
+    ...[1, 2, 3, 4, 5, 6].map((shard) => run(200, `🎭 E2E Shard ${shard}`, 'SUCCESS')),
+    run(200, 'E2E gate', 'SUCCESS'),
+    { name: 'Vercel', state: 'SUCCESS', workflow: null, event: null, run: null },
+  ];
+  const policy = { conditionalChecks: ['Test DB'] };
+  assert.deepEqual(computeVerdict(rows, policy), { verdict: 'ready', reason: '8 pass', failing: [], pending: [], skipped: [], unexpected_skips: [] });
+  assert.deepEqual(currentRows(rows).map((row) => row.name), [...[1, 2, 3, 4, 5, 6].map((shard) => `🎭 E2E Shard ${shard}`), 'E2E gate', 'Vercel']);
+  // Without the newer run, the template row is still dropped, and the old run's own skip is still named.
+  assert.equal(computeVerdict(rows.slice(0, 2), policy).reason, 'unexpected skip: E2E gate');
+  // Another event's run of the same workflow is no supersession, and a failure under a template name still fails.
+  assert.deepEqual(currentRows([run(100, 'lint', 'SUCCESS', { event: 'push' }), run(200, 'lint', 'SUCCESS')]).length, 2);
+  assert.equal(computeVerdict([run(300, 'Shard ${{ matrix.shard }}', 'FAILURE')]).verdict, 'failing');
+  assert.equal(computeVerdict([{ name: 'plain', state: 'SUCCESS' }]).verdict, 'ready', 'a row without run fields reads as before');
 });
 
 test('parseCliArgs reads a number, #number, -R, and --json, and reports anything else', () => {

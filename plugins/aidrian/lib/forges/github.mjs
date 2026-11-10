@@ -52,6 +52,14 @@ const namesItem = (apiUrl, kind, repo, n) => {
 // gh's default host, which a call names only when it is another.
 const DEFAULT_HOST = 'github.com';
 
+// One `gh pr checks` row in the forge's shape: its name and state, and the workflow, event, and run that reported it.
+const RUN_LINK = /\/actions\/runs\/(\d+)(?:\/|$)/u;
+const checkRow = (row) => {
+  const run = typeof row?.link === 'string' ? RUN_LINK.exec(row.link)?.[1] ?? null : null;
+  const text = (value) => (typeof value === 'string' && value !== '' ? value : null);
+  return { name: row?.name, state: row?.state, workflow: text(row?.workflow), event: text(row?.event), run: run === null ? null : Number(run) };
+};
+
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
 // what gh throws. A method that names no `repo` reads gh's default repository for `cwd`.
@@ -98,18 +106,23 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     },
     // The open pull requests, at most `limit`, each with the `fields` named; `repo` lists that repository's.
     openChanges: (limit, fields, { repo = null } = {}) => json(['pr', 'list', '--state', 'open', '--limit', String(limit), '--json', fields, ...(repo ? ['--repo', repo] : [])]),
-    // The checks of the pull request `ref` (none: the current branch's), as `{ name, state }` rows. gh exits 8 while a
-    // check is pending, with the rows on stdout: those rows are the answer. Any other failure throws as gh threw it.
+    // The checks of the pull request `ref` (none: the current branch's), as `{ name, state, workflow, event, run }` rows:
+    // `run` is the id of the Actions workflow run in the row's link, null for a check no workflow run reports, such as an
+    // app's status. gh exits 8 while a check is pending, with the rows on stdout: those rows are the answer. Any other
+    // failure throws as gh threw it.
     checks: (ref, { repo = null } = {}) => {
+      const args = ['pr', 'checks', ...(given(ref) ? [String(ref)] : []), ...(repo ? ['--repo', repo] : []), '--json', 'name,state,workflow,event,link'];
+      let rows;
       try {
-        return json(['pr', 'checks', ...(given(ref) ? [String(ref)] : []), ...(repo ? ['--repo', repo] : []), '--json', 'name,state']);
+        rows = json(args);
       } catch (error) {
         try {
-          return JSON.parse(error?.stdout ?? '');
+          rows = JSON.parse(error?.stdout ?? '');
         } catch {
           throw error;
         }
       }
+      return Array.isArray(rows) ? rows.map(checkRow) : rows;
     },
     // `owner/name` of the default repository.
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,

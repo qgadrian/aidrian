@@ -288,18 +288,26 @@ test('a gh failure reaches the caller as gh threw it', () => {
 });
 
 test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints while it exits 8 for a pending check', () => {
-  const { forge, args } = recorded(() => '[{"name":"e2e","state":"SUCCESS"}]');
-  assert.deepEqual(forge.checks('7', { repo: 'github.com/acme/notes' }), [{ name: 'e2e', state: 'SUCCESS' }]);
+  const printed = [
+    { name: 'e2e', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', link: 'https://github.com/acme/notes/actions/runs/42854262636/job/129962858764' },
+    { name: 'Vercel', state: 'SUCCESS', workflow: '', event: '', link: 'https://vercel.com/acme/notes/abc' },
+  ];
+  const { forge, args } = recorded(() => JSON.stringify(printed));
+  assert.deepEqual(forge.checks('7', { repo: 'github.com/acme/notes' }), [
+    { name: 'e2e', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', run: 42854262636 },
+    { name: 'Vercel', state: 'SUCCESS', workflow: null, event: null, run: null },
+  ], 'the run is the workflow run in the link; an app status has none');
   forge.checks('7', { repo: null });
   forge.checks(null);
+  const fields = 'name,state,workflow,event,link';
   assert.deepEqual(args(), [
-    ['pr', 'checks', '7', '--repo', 'github.com/acme/notes', '--json', 'name,state'],
-    ['pr', 'checks', '7', '--json', 'name,state'],
-    ['pr', 'checks', '--json', 'name,state'],
+    ['pr', 'checks', '7', '--repo', 'github.com/acme/notes', '--json', fields],
+    ['pr', 'checks', '7', '--json', fields],
+    ['pr', 'checks', '--json', fields],
   ]);
   const pending = [{ name: 'e2e', state: 'PENDING' }];
   const exit8 = createGithubForge({ run: () => { throw Object.assign(new Error('exit 8'), { status: 8, stdout: JSON.stringify(pending) }); } });
-  assert.deepEqual(exit8.checks('7'), pending, 'exit 8 with the rows on stdout is an answer');
+  assert.deepEqual(exit8.checks('7'), [{ name: 'e2e', state: 'PENDING', workflow: null, event: null, run: null }], 'exit 8 with the rows on stdout is an answer');
   const missing = createGithubForge({ run: () => { throw new Error('gh: not found'); } });
   assert.throws(() => missing.checks('7'), /gh: not found/u, 'no rows on stdout: gh\'s own error');
   assert.throws(() => recorded(() => 'not json').forge.checks('7'), SyntaxError, 'a success that prints no JSON throws');

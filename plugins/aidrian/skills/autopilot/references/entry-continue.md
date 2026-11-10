@@ -85,15 +85,19 @@ and the plan carries the session's work and decisions.
 - A plan for the branch: pick its engine by the table of `references/entry-task.md`;
   the engine's re-entry resumes at the first incomplete slice.
 - Nothing uncommitted and nothing left to change: start no engine.
-  Dispatch `code-reviewer` in the foreground on `origin/<base>..HEAD`, against the task, with the project's full suite.
-  A `fix_now` finding or a failing test is work left to change: plan it as below.
+  Run the gates of Phase 5 of the `issue-implement` skill's `steps/phases-5-8-close.md` on `origin/<base>..HEAD`,
+  all but the two that read a plan, the slice gate and the scope collision gate.
+  With no slice behind them, the security gate is a `security-engineer` review of a security-sensitive diff,
+  and a critical flow's sign-off comes from a `product-manager` dispatch.
+  A gate that fails is work left to change: plan it as below.
   Otherwise, compare HEAD with the commit `git ls-remote --heads origin <branch>` prints.
   When it is missing or differs, an agent allowed to write, the owner the `knowledge` skill's agent rule picks for the branch's work,
   runs `git push -u origin HEAD:<branch>` in the foreground, never with force:
   a remote head that is not an ancestor of HEAD stops the run.
   Confirm that `git ls-remote --heads origin <branch>` then prints HEAD; a rejected push stops the run, as `SKILL.md` § Stop says.
-  Then open the draft through the `pr-write` skill, as `references/phases.md` § 2 says,
-  and go on from its line that records the pull request.
+  Then open the draft through the `pr-write` skill with the inputs that file's Phase 7 passes,
+  `<base>` from § 1 and the closing line of its acceptance criteria gate among them,
+  and go on from the line of `references/phases.md` § 2 that records the pull request.
 - Work left to change, or uncommitted work, with no plan: dispatch `planning-agent` in the foreground, to `<state>/plans/<key>-implementation.md`
   when the session's task is an issue and `<state>/plans/<slug>-plan.md` otherwise.
   A plan that comes back `open-questions` or `blocked` is parked, and the run stops.

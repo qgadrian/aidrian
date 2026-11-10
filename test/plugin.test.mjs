@@ -821,8 +821,8 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
     'The cap is the `status` it prints, never `round` against the cap: a round at the cap can still be open on the same head, and an extra round can be granted.',
     '`round_limit` goes to the cap of `references/phases.md` § 4; any other status runs the round as its § 3 says.',
     'Nothing uncommitted and nothing left to change: start no engine.',
-    'A `fix_now` finding or a failing test is work left to change: plan it as below.',
-    'Then open the draft through the `pr-write` skill, as `references/phases.md` § 2 says',
+    'A gate that fails is work left to change: plan it as below.',
+    'Then open the draft through the `pr-write` skill with the inputs that file\'s Phase 7 passes, `<base>` from § 1 and the closing line of its acceptance criteria gate among them',
   ]) assert.ok(resume.includes(words), words);
   // pr-write stops on an unpushed branch and code-reviewer is read-only, so local-only commits are pushed before the draft.
   // The check reads the pull request's branch on origin: an upstream can track another branch with nothing ahead.
@@ -833,6 +833,12 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
   ]) assert.ok(resume.indexOf(words) > push && push !== -1, words);
   assert.ok(!resume.includes('@{u}'), 'the push check never reads the upstream');
   assert.ok(push < resume.indexOf('Then open the draft through the `pr-write` skill'), 'the push comes before the draft');
+  // Skipping the engine keeps its close gates and the base it passes: the path points to the engine's own steps.
+  const gates = resume.indexOf('Run the gates of Phase 5 of the `issue-implement` skill\'s `steps/phases-5-8-close.md` on `origin/<base>..HEAD`');
+  assert.ok(gates !== -1 && gates < push, 'the close gates run before the push');
+  const close = flat('plugins/aidrian/skills/issue-implement/steps/phases-5-8-close.md');
+  for (const words of ['## Phase 5: before the pull request', '**Acceptance criteria coverage.**', 'A gap turns `Fixes <ref>` into `Refs <ref>`',
+    '## Phase 7: the pull request', 'the base from phase 0, passed explicitly']) assert.ok(close.includes(words), `the engine's step the path points to: ${words}`);
   for (const gone of ['a pull request already at the cap goes to', 'commits what is uncommitted, and pushes']) assert.ok(!resume.includes(gone), gone);
   // plan-implement stops on a plan with issue_id, so a plan written for an issue session must not go through the one-line task row.
   assert.ok(!resume.includes('as the one-line task row does'), 'the no-plan path names its own engine');

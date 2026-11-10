@@ -120,3 +120,5 @@ and the plan path in `artifacts` when a draft exists.
 When the `plan-review` skill dispatches you to critique, stay read-only: edit no file, and skip § Self-critique pass.
 Apply the `plan-review` skill's `references/review-lens.md` and return its findings, with the proposed change as a unified diff
 in `artifacts.proposed_diff` unless the brief says `--findings-only`. Write the plan only when a later dispatch carries the approved diff.
+A `proof` change to a closure criterion, as the `plan-implement` skill's § Change a closure criterion during implementation says,
+counts as approved when its dispatch carries the reviewer's `plan_change` and the developer's `break` run.

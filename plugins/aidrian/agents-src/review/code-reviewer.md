@@ -87,8 +87,11 @@ or `user_chose`.
 
 ## Output
 
-Return the machine handoff from the `knowledge` skill with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`, ordered by severity;
-`summary` is the impact and `next_step` the fix direction. Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handoff reference defines it.
+Return the machine handoff from the `knowledge` skill with `findings`, ordered by severity, each with
+`severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`;
+`summary` is the impact and `next_step` the fix direction. A `next_step` never hands work or a choice to the Human.
+A finding that a plan closure criterion is unmet as written, while the behaviour it names is proven elsewhere, adds `plan_change`
+as the `knowledge` skill's handoff reference defines it, and its `next_step` names that change. Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handoff reference defines it.
 With no findings, `findings` is `[]` and `decision` says the security sweep completed and gives the test result.
 Use Markdown only when talking to the Human directly.
 Product and design concerns are routed, never restyled as code-quality findings. Leave no verdict implicit when the evidence supports one.

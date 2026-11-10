@@ -62,6 +62,25 @@ The `design-import` skill's `references/plan-requirements.md` sets their rules; 
 - A screen slice is complete only with screenshot-against-artboard evidence for each artboard in its coverage table,
   reviewed by `designer` against the deviation ledger. No evidence: report the exact failure; never claim parity without it.
 
+## Change a closure criterion during implementation
+
+A review finding can show a slice's closure criterion unmet as written while the behaviour it names is proven elsewhere.
+Changing the plan then is not a question for the Human. The finding's `plan_change` sets the route;
+the orchestrator may make `proof` stricter, to `promise`, never the other way. With no `plan_change`, or on disagreement, it is `promise`.
+Issue acceptance criteria never change here: they are the tracker's text.
+
+- **`proof`**: the orchestrator decides it, with no question, only when every condition holds:
+  - `existing_tests` names at least one committed test that runs the real logic;
+  - in the fix pass already under way, within its round cap, the developer applied `break`, saw those tests fail,
+    reverted it, and recorded the run in its handoff;
+  - any evidence in a later slice is added to that slice's closure criteria, so the run cannot close without it;
+  - no critical-flow or security sign-off named the tests being replaced, or its owner signed again.
+  Any condition unmet: the slice keeps its criterion and the developer writes the tests.
+- **`promise`**: it drops or changes behaviour, a parity row, or a non-goal. `product-manager` returns `decision_options`,
+  and `aidrian decisions resolve` sets the authority, as `knowledge/references/decisions.md` says. The Human sees it only under `ask`.
+- **Record**: `planning-agent` writes the change as one revision history entry, attributed to the orchestrator,
+  and the pull request summary lists it, through the `pr-write` skill.
+
 ## Rules
 
 - The plan file is the only record of slice state. Never track progress in the conversation alone.

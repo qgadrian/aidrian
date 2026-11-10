@@ -39,6 +39,8 @@ A true premise does not make the reviewer's fix safe. Before a fix goes to its o
 A fix that would weaken any of these is a conflict, not a `fix_now`: send it, with both sources, to the agent that set
 the condition or made the decision, such as `product-manager` for a product condition or `security-engineer` for a
 security one, and fix nothing until that agent answers. If it keeps its position, the finding is disputed.
+A fix that changes a plan closure criterion follows the `plan-implement` skill's § Change a closure criterion during implementation:
+the Human approving a plan does not make the Human the owner of how it is proven.
 Set `affects` from what the fix puts at risk as well as what the finding describes, and use the higher one:
 a bot or engine finding carries only a severity, so its other axes are yours to set.
 

@@ -1365,3 +1365,25 @@ test('a review finding\'s proposed fix is checked against approval conditions an
   assert.match(rules, /Set `affects` from what the fix puts at risk/);
   assert.match(read('skills/orchestration/SKILL.md'), /§ Check the proposed fix/);
 });
+
+test('a plan closure criterion proven elsewhere is changed by the run, not asked of the Human', () => {
+  // A reviewer found a closure criterion unmet as written while shared tests proved the behaviour, wrote "pending the
+  // Human's choice", and the orchestrator relayed a test-coverage question the run could settle on evidence.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const implement = read('skills/plan-implement/SKILL.md');
+  assert.match(implement, /## Change a closure criterion during implementation/);
+  assert.match(implement, /Changing the plan then is not a question for the Human\./);
+  assert.match(implement, /may make `proof` stricter, to `promise`, never the other way/);
+  assert.match(implement, /applied `break`, saw those tests fail, reverted it/);
+  assert.match(implement, /any evidence in a later slice is added to that slice's closure criteria/);
+  assert.match(implement, /The Human sees it only under `ask`\./);
+  assert.match(implement, /Issue acceptance criteria never change here/);
+  const reviewer = read('agents-src/review/code-reviewer.md');
+  assert.match(reviewer, /A `next_step` never hands work or a choice to the Human\./);
+  assert.match(reviewer, /adds `plan_change`/);
+  assert.match(read('agents/code-reviewer.md'), /A `next_step` never hands work or a choice to the Human\./);
+  assert.match(read('skills/knowledge/references/handoff.md'), /`plan_change` \(`code-reviewer`, on a finding about a plan closure criterion\): `\{kind, existing_tests, break\}`/);
+  assert.match(read('skills/planning-agent/SKILL.md'), /A `proof` change to a closure criterion.*counts as approved when its dispatch carries the reviewer's `plan_change`/);
+  assert.match(read('skills/orchestration/references/review-rules.md'), /the Human approving a plan does not make the Human the owner of how it is proven/);
+  assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), /§ Change a closure criterion during implementation/);
+});

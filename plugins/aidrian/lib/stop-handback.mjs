@@ -37,7 +37,8 @@ const addressed = (human) => [
 const ITEM = /^(?:[-*+]|\d+[.)])\s+(.*)$/u;
 
 // The items of each list addressed to the Human: [{ label, items }]. An item is a top-level list entry with its
-// continuation lines; the list ends at a heading, a new label, or a blank line before a line that is not an entry.
+// continuation lines; the list ends at a heading, a new label, or blank lines before a line that is neither an entry nor
+// indented under one.
 export function handBackLists(message, human) {
   // Fenced code is dropped, not blanked: an example the message quotes, such as a Markdown sample with a "For the Human"
   // heading, is never work handed back, and a code block inside an item does not end its list.
@@ -55,7 +56,10 @@ export function handBackLists(message, human) {
     for (; j < lines.length; j += 1) {
       const line = lines[j];
       if (line.trim() === '') {
-        if (!ITEM.test(lines[j + 1]?.trim() ?? '')) break;
+        // Blank lines end the list unless the next line with text is an entry or an indented part of the last one,
+        // as around a code block inside an item.
+        const next = lines.slice(j + 1).find((later) => later.trim() !== '') ?? '';
+        if (!ITEM.test(next.trim()) && !(items.length && /^\s/u.test(next))) break;
         continue;
       }
       if (/^#{1,6}\s/u.test(line.trim())) break;

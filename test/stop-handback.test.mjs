@@ -64,6 +64,10 @@ test('items that say how critical each is, and messages with no list for the Hum
 test('a fenced block inside an item keeps the list going, and only a real fence hides a list', () => {
   const inItem = 'For the Human:\n- High: approve the migration. Example:\n  ```sql\n  SELECT 1;\n  ```\n- Rotate the deploy key.';
   assert.match(handBackReason({ message: inItem, human: HUMAN }) ?? '', /\("Rotate the deploy key\."\)/u, 'the item after the code block is read');
+  const spaced = 'For Adrian:\n- High: approve the migration. Example:\n\n  ```sql\n  SELECT 1;\n  ```\n\n- Rotate the deploy key.';
+  assert.match(handBackReason({ message: spaced, human: HUMAN }) ?? '', /\("Rotate the deploy key\."\)/u, 'blank lines around the code block keep the list going');
+  const indented = 'For Adrian:\n- High: the deploy key.\n\n  Only Adrian holds the vault login.\n- Rotate the token.';
+  assert.match(handBackReason({ message: indented, human: HUMAN }) ?? '', /\("Rotate the token\."\)/u, 'an indented paragraph under an item keeps the list going');
   const inlineCode = '```code``` is inline, not a fence.\n\nFor Adrian:\n- Rotate the token.';
   assert.ok(fires(inlineCode), 'a backtick line with backticks in its info string opens no fence');
   const sample = 'The sample:\n\n````md\n```js\n## For the Human\n- Rotate the deploy key.\n````\n\nDone.';

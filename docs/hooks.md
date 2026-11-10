@@ -429,8 +429,8 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 - A count toward an [automatic lesson](lessons.md#automatic-lessons): when one rule blocks the same session a third time,
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
-The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `dependency-link`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
+The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
+`grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.

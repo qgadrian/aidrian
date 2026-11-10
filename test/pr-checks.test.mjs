@@ -73,6 +73,9 @@ test('a superseded run and a skipped matrix template row are left out: a draft-t
   assert.deepEqual(currentRows(rows).map((row) => row.name), [...[1, 2, 3, 4, 5, 6].map((shard) => `🎭 E2E Shard ${shard}`), 'E2E gate', 'Vercel']);
   // Without the newer run, the template row is still dropped, and the old run's own skip is still named.
   assert.equal(computeVerdict(rows.slice(0, 2), policy).reason, 'unexpected skip: E2E gate');
+  // Two workflow files may share a display name: an older run's failure is never dropped, only its skip.
+  const shared = [run(100, 'security', 'FAILURE', { workflow: 'CI' }), run(200, 'lint', 'SUCCESS', { workflow: 'CI' })];
+  assert.equal(computeVerdict(shared).verdict, 'failing');
   // Another event's run of the same workflow is no supersession, and a failure under a template name still fails.
   assert.deepEqual(currentRows([run(100, 'lint', 'SUCCESS', { event: 'push' }), run(200, 'lint', 'SUCCESS')]).length, 2);
   assert.equal(computeVerdict([run(300, 'Shard ${{ matrix.shard }}', 'FAILURE')]).verdict, 'failing');

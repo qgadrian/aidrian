@@ -41,10 +41,10 @@ function itemColumn(line) {
 // - a fence on a line of its own indented 4 or more columns past the list item it is in (past column 0 outside one) is
 //   indented code, not a fence; the item is the last list item line outside a fence, until a line indented less than its
 //   content column;
-// - an unclosed fence on an indented line, such as a second bare fence inside a list item, ends before the first later
-//   line indented less than it, as its container does; only one at column 0 runs to the end of the doc.
-// The second also covers a container this reads wrong: a fence it misses leaves its closer to open a fence that is never
-// closed, and that one then ends where the item does instead of hiding every later heading.
+// - an unclosed fence inside a list item, such as a second bare fence there, ends with the item: before the first later
+//   line indented less than the item's content column. Outside a list, an unclosed fence runs to the end of the doc.
+// The second also bounds a fence this misses inside a list item: its closer opens a fence that is never closed, and that
+// one then ends where the item does instead of hiding every later heading.
 // Known limit: a lazy continuation line, indented less than its item, ends the item here.
 export function fencedIn(lines) {
   const expanded = lines.map(expandTabs);
@@ -61,7 +61,7 @@ export function fencedIn(lines) {
     if (ends(item) && itemColumn(line) === null) item = null;
     open = fenceOf(line);
     if (open && open.item === null && indent >= (item ?? 0) + 4) open = null;
-    if (open && open.item === null && indent > 0 && !closedAfter(expanded, at, open)) open.until = indent;
+    if (open && open.item === null && item !== null && !closedAfter(expanded, at, open)) open.until = item;
     if (!open && line.trim()) item = itemColumn(line) ?? item;
     if (open?.item != null) item = open.item;
     return open !== null;

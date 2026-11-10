@@ -81,6 +81,9 @@ test('fencedLines: an unclosed bare fence inside a list item ends with the item'
   assert.deepEqual(fencedLines(body), [false, false, true, true, true, true, true, false, false, false]);
   assert.deepEqual(headings(body), ['Testing', 'Risks']);
   assert.equal(asksForReview(body), true);
+  // Outside a list, an unclosed fence indented 1 to 3 spaces still runs to the end, as CommonMark reads it.
+  assert.deepEqual(headings([`  ${FENCE}md`, '## Testing', '## Risks'].join('\n')), []);
+  assert.deepEqual(headings(['Intro.', '', `   ${FENCE}`, '## Testing'].join('\n')), []);
   const closed = ['- item', `  ${FENCE}`, 'code at column 0', `  ${FENCE}`, '## After'].join('\n');
   assert.deepEqual(fencedLines(closed), [false, true, true, true, false], 'a closed fence keeps a less indented line inside it');
 });

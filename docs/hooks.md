@@ -831,13 +831,18 @@ one unbreakable token such as a URL are never reported.
 ## Delivery check
 
 When a subagent's last message presents a `.md` or `.json` path as delivered and that path exists nowhere, the stop hook
-sends it back once with the missing paths: it writes them, corrects its report, or says it removed them on purpose.
-Its second stop always ends. Each send-back is also an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
+sends it back once, on the first stop of its turn, with the missing paths: it writes them, corrects its report, or says
+it removed them on purpose. A later stop of that turn is not sent back for them. Each send-back is also an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
 for that agent type.
 A path counts as delivered only on a line that also has the 📄 marker or one of the words wrote, written, created, saved,
 handoff, or output, in any case, outside a path.
 A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.
-A path shortened with `...` exists nowhere, so it is sent back too: the `orchestrator` names each path in full.
+A relative path counts as there when it exists under any root it can be relative to (`lib/delivery-check.mjs`):
+the hook's folder, its checkout and the main checkout, the project, the project's [state folder](project-folder.md#local-state)
+(`dispatch/`, `plans/`, `reviews/`, `tmp/`), every worktree of the repository, this plugin, its `skills/` folder and each
+skill's folder (`references/tracker.md`), or the end of a file the agent's own Read, Write, or Edit calls named, such as a
+doc in another project. An absolute or `~/` path is checked as written.
+A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Background check

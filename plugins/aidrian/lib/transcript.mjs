@@ -175,6 +175,22 @@ export function filesRead(text, keep = () => true) {
   return [...read];
 }
 
+// Every `file_path` the transcript's Read, Write, Edit, MultiEdit, and NotebookEdit calls name, once each: the files the
+// agent touched with its file tools, which the delivery check reads a claimed path's root from (delivery-check.mjs).
+const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+export function filesTouched(text) {
+  const files = new Set();
+  for (const line of text.split('\n')) {
+    const content = parseLine(line)?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      const file = block?.type === 'tool_use' && FILE_TOOLS.has(block.name) ? block.input?.file_path ?? block.input?.notebook_path : null;
+      if (typeof file === 'string') files.add(file);
+    }
+  }
+  return [...files];
+}
+
 // The ids of the background tasks the transcript's own tool calls launched or resumed, read from the structured result
 // Claude Code stores beside each tool result (the entry's `toolUseResult`), never from a result's text: a command's output
 // or an agent's report that quotes a launch line launches nothing.

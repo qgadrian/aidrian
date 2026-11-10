@@ -1,17 +1,15 @@
 // The rows the hooks write to the dispatch log (dispatch-log.mjs): `dispatch` after an Agent call, `stop` when a subagent
-// stops, `session` when a session ends, and `hook_deny` when one of the plugin's rules blocks a call; and the delivery
-// check behind a `stop` row, which reads the paths a subagent's last message presents as written.
+// stops, `session` when a session ends, and `hook_deny` when one of the plugin's rules blocks a call. The delivery check
+// behind a `stop` row, which reads the paths a subagent's last message presents as written, is delivery-check.mjs.
 // The stop hook's other check reads which background shells and agents the subagent started are still running (runningChildren).
 // docs/dispatch-log.md describes every field.
 
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { CHILD_SEND_BACKS } from './child-send-backs.mjs';
+import { checkDelivery } from './delivery-check.mjs';
 import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
-import { checkoutRoots } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import {
@@ -21,11 +19,6 @@ import {
 const DESCRIPTION_CHARS = 80;
 // A hook_deny row's `reason`: the start of what the rule matched.
 const REASON_CHARS = 120;
-const CLAIMED_PATHS = 20;
-// A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template.
-const CLAIM = /(?<![\w.~/:@<>{}$*%#-])(~?[\w.-]*\/[\w.~/-]*\.(?:md|json))(?![\w/<>{}*-])/gu;
-// A line that presents a file as delivered: a delivery word that is not part of a path, or the 📄 file marker.
-const DELIVERY_LINE = /(?<![\w./-])(?:wrote|written|created|saved|handoffs?|outputs?)(?![\w./-])|📄/iu;
 
 const text = (value, limit = Infinity) => (typeof value === 'string' && value !== '' ? value.slice(0, limit) : null);
 
@@ -48,13 +41,6 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
     duration_ms: Number.isFinite(response.totalDurationMs) ? response.totalDurationMs : null,
     tool_uses: Number.isFinite(response.totalToolUseCount) ? response.totalToolUseCount : null,
   };
-}
-
-// The paths a subagent's last message presents as delivered, and those of them that exist nowhere: { claims, missing }.
-export function checkDelivery(input, project) {
-  const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
-  const claims = claimedPaths(input.last_assistant_message);
-  return { claims, missing: missingPaths(claims, cwd) };
 }
 
 // Whether the stop hook sends the subagent back, whether or not telemetry is on. A `missing` path sends it back on the
@@ -205,27 +191,6 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
   };
 }
 
-// The .md and .json paths a message presents as delivered, once each, at most CLAIMED_PATHS. A path on any other line
-// is a mention, such as "docs/old.md does not exist", and is never checked.
-export function claimedPaths(message) {
-  if (typeof message !== 'string') return [];
-  const lines = message.split('\n').filter((line) => DELIVERY_LINE.test(line));
-  const claims = lines.flatMap((line) => [...line.matchAll(CLAIM)].map((match) => match[1].replace(/[.]+$/u, '')));
-  return [...new Set(claims)].slice(0, CLAIMED_PATHS);
-}
-
-// The claimed paths that exist nowhere: not absolute, not from `cwd`, not from its checkout or the main checkout.
-export function missingPaths(claims, cwd) {
-  const resolve = (base, claim) => (claim.startsWith('~/') ? path.join(homedir(), claim.slice(2)) : path.resolve(base, claim));
-  let roots;
-  return claims.filter((claim) => {
-    if (existsSync(resolve(cwd, claim))) return false;
-    if (path.isAbsolute(claim) || claim.startsWith('~/')) return true;
-    roots ??= checkoutRoots(cwd);
-    return !roots || ![roots.current, roots.main].some((root) => existsSync(path.join(root, claim)));
-  });
-}
-
 // The knowledge docs among `files`, as { path, bytes }: the path as the index names it, and the size of the copy that
 // was read, or of the project's copy once that one is gone. A project doc matches by its path's end, so a read in a
 // worktree counts too.
@@ -236,3 +201,5 @@ function knowledgeDocsRead(files, project) {
     return file ? [{ path: doc, bytes: fileBytes(file) ?? fileBytes(path.resolve(project.root, doc)) }] : [];
   });
 }
+
+export { checkDelivery, claimedPaths, missingPaths } from './delivery-check.mjs';

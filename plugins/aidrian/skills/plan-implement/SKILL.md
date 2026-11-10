@@ -62,6 +62,11 @@ The `design-import` skill's `references/plan-requirements.md` sets their rules; 
 - A screen slice is complete only with screenshot-against-artboard evidence for each artboard in its coverage table,
   reviewed by `designer` against the deviation ledger. No evidence: report the exact failure; never claim parity without it.
 
+## Closure criteria
+
+A slice's closure criterion changes during the run only as the `orchestration` skill's `references/review-rules.md`
+§ A closure criterion proven elsewhere says. The plan's declared acceptance criteria never change there.
+
 ## Rules
 
 - The plan file is the only record of slice state. Never track progress in the conversation alone.

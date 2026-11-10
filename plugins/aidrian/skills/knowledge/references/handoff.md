@@ -6,6 +6,11 @@ Add a field only when your role emits it or the dispatch asks for it. Use these 
   `severity`, `likelihood`, `affects`, `cost` (`aidrian pr disposition --vocab` defines each word),
   `file`, `line`, `violated_rule`, `summary` (the impact), and `next_step` (the fix direction).
   A finding never carries its own disposition.
+  `plan_change` (any reviewer, on a finding about a slice's closure criterion): `{kind, existing_tests, break}`.
+  `kind` is `proof` when the same people, inputs, and observable result stay and only the test or slice proving them moves,
+  with no test double for any component the criterion names; `promise` when the finding proposes changing that behaviour,
+  a parity row, or a plan-only non-goal. Proof short of `proof` carries no `plan_change`.
+  `existing_tests` names each committed test that proves it; `break` is one change to that behaviour in production code that they must fail on.
 - `sign_off`: `approved` or `blocked` (`architect` and `product-manager` may also return `needs_evidence`).
   `approved` only when `findings` is empty or every finding is severity `low`; otherwise `blocked`.
   The dispatcher runs `aidrian pr disposition` on each finding; its `fix_now` result decides what gets fixed and wins over `sign_off`.

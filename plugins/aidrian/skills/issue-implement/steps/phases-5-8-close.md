@@ -36,6 +36,7 @@ Run the `pr-write` skill with:
 - the slices and their commit subjects, the verification commands with their outcomes, and the acceptance criteria covered;
 - the residual risks, and the accepted residuals;
 - each `decided_provisional`, with its reason, revisit trigger, and how it reverts;
+- each closure criterion change, with its kind, the tests that now prove it, and the break run;
 - draft, unless the Human asked for a pull request ready for review.
 
 The `pr-write` skill owns the title, the body, and the publishing.

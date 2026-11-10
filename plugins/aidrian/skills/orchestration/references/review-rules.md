@@ -1,6 +1,7 @@
 # Review rules
 
-The rules the `pr-review-loop`, `pr-review-fix`, and `autopilot` skills share. Each links here; none keeps a copy.
+The rules the `pr-review-loop`, `pr-review-fix`, and `autopilot` skills share;
+`issue-implement` and `plan-implement` cite § A closure criterion proven elsewhere. Each links here; none keeps a copy.
 
 ## Branch preflight
 
@@ -39,8 +40,39 @@ A true premise does not make the reviewer's fix safe. Before a fix goes to its o
 A fix that would weaken any of these is a conflict, not a `fix_now`: send it, with both sources, to the agent that set
 the condition or made the decision, such as `product-manager` for a product condition or `security-engineer` for a
 security one, and fix nothing until that agent answers. If it keeps its position, the finding is disputed.
+A fix that changes a slice's closure criterion follows § A closure criterion proven elsewhere:
+the Human approving a plan does not make the Human the owner of how it is proven.
 Set `affects` from what the fix puts at risk as well as what the finding describes, and use the higher one:
 a bot or engine finding carries only a severity, so its other axes are yours to set.
+
+## A closure criterion proven elsewhere
+
+A review finding can show a slice's closure criterion unmet as written while other tests already prove the behaviour it names.
+The coordinating session settles it; it is not a question for the Human.
+It covers a slice's closure criteria only: an issue's acceptance criteria and non-goals, and a plan's declared acceptance criteria,
+never change here, and a finding that would change them is a `scope_collision`.
+
+- **The default.** A finding with no `plan_change`, a `plan_change` with any condition below unmet, or a coordinator who doubts
+  the reviewer's `kind`: the slice keeps its criterion, and the developer meets it as written.
+- **`proof`**: the coordinating session decides it when every condition holds:
+  - `existing_tests` names at least one committed test that uses no test double for any component the criterion names;
+  - `break` changes the behaviour the criterion names, in production code and never in a test, and leaves every module loading;
+  - in the fix pass already under way, within its round cap, the developer applied `break` and every test in `existing_tests` failed
+    by assertion; a suite that failed to load rejects the run;
+  - the developer undid only the `break` edit, never with checkout, restore, or stash on a slice file, reran `existing_tests` green,
+    and showed in `commands_run` the same slice hash before the break and after the undo: `git diff <slice base> | git hash-object --stdin`,
+    and `git hash-object` on each file `git ls-files --others --exclude-standard` lists;
+  - on a slice that touches a critical flow or had a security review, its gate owner, `product-manager` or `security-engineer`,
+    answered fresh, dispatched with the `plan_change` and the break run: from `product-manager`, every `critical_flow[].sign_off`
+    for the flows the slice touches is `approved`; from `security-engineer`, `sign_off` is `approved` with no security `fix_now` open.
+- **`promise`**: a finding or fix proposes dropping or changing behaviour, or a parity row or non-goal of a plan with no issue.
+  A proof that fails a condition above is not a `promise`: the default applies.
+  `product-manager` returns `decision_options`, and `knowledge/references/decisions.md` routes it.
+- **Record.** One `planning-agent` dispatch writes the change with all its evidence, and in the same write adds any evidence
+  in a later slice to that slice's closure criteria, so the run cannot close without it.
+  The change counts as made only once the reread plan shows both. Its revision history entry credits whoever decided it:
+  the coordinating session for `proof`, the decision's owner for `promise`.
+  The next `pr-write` run lists it, a pull request update included.
 
 ## Fix passes
 

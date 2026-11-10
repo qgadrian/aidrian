@@ -115,6 +115,15 @@ If the plan cannot be completed safely, return the machine handoff with `status:
 the missing information and the questions to unblock in `blockers`, the repo paths to inspect in `deferred_refs`,
 and the plan path in `artifacts` when a draft exists.
 
+## Closure criterion change
+
+A dispatch that changes a slice's closure criterion during a run, as the `orchestration` skill's `references/review-rules.md`
+§ A closure criterion proven elsewhere says, writes only with the evidence for its kind.
+For `proof`: the `plan_change`, the break run with its hashes, the gate owner's answer on a gated slice,
+and the later slice's added criterion when the `plan_change` names evidence there.
+For `promise`: the `decided_provisional` or the Human's answer, and the authority `aidrian decisions resolve` gave.
+Any piece missing: write nothing and return `blocked`, naming it.
+
 ## Critique mode (plan-review)
 
 When the `plan-review` skill dispatches you to critique, stay read-only: edit no file, and skip § Self-critique pass.

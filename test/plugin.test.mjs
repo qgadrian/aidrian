@@ -1365,3 +1365,43 @@ test('a review finding\'s proposed fix is checked against approval conditions an
   assert.match(rules, /Set `affects` from what the fix puts at risk/);
   assert.match(read('skills/orchestration/SKILL.md'), /§ Check the proposed fix/);
 });
+
+test('a plan closure criterion proven elsewhere is changed by the run, not asked of the Human', () => {
+  // A reviewer found a closure criterion unmet as written while shared tests proved the behaviour, wrote "pending the
+  // Human's choice", and the orchestrator relayed a test-coverage question the run could settle on evidence.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const rules = read('skills/orchestration/references/review-rules.md');
+  for (const line of [
+    /## A closure criterion proven elsewhere/,
+    /The coordinating session settles it; it is not a question for the Human\./,
+    /an issue's acceptance criteria and non-goals, and a plan's declared acceptance criteria, never change here/,
+    /the slice keeps its criterion, and the developer meets it as written/,
+    /uses no test double for any component the criterion names/,
+    /in production code and never in a test, and leaves every module loading/,
+    /every test in `existing_tests` failed by assertion; a suite that failed to load rejects the run/,
+    /never with checkout, restore, or stash on a slice file/,
+    /the same slice hash before the break and after the undo: `git diff <slice base> \| git hash-object --stdin`, and `git hash-object` on each file `git ls-files --others --exclude-standard` lists/,
+    /every `critical_flow\[\]\.sign_off` for the flows the slice touches is `approved`/,
+    /A proof that fails a condition above is not a `promise`: the default applies\./,
+    /from `security-engineer`, `sign_off` is `approved` with no security `fix_now` open/,
+    /answered fresh, dispatched with the `plan_change` and the break run/,
+    /`product-manager` returns `decision_options`, and `knowledge\/references\/decisions\.md` routes it/,
+    /adds any evidence in a later slice to that slice's closure criteria/,
+    /credits whoever decided it: the coordinating session for `proof`, the decision's owner for `promise`/,
+    /the Human approving a plan does not make the Human the owner of how it is proven/,
+  ]) assert.match(rules, line);
+  const pointer = /`references\/review-rules\.md` § A closure criterion proven elsewhere/;
+  assert.match(read('skills/plan-implement/SKILL.md'), pointer);
+  assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), pointer);
+  assert.match(read('skills/issue-implement/steps/phases-5-8-close.md'), /each closure criterion change, with its kind, the tests that now prove it, and the break run/);
+  assert.match(read('skills/pr-write/references/body-template.md'), /A closure criterion changed during the run is one such decision/);
+  const planning = read('skills/planning-agent/SKILL.md');
+  assert.match(planning, /## Closure criterion change .*For `promise`: the `decided_provisional` or the Human's answer.*Any piece missing: write nothing and return `blocked`/);
+  assert.match(read('skills/knowledge/references/handoff.md'), /Proof short of `proof` carries no `plan_change`\./);
+  assert.doesNotMatch(planning.slice(planning.indexOf('## Critique mode')), /closure criterion/);
+  for (const rel of ['agents-src/review/code-reviewer.md', 'agents/code-reviewer.md']) {
+    assert.match(read(rel), /A `next_step` never hands the Human work an agent can do/);
+    assert.match(read(rel), /a `human_only` deferral stays as it is/);
+  }
+  assert.match(read('skills/knowledge/references/handoff.md'), /`plan_change` \(any reviewer, on a finding about a slice's closure criterion\): `\{kind, existing_tests, break\}`/);
+});

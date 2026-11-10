@@ -62,6 +62,10 @@ Its steps keep their owners, and its own output is the end of its part.
 
 An open pull request on the branch is adopted, never implemented again: start no implementing skill on it.
 
+- Before the first round of `references/phases.md` § 3, uncommitted changes that belong to the pull request go to their owner,
+  picked by the `knowledge` skill's agent rule, to finish, verify with the project's checks, commit, and push;
+  then confirm that `git ls-remote --heads origin <branch>` prints HEAD.
+  Changes the run cannot attribute to the pull request stop it, as the branch preflight of the `orchestration` skill's `references/review-rules.md` says.
 - The product feedback step of `references/phases.md` § 2 runs as written: `status` decides whether anything is owed.
 - Rounds the pull request already had count toward the cap.
   The round is the `round` that `aidrian pr review <n>` prints, never a fresh count from 1.

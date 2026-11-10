@@ -833,6 +833,14 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
   ]) assert.ok(resume.indexOf(words) > push && push !== -1, words);
   assert.ok(!resume.includes('@{u}'), 'the push check never reads the upstream');
   assert.ok(push < resume.indexOf('Then open the draft through the `pr-write` skill'), 'the push comes before the draft');
+  // pr-review reviews the published head: a draft's uncommitted work is committed and pushed before its first round.
+  const handed = resume.indexOf('Before the first round of `references/phases.md` § 3, uncommitted changes that belong to the pull request go to their owner');
+  assert.ok(handed !== -1 && handed < resume.indexOf('Rounds the pull request already had count toward the cap.'), 'the handed-over edits are committed before the rounds');
+  for (const words of ['to finish, verify with the project\'s checks, commit, and push', 'confirm that `git ls-remote --heads origin <branch>` prints HEAD',
+    'Changes the run cannot attribute to the pull request stop it, as the branch preflight of the `orchestration` skill\'s `references/review-rules.md` says.']) {
+    assert.ok(resume.indexOf(words) > handed, words);
+  }
+  assert.match(flat('plugins/aidrian/skills/orchestration/references/review-rules.md'), /## Branch preflight .*`git status --porcelain` must be clean or hold only this pull request's work/u);
   // Skipping the engine keeps its close gates and the base it passes: the path points to the engine's own steps.
   const gates = resume.indexOf('Run the gates of Phase 5 of the `issue-implement` skill\'s `steps/phases-5-8-close.md` on `origin/<base>..HEAD`');
   assert.ok(gates !== -1 && gates < push, 'the close gates run before the push');

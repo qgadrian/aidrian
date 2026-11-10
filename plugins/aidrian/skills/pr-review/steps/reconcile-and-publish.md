@@ -38,7 +38,8 @@ then severity (critical to low), then likelihood (routine to contrived).
 Write the round as `references/manifest.md` says: new findings with status `open` (or `follow_up`, on a later round, as the skill's step 2 says) and the next free ids,
 the changed statuses, `round` raised by one, and this round's `head_sha` and `base_sha`.
 Then run `aidrian pr disposition --manifest <file>`: exit 1 lists each finding whose `disposition` its axes do not give.
-Write the first of its `expected` values, or fix the axes when they are wrong, and run it again until it exits 0.
+Write the first of its `expected` values; an empty `expected`, or axes that are wrong, means asking the agent for its axes again.
+Run it again until it exits 0.
 
 ## 5. Comment
 

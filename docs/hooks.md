@@ -827,7 +827,8 @@ gives each finding the `disposition` that `aidrian pr disposition` prints for it
 Before an Edit or Write of a manifest, or of a temporary copy of one (a file in a `reviews` folder named `pr-<n>.json`,
 or starting with it, such as `pr-42.json.tmp`), the file-write hook reads the file as the write leaves it.
 It refuses the write when a finding's `disposition` is not a value the [disposition table](../plugins/aidrian/lib/finding-disposition.json)
-gives its severity, likelihood, affects, and cost, and names each such finding with the value its axes give.
+gives its severity, likelihood, affects, and cost, and names each such finding with the value its axes give. A finding whose axes are not in the vocabulary refuses
+whatever its disposition, even `invalid`, the word the command prints for such axes.
 Both readings count: with no source, as the `pr-review` skill runs the command, and as an agent's finding in its
 `raised_in` round (`--source bot --round`), where the late-round rule can change it. A finding with no `disposition` yet is not judged.
 An edit to an axis alone refuses too, as the old disposition no longer follows from it.
@@ -836,7 +837,7 @@ a disposition that looks wrong means its axes are wrong.
 
 Text that does not parse as JSON, and an `apply_patch`, whose result the hook cannot see, are let through.
 A manifest written from the shell is not judged here: `aidrian pr disposition --manifest <file>` checks one, exiting 1
-with each drifting finding (`drift`: its `id`, `disposition`, and the `expected` values), and the `pr-review` and
+with each drifting finding (`drift`: its `id`, `disposition`, and the `expected` values, empty for axes outside the vocabulary), and the `pr-review` and
 `pr-review-fix` skills run it after each write and before each fix.
 `aidrian pr disposition` splits an argument that starts with `--` and holds spaces into words, as zsh passes a variable
 of flags unsplit, so `aidrian pr disposition $flags` reads every flag.

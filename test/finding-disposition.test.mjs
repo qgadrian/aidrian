@@ -217,7 +217,8 @@ test('manifestDrift names a hand-set disposition with the value the axes give, a
   assert.deepEqual(manifestDrift({ findings: [finding()] }), []);
   assert.deepEqual(manifestDrift({ findings: [finding({ disposition: 'fix_now' })] }), [{ id: 'F1', disposition: 'fix_now', expected: ['accepted_residual'] }]);
   assert.deepEqual(manifestDrift({ findings: [finding({ likelihood: undefined, affects: undefined, disposition: 'fix_now' })] }), [{ id: 'F1', disposition: 'fix_now', expected: ['needs_axis', 'acceptable_as_is'] }], 'a finding missing an axis needs one');
-  assert.deepEqual(manifestDrift({ findings: [finding({ severity: 'P2' })] }), [{ id: 'F1', disposition: 'accepted_residual', expected: ['invalid'] }], 'axes outside the vocabulary never pass');
+  assert.deepEqual(manifestDrift({ findings: [finding({ severity: 'P2' })] }), [{ id: 'F1', disposition: 'accepted_residual', expected: [] }], 'axes outside the vocabulary never pass');
+  assert.deepEqual(manifestDrift({ findings: [finding({ severity: 'P2', disposition: 'invalid' })] }), [{ id: 'F1', disposition: 'invalid', expected: [] }], 'not even with the disposition the command calls them');
   assert.deepEqual(manifestDrift({ findings: [finding({ disposition: undefined }), null, 'x'] }), [], 'a finding with no disposition yet is not judged');
   assert.deepEqual(manifestDrift({}), []);
 });
@@ -271,6 +272,9 @@ test('the file-write hook refuses a Write or Edit that sets a disposition the ax
   assert.match(refused.stderr, /change the axes, never the disposition alone/);
   assert.deepEqual([hook('Write', { content: text([finding()]) }).status], [0], 'the tool\'s value passes');
   assert.equal(hook('Write', { content: '{ not json' }).status, 0, 'text that does not parse runs');
+  const invalid = hook('Write', { content: text([finding({ severity: 'P2', disposition: 'invalid' })]) });
+  assert.equal(invalid.status, 2, 'axes outside the vocabulary refuse, whatever the disposition');
+  assert.match(invalid.stderr, /F1: "invalid", and its axes are not in the vocabulary/);
 
   writeFileSync(file, text([finding()]));
   const edit = hook('Edit', { old_string: '"disposition": "accepted_residual"', new_string: '"disposition": "fix_now"' });

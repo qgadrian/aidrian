@@ -22,7 +22,7 @@
 //   aidrian pr disposition --manifest <state>/reviews/pr-42.json
 //
 // checks a pr-review manifest (skills/pr-review/references/manifest.md): every finding's `disposition` must be a value
-// this table gives its axes (manifestDrift). Output: { file, findings, drift: [{ id, disposition, expected }] }. Exit 0
+// this table gives its axes, and every finding's axes must be in the vocabulary (manifestDrift). Output: { file, findings, drift: [{ id, disposition, expected }] }. Exit 0
 // when none drifts, 1 when one does, 2 when the file does not read as a manifest. The file-write hook refuses a write
 // that sets a drifting disposition (docs/hooks.md#review-dispositions).
 
@@ -94,14 +94,16 @@ export function toolValues(finding, table = loadTable()) {
 }
 
 // The findings of a review manifest whose `disposition` is not a value the table gives their axes, as
-// [{ id, disposition, expected }]: a disposition set by hand, or kept after its axes changed. A finding with no
-// disposition yet is not judged. `manifest` is the parsed file; anything without a findings list has none.
+// [{ id, disposition, expected }]: a disposition set by hand, or kept after its axes changed. A finding whose axes are
+// not in the vocabulary always drifts, with `expected` empty, whatever its disposition: only its axes can be fixed.
+// A finding with no disposition yet is not judged. `manifest` is the parsed file; anything without a findings list has none.
 export function manifestDrift(manifest, table = loadTable()) {
   const findings = Array.isArray(manifest?.findings) ? manifest.findings : [];
   const drift = [];
   for (const finding of findings) {
     if (finding === null || typeof finding !== 'object' || finding.disposition === undefined || finding.disposition === null) continue;
-    const expected = toolValues(finding, table);
+    const values = toolValues(finding, table);
+    const expected = values.includes('invalid') ? [] : values;
     if (!expected.includes(finding.disposition)) drift.push({ id: finding.id ?? null, disposition: finding.disposition, expected });
   }
   return drift;
@@ -126,7 +128,8 @@ export function manifestWriteProblem(writes, table = loadTable()) {
       continue;
     }
     for (const { id, disposition, expected } of manifestDrift(manifest, table)) {
-      lines.push(`  ${path.basename(file)} ${id ?? '(no id)'}: ${JSON.stringify(disposition)}, where its axes give ${expected.join(' or ')}`);
+      const want = expected.length ? `where its axes give ${expected.join(' or ')}` : 'and its axes are not in the vocabulary (`aidrian pr disposition --vocab`)';
+      lines.push(`  ${path.basename(file)} ${id ?? '(no id)'}: ${JSON.stringify(disposition)}, ${want}`);
     }
   }
   if (!lines.length) return null;

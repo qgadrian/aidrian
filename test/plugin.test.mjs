@@ -1370,20 +1370,34 @@ test('a plan closure criterion proven elsewhere is changed by the run, not asked
   // A reviewer found a closure criterion unmet as written while shared tests proved the behaviour, wrote "pending the
   // Human's choice", and the orchestrator relayed a test-coverage question the run could settle on evidence.
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
-  const implement = read('skills/plan-implement/SKILL.md');
-  assert.match(implement, /## Change a closure criterion during implementation/);
-  assert.match(implement, /Changing the plan then is not a question for the Human\./);
-  assert.match(implement, /may make `proof` stricter, to `promise`, never the other way/);
-  assert.match(implement, /applied `break`, saw those tests fail, reverted it/);
-  assert.match(implement, /any evidence in a later slice is added to that slice's closure criteria/);
-  assert.match(implement, /The Human sees it only under `ask`\./);
-  assert.match(implement, /Issue acceptance criteria never change here/);
-  const reviewer = read('agents-src/review/code-reviewer.md');
-  assert.match(reviewer, /A `next_step` never hands work or a choice to the Human\./);
-  assert.match(reviewer, /adds `plan_change`/);
-  assert.match(read('agents/code-reviewer.md'), /A `next_step` never hands work or a choice to the Human\./);
-  assert.match(read('skills/knowledge/references/handoff.md'), /`plan_change` \(`code-reviewer`, on a finding about a plan closure criterion\): `\{kind, existing_tests, break\}`/);
-  assert.match(read('skills/planning-agent/SKILL.md'), /A `proof` change to a closure criterion.*counts as approved when its dispatch carries the reviewer's `plan_change`/);
-  assert.match(read('skills/orchestration/references/review-rules.md'), /the Human approving a plan does not make the Human the owner of how it is proven/);
-  assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), /§ Change a closure criterion during implementation/);
+  const rules = read('skills/orchestration/references/review-rules.md');
+  for (const line of [
+    /## A closure criterion proven elsewhere/,
+    /The coordinating session settles it; it is not a question for the Human\./,
+    /an issue's acceptance criteria and non-goals, and a plan's declared acceptance criteria, never change here/,
+    /the slice keeps its criterion, and the developer meets it as written/,
+    /uses no test double for any component the criterion names/,
+    /in production code and never in a test, and leaves every module loading/,
+    /every test in `existing_tests` failed by assertion; a suite that failed to load rejects the run/,
+    /never with checkout, restore, or stash on a slice file/,
+    /the same `git diff \| git hash-object --stdin` before and after the break/,
+    /returned a fresh `sign_off` of `approved`, dispatched with the `plan_change` and the break run/,
+    /`product-manager` returns `decision_options`, and `knowledge\/references\/decisions\.md` routes it/,
+    /adds any evidence in a later slice to that slice's closure criteria/,
+    /credits whoever decided it: the coordinating session for `proof`, the decision's owner for `promise`/,
+    /the Human approving a plan does not make the Human the owner of how it is proven/,
+  ]) assert.match(rules, line);
+  const pointer = /`references\/review-rules\.md` § A closure criterion proven elsewhere/;
+  assert.match(read('skills/plan-implement/SKILL.md'), pointer);
+  assert.match(read('skills/issue-implement/steps/phases-1-4-implement.md'), pointer);
+  assert.match(read('skills/issue-implement/steps/phases-5-8-close.md'), /each closure criterion change, with its kind, the tests that now prove it, and the break run/);
+  assert.match(read('skills/pr-write/references/body-template.md'), /A closure criterion changed during the run is one such decision/);
+  const planning = read('skills/planning-agent/SKILL.md');
+  assert.match(planning, /## Closure criterion change .*Any piece missing: write nothing and return `blocked`/);
+  assert.doesNotMatch(planning.slice(planning.indexOf('## Critique mode')), /closure criterion/);
+  for (const rel of ['agents-src/review/code-reviewer.md', 'agents/code-reviewer.md']) {
+    assert.match(read(rel), /A `next_step` never hands the Human work an agent can do/);
+    assert.match(read(rel), /a `human_only` deferral stays as it is/);
+  }
+  assert.match(read('skills/knowledge/references/handoff.md'), /`plan_change` \(any reviewer, on a finding about a slice's closure criterion\): `\{kind, existing_tests, break\}`/);
 });

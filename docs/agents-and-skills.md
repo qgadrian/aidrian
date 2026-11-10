@@ -76,7 +76,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | Planning | What it does |
 | --- | --- |
 | `planning-agent` | Writes or revises a local plan file. |
-| `plan-review` | Critiques a local plan. The Human approves each change it proposes; a closure criterion changed during implementation follows `plan-implement`. |
+| `plan-review` | Critiques a local plan. The Human approves each change. |
 | `issue-plan` | Plans one issue before the build. |
 | `initiative-agent` | Breaks a broad goal into a project of ordered tracker issues. |
 | `agent-issue-writer` | Drafts or creates tracker issues for agents. |
@@ -86,7 +86,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 
 | Build | What it does |
 | --- | --- |
-| `issue-implement` | Builds one issue to a draft pull request. |
+| `issue-implement` | Builds one issue to a draft pull request. A closure criterion proven by other tests changes without the Human. |
 | `plan-implement` | Builds a reviewed local plan to a draft pull request. |
 | `design-import` | Turns a Claude Design export into a design import and plan. |
 | `worktree-new` | Creates a task worktree and runs the project's bootstrap. |

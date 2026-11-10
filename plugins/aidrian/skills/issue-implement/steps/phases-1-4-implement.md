@@ -19,8 +19,8 @@
 Every non-trivial issue gets a slice plan, even when the issue carries an agent action plan.
 A chore, a docs-only change, or a one-file refactor with no behaviour change may be a single slice.
 A single slice still gets its review, its verification, and its hooks.
-A slice's closure criterion changes during implementation only as the `plan-implement` skill's
-§ Change a closure criterion during implementation says; the issue's acceptance criteria never change there.
+A slice's closure criterion changes during the run only as the `orchestration` skill's `references/review-rules.md`
+§ A closure criterion proven elsewhere says; the issue's acceptance criteria and non-goals never change there.
 
 1. A fresh plan from phase 0: use its slices, order, and verification. A load-bearing open question in it: stop and ask.
 2. Otherwise dispatch `planning-agent` in the foreground with: the issue summary (goal, scope, acceptance criteria with ids,

@@ -39,6 +39,7 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
 - **Tests run** is evidence: the behaviour each command or check proved. A test count alone proves nothing.
 - **Risk** names the blast radius, data or security impact, backward compatibility, and how to roll back.
 - **Decisions** lists each decision an agent made alone, so the reviewer can keep or reject it. It never names the agent.
+  A closure criterion changed during the run is one such decision: what the plan asked, the tests that now prove it, and the break they failed on.
   A decision with `hasOldWording` true replaces a written rule; with false, it fills a gap.
   A marker of `settled` is listed as settled in this branch. A marker of `removed` is listed as removed in this branch, with its status at the base.
   A bullet shows the status when it is not `unconfirmed`.

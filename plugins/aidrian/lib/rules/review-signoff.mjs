@@ -17,7 +17,7 @@
 
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
-import { originRepo, remoteRepos } from '../review-gate.mjs';
+import { originRepo, remoteRepos } from '../remotes.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 export const REASON =
@@ -32,12 +32,21 @@ export const REASON =
 // The one repository an approved command can only mean, or null. Only a single plain `aidrian pr ...` qualifies: a chain,
 // `cd`, `env -C`, or an environment prefix such as GH_REPO may aim it elsewhere. A checkout with several remotes qualifies
 // neither, since the forge's default may be a parent, not origin. `allowed` is the one prefix the caller's own rule permits.
-export function approvalRepo(project, command, cwd, allowed = '') {
+export const approvalRepo = (project, command, cwd, allowed = '') => approvalTarget(project, command, cwd, allowed).repo;
+
+// What approvalRepo reads, with why it found no repository: { repo } or { repo: null, miss }. `miss` is `remotes` for a
+// checkout with no single remote, `plain` for a command that is not one plain `aidrian pr ...`, or `origin` for no origin.
+// The checkout comes first, since no rewrite of the command helps there.
+export function approvalTarget(project, command, cwd, allowed = '') {
+  if (!oneRemote(project)) return { repo: null, miss: 'remotes' };
   const plain = new RegExp(`^\\s*${allowed}(?:[^\\s;&|()]*/)?aidrian\\s+pr\\s`, 'u').test(command);
-  if (!plain || walkCommands(command, cwd).length !== 1) return null;
-  if (new Set(remoteRepos(project)).size !== 1) return null;
-  return originRepo(project);
+  if (!plain || walkCommands(command, cwd).length !== 1) return { repo: null, miss: 'plain' };
+  const repo = originRepo(project);
+  return repo ? { repo } : { repo: null, miss: 'origin' };
 }
+
+// Whether this checkout has exactly one remote repository, so an answer naming `<owner>/<name>` can only mean it.
+export const oneRemote = (project) => new Set(remoteRepos(project)).size === 1;
 
 // Whether `question` names pull request `pr` of `repo`, as `owner/name#pr`.
 export const namesChange = (question, repo, pr) => new RegExp(`(?<![\\w./-])${repo.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}#${pr}(?!\\d)`, 'iu').test(question);

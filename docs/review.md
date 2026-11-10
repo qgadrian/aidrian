@@ -324,8 +324,13 @@ or touches `harness-config`, so a `signoff: "human"` flow and a change to the re
 Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.
 
 Raising the round cap works the same way. On an answer naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, the session runs
-`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, or the same on `aidrian pr await-review <PR> --request`,
-exactly as written. The `review-rounds` rule refuses the variable in any other form.
+`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` before `--max-rounds` when the step
+runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly as written. The `review-rounds` rule refuses the
+variable in any other form, and in a checkout with several remotes, where no answer can name the one repository the command
+acts on; there the Human runs it in their own shell. Each refusal names what missed: the checkout, the command's form, or
+what the answers lack (none, none naming `<owner>/<name>#<PR>`, none naming `--max-rounds <N>`, or the label picked).
+While a check at the cap waits for the judge or the Human, the refusal names that route first, since it needs no variable:
+run the judge and record its verdict, or ask the Human the printed question and record the answer ([Extra rounds](#extra-rounds)).
 
 **Rejected evidence.** A `holds` or `not_affected` verdict whose `evidence` is not a checkable citation counts as
 `cannot_verify`. `aidrian pr attest` warns as it records the pass, and `next[].notes` names the reviewer, so the session
@@ -866,8 +871,10 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request (`#<PR>`) and the
 round it grants (`round <N>`), given after the judge's verdict, with the option that starts with "Approve". Claude Code
 writes that answer, not the agent. A host without such a transcript, such as Codex, leaves the approval to the Human,
-who runs the command in their own shell. `--human deny` always runs. With no check waiting for the Human, as after a
-judge's stop, the deny names the Human's route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and `--max-rounds`.
+who runs the command in their own shell. `--human deny` always runs. While the check waits for the judge, the deny of an
+approval names the judge's route: run the `dispatch` the step prints, record its verdict, and run the step again. After a
+judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
+`--max-rounds`, on the Human's answer, or in the Human's own shell in a checkout with several remotes.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
 signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one

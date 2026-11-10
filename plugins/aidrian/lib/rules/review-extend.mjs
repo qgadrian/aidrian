@@ -6,8 +6,9 @@
 // starts with "Approve". The host writes that answer to the transcript; the agent's own tool calls cannot.
 // `--human deny`, and `--verdict`, always run. An approval with no ask waiting in this machine's review record is
 // refused too: the review step writes that record before it prints `extension_ask`, so only a record from another
-// machine lacks it, and that approval is the Human's to run. After a judge's stop nothing waits for an answer, so that
-// deny names the Human's route to one more round instead: AIDRIAN_ALLOW_EXTRA_ROUNDS=1 with --max-rounds, in their shell.
+// machine lacks it, and that approval is the Human's to run. While the check waits for the judge, that deny names the
+// judge's route. After a judge's stop nothing waits for an answer, so it names the route to one more round instead:
+// AIDRIAN_ALLOW_EXTRA_ROUNDS=1 with --max-rounds, on the Human's answer, or in their shell with several remotes.
 // Every deny says why the transcript's answers miss, and a chain of calls is judged call by call, wherever each runs
 // (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell. A shell fed text the rule
 // cannot read as commands, such as a pipe into `bash`, is refused when that text names an approval.
@@ -19,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { findProject } from '../project.mjs';
 import { readLocalState } from '../review/state.mjs';
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
+import { oneRemote } from './review-signoff.mjs';
 
 const LEAD = 'Blocked: `aidrian pr extend --human approve` records the Human\'s approval of an extra review round';
 
@@ -30,19 +32,44 @@ export const reason = (pr, round, why = null) =>
   'record approve only when the Human picks the option that starts with "Approve". Or the Human runs the command in their own ' +
   'shell (`!` in the prompt). `--human deny` always runs.';
 
+// The route to one more round while a check at the cap of pull request `pr` waits, or null when none waits: `last` is the
+// record's latest check. A check waiting for the judge needs the judge's verdict first, and one waiting for the Human
+// needs the Human's answer; neither needs AIDRIAN_ALLOW_EXTRA_ROUNDS, so it works in any checkout.
+export function waitingRoute(pr, last) {
+  const rerun = last?.source === 'bot' ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
+  if (last?.status === 'judging') {
+    return `The check at round ${last.round} on pull request #${pr} waits for the judge: run the \`dispatch\` that \`${rerun}\` prints, ` +
+      `as its read-only agent, record its word with \`aidrian pr extend ${pr} --verdict extend|stop --reason "<evidence>" --head <sha>\`, ` +
+      `and run \`${rerun}\` again. When it then asks the Human, put its \`question\` and \`options\` to the Human with AskUserQuestion, ` +
+      `word for word, and record the answer with \`aidrian pr extend ${pr} --human approve\` or \`--human deny\`.`;
+  }
+  if (last?.status === 'asking') {
+    return `The check at round ${last.round} on pull request #${pr} waits for the Human: put the \`question\` and \`options\` that ` +
+      `\`${rerun}\` prints to the Human with AskUserQuestion, word for word, and record the answer with ` +
+      `\`aidrian pr extend ${pr} --human approve\` or \`--human deny\`.`;
+  }
+  return null;
+}
+
 // The deny when no ask waits for the Human in this machine's record of pull request `pr`: the judge stopped, granted,
-// or never ran, so no answer can be recorded, and `aidrian pr extend` itself would fail. More rounds are then the
-// Human's to raise, with the override in their own shell. `last` is the record's latest check, `next` the
-// --max-rounds that allows one more round.
-export const noAskReason = (pr, { last = null, next = null, bot = false } = {}) => {
+// is still to rule, or never ran, so no answer can be recorded, and `aidrian pr extend` itself would fail. A check
+// waiting for the judge names the judge's route. Otherwise more rounds are the Human's to raise, with the override:
+// on an answer the review-rounds rule reads, or in their own shell when this checkout has several remotes (`shared`
+// false), where no answer can name the one repository. `last` is the record's latest check, `next` the --max-rounds
+// that allows one more round.
+export const noAskReason = (pr, { last = null, next = null, bot = false, shared = true } = {}) => {
   const rerun = bot ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
-  const override = `To allow one more round, put the choice to the Human with an AskUserQuestion that names <owner>/<name>#${pr} and --max-rounds ${next ?? '<N>'}, with a recommended option that starts with "Approve"; ` +
-    `on that answer run exactly \`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${rerun} --max-rounds ${next ?? '<N>'}\`. An agent sets that variable on no other ground. ` +
-    'Otherwise report the cap and the findings left open.';
+  const raise = `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${rerun} --max-rounds ${next ?? '<N>'}`;
+  const override = shared
+    ? `To allow one more round, put the choice to the Human with an AskUserQuestion that names <owner>/<name>#${pr} and --max-rounds ${next ?? '<N>'}, with a recommended option that starts with "Approve"; ` +
+      `on that answer run exactly \`${raise}\`. An agent sets that variable on no other ground. Otherwise report the cap and the findings left open.`
+    : `This checkout has several remotes, so no answer lets an agent set AIDRIAN_ALLOW_EXTRA_ROUNDS here: to allow one more round, the Human runs \`${raise}\` in their own shell ` +
+      '(`!` in the prompt, or another terminal). Report the cap, the findings left open, and that command.';
   if (!last) {
     return `${LEAD}, and this machine's review record holds no extension check for pull request #${pr}. When another ` +
       'machine asked, the Human runs the approval in their own shell (`!` in the prompt). ' + override;
   }
+  if (last.status === 'judging') return `${LEAD}, and no extension waits for the Human on pull request #${pr} yet. ${waitingRoute(pr, last)}`;
   return `${LEAD}, and no extension waits for the Human on pull request #${pr} (the latest check, at round ${last.round}, ` +
     `is ${last.status}${last.by ? ` by the ${last.by}` : ''}), so there is no approval to record and asking again changes ` +
     'nothing. ' + override;
@@ -138,7 +165,7 @@ function judge(call, project, input) {
     state = readLocalState(project, call.pr);
   } catch {}
   const pending = (state?.extensions ?? []).filter((entry) => entry.status === 'asking').at(-1);
-  if (!pending) return noAskReason(call.pr, nextCap(state));
+  if (!pending) return noAskReason(call.pr, { ...nextCap(state), shared: oneRemote(project) });
   const round = pending.round + 1;
   const since = pending.judge?.at ?? pending.decided_at ?? null;
   const why = mismatch(transcriptAnswers(readTranscript(input?.transcript_path)), { pr: call.pr, round, since });

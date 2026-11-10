@@ -825,10 +825,13 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
     'Then open the draft through the `pr-write` skill, as `references/phases.md` § 2 says',
   ]) assert.ok(resume.includes(words), words);
   // pr-write stops on an unpushed branch and code-reviewer is read-only, so local-only commits are pushed before the draft.
-  const push = resume.indexOf('when the branch has no upstream or `git rev-list --count @{u}..HEAD` is not 0, an agent allowed to write');
-  for (const words of ['pushes in the foreground, with `-u` on the first push', 'Confirm the head with `git ls-remote --heads origin <branch>`; a rejected push stops the run']) {
-    assert.ok(resume.indexOf(words) > push && push !== -1, words);
-  }
+  // The check reads the pull request's branch on origin: an upstream can track another branch with nothing ahead.
+  const push = resume.indexOf('compare HEAD with the commit `git ls-remote --heads origin <branch>` prints');
+  for (const words of [
+    'runs `git push -u origin HEAD:<branch>` in the foreground, never with force: a remote head that is not an ancestor of HEAD stops the run',
+    'Confirm that `git ls-remote --heads origin <branch>` then prints HEAD; a rejected push stops the run',
+  ]) assert.ok(resume.indexOf(words) > push && push !== -1, words);
+  assert.ok(!resume.includes('@{u}'), 'the push check never reads the upstream');
   assert.ok(push < resume.indexOf('Then open the draft through the `pr-write` skill'), 'the push comes before the draft');
   for (const gone of ['a pull request already at the cap goes to', 'commits what is uncommitted, and pushes']) assert.ok(!resume.includes(gone), gone);
   // plan-implement stops on a plan with issue_id, so a plan written for an issue session must not go through the one-line task row.

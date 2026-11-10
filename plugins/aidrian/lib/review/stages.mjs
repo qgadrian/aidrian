@@ -115,11 +115,12 @@ export async function runStages(s) {
     state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
     recorded = true;
   };
-  // A request a wait posted, from either call, is on record for the head it asked about, which the wait reads again
-  // as it posts: the pull request may have moved past this step's head. Returns whether it asked about this head.
+  // A request a wait posted, from either call, is on record for the head it asked about (`requested_head`), never
+  // the last head the wait saw: the pull request may have moved past either since. Returns whether it asked about
+  // this step's head.
   const noteRequest = (bot) => {
     if (!bot.requested) return false;
-    const asked = typeof bot.head_sha === 'string' ? bot.head_sha : head;
+    const asked = typeof bot.requested_head === 'string' ? bot.requested_head : head;
     state.botRequest = { head: asked, at: new Date().toISOString() };
     return sameCommit(asked, head);
   };
@@ -139,7 +140,7 @@ export async function runStages(s) {
     // A request for a newer head: this step's head is no longer the pull request's, so no reviewer runs on it.
     if (asked.requested && !noteRequest(asked)) {
       undoRound();
-      return finish('incomplete', { reason: `the pull request moved to ${String(asked.head_sha).slice(0, 7)}, and the review bot was asked about that head: run the step again`, retry_recommended: true });
+      return finish('incomplete', { reason: `the pull request moved to ${String(asked.requested_head).slice(0, 7)}, and the review bot was asked about that head: run the step again`, retry_recommended: true });
     }
     if (ANSWERED.has(asked.status) && (!asked.head_sha || sameCommit(asked.head_sha, head))) recordBot(bot, asked);
     else if (asked.requested) recorded = true;

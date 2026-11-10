@@ -836,11 +836,21 @@ test('--with-bot: an early request that went to a newer head ends the step befor
   const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
   const newer = 'f'.repeat(40);
   const calls = [];
-  const bot = async (opts) => (calls.push(['bot', opts.request, opts.timeoutSec]), { status: 'timed_out', requested: true, head_sha: newer, signal: null });
+  const bot = async (opts) => (calls.push(['bot', opts.request, opts.timeoutSec]), { status: 'timed_out', requested: true, requested_head: newer, head_sha: newer, signal: null });
   const moved = await r.step({ exec: async () => (calls.push(['exec']), clean()), awaitBot: bot }, { withBot: true });
   assert.deepEqual([moved.status, moved.retry_recommended, moved.round, calls], ['incomplete', true, 0, [['bot', true, 0]]]);
   assert.match(moved.reason, /moved to fffffff/u);
   assert.equal(readLocalState(r.project, 7).botRequest.head, newer, 'the request is on record for the head it asked about');
+});
+
+test('--with-bot: a request the wait posted before a push is on record for its own head, never for the head it then saw', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
+  const head = r.git('rev-parse', 'HEAD');
+  const newer = 'f'.repeat(40);
+  // The early look saw GitHub lag; the final wait asked about this head, then saw a push it may not ask about.
+  const bot = async (opts) => (opts.timeoutSec === 0 ? { status: 'timed_out', requested: false, signal: null } : { status: 'head_moved', requested: true, requested_head: head, head_sha: newer, signal: null });
+  assert.equal((await r.step({ exec: clean, awaitBot: bot }, { withBot: true })).status, 'incomplete');
+  assert.equal(readLocalState(r.project, 7).botRequest.head, head, 'the newer head is still asked about when its step runs');
 });
 
 test('--with-bot under the review gate: the bot is asked as soon as the code-reviewer is on record, while the engine still runs', async (t) => {

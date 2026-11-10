@@ -401,6 +401,8 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       head_committed_at: s.headCommittedAt,
       trigger_at: since,
       requested,
+      // The head the last request asked about, which the head seen later may have moved past.
+      ...(requested ? { requested_head: requestedForHead } : {}),
       acknowledged_at: ack?.at ?? null,
       // A timeout after the bot acknowledged this head ran past a budget that cannot grow: one re-run without --request
       // is worth its wait. A timeout with nothing acknowledged, or acknowledged for another head, is not.

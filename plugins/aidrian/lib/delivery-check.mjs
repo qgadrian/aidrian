@@ -40,8 +40,8 @@ export function checkDelivery(input, project) {
 }
 
 // The handoff files a subagent's brief asks it to write that do not exist: each absolute `<state>/dispatch/<name>.json`
-// in the transcript's first prompt whose `<name>` holds the agent's own name, such as `feat-12-S1-code-reviewer.json` for
-// `aidrian:code-reviewer`. A path named for another agent, such as a handoff the brief tells it to read, is not its own.
+// in the transcript's first prompt whose `<name>` ends with the agent's own name, such as `feat-12-S1-code-reviewer.json`
+// or `S1-code-reviewer-result.json` for `aidrian:code-reviewer`. A path named for another agent, such as a handoff the brief tells it to read, is not its own.
 // No brief, no agent name, or no state folder: none.
 export function unwrittenHandoffs(input, project) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
@@ -55,8 +55,9 @@ export function unwrittenHandoffs(input, project) {
     return [];
   }
   const named = [...brief.matchAll(new RegExp(`${escapeRegExp(folder)}/([\\w.@+-]+\\.json)`, 'gu'))];
-  // The agent's name as a whole word of the file name: `critic` is not in `fix-critical-S1-backend-developer.json`.
-  const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}[-_.]`, 'u');
+  // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
+  // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
+  const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   const own = named.filter((match) => word.test(match[1])).map((match) => match[0]);
   return [...new Set(own)].filter((file) => !existsSync(file));
 }

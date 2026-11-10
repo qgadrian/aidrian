@@ -56,6 +56,8 @@ test('items that say how critical each is, and messages with no list for the Hum
     'Next step: Adrian merges it.',
     'The report for Adrian is in the pull request.',
     '**For Adrian**\n\nNothing: every item was done by its owner.',
+    'Here is the sample section the doc asked for:\n\n```md\n## For the Human\n- Rotate the deploy key.\n```\n\nDone.',
+    '~~~~\nFor Adrian:\n- Quoted.\n```\n- Still quoted.\n~~~~',
   ]) assert.ok(!fires(message), message);
 });
 

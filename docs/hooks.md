@@ -846,8 +846,9 @@ doc in another project. An absolute or `~/` path is checked as written.
 A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
 
 The check also reads the subagent's brief, the first prompt of its transcript. A handoff file the brief asks this agent to
-write must exist when it stops: an absolute path in the state folder's `dispatch/` whose file name holds the agent's name
-as a whole word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` for `code-reviewer`. When one does not, the hook
+write must exist when it stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
+or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
+for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not, the hook
 sends the agent back once, on the first stop of its turn, to write it. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
 a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief
@@ -929,6 +930,7 @@ do it, and how critical it is. Its second stop always ends.
   such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
   Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
 - An item is a top-level list entry with its continuation lines. The list ends at a heading or at a paragraph after a blank line.
+- A fenced code block is never read, so a Markdown example the message quotes is not work handed back.
 - An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
 
 The announce check runs first; a stop it sends back is not checked here.

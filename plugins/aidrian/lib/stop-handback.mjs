@@ -33,12 +33,30 @@ const addressed = (human) => [
   new RegExp(`^(?:${human})['’]s\\s+[\\p{L}-]+(?:\\s+[\\p{L}-]+)?$`, 'iu'),
 ];
 
+// The lines with each fenced code block blanked, so an example the message quotes, such as a Markdown sample with a
+// "For the Human" heading, is never read as work handed back. A fence opens with three or more backticks or tildes.
+function withoutFences(lines) {
+  let fence = null;
+  return lines.map((line) => {
+    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      return '';
+    }
+    if (marker) {
+      fence = marker;
+      return '';
+    }
+    return line;
+  });
+}
+
 const ITEM = /^(?:[-*+]|\d+[.)])\s+(.*)$/u;
 
 // The items of each list addressed to the Human: [{ label, items }]. An item is a top-level list entry with its
 // continuation lines; the list ends at a heading, a new label, or a blank line before a line that is not an entry.
 export function handBackLists(message, human) {
-  const lines = message.split('\n');
+  const lines = withoutFences(message.split('\n'));
   const patterns = addressed(human);
   const lists = [];
   for (let i = 0; i < lines.length; i += 1) {

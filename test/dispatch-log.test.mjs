@@ -196,7 +196,8 @@ test('the delivery check sends a subagent back once for a handoff file its brief
   const { base, dir, state, log, hook } = project(t);
   const dispatch = path.join(state(), 'dispatch');
   const own = path.join(dispatch, 'feat-12-S1-code-reviewer.json');
-  const other = path.join(dispatch, 'feat-12-S1-backend-developer.json');
+  // Another agent's handoff, on a branch whose name holds this agent's: still not this agent's.
+  const other = path.join(dispatch, 'fix-code-reviewer-delivery-S1-backend-developer.json');
   const transcript = path.join(base, 'agent-a6.jsonl');
   const brief = `Review slice S1. Read the implementer's handoff at ${other}.\nWrite your machine handoff to \`${own}\` before you hand back.`;
   writeFileSync(transcript, [

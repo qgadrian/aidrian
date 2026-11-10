@@ -6,6 +6,7 @@
 // Only a labelled list counts, and an item counts as rated when it holds one of RATINGS, so a report that names its
 // blocks the way the rule asks passes as written. Pure: the hook passes in the message and the names.
 
+import { fencedIn } from './markdown-sections.mjs';
 import { lastReply } from './names.mjs';
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -33,30 +34,16 @@ const addressed = (human) => [
   new RegExp(`^(?:${human})['’]s\\s+[\\p{L}-]+(?:\\s+[\\p{L}-]+)?$`, 'iu'),
 ];
 
-// The lines with each fenced code block blanked, so an example the message quotes, such as a Markdown sample with a
-// "For the Human" heading, is never read as work handed back. A fence opens with three or more backticks or tildes.
-function withoutFences(lines) {
-  let fence = null;
-  return lines.map((line) => {
-    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
-    if (fence) {
-      if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
-      return '';
-    }
-    if (marker) {
-      fence = marker;
-      return '';
-    }
-    return line;
-  });
-}
-
 const ITEM = /^(?:[-*+]|\d+[.)])\s+(.*)$/u;
 
 // The items of each list addressed to the Human: [{ label, items }]. An item is a top-level list entry with its
 // continuation lines; the list ends at a heading, a new label, or a blank line before a line that is not an entry.
 export function handBackLists(message, human) {
-  const lines = withoutFences(message.split('\n'));
+  // Fenced code is dropped, not blanked: an example the message quotes, such as a Markdown sample with a "For the Human"
+  // heading, is never work handed back, and a code block inside an item does not end its list.
+  const all = message.split('\n');
+  const fenced = fencedIn(all);
+  const lines = all.filter((_, at) => !fenced[at]);
   const patterns = addressed(human);
   const lists = [];
   for (let i = 0; i < lines.length; i += 1) {

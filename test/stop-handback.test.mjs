@@ -61,6 +61,15 @@ test('items that say how critical each is, and messages with no list for the Hum
   ]) assert.ok(!fires(message), message);
 });
 
+test('a fenced block inside an item keeps the list going, and only a real fence hides a list', () => {
+  const inItem = 'For the Human:\n- High: approve the migration. Example:\n  ```sql\n  SELECT 1;\n  ```\n- Rotate the deploy key.';
+  assert.match(handBackReason({ message: inItem, human: HUMAN }) ?? '', /\("Rotate the deploy key\."\)/u, 'the item after the code block is read');
+  const inlineCode = '```code``` is inline, not a fence.\n\nFor Adrian:\n- Rotate the token.';
+  assert.ok(fires(inlineCode), 'a backtick line with backticks in its info string opens no fence');
+  const sample = 'The sample:\n\n````md\n```js\n## For the Human\n- Rotate the deploy key.\n````\n\nDone.';
+  assert.ok(!fires(sample), 'a line that is not a bare closer of the same fence leaves the sample fenced');
+});
+
 test('a continuation line and a nested entry belong to their item, and the list ends at a heading or a paragraph', () => {
   const message = [
     'For Adrian:',

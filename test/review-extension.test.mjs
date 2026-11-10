@@ -284,6 +284,7 @@ test('the review-extend rule: after a judge`s stop, the deny names the Human`s o
   const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
   assert.match(denied, /no extension waits for the Human on pull request #12 \(the latest check, at round 4, is stopped by the judge\)/u);
   assert.match(denied, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4`/u, 'five rounds: four done, one granted, one more');
+  assert.match(denied, /`--with-bot` before `--max-rounds` when the step runs the bot/u, 'the raise keeps the bot stage');
   assert.doesNotMatch(denied, /Ask the Human with AskUserQuestion/u, 'an ask cannot help when nothing waits for it');
   state.rounds = [];
   state.extensions = [{ source: 'bot', round: 4, head: 'd', status: 'stopped', by: 'judge' }];
@@ -304,7 +305,7 @@ test('the review-extend rule: while the check at the cap waits for the judge, th
   g.write(g.answer('Grant round 3 on #12?', 'Grant round 3 (Recommended)'));
   const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
   assert.match(denied, /The check at round 2 on pull request #12 waits for the judge/u);
-  assert.match(denied, /run the `dispatch` that `aidrian pr review 12` prints/u);
+  assert.match(denied, /run again the review command that reached the cap, `aidrian pr review 12`, with the options it ran with, such as its `--with-bot` and `--max-rounds`/u);
   assert.match(denied, /`aidrian pr extend 12 --verdict extend\|stop --reason "<evidence>" --head <sha>`/u);
   assert.doesNotMatch(denied, /AIDRIAN_ALLOW_EXTRA_ROUNDS|asking again changes nothing/u, 'the judge comes before any raise of the cap');
 });
@@ -319,7 +320,7 @@ test('the review-extend rule: in a checkout with several remotes, the override a
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: g.dir });
   const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
   assert.match(denied, /This checkout has several remotes/u);
-  assert.match(denied, /the Human runs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4` in their own shell/u);
+  assert.match(denied, /the Human runs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4` \(with `--with-bot` before `--max-rounds` when the step runs the bot\) in their own shell/u);
   assert.doesNotMatch(denied, /AskUserQuestion/u, 'no answer can approve it here');
 });
 

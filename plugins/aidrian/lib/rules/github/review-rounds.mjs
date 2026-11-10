@@ -56,6 +56,15 @@ function raisedPr(invocation) {
   return verb === 'pr' && Object.hasOwn(RAISE_FORMS, sub) && /^\d+$/u.test(pr ?? '') ? pr : null;
 }
 
+// The command to hand the Human for the raise `words` asked for, without its cap: the plan's or the bot's count, and the bot
+// stage when the review step runs it. Each counts its own rounds, so the other would raise the wrong cap.
+function handoverOf(words) {
+  const texts = (words ?? []).map((word) => (word.dynamic ? null : word.text));
+  const pr = /^\d+$/u.test(texts[2] ?? '') ? texts[2] : '<PR>';
+  if (texts[1] === 'await-review') return `aidrian pr await-review ${pr} --request`;
+  return texts.includes('--with-bot') ? `aidrian pr review ${pr} --with-bot` : `aidrian pr review ${pr}`;
+}
+
 // Why the override on `invocation` is not the raise the Human approved in `answers`, or null when it is. `target` is
 // review-signoff.mjs approvalTarget for the command. The checkout comes first, then the command's form, then the answers,
 // so the first deny names the one thing to change.
@@ -63,10 +72,9 @@ export function raiseMiss(invocation, answers, target) {
   const words = aidrianArgs(invocation);
   const texts = words && !words.some((word) => word.dynamic) ? words.map((word) => word.text) : [];
   const [verb, sub, pr] = texts;
-  const shown = /^\d+$/u.test(pr ?? '') ? pr : '<PR>';
   if (target.miss === 'remotes') {
     return `This checkout has several remotes, so no answer can name the one repository the command acts on, and no answer lets an agent set ${ROUNDS_OVERRIDE} here. ` +
-      `Hand the Human \`${ROUNDS_OVERRIDE}=1 aidrian pr review ${shown} --max-rounds <N>\` to run in their own shell (\`!\` in the prompt, or another terminal).`;
+      `Hand the Human \`${ROUNDS_OVERRIDE}=1 ${handoverOf(words)} --max-rounds <N>\` to run in their own shell (\`!\` in the prompt, or another terminal).`;
   }
   const max = verb === 'pr' && Object.hasOwn(RAISE_FORMS, sub) && /^\d+$/u.test(pr ?? '') ? RAISE_FORMS[sub].exec(texts.slice(3).join(' '))?.[1] : undefined;
   if (!max) {

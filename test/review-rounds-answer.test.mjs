@@ -72,10 +72,13 @@ test('in a checkout with several remotes, the first deny says no answer counts a
     const miss = missOf(command, context);
     assert.match(miss, /This checkout has several remotes/u, command);
     assert.match(miss, /in their own shell/u, command);
-    assert.match(miss, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds <N>`/u, 'the command to hand over, for this pull request');
+    assert.match(miss, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 (?:--with-bot )?--max-rounds <N>`/u, 'the command to hand over, for this pull request');
     assert.doesNotMatch(miss, /AskUserQuestion/u, 'asking again cannot help here');
+    assert.equal(miss.includes('--with-bot'), command.includes('--with-bot'), 'the handover keeps the bot stage the command asked for');
     assert.doesNotMatch(miss, new RegExp(ASK_ROUTE.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'), 'nor does the lead offer the ask');
   }
+  const bot = missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 5', context);
+  assert.match(bot, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds <N>`/u, 'the bot`s own count, not the plan`s');
 });
 
 test('every deny of the round override names what the transcript or the command missed', (t) => {
@@ -106,6 +109,7 @@ test('while a check at the cap waits for the judge or the Human, the override de
   const judging = missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 5', context);
   assert.match(judging, /The check at round 4 on pull request #12 waits for the judge/u);
   assert.match(judging, /`aidrian pr extend 12 --verdict extend\|stop/u);
+  assert.match(judging, /with the options it ran with, such as its `--with-bot` and `--max-rounds`/u, 'a rerun with other options plans another review');
   assert.ok(judging.indexOf('waits for the judge') < judging.indexOf('No answered question'), 'the route comes before the miss');
   state.extensions = [{ source: 'bot', round: 4, head: 'd', status: 'asking', judge: { verdict: 'extend', reason: 'r', at: '2026-11-01T10:00:00.000Z' } }];
   writeLocalState(project, state);

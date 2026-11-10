@@ -36,16 +36,18 @@ export const reason = (pr, round, why = null) =>
 // record's latest check. A check waiting for the judge needs the judge's verdict first, and one waiting for the Human
 // needs the Human's answer; neither needs AIDRIAN_ALLOW_EXTRA_ROUNDS, so it works in any checkout.
 export function waitingRoute(pr, last) {
-  const rerun = last?.source === 'bot' ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
+  const base = last?.source === 'bot' ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
+  // The record keeps no flags, and a rerun with other options plans another review, so the session repeats its own.
+  const rerun = `run again the review command that reached the cap, \`${base}\`, with the options it ran with, such as its \`--with-bot\` and \`--max-rounds\``;
   if (last?.status === 'judging') {
-    return `The check at round ${last.round} on pull request #${pr} waits for the judge: run the \`dispatch\` that \`${rerun}\` prints, ` +
+    return `The check at round ${last.round} on pull request #${pr} waits for the judge: ${rerun}; run the \`dispatch\` it prints ` +
       `as its read-only agent, record its word with \`aidrian pr extend ${pr} --verdict extend|stop --reason "<evidence>" --head <sha>\`, ` +
-      `and run \`${rerun}\` again. When it then asks the Human, put its \`question\` and \`options\` to the Human with AskUserQuestion, ` +
+      'and run that command once more. When it then asks the Human, put its `question` and `options` to the Human with AskUserQuestion, ' +
       `word for word, and record the answer with \`aidrian pr extend ${pr} --human approve\` or \`--human deny\`.`;
   }
   if (last?.status === 'asking') {
-    return `The check at round ${last.round} on pull request #${pr} waits for the Human: put the \`question\` and \`options\` that ` +
-      `\`${rerun}\` prints to the Human with AskUserQuestion, word for word, and record the answer with ` +
+    return `The check at round ${last.round} on pull request #${pr} waits for the Human: ${rerun}; put the \`question\` and \`options\` ` +
+      `it prints to the Human with AskUserQuestion, word for word, and record the answer with ` +
       `\`aidrian pr extend ${pr} --human approve\` or \`--human deny\`.`;
   }
   return null;
@@ -59,11 +61,12 @@ export function waitingRoute(pr, last) {
 // that allows one more round.
 export const noAskReason = (pr, { last = null, next = null, bot = false, shared = true } = {}) => {
   const rerun = bot ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
+  const withBot = bot ? '' : ' (with `--with-bot` before `--max-rounds` when the step runs the bot)';
   const raise = `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${rerun} --max-rounds ${next ?? '<N>'}`;
   const override = shared
     ? `To allow one more round, put the choice to the Human with an AskUserQuestion that names <owner>/<name>#${pr} and --max-rounds ${next ?? '<N>'}, with a recommended option that starts with "Approve"; ` +
-      `on that answer run exactly \`${raise}\`. An agent sets that variable on no other ground. Otherwise report the cap and the findings left open.`
-    : `This checkout has several remotes, so no answer lets an agent set AIDRIAN_ALLOW_EXTRA_ROUNDS here: to allow one more round, the Human runs \`${raise}\` in their own shell ` +
+      `on that answer run exactly \`${raise}\`${withBot}. An agent sets that variable on no other ground. Otherwise report the cap and the findings left open.`
+    : `This checkout has several remotes, so no answer lets an agent set AIDRIAN_ALLOW_EXTRA_ROUNDS here: to allow one more round, the Human runs \`${raise}\`${withBot} in their own shell ` +
       '(`!` in the prompt, or another terminal). Report the cap, the findings left open, and that command.';
   if (!last) {
     return `${LEAD}, and this machine's review record holds no extension check for pull request #${pr}. When another ` +

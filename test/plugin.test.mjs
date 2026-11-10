@@ -1383,6 +1383,7 @@ test('a plan closure criterion proven elsewhere is changed by the run, not asked
     /the same slice hash before the break and after the undo: `git diff <slice base> \| git hash-object --stdin`, and `git hash-object` on each file `git ls-files --others --exclude-standard` lists/,
     /every `critical_flow\[\]\.sign_off` for the flows the slice touches is `approved`/,
     /A proof that fails a condition above is not a `promise`: the default applies\./,
+    /from `security-engineer`, `sign_off` is `approved` with no security `fix_now` open/,
     /answered fresh, dispatched with the `plan_change` and the break run/,
     /`product-manager` returns `decision_options`, and `knowledge\/references\/decisions\.md` routes it/,
     /adds any evidence in a later slice to that slice's closure criteria/,

@@ -224,9 +224,9 @@ Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any o
 Before any of these, `aidrian pr checks` leaves out two kinds of row gh still lists for the head: a row from an older
 run of the same workflow file and event than the newest one listed, such as the run started while the pull request was a
 draft, and a `SKIPPED` or `NEUTRAL` row whose name still holds an unexpanded `${{ ... }}` expression, a matrix job that a
-skipped run reported under its template name. The workflow file of each run comes from one list of the head's workflow
-runs, on the host of the run's link, read only when some workflow name has more than one run, since two files may share
-a name; a run that list does not name is never taken for superseded. A check no workflow run reports, such as an app's status, always counts.
+skipped run reported under its template name. The workflow file of each run comes from a list of the head's workflow
+runs, one for each repository the workflow rows' run links name, on that link's host, read only when some workflow name
+has more than one run, since two files may share a name; a run no list names is never taken for superseded. A check no workflow run reports, such as an app's status, always counts.
 
 ### Changed defaults
 

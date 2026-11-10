@@ -4,6 +4,11 @@
 `max_rounds`, `engine`, and `plan` (its depth, reasons, flows, and stages). docs/review.md in the aidrian
 repository describes the plan itself.
 
+With `--with-bot`, run the step right after each push, before any other review of that head: the step that opens the
+head's round asks the review bot, so the bot, CI, and the local passes review the head together. Never hold the bot
+back for the local passes, and never ask it yourself. The bot's stage is still the last one judged: `received` comes
+only after its answer, so the pull request stays a draft until the bot is clean.
+
 ## `dispatch`
 
 `dispatch[]` lists the agent passes of the current stage. Run them in parallel, one read-only agent each:

@@ -782,6 +782,55 @@ test('--with-bot adds the review bot as the last stage after this machine`s engi
   assert.deepEqual([result.status, asked, result.plan.stages.map((stage) => stage.name)], ['received', 1, ['independent', 'remote']]);
 });
 
+// A bot that has not answered yet: the request goes out, and the wait ends with nothing for this head.
+const botLog = (calls, answer = () => ({ status: 'received', requested: false, signal: { kind: 'thumbs_up' } })) => async (opts) => {
+  calls.push(['bot', opts.request, opts.timeoutSec]);
+  return opts.timeoutSec === 0 ? { status: 'timed_out', requested: opts.request, signal: null } : answer();
+};
+
+test('--with-bot asks the review bot when a head`s round opens, before this machine`s engine runs, and awaits it last', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
+  const calls = [];
+  const failing = async () => (calls.push(['exec']), { status: 'failed', reason: 'crashed' });
+  const failed = await r.step({ exec: failing, awaitBot: botLog(calls) }, { withBot: true });
+  assert.equal(failed.status, 'incomplete');
+  assert.deepEqual(calls, [['bot', true, 0], ['exec']], 'the bot is asked first, with no wait, and the engine runs while it reviews');
+  assert.equal(failed.round, 1, 'the round the bot was asked on is kept');
+  calls.length = 0;
+  const result = await r.step({ exec: async () => (calls.push(['exec']), clean()), awaitBot: botLog(calls) }, { withBot: true });
+  assert.equal(result.status, 'received');
+  assert.deepEqual(calls, [['exec'], ['bot', false, 840]], 'the head was asked about once: the step only waits for the answer');
+  assert.equal(result.round, 1);
+});
+
+test('--with-bot: the bot is asked in the step that dispatches the agent passes, once per head, and again after a push', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const calls = [];
+  const first = await r.step({ codex: off, exec: clean, awaitBot: botLog(calls) }, { withBot: true });
+  assert.deepEqual([first.status, calls], ['dispatch', [['bot', true, 0]]], 'the bot reviews while the agents do');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 1, fixed: 0, verdictsText: holdsAll(first.dispatch[0], 'src/booking/a.js:1') });
+  assert.equal((await r.step({ codex: off, exec: clean, awaitBot: botLog(calls) }, { withBot: true })).status, 'fix_required');
+  assert.deepEqual(calls, [['bot', true, 0]], 'a finding of an earlier stage is reported before the bot is awaited, and the head is not asked again');
+  r.write('src/booking/a.js', '2\n');
+  r.commit();
+  calls.length = 0;
+  const next = await r.step({ codex: off, exec: clean, awaitBot: botLog(calls) }, { withBot: true });
+  assert.deepEqual([next.status, next.round, calls], ['dispatch', 2, [['bot', true, 0]]], 'a new head is asked about at once');
+});
+
+test('--with-bot under the review gate: the bot is asked as soon as the code-reviewer is on record, while the engine still runs', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewGate: { enabled: true, checklist: null } } }, change: (write) => write('src/app.js', 'q\n') });
+  const calls = [];
+  const exec = async () => (calls.push(['exec']), clean());
+  const first = await r.step({ exec, awaitBot: botLog(calls) }, { withBot: true });
+  assert.deepEqual([first.status, first.dispatch[0].agent, calls], ['dispatch', 'code-reviewer', []], 'no request before the gate allows one');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0 });
+  const done = await r.step({ exec, awaitBot: botLog(calls) }, { withBot: true });
+  assert.deepEqual([done.status, calls], ['received', [['bot', true, 0], ['exec'], ['bot', false, 840]]]);
+});
+
 test('runExec: a reviewer that ignores SIGTERM is killed, and the step still answers', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-exec-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

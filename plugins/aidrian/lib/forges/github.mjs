@@ -39,6 +39,9 @@ const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
 const THREADS_QUERY = 'query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}';
 // The pull request one GraphQL node id names, as the ready hold looks up an id a ready call names.
 const NODE_QUERY = 'query($id:ID!){node(id:$id){... on PullRequest{url}}}';
+// When a pull request's body and title last changed: the body's last edit and the newest title rename, as the ready
+// checks hold reads whether a check an edit re-queues has had time to show.
+const EDITS_QUERY = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
 // How long an upload of images may take: a pull request's captures go up in one call.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
@@ -239,6 +242,13 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     reviewThreads: (repo, n, after = null) => {
       const [owner, name] = repo.split('/');
       return json(['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`, ...(after ? ['-f', `after=${after}`] : [])]);
+    },
+    // When the body of pull request `n` of `repo` was last edited and its title last renamed, GitHub's GraphQL answer:
+    // `data.repository.pullRequest` with `lastEditedAt` (null when never edited) and `timelineItems.nodes`, the newest
+    // rename's `createdAt` or none.
+    changeEdits: (repo, n, { host } = {}) => {
+      const [owner, name] = repo.split('/');
+      return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${EDITS_QUERY}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`]);
     },
     commit: (repo, sha) => rest(`repos/${repo}/commits/${sha}`),
     // The check runs of one commit, every page.

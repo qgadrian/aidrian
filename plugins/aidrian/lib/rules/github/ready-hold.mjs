@@ -111,12 +111,12 @@ const namesReady = (text) => {
 };
 
 // The forge methods whose answer is the same from any folder: each names its repository or node, as an `api` route does.
-const ANY_FOLDER = new Set(['nodeChange', 'repository', 'contents', 'pull', 'viewer', 'comment']);
+const ANY_FOLDER = new Set(['nodeChange', 'changeEdits', 'repository', 'contents', 'pull', 'viewer', 'comment']);
 
 // The forge (lib/forges), bounded by one deadline, at a folder: each call gets the time left, is stopped with SIGKILL at
 // it, and none starts past it. A call with the same arguments runs once, from any folder when ANY_FOLDER holds its method.
-// `forge` is the test seam: forgeFor's signature, (cwd, options) → the facade.
-function deadlineForge({ forge = forgeFor, now = Date.now, deadlineMs = DEADLINE_MS, startedAt = Infinity } = {}) {
+// `forge` is the test seam: forgeFor's signature, (cwd, options) → the facade. The ready checks hold shares it.
+export function deadlineForge({ forge = forgeFor, now = Date.now, deadlineMs = DEADLINE_MS, startedAt = Infinity } = {}) {
   const deadline = Math.min(now() + deadlineMs, startedAt + HOOK_BUDGET_MS);
   const seen = new Map();
   const call = (cwd, method, args) => {

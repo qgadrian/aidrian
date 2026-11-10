@@ -6,7 +6,8 @@
 // a merge whose head it cannot read rather than let it run unchecked.
 // It also holds the ready hold (lib/rules/github/ready-hold.mjs) for `mcp__github__update_pull_request` and
 // `mcp__github__update_pull_request_draft_state` with a `draft` that is not true: no draft is marked ready while its
-// product feedback is owed.
+// product feedback is owed; then the ready checks hold (lib/rules/github/ready-checks.mjs): none while a check on its head
+// has not finished, or one its last edit re-queues has not shown.
 // A host's own GitHub connector reaches this hook too: `githubCall` gives its call in the terms of the tool it stands for,
 // so this file reads one shape. Anything else this hook cannot read lets the call run.
 
@@ -16,6 +17,7 @@ import { githubCall } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { asksForReview, judgeRequests, markersIn } from '../lib/review-gate.mjs';
 import { checkMcp } from '../lib/rules/github/merge-review.mjs';
+import { checkMcp as checkChecks } from '../lib/rules/github/ready-checks.mjs';
 import { checkMcp as checkReady } from '../lib/rules/github/ready-hold.mjs';
 import { botNamed, REQUEST_REASON } from '../lib/rules/github/review-rounds.mjs';
 
@@ -38,8 +40,11 @@ await runHook(async (input) => {
     return;
   }
   if (READY_TOOLS.has(tool)) {
-    const reason = checkReady(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), startedAt: performance.timeOrigin });
-    if (reason) await block(input, 'ready-hold', reason);
+    const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), startedAt: performance.timeOrigin };
+    const reason = checkReady(toolInput, context);
+    if (reason) return block(input, 'ready-hold', reason);
+    const pending = checkChecks(toolInput, context);
+    if (pending) await block(input, 'ready-checks', pending);
     return;
   }
   const field = PR_FIELD[tool];

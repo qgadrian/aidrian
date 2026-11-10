@@ -159,8 +159,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 
 - `id`, `cwd`, and the helper `isTrustedCommenter(comment)`.
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, `pull`, `diff`, its diff as text,
-  `nodeChange`, the pull request a GraphQL node id names, and `changeFiles`, every changed file past the 100 `change`
-  lists.
+  `nodeChange`, the pull request a GraphQL node id names, `changeEdits(repo, n, { host })`, when its body was last edited
+  and its title last renamed, and `changeFiles`, every changed file past the 100 `change` lists.
 - The repository: `repo`, `repository`, `contents`, `visibility`, and `viewer`.
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment`, one of them by id,
   `postComment`, `editComment`, and `reactions`.

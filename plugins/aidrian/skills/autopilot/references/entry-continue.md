@@ -64,8 +64,10 @@ An open pull request on the branch is adopted, never implemented again: start no
 
 - The product feedback step of `references/phases.md` § 2 runs as written: `status` decides whether anything is owed.
 - Rounds the pull request already had count toward the cap.
-  The round is the `round` that `aidrian pr review <n>` prints, never a fresh count from 1;
-  a pull request already at the cap goes to the cap of `references/phases.md` § 4.
+  The round is the `round` that `aidrian pr review <n>` prints, never a fresh count from 1.
+  The cap is the `status` it prints, never `round` against the cap:
+  a round at the cap can still be open on the same head, and an extra round can be granted.
+  `round_limit` goes to the cap of `references/phases.md` § 4; any other status runs the round as its § 3 says.
 - A review skill mid-way is the round in progress: `references/phases.md` § 3 enters at the step the session reached,
   and its § 4 owns ready and merge.
 - An implementing skill that stopped after its draft opened is not entered again:
@@ -82,16 +84,19 @@ and the plan carries the session's work and decisions.
 
 - A plan for the branch: pick its engine by the table of `references/entry-task.md`;
   the engine's re-entry resumes at the first incomplete slice.
-- No plan: dispatch `planning-agent` in the foreground, to `<state>/plans/<key>-implementation.md`
+- Nothing uncommitted and nothing left to change: start no engine.
+  Dispatch `code-reviewer` in the foreground on `origin/<base>..HEAD`, against the task, with the project's full suite.
+  A `fix_now` finding or a failing test is work left to change: plan it as below.
+  Otherwise open the draft through the `pr-write` skill, as `references/phases.md` § 2 says,
+  and go on from its line that records the pull request.
+- Work left to change, or uncommitted work, with no plan: dispatch `planning-agent` in the foreground, to `<state>/plans/<key>-implementation.md`
   when the session's task is an issue and `<state>/plans/<slug>-plan.md` otherwise.
   A plan that comes back `open-questions` or `blocked` is parked, and the run stops.
   Otherwise run the written plan with the engine the table picks for it:
   `issue-implement` for `<key>-implementation.md`, `plan-implement` for `<slug>-plan.md`.
   Besides the task, the brief carries the commits `git log --oneline origin/<base>..HEAD` lists, the uncommitted changes,
   each decision with whose it is, and this worktree and branch as the workspace.
-  The plan covers only what remains.
-  With nothing left to change, it holds one slice whose owner reviews the session's work against the task,
-  runs the project's checks, commits what is uncommitted, and pushes.
+  The plan covers only what remains, and the uncommitted work is a slice of it.
 - Never start from the base again, and never write a plan that repeats what the branch already holds.
 
 ## 7. The report

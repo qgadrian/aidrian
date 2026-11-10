@@ -815,6 +815,16 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
     'A plan that comes back `open-questions` or `blocked` is parked, and the run stops.',
     'Otherwise run the written plan with the engine the table picks for it: `issue-implement` for `<key>-implementation.md`, `plan-implement` for `<slug>-plan.md`.',
   ]) assert.ok(resume.includes(words), words);
+  // A round equal to the cap can still be open on the same head, and an extra round can be granted: the command's status says
+  // when the cap is reached. With everything committed, an engine slice could never make its one commit.
+  for (const words of [
+    'The cap is the `status` it prints, never `round` against the cap: a round at the cap can still be open on the same head, and an extra round can be granted.',
+    '`round_limit` goes to the cap of `references/phases.md` § 4; any other status runs the round as its § 3 says.',
+    'Nothing uncommitted and nothing left to change: start no engine.',
+    'A `fix_now` finding or a failing test is work left to change: plan it as below.',
+    'Otherwise open the draft through the `pr-write` skill, as `references/phases.md` § 2 says',
+  ]) assert.ok(resume.includes(words), words);
+  for (const gone of ['a pull request already at the cap goes to', 'commits what is uncommitted, and pushes']) assert.ok(!resume.includes(gone), gone);
   // plan-implement stops on a plan with issue_id, so a plan written for an issue session must not go through the one-line task row.
   assert.ok(!resume.includes('as the one-line task row does'), 'the no-plan path names its own engine');
   for (const own of ['knowledge', 'orchestration', 'worktree-new', 'pr-product-feedback', 'pr-auto-merge', 'session-handoff']) {

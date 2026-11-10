@@ -1,6 +1,7 @@
 // A subagent's background agent dispatch is moved to the foreground by the Agent hook, so the subagent cannot end its
 // turn with a child still running (lib/foreground-dispatch.mjs, docs/hooks.md#background-check).
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

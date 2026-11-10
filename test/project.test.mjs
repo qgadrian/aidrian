@@ -1,3 +1,4 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -5,9 +6,10 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { findProject, normalizeRemote, openProject, projectAt, stateDir, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
+import { findProject, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -538,6 +540,37 @@ test('without XDG_STATE_HOME, or with a relative one, the state folder is under 
   for (const env of [{}, { XDG_STATE_HOME: 'relative/state' }]) {
     assert.match(stateDir(findProject(dir), { env }), new RegExp(`^${homedir()}/\\.local/state/aidrian/projects/`));
   }
+});
+
+test('under the test runner, a state root in the real home folder is refused, and one in a temporary folder is not', () => {
+  const real = path.join(homedir(), '.local/state/aidrian');
+  assert.equal(stateRoot({}), real, 'outside the test runner the default stands');
+  assert.throws(() => stateRoot({ NODE_TEST_CONTEXT: 'child-v8' }), /a test reached the real state root .*--import \.\/scripts\/test-state\.mjs/u);
+  assert.throws(() => stateRoot({ NODE_TEST_CONTEXT: 'child-v8', XDG_STATE_HOME: path.join(homedir(), '.local/state') }), /real state root/u);
+  const temp = realpathSync(tmpdir());
+  assert.equal(stateRoot({ NODE_TEST_CONTEXT: 'child-v8', XDG_STATE_HOME: path.join(temp, 'state') }), path.join(temp, 'state/aidrian'));
+  assert.equal(stateRoot({ NODE_TEST_CONTEXT: 'child-v8', XDG_STATE_HOME: '/state' }), '/state/aidrian', 'a root outside the home folder is no developer`s');
+  const own = path.join(homedir(), 'tmp-test-state');
+  assert.equal(stateRoot({ NODE_TEST_CONTEXT: 'child-v8', XDG_STATE_HOME: own, AIDRIAN_TEST_STATE: own }), path.join(own, 'aidrian'), 'the run`s own test state folder');
+});
+
+test('a test file run without the preload keeps its state and temporary files out of the real folders', (t) => {
+  const outer = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-plain-run-')));
+  t.after(() => rmSync(outer, { recursive: true, force: true }));
+  const file = path.join(outer, 'plain.test.mjs');
+  const from = (relative) => JSON.stringify(pathToFileURL(path.join(ROOT, relative)).href);
+  writeFileSync(file, [
+    `import ${from('scripts/test-state.mjs')};`,
+    "import { tmpdir } from 'node:os';",
+    `import { stateRoot } from ${from('plugins/aidrian/lib/project.mjs')};`,
+    'process.stdout.write(JSON.stringify({ root: stateRoot(), tmp: tmpdir() }));',
+  ].join('\n'));
+  // `node --test <file>` with no --import and none of the preload's variables, as an agent runs one file.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !['XDG_STATE_HOME', 'AIDRIAN_TEST_STATE', 'NODE_TEST_CONTEXT'].includes(name)));
+  const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap', file], { encoding: 'utf8', env: { ...env, TMPDIR: outer } });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const seen = JSON.parse(/\{"root".*?\}/u.exec(run.stdout)[0]);
+  assert.ok(seen.root.startsWith(outer) && seen.tmp.startsWith(outer), JSON.stringify(seen));
 });
 
 test('without an origin, the state folder is named for the main checkout and differs per checkout', (t) => {

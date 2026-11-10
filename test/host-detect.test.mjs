@@ -1,6 +1,7 @@
 // Which host a process runs under, and what shared code learns from it (lib/hosts/index.mjs). An unknown host is reported as
 // unknown, never as one of the hosts it may not be.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

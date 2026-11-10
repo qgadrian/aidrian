@@ -154,6 +154,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
+  Under node's test runner (`NODE_TEST_CONTEXT` set), a state root in the user's home folder, outside the temporary
+  folder, is refused with an error, so a test can never write into the developer's own state folder or lesson inbox.
 - `<project-id>` is the repository name and a short hash of its `origin` URL, such as `notes-1a2b3c4d`.
   Every worktree and every clone of the repository shares it.
   A repository with no `origin` uses its folder name and a hash of the main checkout's path.
@@ -282,7 +284,9 @@ Two commands keep a ledger honest, `roles` tells the skill who runs each role, `
   When `git ls-files` itself fails, the citation fails with git's exit code and its last stderr line.
   An anchor matches a heading by its text, the anchor GitHub gives it (`-1` for a repeated heading's second copy), or that anchor with `_` dropped and hyphens collapsed;
   a `#` line in a fenced code block is not a heading.
-  A fence counts at any indentation, and may open after a list marker, as in "- ```bash".
+  A fence may open after a list marker, as in "- ```bash". A fence-like line 4 or more columns past its list item's
+  content column, or past column 0 outside a list, is indented code, not a fence; and an unclosed fence inside a list
+  item ends with the item, while one outside a list runs to the end of the doc (`lib/markdown-sections.mjs`).
   A quote is at most 200 characters, compared with whitespace collapsed.
   A `pending` objection with no passing citation becomes `opinion`; one already ruled on keeps its status and is named.
   A ruling, or a rebuttal that rebuts, with no passing citation is named invalid.

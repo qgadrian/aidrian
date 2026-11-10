@@ -1,6 +1,7 @@
 // What a host sends and what a project wrote must still meet after the hosts layer: a server name the host spells its own way,
 // and a pattern naming the tool as the host sends it. Each of these passed unchecked, or wrongly refused, without the fix.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

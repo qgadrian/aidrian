@@ -1,6 +1,7 @@
 // The short `tracker` key (docs/config.md#tracker): `provider` fills in what a person does not know, a list or field the
 // file sets overrides it, and a key written out in full, as adopted projects have it, loads as it always did.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

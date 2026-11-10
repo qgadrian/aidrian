@@ -1,3 +1,4 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants, cpSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
@@ -31,7 +32,8 @@ function project(t) {
   const dir = path.join(base, 'repo');
   spawnSync('git', ['init', '-q', dir]);
   for (const entry of ['.aidrian', 'docs', '.gitignore']) cpSync(path.join(ROOT, 'examples/consumer', entry), path.join(dir, entry), { recursive: true });
-  const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state') };
+  mkdirSync(path.join(base, 'tmp'));
+  const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state'), TMPDIR: path.join(base, 'tmp') };
   const state = () => spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   const log = () => {
     try {
@@ -154,6 +156,47 @@ test('the delivery check sends a subagent back once for a path it named that doe
   assert.deepEqual(agents, [['general-purpose', 1, 0, 0, 0], ['planner', 1, 1, 1, 0]], 'a3 named a missing file and was never sent back; a2 was, once');
 });
 
+test('the delivery check finds a claimed path under the state folder, the plugin, a skill, another worktree, or a file the agent touched', (t) => {
+  const { base, dir, state, hook } = project(t);
+  const git = (...args) => spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+  git('add', '.');
+  git('commit', '-q', '-m', 'init');
+  // Another worktree of the repository, with the pull request body an orchestrator wrote there.
+  const other = path.join(base, 'other-worktree');
+  git('worktree', 'add', '-q', '-b', 'fix/other', other);
+  mkdirSync(path.join(other, 'tmp'));
+  writeFileSync(path.join(other, 'tmp/pr-body-fix-other.md'), 'body');
+  // The state folder's dispatch, plans, reviews, and tmp files, as the real reports named them.
+  const folder = state();
+  for (const file of ['dispatch/feat-139-S1-harness-mechanic.json', 'plans/140-implementation.md', 'reviews/pr-6007.json', 'tmp/pr-body-fix-12.md']) {
+    mkdirSync(path.dirname(path.join(folder, file)), { recursive: true });
+    writeFileSync(path.join(folder, file), '{}');
+  }
+  // A file in another project the agent wrote with its own Write call.
+  const elsewhere = path.join(base, 'elsewhere');
+  mkdirSync(path.join(elsewhere, 'docs/product'), { recursive: true });
+  writeFileSync(path.join(elsewhere, 'docs/product/tables.md'), 'x');
+  const transcript = path.join(base, 'agent-a5.jsonl');
+  writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Write', input: { file_path: path.join(elsewhere, 'docs/product/tables.md'), content: 'x' } }] } }));
+  const stop = (message) => hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a5', agent_type: 'aidrian:agent-issue-writer', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: false });
+  const present = [
+    'Wrote dispatch/feat-139-S1-harness-mechanic.json, plans/140-implementation.md, reviews/pr-6007.json, and tmp/pr-body-fix-12.md.',
+    'Handoff follows references/issue-body.md and references/tracker.md, as written in skills/agent-issue-writer/references/issue-body.md.',
+    'Output: knowledge/references/handoff.md',
+    'Wrote tmp/pr-body-fix-other.md in the other worktree.',
+    'Wrote docs/product/tables.md.',
+  ];
+  for (const message of present) assert.deepEqual([stop(message).status, stop(message).stderr], [0, ''], message);
+  const sent = stop('Wrote plans/never-written.md and tmp/never-written.md.');
+  assert.equal(sent.status, 2, 'a path under no root is still sent back');
+  assert.match(sent.stderr, /^Your report names `plans\/never-written\.md`, `tmp\/never-written\.md`, which does not exist\./u);
+});
+
+test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {
+  const message = 'Wrote .../review/b-verdicts-r34-cr.json, …/dispatch/x-harness-mechanic.json, and ../docs/real.md.';
+  assert.deepEqual(claimedPaths(message), ['../docs/real.md']);
+});
+
 test('a stop row counts the background tasks the subagent started that still run, and records the send-back they caused', (t) => {
   const { base, dir, log, hook } = project(t);
   const transcript = path.join(base, 'agent-a4.jsonl');
@@ -163,8 +206,11 @@ test('a stop row counts the background tasks the subagent started that still run
   ].join('\n'));
   const tasks = [{ id: 'bsleep001', type: 'shell', status: 'running', command: 'sleep 600' }, { id: 'bother002', type: 'shell', status: 'running' }];
   const stop = (active, background) => hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a4', agent_type: 'fixer', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: active, background_tasks: background });
-  assert.deepEqual([stop(false, tasks).status, stop(true, tasks).status, stop(false, tasks.slice(1)).status], [2, 0, 0]);
-  assert.deepEqual(log().map((row) => [row.delivered, row.running, row.sent_back]), [['chat', 1, true], ['chat', 1, false], ['chat', 0, false]]);
+  const sends = Array.from({ length: 5 }, (_, i) => stop(i > 0, tasks).status);
+  assert.deepEqual([...sends, stop(true, tasks).status, stop(false, tasks.slice(1)).status], [2, 2, 2, 2, 2, 0, 0]);
+  assert.deepEqual(log().map((row) => [row.delivered, row.running, row.sent_back]), [
+    ...Array(5).fill(['chat', 1, true]), ['chat', 1, false], ['chat', 0, false],
+  ], 'the stop the cap let end is the one with running above 0 and sent_back false');
 });
 
 // Sets config.json `telemetry` in a project from project().

@@ -338,7 +338,7 @@ What each rule matches:
 - Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, but `--undo` with no
   value or a true one, and a `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview`
   ([Ready hold](#ready-hold)).
-- Merge guard: `gh pr merge` but `--disable-auto`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
+- Merge guard: `gh pr merge` but `--disable-auto` and a read of its `--help` or `-h`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
   sent as a PUT or a POST ([Merge guard](#merge-guard)).
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;
@@ -831,23 +831,38 @@ one unbreakable token such as a URL are never reported.
 ## Delivery check
 
 When a subagent's last message presents a `.md` or `.json` path as delivered and that path exists nowhere, the stop hook
-sends it back once with the missing paths: it writes them, corrects its report, or says it removed them on purpose.
-Its second stop always ends. Each send-back is also an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
+sends it back once, on the first stop of its turn, with the missing paths: it writes them, corrects its report, or says
+it removed them on purpose. A later stop of that turn is not sent back for them. Each send-back is also an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
 for that agent type.
 A path counts as delivered only on a line that also has the 📄 marker or one of the words wrote, written, created, saved,
 handoff, or output, in any case, outside a path.
 A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.
-A path shortened with `...` exists nowhere, so it is sent back too: the `orchestrator` names each path in full.
+A relative path counts as there when it exists under any root it can be relative to (`lib/delivery-check.mjs`):
+the hook's folder, its checkout and the main checkout, the project, the project's [state folder](project-folder.md#local-state)
+(`dispatch/`, `plans/`, `reviews/`, `tmp/`), every worktree of the repository, this plugin, its `skills/` folder and each
+skill's folder (`references/tracker.md`), or the end of a file the agent's own Read, Write, or Edit calls named, such as a
+doc in another project. An absolute or `~/` path is checked as written.
+A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Background check
 
-A subagent that ends its turn goes idle, and the end of a background shell or agent it started does not wake it:
-a background push, or a reviewer whose report can no longer reach it, leaves it waiting until someone messages it.
-So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back once, naming each task,
-to wait for it in the foreground: poll it with a foreground command and a timeout, and repeat the call until it ends,
-or stop it with `TaskStop` when it should not outlive the turn. Its second stop always ends; ending with the task still running
-is an occurrence of an [automatic lesson](lessons.md#automatic-lessons) for the plugin.
+A subagent that ends its turn goes idle. Claude Code wakes it with a notice when a background shell it started ends,
+but a background agent it started, such as a reviewer resumed with SendMessage, cannot hand its report back to an idle
+agent, and the work waiting on that report stalls until someone messages it.
+So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back, naming each task,
+to wait for it in the foreground: poll it with a foreground command whose loop ends on its own before the command's timeout,
+and repeat the call until the task ends, or stop it with `TaskStop` when it should not outlive the turn.
+
+One send-back did not hold. A foreground wait that outlives its timeout is moved to the background, so at the next stop it
+is one more running task, and some agents answered the send-back by arming a Monitor, another task, and ending the turn.
+Claude Code marks every stop after the first send-back of a turn with `stop_hook_active: true`, so that flag cannot count
+the rounds. The hook counts them instead, in a file per agent in the temporary folder (`lib/child-send-backs.mjs`):
+it sends the subagent back at each stop while its task runs, up to 5 times in a row, and says which round it is.
+A stop with none of its own tasks running clears the count, and a turn no stop hook started counts from zero.
+The stop the cap lets end with the task still running is an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
+for the plugin, once per run of send-backs. The count is written before each send-back, and a stop whose count cannot be
+written is let end, so the check never loops.
 
 The send-back alone did not hold: subagents still ended their turn with a background agent running. So the Agent hook
 also rewrites the dispatch before it runs: a call a subagent makes, one whose payload has `agent_id`, with

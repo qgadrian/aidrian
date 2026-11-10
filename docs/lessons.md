@@ -196,8 +196,8 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
   target `plugin` for an `aidrian:` agent, `project` for any other.
   It stays quiet: it fires only when a file the agent said it wrote does not exist, once per stop.
 - **A subagent ends its turn with a background task it started still running**, after the [background check](hooks.md#background-check)
-  already sent it back once to wait. Key `idle-with-children:<agent type>`; P2, `gap`; target `plugin`.
-  It stays quiet: the send-back is the check working; only the stop after it, with the task still running, counts.
+  already sent it back 5 times in a row to wait. Key `idle-with-children:<agent type>`; P2, `gap`; target `plugin`.
+  It stays quiet: a send-back is the check working; only the stop the cap lets end, with the task still running, counts.
 - **One of the plugin's [blocking rules](hooks.md#recorded-blocks) blocks one session 3 times.** Key `hook-deny:<rule>`; P2, `gap`;
   target `project` for `agent-gates` and `tracker-guard`, whose gates and `tracker` key the project writes, `plugin` for any other.
   It stays quiet: one block is the rule doing its job; three in a session is an agent fighting it.

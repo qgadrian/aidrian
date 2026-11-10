@@ -1,3 +1,4 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -138,6 +139,12 @@ test('a head the guard cannot read refuses the merge, and --match-head-commit ne
   assert.equal(r.run('gh pr merge'), null, 'a bare merge reads the current branch`s pull request');
   assert.deepEqual(r.views.at(-1), [null, null]);
   assert.equal(r.run('gh pr merge 5 --disable-auto', { head: null }), null, 'turning auto-merge off merges nothing');
+  // The real block: a session read the options of `gh pr merge` in a chain of help reads, and was refused three times.
+  r.views.length = 0;
+  assert.equal(r.run('gh pr comment --help | grep body; gh pr merge --help 2>/dev/null | grep -nE "^\\s+-"', { head: null }), null, 'a help read merges nothing');
+  assert.equal(r.run('gh pr merge -h', { head: null }), null);
+  assert.equal(r.run('gh pr merge 5 --squash --help', { head: null }), null, 'gh prints the help and merges nothing, whatever else is given');
+  assert.deepEqual(r.views, [], 'a help read asks gh nothing');
   assert.equal(r.run('gh pr merge 5 -R other/repo', { head: null }), null, 'another repository is not this record`s');
 });
 

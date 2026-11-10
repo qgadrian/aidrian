@@ -51,10 +51,12 @@ export function deliverySignal({ agentType, agentId = null, session = null, miss
   };
 }
 
-// A subagent ended its turn while a background shell or agent it started still ran, after the stop hook had already sent
-// it back once to wait: it went idle, and the task's completion will not wake it. The rule and the hook are the plugin's.
-export function idleChildrenSignal({ agentType, agentId = null, session = null, children }) {
+// A subagent ended its turn while a background shell or agent it started still ran, after the stop hook had sent it back
+// `sendBacks` times in a row to wait (child-send-backs.mjs): it went idle with work in flight, and a subagent task's
+// handback to an idle agent is refused. The rule and the hook are the plugin's.
+export function idleChildrenSignal({ agentType, agentId = null, session = null, children, sendBacks = 1 }) {
   const kinds = [...new Set(children.map((child) => child.type))].join(', ');
+  const times = sendBacks === 1 ? 'once' : `${sendBacks} times`;
   return {
     key: `idle-with-children:${agentType}`,
     tier: 'P2',
@@ -63,7 +65,7 @@ export function idleChildrenSignal({ agentType, agentId = null, session = null, 
     title: `${agentType} went idle while a background task it started still ran`,
     note:
       `${agentType} ended its turn with ${children.length} background ${kinds} task${children.length === 1 ? '' : 's'} still running, ` +
-      'after the stop hook sent it back once to wait in the foreground. Nothing wakes it when the task ends.',
+      `after the stop hook sent it back ${times} in a row to wait in the foreground. A subagent task cannot hand its result back to an idle agent.`,
     evidence: [...children.map((child) => `background task ${child.id}`), ...(agentId ? [`dispatch log: agent ${agentId}`] : [])],
     session,
     agent: agentType,

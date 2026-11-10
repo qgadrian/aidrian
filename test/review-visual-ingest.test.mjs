@@ -1,6 +1,7 @@
 // Images taken outside the tool, ingested as captures of one head (issue #139): `ingestCaptures` in
 // lib/review/visual.mjs and `aidrian pr ingest` (runIngest in lib/review-gate.mjs). An ingest is an audit entry, not a
 // measured capture: it sits apart from the tool's entries in the manifest, and every surface marks it.
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';

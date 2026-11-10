@@ -1,3 +1,4 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -7,6 +8,7 @@ import { createGithubForge, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, UPLOA
 import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
+import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import * as reviewState from '../plugins/aidrian/lib/review/state.mjs';
 import { listForge, openPrBodies } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
@@ -287,18 +289,73 @@ test('a gh failure reaches the caller as gh threw it', () => {
 });
 
 test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints while it exits 8 for a pending check', () => {
-  const { forge, args } = recorded(() => '[{"name":"e2e","state":"SUCCESS"}]');
-  assert.deepEqual(forge.checks('7', { repo: 'github.com/acme/notes' }), [{ name: 'e2e', state: 'SUCCESS' }]);
+  const printed = [
+    { name: 'e2e', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', link: 'https://github.com/acme/notes/actions/runs/42854262636/job/129962858764' },
+    { name: 'Vercel', state: 'SUCCESS', workflow: '', event: '', link: 'https://vercel.com/acme/notes/abc' },
+  ];
+  const { forge, args } = recorded(() => JSON.stringify(printed));
+  assert.deepEqual(forge.checks('7', { repo: 'github.com/acme/notes' }), [
+    { name: 'e2e', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', run: 42854262636, host: 'github.com', repo: 'acme/notes', workflowId: null },
+    { name: 'Vercel', state: 'SUCCESS', workflow: null, event: null, run: null, host: null, repo: null, workflowId: null },
+  ], 'the run is the workflow run in the link; an app status has none; one run per name needs no workflow file read');
   forge.checks('7', { repo: null });
   forge.checks(null);
+  const fields = 'name,state,workflow,event,link';
   assert.deepEqual(args(), [
-    ['pr', 'checks', '7', '--repo', 'github.com/acme/notes', '--json', 'name,state'],
-    ['pr', 'checks', '7', '--json', 'name,state'],
-    ['pr', 'checks', '--json', 'name,state'],
+    ['pr', 'checks', '7', '--repo', 'github.com/acme/notes', '--json', fields],
+    ['pr', 'checks', '7', '--json', fields],
+    ['pr', 'checks', '--json', fields],
   ]);
+  // A name with several runs: one paginated list of the head's runs, on the link's own host, gives every run's workflow
+  // file, however many groups there are, and the verdict over them drops every superseded skip.
+  const SHA = 'a'.repeat(40);
+  const link = (id) => `https://ghe.example/acme/notes/actions/runs/${id}/job/1`;
+  const many = Array.from({ length: 14 }, (_, i) => ({ name: `gate ${i % 7}`, state: i < 7 ? 'SKIPPED' : 'SUCCESS', workflow: `W${i % 7}`, event: 'pull_request', link: link(100 + i) }));
+  const reads = recorded((given) => {
+    if (given[0] === 'pr' && given[1] === 'checks') return JSON.stringify(many);
+    if (given[0] === 'pr') return JSON.stringify({ headRefOid: SHA });
+    const runs = Array.from({ length: 14 }, (_, i) => ({ id: 100 + i, workflow_id: 10 + (i % 7) }));
+    return JSON.stringify([{ workflow_runs: runs.slice(0, 8) }, { workflow_runs: runs.slice(8) }]);
+  });
+  const rows = reads.forge.checks('7', { repo: 'ghe.example/acme/notes' });
+  assert.deepEqual(rows.map((row) => row.workflowId), Array.from({ length: 14 }, (_, i) => 10 + (i % 7)));
+  assert.deepEqual(computeVerdict(rows, { conditionalChecks: ['docs'] }).verdict, 'ready', 'seven workflows, each with a superseded skip');
+  assert.deepEqual(reads.args().slice(1), [
+    ['pr', 'view', '7', '--repo', 'ghe.example/acme/notes', '--json', 'headRefOid'],
+    ['api', '--hostname', 'ghe.example', `repos/acme/notes/actions/runs?head_sha=${SHA}&per_page=100`, '--paginate', '--slurp'],
+  ]);
+  const once = recorded((given) => (given[1] === 'checks' ? JSON.stringify(many.slice(0, 2)) : assert.fail('one run per name reads nothing more')));
+  assert.deepEqual(once.forge.checks('7').map((row) => row.workflowId), [null, null]);
+  const failed = recorded((given) => {
+    if (given[1] === 'checks') return JSON.stringify(many);
+    throw new Error('HTTP 502');
+  });
+  assert.deepEqual(new Set(failed.forge.checks('7').map((row) => row.workflowId)), new Set([null]), 'a list that fails leaves every run unread');
+  // Review round 4: the lists follow the repositories of the workflow rows' runs, once each, never the first row's alone.
+  const at = (repo, id) => `https://github.com/${repo}/actions/runs/${id}/job/1`;
+  const mixed = [
+    { name: 'Vercel', state: 'SUCCESS', workflow: '', event: '', link: at('acme/app-status', 900) },
+    { name: 'gate', state: 'SKIPPED', workflow: 'CI', event: 'pull_request', link: at('acme/notes', 100) },
+    { name: 'gate', state: 'SUCCESS', workflow: 'CI', event: 'pull_request', link: at('acme/notes', 200) },
+    { name: 'lint', state: 'SUCCESS', workflow: 'Lint', event: 'pull_request', link: at('acme/other', 300) },
+    { name: 'lint', state: 'SUCCESS', workflow: 'Lint', event: 'pull_request', link: at('acme/broken', 400) },
+  ];
+  const lists = { 'acme/notes': [{ id: 100, workflow_id: 1 }, { id: 200, workflow_id: 1 }], 'acme/other': [{ id: 300, workflow_id: 3 }, { id: 400, workflow_id: 3 }] };
+  const listed = recorded((given) => {
+    if (given[1] === 'checks') return JSON.stringify(mixed);
+    if (given[0] === 'pr') return JSON.stringify({ headRefOid: SHA });
+    const repo = /repos\/([^/]+\/[^/]+)\/actions/u.exec(given.find((arg) => arg.startsWith('repos/')))[1];
+    if (!lists[repo]) throw new Error('HTTP 404');
+    return JSON.stringify([{ workflow_runs: lists[repo] }]);
+  });
+  const mixedRows = listed.forge.checks('7');
+  assert.deepEqual(mixedRows.map((row) => row.workflowId), [null, 1, 1, 3, null], 'a run of another repository is not read from this one\'s list, and an unread one keeps null');
+  assert.deepEqual(listed.args().filter((each) => each[0] === 'api').map((each) => /repos\/([^/]+\/[^/]+)\//u.exec(each.find((arg) => arg.startsWith('repos/')))[1]),
+    ['acme/notes', 'acme/other', 'acme/broken'], 'the leading app status chooses no repository');
+  assert.equal(computeVerdict(mixedRows, { conditionalChecks: ['docs'] }).verdict, 'ready', 'the superseded skip goes although an app status leads');
   const pending = [{ name: 'e2e', state: 'PENDING' }];
   const exit8 = createGithubForge({ run: () => { throw Object.assign(new Error('exit 8'), { status: 8, stdout: JSON.stringify(pending) }); } });
-  assert.deepEqual(exit8.checks('7'), pending, 'exit 8 with the rows on stdout is an answer');
+  assert.deepEqual(exit8.checks('7'), [{ name: 'e2e', state: 'PENDING', workflow: null, event: null, run: null, host: null, repo: null, workflowId: null }], 'exit 8 with the rows on stdout is an answer');
   const missing = createGithubForge({ run: () => { throw new Error('gh: not found'); } });
   assert.throws(() => missing.checks('7'), /gh: not found/u, 'no rows on stdout: gh\'s own error');
   assert.throws(() => recorded(() => 'not json').forge.checks('7'), SyntaxError, 'a success that prints no JSON throws');

@@ -1,3 +1,4 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -6,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { checkoutRepos, computeVerdict, namesRemote, parseCliArgs, runChecks } from '../plugins/aidrian/lib/pr-checks.mjs';
+import { checkoutRepos, computeVerdict, currentRows, namesRemote, parseCliArgs, runChecks } from '../plugins/aidrian/lib/pr-checks.mjs';
 
 const row = (name, state) => ({ name, state });
 const verdict = (rows, policy) => computeVerdict(rows, policy).verdict;
@@ -54,6 +55,41 @@ test('conditionalChecks: once it has an entry, only a listed check may skip; any
   assert.equal(verdict([row('docs', 'SKIPPED'), row('unit', 'IN_PROGRESS')], { conditionalChecks: ['db'] }), 'failing', 'a skip is final');
   const required = computeVerdict([row('e2e', 'SKIPPED')], { requiredChecks: ['e2e'], conditionalChecks: ['e2e'] });
   assert.deepEqual([required.verdict, required.reason], ['failing', 'e2e=SKIPPED (required)'], 'required wins over conditional');
+});
+
+test('a superseded run and a skipped matrix template row are left out: a draft-then-ready pull request reads ready', () => {
+  // The incident: the run started while the pull request was a draft skipped the matrix job under its template name, and
+  // the run after it was marked ready, on the same head, passed every expanded shard and the aggregator.
+  const run = (id, name, state, extra = {}) => ({ name, state, workflow: 'E2E', event: 'pull_request', run: id, workflowId: 7, ...extra });
+  const rows = [
+    run(100, '🎭 E2E Shard ${{ matrix.shard }}', 'SKIPPED'),
+    run(100, 'E2E gate', 'SKIPPED'),
+    ...[1, 2, 3, 4, 5, 6].map((shard) => run(200, `🎭 E2E Shard ${shard}`, 'SUCCESS')),
+    run(200, 'E2E gate', 'SUCCESS'),
+    { name: 'Vercel', state: 'SUCCESS', workflow: null, event: null, run: null },
+  ];
+  const policy = { conditionalChecks: ['Test DB'] };
+  assert.deepEqual(computeVerdict(rows, policy), { verdict: 'ready', reason: '8 pass', failing: [], pending: [], skipped: [], unexpected_skips: [] });
+  assert.deepEqual(currentRows(rows).map((row) => row.name), [...[1, 2, 3, 4, 5, 6].map((shard) => `🎭 E2E Shard ${shard}`), 'E2E gate', 'Vercel']);
+  // Without the newer run, the template row is still dropped, and the old run's own skip is still named.
+  assert.equal(computeVerdict(rows.slice(0, 2), policy).reason, 'unexpected skip: E2E gate');
+  // Two workflow files may share a display name: only the same file's newer run supersedes a row, whatever its state.
+  const security = { workflow: 'CI', workflowId: 1 };
+  const lint = { workflow: 'CI', workflowId: 2 };
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', security), run(200, 'lint', 'SUCCESS', lint)]).verdict, 'failing');
+  assert.equal(computeVerdict([run(100, 'security', 'SKIPPED', security), run(200, 'lint', 'SUCCESS', lint)], { conditionalChecks: ['docs'] }).reason,
+    'unexpected skip: security', 'another file`s skip is still unexpected');
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', security), run(200, 'security', 'SUCCESS', security)]).verdict, 'ready', 'a rerun of the same file replaces its failure');
+  // After review round 5: workflow ids are per installation, so the same id on two hosts is two workflows.
+  const ghe = { workflow: 'CI', workflowId: 1, host: 'ghe.example', repo: 'acme/notes' };
+  const dotcom = { workflow: 'CI', workflowId: 1, host: 'github.com', repo: 'acme/notes' };
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', ghe), run(200, 'security', 'SUCCESS', dotcom)]).verdict, 'failing');
+  // A run whose workflow file the forge could not read is never taken for superseded.
+  assert.equal(computeVerdict([run(100, 'security', 'FAILURE', { workflowId: null }), run(200, 'security', 'SUCCESS', { workflowId: null })]).verdict, 'failing');
+  // Another event's run of the same workflow is no supersession, and a failure under a template name still fails.
+  assert.deepEqual(currentRows([run(100, 'lint', 'SUCCESS', { event: 'push' }), run(200, 'lint', 'SUCCESS')]).length, 2);
+  assert.equal(computeVerdict([run(300, 'Shard ${{ matrix.shard }}', 'FAILURE')]).verdict, 'failing');
+  assert.equal(computeVerdict([{ name: 'plain', state: 'SUCCESS' }]).verdict, 'ready', 'a row without run fields reads as before');
 });
 
 test('parseCliArgs reads a number, #number, -R, and --json, and reports anything else', () => {

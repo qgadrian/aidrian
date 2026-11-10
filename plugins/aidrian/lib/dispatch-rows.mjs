@@ -1,16 +1,15 @@
 // The rows the hooks write to the dispatch log (dispatch-log.mjs): `dispatch` after an Agent call, `stop` when a subagent
-// stops, `session` when a session ends, and `hook_deny` when one of the plugin's rules blocks a call; and the delivery
-// check behind a `stop` row, which reads the paths a subagent's last message presents as written.
+// stops, `session` when a session ends, and `hook_deny` when one of the plugin's rules blocks a call. The delivery check
+// behind a `stop` row, which reads the paths a subagent's last message presents as written, is delivery-check.mjs.
 // The stop hook's other check reads which background shells and agents the subagent started are still running (runningChildren).
 // docs/dispatch-log.md describes every field.
 
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { CHILD_SEND_BACKS } from './child-send-backs.mjs';
+import { checkDelivery } from './delivery-check.mjs';
 import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
-import { checkoutRoots } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import {
@@ -20,11 +19,6 @@ import {
 const DESCRIPTION_CHARS = 80;
 // A hook_deny row's `reason`: the start of what the rule matched.
 const REASON_CHARS = 120;
-const CLAIMED_PATHS = 20;
-// A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template.
-const CLAIM = /(?<![\w.~/:@<>{}$*%#-])(~?[\w.-]*\/[\w.~/-]*\.(?:md|json))(?![\w/<>{}*-])/gu;
-// A line that presents a file as delivered: a delivery word that is not part of a path, or the 📄 file marker.
-const DELIVERY_LINE = /(?<![\w./-])(?:wrote|written|created|saved|handoffs?|outputs?)(?![\w./-])|📄/iu;
 
 const text = (value, limit = Infinity) => (typeof value === 'string' && value !== '' ? value.slice(0, limit) : null);
 
@@ -49,18 +43,15 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
   };
 }
 
-// The paths a subagent's last message presents as delivered, and those of them that exist nowhere: { claims, missing }.
-export function checkDelivery(input, project) {
-  const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
-  const claims = claimedPaths(input.last_assistant_message);
-  return { claims, missing: missingPaths(claims, cwd) };
-}
-
-// Whether the stop hook sends the subagent back, whether or not telemetry is on: a path is `missing` or a background task
-// it started still runs (runningChildren), and the host marks this stop as a first one with `stop_hook_active: false`.
-// The stop that a send-back caused, and a payload without the field, always end.
-export const sendsBack = (input, delivery, children = []) =>
-  (delivery.missing.length > 0 || children.length > 0) && input.stop_hook_active === false;
+// Whether the stop hook sends the subagent back, whether or not telemetry is on. A `missing` path sends it back on the
+// first stop of a turn (`stop_hook_active: false`) alone. A background task it started that still runs (runningChildren)
+// sends it back while `made`, the send-backs in a row for that reason so far (child-send-backs.mjs), is under
+// CHILD_SEND_BACKS: one send-back is not enough, since a foreground wait the host moves to the background, or a watch the
+// agent arms instead, is one more task at the next stop. `made` defaults to one send-back per turn. A payload without
+// `stop_hook_active` (a host that does not send it) is never sent back.
+export const sendsBack = (input, delivery, children = [], made = input.stop_hook_active === false ? 0 : CHILD_SEND_BACKS) =>
+  (delivery.missing.length > 0 && input.stop_hook_active === false)
+  || (children.length > 0 && typeof input.stop_hook_active === 'boolean' && made < CHILD_SEND_BACKS);
 
 // A task status that is no longer in flight. Claude Code lists in-flight tasks only; this guards a host that lists more.
 export const ENDED_STATUSES = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled']);
@@ -107,9 +98,11 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
 
 // SubagentStop: the subagent's tokens, cost, API requests and tool calls, the knowledge docs it read with their sizes,
 // its delivery check, the count of background tasks it started that still run (`running`, from runningChildren), and
-// whether the hook sent it back, over the requests it made itself (ownRequests).
-// `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
-export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project), children = [] } = {}) {
+// whether the hook sent it back (`sentBack`, by default sendsBack's one send-back per turn), over the requests it made
+// itself (ownRequests). `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
+export function stopRow(input, project, {
+  now = Date.now(), docReads = true, delivery = checkDelivery(input, project), children = [], sentBack = sendsBack(input, delivery, children),
+} = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const own = transcript ? ownRequests(input) : undefined;
   const part = transcript ? partOf(aggregateUsage(transcript), own) : { perModel: {}, requests: 0, tool_requests: 0, tool_calls: 0 };
@@ -129,7 +122,7 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
     running: children.length,
-    sent_back: sendsBack(input, delivery, children),
+    sent_back: sentBack,
   };
 }
 
@@ -198,27 +191,6 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
   };
 }
 
-// The .md and .json paths a message presents as delivered, once each, at most CLAIMED_PATHS. A path on any other line
-// is a mention, such as "docs/old.md does not exist", and is never checked.
-export function claimedPaths(message) {
-  if (typeof message !== 'string') return [];
-  const lines = message.split('\n').filter((line) => DELIVERY_LINE.test(line));
-  const claims = lines.flatMap((line) => [...line.matchAll(CLAIM)].map((match) => match[1].replace(/[.]+$/u, '')));
-  return [...new Set(claims)].slice(0, CLAIMED_PATHS);
-}
-
-// The claimed paths that exist nowhere: not absolute, not from `cwd`, not from its checkout or the main checkout.
-export function missingPaths(claims, cwd) {
-  const resolve = (base, claim) => (claim.startsWith('~/') ? path.join(homedir(), claim.slice(2)) : path.resolve(base, claim));
-  let roots;
-  return claims.filter((claim) => {
-    if (existsSync(resolve(cwd, claim))) return false;
-    if (path.isAbsolute(claim) || claim.startsWith('~/')) return true;
-    roots ??= checkoutRoots(cwd);
-    return !roots || ![roots.current, roots.main].some((root) => existsSync(path.join(root, claim)));
-  });
-}
-
 // The knowledge docs among `files`, as { path, bytes }: the path as the index names it, and the size of the copy that
 // was read, or of the project's copy once that one is gone. A project doc matches by its path's end, so a read in a
 // worktree counts too.
@@ -229,3 +201,5 @@ function knowledgeDocsRead(files, project) {
     return file ? [{ path: doc, bytes: fileBytes(file) ?? fileBytes(path.resolve(project.root, doc)) }] : [];
   });
 }
+
+export { checkDelivery, claimedPaths, missingPaths } from './delivery-check.mjs';

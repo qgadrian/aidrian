@@ -51,7 +51,8 @@ When `delivered` is `missing` and Claude Code marks the stop as a first one (`st
 the subagent back once: it is told which paths do not exist, and either writes them, corrects its report, or says it
 removed them on purpose. Its second stop always ends, and writes a second `stop` row; the report counts the last one.
 A stop that ends with `delivered: missing`, such as that second one, has `sent_back: false`.
-The same holds for `running` above 0: the first stop sends the subagent back to wait, and a second stop with `running` above 0
+For `running` above 0 the hook sends the subagent back to wait at each stop, up to 5 in a row
+([background check](hooks.md#background-check)), so a stop with `running` above 0 and `sent_back: false`
 is a subagent that went idle with its task still running.
 
 ### `session`: when a session ends

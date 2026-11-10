@@ -1,6 +1,7 @@
 // What Codex needs from its adapter for the tracker write guard (docs/hooks.md#where-the-tracker-guard-is-verified): its app
 // connectors' tool names, and the warnings of `aidrian check` while the guard cannot hold there. No live Codex runs here.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

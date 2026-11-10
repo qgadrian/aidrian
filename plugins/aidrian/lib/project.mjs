@@ -6,7 +6,7 @@
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig, pluginRepository } from './config.mjs';
@@ -30,9 +30,9 @@ const defaultRead = () => undefined;
 // subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded.
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
-  'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
+  'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
   'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
-  'decisions', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
+  'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
   'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-await-review',
   'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'review-gate', 'session-length', 'shell-lex',
@@ -462,9 +462,27 @@ export const recordsFolder = (state) => path.join(state, 'reviews');
 
 // `$XDG_STATE_HOME/aidrian`, with `~/.local/state` when that variable is unset or relative: the folder that holds every
 // project's state folder, and what no config.json can move (lib/gate-snapshot.mjs keeps its files there).
+// Under node's test runner (`NODE_TEST_CONTEXT`, which it sets for every test file and the processes it spawns), a root in
+// the user's real home folder, outside the temporary folder and the run's test state folder, is refused: a test that
+// reached it would write fixture lessons and state folders into the developer's own inbox. scripts/test-state.mjs gives
+// every test its own root.
 export function stateRoot(env = process.env) {
   const base = path.isAbsolute(env.XDG_STATE_HOME ?? '') ? env.XDG_STATE_HOME : path.join(homedir(), '.local/state');
-  return path.join(base, 'aidrian');
+  const root = path.join(base, 'aidrian');
+  const scratch = [tmpdir(), env.AIDRIAN_TEST_STATE].filter((folder) => typeof folder === 'string' && path.isAbsolute(folder));
+  if (env.NODE_TEST_CONTEXT && realHome(root) && !scratch.some((folder) => isWithin(path.resolve(folder), root))) {
+    throw new Error(`a test reached the real state root ${root}: run it with \`--import ./scripts/test-state.mjs\`, or set XDG_STATE_HOME`);
+  }
+  return root;
+}
+
+// Whether `folder` is in the home folder of the user this process runs as, which no HOME change moves.
+function realHome(folder) {
+  try {
+    return isWithin(path.resolve(userInfo().homedir), path.resolve(folder));
+  } catch {
+    return false;
+  }
 }
 
 // Task worktrees: config.json `git.worktrees.dir`, `.worktrees` at the repository root by default.

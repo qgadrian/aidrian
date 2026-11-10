@@ -2,6 +2,7 @@
 // working copy's value to the base branch's, as auto-merge does, and the review step reads `review.record` as the base
 // branch commits it. docs/review.md#the-record describes it.
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';

@@ -2,6 +2,7 @@
 // their inputs its own way, so without the fix each of these passed unchecked. The payloads are test/fixtures/hosts/codex/github.json,
 // which says what they come from: no hook on Codex has run them (docs/providers/codex.md#github-through-the-app-connector).
 
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

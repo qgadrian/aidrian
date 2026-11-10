@@ -221,6 +221,12 @@ A state folder whose path holds a line break gets the same warning and refusal w
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.
+Before any of these, `aidrian pr checks` leaves out two kinds of row gh still lists for the head: a row from an older
+run of the same workflow file and event than the newest one listed, such as the run started while the pull request was a
+draft, and a `SKIPPED` or `NEUTRAL` row whose name still holds an unexpanded `${{ ... }}` expression, a matrix job that a
+skipped run reported under its template name. The workflow file of each run comes from a list of the head's workflow
+runs, one for each repository the workflow rows' run links name, on that link's host, read only when some workflow name
+has more than one run, since two files may share a name; a run no list names is never taken for superseded. A check no workflow run reports, such as an app's status, always counts.
 
 ### Changed defaults
 

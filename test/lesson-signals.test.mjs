@@ -1,3 +1,4 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,6 +8,7 @@ import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { CHILD_SEND_BACKS } from '../plugins/aidrian/lib/child-send-backs.mjs';
 import { deliverySignal, denialSignal, forgetDenials, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { projectAt, projectId } from '../plugins/aidrian/lib/project.mjs';
 
@@ -229,34 +231,50 @@ const SESSION_TASKS = [
   { id: 'afix-1475', type: 'teammate', status: 'running', description: 'A peer teammate' },
 ];
 
-test('a subagent that stops with a background task it started still running is sent back once to wait; ending anyway is a plugin lesson', (t) => {
-  const { dir, all, plugin, hook } = project(t);
+test('a subagent that stops with a background task it started still running is sent back at each stop, up to the cap; ending anyway is a plugin lesson', (t) => {
+  const { dir, temp, all, plugin, hook } = project(t);
   const transcript = childTranscript(dir);
-  const stop = (active, tasks = SESSION_TASKS) => hook('hook-subagent-stop.mjs', {
-    session_id: 's1', agent_id: 'a1', agent_type: 'fix-1027', agent_transcript_path: transcript, last_assistant_message: 'Waiting for the push.',
+  const stop = (active, tasks = SESSION_TASKS, agent = 'a1') => hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: agent, agent_type: 'fix-1027', agent_transcript_path: transcript, last_assistant_message: 'Waiting for the push.',
     stop_hook_active: active, background_tasks: tasks,
   });
   const sent = stop(false);
   assert.equal(sent.status, 2);
   assert.match(sent.stderr, /^You started background work that is still running: `bmnjbq03x` \(shell: Push the branch\), `a51c8e798c62f1139` \(subagent: Delta review\)\. /);
   assert.match(sent.stderr, /Wait for it in the foreground before you end the turn/);
+  assert.match(sent.stderr, /ends on its own before the command's timeout/);
+  assert.match(sent.stderr, /This is send-back 1 of 5\./);
   assert.doesNotMatch(sent.stderr, /bother0001|afix-1475/, 'a task another agent started, and a peer teammate, are not its children');
   assert.deepEqual([...all(), ...plugin()], [], 'the send-back is the check working, not a lesson');
 
-  assert.equal(stop(true).status, 0, 'the second stop always ends');
+  // stop_hook_active is true on every stop the send-backs caused; the hook counts them itself.
+  const rounds = Array.from({ length: CHILD_SEND_BACKS - 1 }, () => stop(true));
+  assert.deepEqual(rounds.map((round) => round.status), Array(CHILD_SEND_BACKS - 1).fill(2), 'each later stop with the task running is sent back too');
+  assert.match(rounds.at(-1).stderr, new RegExp(`This is send-back ${CHILD_SEND_BACKS} of ${CHILD_SEND_BACKS}\\.`));
+  assert.deepEqual(plugin(), [], 'no lesson while the check still sends it back');
+
+  assert.equal(stop(true).status, 0, 'the cap lets the next stop end');
   assert.deepEqual(
     plugin().map((lesson) => [lesson.key, lesson.target, lesson.seen, lesson.evidence]),
     [['idle-with-children:fix-1027', 'plugin', 1, ['background task bmnjbq03x', 'background task a51c8e798c62f1139', 'dispatch log: agent a1']]],
   );
+  assert.match(plugin()[0].note, /sent it back 5 times in a row/);
   assert.deepEqual(all(), [], 'the lesson is the plugin\'s, in the plugin\'s inbox');
+  assert.deepEqual([stop(true).status, stop(true).status, plugin()[0].seen], [0, 0, 1], 'past the cap a chain of stops ends, with no new occurrence');
 
+  assert.equal(stop(false).status, 2, 'a turn no stop hook started counts from zero');
   assert.equal(stop(false, SESSION_TASKS.slice(2)).status, 0, 'only others\' tasks still run');
+  assert.equal(stop(true).status, 2, 'a stop with none of its own tasks running cleared the count');
   assert.equal(stop(false, [{ ...SESSION_TASKS[0], status: 'completed' }]).status, 0, 'its task ended');
   assert.equal(stop(false, []).status, 0);
   assert.equal(stop(true, []).status, 0);
   assert.equal(hook('hook-subagent-stop.mjs', { agent_id: 'a1', agent_type: 'fix-1027', agent_transcript_path: transcript, background_tasks: SESSION_TASKS }).status, 0, 'no stop_hook_active field: never sent back');
   assert.equal(hook('hook-subagent-stop.mjs', { agent_id: 'a1', agent_type: 'fix-1027', stop_hook_active: false, background_tasks: SESSION_TASKS }).status, 0, 'no transcript: no task is its own');
   assert.equal(plugin()[0].seen, 1, 'a stop with nothing of its own running adds no occurrence');
+
+  // A count the hook cannot store ends every stop after the first of a turn: nothing could count the next one.
+  mkdirSync(path.join(temp, 'aidrian-child-send-backs-a9'));
+  assert.deepEqual([stop(false, SESSION_TASKS, 'a9').status, stop(true, SESSION_TASKS, 'a9').status], [2, 0]);
 });
 
 test('a subagent that reads, waits on, messages, or quotes the launch of another agent\'s running task is not sent back for it', (t) => {

@@ -1,6 +1,7 @@
 // The harness-setup skill hands harness-librarian the text it writes into a project from
 // references/setup-files.md. These cases hold that text to the files it copies: the example project's team install,
 // the plugin manifest's repository, and the AGENTS.md lines of docs/adopting.md.
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

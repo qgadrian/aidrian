@@ -52,6 +52,50 @@ const namesItem = (apiUrl, kind, repo, n) => {
 // gh's default host, which a call names only when it is another.
 const DEFAULT_HOST = 'github.com';
 
+// One `gh pr checks` row in the forge's shape: its name and state, the workflow, event, and run that reported it, and
+// `workflowId`, the workflow file's id (filled in by workflowIds), null until it is read. `host` and `repo` name the
+// run's repository, from its link, for that read.
+const RUN_LINK = /^https:\/\/([^/]+)\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(?:\/|$)/u;
+const checkRow = (row) => {
+  const link = typeof row?.link === 'string' ? RUN_LINK.exec(row.link) : null;
+  const text = (value) => (typeof value === 'string' && value !== '' ? value : null);
+  return {
+    name: row?.name, state: row?.state, workflow: text(row?.workflow), event: text(row?.event),
+    run: link ? Number(link[3]) : null, host: link ? link[1] : null, repo: link ? link[2] : null, workflowId: null,
+  };
+};
+
+// Fills in `workflowId` on every row of a run, once some workflow name and event is reported by more than one run: two
+// workflow files may share a display name, so only the file's id tells a rerun from another workflow. `listRuns(host,
+// repo)` gives the workflow runs of the pull request's head in that repository, every page of them, each with its `id`
+// and `workflow_id`; it is called once for each repository the workflow rows' runs belong to, so a row with no workflow,
+// such as an app's status that links to a run, chooses none. A run no list names, or one whose list fails, keeps null.
+// Returns the rows.
+function workflowIds(rows, listRuns) {
+  const runs = new Map();
+  const repos = new Map();
+  const key = (host, repo) => `${host}/${repo}`;
+  for (const row of rows) {
+    if (row.run === null || !row.workflow) continue;
+    const group = `${row.workflow}\u0000${row.event ?? ''}`;
+    runs.set(group, (runs.get(group) ?? new Set()).add(row.run));
+    repos.set(key(row.host, row.repo), { host: row.host, repo: row.repo });
+  }
+  if (![...runs.values()].some((each) => each.size > 1)) return rows;
+  const ids = new Map();
+  for (const { host, repo } of repos.values()) {
+    try {
+      for (const run of listRuns(host, repo)) {
+        if (Number.isInteger(run?.id) && Number.isInteger(run.workflow_id)) ids.set(`${key(host, repo)}#${run.id}`, run.workflow_id);
+      }
+    } catch {
+      // Unread: no run of this repository is taken for a rerun of another.
+    }
+  }
+  for (const row of rows) row.workflowId = row.run === null ? null : ids.get(`${key(row.host, row.repo)}#${row.run}`) ?? null;
+  return rows;
+}
+
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
 // what gh throws. A method that names no `repo` reads gh's default repository for `cwd`.
@@ -98,18 +142,29 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     },
     // The open pull requests, at most `limit`, each with the `fields` named; `repo` lists that repository's.
     openChanges: (limit, fields, { repo = null } = {}) => json(['pr', 'list', '--state', 'open', '--limit', String(limit), '--json', fields, ...(repo ? ['--repo', repo] : [])]),
-    // The checks of the pull request `ref` (none: the current branch's), as `{ name, state }` rows. gh exits 8 while a
-    // check is pending, with the rows on stdout: those rows are the answer. Any other failure throws as gh threw it.
+    // The checks of the pull request `ref` (none: the current branch's), as checkRow rows: `run` is the id of the Actions
+    // workflow run in the row's link, null for a check no workflow run reports, such as an app's status, and
+    // `workflowId` is read from the head's runs, on the link's host, once a workflow name has several (workflowIds). gh exits 8 while a check is
+    // pending, with the rows on stdout: those rows are the answer. Any other failure throws as gh threw it.
     checks: (ref, { repo = null } = {}) => {
+      const args = ['pr', 'checks', ...(given(ref) ? [String(ref)] : []), ...(repo ? ['--repo', repo] : []), '--json', 'name,state,workflow,event,link'];
+      let rows;
       try {
-        return json(['pr', 'checks', ...(given(ref) ? [String(ref)] : []), ...(repo ? ['--repo', repo] : []), '--json', 'name,state']);
+        rows = json(args);
       } catch (error) {
         try {
-          return JSON.parse(error?.stdout ?? '');
+          rows = JSON.parse(error?.stdout ?? '');
         } catch {
           throw error;
         }
       }
+      if (!Array.isArray(rows)) return rows;
+      const listRuns = (host, owner) => {
+        const head = json(['pr', 'view', ...(given(ref) ? [String(ref)] : []), ...(repo ? ['--repo', repo] : []), '--json', 'headRefOid']).headRefOid;
+        if (!/^[0-9a-f]{40}$/u.test(head ?? '')) return [];
+        return rest(`repos/${owner}/actions/runs?head_sha=${head}&per_page=100`, { paginate: true, host }).flatMap((page) => page?.workflow_runs ?? []);
+      };
+      return workflowIds(rows.map(checkRow), listRuns);
     },
     // `owner/name` of the default repository.
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,

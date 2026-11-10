@@ -36,7 +36,7 @@ const GUARDED_LIB = [
   'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-await-review',
   'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'review-gate', 'session-length', 'shell-lex',
-  'stop-announce', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
+  'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 export const GUARDED_PATHS = new RegExp(

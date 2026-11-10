@@ -80,7 +80,8 @@ export PATH="${aidrian_dir}bin:$PATH"
 - The Stop input holds `stop_hook_active` and `last_assistant_message`, and a Stop hook's exit 2 makes its stderr the
   continuation prompt: both come from the schema and messages the 0.167.0 binary embeds, and no live session has run them.
   So the [announce check](../hooks.md#announced-work) sends a Codex main session back once, naming `request_user_input`
-  as its question tool; the session-length reminder reads Claude Code transcripts only and stays quiet.
+  as its question tool, and the [hand-back check](../hooks.md#hand-back-check) reads the same message;
+  the session-length reminder reads Claude Code transcripts only and stays quiet.
 - The subagent-stop and session-end inputs are not verified.
   Those hooks run, write nothing they cannot read, and never send a Codex agent back.
 

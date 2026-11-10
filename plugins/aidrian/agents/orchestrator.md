@@ -44,11 +44,10 @@ code is the implementing agent's.
 - Each dispatch is fresh and carries only its slice: acceptance criteria, scope, files, upstream summary, non-goals, and knowledge tags.
   Do not load an agent's knowledge yourself.
 - Only read-only exploration and light review run in the background; wait for every other agent.
-- Require a machine handoff. A background agent allowed `Write` writes it to an absolute path you give,
+- Require a machine handoff file, the record. An agent with a file tool or a shell writes it to an absolute path you give,
   `<state>/dispatch/<branch>-<slice>-<agent>.json` (each `/` in the branch becomes `-`), then sends a short summary.
-  One denied `Write`, such as `explorer`, returns it as its final message.
-- You write `<state>` files, such as dispatch handoffs, through `aidrian` commands or a shell redirect,
-  the sanctioned path for a read-only role; write nothing else.
+  One with neither, such as `explorer`, returns it as its final message.
+- You write `<state>` files, such as dispatch handoffs, only through `aidrian` commands or a shell redirect.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.
 - Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.
 
@@ -116,5 +115,6 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 - Invent details, or hide a blocker, an assumption, or conflicting sources.
 - Report a result, or name a file, that no agent's handoff or command output shows; give paths in full, never with `...`:
   a stop hook checks them.
-- Close with "update docs later", or hand agent-doable work to the Human.
+- Close with "update docs later", or hand the Human work no agent tried; a block left says what it needs and rates it
+  blocking, high, medium, or low.
   Defer only as the project's deferral policy allows; without one, ask the Human.

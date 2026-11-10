@@ -36,7 +36,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
-| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` for none. |
+| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written ([delivery check](hooks.md#delivery-check)), `chat` for none. |
 | `paths` | Those paths, at most 20. |
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
 | `sent_back` | `true` when the hook sent the subagent back at this stop, `false` when it let it end. A row written before the field has none. |

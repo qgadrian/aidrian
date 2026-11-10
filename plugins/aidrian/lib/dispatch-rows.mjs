@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { CHILD_SEND_BACKS } from './child-send-backs.mjs';
 import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
 import { checkoutRoots } from './git.mjs';
@@ -56,11 +57,15 @@ export function checkDelivery(input, project) {
   return { claims, missing: missingPaths(claims, cwd) };
 }
 
-// Whether the stop hook sends the subagent back, whether or not telemetry is on: a path is `missing` or a background task
-// it started still runs (runningChildren), and the host marks this stop as a first one with `stop_hook_active: false`.
-// The stop that a send-back caused, and a payload without the field, always end.
-export const sendsBack = (input, delivery, children = []) =>
-  (delivery.missing.length > 0 || children.length > 0) && input.stop_hook_active === false;
+// Whether the stop hook sends the subagent back, whether or not telemetry is on. A `missing` path sends it back on the
+// first stop of a turn (`stop_hook_active: false`) alone. A background task it started that still runs (runningChildren)
+// sends it back while `made`, the send-backs in a row for that reason so far (child-send-backs.mjs), is under
+// CHILD_SEND_BACKS: one send-back is not enough, since a foreground wait the host moves to the background, or a watch the
+// agent arms instead, is one more task at the next stop. `made` defaults to one send-back per turn. A payload without
+// `stop_hook_active` (a host that does not send it) is never sent back.
+export const sendsBack = (input, delivery, children = [], made = input.stop_hook_active === false ? 0 : CHILD_SEND_BACKS) =>
+  (delivery.missing.length > 0 && input.stop_hook_active === false)
+  || (children.length > 0 && typeof input.stop_hook_active === 'boolean' && made < CHILD_SEND_BACKS);
 
 // A task status that is no longer in flight. Claude Code lists in-flight tasks only; this guards a host that lists more.
 export const ENDED_STATUSES = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled']);
@@ -107,9 +112,11 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
 
 // SubagentStop: the subagent's tokens, cost, API requests and tool calls, the knowledge docs it read with their sizes,
 // its delivery check, the count of background tasks it started that still run (`running`, from runningChildren), and
-// whether the hook sent it back, over the requests it made itself (ownRequests).
-// `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
-export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project), children = [] } = {}) {
+// whether the hook sent it back (`sentBack`, by default sendsBack's one send-back per turn), over the requests it made
+// itself (ownRequests). `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
+export function stopRow(input, project, {
+  now = Date.now(), docReads = true, delivery = checkDelivery(input, project), children = [], sentBack = sendsBack(input, delivery, children),
+} = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const own = transcript ? ownRequests(input) : undefined;
   const part = transcript ? partOf(aggregateUsage(transcript), own) : { perModel: {}, requests: 0, tool_requests: 0, tool_calls: 0 };
@@ -129,7 +136,7 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
     running: children.length,
-    sent_back: sendsBack(input, delivery, children),
+    sent_back: sentBack,
   };
 }
 

@@ -842,12 +842,22 @@ A path shortened with `...` exists nowhere, so it is sent back too: the `orchest
 
 ## Background check
 
-A subagent that ends its turn goes idle, and the end of a background shell or agent it started does not wake it:
-a background push, or a reviewer whose report can no longer reach it, leaves it waiting until someone messages it.
-So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back once, naming each task,
-to wait for it in the foreground: poll it with a foreground command and a timeout, and repeat the call until it ends,
-or stop it with `TaskStop` when it should not outlive the turn. Its second stop always ends; ending with the task still running
-is an occurrence of an [automatic lesson](lessons.md#automatic-lessons) for the plugin.
+A subagent that ends its turn goes idle. Claude Code wakes it with a notice when a background shell it started ends,
+but a background agent it started, such as a reviewer resumed with SendMessage, cannot hand its report back to an idle
+agent, and the work waiting on that report stalls until someone messages it.
+So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back, naming each task,
+to wait for it in the foreground: poll it with a foreground command whose loop ends on its own before the command's timeout,
+and repeat the call until the task ends, or stop it with `TaskStop` when it should not outlive the turn.
+
+One send-back did not hold. A foreground wait that outlives its timeout is moved to the background, so at the next stop it
+is one more running task, and some agents answered the send-back by arming a Monitor, another task, and ending the turn.
+Claude Code marks every stop after the first send-back of a turn with `stop_hook_active: true`, so that flag cannot count
+the rounds. The hook counts them instead, in a file per agent in the temporary folder (`lib/child-send-backs.mjs`):
+it sends the subagent back at each stop while its task runs, up to 5 times in a row, and says which round it is.
+A stop with none of its own tasks running clears the count, and a turn no stop hook started counts from zero.
+The stop the cap lets end with the task still running is an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
+for the plugin, once per run of send-backs. The count is written before each send-back, and a stop whose count cannot be
+written is let end, so the check never loops.
 
 The send-back alone did not hold: subagents still ended their turn with a background agent running. So the Agent hook
 also rewrites the dispatch before it runs: a call a subagent makes, one whose payload has `agent_id`, with

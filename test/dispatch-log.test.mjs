@@ -32,7 +32,8 @@ function project(t) {
   const dir = path.join(base, 'repo');
   spawnSync('git', ['init', '-q', dir]);
   for (const entry of ['.aidrian', 'docs', '.gitignore']) cpSync(path.join(ROOT, 'examples/consumer', entry), path.join(dir, entry), { recursive: true });
-  const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state') };
+  mkdirSync(path.join(base, 'tmp'));
+  const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state'), TMPDIR: path.join(base, 'tmp') };
   const state = () => spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   const log = () => {
     try {
@@ -164,8 +165,11 @@ test('a stop row counts the background tasks the subagent started that still run
   ].join('\n'));
   const tasks = [{ id: 'bsleep001', type: 'shell', status: 'running', command: 'sleep 600' }, { id: 'bother002', type: 'shell', status: 'running' }];
   const stop = (active, background) => hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a4', agent_type: 'fixer', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: active, background_tasks: background });
-  assert.deepEqual([stop(false, tasks).status, stop(true, tasks).status, stop(false, tasks.slice(1)).status], [2, 0, 0]);
-  assert.deepEqual(log().map((row) => [row.delivered, row.running, row.sent_back]), [['chat', 1, true], ['chat', 1, false], ['chat', 0, false]]);
+  const sends = Array.from({ length: 5 }, (_, i) => stop(i > 0, tasks).status);
+  assert.deepEqual([...sends, stop(true, tasks).status, stop(false, tasks.slice(1)).status], [2, 2, 2, 2, 2, 0, 0]);
+  assert.deepEqual(log().map((row) => [row.delivered, row.running, row.sent_back]), [
+    ...Array(5).fill(['chat', 1, true]), ['chat', 1, false], ['chat', 0, false],
+  ], 'the stop the cap let end is the one with running above 0 and sent_back false');
 });
 
 // Sets config.json `telemetry` in a project from project().

@@ -16,9 +16,6 @@ export const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
 // opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one, and `item`
 // is the content column of that list item (null for a fence on a line of its own).
-// A fence counts at any indentation. CommonMark reads a fence 4 or more columns past its container as indented code,
-// but measuring that needs every list container right (nested markers, marker-only lines, thematic breaks), and each
-// miss hid the headings after it. Reading such a rare line as a fence costs less.
 export const fenceOf = (line) => {
   const found = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
   // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
@@ -27,24 +24,52 @@ export const fenceOf = (line) => {
 };
 export const closes = (fence, open) => fence?.bare && fence.char === open.char && fence.length >= open.length;
 
+// A list item's marker line, its markers alone included ("-", "1."): the item's content column, or null.
+const MARKERS_ONLY = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*(?:[-*+]|\d+[.)]))\s*$/u;
+const NESTED_MARKERS = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)+)/u;
+function itemColumn(line) {
+  const bare = MARKERS_ONLY.exec(line);
+  if (bare) return bare[1].length + bare[2].length + 1;
+  const markers = NESTED_MARKERS.exec(line);
+  return markers ? markers[1].length + markers[2].length : null;
+}
+
 // For each line, whether it is code: a fence line or a line inside a fenced block, by the delimiters blocksOf uses. A
 // fence may open after list markers, as in "- ```bash", and one that opened after them ends where that item ends, so the
 // bare fence that closes it never opens another. sectionOf and invariantsOf skip these lines as headings.
-// Known limit: an unclosed fence on a line of its own runs to the end of the doc, even inside a list item, where
-// blocksOf ends it with the item; and a lazy continuation line, indented less than its item, ends the item here.
+// Two CommonMark rules keep a fence-like line from hiding the rest of the doc:
+// - a fence on a line of its own indented 4 or more columns past the list item it is in (past column 0 outside one) is
+//   indented code, not a fence; the item is the last list item line outside a fence, until a line indented less than its
+//   content column;
+// - an unclosed fence on an indented line, such as a second bare fence inside a list item, ends before the first later
+//   line indented less than it, as its container does; only one at column 0 runs to the end of the doc.
+// The second also covers a container this reads wrong: a fence it misses leaves its closer to open a fence that is never
+// closed, and that one then ends where the item does instead of hiding every later heading.
+// Known limit: a lazy continuation line, indented less than its item, ends the item here.
 export function fencedIn(lines) {
+  const expanded = lines.map(expandTabs);
   let open = null;
-  return lines.map((raw) => {
-    const line = expandTabs(raw);
-    if (open?.item != null && line.trim() && indentOf(line) < open.item) open = null;
+  let item = null;
+  return expanded.map((line, at) => {
+    const indent = indentOf(line);
+    const ends = (column) => column != null && line.trim() && indent < column;
+    if (ends(open?.item) || ends(open?.until)) open = null;
     if (open) {
       if (closes(fenceOf(line), open)) open = null;
       return true;
     }
+    if (ends(item) && itemColumn(line) === null) item = null;
     open = fenceOf(line);
+    if (open && open.item === null && indent >= (item ?? 0) + 4) open = null;
+    if (open && open.item === null && indent > 0 && !closedAfter(expanded, at, open)) open.until = indent;
+    if (!open && line.trim()) item = itemColumn(line) ?? item;
+    if (open?.item != null) item = open.item;
     return open !== null;
   });
 }
+
+// Whether a later line closes the fence `open` that opened on line `at`.
+const closedAfter = (lines, at, open) => lines.slice(at + 1).some((line) => closes(fenceOf(line), open));
 
 // A line with the tabs of its indentation and list markers expanded to 4-column stops, so indentation is measured in
 // columns: a tab-indented nested bullet stays nested.

@@ -284,7 +284,9 @@ Two commands keep a ledger honest, `roles` tells the skill who runs each role, `
   When `git ls-files` itself fails, the citation fails with git's exit code and its last stderr line.
   An anchor matches a heading by its text, the anchor GitHub gives it (`-1` for a repeated heading's second copy), or that anchor with `_` dropped and hyphens collapsed;
   a `#` line in a fenced code block is not a heading.
-  A fence counts at any indentation, and may open after a list marker, as in "- ```bash".
+  A fence may open after a list marker, as in "- ```bash". A fence-like line 4 or more columns past its list item's
+  content column, or past column 0 outside a list, is indented code, not a fence; and an unclosed fence on an indented
+  line ends before the first line indented less than it, as its list item does (`lib/markdown-sections.mjs`).
   A quote is at most 200 characters, compared with whitespace collapsed.
   A `pending` objection with no passing citation becomes `opinion`; one already ruled on keeps its status and is named.
   A ruling, or a rebuttal that rebuts, with no passing citation is named invalid.

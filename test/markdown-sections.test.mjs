@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { fencedLines, headings, sectionItems, unfencedLines } from '../plugins/aidrian/lib/markdown-sections.mjs';
+import { asksForReview } from '../plugins/aidrian/lib/review-gate.mjs';
 
 const FENCE = '```';
 
@@ -58,8 +59,30 @@ test('fencedLines: a marker-only list line, then a fence four spaces in that clo
   assert.deepEqual(headings(body), ['Testing', 'Risks']);
 });
 
-test('fencedLines: a fence counts at any indentation, as the old detector did', () => {
-  assert.deepEqual(fencedLines([`    ${FENCE}`, '## code', `    ${FENCE}`, '## Real'].join('\n')), [true, true, true, false]);
+test('fencedLines: a fence-like line indented 4 or more columns outside a list item is indented code, not a fence', () => {
+  assert.deepEqual(fencedLines([`    ${FENCE}`, '## Seen', `    ${FENCE}`, '## Real'].join('\n')), [false, false, false, false]);
+  assert.deepEqual(headings([`    ${FENCE}`, '## Seen', `    ${FENCE}`, '## Real'].join('\n')), ['Seen', 'Real']);
+  // Lesson c8d7f0f7: an unclosed one hid the review request written after it, and the gate failed open.
+  const body = ['Example:', '', `    ${FENCE}`, '', '@codex review'].join('\n');
+  assert.deepEqual(fencedLines(body), [false, false, false, false, false]);
+  assert.equal(asksForReview(body), true);
+});
+
+test('fencedLines: inside a list item, a fence is code only 4 columns past the item`s content column', () => {
+  const body = ['- item', '', `      ${FENCE}js`, '  ## inside', `      ${FENCE}`, '', '## Risks'].join('\n');
+  assert.deepEqual(fencedLines(body), [false, false, false, false, false, false, false], 'six columns is four past the content column 2');
+  const fenced = ['- item', '', `   ${FENCE}js`, '## not a heading', `   ${FENCE}`, '', '## Risks'].join('\n');
+  assert.deepEqual(fencedLines(fenced), [false, false, true, true, true, false, false]);
+});
+
+test('fencedLines: an unclosed bare fence inside a list item ends with the item', () => {
+  // Lesson ac9ac1ec: the second fence never closes; CommonMark ends it where the item ends, so Risks is a heading.
+  const body = ['## Testing', '', `- ${FENCE}bash`, '  npm test', `  ${FENCE}`, `  ${FENCE}`, '', '## Risks', '', '@codex review'].join('\n');
+  assert.deepEqual(fencedLines(body), [false, false, true, true, true, true, true, false, false, false]);
+  assert.deepEqual(headings(body), ['Testing', 'Risks']);
+  assert.equal(asksForReview(body), true);
+  const closed = ['- item', `  ${FENCE}`, 'code at column 0', `  ${FENCE}`, '## After'].join('\n');
+  assert.deepEqual(fencedLines(closed), [false, true, true, true, false], 'a closed fence keeps a less indented line inside it');
 });
 
 test('fencedLines: tabs after a list marker and in the body expand to 4-column stops', () => {

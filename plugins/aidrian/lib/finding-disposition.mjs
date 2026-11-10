@@ -114,22 +114,24 @@ export function manifestDrift(manifest, table = loadTable()) {
 // pr-42.json.tmp.
 export const isManifestPath = (file) => path.basename(path.dirname(file)) === 'reviews' && /^\.?pr-\d+\.json(?:\.[\w.-]+)?$/u.test(path.basename(file));
 
-// The refusal for a file write, as one message, or null. `writes` are { file, text } pairs, `text` the file's content
-// after the write, or null when the write does not show it (an apply_patch): such a write, a file that is no manifest,
-// and text that does not parse are let through, as a hook lets through what it cannot read.
+// The refusal for a file write, as one message, or null. `writes` are { file, text, before } triples: `text` the
+// file's content after the write, or null when the write does not show it (an apply_patch), and `before` its content
+// before, or null for a new file. Such a write, a file that is no manifest, and text that does not parse are let
+// through, as a hook lets through what it cannot read. Only drift the write brings is refused: a finding that drifted
+// the same way before, with the same id, disposition, and axes, passes, so a run can still record its status. A new
+// temporary copy is compared with the manifest beside it, pr-<n>.json, which it is written to replace.
 export function manifestWriteProblem(writes, table = loadTable()) {
   const lines = [];
-  for (const { file, text } of writes) {
+  for (const { file, text, before = null } of writes) {
     if (typeof text !== 'string' || !isManifestPath(file)) continue;
-    let manifest;
-    try {
-      manifest = JSON.parse(text);
-    } catch {
-      continue;
-    }
-    for (const { id, disposition, expected } of manifestDrift(manifest, table)) {
-      const want = expected.length ? `where its axes give ${expected.join(' or ')}` : 'and its axes are not in the vocabulary (`aidrian pr disposition --vocab`)';
-      lines.push(`  ${path.basename(file)} ${id ?? '(no id)'}: ${JSON.stringify(disposition)}, ${want}`);
+    const manifest = parsed(text);
+    if (manifest === null) continue;
+    const prior = parsed(before ?? siblingText(file));
+    const known = new Set(manifestDrift(prior, table).map((entry) => driftKey(entry, prior)));
+    for (const entry of manifestDrift(manifest, table)) {
+      if (known.has(driftKey(entry, manifest))) continue;
+      const want = entry.expected.length ? `where its axes give ${entry.expected.join(' or ')}` : 'and its axes are not in the vocabulary (`aidrian pr disposition --vocab`)';
+      lines.push(`  ${path.basename(file)} ${entry.id ?? '(no id)'}: ${JSON.stringify(entry.disposition)}, ${want}`);
     }
   }
   if (!lines.length) return null;
@@ -139,6 +141,32 @@ export function manifestWriteProblem(writes, table = loadTable()) {
     'Run `aidrian pr disposition` with the finding\'s severity, likelihood, affects, and cost, each flag its own word, and write the disposition it prints.',
     'A disposition that looks wrong means its axes are wrong: change the axes, never the disposition alone.',
   ].join('\n');
+}
+
+const parsed = (text) => {
+  if (typeof text !== 'string') return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+// The text of the manifest a temporary copy replaces, or null for the manifest itself or one not there.
+function siblingText(file) {
+  const name = /^\.?(pr-\d+\.json)/u.exec(path.basename(file))?.[1];
+  if (!name || name === path.basename(file)) return null;
+  try {
+    return readFileSync(path.join(path.dirname(file), name), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// What makes one drift the same before and after a write: the finding's id, its disposition, and its axes.
+function driftKey({ id, disposition }, manifest) {
+  const finding = (manifest?.findings ?? []).find((each) => each?.id === id) ?? {};
+  return JSON.stringify([id, disposition, finding.severity, finding.likelihood, finding.affects, finding.cost, finding.raised_in]);
 }
 
 // One flag word per argument: an argument that starts with `--` and holds whitespace, as zsh passes an unsplit variable,

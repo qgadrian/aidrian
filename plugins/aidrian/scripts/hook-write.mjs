@@ -43,7 +43,7 @@ async function manifestDrift(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const { addedLines } = await import('../lib/terms.mjs');
   try {
-    return manifestWriteProblem(addedLines(input, cwd).map(({ file, text }) => ({ file: path.resolve(cwd, file), text })));
+    return manifestWriteProblem(addedLines(input, cwd).map(({ file, text, before }) => ({ file: path.resolve(cwd, file), text, before })));
   } catch {
     return null;
   }

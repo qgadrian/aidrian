@@ -282,6 +282,15 @@ test('the file-write hook refuses a Write or Edit that sets a disposition the ax
   assert.equal(hook('Edit', { old_string: '"likelihood": "contrived"', new_string: '"likelihood": "routine"' }).status, 2, 'changing an axis alone leaves the old disposition drifting');
   assert.equal(hook('Edit', { old_string: '"status": "open"', new_string: '"status": "in_progress"' }).status, 0, 'a status write runs');
 
+  // A finding that drifted before the write, the same way, does not stop a run recording its status.
+  writeFileSync(file, text([finding({ severity: 'P2', disposition: 'invalid' }), finding({ id: 'F2' })]));
+  assert.equal(hook('Edit', { old_string: '"status": "open"', new_string: '"status": "blocked"' }).status, 0, 'a status write on an old drift runs');
+  assert.equal(hook('Edit', { old_string: '"severity": "P2"', new_string: '"severity": "P3"' }).status, 2, 'a changed axis is a new drift');
+  const copy = path.join(dir, 'reviews', 'pr-9.json.tmp');
+  const tmp = (findings) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: copy, content: text(findings) } }), encoding: 'utf8' });
+  assert.equal(tmp([finding({ severity: 'P2', disposition: 'invalid', status: 'blocked' }), finding({ id: 'F2' })]).status, 0, 'a temporary copy is compared with the manifest beside it');
+  assert.equal(tmp([finding({ severity: 'P2', disposition: 'invalid' }), finding({ id: 'F2', disposition: 'fix_now' })]).status, 2, 'and refuses the drift it adds');
+
   const elsewhere = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: path.join(dir, 'pr-9.json'), content: text([finding({ disposition: 'fix_now' })]) } }), encoding: 'utf8' });
   assert.equal(elsewhere.status, 0, 'a file outside a reviews folder is no manifest');
 });

@@ -830,7 +830,9 @@ It refuses the write when a finding's `disposition` is not a value the [disposit
 gives its severity, likelihood, affects, and cost, and names each such finding with the value its axes give. A finding whose axes are not in the vocabulary refuses
 whatever its disposition, even `invalid`, the word the command prints for such axes.
 Both readings count: with no source, as the `pr-review` skill runs the command, and as an agent's finding in its
-`raised_in` round (`--source bot --round`), where the late-round rule can change it. A finding with no `disposition` yet is not judged.
+`raised_in` round (`--source bot --round`), where the late-round rule can change it. A finding with no `disposition` yet is not judged, and neither is one that drifted the same way before the write,
+with the same id, disposition, and axes, so a run can still record its status; a new temporary copy is compared with
+the `pr-<n>.json` beside it.
 An edit to an axis alone refuses too, as the old disposition no longer follows from it.
 The block is [recorded](#recorded-blocks) as `review-disposition`. The rule has no switch and no override:
 a disposition that looks wrong means its axes are wrong.

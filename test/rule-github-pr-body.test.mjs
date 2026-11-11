@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
+import { appearsAfterFirstStat } from './fixtures/fs-faults.mjs';
 
 const GOOD = '## Summary\nShare links expire.\n\n## Tests run\n- `npm test`: pass\n';
 
@@ -140,6 +141,16 @@ test('a body file another command on the line changes names that cause, and gh a
     assert.match(reason, /Run that command first, then gh as its own command\./, command);
   }
   assert.equal(run('gh pr edit 3 --body-file b.md'), null);
+});
+
+test('a body file that appears after the rule first looks is refused from one read, without a throw', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'b.md'), GOOD);
+  appearsAfterFirstStat(t, path.join(dir, 'b.md'));
+  assert.match(check('gh pr create -t x --body-file b.md', { cwd: dir, env: {} }) ?? '', /^Blocked: the body is one this rule cannot read: the body file `b\.md` does not exist yet/);
 });
 
 test('the unreadable body deny names the literal body path pr-write writes, for the branch gh runs on', (t) => {

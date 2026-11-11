@@ -24,7 +24,7 @@ import { BANNED_FILE, usableBannedLines } from '../../banned-terms.mjs';
 import { boundedSearch, timeBudget } from '../../bounded-regexp.mjs';
 import { loadConfig } from '../../config.mjs';
 import { findProject } from '../../project.mjs';
-import { bodyCalls, bodyFilePath, readBody, readBodyCall, stateFolder, targetsAnotherRepo, TEXT_HEREDOC, twoSteps, unreadBody } from './pr-body.mjs';
+import { bodyCalls, bodyFilePath, bodyRead, readBodyCall, stateFolder, targetsAnotherRepo, TEXT_HEREDOC, twoSteps } from './pr-body.mjs';
 import { invocationRepo } from './review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PUBLIC_TEXT';
@@ -62,8 +62,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, started
     const words = project ? usableBannedLines(project.root) : [];
     if (!patterns.length && !words.length) continue;
     // Read now: `written` holds what the line wrote before this call, and changes as the walk goes on.
-    const body = readBody(call, entry.folder, written);
-    const why = body === null ? unreadBody(call, entry.folder, written) : null;
+    const { text: body, unread: why = null } = bodyRead(call, entry.folder, written);
     const title = call.title && !call.title.dynamic ? call.title.text : null;
     const texts = [[bodyName(call), body], [titleName(call), title]].filter(([, raw]) => raw !== null);
     calls.push({ call, entry, project, config, patterns, words, why, texts });
@@ -128,7 +127,7 @@ function configHit(texts, patterns, budget) {
   return null;
 }
 
-// The deny for text the patterns never saw, or null. `why` is the body's unreadBody, null when the body reads; `steps`
+// The deny for text the patterns never saw, or null. `why` is the body's bodyRead `unread`, null when the body reads; `steps`
 // gives the two steps that pass.
 function unread(call, why, steps) {
   if (call.title?.dynamic) {

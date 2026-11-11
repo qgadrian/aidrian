@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { bannedPatterns } from '../scripts/banned-terms.mjs';
+import { appearsAfterFirstStat, unreadableFile } from './fixtures/fs-faults.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config-defaults.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
@@ -164,6 +165,19 @@ test('a body the rule cannot read names its own cause first', (t) => {
     assert.doesNotMatch(reason, /a variable, a command substitution, stdin without a heredoc/, 'never the whole list of causes');
     assert.match(reason, /Do this instead: 1\. write the body to /, command);
   }
+});
+
+// One read gives both the text and why it is missing: a second read could find the file, leave the text unread, and drop the deny.
+test('a body file that appears after the rule first looks is still refused, from one read', (t) => {
+  const run = project(t, WITH_PATTERNS, { 'b.md': BAD });
+  appearsAfterFirstStat(t, path.join(run.dir, 'b.md'));
+  assert.match(run('gh pr comment 3 --body-file b.md') ?? '', /^Blocked: the body is one this rule cannot read: the body file `b\.md` does not exist yet/);
+});
+
+test('a regular body file the hook cannot read says so, not that it is a device', (t) => {
+  const run = project(t, WITH_PATTERNS, { 'b.md': GOOD });
+  unreadableFile(t, path.join(run.dir, 'b.md'));
+  assert.match(run('gh pr comment 3 --body-file b.md') ?? '', /^Blocked: the body is one this rule cannot read: the body file `b\.md` is a regular file the hook cannot open \(EACCES\)/);
 });
 
 test('with no body flag, text from elsewhere is refused, and only a call that posts none passes', (t) => {

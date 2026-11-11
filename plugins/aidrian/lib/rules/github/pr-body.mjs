@@ -4,7 +4,7 @@
 // too, when sections are configured: gh then takes the body from an editor, a prompt, or a template, unchecked.
 // `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit). A body flag whose body the
 // rule cannot read (a variable, a substitution, stdin, a missing file, a device or a pipe, a file the line edits first)
-// is refused when sections are configured, naming the one cause that applies (`unreadBody`). Runs only inside a project. A
+// is refused when sections are configured, naming the one cause that applies (`bodyRead`). Runs only inside a project. A
 // command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A leading `cd <dir> &&`
 // moves the folder the body file and the project are read from; after any other directory change on the line, a relative
 // body file is one the rule cannot read. A body file the same command line writes first, through `cat > file` or `tee
@@ -26,7 +26,7 @@
 // its second sentence, right after the cause, as the two steps that pass (`twoSteps`). The first sentence stays the
 // cause, since the dispatch log records it.
 
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
@@ -402,9 +402,9 @@ function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, 
     return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, unchecked. ' +
       `${steps()} The body needs the sections config.json \`github.requiredSections\` asks for.`);
   }
-  const body = readBody(call, folderKnown ? cwd : null, written);
-  if (body === null && sectioned && (call.body || call.bodyFile)) {
-    const { cause, fix } = unreadBody(call, folderKnown ? cwd : null, written);
+  const { text: body, unread: why } = bodyRead(call, folderKnown ? cwd : null, written);
+  if (why && sectioned) {
+    const { cause, fix } = why;
     return deny(`the body is one this rule cannot read: ${cause}, so the sections config.json \`github.requiredSections\` asks for go unchecked. ` +
       `${fix ? `${fix} ` : ''}${steps()}`);
   }
@@ -613,14 +613,14 @@ export function openPrBodies(cwd, forge = listForge(cwd)) {
 // `stdin`, and a file the line wrote earlier the text `written` (lineWrites) holds for it.
 export const readBody = (call, cwd, written = new Map()) => bodyRead(call, cwd, written).text;
 
-// Why readBody gives no text for a call with a body flag, as { cause, fix }: the cause a deny names first, and the one
-// step it needs beyond the two that pass, or ''. Null when the body reads, or the call has no body flag. The pull request
-// body rule and the public text rule refuse with it, so the first deny names the form that passes.
-export const unreadBody = (call, cwd, written = new Map()) => bodyRead(call, cwd, written).unread ?? null;
-
 const unread = (cause, fix = '') => ({ text: null, unread: { cause, fix } });
 
-function bodyRead(call, cwd, written) {
+// The body as { text, unread } from one read: `text` as readBody gives it, and when it is null for a call with a body
+// flag, `unread` as { cause, fix }, the cause a deny names first and the one step it needs beyond the two that pass, or
+// ''. A rule that refuses an unread body takes both from this one call: a second read could find a file the first did
+// not, and leave the text unchecked with no cause to refuse it. The pull request body, public text, and attribution rules
+// refuse with it, so the first deny names the form that passes.
+export function bodyRead(call, cwd, written = new Map()) {
   if (call.bodyOverwritten) {
     return unread('a redirect on the gh call writes onto its own body file, which bash empties before gh reads it', 'Send that output to another file.');
   }
@@ -647,11 +647,28 @@ function bodyRead(call, cwd, written) {
       'or a redirect', 'Run that command first, then gh as its own command.');
   }
   // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh opens the operand.
-  const text = readText(path.isAbsolute(given) ? given : `${cwd}/${given}`);
-  if (text !== null) return { text };
-  return existsSync(path.isAbsolute(given) ? given : `${cwd}/${given}`)
-    ? unread(`the body file \`${given}\` is a device, a pipe, or a folder, not a regular file`)
-    : unread(`the body file \`${given}\` does not exist yet`);
+  const read = bodyFileText(path.isAbsolute(given) ? given : `${cwd}/${given}`);
+  if (read.text !== undefined) return { text: read.text };
+  if (read.missing) return unread(`the body file \`${given}\` does not exist yet`);
+  if (read.notFile) return unread(`the body file \`${given}\` is a device, a pipe, or a folder, not a regular file`);
+  return unread(`the body file \`${given}\` is a regular file the hook cannot open (${read.error})`, 'Check its permissions.');
+}
+
+// A body file's text from one stat, as { text }, or what kept it: { missing }, { notFile } for a device, a FIFO, or a
+// folder (reading one can hang the hook, or read as empty and pass), or { error } with the code of a failed read.
+function bodyFileText(file) {
+  let stat;
+  try {
+    stat = statSync(file);
+  } catch (error) {
+    return ['ENOENT', 'ENOTDIR'].includes(error?.code) ? { missing: true } : { error: error?.code ?? 'an unknown error' };
+  }
+  if (!stat.isFile()) return { notFile: true };
+  try {
+    return { text: readFileSync(file, 'utf8') };
+  } catch (error) {
+    return { error: error?.code ?? 'an unknown error' };
+  }
 }
 
 function hasSection(body, section) {

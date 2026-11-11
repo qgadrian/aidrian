@@ -145,7 +145,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pr auto-merge` | Says whether a session may merge a pull request unasked. | [Auto-merge](docs/config.md#auto-merge) |
 | `aidrian pr disposition` | Decides what to do with one review finding. | [`pr-review`](plugins/aidrian/skills/pr-review/SKILL.md) |
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |
-| `aidrian pre-commit` | Refuses a commit in the main checkout, or one that newly stages a git-ignored file, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
+| `aidrian pre-commit` | Refuses a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
 | `aidrian quorum` | Runs Codex as a quorum adversary or advocate, checks a quorum ledger's citations, prints a mode's roles and caps from config.json, says what happens to one product decision, and records work continuing on a product ruling. | [Local state](docs/project-folder.md#local-state) |

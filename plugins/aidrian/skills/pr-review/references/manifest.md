@@ -44,7 +44,7 @@ The `pr-review` skill writes the rounds and the findings; the `pr-review-fix` sk
 | `severity`, `likelihood`, `affects`, `cost` | The agent's axes, as it gave them. A missing `cost` means `bounded`. |
 | `file`, `line` | Where it is; `line` is the first line, `null` for a whole file. |
 | `summary`, `next_step` | The agent's words. |
-| `disposition` | The output of `aidrian pr disposition` for the axes. Never set by hand. |
+| `disposition` | The output of `aidrian pr disposition` for the axes. Never set by hand: the file-write hook refuses a write that sets another, and `aidrian pr disposition --manifest <file>` checks the file. |
 | `raised_in` | The round that raised it. |
 | `commit`, `attempts`, `note` | Fix progress: the commit that fixed it, the fix passes so far, and why a fix is blocked. |
 

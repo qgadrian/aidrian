@@ -36,6 +36,8 @@ A true premise does not make the reviewer's fix safe. Before a fix goes to its o
 - each condition an approval or sign-off on this pull request set, and each flow invariant in the review record;
 - each fix brief, verdict, and decision of an earlier round on this pull request;
 - the test it touches: a suggested test change must still fail on the mistake the test catches.
+  The owner's brief asks for the proof: with the change in place, put that mistake back in the code under test,
+  see the test fail by assertion, undo only that edit, and report both runs.
 
 A fix that would weaken any of these is a conflict, not a `fix_now`: send it, with both sources, to the agent that set
 the condition or made the decision, such as `product-manager` for a product condition or `security-engineer` for a

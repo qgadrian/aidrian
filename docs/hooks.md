@@ -11,7 +11,7 @@ such as `echo 'gh pr ready 7' | bash`. Every other ready it cannot read, such as
 It also refuses a command that marks more than one pull request ready, since one deadline cannot check them all.
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
-The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard,
+The Bash rules, the main-checkout rule, the review-disposition rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard,
 the tracker write guard, and the question names check also record each block: see [Recorded blocks](#recorded-blocks).
 
 | When | What runs | Host | Blocks |
@@ -20,7 +20,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
 | A new turn starts: a prompt, a background agent's report, or a scheduled run | The [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
-| Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | Claude Code, Codex | yes |
+| Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
@@ -417,7 +417,7 @@ The product feedback answer rule has limits it accepts, so a reader does not tak
 
 ## Recorded blocks
 
-Every block by a Bash rule, the main-checkout rule, an [agent gate](#agent-gates), the config guard,
+Every block by a Bash rule, the main-checkout rule, the review-disposition rule, an [agent gate](#agent-gates), the config guard,
 the [tracker write guard](config.md#tracker), or the question names check is recorded twice,
 in `plugins/aidrian/lib/hook-deny.mjs`, after the hook writes its reason and before it exits 2.
 Neither record waits on a lock, so a block stays well inside the host's 5-second hook timeout:
@@ -430,7 +430,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
 `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
-`decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`,
+`decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
@@ -820,6 +820,30 @@ A `block` hit refuses the write, naming each term and its replacement, and is [r
 A `warn` hit lets the write run and gives the agent the same lines as additional context; Claude Code shows it to the agent.
 The rule has no override: a term that is right in some file belongs in its rule's `exclude`.
 
+## Review dispositions
+
+A `pr-review` manifest, `<state>/reviews/pr-<n>.json` ([its fields](../plugins/aidrian/skills/pr-review/references/manifest.md)),
+gives each finding the `disposition` that `aidrian pr disposition` prints for its axes, never one set by hand.
+Before an Edit or Write of a manifest, or of a temporary copy of one (a file in a `reviews` folder named `pr-<n>.json`,
+or starting with it, such as `pr-42.json.tmp`), the file-write hook reads the file as the write leaves it.
+It refuses the write when a finding's `disposition` is not a value the [disposition table](../plugins/aidrian/lib/finding-disposition.json)
+gives its severity, likelihood, affects, and cost, and names each such finding with the value its axes give. A finding whose axes are not in the vocabulary refuses
+whatever its disposition, even `invalid`, the word the command prints for such axes.
+Both readings count: with no source, as the `pr-review` skill runs the command, and as an agent's finding in its
+`raised_in` round (`--source bot --round`), where the late-round rule can change it. A finding with no `disposition` yet is not judged, and neither is one that drifted the same way before the write,
+with the same id, disposition, and axes, so a run can still record its status; a new temporary copy is compared with
+the `pr-<n>.json` beside it.
+An edit to an axis alone refuses too, as the old disposition no longer follows from it.
+The block is [recorded](#recorded-blocks) as `review-disposition`. The rule has no switch and no override:
+a disposition that looks wrong means its axes are wrong.
+
+Text that does not parse as JSON, and an `apply_patch`, whose result the hook cannot see, are let through.
+A manifest written from the shell is not judged here: `aidrian pr disposition --manifest <file>` checks one, exiting 1
+with each drifting finding (`drift`: its `id`, `disposition`, and the `expected` values, empty for axes outside the vocabulary), and the `pr-review` and
+`pr-review-fix` skills run it after each write and before each fix.
+`aidrian pr disposition` splits an argument that starts with `--` and holds spaces into words, as zsh passes a variable
+of flags unsplit, so `aidrian pr disposition $flags` reads every flag.
+
 ## Markdown line length
 
 After an Edit or Write of a `.md`, `.markdown`, or `.mdx` file in a project, the hook reads the whole file and names the lines
@@ -956,7 +980,7 @@ or the folder the host installed: [Claude Code](providers/claude-code.md#running
 It is a git hook, not a plugin hook, so it has no row in the table of plugin hooks at the top of this page,
 as [commit messages](#commit-messages) have none.
 It is on while config.json `git.mainCheckout.guard` is `true` ([config.md](config.md)), and checks nothing while it is off.
-It refuses two commits:
+It refuses three commits:
 
 - **A commit in the main checkout**, which several sessions share. The message names `aidrian worktree new <branch>`.
   A repository's first commit passes, as no worktree exists before it: an unborn HEAD in a repository with no branch
@@ -970,6 +994,11 @@ It refuses two commits:
   and the `GITHEAD_<oid>` names `git merge` sets for `pre-merge-commit`, which runs before `MERGE_HEAD` is written;
   a parent that is HEAD or one of its ancestors brings nothing in, and is dropped.
   A squash merge or a path restored from another branch (`git checkout <branch> -- <path>`) counts as a fresh add.
+- **A commit whose staged lines add a conflict marker**, in any checkout: each line that `git diff --cached --check`
+  reports as a leftover conflict marker, a line that starts with seven `<`, `=`, `>`, or `|` and then a space or its end.
+  A merge's commit counts what it brings in from the other side, as the diff is against HEAD. The message names each
+  file and line. A line meant to look like a marker, such as one in a doc about merges, passes once `.gitattributes`
+  gives its path a larger `conflict-marker-size`. Whitespace that `--check` also reports is left alone.
 
 The message names each problem and the override, and the commit is refused. A check whose input git cannot give,
 such as an index it cannot read, finds nothing and prints one line naming what it could not read; what the other check

@@ -78,10 +78,16 @@ export function checkReview(value, file, errors) {
     if (RECORDS.includes(value.record)) out.record = value.record;
     else bad('"review.record" must be "comment" or "local"');
   }
+  // A bad `re:` entry is an error and is left out, and the list keeps the team's other entries, never the built-in list:
+  // fewer entries mean more review, so a typo can only fail closed.
   for (const key of ['ignore', 'nonBehaviour']) {
     if (!Object.hasOwn(value, key)) continue;
-    if (texts(value[key])) out[key] = value[key];
-    else bad(`"review.${key}" must be a list of globs`);
+    if (!texts(value[key])) {
+      bad(`"review.${key}" must be a list of globs`);
+      continue;
+    }
+    if (pathsProblem(value[key])) bad(`"review.${key}" ${pathsProblem(value[key])}`);
+    out[key] = value[key].filter((entry) => !pathsProblem([entry]));
   }
   if (Object.hasOwn(value, 'planCommand')) {
     if (value.planCommand === null || isText(value.planCommand)) out.planCommand = value.planCommand;
@@ -408,8 +414,9 @@ function checkSplit(split, bad) {
   return out;
 }
 
-// The problem with a list of path entries (globs, or `re:<regular expression>`), or null.
-function pathsProblem(list) {
+// The problem with a list of path entries (globs, or `re:<regular expression>`), or null. config-types.mjs `globs` checks
+// a config list of paths by it too, so both say the same.
+export function pathsProblem(list) {
   for (const entry of list) {
     if (entry.startsWith('re:')) {
       const problem = regexProblem(entry.slice('re:'.length));

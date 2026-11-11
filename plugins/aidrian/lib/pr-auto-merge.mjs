@@ -28,13 +28,22 @@
 //      and nothing is owed. A waiver above low through an accepted residual, on any pass record, keeps it off too, also
 //      after the waiver ends. A reviewer's output cannot end that hold; a listing of the finding's title and file as
 //      fixed does (settled.mjs heldWaiver).
-//      `none_needed` is no review, so a pull request that needed none waits for the Human.
+//      A `none_needed` outcome on exactly that head counts only by pr-auto-merge-docs.mjs noneNeededProblem: its plan
+//      reasons are exactly "only files that cannot change behaviour", at depth `none`; `github.autoMerge.unreviewedPaths` is a non-empty
+//      list with no error on both the default branch and the base, and names every changed file on each, as the whole path
+//      from the project root; and every file of the paths check's whole list is added, modified, or deleted, sorts as `review.nonBehaviour`
+//      by the default branch's review lists (a `review.ignore` file is off too), has a safe extension (.md or a raster
+//      image), and is no GUARDED_PATHS file, with includeGuardedPaths on too, no path with a folder or name that starts
+//      with ".", no host instruction name such as GEMINI.md or AGENTS.override.md, and no test file, fixture, or golden
+//      file. Every list is read from GitHub, never the working copy, so a pull request cannot widen what lets it through.
+//      Any other `none_needed` waits for the Human.
 // gh reads, each through the forge facade (lib/forges): one `gh pr view` for the number, head, base, author, URL, files,
 // and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the
 // contents API, at `refs/heads/<branch>` (once when the base is the default branch); and, only when the team, the checks,
 // the paths, and the machine all allow it, `gh api user` for the login, then the pull request's three comment lists.
 // When the view lists fewer files than it counts, and the team and the checks allow it, the paged file list and then the
 // pull request's head again, before the login.
+// The `none_needed` route of the review check reads nothing more: the two configs above hold its lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
 // repo, base }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
@@ -46,6 +55,7 @@
 import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
+import { noneNeededProblem } from './pr-auto-merge-docs.mjs';
 import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { heldWaiver } from './review/settled.mjs';
@@ -132,17 +142,32 @@ export function branchConfig(forge, { repo, host }, branch, prefix = '', { locat
   return parse(read(file), file);
 }
 
-// The team's config at the two branches that decide a ceiling: { main, policy, basePolicy, policyFiles }, the default
-// branch's name, its config, the base's config (the same object when the base is the default branch), and every path
-// read for them on either branch, each once: the files the gate reads its policy from, including a folder the pointer
-// file names. Read in this order: the default branch, its config, then the base's config, each config by branchConfig's
-// reads. `pr` is { repo, host, base }. Throws as defaultBranch and branchConfig do.
+// The team's config at the two branches that decide a ceiling: { main, policy, basePolicy, policyFiles, policyErrors,
+// baseErrors }, the default branch's name, its config, the base's config (the same object when the base is the default
+// branch), every path read for them on either branch, each once: the files the gate reads its policy from, including a
+// folder the pointer file names; and each config's errors, one line each, whose keys then hold their defaults (the
+// same list when the base is the default branch). Read in this order: the default branch, its config, then the base's
+// config, each config by branchConfig's reads. `pr` is { repo, host, base }. Throws as defaultBranch and branchConfig do.
 export function branchPolicies(forge, pr, prefix = '') {
   const seen = [];
+  const policyErrors = [];
   const main = defaultBranch(forge, pr);
-  const policy = branchConfig(forge, pr, main, prefix, { seen });
-  const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix, { seen });
-  return { main, policy, basePolicy, policyFiles: [...new Set(seen)] };
+  const policy = branchConfig(forge, pr, main, prefix, { seen, parse: (text, file) => configFromText(text, file, policyErrors) });
+  const baseErrors = pr.base === main ? policyErrors : [];
+  const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix, { seen, parse: (text, file) => configFromText(text, file, baseErrors) });
+  return { main, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors };
+}
+
+// What the `none_needed` route of the review check reads from the two branches' configs (pr-auto-merge-docs.mjs
+// noneNeededProblem): each branch's `github.autoMerge.unreviewedPaths`, the default branch first and the base once, and
+// the errors either config has under that key, each naming its branch.
+function unreviewedLists({ main, policy, basePolicy, policyErrors, baseErrors }, { repo, base }) {
+  const branches = [[main, policy, policyErrors], ...(base === main ? [] : [[base, basePolicy, baseErrors]])];
+  return {
+    lists: branches.map(([branch, config]) => [`${repo} ${branch}`, config.github.autoMerge.unreviewedPaths]),
+    listErrors: branches.flatMap(([branch, , errors]) => errors.filter((error) => error.includes('"github.autoMerge.unreviewedPaths"'))
+      .map((error) => error.replace(/^(.*?): /u, `$1 on ${repo} ${branch}: `))),
+  };
 }
 
 // The branches whose `github.<key>.allow` is not true, the default branch first, each once: empty when both allow it.
@@ -255,16 +280,22 @@ export function changesRequested({ reviewDecision, latestReviews }) {
 }
 
 // Why the review keeps auto-merge off, or null when the record holds a `received` review of exactly `head` and nothing is
-// owed. A finding above low that an accepted residual waived is the author's word on a reviewer's finding, so the merge
-// waits for the Human, whatever the review's outcome, and after the waiver ends, until a listing holds the finding as fixed.
-export function reviewProblem(state, head) {
+// owed, or a `none_needed` one that pr-auto-merge-docs.mjs noneNeededProblem lets stand, by `unreviewed`: { files, prefix,
+// review, errors, lists, listErrors }.
+// A finding above low that an accepted residual waived is the author's word on a reviewer's finding, so the merge waits
+// for the Human, whatever the review's outcome, and after the waiver ends, until a listing holds the finding as fixed.
+export function reviewProblem(state, head, unreviewed = {}) {
   if (!state) return 'this machine holds no review record for it: run `aidrian pr review`';
   const owing = owed(state);
   if (owing.length) return `${owing.length} review ${owing.length === 1 ? 'entry is' : 'entries are'} still owed`;
   const outcome = state.outcome ?? null;
   if (outcome === null) return 'its review record holds no finished review';
   if (outcome.head !== head) return `the last review covered ${String(outcome.head).slice(0, 7)}, not head ${head.slice(0, 7)}`;
-  if (outcome.status !== 'received') return `the review of head ${head.slice(0, 7)} is \`${outcome.status}\``;
+  const status = `the review of head ${head.slice(0, 7)} is \`${outcome.status}\``;
+  if (outcome.status === 'none_needed') {
+    const why = noneNeededProblem(outcome, unreviewed);
+    if (why) return `${status}, and ${why}, so the merge waits for the Human`;
+  } else if (outcome.status !== 'received') return status;
   const waived = heldWaiver(state);
   if (!waived) return null;
   const named = `the accepted residual ${JSON.stringify(String(waived.residual).slice(0, 120))} waived a finding above low severity`;
@@ -308,8 +339,9 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   let policy;
   let includeGuarded = false;
   let policyFiles = [];
+  let policies;
   try {
-    const policies = branchPolicies(forge, pr, prefix ?? '');
+    policies = branchPolicies(forge, pr, prefix ?? '');
     ({ main, policy, policyFiles } = policies);
     refusing = refusingBranches(policies, pr.base, 'autoMerge');
     includeGuarded = includesGuardedPaths(policies);
@@ -325,11 +357,13 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   let why = reason === 'team'
     ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
+  // The pull request with every changed file, once the paths check has read the whole list: the review check sorts it.
+  let listed = pr;
   if (reason !== 'team') {
     const problem = checksProblem(policy, loadConfig(project), `${pr.repo} ${main}`);
     if (problem) [effective, reason, why] = [false, 'checks', problem];
     else {
-      const listed = prefix === null ? pr : wholeFiles(forge, pr);
+      listed = prefix === null ? pr : wholeFiles(forge, pr);
       const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles });
       if (paths) [effective, reason, why] = [false, 'paths', paths];
     }
@@ -351,7 +385,8 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
       } catch (error) {
         return fail(error.message);
       }
-      const problem = changesRequested(pr) ?? reviewProblem(scoped(readLocalState(project, pr.number), project, pr.repo), pr.head);
+      const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr) };
+      const problem = changesRequested(pr) ?? reviewProblem(scoped(readLocalState(project, pr.number), project, pr.repo), pr.head, unreviewed);
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
     }

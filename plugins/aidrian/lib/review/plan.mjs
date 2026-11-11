@@ -31,6 +31,10 @@ export const DEFAULT_NON_BEHAVIOUR = Object.freeze([
   '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.webp', '**/*.svg', '**/*.ico', '**/*.woff', '**/*.woff2', '**/*.ttf',
 ]);
 
+// The plan's reason when every reviewed file is one `review.nonBehaviour` lists: `aidrian pr auto-merge` reads it from a
+// `none_needed` outcome (lib/pr-auto-merge.mjs reviewProblem), so it is one spelling for both.
+export const ONLY_NON_BEHAVIOUR = 'only files that cannot change behaviour';
+
 // The meta-flow every project has: a change to how the project is reviewed is reviewed by the Human.
 export const HARNESS_FLOW = 'harness-config';
 
@@ -90,7 +94,7 @@ export function evaluateRules(rules, files, sorted) {
     reasons.push(`rule ${i + 1}${rule.depth ? `: ${rule.depth}` : ''}${rule.require?.length ? `: requires ${rule.require.join(', ')}` : ''}`);
   });
   let depth = sorted.behaviour.length ? 'single' : 'none';
-  if (depth === 'none') reasons.unshift(sorted.nonBehaviour.length ? 'only files that cannot change behaviour' : 'nothing to review');
+  if (depth === 'none') reasons.unshift(sorted.nonBehaviour.length ? ONLY_NON_BEHAVIOUR : 'nothing to review');
   if (raised) depth = maxDepth(depth === 'none' && lowered ? 'none' : depth, raised);
   else if (lowered && !require.size) depth = 'none';
   return { depth, require: [...require], reasons };

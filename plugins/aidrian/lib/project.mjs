@@ -34,7 +34,7 @@ const GUARDED_LIB = [
   'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
   'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
   'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
-  'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-await-review',
+  'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
   'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-length', 'shell-lex',
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
 ].join('|');

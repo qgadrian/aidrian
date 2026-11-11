@@ -434,6 +434,8 @@ test('a review step that needs no review leaves a finished outcome the guard rea
   assert.equal(comments.length, 0, 'an early return still posts nothing');
   const { outcome } = readLocalState(project, 8);
   assert.deepEqual([outcome.status, outcome.head], ['none_needed', head]);
+  assert.deepEqual(outcome.reasons, ['only files that cannot change behaviour'], 'the plan\'s reasons, which aidrian pr auto-merge reads');
+  assert.equal(outcome.depth, 'none', 'the plan\'s depth, which aidrian pr auto-merge reads');
   assert.equal(r.run(`gh pr merge 8 --match-head-commit ${head}`), null);
   assert.match(r.run(`gh pr merge 8 --match-head-commit ${HEAD}`) ?? '', /covered .*, not head abcdef1/u, 'a later head is not reviewed');
 });

@@ -167,7 +167,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 
 [Agents and skills](docs/agents-and-skills.md) lists each one, grouped, with what it does. In short:
 
-- **Coordination**: the `orchestrator` agent splits work and routes each part; the `autopilot` skill runs one task unattended.
+- **Coordination**: the `orchestrator` agent splits work and routes each part; the `autopilot` skill runs one task unattended, or takes over a session already under way with `--continue`.
 - **Planning**: agents that plan, design, and write tracker issues, and skills that plan an issue or review a plan.
 - **Build**: backend, frontend, and docs agents, and the skills that build an issue or a plan to a draft pull request.
 - **Pull requests and review**: `code-reviewer`, `security-engineer`, and the skills that write, review, and fix pull requests.

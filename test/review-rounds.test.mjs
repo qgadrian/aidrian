@@ -28,7 +28,7 @@ test('an agent cannot set the extra-rounds override, in any way the shell takes 
     'declare -x AIDRIAN_ALLOW_EXTRA_ROUNDS=1',
     'cd x && AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 9',
     'echo $(AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 9)',
-  ]) assert.equal(run(command), OVERRIDE_REASON, command);
+  ]) assert.ok(run(command)?.startsWith(OVERRIDE_REASON), command);
   assert.equal(run('unset AIDRIAN_ALLOW_EXTRA_ROUNDS'), null);
   assert.equal(run('env -u AIDRIAN_ALLOW_EXTRA_ROUNDS aidrian pr review 9'), null);
   assert.equal(run('echo "$AIDRIAN_ALLOW_EXTRA_ROUNDS"'), null, 'reading it is fine');

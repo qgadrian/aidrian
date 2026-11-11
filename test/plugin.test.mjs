@@ -792,7 +792,8 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
   assert.ok(!phases.includes('## 1. Implement'), 'phase 1 is the entry');
   const order = ['## 2. The draft pull request', '## 3. Review rounds', '## 4. Stop at sign-off'].map((heading) => phases.indexOf(heading));
   assert.ok(order.every((at, i) => at !== -1 && (i === 0 || at > order[i - 1])), `phases 2 to 4 keep their headings: ${order}`);
-  // The adopted pull request enters § 2 at this line, and an implementing skill is not entered again because its re-entry stops.
+  // The adopted pull request enters § 2 at this line. entry-continue.md starts no implementing skill on it, and says so itself:
+  // the engine's re-entry, which it no longer restates, would stop on the open pull request anyway.
   assert.ok(phases.slice(order[0], order[1]).includes('Record the pull request\'s number'), 'the line an adopted pull request enters at');
   const reentry = flat('plugins/aidrian/skills/issue-implement/steps/phase-0-resolve.md');
   assert.ok(reentry.slice(reentry.indexOf('## 5. Re-entry'), reentry.indexOf('## 6.')).includes('An open pull request: stop'), 'the engine stops on an open pull request');
@@ -811,44 +812,73 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
     'An open pull request on the branch is adopted, never implemented again: start no implementing skill on it.',
     'Rounds the pull request already had count toward the cap.',
     'git worktree list --porcelain', 'gh pr list --head <branch> --state open', 'references/phases.md',
-    'implement what remains, as § 6 says', 'this file\'s § 2 replaces its Workspace bullet',
+    'this file\'s § 2 replaces its Workspace bullet',
     'A skill loaded after the launch is never mid-way',
     'A plan that comes back `open-questions` or `blocked` is parked, and the run stops.',
     'Otherwise run the written plan with the engine the table picks for it: `issue-implement` for `<key>-implementation.md`, `plan-implement` for `<slug>-plan.md`.',
+    'A pull request that is already ready stays ready.',
+    'Its first item says what the run took over',
   ]) assert.ok(resume.includes(words), words);
   // A round equal to the cap can still be open on the same head, and an extra round can be granted: the command's status says
-  // when the cap is reached. With everything committed, an engine slice could never make its one commit.
+  // when the cap is reached.
   for (const words of [
     'The cap is the `status` it prints, never `round` against the cap: a round at the cap can still be open on the same head, and an extra round can be granted.',
     '`round_limit` goes to the cap of `references/phases.md` § 4; any other status runs the round as its § 3 says.',
-    'Nothing uncommitted and nothing left to change: start no engine.',
-    'A gate that fails is work left to change: plan it as below.',
-    'Then open the draft through the `pr-write` skill with the inputs that file\'s Phase 7 passes, `<base>` from § 1 and the closing line of its acceptance criteria gate among them',
   ]) assert.ok(resume.includes(words), words);
-  // pr-write stops on an unpushed branch and code-reviewer is read-only, so local-only commits are pushed before the draft.
-  // The check reads the pull request's branch on origin: an upstream can track another branch with nothing ahead.
-  const push = resume.indexOf('compare HEAD with the commit `git ls-remote --heads origin <branch>` prints');
+  // One publish rule replaces the custom push and adoption paths, which restated the engines' close steps and drifted:
+  // an adopted pull request once went to its rounds with local commits unpublished. pr-review reviews the published head,
+  // pr-write stops on an unpushed branch, and the check reads the branch on origin: an upstream can track another branch.
+  // Only the pull request and no pull request rows publish; the first row finishes another skill's steps as § 4 says.
+  for (const row of ['| publish as § 5 says, then adopt it: `references/phases.md` § 2 from the line that records the pull request, then § 3 and § 4 |',
+    '| implement what remains as § 7 says, publishing when § 5 says, then phases 2 to 4 |']) assert.ok(resume.includes(row), row);
+  const publish = resume.indexOf('## 5. Publish what is local');
+  const rule = 'The second and third rows of § 3 publish first, never with force, except on § 7\'s path with no plan and nothing left to change, which publishes once its gates pass: the owner the `knowledge` skill\'s agent rule picks pushes the branch\'s commits to `origin/<branch>` in the foreground, as the `issue-implement` skill\'s `steps/phases-1-4-implement.md` step 9 pushes a slice, the first push with `-u`.';
+  assert.ok(publish !== -1 && resume.indexOf(rule) > publish, 'the publish rule');
+  assert.ok(flat('plugins/aidrian/skills/issue-implement/steps/phases-1-4-implement.md').includes('and pushes it, the first push with `-u`.'), 'the slice push the rule follows');
+  // Commit only where no engine runs: an engine's slice makes one commit, so work committed ahead of it would leave
+  // the slice with nothing to commit. ae94cca took that commit out, and an early draft of #245 brought it back.
   for (const words of [
-    'runs `git push -u origin HEAD:<branch>` in the foreground, never with force: a remote head that is not an ancestor of HEAD stops the run',
-    'Confirm that `git ls-remote --heads origin <branch>` then prints HEAD; a rejected push stops the run',
-  ]) assert.ok(resume.indexOf(words) > push && push !== -1, words);
-  assert.ok(!resume.includes('@{u}'), 'the push check never reads the upstream');
-  assert.ok(push < resume.indexOf('Then open the draft through the `pr-write` skill'), 'the push comes before the draft');
-  // pr-review reviews the published head: a draft's uncommitted work is committed and pushed before its first round.
-  const handed = resume.indexOf('Before the first round of `references/phases.md` § 3, uncommitted changes that belong to the pull request go to their owner');
-  assert.ok(handed !== -1 && handed < resume.indexOf('Rounds the pull request already had count toward the cap.'), 'the handed-over edits are committed before the rounds');
-  for (const words of ['to finish, verify with the project\'s checks, commit, and push', 'confirm that `git ls-remote --heads origin <branch>` prints HEAD',
-    'Changes the run cannot attribute to the pull request stop it, as the branch preflight of the `orchestration` skill\'s `references/review-rules.md` says.']) {
-    assert.ok(resume.indexOf(words) > handed, words);
+    'On an adopted pull request, and on that path before its gates, that owner first finishes, verifies with the project\'s checks, and commits the uncommitted work.',
+    'Before an engine or `planning-agent`, uncommitted work stays in the worktree for the owner of the plan\'s first incomplete slice.',
+    'A failed check, a remote head that is not an ancestor of HEAD, or a rejected push stops the run: park the rest and report, as `SKILL.md` § Stop says.',
+    'Confirm that `git ls-remote --heads origin <branch>` then prints HEAD.',
+    'Uncommitted changes the run cannot tie to the work stop the run with no question: on a pull request\'s branch, as the branch preflight of the `orchestration` skill\'s `references/review-rules.md` says; with none, as the `issue-implement` skill\'s `references/hard-rules.md` stops on changes unrelated to this one.',
+  ]) assert.ok(resume.indexOf(words) > publish, words);
+  for (const gone of ['commits what is uncommitted, and pushes', 'before any hand-over', 'commits the uncommitted work and pushes']) assert.ok(!resume.includes(gone), `no commit before an engine: ${gone}`);
+  // The no-plan path publishes only once its Phase 5 gates pass: the full suite, the docs, security, and critical-flow sign-off.
+  const noPlan = resume.slice(resume.indexOf('- No plan and nothing left to change:'), resume.indexOf('- Work left to change with no plan:'));
+  const gatesAt = noPlan.indexOf('run the gates of Phase 5');
+  assert.ok(gatesAt !== -1 && gatesAt < noPlan.indexOf('When they pass, publish as § 5 says, then open the draft through the `pr-write` skill'), 'the no-plan path runs its gates before it publishes');
+  assert.ok(!resume.includes('commits, and pushes the uncommitted work'), 'the no-plan path pushes nothing before its gates');
+  for (const words of ['the uncommitted changes, each decision with whose it is', 'The plan covers only what remains, and the uncommitted work is its first slice.']) {
+    assert.ok(resume.includes(words), `the planning brief carries the uncommitted work: ${words}`);
   }
+  assert.equal(resume.split('never with force').length, 2, 'the publish rule is stated once');
+  assert.equal(resume.split('git ls-remote --heads origin <branch>').length, 2, 'the push is confirmed in one place');
+  assert.ok(!resume.includes('@{u}'), 'the push check never reads the upstream');
   assert.match(flat('plugins/aidrian/skills/orchestration/references/review-rules.md'), /## Branch preflight .*`git status --porcelain` must be clean or hold only this pull request's work/u);
-  // Skipping the engine keeps its close gates and the base it passes: the path points to the engine's own steps.
-  const gates = resume.indexOf('Run the gates of Phase 5 of the `issue-implement` skill\'s `steps/phases-5-8-close.md` on `origin/<base>..HEAD`');
-  assert.ok(gates !== -1 && gates < push, 'the close gates run before the push');
+  assert.ok(flat('plugins/aidrian/skills/issue-implement/references/hard-rules.md').includes('holds uncommitted changes unrelated to this one'), 'the no-pull-request stop it cites');
+  // Plan discovery is the engines' own lookup, which finds a design import's plan too; the file cites it, never restates it.
+  // Only its first match counts: the state folder holds many stale plans, so its newest-plan fallback would fire routinely.
+  assert.ok(resume.includes('The branch\'s plan: the first match of the plan path lookup of the `plan-implement` skill\'s Inputs, run in the session\'s worktree, design-import plans included; its fallback to the newest plan never names the branch\'s plan.'), 'plan discovery cites the engine');
+  assert.ok(!resume.includes('workspace_decision.branch_name'), 'plan discovery is not restated');
+  const lookup = flat('plugins/aidrian/skills/plan-implement/SKILL.md');
+  for (const words of ['- The plan path:', '`<state>/plans/*.md`', '`docs/design-imports/*/plan.md`', 'first a plan whose `workspace_decision.branch_name` is the current branch',
+    'then the newest plan whose `status` is not `complete`']) {
+    assert.ok(lookup.includes(words), `the lookup the citation points to: ${words}`);
+  }
+  // The engine runs from its phase 0, so its ready check, guards, and gates run; its re-entry step takes up the commits.
+  for (const words of ['run the engine the table picks from its phase 0', 'the `issue-implement` skill\'s `steps/phase-0-resolve.md` § 5', 'step 5 of the `plan-implement` skill\'s Phase 0',
+    'the gates of Phase 5 of the `issue-implement` skill\'s `steps/phases-5-8-close.md` on `origin/<base>..HEAD`, all but gates 1 and 4, which read a plan.',
+    'With no slice, a security-sensitive diff gets a `security-engineer` review and a critical flow a `product-manager` sign-off.',
+    'A gate that fails is work left to change.', 'the `pr-write` skill with the inputs that file\'s Phase 7 passes']) assert.ok(resume.includes(words), words);
+  assert.ok(lookup.includes('5. **Re-entry**'), 'plan-implement keeps its re-entry step');
   const close = flat('plugins/aidrian/skills/issue-implement/steps/phases-5-8-close.md');
-  for (const words of ['## Phase 5: before the pull request', '**Acceptance criteria coverage.**', 'A gap turns `Fixes <ref>` into `Refs <ref>`',
+  for (const words of ['## Phase 5: before the pull request', '1. Every implementation slice in the plan is `complete`', '4. No `scope_collision` is open.',
+    '**Acceptance criteria coverage.**', 'A gap turns `Fixes <ref>` into `Refs <ref>`',
     '## Phase 7: the pull request', 'the base from phase 0, passed explicitly']) assert.ok(close.includes(words), `the engine's step the path points to: ${words}`);
-  for (const gone of ['a pull request already at the cap goes to', 'commits what is uncommitted, and pushes']) assert.ok(!resume.includes(gone), gone);
+  for (const gone of ['a pull request already at the cap goes to', '**Acceptance criteria coverage', 'the scope collision gate',
+    'resumes at the first incomplete slice', 'its re-entry stops on an open pull request', 'git push -u origin']) assert.ok(!resume.includes(gone), `not restated: ${gone}`);
   // plan-implement stops on a plan with issue_id, so a plan written for an issue session must not go through the one-line task row.
   assert.ok(!resume.includes('as the one-line task row does'), 'the no-plan path names its own engine');
   for (const own of ['knowledge', 'orchestration', 'worktree-new', 'pr-product-feedback', 'pr-auto-merge', 'session-handoff']) {

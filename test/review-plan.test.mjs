@@ -153,6 +153,32 @@ test('a path entry may be re:<regex>: rules, flows, and tests match it, and a ba
   assert.equal(errors.length, 2);
 });
 
+// An empty `re:` compiles to a pattern that matches every path, so one stray entry would sort every file as prose, or
+// as ignored, and the plan would skip the review.
+test('checkReview: an empty re: in review.nonBehaviour or review.ignore is an error, and only that entry is left out', () => {
+  const errors = [];
+  const prose = checkReview({ nonBehaviour: ['README.md', 're:'] }, 'c.json', errors);
+  assert.deepEqual(errors, ['c.json: "review.nonBehaviour" has re: with no expression']);
+  assert.deepEqual(prose.nonBehaviour, ['README.md'], 'the team\'s other entries stay, never the built-in list');
+  const reviewed = plan([change('src/app.js')], prose);
+  assert.equal(reviewed.depth, 'single', 'src/app.js still plans a review');
+  assert.deepEqual(plan([change('README.md')], prose).depth, 'none', 'the entry beside it still counts');
+
+  const ignoreErrors = [];
+  const ignore = checkReview({ ignore: ['re:'] }, 'c.json', ignoreErrors);
+  assert.deepEqual(ignoreErrors, ['c.json: "review.ignore" has re: with no expression']);
+  assert.deepEqual(ignore.ignore, []);
+  assert.deepEqual(classify([change('src/app.js')], ignore).ignored, [], 'no file is ignored because of it');
+});
+
+test('checkReview: an empty re: in a rule\'s when.onlyFiles is an error, so a none rule cannot cover every file', () => {
+  const errors = [];
+  const review = checkReview({ rules: [{ when: { onlyFiles: ['re:'] }, depth: 'none' }] }, 'c.json', errors);
+  assert.deepEqual(errors, ['c.json: "review.rules[0].when.onlyFiles" has re: with no expression']);
+  assert.deepEqual(review.rules, []);
+  assert.equal(plan([change('src/app.js')], review).depth, 'single');
+});
+
 test('mergePlans then mergeStages: a plan command pass for an agent folds into the built-in pass for it, and a shared flow keeps both files and reasons', () => {
   const flows = { 'service-role': { files: ['src/admin/**'], require: ['agent:security-engineer'] } };
   const builtIn = plan([change('src/admin/a.ts'), change('src/lib/b.ts')], { flows, rules: [{ when: { anyFiles: ['src/**'] }, require: ['agent:security-engineer'] }] }, { merge: false });

@@ -1,7 +1,7 @@
 // Bash rule, and the decision of the GitHub MCP hook on a call that marks a draft ready: no draft is marked ready while a
 // check on its head has not finished, or while a check its last edit re-queues has not shown yet. docs/hooks.md#ready-checks.
-// It reads the same calls the ready hold reads (ready-hold.mjs CANDIDATE and readReady), quoted spellings such as
-// `re""ady` included, in every project, product feedback or not.
+// It reads the same calls the ready hold reads (ready-hold.mjs mayMarkReady and readReady), quoted spellings such as
+// `r""eady` included, in every project, product feedback or not.
 //
 // Editing a pull request's title or body re-runs the workflows that listen for the edit, such as a title check, and GitHub
 // takes a few seconds to queue the run: until then the checks still show the run from before. So it holds, in this order:
@@ -17,7 +17,7 @@
 
 import { findProject } from '../../project.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
-import { CANDIDATE, deadlineForge, OVERRIDE, readReady } from './ready-hold.mjs';
+import { asksHelp, deadlineForge, mayMarkReady, OVERRIDE, readReady } from './ready-hold.mjs';
 import { commandPath, readWords } from './review-request.mjs';
 
 // How long after an edit a check it re-queues may take to show. Past it, an edit that re-queued nothing holds nothing.
@@ -37,13 +37,14 @@ export const SAME_COMMAND_REASON =
   'Make the edit alone, wait with `gh pr checks <n> --watch` until every check reports, then mark it ready with ' +
   '`gh pr ready <n>` in a separate call.';
 
-// Whether one gh invocation edits a pull request's title or body, or opens a pull request.
+// Whether one gh invocation edits a pull request's title or body, or opens a pull request; a read of its help does neither.
 function editsText({ program, args }) {
   if (program !== 'gh') return false;
   const [noun, verb] = commandPath(args);
   if (noun !== 'pr') return false;
-  if (verb === 'create') return true;
-  return verb === 'edit' && readWords(args, VALUES).flags.some(({ name }) => TEXT_FLAGS.has(name));
+  const { flags } = readWords(args, VALUES);
+  if (asksHelp(flags)) return false;
+  return verb === 'create' || (verb === 'edit' && flags.some(({ name }) => TEXT_FLAGS.has(name)));
 }
 
 const millis = (text) => (typeof text === 'string' && text !== '' ? Date.parse(text) : Number.NaN);
@@ -129,7 +130,7 @@ function judgeCalls(calls, seams) {
 // The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment; the rest are the
 // seams of ready-hold.mjs deadlineForge.
 export function check(command, { cwd = process.cwd(), env = process.env, ...seams } = {}) {
-  if (env[OVERRIDE] === '1' || !CANDIDATE.test(command)) return null;
+  if (env[OVERRIDE] === '1' || !mayMarkReady(command)) return null;
   const entries = walkCommands(command, cwd).filter((entry) => entry.unread === undefined);
   const readies = entries.flatMap((entry) => {
     const call = readReady(entry.invocation, env);

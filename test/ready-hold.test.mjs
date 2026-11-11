@@ -119,6 +119,10 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
     "sh -c 'gh pr ready 7'",
     'bash <<EOF\ngh pr ready 7\nEOF',
     'rtk gh pr ready 7',
+    // Quotes and backslashes the shell takes out, anywhere in the word.
+    'gh pr r""eady 7',
+    'gh pr re""""ady 7',
+    'gh pr r\\e\\a\\d\\y 7',
     `cd ${dir} && gh pr ready 7`,
     graphql('graphql', 'PR_kwDOabc123'),
     "gh api graphql -F id=PR_kwDOabc123 -f query='mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }'",
@@ -288,6 +292,8 @@ test('the hold lets the command run when clear, when a read fails, for another r
   const { calls, exec } = seam({ head: HEAD });
   assert.equal(check('gh pr ready 7', { cwd: fresh, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null, 'the override in the hook environment');
   assert.equal(calls.length, 0);
+  // A read of gh's help marks nothing ready.
+  for (const command of ['gh pr ready --help', 'gh pr ready 7 -h']) assert.equal(owedNow(fresh).reason(command), null, command);
   assert.match(check(`${OVERRIDE}=1 gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u, 'an inline setter lifts nothing');
   assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u);
 });

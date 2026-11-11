@@ -336,11 +336,13 @@ What each rule matches:
   request, body file, or subcommand it cannot read is refused while a record holds a post; so is text fed to a shell, `xargs`,
   `parallel`, or a command it did not judge, such as `npx`, whose words name `product-feedback` and `post`, and a post in the same
   command as `record` or an aidrian call it cannot read. The deny says the Human can run `post` in their own shell.
-- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, but `--undo` with no
-  value or a true one, and a `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview`
+- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes or
+  backslashes the shell takes out anywhere in its words (`r""eady`), but `--undo` with no value or a true one and a read of
+  its `--help` or `-h`, and a `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview`
   ([Ready hold](#ready-hold)).
 - Ready checks: the same `gh pr ready` calls, but not the `gh api` form, and a `gh pr edit` with `--title`, `--body`, or
-  `--body-file` (`-t`, `-b`, `-F`), or any `gh pr create`, in the same command as one ([Ready checks](#ready-checks)).
+  `--body-file` (`-t`, `-b`, `-F`), or any `gh pr create`, in the same command as one, but not a read of their `--help` or
+  `-h` ([Ready checks](#ready-checks)).
 - Merge guard: `gh pr merge` but `--disable-auto` and a read of its `--help` or `-h`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
   sent as a PUT or a POST ([Merge guard](#merge-guard)).
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,

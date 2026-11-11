@@ -128,6 +128,44 @@ test('a body the rule cannot read is refused, with the two steps that pass', (t)
   assert.match(run('gh pr edit 3 --body "$UNREAD"'), /`.*pr-body-<branch>\.md`.*the pr-write skill/su);
 });
 
+// The shape that refused one session's agents again and again: a script edits the body file, and gh posts it on the same line.
+test('a body file another command on the line changes is refused with that cause, and gh as its own command passes', (t) => {
+  const run = project(t, WITH_PATTERNS, { 'b.md': GOOD });
+  const file = path.join(run.dir, 'b.md');
+  const script = (target) => `python3 - ${target} <<'EOF'\nimport sys\nEOF\n`;
+  for (const command of [
+    `f=${file}; ${script('"$f"')}gh pr edit 3 --body-file "$f"`,
+    `B=${file}; ${script('"$B"')}gh pr edit 3 --body-file $B >/dev/null`,
+    `${script(file)}cd ${run.dir} && gh pr create --draft --title x --body-file ${file}`,
+    `sed -i '' s/a/b/ b.md && gh issue comment 3 --body-file b.md`,
+  ]) {
+    const reason = run(command) ?? '';
+    assert.match(reason, /^Blocked: the body is one this rule cannot read: another command on this line changes the body file before gh reads it, such as a script or `sed -i`/, command);
+    assert.match(reason, /Run that command first, then gh as its own command\./, command);
+    assert.doesNotMatch(reason, /a variable, a command substitution, stdin without a heredoc/, 'never the whole list of causes');
+  }
+  assert.equal(run(`gh pr edit 3 --body-file ${file}`), null, 'gh as its own command reads the file');
+});
+
+test('a body the rule cannot read names its own cause first', (t) => {
+  const run = project(t);
+  for (const [command, cause] of [
+    ['gh issue comment 3 --body "$UNREAD"', 'the body is one this rule cannot read: it is a variable, a command substitution, or a heredoc bash expands'],
+    ['gh pr close 3 --comment "$UNREAD"', 'the comment is one this rule cannot read: it is a variable, a command substitution, or a heredoc bash expands'],
+    ['gh issue create --title x --body-file "$FILE"', 'the body is one this rule cannot read: the body file `$FILE` is a variable this command does not set to a literal path, or a command substitution'],
+    ['gh issue create --title x --body-file gone.md', 'the body is one this rule cannot read: the body file `gone.md` does not exist yet'],
+    ['gh pr comment 3 --body-file -', 'the body is one this rule cannot read: `--body-file -` reads standard input, and that input is not one heredoc bash passes unchanged'],
+    ['gh pr comment 3 --body-file /dev/null', 'the body is one this rule cannot read: the body file `/dev/null` is a device, a pipe, or a folder, not a regular file'],
+    ['cd .. || true; gh pr comment 3 --body-file b.md', 'the body is one this rule cannot read: the body file `b.md` is a relative path, and the folder gh runs in is unknown after that directory change'],
+    ['gh pr comment 3 --body-file b.md > b.md', 'the body is one this rule cannot read: a redirect on the gh call writes onto its own body file, which bash empties before gh reads it'],
+  ]) {
+    const reason = run(command) ?? '';
+    assert.ok(reason.startsWith(`Blocked: ${cause}`), `${command}\n${reason}`);
+    assert.doesNotMatch(reason, /a variable, a command substitution, stdin without a heredoc/, 'never the whole list of causes');
+    assert.match(reason, /Do this instead: 1\. write the body to /, command);
+  }
+});
+
 test('with no body flag, text from elsewhere is refused, and only a call that posts none passes', (t) => {
   const run = project(t);
   for (const command of ['gh issue create --title x', 'gh issue comment 3', 'gh issue comment 3 --editor', 'gh pr comment 3', 'gh pr create --fill', 'gh pr create --title x --template t.md']) {

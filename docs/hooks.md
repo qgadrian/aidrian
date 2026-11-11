@@ -215,6 +215,10 @@ What each rule matches:
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
   cannot read: gh then runs as its own command after it.
+  The deny for a body it cannot read names the one cause that applies, never the whole list: a `--body` the shell builds,
+  a body file path it cannot resolve, `--body-file -` with no heredoc, a relative path after a directory change, a file
+  that does not exist yet or is not a regular file, a redirect on gh onto its own body file, or another command on the
+  line that changes the file first, whose deny says to run that command first, then gh as its own command.
   Only an unquoted number or `{name}` right against `<` or `>` names a descriptor: a quoted `--body '2'> /dev/null` is the
   body `2`, as bash passes it, and the rule checks it.
   A deny about where the body comes from states the cause first, then the two steps that pass: write the body to the one
@@ -241,8 +245,11 @@ What each rule matches:
   The patterns of one command share a time budget, and one that runs out is dropped, as a bad line is.
   Private words are checked on every call of the command before any config pattern runs, so config patterns never use up their time.
   A rule of this hook that fails lets the command through that rule only; the later rules still run.
-  A body or title the rule cannot read is refused, with the two steps that pass for a body, and that includes a device or a pipe given as the body file, and so is a call with no body flag whose text would come
-  from an editor, a prompt, a template, or the commit messages. `--fill` with no `--title` is refused the same way.
+  A body or title the rule cannot read is refused, with the two steps that pass for a body, and that includes a device or a pipe given as the body file.
+  The deny names the same one cause as the pull request body rule's, from the same reader (`unreadBody`), since this rule runs first:
+  a script or `sed -i` that edits the body file on the gh line gets the step that passes, gh as its own command after it.
+  A call with no body flag whose text would come
+  from an editor, a prompt, a template, or the commit messages is refused too. `--fill` with no `--title` is refused the same way.
   `--web`, `--dry-run`, `--help`, `--delete-last`, and an edit, close, reopen, or merge with no text flag pass.
   With no pattern from either, the default, the rule refuses nothing: it reads only the config and looks for the file, which runs git once,
   and it looks up no remotes and reads no body. It never asks whether the repository is public: a project opting in is the signal.

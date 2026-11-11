@@ -24,7 +24,7 @@ import { BANNED_FILE, usableBannedLines } from '../../banned-terms.mjs';
 import { boundedSearch, timeBudget } from '../../bounded-regexp.mjs';
 import { loadConfig } from '../../config.mjs';
 import { findProject } from '../../project.mjs';
-import { bodyCalls, bodyFilePath, readBody, readBodyCall, stateFolder, targetsAnotherRepo, TEXT_HEREDOC, twoSteps } from './pr-body.mjs';
+import { bodyCalls, bodyFilePath, readBody, readBodyCall, stateFolder, targetsAnotherRepo, TEXT_HEREDOC, twoSteps, unreadBody } from './pr-body.mjs';
 import { invocationRepo } from './review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PUBLIC_TEXT';
@@ -63,9 +63,10 @@ export function check(command, { cwd = process.cwd(), env = process.env, started
     if (!patterns.length && !words.length) continue;
     // Read now: `written` holds what the line wrote before this call, and changes as the walk goes on.
     const body = readBody(call, entry.folder, written);
+    const why = body === null ? unreadBody(call, entry.folder, written) : null;
     const title = call.title && !call.title.dynamic ? call.title.text : null;
     const texts = [[bodyName(call), body], [titleName(call), title]].filter(([, raw]) => raw !== null);
-    calls.push({ call, entry, project, config, patterns, words, body, texts });
+    calls.push({ call, entry, project, config, patterns, words, why, texts });
   }
   if (!calls.length) return null;
   const budget = budgetFor(startedAt);
@@ -73,12 +74,12 @@ export function check(command, { cwd = process.cwd(), env = process.env, started
     const hit = privateHit(texts, words, budget);
     if (hit) return hit;
   }
-  for (const { call, entry, project, config, patterns, body, texts } of calls) {
+  for (const { call, entry, project, config, patterns, why, texts } of calls) {
     if (targetsAnotherRepo(call, project, invocationRepo(entry.invocation.environment, env))) continue;
     // A closing comment has no file form, so its steps post the comment first, through the command that has one.
     const stepCall = isClosing(call) ? { ...call, subcommand: 'comment' } : call;
     const steps = () => twoSteps(bodyFilePath(stateFolder(project, config, env), stepCall, entry.folder), stepCall);
-    const reason = configHit(texts, patterns, budget) ?? unread(call, body, steps);
+    const reason = configHit(texts, patterns, budget) ?? unread(call, why, steps);
     if (reason) return reason;
   }
   return null;
@@ -127,18 +128,18 @@ function configHit(texts, patterns, budget) {
   return null;
 }
 
-// The deny for text the patterns never saw, or null. `steps` gives the two steps that pass.
-function unread(call, body, steps) {
+// The deny for text the patterns never saw, or null. `why` is the body's unreadBody, null when the body reads; `steps`
+// gives the two steps that pass.
+function unread(call, why, steps) {
   if (call.title?.dynamic) {
     const where = titleName(call);
     return deny(`the ${where} is one this rule cannot read: a variable or a command substitution, so ${UNCHECKED}. Write the ${where} out in the command.`);
   }
   if (call.body || call.bodyFile) {
-    if (body === null) {
+    if (why) {
       const target = call.target && !call.target.dynamic ? ` ${call.target.text}` : '';
       const after = isClosing(call) ? ` Then run \`gh ${call.noun} ${call.subcommand}${target}\` without --comment.` : '';
-      return deny(`the ${bodyName(call)} is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, a file that does not ` +
-        `exist yet, or a device or a pipe, so ${UNCHECKED}. ${steps()}${after}`);
+      return deny(`the ${bodyName(call)} is one this rule cannot read: ${why.cause}, so ${UNCHECKED}. ${why.fix ? `${why.fix} ` : ''}${steps()}${after}`);
     }
   } else if (['create', 'comment'].includes(call.subcommand) && !call.web) {
     return deny(`\`gh ${call.noun} ${call.subcommand}\` has no --body or --body-file, so its text comes from an editor, a prompt, a template, or the ` +

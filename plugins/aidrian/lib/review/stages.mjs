@@ -3,7 +3,7 @@
 // reviewers. Every return goes through the step's outcome writers on `s`, which lib/review/run.mjs defines.
 
 import { markerFor } from '../review-gate.mjs';
-import { ANSWERED, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
+import { ANSWERED, keepsRecordedCap } from '../pr-await-review.mjs';
 import { sameCommit } from './state.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { lateRoundResidual } from '../finding-disposition.mjs';
@@ -95,7 +95,8 @@ export async function runStages(s) {
 
   // The review bot's request: the gate's marker sums every code-reviewer pass that counts for this head (a
   // carried-forward one too); with the gate on and none on record, nothing is posted. The plan's cap (the base branch's,
-  // plus valid extra rounds) is the bot's too: a cap an earlier request recorded counts only under the Human's override.
+  // plus valid extra rounds) is the bot's too: a cap an earlier request recorded counts only under the Human's override
+  // with no --max-rounds, so an approved raise runs at exactly its --max-rounds.
   // A request past the base branch's cap uses an extra round, granted on the signals of this head: the wait posts
   // nothing for another head (head_moved), and the next step reads the grant again on it.
   const gate = () => {
@@ -107,7 +108,7 @@ export async function runStages(s) {
     return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
   };
   const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-  const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1', validHead: head, grantFloor, ...extra }, { gate });
+  const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: keepsRecordedCap(env, opts.maxRounds !== undefined), validHead: head, grantFloor, ...extra }, { gate });
   const headMoved = (bot) => finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
   // The bot's answer for this head, recorded as its pass's result.
   const recordBot = (pass, bot) => {

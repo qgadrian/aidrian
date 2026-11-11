@@ -1093,6 +1093,36 @@ test('a raised limit is recorded in the request and kept by later runs only unde
   assert.ok(forge.posts[0].fields.body.includes('max-rounds=15'), 'the raised limit rides on every later request');
 });
 
+// #235: an approved `--max-rounds 6` after an earlier request recorded 10 ran to 10. A run of `await-review --request` under
+// the Human's override, at the default cap of 3, on a pull request with `reviews` bot reviews and that recorded 10.
+async function underOverride(t, reviews, args) {
+  const config = { github: { reviewer: DEFAULT_REVIEWER, maxReviewRounds: 3, reviewGate: { enabled: false } } };
+  const recorded = { user: { login: 'someone' }, created_at: T(1), body: requestCommentBody('aaa', 10) };
+  const log = t.mock.method(console, 'log', () => {});
+  const rounds = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
+  const forge = fakeForge([{ reviews: rounds, issueComments: [recorded] }], { head: 'bbb' });
+  const code = await runAwaitReview(['42', '--request', '--timeout-sec', '60', ...args], config, null, { forge, env: { [ROUNDS_OVERRIDE]: '1' }, ...clock() });
+  return { code, posts: forge.posts, out: JSON.parse(log.mock.calls.at(-1).arguments[0]) };
+}
+
+test('under the override, an approved --max-rounds 6 at 6 reviews stops there, not at a recorded 10', async (t) => {
+  const { code, posts, out } = await underOverride(t, 6, ['--max-rounds', '6']);
+  assert.deepEqual([code, out.status, posts.length, out.max_rounds], [4, 'round_limit', 0, 6]);
+});
+
+test('under the override, an approved --max-rounds 6 records 6 in its request, not a recorded 10', async (t) => {
+  const { posts } = await underOverride(t, 5, ['--max-rounds', '6']);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].fields.body, /max-rounds=6 /u);
+  assert.doesNotMatch(posts[0].fields.body, /max-rounds=10/u);
+});
+
+test('under the override with no --max-rounds, the recorded cap still carries over', async (t) => {
+  const { posts } = await underOverride(t, 5, []);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].fields.body, /max-rounds=10 /u);
+});
+
 test('REQUEST_INSTRUCTIONS asks for every location of a repeated mistake in one finding', () => {
   assert.match(REQUEST_INSTRUCTIONS, /same mistake/);
   assert.match(REQUEST_INSTRUCTIONS, /every other location in that one finding/);

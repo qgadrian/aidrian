@@ -1579,6 +1579,10 @@ test('--with-bot: the bot is held to the plan`s cap; a cap an earlier request re
   const other = repo(t, { change: (write) => write('src/app.js', '8\n') });
   await other.step({ exec: clean, awaitBot, env: { AIDRIAN_ALLOW_EXTRA_ROUNDS: '1' } }, { withBot: true });
   assert.deepEqual(seen, [[3, false], [3, true]]);
+  // #235: an approved raise runs at exactly its --max-rounds, so a higher cap an earlier request recorded never counts.
+  const raised = repo(t, { change: (write) => write('src/app.js', '7\n') });
+  await raised.step({ exec: clean, awaitBot, env: { AIDRIAN_ALLOW_EXTRA_ROUNDS: '1' } }, { withBot: true, maxRounds: 6 });
+  assert.deepEqual(seen.at(-1), [6, false]);
 });
 
 test('extra rounds: a finding attested as fixed is not an open finding of its round, so it never reads as a loop', async (t) => {

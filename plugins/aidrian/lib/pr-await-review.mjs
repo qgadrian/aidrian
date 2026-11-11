@@ -22,10 +22,11 @@
 //   6. With --request: at --max-rounds bot reviews (config.json `github.maxReviewRounds`) post nothing and end with
 //      `round_limit`; a long run of rounds is a design problem more review will not fix. Raising --max-rounds past
 //      the config value is the Human's call: it needs ROUNDS_OVERRIDE, set on the Human's word (roundCapProblem), whatever
-//      reviews the pull request. A raised limit is recorded in the request comment; a later run keeps the highest one
-//      only while the Human's override is set in its own environment too (`keepRecordedCap`). Without it, the cap the
-//      run was given (the base branch's, plus the extra rounds still valid) is the cap: a marker an extra round wrote
-//      never brings back a grant revoked since.
+//      reviews the pull request. A raised limit is recorded in the request comment. A run that gives --max-rounds uses
+//      exactly that count, plus the extra rounds still valid, so an approved raise never runs past what was approved.
+//      Only a run under the Human's own override with no --max-rounds keeps the highest recorded cap
+//      (`keepsRecordedCap`). Otherwise the cap the run was given (the base branch's, plus the extra rounds still valid)
+//      is the cap: a marker an extra round wrote never brings back a grant revoked since.
 //
 //   8. At that cap, with config.json `github.extraRounds` other than "off" on the base branch: the check at the cap
 //      (lib/review/extension.mjs) reads the bot's rounds and may end with `extension_check` (a judge to dispatch) or
@@ -127,6 +128,10 @@ export const ROUNDS_OVERRIDE = 'AIDRIAN_ALLOW_EXTRA_ROUNDS';
 
 // The line the Human types at the prompt to approve that command for every --max-rounds up to <N>.
 export const TYPED_GRANT_FORM = 'grant up to <N> review rounds on <owner>/<name>#<PR>';
+
+// Whether a run keeps the highest cap an earlier request recorded: only under the Human's override, and only when the
+// run gives no --max-rounds (`explicitMaxRounds`). A raise approved at --max-rounds <N> runs at exactly <N>.
+export const keepsRecordedCap = (env, explicitMaxRounds) => env[ROUNDS_OVERRIDE] === '1' && !explicitMaxRounds;
 
 // Why `maxRounds` may not run, or null: a cap above the project's `cap` without ROUNDS_OVERRIDE in `env`. It judges the
 // command's own flag, so it holds for any reviewer the command waits on; a lower cap always runs.
@@ -561,7 +566,8 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, forge, base) : null;
     // The baseline: an explicit --max-rounds, held to the base branch's cap unless the Human set the override, else that
     // cap. Grants add to it either way, as in `aidrian pr review`.
-    const baseline = args.includes('--max-rounds') ? opts.maxRounds : cap;
+    const explicit = args.includes('--max-rounds');
+    const baseline = explicit ? opts.maxRounds : cap;
     const capped = roundCapProblem(baseline, cap, env);
     if (capped) throw new Error(capped);
     // The extra rounds still valid on `head`: a decision made on another head is read again on it first.
@@ -575,8 +581,9 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
       return granted;
     };
     await allowFor(base?.pr?.head?.sha ?? null);
-    // A cap an earlier request recorded counts only under the Human's override, as a --max-rounds past the cap does.
-    opts.keepRecordedCap = env[ROUNDS_OVERRIDE] === '1';
+    // A cap an earlier request recorded counts only under the Human's override and with no --max-rounds: a run that gives
+    // one uses exactly that count, plus the extra rounds still valid.
+    opts.keepRecordedCap = keepsRecordedCap(env, explicit);
     // One deadline for the whole command: a retry after head_moved waits only for what is left of --timeout-sec, so the
     // command still ends inside the shell call it was given.
     const clock = deps.now ?? (() => Date.now());

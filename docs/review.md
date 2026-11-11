@@ -325,7 +325,9 @@ Like the [unattended waiver](config.md#unattended-waiver), a ruling is the sessi
 
 Raising the round cap works the same way. On an answer naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, the session runs
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` before `--max-rounds` when the step
-runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly as written. The `review-rounds` rule refuses the
+runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly as written. That run reviews to exactly its
+`--max-rounds`, plus the extra rounds still valid: a higher cap an earlier bot request recorded in its comment counts only
+for a run under the Human's own override that gives no `--max-rounds`. The `review-rounds` rule refuses the
 variable in any other form, and in a checkout with several remotes, where no answer can name the one repository the command
 acts on; there the Human runs it in their own shell, as the refusal writes it, with the command's own subcommand and
 `--with-bot` or `--request`, since each counts its own rounds.

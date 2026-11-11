@@ -64,6 +64,7 @@ import { indexedAlways } from './knowledge.mjs';
 import { noneNeededProblem, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
 import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
+import { isFindingId } from './review/findings.mjs';
 import { heldWaiver } from './review/settled.mjs';
 import { owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
@@ -354,7 +355,11 @@ export function reviewProblem(state, head, unreviewed = {}) {
   } else if (outcome.status !== 'received') return status;
   const waived = heldWaiver(state);
   if (!waived) return null;
-  const named = `the accepted residual ${JSON.stringify(String(waived.residual).slice(0, 120))} waived a finding above low severity`;
+  // A record without the residual's text names the finding by its id.
+  const finding = [waived.ruled_id, waived.id].find(isFindingId);
+  const named = typeof waived.residual === 'string'
+    ? `the accepted residual ${JSON.stringify(waived.residual.slice(0, 120))} waived a finding above low severity`
+    : `an accepted residual waived finding ${finding ?? 'with no id'}, above low severity`;
   return waived.ended ? `${named} and no listing holds it fixed, so the merge waits for the Human` : `${named}, so the merge waits for the Human`;
 }
 

@@ -184,11 +184,14 @@ test('a local file git tracks reads the waiver switch "off" with the tracked-fil
 // runWaive as the CLI runs it, over a fake forge whose pull request is at `head` and whose comments are `issue`.
 // `change` replaces the head read, which runs between the record's read and its write. The base read before it names
 // this checkout's own branch, or `base` when given: its config holds the same state.dir.
-function waive(t, r, args, { head = HEAD, change = null, issue = [], record = 'comment', base = r.git('branch', '--show-current') } = {}) {
+// `visibility` is what the forge reads the repository as; the pull request comes from inside the team.
+function waive(t, r, args, { head = HEAD, change = null, issue = [], record = 'comment', base = r.git('branch', '--show-current'), visibility = 'PRIVATE' } = {}) {
   const log = t.mock.method(console, 'log', () => {});
   const headRead = change ?? ((ref, fields) => (assert.equal(fields, 'number,headRefOid,url'), { number: Number(ref), headRefOid: head, url: URL }));
   const forge = {
-    change: (ref, fields) => (fields === 'baseRefName' ? { baseRefName: base } : headRead(ref, fields)),
+    visibility: () => visibility,
+    pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }),
+    change: (ref, fields) => (fields === 'baseRefName' ? { baseRefName: base } : fields === 'isCrossRepository' ? { isCrossRepository: false } : headRead(ref, fields)),
     conversationComments: () => issue,
     postComment: (_repo, _n, body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', body }), issue.at(-1)),
     editComment: (_repo, id, body) => (issue.find((comment) => comment.id === id).body = body),
@@ -213,6 +216,20 @@ test('aidrian pr waive records a round_cap verdict on the current head, visible 
   assert.match(issue[0].body, new RegExp(`${WAIVER_HEADING.replace(/\*/gu, '\\*')}\\n- round_cap on \`abcdef1\`: waive by unknown: the three open findings are style nits \\(an audit entry, not proof\\)`, 'u'));
 });
 
+test('aidrian pr waive on a repository that is not private posts the waiver line and the record with no reason', async (t) => {
+  for (const visibility of ['PUBLIC', 'INTERNAL', null]) {
+    const r = repo(t, { local: ON });
+    r.record(5, roundLimit);
+    const { code, issue } = await waive(t, r, ['--verdict', 'waive', '--reason', 'the three open findings are style nits'], { visibility });
+    assert.equal(code, 0);
+    assert.equal(readLocalState(r.project(), 5).waivers[0].reason, 'the three open findings are style nits', `${visibility}: the local record keeps the reason`);
+    assert.doesNotMatch(issue[0].body, /style nits/u, `${visibility}: the line names no reason`);
+    assert.equal(stateFromComment(issue[0].body, 5).waivers[0].reason, undefined, `${visibility}: the posted record holds none`);
+    // A judge's name is posted only where the plan or the config defines it, and this record holds no plan note.
+    assert.match(issue[0].body, /- round_cap on `abcdef1`: waive by a judge \(an audit entry, not proof\)/u, `${visibility}: the line keeps the kind, head, and verdict`);
+  }
+});
+
 test('aidrian pr waive refuses a failed head read after the base read, and a base it cannot read', async (t) => {
   const r = repo(t, { local: ON });
   r.record(5, roundLimit);
@@ -224,7 +241,7 @@ test('aidrian pr waive refuses a failed head read after the base read, and a bas
 test('a second verdict rewrites the waiver list in the summary comment, not a second one', async (t) => {
   const r = repo(t, { local: ON });
   r.record(5, roundLimit);
-  const issue = [{ id: 1, user: { login: 'someone' }, author_association: 'MEMBER', body: summaryBody(readLocalState(r.project(), 5), null, 'round_limit') }];
+  const issue = [{ id: 1, user: { login: 'someone' }, author_association: 'MEMBER', body: summaryBody(readLocalState(r.project(), 5), null, 'round_limit', { reading: { visibility: 'PRIVATE', inside: true } }) }];
   for (const verdict of ['refuse', 'waive']) assert.equal((await waive(t, r, ['--verdict', verdict, '--reason', `judged ${verdict}`], { issue })).code, 0);
   assert.equal(issue.length, 1, 'edited, not posted');
   assert.equal(issue[0].body.split(WAIVER_HEADING).length, 2, 'one heading');

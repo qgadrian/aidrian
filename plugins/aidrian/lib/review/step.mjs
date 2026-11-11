@@ -3,7 +3,6 @@
 // stages (lib/review/stages.mjs) then run.
 
 import { roundCapProblem } from '../pr-await-review.mjs';
-import { runGit } from '../git.mjs';
 import { isolate } from './env.mjs';
 import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, mergeBase, parents, QUIET_TEST_FILES, quietDelta, resolve } from './diff.mjs';
 import { checkReview } from './config.mjs';
@@ -14,7 +13,11 @@ import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { heldMessage, publishState, readRecord, sameCommit, summaryToEdit } from './state.mjs';
+import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
+import { isObject } from '../fs.mjs';
+import { isFindingId, recordFindings } from './findings.mjs';
+import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
+import { postContext } from './dispatch.mjs';
 import * as quota from './quota.mjs';
 import { readManifest, visualMatrix, visualRoutes } from './visual.mjs';
 import { headToReview } from './pushed.mjs';
@@ -32,14 +35,27 @@ const HARNESS_INVARIANT = Object.freeze({
 // The fields the review step reads of its pull request.
 const CHANGE_FIELDS = 'number,headRefOid,headRefName,baseRefName,url,title,body';
 
-// The files tracked at `commit`.
-function trackedAt(root, commit) {
-  const result = runGit(['ls-tree', '-r', '--name-only', '-z', commit], root, { timeout: 30_000, maxBuffer: 256 * 1024 * 1024 });
-  return result.status === 0 ? result.stdout.split('\0').filter(Boolean) : [];
-}
+// The files tracked at `commit`, none when git cannot list them.
+const trackedAt = (root, commit) => [...(trackedSet(root, commit) ?? [])];
 
 // Whether the change from `from` to `to` touches `files` (null: any reviewed file).
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
+
+// The plan note a step writes for its head (G1, H6), merged into the record's note: every pass id an engine plan ever
+// named stays, with the stage, the reviewer, and whether the plan requires the security reviewer for it (true in the
+// local and independent stages of a plan that requires `agent:security-engineer`), the head's own plan's word winning
+// for its passes; and every flow and invariant pair of its flows. A pass that attest alone supplied is never added.
+function planNote(plan, map, earlier) {
+  const passes = plan.stages.flatMap((stage) => stage.passes);
+  const security = plan.require.includes('agent:security-engineer') || satisfies('agent:security-engineer', passes, map);
+  const before = earlier && typeof earlier.passes === 'object' && earlier.passes ? earlier.passes : {};
+  const pairs = [...(Array.isArray(earlier?.pairs) ? earlier.pairs : []), ...plan.flows.flatMap((flow) => (flow.invariants ?? []).map((invariant) => ({ flow: flow.id, invariant: invariant.id })))];
+  return {
+    head: plan.head,
+    passes: { ...before, ...Object.fromEntries(plan.stages.flatMap((stage) => stage.passes.map((pass) => [pass.id, { stage: stage.name, reviewer: pass.reviewer, security: security && ['local', 'independent'].includes(stage.name) }]))) },
+    pairs: [...new Map(pairs.map((pair) => [JSON.stringify([pair.flow, pair.invariant]), pair])).values()],
+  };
+}
 
 // Whether `since`, the change from `from` to `head`, is quiet (diff.mjs quietDelta: prose, tests that only gained
 // lines, comment-only code). Quiet decides round accounting alone: the round on `from` stays open on `head`, with its
@@ -103,9 +119,25 @@ export async function prepareStep(s) {
   const comments = onPr ? forge.conversationComments(repo, n) : [];
   const summary = summaryToEdit(comments, () => forge.viewer());
   const record = readRecord(project, n, comments, repo);
-  if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
+  if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held, record.why), held: record.held, retry_recommended: false };
+  // A record built on another machine's posted copy can hold an open, blocking finding whose text stayed on that machine:
+  // no reviewer here can judge a fix of it. The step stops before it adopts the record or runs a reviewer, and this
+  // machine's own record notes the stop, so its merge guard keeps refusing the head. The review goes on on the machine
+  // that recorded the finding, or restarts as a held record does.
+  const untexted = untextedBlocking(record.state, readLocalState(project, n));
+  if (untexted) {
+    const reason = `the review record of #${n} holds the open finding ${untexted}, whose text is on the machine that recorded it: continue the review on that machine. If that machine is gone, the Human deletes the review summary comment of #${n} and this machine's record file ${recordFile(project, n)}; the review then restarts from round 1`;
+    noteLocalOutcome(project, n, repo, { status: 'incomplete', head, reason });
+    return { status: 'incomplete', pr: n, repo, head, reason, retry_recommended: false };
+  }
   let state = record.state;
-  Object.assign(s, { root, cleanEnv, info, repo, n, head, baseTip, base, policy, review, onPr, comments, summary, state });
+  // The record is floored before any id is minted: `aidrian pr attest` mints only into a floored record.
+  state.floored = true;
+  const paths = gitPaths(root);
+  // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
+  let posting = null;
+  const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, ...extra }));
+  Object.assign(s, { root, cleanEnv, info, repo, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried
@@ -142,7 +174,7 @@ export async function prepareStep(s) {
       plan: { depth: 'none', reasons: [`a clean merge from ${info.baseRefName}: the review of ${reviewedHead.slice(0, 7)} carries to this head`], flows: [], stages: [] },
     });
     // Published as the review step publishes, so another machine's merge guard reads the same record.
-    const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, n, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, 'received') : null;
+    const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, n, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, 'received', post()) : null;
     return summaryError ? { ...carried, summary_error: summaryError } : carried;
   }
   const scope = baseMerge ? baseMerge.scope : null;
@@ -255,6 +287,14 @@ export async function prepareStep(s) {
   for (const flow of plan.flows) {
     if (flow.id === HARNESS_FLOW) Object.assign(flow, { invariants: [HARNESS_INVARIANT], unspecified: false, signoff: 'human' });
     else Object.assign(flow, invariantsOf(review.flows[flow.id] ?? {}, readAt(baseReview?.flows?.[flow.id] ? baseTip : head)));
+  }
+  // The plan note for this head (G1, H6): each pass of the plan with its stage, its reviewer, and whether the plan
+  // requires the security reviewer for it, and the flows' invariant pairs. The posted copy names only what it holds.
+  state.planNote = planNote(plan, map, state.planNote);
+  // A finding attest stored without an id, as on a record no step had floored, takes one now, from the same function.
+  for (const [id, result] of Object.entries(state.passes)) {
+    if (!isObject(result) || !['list', 'ruled', 'carried'].some((key) => Array.isArray(result[key]) && result[key].some((finding) => isObject(finding) && !isFindingId(finding.id)))) continue;
+    recordFindings(state, id, result, { mint: true, securityPass: state.planNote.passes[id]?.security === true || state.dispatched?.[id]?.security === true, kept: true });
   }
 
   const keptSignoffs = await keptSignoffsOf({ root, head, baseTip, cleanEnv, review, harnessFiles, plan, state });

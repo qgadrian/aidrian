@@ -1393,3 +1393,14 @@ test('review: a none_needed whose changed file is a symlink or a submodule at th
   received.record((state) => finished(state));
   assert.deepEqual(run(t, received, ['7'], { files: every, view: changing('README.md') }).calls.filter((call) => call[0] === 'tree'), [], 'a received review reads no tree');
 });
+
+test('reviewProblem holds on a waiver whose record holds no text, and names the finding by id', () => {
+  const head = 'b'.repeat(40);
+  const state = { ...emptyState(5, 'acme/notes'), outcome: { status: 'received', head, at: '2026-11-11T00:00:00Z' }, passes: {
+    'engine:codex-local': { head, list: [], carried: [{ id: 'R2-3', mint: '0000000a', ruled_id: 'R1-1', file: 'src/a.js', severity: 'medium', settled_severity: 'medium', residual: true, from: 'residual' }] },
+  } };
+  assert.equal(reviewProblem(state, head), 'an accepted residual waived finding R1-1, above low severity, so the merge waits for the Human');
+  state.passes['engine:codex-local'].carried[0].ended = true;
+  state.passes['agent:code-reviewer'] = { head, list: [{ id: 'R1-9', file: 'src/a.js', state: 'fixed' }, { file: 'src/a.js', state: 'fixed' }] };
+  assert.match(reviewProblem(state, head), /finding R1-1, above low severity and no listing holds it fixed/u, 'a listing of another id, or of none, ends nothing');
+});

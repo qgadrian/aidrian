@@ -375,7 +375,8 @@ test('extra rounds: a mistake a slice and the cross pass both report is one open
   };
   assert.equal((await settle()).status, 'fix_required');
   round = 2;
-  r.write('src/a/x.js', 'fixed\n');
+  // Long enough to hold every line a finding names: a line past the end of its file is not recorded.
+  r.write('src/a/x.js', Array.from({ length: 200 }, (_, i) => `fixed ${i}\n`).join(''));
   r.commit();
   const capped = await settle();
   assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
@@ -411,4 +412,12 @@ test('bench: an escaped fix is found for a project at the root and below it, by 
     const found = escapedFixes(project, { base, head, baseRefName: 'main', mergedAt: '2026-01-01T00:00:00Z' });
     assert.deepEqual(found, [{ source: 'escaped', file: `${prefix}src/a.js`, line: null }], prefix || 'root');
   }
+});
+
+test('dedupe never throws on, and never merges, findings that have no title', () => {
+  const merged = dedupe([
+    ['slice:a', [{ id: 'R1-1', file: 'x.js', line: 10, severity: 'medium' }, { id: 'R1-2', file: 'x.js', line: 11, title: '', severity: 'low' }]],
+    ['cross', [{ id: 'R1-3', file: 'x.js', line: 10, severity: 'high' }, { id: 'R1-4', file: 'x.js', line: 12, title: 'Missing null check', severity: 'low' }]],
+  ]);
+  assert.deepEqual(merged.map((each) => each.id), ['R1-1', 'R1-2', 'R1-3', 'R1-4']);
 });

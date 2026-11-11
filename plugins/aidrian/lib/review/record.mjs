@@ -3,8 +3,10 @@
 
 import { forgeFor } from '../forges/index.mjs';
 import { overruleRefusal } from './approvals.mjs';
-import { parseFindings } from './findings.mjs';
+import { isObject } from '../fs.mjs';
+import { parseFindings, recordFindings } from './findings.mjs';
 import { parseVerdicts } from './flows.mjs';
+import { gitPaths } from './publish.mjs';
 import * as quota from './quota.mjs';
 import { heldMessage, readRecord, sameCommit, writeLocalState } from './state.mjs';
 
@@ -13,7 +15,7 @@ import { heldMessage, readRecord, sameCommit, writeLocalState } from './state.mj
 // this machine's record is refused, never started over.
 function current(project, pr, repo, remote) {
   const record = readRecord(project, pr, remote ?? [], repo);
-  if (record.held !== undefined) throw new Error(heldMessage(pr, record.held));
+  if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why));
   return record.state;
 }
 
@@ -48,10 +50,16 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
   } catch {}
   const state = current(project, pr, repo, remote);
   const before = state.passes[pass];
-  const files = state.dispatched?.[pass]?.files ?? null;
-  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
+  const note = isObject(state.dispatched?.[pass]) ? state.dispatched[pass] : null;
+  const files = note?.files ?? null;
+  const result = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
+  // Ids come from the one function that writes them (findings.mjs recordFindings). Attest mints one only into a record a
+  // step has floored, for a pass that step dispatched: elsewhere a finding keeps the id of its match in the pass's prior
+  // list, and the rest wait for the next step.
+  const mint = state.floored === true && typeof note?.stage === 'string';
+  const recorded = recordFindings(state, pass, result, { mint, securityPass: note?.security === true, paths: gitPaths(project.root).at(head) });
   writeLocalState(project, state);
-  return state.passes[pass];
+  return recorded;
 }
 
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a flow on a head. An audit entry, not

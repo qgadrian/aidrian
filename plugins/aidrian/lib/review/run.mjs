@@ -33,7 +33,8 @@
 import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
-import { blocks } from './findings.mjs';
+import { blocks, isFindingId } from './findings.mjs';
+import { residualRows } from './publish.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
@@ -104,7 +105,11 @@ function noteFindings({ state, head }, extra) {
   const counted = passes.filter((each) => !Array.isArray(each.findings)).reduce((total, each) => total + (each.open ?? 0), 0);
   round.open = merged.length + counted + violated.length;
   round.findings = itemized.length === passes.length
-    ? [...merged.map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
+    ? [...merged.map((each) => ({
+      ...(isFindingId(each.id) ? { id: each.id, mint: each.mint, ...(Array.isArray(each.aliases) && each.aliases.length ? { aliases: each.aliases } : {}) } : {}),
+      title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null,
+      ...(each.security === true ? { security: true } : {}), pass: each.sources?.[0] ?? null,
+    })), ...violated].slice(0, 50)
     : null;
 }
 
@@ -153,19 +158,22 @@ function answerRequests({ project, root, repo, n, state, passes, map, resultFor 
   for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
 }
 
-// The late-round residuals of the passes that count for this head, for the body's Accepted residuals, each finding once.
-// A repeat the reviewer returned as already ruled, or a ruling the pass carries, has left `list`: it keeps the record's
-// `accepted_by` (lib/review/settled.mjs), and is named by the title and at the severity the record accepted.
+// The late-round residuals of the passes that count for this head, for the body's Accepted residuals, each finding once,
+// by its id, or by its title and file where it has none. A repeat the reviewer returned as already ruled, or a ruling the
+// pass carries, has left `list`: it keeps the record's `accepted_by` (lib/review/settled.mjs), and is named by the title
+// and at the severity the record accepted. finish passes the rows through the text decision (publish.mjs residualRows).
 export function lateResiduals(passes, resultFor) {
   const seen = new Set();
   return passes.flatMap((pass) => {
     const result = resultFor(pass);
     return ['list', 'ruled', 'carried'].flatMap((key) => (Array.isArray(result?.[key]) ? result[key] : []))
       .filter((finding) => finding?.accepted_by === 'late-round')
-      .map(({ title, file, line, severity, already_ruled: ruled, settled_severity: cap }) => ({ pass: pass.id, title: ruled ?? title, file, line, severity: cap ?? severity }));
+      // A ruling names the finding it repeats, so its row and that finding's are one.
+      .map(({ id, ruled_id: named, title, file, line, severity, already_ruled: ruled, settled_severity: cap }) => ({ pass: pass.id, ...([named, id].some(isFindingId) ? { id: [named, id].find(isFindingId) } : {}), title: ruled ?? title, file, line, severity: cap ?? severity }));
   }).filter((row) => {
-    if (seen.has(where(row))) return false;
-    seen.add(where(row));
+    const key = row.id ?? where(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -175,8 +183,14 @@ function finish(s, status, extra) {
   answerRequests(s);
   noteFindings(s, extra);
   const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
-  const residuals = lateResiduals(passes, resultFor);
-  if (residuals.length) result.residuals = residuals;
+  // The residual rows the session copies into the pull request body pass the text decision: a finding whose text it
+  // withholds is named by its id, and its row anchors nothing.
+  const late = lateResiduals(passes, resultFor);
+  if (late.length) {
+    const { rows, withheld } = residualRows(late, state, s.post());
+    result.residuals = rows;
+    if (withheld) result.withheld = withheld;
+  }
   // Every result on a head whose review a fallback replaced says so.
   if (fallbacks.length) result.quota_fallback = fallbacks.map((stop) => ({ stage: stop.stage, replaces: stop.reviewer, choice: stop.choice, signed_off_by: stop.signoff?.by ?? null, note: quota.describe(stop) }));
   // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
@@ -196,7 +210,7 @@ function finish(s, status, extra) {
   if (approvalPath) result.approvals = { on: approvalPath.on, ...(approvalPath.off ? { off: approvalPath.off } : {}), ...(approvals().error ? { error: approvals().error } : {}), closed: state.outside.approvals };
   settle(s, result);
   if (onPr) {
-    const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
+    const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status, { ...s.post(), diffPaths: new Set((s.changes ?? []).map((change) => change.file)) });
     try {
       writeSummary(summary, (id) => forge.editComment(repo, id, body), () => forge.postComment(repo, n, body));
     } catch (error) {

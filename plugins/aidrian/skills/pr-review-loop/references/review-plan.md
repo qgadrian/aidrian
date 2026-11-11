@@ -46,7 +46,8 @@ only after its answer, so the pull request stays a draft until the bot is clean.
   ```
 
   `state` is `open`, `fixed` (in a pushed commit), or `accepted`. A fix_now finding cannot be accepted, and one
-  without likelihood and affects stays open until it has them.
+  without likelihood and affects stays open until it has them. Add `"security": true` to a security problem; the engine
+  then keeps its text and place off a pull request that is not private. Write no `id`: the engine gives each one.
 
 A split review's passes carry `role`: a `slice` reviews only its `files` and also writes `contracts` and
 `cross_notes` (lists of strings) in its final JSON, as `{ "verdicts": [...], "contracts": [...], "cross_notes": [...] }`; the `cross` pass reads `slices` and reports only what

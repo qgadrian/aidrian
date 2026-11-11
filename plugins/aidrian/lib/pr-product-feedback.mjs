@@ -41,6 +41,7 @@ import { checkoutRemotes } from './pr-checks.mjs';
 import { fromOutside, parseTarget } from './pr-resolve.mjs';
 import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
+import { decodedCopy, neutralized, refusedKind } from './review/publish.mjs';
 import { pathPattern } from './review/plan.mjs';
 
 const ITEM_ID = /^PF([1-9]\d*)$/u;
@@ -526,98 +527,9 @@ export function accessTerms(text) {
   return { hosts, accounts: lowered(accounts), variables: [...new Set(variables)] };
 }
 
-const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-// A root that holds what is local to a machine or a runner; an ordinary route such as /settings/team is none of them.
-const LOCAL_ROOTS = ['Users', 'home', 'root', 'tmp', 'private', 'var', 'etc', 'opt', 'mnt', 'srv', 'usr', 'Volumes', 'Library', 'System', 'Applications', 'workspace', '__w', 'builds', 'nix', 'proc'];
-const LOCAL_PATH = new RegExp([
-  `(?<![\\w./-])/(?:${LOCAL_ROOTS.join('|')})/`,
-  '(?<![\\w./-])/(?:github/workspace|dev/shm|cygdrive|c/Users)(?![\\w-])',
-  // The scheme of a URL keeps `https://home` out.
-  '(?<![\\w.:/-])//home(?![\\w-])',
-  '(?<![\\w./-])[A-Za-z]:[\\\\/]',
-  '(?<![\\w-])file:[/\\\\]',
-  '(?<![\\w\\\\])\\\\\\\\[\\w.-]+',
-  '(?<![\\w\\\\])\\\\Users(?![\\w-])',
-].join('|'), 'u');
-const HOME = /(?<![\w./-])~[\\/]|\$\{?HOME\b|%USERPROFILE%/iu;
-const LOCAL_HOST = new RegExp([
-  '(?<![\\w-])localhost(?![\\w-])',
-  '(?<![\\w.-])host\\.docker\\.internal(?![\\w-])',
-  '(?<![\\w-])[\\w-]+\\.local(?!\\.?[\\w-])',
-  '\\[::1\\]',
-  '(?<![\\w.])169\\.254\\.',
-  '(?<![\\w.])(?:127(?:\\.\\d{1,3}){1,3}|0\\.0\\.0\\.0|10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(?:1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})(?!\\d)',
-].join('|'), 'iu');
-// A named host as a pattern: a leading `*.` is the host itself and its subdomains, and a templated first label, such as
-// `<pr>` or `pr-*`, takes any label. The match lets a dot or a template stand before it.
-function hostPattern(host) {
-  const [first, ...rest] = host.split('.');
-  if (first === '*') return escaped(rest.join('.'));
-  const label = first.split(/<[^>]*>|\{+[^}]*\}+|\*/u).map(escaped).join('[\\w-]*');
-  return [label, ...rest.map(escaped)].join('\\.');
-}
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/u;
-const REPORT_PATH = /(?<![\w./-])[\w+-]+-\d{4}-\d{2}-\d{2}(?:-\d+)?(?:\.md|\.json|\/\S+)/u;
-const SECRETS = [
-  /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{4,}/u,
-  /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{4,}/u,
-  /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}/u,
-  /(?<![A-Za-z0-9])sk_(?:live|test)_[A-Za-z0-9]{4,}/u,
-  /(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{12,}/u,
-  /(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9-]{4,}/u,
-  /(?<![A-Za-z0-9])eyJ[\w-]+\.[\w-]+\.[\w-]+/u,
-  /-----BEGIN [A-Z ]*PRIVATE KEY/u,
-];
-
-// `body` as a reader may come to see it: no format character, and numeric entities and %xx decoded.
-function decodedCopy(body) {
-  const point = (code) => (code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '');
-  return body.replace(/\p{Cf}/gu, '')
-    .replace(/&#(\d+);/gu, (_, digits) => point(Number(digits)))
-    .replace(/&#x([0-9a-f]+);/giu, (_, digits) => point(Number.parseInt(digits, 16)))
-    .replace(/&commat;/giu, '@')
-    .replace(/%([0-9a-f]{2})/giu, (_, digits) => String.fromCharCode(Number.parseInt(digits, 16)));
-}
-
-// The kind of the first local or secret thing `body` holds, in words safe to print, or null. The value never leaves here.
-function kindIn(body, { home, state, roots, terms, env }) {
-  if (state && body.includes(state)) return 'a path in the state folder';
-  if ((home && body.includes(home)) || HOME.test(body)) return 'a path in the home folder';
-  if (roots.some((root) => root && body.includes(root))) return 'a path in the checkout';
-  if (LOCAL_PATH.test(body)) return 'an absolute local path';
-  if (LOCAL_HOST.test(body)) return 'localhost or a private network address';
-  // A named host's subdomains and templated labels match, so only a word character or a dash before it keeps it apart.
-  if (terms.hosts.length && new RegExp(`(?<![\\w-])(?:${terms.hosts.map(hostPattern).join('|')})(?![\\w-])`, 'iu').test(body)) return 'a host product-access names';
-  if (terms.accounts.length && new RegExp(`(?<![\\w.-])(?:${terms.accounts.map(escaped).join('|')})(?![\\w-])`, 'iu').test(body)) return 'an account product-access names';
-  // A value this short would match ordinary text.
-  if (terms.variables.some((name) => typeof env[name] === 'string' && env[name].length >= 4 && body.includes(env[name]))) return 'the value of a variable product-access names';
-  if (EMAIL.test(body)) return 'an email address';
-  if (SECRETS.some((shape) => shape.test(body))) return 'a secret';
-  if (REPORT_PATH.test(body)) return 'a report or screenshot path';
-  return null;
-}
-
-// The kind of what `body` holds, as written or as a reader may come to see it, or null.
-export function refusedKind(body, { home = '', state = '', roots = [], terms, env = {} }) {
-  const context = { home, state, roots, terms, env };
-  return kindIn(body, context) ?? kindIn(decodedCopy(body), context);
-}
-
-const IMAGE = '(image removed)';
-const AT_ENTITY = /&#0*64;|&#x0*40;|&commat;/giu;
-const URL_TOKEN = /^[(<["']*https?:\/\/[^\s<]*$/u;
-
-export function neutralized(body) {
-  const out = body.replace(/!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])?/gu, IMAGE)
-    .replace(/<\s*(?:img|image|picture|source|video|svg)\b[^>]*>?/giu, IMAGE)
-    .replaceAll('<!--', '&lt;!--')
-    .replace(AT_ENTITY, '@');
-  // GitHub reads a mention from the rendered text. A URL keeps its /@name.
-  return out.replace(/(?<![A-Za-z0-9])@(?=[A-Za-z0-9])/gu, (at, offset, whole) => {
-    const inUrl = whole[offset - 1] === '/' && URL_TOKEN.test(whole.slice(0, offset).split(/\s/u).at(-1));
-    return inUrl ? at : '@\u200b';
-  });
-}
+// The checks of what a post may hold, refusedKind, decodedCopy, and neutralized, are the review engine's too: they live
+// with its posting rules (lib/review/publish.mjs), so loading them loads nothing of this command.
+export { decodedCopy, neutralized, refusedKind };
 
 // The text of the project's product-access docs. A knowledge error that names an index file throws: the doc it would
 // have listed cannot be told apart from no doc, so `post` posts nothing.
@@ -626,6 +538,17 @@ function projectAccessDocs(project) {
   const broken = errors.find((each) => /\bknowledge\/[^\s:"]+\.json/u.test(each));
   if (broken) throw new Error(`a knowledge index cannot be read, and a product-access doc may be behind it, so nothing was posted: ${broken}`);
   return personaDocs(project.root, buckets).filter(({ id }) => id === ACCESS_DOC).map(({ file }) => readFileSync(file, 'utf8'));
+}
+
+// The context refusedKind reads, for every caller that checks text before it is posted: this post, and the review
+// engine's (lib/review/publish.mjs): home, the state folder `state`, both checkout roots, the product-access terms, and
+// the environment `env`. `access` reads the product-access docs; the default throws on a knowledge index it cannot
+// read (projectAccessDocs), and so does this.
+export function refusalContext(project, { state, env, access = projectAccessDocs }) {
+  const terms = access(project).map(accessTerms).reduce((all, each) => ({
+    hosts: [...all.hosts, ...each.hosts], accounts: [...all.accounts, ...each.accounts], variables: [...all.variables, ...each.variables],
+  }), { hosts: [], accounts: [], variables: [] });
+  return { home: homedir(), state, roots: [project.root, repoRoot(project)], terms, env };
 }
 
 // The text of --body-file, which must really be inside `<state>/tmp/`, where a skill drafts what it posts, so a post
@@ -680,10 +603,7 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   const found = readRecord(file, pr);
   if (!found) throw new Error(notRun(pr.number));
   const body = readBody(values['body-file'], state);
-  const terms = access(project).map(accessTerms).reduce((all, each) => ({
-    hosts: [...all.hosts, ...each.hosts], accounts: [...all.accounts, ...each.accounts], variables: [...all.variables, ...each.variables],
-  }), { hosts: [], accounts: [], variables: [] });
-  const kind = refusedKind(body, { home: homedir(), state, roots: [project.root, repoRoot(project)], terms, env });
+  const kind = refusedKind(body, refusalContext(project, { state, env, access }));
   if (kind) throw new Error(`refused: the body holds ${kind}. Nothing was posted`);
   const marker = `<!-- aidrian-product-feedback: pr=${pr.number} repo=${pr.repo} -->`;
   const comment = `${marker}\n${neutralized(body)}`;

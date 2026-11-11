@@ -23,15 +23,18 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
+import { postContext } from './dispatch.mjs';
+import { isFindingId, twinMatch } from './findings.mjs';
 import { heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
+
+// The twin match lives with the findings (lib/review/findings.mjs), which the security mark reads too.
+export { NEAR_LINES, normalizeTitle } from './findings.mjs';
 
 export const MODES = Object.freeze(['off', 'ask', 'auto']);
 // Fix commits that add more than this share of the lines of code the pull request first added are the change growing under
 // review, not converging. Below BLOAT_MIN_LINES the share says nothing: a ten-line change may need a ten-line fix.
 export const BLOAT_PERCENT = 50;
 export const BLOAT_MIN_LINES = 40;
-// Two findings this many lines apart in one file are at the same place, as split reviews dedupe them.
-export const NEAR_LINES = 3;
 export const JUDGE_PASS = 'extension-judge';
 export const JUDGE_AGENT = 'code-reviewer';
 // What a status carries per round and per list, so a long history stays one readable JSON object.
@@ -57,19 +60,6 @@ export function grantedRounds(state, source, policy) {
 // bound to the head the grant was read on.
 export const roundCap = ({ baseline, granted }) => ({ maxRounds: baseline + granted, grantFloor: baseline });
 
-// A finding's title as words: no markup, badges, links, or case, words of four letters or more, sorted. Two titles that
-// differ only in wording order or markup are the same title.
-export function normalizeTitle(title) {
-  if (typeof title !== 'string') return '';
-  const plain = title
-    .replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
-    .replace(/\[([^\]]*)\]\([^)]*\)/gu, '$1')
-    .replace(/<[^>]*>/gu, ' ')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N} ]+/gu, ' ');
-  return [...new Set(plain.split(/\s+/u).filter((word) => word.length > 3))].sort().join(' ');
-}
-
 // The title of a review bot's inline comment: its first line with words, without badges and markup.
 export function findingTitle(body) {
   if (typeof body !== 'string') return null;
@@ -80,11 +70,8 @@ export function findingTitle(body) {
   return null;
 }
 
-const samePlace = (a, b) => typeof a.file === 'string' && a.file === b.file && Number.isInteger(a.line) && Number.isInteger(b.line) && Math.abs(a.line - b.line) <= NEAR_LINES;
-const sameTitle = (a, b) => {
-  const title = normalizeTitle(a.title);
-  return title !== '' && title === normalizeTitle(b.title);
-};
+// The id an evidence entry carries for the finding it reports, when that finding has one.
+const idOf = (finding) => (isFindingId(finding?.id) ? { id: finding.id } : {});
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 // The mechanical signals of a round history: { converging, looping, drifting, bloating, unknown, evidence, reasons }.
@@ -117,9 +104,9 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
         for (let j = 0; j < k; j += 1) {
           // A finding still there on the same head is not back after a fix: no fix came between.
           if (itemized[j].head && itemized[j].head === itemized[k].head) continue;
-          const twin = itemized[j].findings.find((each) => samePlace(finding, each) || sameTitle(finding, each));
+          const twin = itemized[j].findings.find((each) => twinMatch(finding, each));
           if (twin) {
-            loops.push({ round: itemized[k].round, earlier_round: itemized[j].round, file: finding.file ?? null, line: finding.line ?? null, title: finding.title ?? null, match: samePlace(finding, twin) ? 'place' : 'title' });
+            loops.push({ round: itemized[k].round, earlier_round: itemized[j].round, ...idOf(finding), file: finding.file ?? null, line: finding.line ?? null, title: finding.title ?? null, match: twinMatch(finding, twin) });
             break;
           }
         }
@@ -130,7 +117,8 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
     if (looping) {
       const [first] = loops;
       const where = first.file ? ` at ${first.file}${first.line ? `:${first.line}` : ''}` : '';
-      reasons.push(`looping: ${plural(loops.length, 'finding')} came back after a fix, such as "${first.title ?? 'untitled'}"${where} in round ${first.round}, first in round ${first.earlier_round}`);
+      // A finding is named by its id, never by its title: a reason can reach the pull request.
+      reasons.push(`looping: ${plural(loops.length, 'finding')} came back after a fix, such as ${first.id ?? 'a finding with no id'}${where} in round ${first.round}, first in round ${first.earlier_round}`);
     }
   } else unknown.push('looping');
 
@@ -138,7 +126,7 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
   let drifting = null;
   if (Array.isArray(originalFiles) && later.length) {
     const original = new Set(originalFiles);
-    const outside = later.flatMap((round) => round.findings.filter((finding) => typeof finding.file === 'string' && !original.has(finding.file)).map((finding) => ({ round: round.round, file: finding.file, line: finding.line ?? null, title: finding.title ?? null })));
+    const outside = later.flatMap((round) => round.findings.filter((finding) => typeof finding.file === 'string' && !original.has(finding.file)).map((finding) => ({ round: round.round, ...idOf(finding), file: finding.file, line: finding.line ?? null, title: finding.title ?? null })));
     drifting = outside.length > 0;
     evidence.drifting = outside.slice(0, 10);
     if (drifting) reasons.push(`drifting: ${plural(outside.length, 'finding')} after round ${rounds[0].round} sit outside the files the pull request first changed, such as ${outside[0].file}`);
@@ -538,7 +526,7 @@ export async function runExtend(args, project, config, deps = {}) {
     } catch {}
   }
   const record = readRecord(project, opts.pr, comments, repo);
-  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held));
+  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why));
   const { state } = record;
   const env = deps.env ?? process.env;
   let entry;
@@ -549,7 +537,7 @@ export async function runExtend(args, project, config, deps = {}) {
   }
   writeLocalState(project, state);
   const unposted = held === null ? 'the forge named no base branch, so nothing was posted' : null;
-  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `extension ${entry.status}`) : unposted;
+  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `extension ${entry.status}`, postContext({ forge, repo, n: opts.pr, project, configs: [held.committed, config], env })) : unposted;
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr: opts.pr, repo });
   } catch {}

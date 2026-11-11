@@ -9,7 +9,7 @@ import test from 'node:test';
 import { auditNudge, readTriage, recordDecision, today } from '../plugins/aidrian/lib/audits.mjs';
 import { itemState } from '../plugins/aidrian/lib/feedback-record.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
-import { accessTerms, deriveKind, neutralized, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
+import { accessTerms, deriveKind, neutralized, refusalContext, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { configPathIn, projectAt, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-answer.mjs';
 
@@ -1424,4 +1424,19 @@ test('a later read that reports a product-manager gap again clears its confirmed
   const [item] = recordOf(r).items;
   assert.deepEqual([item.head, item.rechecked], ['c'.repeat(40), null]);
   assert.deepEqual([status(t, r, newer).code, status(t, r, newer).json.reason], [2, 'not_rechecked']);
+});
+
+test('refusalContext: the one context the post and the review engine check text in, from the product-access docs it reads', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-refusal-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const project = projectAt(dir);
+  const doc = '# Product access\n\n## Environments\n\n- `staging.example.com`\n\n## Accounts\n\n- `qa-owner` signs in with `QA_PASSWORD`\n';
+  const context = refusalContext(project, { state: path.join(dir, 'state'), env: { QA_PASSWORD: 'correct-horse' }, access: () => [doc] });
+  assert.deepEqual([context.home, context.state, context.roots[0]], [homedir(), path.join(dir, 'state'), dir]);
+  assert.equal(refusedKind('log in at staging.example.com', context), 'a host product-access names');
+  assert.equal(refusedKind('the password is correct-horse', context), 'the value of a variable product-access names');
+  assert.equal(refusedKind('a plain sentence', context), null);
+  assert.throws(() => refusalContext(project, { state: '', env: {}, access: () => { throw new Error('a knowledge index cannot be read'); } }), /cannot be read/u);
 });

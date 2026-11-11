@@ -480,14 +480,15 @@ async function reviewRecord(project, forge, base) {
     } catch {}
   }
   const record = readRecord(project, Number(n), comments, repo);
-  if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held));
+  if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held, record.why));
   return { state: record.state, comments };
 }
 
 // Writes the record where the review step does: the state folder and, when it publishes, the pull request's summary
 // comment, so another machine continues from the same checks and grants.
-async function saveRecord(record, { project, forge, base, status }) {
+async function saveRecord(record, { project, config = null, forge, base, status }) {
   const { publishState, writeLocalState } = await import('./review/state.mjs');
+  const { postContext } = await import('./review/dispatch.mjs');
   writeLocalState(project, record.state);
   if (!publishes(base)) return base.baseTip === null ? 'the forge named no base branch, so nothing was posted' : null;
   return publishState(record.state, {
@@ -495,7 +496,7 @@ async function saveRecord(record, { project, forge, base, status }) {
     post: (body) => forge.postComment(base.repo, base.n, body),
     edit: (id, body) => forge.editComment(base.repo, id, body),
     viewer: () => forge.viewer(),
-  }, status);
+  }, status, postContext({ forge, repo: base.repo, n: base.n, project, configs: [base, config] }));
 }
 
 // The bot's rounds as the history the signals read: its reviews and their inline comments, up to `head`.
@@ -527,7 +528,7 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
     },
     log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
   });
-  const summaryError = await saveRecord(record, { project, forge, base, status: decision.status });
+  const summaryError = await saveRecord(record, { project, config, forge, base, status: decision.status });
   return { ...result, ...decision, ...(summaryError ? { summary_error: summaryError } : {}) };
 }
 
@@ -603,7 +604,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     }
     result = { ...result, waited_sec: Math.round((clock() - started) / 1000) };
     if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, forge, base, record, policy, env });
-    else if (moved) await saveRecord(record, { project, forge, base, status: result.status });
+    else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
     if (result.status === 'review_required') console.error(result.reason);
     // The bot review the Human asked for (`aidrian pr request`): sent once this run posted it, and answered once the

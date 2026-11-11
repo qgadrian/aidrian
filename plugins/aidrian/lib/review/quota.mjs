@@ -27,7 +27,7 @@ export function parseChoice(value) {
 }
 
 // Whose quota ran out, in words: the review bot's quota notice is Codex's (lib/pr-await-review.mjs).
-export const owner = (reviewer) => (reviewer === 'codex-local' || reviewer === 'pr-bot' ? 'Codex' : `the ${reviewer} reviewer`);
+export const owner = (reviewer) => (reviewer === 'codex-local' || reviewer === 'pr-bot' ? 'Codex' : typeof reviewer === 'string' ? `the ${reviewer} reviewer` : 'a reviewer');
 
 export const fallbackPassId = (stop, agent) => `fallback:${stop.stage}:${stop.reviewer}:${agent}`;
 
@@ -95,13 +95,16 @@ export function describe(stop) {
   const at = `\`${String(stop.head).slice(0, 7)}\``;
   const agent = AGENT.exec(stop.choice ?? '')?.[1];
   const not = 'This is not an independent review.';
-  if (agent) return `${who} was out of quota on ${at}, so the ${stop.stage} stage ran on a fallback the Human chose: the ${agent} agent, on the session's own model. ${not}`;
-  if (stop.choice === HUMAN && stop.signoff) return `${who} was out of quota on ${at}, so the Human reviewed the ${stop.stage} stage instead, signed off by ${stop.signoff.by} (an audit entry, not proof). ${not}`;
-  if (stop.choice === HUMAN) return `${who} was out of quota on ${at}, so the Human chose to review the ${stop.stage} stage; their sign-off is needed. ${not}`;
-  return `${who} was out of quota on ${at}, and the ${stop.stage} stage stopped: nothing replaced it. A later push runs it again.`;
+  // A copy that names no stage, as a posted one may, says "a stage".
+  const stage = typeof stop.stage === 'string' ? `the ${stop.stage} stage` : 'a stage';
+  if (agent) return `${who} was out of quota on ${at}, so ${stage} ran on a fallback the Human chose: the ${agent} agent, on the session's own model. ${not}`;
+  if (stop.choice === HUMAN && stop.signoff) return `${who} was out of quota on ${at}, so the Human reviewed ${stage} instead, signed off${typeof stop.signoff.by === 'string' ? ` by ${stop.signoff.by}` : ''} (an audit entry, not proof). ${not}`;
+  if (stop.choice === HUMAN) return `${who} was out of quota on ${at}, so the Human chose to review ${stage}; their sign-off is needed. ${not}`;
+  return `${who} was out of quota on ${at}, and ${stage} stopped: nothing replaced it. A later push runs it again.`;
 }
 
 // The summary comment's lines on the latest stops: a blank line, then one line per stop; nothing when there is none.
+// The summary reads its posted copy, which holds no reason and no person's name on a repository that is not private.
 export function summaryLines(state) {
   const stops = (state.quotaStops ?? []).slice(-5);
   return stops.length ? ['', ...stops.map((stop) => `- ${describe(stop)}`)] : [];

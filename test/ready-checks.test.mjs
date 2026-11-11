@@ -86,6 +86,8 @@ test('a check on the head that has not finished holds the draft, and the deny na
       assert.equal(calls.length, 1, 'one view of the pull request, and no edit read while a check is pending');
     }
   }
+  // A help flag gh reads as false runs the ready: it is held like any other.
+  assert.match(judge(dir, { view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]) }, 'gh pr ready 7 --help=false').reason ?? '', /#7 has checks that have not finished/u);
   // A check that finished and failed is not pending: the ready runs, and the failure is the review's to read.
   assert.equal(judge(dir, { view: draft([...GREEN, run('Lint', at(-500_000), 'COMPLETED', 'FAILURE')]), edits: {} }).reason, null);
 });
@@ -127,10 +129,8 @@ test('a command that edits a title or body, or opens a pull request, and marks o
     assert.equal(reason, SAME_COMMAND_REASON, command);
     assert.equal(calls.length, 0, command);
   }
-  // An edit of labels or reviewers re-queues nothing, and a read of an edit's or create's help edits nothing.
-  for (const command of ['gh pr edit 7 --add-label bug && gh pr ready 7', 'gh pr edit --help --title x && gh pr ready 7', 'gh pr create --help; gh pr ready 7']) {
-    assert.equal(judge(dir, { view: draft(GREEN), edits: {} }, command).reason, null, command);
-  }
+  // An edit of labels or reviewers re-queues nothing.
+  assert.equal(judge(dir, { view: draft(GREEN), edits: {} }, 'gh pr edit 7 --add-label bug && gh pr ready 7').reason, null);
 });
 
 test('the hold lets the command run when it cannot read the checks, with no draft, with the override, and outside a project', (t) => {
@@ -140,9 +140,7 @@ test('the hold lets the command run when it cannot read the checks, with no draf
   assert.equal(judge(dir, { view: draft(GREEN), edits: null }).reason, null, 'an edit read that fails');
   assert.equal(judge(dir, { view: draft('not a list') }).reason, null, 'a rollup it cannot read');
   assert.equal(judge(dir, { view: { ...draft([run('CI', at(-1), 'IN_PROGRESS')]), isDraft: false } }).reason, null, 'not a draft: nothing to hold');
-  // A read of gh's help marks nothing ready, and an edit's or create's help edits nothing.
-  for (const command of ['gh pr ready 7 --undo', 'gh pr ready "$PR"', 'echo done', 'gh pr ready --help', 'gh pr ready -h',
-    'gh pr edit --help --title x && gh pr ready --help', 'gh pr create -h; gh pr ready -h']) {
+  for (const command of ['gh pr ready 7 --undo', 'gh pr ready "$PR"', 'echo done']) {
     const { reason, calls } = judge(dir, { view: draft([run('CI', at(-1), 'IN_PROGRESS')]) }, command);
     assert.equal(reason, null, command);
     assert.equal(calls.length, 0, command);

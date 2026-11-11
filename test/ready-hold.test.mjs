@@ -292,8 +292,6 @@ test('the hold lets the command run when clear, when a read fails, for another r
   const { calls, exec } = seam({ head: HEAD });
   assert.equal(check('gh pr ready 7', { cwd: fresh, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null, 'the override in the hook environment');
   assert.equal(calls.length, 0);
-  // A read of gh's help marks nothing ready.
-  for (const command of ['gh pr ready --help', 'gh pr ready 7 -h']) assert.equal(owedNow(fresh).reason(command), null, command);
   assert.match(check(`${OVERRIDE}=1 gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u, 'an inline setter lifts nothing');
   assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u);
 });

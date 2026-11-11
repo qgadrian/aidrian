@@ -17,7 +17,7 @@
 
 import { findProject } from '../../project.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
-import { asksHelp, deadlineForge, mayMarkReady, OVERRIDE, readReady } from './ready-hold.mjs';
+import { deadlineForge, mayMarkReady, OVERRIDE, readReady } from './ready-hold.mjs';
 import { commandPath, readWords } from './review-request.mjs';
 
 // How long after an edit a check it re-queues may take to show. Past it, an edit that re-queued nothing holds nothing.
@@ -37,14 +37,13 @@ export const SAME_COMMAND_REASON =
   'Make the edit alone, wait with `gh pr checks <n> --watch` until every check reports, then mark it ready with ' +
   '`gh pr ready <n>` in a separate call.';
 
-// Whether one gh invocation edits a pull request's title or body, or opens a pull request; a read of its help does neither.
+// Whether one gh invocation edits a pull request's title or body, or opens a pull request.
 function editsText({ program, args }) {
   if (program !== 'gh') return false;
   const [noun, verb] = commandPath(args);
   if (noun !== 'pr') return false;
-  const { flags } = readWords(args, VALUES);
-  if (asksHelp(flags)) return false;
-  return verb === 'create' || (verb === 'edit' && flags.some(({ name }) => TEXT_FLAGS.has(name)));
+  if (verb === 'create') return true;
+  return verb === 'edit' && readWords(args, VALUES).flags.some(({ name }) => TEXT_FLAGS.has(name));
 }
 
 const millis = (text) => (typeof text === 'string' && text !== '' ? Date.parse(text) : Number.NaN);

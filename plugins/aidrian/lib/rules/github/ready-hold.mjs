@@ -51,8 +51,6 @@ const READY_LIKE = /re\S{0,4}dy/iu;
 const CANDIDATE = /re\S{0,4}dy|markPullRequestReadyForReview|[$`{[*?]/iu;
 // Whether `command` may mark a pull request ready, by CANDIDATE. The ready checks hold shares it.
 export const mayMarkReady = (command) => CANDIDATE.test(command) || CANDIDATE.test(command.replace(/["'\\]/gu, ''));
-// Whether gh's options ask for its help, which runs nothing else.
-export const asksHelp = (flags) => flags.some(({ name }) => name === '--help' || name === '-h');
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval']);
 const READY_VALUES = new Set(['-R', '--repo']);
 // gh reads a bool flag's value with Go's strconv.ParseBool: these are true.
@@ -87,7 +85,6 @@ export function readReady({ program, args, environment = [] }, env = {}) {
   }
   if (command[0] !== 'pr' || command[1] !== 'ready') return null;
   const { words, flags } = readWords(args, READY_VALUES);
-  if (asksHelp(flags)) return null;
   const undo = flags.filter((flag) => flag.name === '--undo').at(-1);
   if (undo && (undo.value === null || (!undo.value.dynamic && TRUE_WORDS.has(undo.value.text)))) return null;
   const word = words[2] ?? null;

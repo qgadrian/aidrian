@@ -1,6 +1,7 @@
 // Bash rule, and the decision of the GitHub MCP hook on a call that marks a draft ready: no draft is marked ready while a
 // check on its head has not finished, or while a check its last edit re-queues has not shown yet. docs/hooks.md#ready-checks.
-// It reads the same calls the ready hold reads (ready-hold.mjs readReady), in every project, product feedback or not.
+// It reads the same calls the ready hold reads (ready-hold.mjs CANDIDATE and readReady), quoted spellings such as
+// `re""ady` included, in every project, product feedback or not.
 //
 // Editing a pull request's title or body re-runs the workflows that listen for the edit, such as a title check, and GitHub
 // takes a few seconds to queue the run: until then the checks still show the run from before. So it holds, in this order:
@@ -16,13 +17,12 @@
 
 import { findProject } from '../../project.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
-import { deadlineForge, OVERRIDE, readReady } from './ready-hold.mjs';
+import { CANDIDATE, deadlineForge, OVERRIDE, readReady } from './ready-hold.mjs';
 import { commandPath, readWords } from './review-request.mjs';
 
 // How long after an edit a check it re-queues may take to show. Past it, an edit that re-queued nothing holds nothing.
 export const EDIT_WINDOW_MS = 30_000;
 const VIEW = 'url,number,isDraft,createdAt,statusCheckRollup';
-const CANDIDATE = /\bready\b/u;
 // The options of `gh pr edit` and `gh pr create` that take a value, so the words after them are read as gh reads them.
 const VALUES = new Set(['-t', '--title', '-b', '--body', '-F', '--body-file', '-B', '--base', '-H', '--head', '-m', '--milestone',
   '-a', '--assignee', '-l', '--label', '-p', '--project', '-r', '--reviewer', '-T', '--template', '-R', '--repo',

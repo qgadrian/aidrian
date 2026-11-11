@@ -46,8 +46,8 @@ const MUTATION = 'markPullRequestReadyForReview';
 // A word close to `ready`, as text a shell is fed may spell it: `re""ady`, `"ready"`, or printf's `re%sdy`.
 const READY_LIKE = /re\S{0,4}dy/iu;
 // Only a command holding one of these can mark ready: every other Bash call pays for this one look. A glob or brace
-// character, or a substitution, can build a word the rule then reads as unreadable.
-const CANDIDATE = /re\S{0,4}dy|markPullRequestReadyForReview|[$`{[*?]/iu;
+// character, or a substitution, can build a word the rule then reads as unreadable. The ready checks hold shares it.
+export const CANDIDATE = /re\S{0,4}dy|markPullRequestReadyForReview|[$`{[*?]/iu;
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval']);
 const READY_VALUES = new Set(['-R', '--repo']);
 // gh reads a bool flag's value with Go's strconv.ParseBool: these are true.

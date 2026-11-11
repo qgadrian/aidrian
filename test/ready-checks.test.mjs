@@ -75,7 +75,9 @@ test('a check on the head that has not finished holds the draft, and the deny na
     [status('required/e2e', 'EXPECTED', null)],
   ];
   for (const rows of pending) {
-    for (const command of ['gh pr ready 7', `gh pr ready ${URL7}`, 'gh pr ready', 'gh -R acme/notes pr ready 7', 'git push && gh pr ready 7']) {
+    // The quoted spellings the shell runs as `gh pr ready 7`, which the ready hold's parser reads, are judged the same.
+    for (const command of ['gh pr ready 7', `gh pr ready ${URL7}`, 'gh pr ready', 'gh -R acme/notes pr ready 7', 'git push && gh pr ready 7',
+      'gh pr re""ady 7', 'gh pr rea\\dy 7', "gh pr 'ready' 7"]) {
       const { reason, calls } = judge(dir, { view: draft([...GREEN, ...rows]) }, command);
       assert.match(reason ?? '', /^Blocked: pull request #7 has checks that have not finished/u, `${command}: ${JSON.stringify(rows)}`);
       assert.ok(reason.includes(rows[0].name ?? rows[0].context), reason);
@@ -119,6 +121,7 @@ test('a command that edits a title or body, or opens a pull request, and marks o
     'gh pr edit 7 --title "fix: x" && gh pr ready 7',
     'gh pr ready 7 && gh pr edit 7 -b "new body"',
     'gh pr create --draft --title "fix: x" --body-file b.md && gh pr ready',
+    'gh pr edit 7 --body-file body.md && gh pr re""ady 7',
   ]) {
     const { reason, calls } = judge(dir, { view: draft(GREEN), edits: {} }, command);
     assert.equal(reason, SAME_COMMAND_REASON, command);

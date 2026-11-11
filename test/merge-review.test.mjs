@@ -440,6 +440,50 @@ test('a review step that needs no review leaves a finished outcome the guard rea
   assert.match(r.run(`gh pr merge 8 --match-head-commit ${HEAD}`) ?? '', /covered .*, not head abcdef1/u, 'a later head is not reviewed');
 });
 
+// Pull request 10: a README-only change, planned by a plan command on `main` that prints `plan`.
+async function plannedReadme(t, plan) {
+  const r = repo(t, { review: { planCommand: 'node plan.mjs' } });
+  r.git('branch', '-M', 'main');
+  writeFileSync(path.join(r.dir, 'plan.mjs'), `let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(${JSON.stringify(JSON.stringify(plan))}))\n`);
+  r.git('add', 'plan.mjs');
+  r.git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'planner');
+  r.git('switch', '-q', '-c', 'feat');
+  writeFileSync(path.join(r.dir, 'README.md'), 'hello\n');
+  r.git('add', 'README.md');
+  r.git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'readme');
+  const head = r.git('rev-parse', 'HEAD');
+  const forge = {
+    change: () => ({ number: 10, headRefOid: head, baseRefName: 'main' }),
+    repo: () => 'acme/notes',
+    conversationComments: () => [],
+    postComment: () => ({}),
+    editComment: () => ({}),
+  };
+  const project = projectAt(r.dir);
+  const reviewers = [];
+  const exec = async (reviewer) => (reviewers.push(reviewer.name ?? reviewer), clean());
+  const result = await reviewStep({ pr: '10' }, { project, config: loadConfig(project).config, forge, exec, codex: () => ({ ok: true }) });
+  return { r, head, project, result, reviewers };
+}
+
+test('a plan command that raises the depth with no pass of its own gets the built-in passes, never none_needed', async (t) => {
+  const { r, head, project, result, reviewers } = await plannedReadme(t, { depth: 'single', stages: [] });
+  assert.notEqual(result.status, 'none_needed', 'the plan command asked for a review');
+  assert.equal(result.status, 'received', JSON.stringify(result));
+  assert.equal(reviewers.length, 1, 'the built-in engine pass reviewed the change');
+  const { outcome } = readLocalState(project, 10);
+  assert.deepEqual([outcome.status, outcome.head], ['received', head]);
+  assert.equal(result.depth, 'single');
+  assert.equal(r.run(`gh pr merge 10 --match-head-commit ${head}`), null);
+});
+
+test('a plan command that raises the depth with its own pass runs only that pass, as before', async (t) => {
+  const own = { id: 'own:lint', reviewer: 'codex-local', kind: 'exec', files: null, context: 'full' };
+  const { result, reviewers } = await plannedReadme(t, { depth: 'single', stages: [{ name: 'independent', passes: [own] }] });
+  assert.equal(result.status, 'received', JSON.stringify(result));
+  assert.equal(reviewers.length, 1, 'the plan command`s pass, and no built-in engine pass beside it');
+});
+
 // Pull request 9: a `feat` branch off `main` that changes `src/app.js`, so the review plan has a pass to run.
 function feature(r) {
   r.git('branch', '-M', 'main');

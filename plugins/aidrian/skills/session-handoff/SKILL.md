@@ -42,8 +42,8 @@ or an unattended run that ends with its task unfinished.
    - lines are one sentence each and within the project's line limit.
 
    Under a usage-limit warning, write first, then review and rewrite.
-6. **Check it.** Run `aidrian handoff check <brief>` (same `--prior` as step 4). Exit 1 lists long lines and the
-   identifiers from the superseded brief's Decisions locked and Gotchas that the new one no longer names:
+6. **Check it.** Run `aidrian handoff check <brief>` (same `--prior` as step 4). Exit 1 lists long lines,
+   a missing advice line, and the identifiers from the superseded brief's Decisions locked and Gotchas that the new one no longer names:
    carry each, or name it as dropped. Compare the prose-only items it prints by hand, at exit 0 too.
 7. **Print the resume instructions** below.
 
@@ -55,6 +55,7 @@ and the newest brief wins.
 ```markdown
 # Handoff: <task title>
 Written: <UTC timestamp> | Phase completed: <plan | implement | review | ...> | Supersedes: <brief or none>
+Advice from <writer>, not a spec: check each claim against the docs and code before building on it.
 
 ## Objective
 <one to three lines: the task, and what "done" means>

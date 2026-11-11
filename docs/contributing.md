@@ -21,7 +21,7 @@ It gives the run its own state folder, temporary folder, and fake `gh`, so a fil
 writes no fixture lesson or state folder into this machine's own state folder.
 A probe script that runs a hook or a command by hand takes the same preload: `node --import ./scripts/test-state.mjs probe.mjs`.
 The hooks in `.githooks/` keep the private words of `.banned-terms.local` out of commit messages and branch names,
-and refuse a commit in the main checkout or one that newly stages a git-ignored file ([Commit guard](hooks.md#commit-guard)).
+and refuse a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker ([Commit guard](hooks.md#commit-guard)).
 `make hooks` sets `core.hooksPath` to the main checkout's `.githooks` by absolute path, so git runs them for a commit
 made through `GIT_DIR` or `--git-dir` from another folder too, and every worktree runs the main checkout's copy.
 A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents are denied setting `core.hooksPath`.

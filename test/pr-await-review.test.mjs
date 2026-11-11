@@ -1066,6 +1066,7 @@ test('awaitReview: a push mid-wait past the limit ends with round_limit, not rec
   const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 300, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'round_limit');
   assert.equal(forge.posts.length, 1, 'only the request under the limit went out');
+  assert.deepEqual([r.requested_head, r.head_sha], ['bbb', 'ccc'], 'the request names the head it asked about, not the last head seen');
   assert.equal(exitCodeFor(r.status), 4);
 });
 
@@ -1131,7 +1132,9 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr auto-merge [PR] [--json]',
     '       aidrian pr resolve URL|NUMBER',
     '       aidrian pr disposition --severity S [--likelihood L --affects A] [--cost C]',
-    '               [--source bot [--round N]] [--vocab]',
+    '               [--source bot [--round N]]',
+    '       aidrian pr disposition --manifest FILE',
+    '       aidrian pr disposition --vocab',
     '       aidrian pr product-feedback status PR [--json]',
     '       aidrian pr product-feedback record PR [--report FILE] [--items FILE]',
     '               [--none-found --read-by product-manager]',

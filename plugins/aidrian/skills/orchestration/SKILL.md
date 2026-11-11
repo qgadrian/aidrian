@@ -39,6 +39,9 @@ So every brief to an agent that pushes, waits on CI, or starts a reviewer says t
 the push or CI wait as a foreground command with a timeout, repeated until it ends, and the reviewer in the foreground.
 The stop hook sends a subagent back once when it stops with one still running.
 
+**Briefs.** Read `references/briefs.md` before the first brief that changes behaviour, before a retraction,
+and before several pull requests land: decisions on record, pushes, logs, and landing order.
+
 ## 2. Parallel slices
 
 - Slices run in parallel only when their files are disjoint and they share no generated file, such as a lockfile.

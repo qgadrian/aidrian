@@ -281,8 +281,61 @@ test('pre-commit: a staged-files read that fails adds no problem, and the main-c
   assert.deepEqual(preCommit(tree, { GIT_INDEX_FILE: garbage }), {
     status: 0,
     stdout: '',
-    stderr: 'aidrian pre-commit: the staged files unreadable; not checked\n',
-  }, 'in a worktree nothing else is wrong');
+    stderr: 'aidrian pre-commit: the staged files unreadable; not checked\naidrian pre-commit: the staged changes unreadable; not checked\n',
+  }, 'in a worktree nothing else is wrong; the conflict-marker check reads the same index');
+});
+
+const MARKER = (file, line) => new RegExp(`aidrian pre-commit: ${file}:${line} adds a conflict marker; finish resolving the file and stage it again\\. A line meant to look like one takes a larger conflict-marker-size for its path in \\.gitattributes\n`);
+
+test('pre-commit refuses staged lines that start with a conflict marker, in a worktree too, naming each line', (t) => {
+  const { dir, git } = repo(t);
+  const { tree, git: treeGit } = worktree(dir, git);
+  const marker = (char, rest = '') => `${char.repeat(7)}${rest}`;
+  writeFileSync(path.join(tree, 'README.md'), ['# test', marker('<', ' HEAD'), 'ours', marker('='), 'theirs', marker('>', ' side'), ''].join('\n'));
+  writeFileSync(path.join(tree, 'clean.md'), 'a line that names <<<<<<< inside it, not at its start\ntrailing space \n');
+  treeGit('add', 'README.md', 'clean.md');
+  const { status, stderr } = preCommit(tree);
+  assert.equal(status, 1);
+  for (const line of [2, 4, 6]) assert.match(stderr, MARKER('README\\.md', line));
+  assert.doesNotMatch(stderr, /clean\.md|whitespace/, 'a marker inside a line, and whitespace, are not refused');
+  assert.doesNotMatch(stderr, MAIN, 'a worktree is not the main checkout');
+  assert.match(stderr, OVERRIDE_LINE);
+
+  // A marker only in the working tree is not in the commit.
+  treeGit('reset', '-q', 'README.md');
+  assert.deepEqual(preCommit(tree), { status: 0, stdout: '', stderr: '' });
+});
+
+test('pre-commit passes a marker-like line once .gitattributes gives its path a larger conflict-marker-size', (t) => {
+  const { dir, git } = repo(t);
+  const { tree, git: treeGit } = worktree(dir, git);
+  writeFileSync(path.join(tree, 'example.md'), `${'='.repeat(7)}\n`);
+  treeGit('add', 'example.md');
+  assert.equal(preCommit(tree).status, 1, 'seven equals signs alone are a marker');
+  writeFileSync(path.join(tree, '.gitattributes'), 'example.md conflict-marker-size=32\n');
+  treeGit('add', '.gitattributes');
+  assert.deepEqual(preCommit(tree), { status: 0, stdout: '', stderr: '' });
+});
+
+test('a merge whose conflict is staged with its markers is refused through the real hooks; resolved, it lands', (t) => {
+  const { dir, git } = repo(t);
+  const { tree, git: treeGit } = worktree(dir, git, 'task');
+  const { tree: other, git: otherGit } = worktree(dir, git, 'other');
+  installHooks(t, git);
+  writeFileSync(path.join(other, 'README.md'), '# other\n');
+  otherGit('commit', '-q', '-am', 'docs: other');
+  writeFileSync(path.join(tree, 'README.md'), '# task\n');
+  treeGit('commit', '-q', '-am', 'docs: task');
+  assert.notEqual(gitRun(tree, ['merge', '--no-edit', 'other']).status, 0, 'the merge stops on the conflict');
+  treeGit('add', 'README.md');
+  const before = treeGit('rev-parse', 'HEAD');
+  const refused = gitRun(tree, ['commit', '-q', '--no-edit']);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, MARKER('README\\.md', 1));
+  assert.equal(treeGit('rev-parse', 'HEAD'), before, 'no merge commit landed');
+  writeFileSync(path.join(tree, 'README.md'), '# task and other\n');
+  treeGit('add', 'README.md');
+  assert.equal(gitRun(tree, ['commit', '-q', '--no-edit']).status, 0);
 });
 
 test('pre-commit reads more than 1 MiB of added paths: a large git add -f of an ignored folder is refused', (t) => {

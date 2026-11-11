@@ -35,6 +35,10 @@ In that worktree, after the fetch, read the manifest `<state>/reviews/pr-<n>.jso
 The `pr-review` skill's `references/manifest.md` defines its fields and statuses, and how to write it.
 
 - No manifest: stop, and say to run the `pr-review` skill first.
+- Run `aidrian pr disposition --manifest <manifest>`. Exit 1 lists each finding whose `disposition` its axes do not give:
+  write the first of its `expected` values in its place, and name each in the report. An empty `expected` means its axes
+  are not in the vocabulary: set that finding `blocked`, with that in `note`, and report that the `pr-review` skill asks its agent again.
+  Exit 2: the file is unreadable; stop.
 - Check that the manifest's `head_sha` still covers the remote head `@{u}`. It does not when `git merge-base --is-ancestor <head_sha> @{u}` fails,
   or when `git log --format=%h <head_sha>..@{u}` lists a commit that no finding records in its `commit`: nobody reviewed that commit.
   Then stop and ask the user: run the `pr-review` skill again first (recommended), or go on with the old findings.

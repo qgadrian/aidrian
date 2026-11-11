@@ -19,8 +19,10 @@ import {
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 
 // Synthetic ids only: briefs carry real customer data, fixtures never do.
+const ADVICE = 'Advice from Claude, not a spec: check each claim against the docs and code before building on it.';
 const PRIOR = `# Handoff: heal cancelled subscriptions
 Written: 2026-01-01 | Session phase completed: plan
+${ADVICE}
 
 ## Decisions locked (do not relitigate)
 - Mechanism: create a replacement with \`billing_cycle_anchor\` = paid period end.
@@ -201,7 +203,7 @@ test('checkBrief prints a prose-only item whole, even on the exit-0 run that con
   const dir = tempBriefDir();
   const first = '- Production DB was hand-edited to show the customer active, so every check that reads the subscription row agrees.';
   const continuation = '  Restore it from the dashboard export before deploying the heal.';
-  const brief = write(dir, '2026-01-02-task.md', `# Handoff\n\n## Gotchas\n${first}\n${continuation}\n`);
+  const brief = write(dir, '2026-01-02-task.md', `# Handoff\n${ADVICE}\n\n## Gotchas\n${first}\n${continuation}\n`);
   takeSnapshot(brief);
   const result = checkBrief(brief);
   assert.equal(result.exitCode, 0);
@@ -219,6 +221,19 @@ test('checkBrief reports lines over the wrap limit, outside fences only', () => 
   assert.equal(result.exitCode, 1);
   assert.match(result.lines.join('\n'), /Lines over 155 characters \(wrap them\): L2 \(\d+\)$/m);
   assert.match(result.lines.join('\n'), /no superseded brief found/);
+});
+
+test('checkBrief fails a brief with no advice line above its first section, and passes it once there', () => {
+  const dir = tempBriefDir();
+  const body = '\n## Next steps (ordered)\n1. Run the suite.\n';
+  const brief = write(dir, '2026-01-02-solo.md', `# Handoff: solo\nWritten: 2026-01-02${body}`);
+  const missing = checkBrief(brief);
+  assert.equal(missing.exitCode, 1);
+  assert.match(missing.lines.join('\n'), /^No advice line above the first section: add "Advice from <writer>, not a spec: /m);
+  writeFileSync(brief, `# Handoff: solo${body}${ADVICE}\n`);
+  assert.equal(checkBrief(brief).exitCode, 1, 'the line counts only above the first section');
+  writeFileSync(brief, `# Handoff: solo\nWritten: 2026-01-02\n${ADVICE}${body}`);
+  assert.equal(checkBrief(brief).exitCode, 0);
 });
 
 test('an explicit --prior wins over the same-slug brief', () => {
@@ -255,7 +270,7 @@ test('the line-length limit comes from config.json, and 0 turns it off', () => {
   const dir = tempBriefDir();
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, docs: { wrapLimit: 0 } }));
-  const brief = write(dir, '2026-01-02-solo.md', `# Handoff\n- ${'word '.repeat(40)}\n`);
+  const brief = write(dir, '2026-01-02-solo.md', `# Handoff\n${ADVICE}\n- ${'word '.repeat(40)}\n`);
   assert.equal(spawnSync(CLI, ['handoff', 'check', brief], { cwd: dir, encoding: 'utf8' }).status, 0);
   assert.equal(checkBrief(brief, undefined, 155).exitCode, 1);
 });

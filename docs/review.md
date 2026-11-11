@@ -324,8 +324,14 @@ or touches `harness-config`, so a `signoff: "human"` flow and a change to the re
 Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.
 
 Raising the round cap works the same way. On an answer naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, the session runs
-`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, or the same on `aidrian pr await-review <PR> --request`,
-exactly as written. The `review-rounds` rule refuses the variable in any other form.
+`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` before `--max-rounds` when the step
+runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly as written. The `review-rounds` rule refuses the
+variable in any other form, and in a checkout with several remotes, where no answer can name the one repository the command
+acts on; there the Human runs it in their own shell, as the refusal writes it, with the command's own subcommand and
+`--with-bot` or `--request`, since each counts its own rounds. Each refusal names what missed: the checkout, the command's form, or
+what the answers lack (none, none naming `<owner>/<name>#<PR>`, none naming `--max-rounds <N>`, or the label picked).
+While a check at the cap waits for the judge or the Human, the refusal names that route first, since it needs no variable:
+run the judge and record its verdict, or ask the Human the printed question and record the answer ([Extra rounds](#extra-rounds)).
 
 **Rejected evidence.** A `holds` or `not_affected` verdict whose `evidence` is not a checkable citation counts as
 `cannot_verify`. `aidrian pr attest` warns as it records the pass, and `next[].notes` names the reviewer, so the session
@@ -642,9 +648,17 @@ context, so a line inside a string that looks like a comment, or a C-style line 
 as a comment; a miss like that costs one round of cap and never a review. The syntax table grows when a project asks
 for a language; it is not kept complete.
 
-`--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
-earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
-than the one under review counts for nothing. A flow's required checks are read for that commit too.
+`--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked when a head's round
+opens, before this machine's reviewers run and in the same step that dispatches the agent passes, so it reviews the
+head while they and CI do; with the [review gate](config.md#review-gate) on, it is asked in the first step after the
+code-reviewer pass is on record, with the gate's marker. The request goes out once per head, under the plan's round
+cap (`botRequest` on the record): later steps on that head only wait for the answer, and `aidrian pr await-review
+<n> --request` run by hand asks again. A round the bot was asked on is kept when a reviewer then fails. The bot's
+stage is still awaited and judged last: the step returns an earlier stage's findings first, and `received` only once
+the bot has answered, so a pull request is marked ready only on the bot's clean answer. A moved head ends the request
+at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
+bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for
+nothing. A flow's required checks are read for that commit too.
 
 **Merge from the base branch.** A head is a clean merge from the base branch when all four hold: it is a two-parent
 merge commit; its first parent is the head of the last `received` outcome; its other parent is an ancestor of the
@@ -866,8 +880,11 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request (`#<PR>`) and the
 round it grants (`round <N>`), given after the judge's verdict, with the option that starts with "Approve". Claude Code
 writes that answer, not the agent. A host without such a transcript, such as Codex, leaves the approval to the Human,
-who runs the command in their own shell. `--human deny` always runs. With no check waiting for the Human, as after a
-judge's stop, the deny names the Human's route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and `--max-rounds`.
+who runs the command in their own shell. `--human deny` always runs. While the check waits for the judge, the deny of an
+approval names the judge's route: run the review step again with the options it ran with, such as `--with-bot` and
+`--max-rounds`, run the `dispatch` it prints, record its verdict, and run the step once more. After a
+judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
+`--max-rounds`, on the Human's answer, or in the Human's own shell in a checkout with several remotes.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
 signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
@@ -1021,6 +1038,11 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   [merge guard](hooks.md#merge-guard) reads the outcome.
 - **Quiet pushes.** A round's `quiet` list holds the heads it moved from on [quiet pushes](#rounds), each `{ from, at }`
   with the time the round was opened on that head. A round without the list never moved.
+- **Bot request.** `botRequest` is `{ head, at }`: the head the step last asked the review bot about, so a later
+  step on that head waits for the answer and does not ask again ([Rounds](#rounds)). Either call to the bot that posts
+  a request records it, for the head the request names (`requested_head` of `aidrian pr await-review`, which a push
+  during the wait does not change): when the pull request moved past the step's head before the
+  request, the step ends `incomplete` before any reviewer runs, and the newer head is not asked about again.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head

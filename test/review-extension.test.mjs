@@ -284,6 +284,7 @@ test('the review-extend rule: after a judge`s stop, the deny names the Human`s o
   const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
   assert.match(denied, /no extension waits for the Human on pull request #12 \(the latest check, at round 4, is stopped by the judge\)/u);
   assert.match(denied, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4`/u, 'five rounds: four done, one granted, one more');
+  assert.match(denied, /`--with-bot` before `--max-rounds` when the step runs the bot/u, 'the raise keeps the bot stage');
   assert.doesNotMatch(denied, /Ask the Human with AskUserQuestion/u, 'an ask cannot help when nothing waits for it');
   state.rounds = [];
   state.extensions = [{ source: 'bot', round: 4, head: 'd', status: 'stopped', by: 'judge' }];
@@ -295,6 +296,32 @@ test('the review-extend rule: after a judge`s stop, the deny names the Human`s o
   assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /await-review 12 --request --max-rounds 3`/u, 'three bot reviews, one bot grant: a baseline of three allows a fourth');
   const other = check('aidrian pr extend 99 --human approve', { cwd: g.dir, input: {} }) ?? '';
   assert.match(other, /holds no extension check for pull request #99.*the Human runs the approval in their own shell/su, 'no record here: maybe another machine asked');
+});
+
+test('the review-extend rule: while the check at the cap waits for the judge, the deny names the judge, not the override', (t) => {
+  // 2026-11-10: a session asked the Human before the judge ran, and this deny sent it to the override instead of the judge.
+  const g = guarded(t, { asking: false });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/o/r.git'], { cwd: g.dir });
+  g.write(g.answer('Grant round 3 on #12?', 'Grant round 3 (Recommended)'));
+  const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
+  assert.match(denied, /The check at round 2 on pull request #12 waits for the judge/u);
+  assert.match(denied, /run again the review command that reached the cap, `aidrian pr review 12`, with the options it ran with, such as its `--with-bot` and `--max-rounds`/u);
+  assert.match(denied, /`aidrian pr extend 12 --verdict extend\|stop --reason "<evidence>" --head <sha>`/u);
+  assert.doesNotMatch(denied, /AIDRIAN_ALLOW_EXTRA_ROUNDS|asking again changes nothing/u, 'the judge comes before any raise of the cap');
+});
+
+test('the review-extend rule: in a checkout with several remotes, the override after a stop is the Human`s to run', (t) => {
+  const g = guarded(t);
+  const state = emptyState(12, 'o/r');
+  state.extensions = [{ source: 'plan', round: 3, head: 'c', status: 'stopped', by: 'judge' }];
+  writeLocalState(g.project, state);
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/o/r.git'], { cwd: g.dir });
+  assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /put the choice to the Human with an AskUserQuestion that names <owner>\/<name>#12/u, 'one remote: an answer can approve it');
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: g.dir });
+  const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
+  assert.match(denied, /This checkout has several remotes/u);
+  assert.match(denied, /the Human runs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4` \(with `--with-bot` before `--max-rounds` when the step runs the bot\) in their own shell/u);
+  assert.doesNotMatch(denied, /AskUserQuestion/u, 'no answer can approve it here');
 });
 
 test('the review-extend rule: each call in a chain is judged against its own pull request, and every refusal is named', (t) => {

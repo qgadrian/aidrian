@@ -1231,7 +1231,9 @@ test('with no base from the forge, attest and signoff read no comment, and the r
 // ---- a local reviewer, when a checkout at the head is refused
 
 // A checkout on the base branch, and the review step from it with Codex as `codex` says.
-const stepFrom = (checkout, r, codex = () => ({ ok: true })) => reviewStep({ pr: '7' }, { project: checkout.project, config: loadConfig(checkout.project).config, forge: r.forge, codex, exec: clean });
+// The review bot, asked when a round opens: the request goes out, and no answer has arrived yet.
+const unanswered = async () => ({ status: 'timed_out', requested: true, signal: null });
+const stepFrom = (checkout, r, codex = () => ({ ok: true })) => reviewStep({ pr: '7' }, { project: checkout.project, config: loadConfig(checkout.project).config, forge: r.forge, codex, exec: clean, awaitBot: unanswered });
 const OUTSIDE_HEAD = { version: 1, state: { dir: '../head-state' } };
 const pinned = (engine, state = '../state') => ({ version: 1, state: { dir: state }, review: { engine } });
 
@@ -1289,7 +1291,7 @@ test('a base that pins a local reviewer ends both messages at the Human, by the 
   const walk = async (baseEngine, headEngine, codex) => {
     const r = repo(t, { baseConfig: pinned(baseEngine), headConfig: pinned(headEngine, '../head-state') });
     tracking(r);
-    const atHead = await reviewStep({ pr: '7' }, { project: r.project, config: r.config, forge: r.forge, codex, exec: clean }).catch((error) => error.message);
+    const atHead = await reviewStep({ pr: '7' }, { project: r.project, config: r.config, forge: r.forge, codex, exec: clean, awaitBot: unanswered }).catch((error) => error.message);
     const fromBase = await stepFrom(linkedAt(t, r, 'main'), r, codex);
     return { atHead, fromBase };
   };

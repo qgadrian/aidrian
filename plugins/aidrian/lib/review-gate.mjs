@@ -17,9 +17,13 @@ import path from 'node:path';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
-import { normalizeRemote, recordsFolder, stateDir } from './project.mjs';
+import { recordsFolder, stateDir } from './project.mjs';
+import { originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
 import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit } from './review/state.mjs';
+
+// Re-exported for the callers that read them here.
+export { originRepo, remoteRepos, repoName };
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNREVIEWED_REQUEST';
 
@@ -41,13 +45,6 @@ export const markerFor = ({ pr, repo, head, reviewer, findings, fixed }) =>
 
 export const markersIn = (text) =>
   (typeof text === 'string' ? [...text.matchAll(MARKER)].map((match) => ({ pr: Number(match[1]), repo: match[2].toLowerCase() })) : []);
-
-// `owner/name`, lower-cased, from any spelling gh takes: `[HOST/]OWNER/REPO`, a URL, a `.git` suffix; or null.
-export function repoName(value) {
-  if (typeof value !== 'string') return null;
-  const parts = normalizeRemote(value.replace(/\/(?:pull|issues)\/.*$/u, '')).toLowerCase().split('/').filter(Boolean);
-  return parts.length >= 2 ? parts.slice(-2).join('/') : null;
-}
 
 // A pull request number from `123`, `#123`, or a `…/pull/123` or `…/issues/123` URL (gh issue comment takes one, and a
 // pull request is also an issue); null otherwise.
@@ -100,19 +97,6 @@ export function writeRecord(project, record) {
   const file = recordFile(project, record.pr);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify({ ...record, recordedAt: new Date().toISOString() }, null, 2)}\n`);
-}
-
-// This repository's `owner/name`, from its origin, or null.
-export function originRepo(project) {
-  const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root);
-  return status === 0 ? repoName(stdout) : null;
-}
-
-// The `owner/name` of every remote of this checkout, so a fork's parent counts with its origin. Empty when it has none.
-export function remoteRepos(project, options) {
-  const { status, stdout } = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root, options);
-  if (status !== 0) return [];
-  return stdout.split('\n').map((line) => repoName(line.slice(line.indexOf(' ') + 1))).filter(Boolean);
 }
 
 // The deny reason for the requests in one tool call, each { pr, repo, markers }, or null. `pr` null is a request whose

@@ -15,6 +15,8 @@ Follow the `knowledge` skill first. Start with `git pull --ff-only`.
 Change only these files: <paths>. No unrelated edits, refactors, or renames.
 Fix the cause the finding names, and every copy of the same mistake in these files.
 Add or update a test for each behaviour change: a behaviour change without a test change is not done.
+A test change a finding suggests must still catch its mistake: with the change in place, put the mistake back in the code
+under test, see the test fail by assertion, undo only that edit, and report both runs.
 Run the commands the project's `testing` knowledge names for the touched files, and report each one with its result.
 Do not commit yet: the review comes first. Return the machine handoff from the `knowledge` skill, with the changed files in `pending_commit`,
 the tests you added or changed, each command and its result, and a Conventional Commits subject for the commit.

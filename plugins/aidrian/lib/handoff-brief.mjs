@@ -4,6 +4,8 @@
 //      at the old brief silently loses those facts. Prose-only items have no identifier; they are printed for a
 //      by-hand comparison instead.
 //   2. Line length: Markdown lines over config.json `docs.wrapLimit`, for hosts without the PostToolUse wrap hook.
+//   3. The advice line: above its first section, the brief says it is an agent's advice, not a spec (ADVICE_LINE), so
+//      the session that resumes it checks its claims against the docs and code instead of building on them as fact.
 // The prior brief is --prior, else the snapshot `snapshot` took before an overwrite, else the newest other brief with
 // the same slug (<date>-<slug>.md). A passing check removes the snapshot.
 
@@ -17,6 +19,8 @@ import { projectAt } from './project.mjs';
 import { usageLines } from './usage.mjs';
 
 const CARRIED_SECTION = /^(decisions|gotchas)\b/i;
+// The template's line: `Advice from <writer>, not a spec: check each claim against the docs and code before building on it.`
+export const ADVICE_LINE = /^Advice from \S.*, not a spec\b/mu;
 const BRIEF_NAME = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/;
 // Shorter spans (`!`, `ok`) are syntax, not identifiers.
 const MIN_IDENTIFIER_LENGTH = 3;
@@ -162,11 +166,16 @@ export function takeSnapshot(briefPath, explicitPrior) {
   return { source, snapshot };
 }
 
+// The finding for a brief with no advice line above its first section, or null.
+export const adviceProblem = (text) =>
+  ADVICE_LINE.test(text.split(/^##\s/mu)[0]) ? null : 'No advice line above the first section: add "Advice from <writer>, not a spec: check each claim against the docs and code before building on it."';
+
 // { exitCode: 0 clean, 1 findings, 2 an unreadable prior; lines }. `limit` 0 skips the line-length check.
 export function checkBrief(briefPath, explicitPrior, limit = 155) {
   const briefText = readFileSync(briefPath, 'utf8');
-  const lines = [`handoff check: ${briefPath}`];
-  let findings = 0;
+  const advice = adviceProblem(briefText);
+  const lines = [`handoff check: ${briefPath}`, ...(advice ? [advice] : [])];
+  let findings = advice ? 1 : 0;
   const wrap = limit > 0 ? findWrapViolations(briefText, limit) : [];
   if (wrap.length) {
     findings += wrap.length;

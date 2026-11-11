@@ -23,7 +23,7 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 ## 1. Run the review plan
 
 ```bash
-aidrian pr review <n>    # one step of the project's review plan; give the shell call a 15-minute timeout
+aidrian pr review <n>    # one step of the review plan; give the shell call a 15-minute timeout
 ```
 
 It plans the review from the diff and config.json `review`, runs what it can itself, and prints the next action.
@@ -40,7 +40,7 @@ Act on `status`, then run it again, until it stops:
 | `blocked_quota` | ask `question` with AskUserQuestion and `options`; run the pick's `run` |
 | `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit` | stop: report it and ask the Human |
 
-With `--await-codex`, run `aidrian pr review <n> --with-bot`: the review bot then runs as the last stage.
+With `--await-codex`, run `aidrian pr review <n> --with-bot`: the bot reviews each head alongside local passes and CI, awaited last.
 
 ## 2. Collect every review surface
 
@@ -105,7 +105,7 @@ The agent that made the fix verifies, commits, and pushes it, then returns the S
 
 - Before the first post, read `references/replies.md`: one shape per verdict, and where each reply goes.
 - Resolve a bot's thread the fix addressed. A person's thread gets the reply and stays open: its author resolves it.
-- Check each post's response: a failed post leaves its thread unaddressed; say so in the summary.
+- Check each post's response: a failed post leaves its thread unaddressed.
 
 ## 7. Summary
 

@@ -191,7 +191,8 @@ export async function prepareStep(s) {
   // Agent passes merge per reviewer only now, after the plan command's passes joined, so one agent reads the diff once.
   plan = mergeStages(plan);
   if (mergeNote) plan.reasons = [...plan.reasons, mergeNote];
-  // --with-bot (the skill's --await-codex): the review bot runs as the last stage too, after this machine's engine.
+  // --with-bot (the skill's --await-codex): the review bot is the last stage, after this machine's engine. The stages
+  // ask it when the head's round opens and await its answer last (lib/review/stages.mjs).
   if (opts.withBot && plan.depth !== 'none' && config.github.reviewer !== null && !plan.stages.some((stage) => stage.passes.some((pass) => pass.reviewer === 'pr-bot'))) {
     plan.stages = [...plan.stages.filter((stage) => stage.name !== 'remote'), { name: 'remote', passes: [...(plan.stages.find((stage) => stage.name === 'remote')?.passes ?? []), { id: 'engine:pr-bot', reviewer: 'pr-bot', kind: 'remote', files: null, context: 'full' }] }];
   }

@@ -178,7 +178,7 @@ the orchestrator uses it to name each background agent's handoff file.
 `aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)).
 `aidrian audits` lists the persona audits and records their triage ([personas.md](personas.md#triage)).
 A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbox), in the state folder of the plugin's own repository.
-`aidrian handoff` checks a handoff brief against the one it supersedes.
+`aidrian handoff` checks a handoff brief against the one it supersedes, and that it says it is advice, not a spec.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
 The `quorum` skill runs in one of three modes, and its ledger records which in `mode`.

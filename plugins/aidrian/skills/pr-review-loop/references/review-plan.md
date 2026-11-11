@@ -166,7 +166,7 @@ waiver: run the step again on it.
   `aidrian pr waive <n> --verdict <the judge's verdict> --reason "<the judge's evidence>" --head <sha>`.
   The session never writes a verdict the judge did not give, and never turns the judge's `refuse` into `waive`.
 - On `waive`, merge naming the head, as the command's `next` says: `gh pr merge <n> --match-head-commit <sha>`.
-  On `refuse`, report the stop with the judge's evidence: the Human merges, or answers "Merge anyway".
+  On `refuse`, report the stop with the judge's evidence: the Human merges, or answers the merge guard's question with "Merge with the findings filed".
 
 ## Owed reviews
 

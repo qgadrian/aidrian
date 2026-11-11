@@ -29,6 +29,10 @@
 // The Human waives the record's denial with an AskUserQuestion answer, given at or after the head's outcome and every
 // entry still owed, to a question naming `#<PR>` and the head's first 7 characters, whose chosen option starts with
 // "Merge anyway". Without a transcript the host writes in that shape (Codex), the Human merges in their own shell.
+// A review stopped at its round limit (`extension_check` or `round_limit` on the merge's head, nothing owed) runs no
+// more, so its denial offers no wait: it asks to ship with what the review left open filed as an issue, or to grant
+// more rounds, neither preferred, and an answer starting "Merge with the findings filed" waives it too, there only.
+// The guard does not check that the issue was filed. `extension_ask` keeps the first question: it waits for the Human.
 // An unattended run's judge verdict (`aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
 // for `round_limit` on the merge's own head, nothing owed, and only under both switches:
 // `github.unattendedWaiver.allow` on the default and base branches, read from GitHub, and the main checkout's local switch.
@@ -49,7 +53,7 @@ import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.m
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { guardWaiver, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
-import { transcriptAnswers } from '../review-extend.mjs';
+import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
 import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
 
 // How long the head lookup may take, inside the hook's 5 s, as pr-body's open pull request lookup.
@@ -121,12 +125,55 @@ export function readMerge({ program, args, environment = [] }, env = {}) {
   };
 }
 
-// The Human's answer that waives the guard for `pr` at `head`, given at or after `since`.
-export function mergeApproved(answers, { pr, head, since = null }) {
+// The outcomes on the merge's head where the review is stopped at its round limit and nothing runs: the cap's check waits
+// for its judge, or the cap stands. Not `extension_ask`: there the step waits for the Human's answer to the extra-round
+// question, which comes first.
+const CAPPED = new Set(['extension_check', 'round_limit']);
+// The options of the question at a capped review, in the deny and in the answer mergeApproved takes.
+const SHIP = 'Merge with the findings filed';
+const GRANT = 'Grant more review rounds';
+// SHIP holds no character a regular expression treats as special.
+const SHIP_ANSWER = new RegExp(`^\\s*${SHIP}\\b`, 'iu');
+
+// The Human's answer that waives the guard for `pr` at `head`, given at or after `since`: "Merge anyway", or, at a
+// review stopped at its round limit (`capped`), "Merge with the findings filed".
+export function mergeApproved(answers, { pr, head, since = null, capped = false }) {
   const names = new RegExp(`#${pr}(?!\\d)`, 'u');
   const sha7 = String(head).slice(0, 7).toLowerCase();
-  return answers.some((each) => names.test(each.question) && each.question.toLowerCase().includes(sha7) && /^\s*merge anyway\b/iu.test(each.answer) &&
+  const takes = (answer) => /^\s*merge anyway\b/iu.test(answer) || (capped && SHIP_ANSWER.test(answer));
+  return answers.some((each) => names.test(each.question) && each.question.toLowerCase().includes(sha7) && takes(each.answer) &&
     (since === null || (each.at !== null && Date.parse(each.at) >= Date.parse(since))));
+}
+
+// The open findings of the record's last round, when that round is for `head` and left some; else null.
+function openCount(state, head) {
+  const last = state.rounds.at(-1);
+  return last && sameCommit(last.head, head) && Number.isInteger(last.open) && last.open > 0 ? last.open : null;
+}
+
+// `, with <N> finding(s) open` for a count, or nothing without one.
+const withOpen = (count) => {
+  if (count === null) return '';
+  const noun = count === 1 ? 'finding' : 'findings';
+  return `, with ${count} ${noun} open`;
+};
+
+// The review step's outcome on head `sha7`, as the deny names it: its status, and its reason when it has one.
+const statusText = (outcome, sha7) => `the review of head ${sha7} is \`${outcome.status}\`${outcome.reason ? ` (${outcome.reason})` : ''}`;
+
+// The deny's tail at a review stopped at its round limit: ship with the findings filed, or grant more rounds, with
+// neither preferred. The grant's route is the waiting check's own, else `aidrian pr extend`, whose refusal names it.
+function cappedAsk({ pr, sha7, count, last }) {
+  // With no count, the record does not say findings are what is open: the cap is also reached on a failing check.
+  let left = 'them';
+  if (count === null) left = 'what it left open';
+  else if (count === 1) left = 'it';
+  const question = `Review of pull request #${pr} at ${sha7} stopped at its round limit${withOpen(count)}. Ship, and file ${left} as an issue?`;
+  const route = waitingRoute(pr, last) ??
+    `Run \`aidrian pr extend ${pr} --human approve\`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.`;
+  return `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "${SHIP}" and "${GRANT}", ` +
+    `and mark neither as preferred. When the Human picks "${SHIP}", file the findings the review left open as a follow-up issue, then merge. ` +
+    `When the Human picks "${GRANT}", do not merge. ${route} `;
 }
 
 const readTranscript = (file) => {
@@ -216,6 +263,9 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const owing = owed(state);
   const outcome = state.outcome ?? null;
   const onHead = outcome !== null && sameCommit(outcome.head, head);
+  // Stopped at the round limit with nothing owed: no review runs, so there is nothing to wait for.
+  const capped = owing.length === 0 && onHead && CAPPED.has(outcome.status);
+  const count = capped ? openCount(state, head) : null;
   let problem;
   if (owing.length) {
     problem = owing.map((entry) => {
@@ -228,23 +278,26 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
     }).join('; and ');
   } else if (onHead && FINISHED.has(outcome.status)) return null;
   else if (outcome === null && !state.rounds.length) return null;
-  else {
+  else if (capped) {
+    problem = `${statusText(outcome, sha7)}: stopped at its round limit${withOpen(count)}, and not running`;
+  } else {
     problem = outcome === null
       ? `its review record holds rounds but no finished review of head ${sha7}`
-      : onHead ? `the review of head ${sha7} is \`${outcome.status}\`${outcome.reason ? ` (${outcome.reason})` : ''}`
+      : onHead ? statusText(outcome, sha7)
         : `the last review step covered ${String(outcome.head).slice(0, 7)}, not head ${sha7}`;
     problem += `: run \`aidrian pr review ${pr}\` until it returns \`received\` or \`none_needed\``;
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
-  if (mergeApproved(answers, { pr, head, since })) return null;
+  if (mergeApproved(answers, { pr, head, since, capped })) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now });
   if (waiver.allow) return null;
   const question = `Merge pull request #${pr} at ${sha7} before its review is finished?`;
-  return `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${waiver.note}. ` +
-    `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
-    '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ' +
-    `Or the Human merges in their own shell.${waiver.route}`;
+  const ask = capped
+    ? cappedAsk({ pr, sha7, count, last: state.extensions?.at(-1) ?? null })
+    : `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
+      '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';
+  return `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${waiver.note}. ${ask}Or the Human merges in their own shell.${waiver.route}`;
 }
 
 // The deny reason for `command`, or null. On only inside a project. `input` is the hook payload, for its transcript.

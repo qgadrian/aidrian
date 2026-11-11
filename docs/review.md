@@ -969,7 +969,7 @@ outside them is allowed, inside another repository's checkout, an outer reposito
 repository's separate git dir included. A relative `state.dir` that stays inside the repository lies in the main checkout,
 also from a linked worktree.
 The pull request that moves it out gets no local record on any checkout, the [merge guard](hooks.md#merge-guard)'s hold
-applies with no review record too, and the `Merge anyway` answer does not waive it, so the Human merges it. With product
+applies with no review record too, and no answer to the merge guard's question waives it, so the Human merges it. With product
 feedback on, marking that pull request ready from its own head meets the ready hold's `state_dir` status, so it is marked
 ready from a checkout on the base branch or by the Human on the forge. Once it lands, each machine, from a clean checkout on
 the base branch, moves its own old folder's contents to the folder `aidrian state` prints, since the guard reads only the

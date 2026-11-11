@@ -293,6 +293,20 @@ test('aidrian pr waive records a waive only with this machine\'s switch on; a re
   }
 });
 
+test('after a refuse verdict, the next step names the answer the merge guard\'s question takes', async (t) => {
+  const r = repo(t);
+  r.record(5, roundLimit);
+  const { out } = await waive(t, r, ['--verdict', 'refuse', '--reason', 'the findings are real']);
+  assert.match(out.next, /^the guard stands: the Human merges, or answers the merge guard's question with "Merge with the findings filed"$/u);
+  // The label is the one the guard's deny offers and takes at the round limit.
+  const label = /with "([^"]+)"$/u.exec(out.next)[1];
+  const reason = merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`) ?? '';
+  assert.ok(reason.includes(`the options "${label}" and`), reason);
+  const question = /the question "([^"]+)"/u.exec(reason)[1];
+  writeFileSync(r.transcript, `${JSON.stringify({ type: 'user', timestamp: '2026-11-03T15:30:00.000Z', toolUseResult: { answers: { [question]: label } } })}\n`);
+  assert.equal(merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`), null, 'the guard takes that answer');
+});
+
 test('aidrian pr waive keeps this machine\'s owed entries: a newer comment record hides none, and a write since refuses', async (t) => {
   const r = repo(t, { local: ON });
   // This machine owes a bot review the Human asked for; another machine's comment record, newer, owes nothing.
@@ -433,7 +447,7 @@ test('without a verdict that stands for this head and kind, the denial is today\
   ]) {
     r.record(5, edit);
     const reason = merge(r, command);
-    assert.match(reason ?? '', /the review of head abcdef1 is `round_limit`: run `aidrian pr review 5`/u, name);
+    assert.match(reason ?? '', /the review of head abcdef1 is `round_limit`: stopped at its round limit, and not running\. /u, name);
     assert.match(reason, route, name);
   }
   // A head past a finished review has no waiver route: the review can still run on it.
@@ -481,7 +495,7 @@ test('the team refuses on the default or the base branch: today\'s denial, and n
 test('a team it cannot read keeps the denial, and says so', (t) => {
   const r = repo(t, { local: ON });
   r.record(5, (state) => (roundLimit(state), waiver(state)));
-  const unread = /is `round_limit`: run `aidrian pr review 5` until it returns `received` or `none_needed`, and the team's github\.unattendedWaiver could not be read in time\. Only the Human/u;
+  const unread = /is `round_limit`: stopped at its round limit, and not running, and the team's github\.unattendedWaiver could not be read in time\. Only the Human/u;
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
   const failing = Object.assign(() => ({ change: () => ({ number: 5, headRefOid: HEAD, baseRefName: 'main', url: URL }), repository: () => { throw new Error('gh: HTTP 502'); }, contents: () => assert.fail('no read after a failure') }), {});
   assert.match(merge(r, command, { forge: failing }) ?? '', unread, 'a failed read');

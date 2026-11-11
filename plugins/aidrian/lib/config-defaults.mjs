@@ -48,7 +48,7 @@ export const DEFAULTS = deepFreeze({
     // reads its policy from, including a folder the pointer file names; the team accepts that risk on both branches
     // (pr-auto-merge.mjs).
     autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false },
-    // The team's ceiling on a recorded judge verdict standing in for the Human's "Merge anyway" at the merge guard
+    // The team's ceiling on a recorded judge verdict standing in for the Human's answer to the merge guard's question
     // (lib/review/waiver.mjs). A machine opts in under it from the local file (resolveUnattendedWaiver); no team default.
     unattendedWaiver: { allow: false },
   },

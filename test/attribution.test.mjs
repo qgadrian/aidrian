@@ -12,6 +12,7 @@ import {
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/attribution.mjs';
+import { appearsAfterFirstStat } from './fixtures/fs-faults.mjs';
 
 const request = (id, model, effort) => JSON.stringify({ message: { id, model, usage: { input_tokens: 1, output_tokens: 1 } }, ...(effort ? { effort } : {}) });
 
@@ -178,6 +179,32 @@ test('the PR rule reads a body file the same command writes first, and the hered
   assert.match(run(`tee b.md 3<<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`) ?? '', /cannot read/, 'tee reads no heredoc');
   assert.equal(run(`cat 1> b.md 0<<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`), null, 'stdin and stdout by number');
   assert.match(run(`F=x.md; cat > $F <<'EOF'\n${signed}EOF\nsh -c 'F=y.md'; gh pr create -t x --body-file "$F"`) ?? '', /cannot read/, 'a nested assignment');
+});
+
+// The pull request body and public text rules refuse with the same cause, from the same read (pr-body `bodyRead`).
+test('the PR rule names the one cause it cannot read a body for, and the step that passes', (t) => {
+  const { dir, run } = setup(t, { pullRequest: ['tool'] });
+  writeFileSync(path.join(dir, 'b.md'), '## Summary\nx\n\nAuthored-with: Claude Code\n');
+  for (const [command, cause] of [
+    [`f=b.md; python3 - "$f" <<'EOF'\nimport sys\nEOF\ngh pr create -t x --body-file "$f"`, 'another command on this line changes the body file before gh reads it, such as a script or `sed -i`'],
+    ['gh pr create -t x --body "$UNREAD"', 'it is a variable, a command substitution, or a heredoc bash expands'],
+    ['gh pr create -t x --body-file gone.md', 'the body file `gone.md` does not exist yet'],
+    ['gh pr create -t x --body-file -', '`--body-file -` reads standard input, and that input is not one heredoc bash passes unchanged'],
+    ['gh pr create -t x', '`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template'],
+  ]) {
+    const reason = run(command) ?? '';
+    assert.ok(reason.startsWith(`Blocked: the attribution rule cannot read this pull request body: ${cause}`), `${command}\n${reason}`);
+    assert.doesNotMatch(reason, /a variable, a command substitution, stdin, a missing file/, 'never the whole list of causes');
+  }
+  assert.match(run(`f=b.md; python3 - "$f" <<'EOF'\nimport sys\nEOF\ngh pr create -t x --body-file "$f"`), /Run that command first, then gh as its own command\./);
+  assert.equal(run('gh pr create -t x --body-file b.md'), null, 'gh as its own command reads the file');
+});
+
+test('a body file that appears after the PR rule first looks is refused from one read, with its own cause', (t) => {
+  const { dir, run } = setup(t, { pullRequest: ['tool'] });
+  writeFileSync(path.join(dir, 'b.md'), '## Summary\nx\n\nAuthored-with: Claude Code\n');
+  appearsAfterFirstStat(t, path.join(dir, 'b.md'));
+  assert.match(run('gh pr create -t x --body-file b.md') ?? '', /^Blocked: the attribution rule cannot read this pull request body: the body file `b\.md` does not exist yet/);
 });
 
 test('a -F file is read where the commit runs: git -C, cd, and an unknown folder', (t) => {

@@ -3,7 +3,8 @@
 // gh then writes the body from the commit messages. A non-web `gh pr create` with no --body or --body-file is refused
 // too, when sections are configured: gh then takes the body from an editor, a prompt, or a template, unchecked.
 // `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit). A body flag whose body the
-// rule cannot read (a variable, a substitution, stdin, a missing file, a device or a pipe) is refused when sections are configured. Runs only inside a project. A
+// rule cannot read (a variable, a substitution, stdin, a missing file, a device or a pipe, a file the line edits first)
+// is refused when sections are configured, naming the one cause that applies (`bodyRead`). Runs only inside a project. A
 // command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A leading `cd <dir> &&`
 // moves the folder the body file and the project are read from; after any other directory change on the line, a relative
 // body file is one the rule cannot read. A body file the same command line writes first, through `cat > file` or `tee
@@ -401,12 +402,11 @@ function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, 
     return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, unchecked. ' +
       `${steps()} The body needs the sections config.json \`github.requiredSections\` asks for.`);
   }
-  const body = readBody(call, folderKnown ? cwd : null, written);
-  if (body === null && sectioned && (call.body || call.bodyFile)) {
-    return deny('the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, a device or a pipe, ' +
-      `or a file that does not exist yet. ${steps()} A file that another command on this line edits, such as \`sed -i\` or a script, counts as ` +
-      'not there yet: run gh as its own command after it. Never pass the path through `$(…)` or a variable, or the sections ' +
-      'config.json `github.requiredSections` asks for go unchecked.');
+  const { text: body, unread: why } = bodyRead(call, folderKnown ? cwd : null, written);
+  if (why && sectioned) {
+    const { cause, fix } = why;
+    return deny(`the body is one this rule cannot read: ${cause}, so the sections config.json \`github.requiredSections\` asks for go unchecked. ` +
+      `${fix ? `${fix} ` : ''}${steps()}`);
   }
   const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
@@ -611,20 +611,63 @@ export function openPrBodies(cwd, forge = listForge(cwd)) {
 // The body text, or null when this rule cannot know it. A null `cwd` is a folder it cannot know: only an absolute body
 // file reads. A dynamic --body reads the heredoc readPrCalls gave the call, `--body-file -` the heredoc check gave it as
 // `stdin`, and a file the line wrote earlier the text `written` (lineWrites) holds for it.
-export function readBody(call, cwd, written = new Map()) {
-  if (call.bodyOverwritten) return null;
-  if (call.body) return call.body.dynamic ? call.heredoc ?? null : call.body.text;
-  if (!call.bodyFile || call.bodyFile.dynamic) return null;
-  if (call.bodyFile.text === '-') return call.stdin ?? null;
-  if (cwd === null && !path.isAbsolute(call.bodyFile.text)) return null;
-  const file = resolveIn(cwd, call.bodyFile.text);
-  if (written.has(file)) return written.get(file);
+export const readBody = (call, cwd, written = new Map()) => bodyRead(call, cwd, written).text;
+
+const unread = (cause, fix = '') => ({ text: null, unread: { cause, fix } });
+
+// The body as { text, unread } from one read: `text` as readBody gives it, and when it is null for a call with a body
+// flag, `unread` as { cause, fix }, the cause a deny names first and the one step it needs beyond the two that pass, or
+// ''. A rule that refuses an unread body takes both from this one call: a second read could find a file the first did
+// not, and leave the text unchecked with no cause to refuse it. The pull request body, public text, and attribution rules
+// refuse with it, so the first deny names the form that passes.
+export function bodyRead(call, cwd, written = new Map()) {
+  if (call.bodyOverwritten) {
+    return unread('a redirect on the gh call writes onto its own body file, which bash empties before gh reads it', 'Send that output to another file.');
+  }
+  if (call.body) {
+    if (!call.body.dynamic) return { text: call.body.text };
+    return call.heredoc != null ? { text: call.heredoc } : unread('it is a variable, a command substitution, or a heredoc bash expands');
+  }
+  if (!call.bodyFile) return { text: null };
+  const given = call.bodyFile.text;
+  if (call.bodyFile.dynamic) {
+    return unread(`the body file \`${given}\` is a variable this command does not set to a literal path, or a command substitution`,
+      'Never pass the path through `$(…)` or a variable no literal sets on this line: write it out.');
+  }
+  if (given === '-') {
+    return call.stdin != null ? { text: call.stdin } : unread('`--body-file -` reads standard input, and that input is not one heredoc bash passes unchanged, such as a pipe');
+  }
+  if (cwd === null && !path.isAbsolute(given)) {
+    return unread(`the body file \`${given}\` is a relative path, and the folder gh runs in is unknown after that directory change`, 'Write the path out in full.');
+  }
+  const file = resolveIn(cwd, given);
+  if (written.has(file)) {
+    const text = written.get(file);
+    return text !== null ? { text } : unread('another command on this line changes the body file before gh reads it, such as a script or `sed -i`, ' +
+      'or a redirect', 'Run that command first, then gh as its own command.');
+  }
+  // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh opens the operand.
+  const read = bodyFileText(path.isAbsolute(given) ? given : `${cwd}/${given}`);
+  if (read.text !== undefined) return { text: read.text };
+  if (read.missing) return unread(`the body file \`${given}\` does not exist yet`);
+  if (read.notFile) return unread(`the body file \`${given}\` is a device, a pipe, or a folder, not a regular file`);
+  return unread(`the body file \`${given}\` is a regular file the hook cannot open (${read.error})`, 'Check its permissions.');
+}
+
+// A body file's text from one stat, as { text }, or what kept it: { missing }, { notFile } for a device, a FIFO, or a
+// folder (reading one can hang the hook, or read as empty and pass), or { error } with the code of a failed read.
+function bodyFileText(file) {
+  let stat;
   try {
-    // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh opens the operand.
-    const file = call.bodyFile.text;
-    return readText(path.isAbsolute(file) ? file : `${cwd}/${file}`);
-  } catch {
-    return null;
+    stat = statSync(file);
+  } catch (error) {
+    return ['ENOENT', 'ENOTDIR'].includes(error?.code) ? { missing: true } : { error: error?.code ?? 'an unknown error' };
+  }
+  if (!stat.isFile()) return { notFile: true };
+  try {
+    return { text: readFileSync(file, 'utf8') };
+  } catch (error) {
+    return { error: error?.code ?? 'an unknown error' };
   }
 }
 

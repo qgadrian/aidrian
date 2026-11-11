@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
+import { appearsAfterFirstStat } from './fixtures/fs-faults.mjs';
 
 const GOOD = '## Summary\nShare links expire.\n\n## Tests run\n- `npm test`: pass\n';
 
@@ -122,9 +123,34 @@ test('a body the rule cannot read is denied when sections are configured', (t) =
     `gh pr create --title '[NOISSUE] fix: x' --body "$PR_BODY"`, 'gh pr create -t x --body "$(cat f)"', 'gh pr create -t x -b "$X"',
     'gh pr create -t x --body-file -', 'gh pr create -t x --body-file missing.md', 'gh pr create -t x -F "$F"', 'gh pr edit 3 --body "$B"',
   ]) {
-    assert.match(run(command), /^Blocked: the body is one this rule cannot read: .* or a file that does not exist yet\. Do this instead: 1\. write the body to /, command);
+    assert.match(run(command), /^Blocked: the body is one this rule cannot read: [^\n]*, so the sections config\.json `github\.requiredSections` asks for go unchecked\. (?:[^\n]* )?Do this instead: 1\. write the body to /, command);
+    assert.doesNotMatch(run(command), /a variable, a command substitution, stdin without a heredoc/, 'the deny names its own cause, not the whole list');
   }
   assert.equal(project(t, { version: 1, github: { requiredSections: [] } })('gh pr create -t x --body "$B"'), null, 'no sections configured');
+});
+
+// The public text rule refuses with the same cause, from the same reader: a script that edits the body file before gh.
+test('a body file another command on the line changes names that cause, and gh as its own command passes', (t) => {
+  const run = project(t, { version: 1 }, { 'b.md': GOOD });
+  for (const command of [
+    `f=b.md; python3 - "$f" <<'EOF'\nimport sys\nEOF\ngh pr edit 3 --body-file "$f"`,
+    `sed -i '' s/a/b/ b.md && gh pr create -t x --body-file b.md`,
+  ]) {
+    const reason = run(command) ?? '';
+    assert.match(reason, /^Blocked: the body is one this rule cannot read: another command on this line changes the body file before gh reads it, such as a script or `sed -i`/, command);
+    assert.match(reason, /Run that command first, then gh as its own command\./, command);
+  }
+  assert.equal(run('gh pr edit 3 --body-file b.md'), null);
+});
+
+test('a body file that appears after the rule first looks is refused from one read, without a throw', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'b.md'), GOOD);
+  appearsAfterFirstStat(t, path.join(dir, 'b.md'));
+  assert.match(check('gh pr create -t x --body-file b.md', { cwd: dir, env: {} }) ?? '', /^Blocked: the body is one this rule cannot read: the body file `b\.md` does not exist yet/);
 });
 
 test('the unreadable body deny names the literal body path pr-write writes, for the branch gh runs on', (t) => {
@@ -134,7 +160,7 @@ test('the unreadable body deny names the literal body path pr-write writes, for 
   assert.match(reason, /Do this instead: 1\. write the body to `\/state\/aidrian\/projects\/aidrian-prbody-[a-z0-9-]+\/tmp\/pr-body-<branch>\.md` \(`<branch>` is the branch name/);
   assert.match(reason, /2\. run `gh pr create --body-file \/state\/aidrian\/projects\/aidrian-prbody-[a-z0-9-]+\/tmp\/pr-body-<branch>\.md`, the path written out/);
   assert.match(reason, /Never pass the path through `\$\(…\)` or a variable/);
-  assert.match(reason, /another command on this line edits, such as `sed -i` or a script, counts as not there yet: run gh as its own command after it/);
+  assert.doesNotMatch(reason, /Run that command first/, 'the advice for an edit on the line comes only with that cause');
   assert.match(run('gh pr create -t x -H fix/a --body "$(cat f)"', { XDG_STATE_HOME: '/state' }), /\/tmp\/pr-body-fix-a\.md`/);
   assert.match(run('gh pr edit 12 --body "$B"', { XDG_STATE_HOME: '/state' }), /2\. run `gh pr edit 12 --body-file /, 'an edit keeps the pull request it names');
 });
@@ -383,7 +409,7 @@ test('a device or a pipe as the body file is one the rule cannot read', (t) => {
 test('a heredoc of another command never stands in for an unread body', (t) => {
   const run = project(t);
   const reason = run(`python3 -c "$(cat <<'EOF'\nprint(1)\nEOF\n)" && gh pr edit 3 --body "$UNREAD"`);
-  assert.match(reason, /^Blocked: the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, a device or a pipe/);
+  assert.match(reason, /^Blocked: the body is one this rule cannot read: it is a variable, a command substitution, or a heredoc bash expands/);
   assert.equal(run(`python3 -c "$(cat <<'EOF'\nprint(1)\nEOF\n)" && ${heredoc(GOOD)}`), null, 'its own heredoc is read');
 });
 

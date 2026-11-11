@@ -177,10 +177,11 @@ test('a comment-, doc-, or test-only push keeps its round, and the passes it tou
   }
 });
 
-// A file the default review.nonBehaviour calls prose can still hold behaviour (a pinned dependency): quiet keeps the
-// round, but the pass it touches reviews it.
+// A file a project's review.nonBehaviour calls prose can still hold behaviour (a pinned dependency): quiet keeps the
+// round, but the pass it touches reviews it. The built-in list names no .txt file, so the project lists it here.
 test('a fix push to a file review.nonBehaviour calls prose is re-reviewed on the new head in the same round', async (t) => {
-  const r = repo(t, { change: (write) => (write('src/app.js', 'export const app = 2;\n'), write('requirements.txt', 'requests==2.31.0\n')) });
+  const baseConfig = { version: 1, review: { nonBehaviour: ['**/*.md', '**/*.txt'] } };
+  const r = repo(t, { baseConfig, change: (write) => (write('src/app.js', 'export const app = 2;\n'), write('requirements.txt', 'requests==2.31.0\n')) });
   const seen = scripted();
   const first = await r.step({ exec: seen.exec });
   assert.deepEqual([first.status, first.round], ['received', 1]);

@@ -11,7 +11,7 @@ import { invariantsOf } from './flows.mjs';
 import { packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
-import { buildPlan, classify, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
+import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, publishState, readRecord, sameCommit, summaryToEdit } from './state.mjs';
@@ -184,8 +184,10 @@ export async function prepareStep(s) {
   let plan = planFor('none');
   if (review.planCommand) {
     const project_ = await runPlanCommand(review.planCommand, { base, head, changes }, { root, env: cleanEnv, baseTip });
-    // A plan command that raises the depth to split gets the slices too: the built-in plan is rebuilt at that depth.
-    if (project_.depth === 'split' && plan.depth !== 'split') plan = planFor('split');
+    // A plan command that raises the depth gets the built-in plan rebuilt at that depth when it names no pass of its
+    // own, so its depth has a pass to run (never `none_needed` above depth none), and at split always, for the slices.
+    const raised = DEPTHS.indexOf(project_.depth) > DEPTHS.indexOf(plan.depth);
+    if (raised && (project_.depth === 'split' || !project_.stages.some((stage) => stage.passes.length))) plan = planFor(project_.depth);
     plan = mergePlans(plan, project_);
   }
   // Agent passes merge per reviewer only now, after the plan command's passes joined, so one agent reads the diff once.
@@ -298,6 +300,8 @@ export async function prepareStep(s) {
   state.signoffable = { head, flows: [...new Set([...plan.flows.filter((flow) => flow.signoff === 'human').map((flow) => flow.id), ...removedTests.map((each) => each.flow)])].sort() };
   const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
   if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
+  // A plan with no pass is `none_needed` only at depth none: a depth above it with nothing to run is a review lost.
+  if (!passes.length && !removedTests.length && !fallbacks.length && plan.depth !== 'none') return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan asks for a ${plan.depth} review and names no pass to run it`, plan });
   if (!passes.length && !removedTests.length && !fallbacks.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });
 
   // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still

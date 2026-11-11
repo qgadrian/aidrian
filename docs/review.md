@@ -929,8 +929,11 @@ listed on the pull request.
 `review.planCommand` runs a project's own planner: it reads `{ base, head, changes }` on stdin and prints a plan in
 the same shape as the built-in one. The built-in plan is computed too, and the two merge: the command may add depth,
 flows, passes, and stages, and reorder stages, never remove or replace a built-in pass or flow: a pass with a built-in
-pass's id is dropped, and the plan says so. Its passes then merge with the built-in ones per agent, so an agent both
-plans ask for is dispatched once; a flow both plans name keeps the files and reasons of both. A plan that names a
+pass's id is dropped, and the plan says so. A command that raises the depth gets the built-in plan rebuilt at that
+depth when it names no pass of its own, and at `split` always, for the slices: a raised depth always has a pass to run.
+A plan with no pass is `none_needed` only at depth `none`; above it, the step returns `unsatisfied`.
+The command's passes then merge with the built-in ones per agent, so an agent both plans ask for is dispatched once;
+a flow both plans name keeps the files and reasons of both. A plan that names a
 reviewer nobody can run is refused. A failed command shows the last lines of its stderr, with token-shaped strings
 masked. The command and its files are the base branch's, like the rest of the review config.
 

@@ -830,21 +830,26 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
   // pr-write stops on an unpushed branch, and the check reads the branch on origin: an upstream can track another branch.
   // Only the pull request and no pull request rows publish; the first row finishes another skill's steps as § 4 says.
   for (const row of ['| publish as § 5 says, then adopt it: `references/phases.md` § 2 from the line that records the pull request, then § 3 and § 4 |',
-    '| publish as § 5 says, then implement what remains, as § 7 says, then phases 2 to 4 |']) assert.ok(resume.includes(row), row);
+    '| implement what remains as § 7 says, publishing when § 5 says, then phases 2 to 4 |']) assert.ok(resume.includes(row), row);
   const publish = resume.indexOf('## 5. Publish what is local');
-  const rule = 'The second and third rows of § 3 publish first, never with force: the owner the `knowledge` skill\'s agent rule picks pushes the branch\'s commits to `origin/<branch>` in the foreground, as the `issue-implement` skill\'s `steps/phases-1-4-implement.md` step 9 pushes a slice, the first push with `-u`.';
+  const rule = 'The second and third rows of § 3 publish first, never with force, except on § 7\'s path with no plan and nothing left to change, which publishes once its gates pass: the owner the `knowledge` skill\'s agent rule picks pushes the branch\'s commits to `origin/<branch>` in the foreground, as the `issue-implement` skill\'s `steps/phases-1-4-implement.md` step 9 pushes a slice, the first push with `-u`.';
   assert.ok(publish !== -1 && resume.indexOf(rule) > publish, 'the publish rule');
   assert.ok(flat('plugins/aidrian/skills/issue-implement/steps/phases-1-4-implement.md').includes('and pushes it, the first push with `-u`.'), 'the slice push the rule follows');
   // Commit only where no engine runs: an engine's slice makes one commit, so work committed ahead of it would leave
   // the slice with nothing to commit. ae94cca took that commit out, and an early draft of #245 brought it back.
   for (const words of [
-    'On an adopted pull request, and on § 7\'s path with no plan and nothing left to change, that owner first finishes, verifies with the project\'s checks, commits, and pushes the uncommitted work.',
+    'On an adopted pull request, and on that path before its gates, that owner first finishes, verifies with the project\'s checks, and commits the uncommitted work.',
     'Before an engine or `planning-agent`, uncommitted work stays in the worktree for the owner of the plan\'s first incomplete slice.',
     'A failed check, a remote head that is not an ancestor of HEAD, or a rejected push stops the run: park the rest and report, as `SKILL.md` § Stop says.',
     'Confirm that `git ls-remote --heads origin <branch>` then prints HEAD.',
     'Uncommitted changes the run cannot tie to the work stop the run with no question: on a pull request\'s branch, as the branch preflight of the `orchestration` skill\'s `references/review-rules.md` says; with none, as the `issue-implement` skill\'s `references/hard-rules.md` stops on changes unrelated to this one.',
   ]) assert.ok(resume.indexOf(words) > publish, words);
-  for (const gone of ['commits what is uncommitted, and pushes', 'before any hand-over', 'commits the uncommitted work']) assert.ok(!resume.includes(gone), `no commit before an engine: ${gone}`);
+  for (const gone of ['commits what is uncommitted, and pushes', 'before any hand-over', 'commits the uncommitted work and pushes']) assert.ok(!resume.includes(gone), `no commit before an engine: ${gone}`);
+  // The no-plan path publishes only once its Phase 5 gates pass: the full suite, the docs, security, and critical-flow sign-off.
+  const noPlan = resume.slice(resume.indexOf('- No plan and nothing left to change:'), resume.indexOf('- Work left to change with no plan:'));
+  const gatesAt = noPlan.indexOf('run the gates of Phase 5');
+  assert.ok(gatesAt !== -1 && gatesAt < noPlan.indexOf('When they pass, publish as § 5 says, then open the draft through the `pr-write` skill'), 'the no-plan path runs its gates before it publishes');
+  assert.ok(!resume.includes('commits, and pushes the uncommitted work'), 'the no-plan path pushes nothing before its gates');
   for (const words of ['the uncommitted changes, each decision with whose it is', 'The plan covers only what remains, and the uncommitted work is its first slice.']) {
     assert.ok(resume.includes(words), `the planning brief carries the uncommitted work: ${words}`);
   }

@@ -1,6 +1,6 @@
 # Entry: continue a session
 
-Read at the start of a run launched with `--continue`. It takes over the work this session already has under way
+Read at the start of a run launched with `--continue`. It takes over the work this session has under way
 and finishes it under the same unattended rules. Everything here happens while the Human is still here;
 once the entry is picked, `SKILL.md` § Who decides applies.
 
@@ -16,7 +16,7 @@ Read the state fresh, while the Human is here: the session's memory of it is a l
   `<base>` is `--base`, else the base of the branch's pull request, else the target branch the issue declares,
   as the `issue-implement` skill's `steps/phase-0-resolve.md` § 4 says, else config.json `git.defaultBranch`.
 - Only for a task branch: `gh pr list --head <branch> --state open --json number,url,isDraft,baseRefName,headRefOid`.
-  A session with no task worktree, on the default branch with a clean main checkout, has no branch to look up, so `gh` does not run.
+  A session with no task worktree, on the default branch with a clean main checkout, has no branch, so `gh` does not run.
 - The branch's plan: the first match of the plan path lookup of the `plan-implement` skill's Inputs, run in the session's worktree,
   design-import plans included; its fallback to the newest plan never names the branch's plan.
 - When the session cannot tell which step a skill reached, or two worktrees or pull requests could be the work, ask now which.
@@ -35,13 +35,13 @@ the `worktree-new` skill's reuse question is answered Reuse, with `--reuse-exist
 
 ## 3. Pick the entry
 
-The first row that holds, in this order:
+The first row that holds:
 
 | The state | The run |
 | --- | --- |
 | A skill is mid-way that is not one of this run's own | finish that skill's own steps, with `SKILL.md` § Who decides in place of each question it would ask the Human; then take the next row only when it is the pull request row, and otherwise report |
 | The branch has an open pull request, or a review skill is mid-way on it | publish as § 5 says, then adopt it: `references/phases.md` § 2 from the line that records the pull request, then § 3 and § 4 |
-| An implementing skill is mid-way, or the branch holds commits or changes with no pull request | publish as § 5 says, then implement what remains, as § 7 says, then phases 2 to 4 |
+| An implementing skill is mid-way, or the branch holds commits or changes with no pull request | implement what remains as § 7 says, publishing when § 5 says, then phases 2 to 4 |
 | None of these | Nothing under way: ask for a task now, while the Human is here. With a task, follow `references/entry-task.md`; with no answer, start no run |
 
 This run's own skills are `knowledge`, `orchestration`, `worktree-new`, `issue-implement`, `plan-implement`, `pr-write`,
@@ -61,11 +61,11 @@ Its steps keep their owners, and its own output is the end of its part.
 
 ## 5. Publish what is local
 
-The second and third rows of § 3 publish first, never with force: the owner the `knowledge` skill's agent rule picks
-pushes the branch's commits to `origin/<branch>` in the foreground, as the `issue-implement` skill's
-`steps/phases-1-4-implement.md` step 9 pushes a slice, the first push with `-u`.
-On an adopted pull request, and on § 7's path with no plan and nothing left to change, that owner first finishes,
-verifies with the project's checks, commits, and pushes the uncommitted work.
+The second and third rows of § 3 publish first, never with force, except on § 7's path with no plan and nothing left to change,
+which publishes once its gates pass: the owner the `knowledge` skill's agent rule picks pushes the branch's commits to `origin/<branch>`
+in the foreground, as the `issue-implement` skill's `steps/phases-1-4-implement.md` step 9 pushes a slice, the first push with `-u`.
+On an adopted pull request, and on that path before its gates, that owner first finishes,
+verifies with the project's checks, and commits the uncommitted work.
 Before an engine or `planning-agent`, uncommitted work stays in the worktree for the owner of the plan's first incomplete slice.
 A failed check, a remote head that is not an ancestor of HEAD, or a rejected push stops the run: park the rest and report, as `SKILL.md` § Stop says.
 Confirm that `git ls-remote --heads origin <branch>` then prints HEAD.
@@ -99,8 +99,8 @@ Never start from the base again, and never write a plan that repeats what the br
 - No plan and nothing left to change: run the gates of Phase 5 of the `issue-implement` skill's `steps/phases-5-8-close.md`
   on `origin/<base>..HEAD`, all but gates 1 and 4, which read a plan.
   With no slice, a security-sensitive diff gets a `security-engineer` review and a critical flow a `product-manager` sign-off.
-  When they pass, open the draft through the `pr-write` skill with the inputs that file's Phase 7 passes, `<base>` from § 1 among them,
-  and go on from the line of `references/phases.md` § 2 that records the pull request. A gate that fails is work left to change.
+  When they pass, publish as § 5 says, then open the draft through the `pr-write` skill with the inputs that file's Phase 7 passes,
+  `<base>` from § 1 among them, and go on from the line of `references/phases.md` § 2 that records the pull request. A gate that fails is work left to change.
 - Work left to change with no plan: dispatch `planning-agent` in the foreground, to `<state>/plans/<key>-implementation.md`
   when the session's task is an issue and `<state>/plans/<slug>-plan.md` otherwise.
   Besides the task, the brief carries the commits `git log --oneline origin/<base>..HEAD` lists, the uncommitted changes,

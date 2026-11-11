@@ -175,6 +175,10 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
     // One file of `repo` at `ref`, such as `refs/heads/main`: `{ type, encoding, content }`, its content base64.
     contents: (repo, file, ref, { host } = {}) => rest(`repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { host }),
+    // One folder of a commit's tree, not recursive: `{ sha, tree: [{ path, mode, type, sha }], truncated }`, each entry's
+    // `path` its name in the folder, `mode` git's, such as 100644, 120000 for a symbolic link, 160000 for a submodule, or
+    // 040000 for a folder, whose `sha` reads it in turn. `sha` is a commit, whose root folder it reads, or a folder's.
+    tree: (repo, sha, { host } = {}) => rest(`repos/${repo}/git/trees/${encodeURIComponent(sha)}`, { host }),
     // PUBLIC, PRIVATE, or INTERNAL.
     visibility: (repo) => json(['repo', 'view', repo, '--json', 'visibility']).visibility,
     // The login gh is signed in as.

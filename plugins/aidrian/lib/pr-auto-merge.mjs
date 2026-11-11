@@ -12,8 +12,10 @@
 //      review record is read from `state.dir`, so a branch cannot point it at a record of its own. A working copy config
 //      that cannot be read, or has errors, is off too.
 //   3. paths: gh lists every changed file with its change type, none is a rename, whose old path gh does not give, and
-//      none is one that instructs an AI session or runs in CI (GUARDED_PATHS), unless both branches commit
-//      `github.autoMerge.includeGuardedPaths` true, which lifts the GUARDED_PATHS refusal alone, never for a policy
+//      none is one that instructs an AI session or runs in CI (GUARDED_PATHS, every host's instruction files among
+//      them), or a knowledge doc the start hook loads into every session, or a file of the knowledge folder that names
+//      them, as the default branch commits its indexes (startDocs), which must be readable, unless both branches commit
+//      `github.autoMerge.includeGuardedPaths` true, which lifts those refusals alone, never for a policy
 //      file (POLICY_PATHS). None, with the key on or off, is one of the files the gate reads its policy from,
 //      including a folder the pointer file names (branchPolicies' policyFiles). `gh pr view` lists at most 100 files,
 //      so a longer pull request's list is read whole from the forge's paged list (wholeFiles), at the head the view gave.
@@ -33,17 +35,20 @@
 //      list with no error on both the default branch and the base, and names every changed file on each, as the whole path
 //      from the project root; and every file of the paths check's whole list is added, modified, or deleted, sorts as `review.nonBehaviour`
 //      by the default branch's review lists (a `review.ignore` file is off too), has a safe extension (.md or a raster
-//      image), and is no GUARDED_PATHS file, with includeGuardedPaths on too, no path with a folder or name that starts
-//      with ".", no host instruction name such as GEMINI.md or AGENTS.override.md, and no test file, fixture, or golden
-//      file. Every list is read from GitHub, never the working copy, so a pull request cannot widen what lets it through.
-//      Any other `none_needed` waits for the Human.
+//      image), and is no GUARDED_PATHS file, which holds every host's instruction files, and no knowledge doc the start
+//      hook loads, with includeGuardedPaths on too, no path with a folder or name that starts with ".", and no test file,
+//      fixture, or golden file; and every file still at the head is a regular file there, read from the head's tree:
+//      no symbolic link and no submodule. Every list is read from GitHub, never the working copy, so a pull request
+//      cannot widen what lets it through. Any other `none_needed` waits for the Human.
 // gh reads, each through the forge facade (lib/forges): one `gh pr view` for the number, head, base, author, URL, files,
 // and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the
 // contents API, at `refs/heads/<branch>` (once when the base is the default branch); and, only when the team, the checks,
 // the paths, and the machine all allow it, `gh api user` for the login, then the pull request's three comment lists.
 // When the view lists fewer files than it counts, and the team and the checks allow it, the paged file list and then the
-// pull request's head again, before the login.
-// The `none_needed` route of the review check reads nothing more: the two configs above hold its lists.
+// pull request's head again, before the login. Then, with a whole list, the default branch's knowledge folder beside its
+// config.json and each `.json` index in it (startDocs).
+// The `none_needed` route of the review check reads the head's tree too, one folder at a time, after every other check
+// of that route passed; the two configs above hold its lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
 // repo, base }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
@@ -55,8 +60,9 @@
 import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
-import { noneNeededProblem } from './pr-auto-merge-docs.mjs';
-import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
+import { indexedAlways } from './knowledge.mjs';
+import { noneNeededProblem, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
+import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { heldWaiver } from './review/settled.mjs';
 import { owed, readLocalState } from './review/state.mjs';
@@ -126,36 +132,78 @@ export function branchConfig(forge, { repo, host }, branch, prefix = '', { locat
   const read = (name) => {
     const file = `${prefix}${name}`;
     seen?.push(file);
-    let body;
-    try {
-      body = forge.contents(repo, file, `refs/heads/${branch}`, { host });
-    } catch (error) {
-      if (notFound(error)) return null;
-      throw new Error(`could not read ${file} on ${repo} ${branch} with gh (${ghError(error)})`);
-    }
-    if (body?.type !== 'file' || body.encoding !== 'base64' || typeof body.content !== 'string') {
-      throw new Error(`gh returned no file content for ${file} on ${repo} ${branch}`);
-    }
-    return Buffer.from(body.content, 'base64').toString('utf8');
+    return branchText(forge, { repo, host }, branch, file);
   };
   const file = locate(read);
   return parse(read(file), file);
 }
 
+// The text of `file`, from the top of the repository, as the branch `branch` of `repo` commits it on GitHub now, at
+// `refs/heads/<branch>`, or null when GitHub has no such file (404). Any other failure, or an answer with no file
+// content, throws, naming the file and the branch.
+function branchText(forge, { repo, host }, branch, file) {
+  let body;
+  try {
+    body = forge.contents(repo, file, `refs/heads/${branch}`, { host });
+  } catch (error) {
+    if (notFound(error)) return null;
+    throw new Error(`could not read ${file} on ${repo} ${branch} with gh (${ghError(error)})`);
+  }
+  if (body?.type !== 'file' || body.encoding !== 'base64' || typeof body.content !== 'string') {
+    throw new Error(`gh returned no file content for ${file} on ${repo} ${branch}`);
+  }
+  return Buffer.from(body.content, 'base64').toString('utf8');
+}
+
+// What the start hook loads into every session, as the default branch `branch` commits it now: { docs, folder }, the
+// `always` docs of each `.json` index in the knowledge folder beside `configFile`, the config.json branchPolicies located
+// there, and that folder, each from the top of the repository; or a string saying why it cannot be read, which the
+// paths check refuses on. No folder there (404) is no docs. Each index is read by the knowledge reader's own rules
+// (knowledge.mjs indexedAlways). Only `always` docs: the start hook names no other doc of a bucket to every session.
+// A machine's local knowledge sources are on no branch, so none is read.
+export function startDocs(forge, pr, branch, configFile, prefix = '') {
+  const { repo, host } = pr;
+  const folder = knowledgeIn(configFile);
+  let listing;
+  try {
+    listing = forge.contents(repo, folder, `refs/heads/${branch}`, { host });
+  } catch (error) {
+    if (notFound(error)) return { docs: [], folder };
+    return `could not read ${folder} on ${repo} ${branch} with gh (${ghError(error)})`;
+  }
+  if (!Array.isArray(listing)) return `gh returned no listing of ${folder} on ${repo} ${branch}`;
+  const names = listing.filter((entry) => entry?.type === 'file' && typeof entry.name === 'string' && entry.name.endsWith('.json')).map((entry) => entry.name).sort();
+  const docs = [];
+  for (const name of names) {
+    const file = `${folder}/${name}`;
+    try {
+      const text = branchText(forge, pr, branch, file);
+      if (text === null) return `${file} on ${repo} ${branch} was listed, and then GitHub had no such file`;
+      docs.push(...indexedAlways(text, file).map((doc) => `${prefix}${doc}`));
+    } catch (error) {
+      return error.message;
+    }
+  }
+  return { docs, folder };
+}
+
 // The team's config at the two branches that decide a ceiling: { main, policy, basePolicy, policyFiles, policyErrors,
-// baseErrors }, the default branch's name, its config, the base's config (the same object when the base is the default
+// baseErrors, configFile }, the default branch's name, its config, the base's config (the same object when the base is the default
 // branch), every path read for them on either branch, each once: the files the gate reads its policy from, including a
 // folder the pointer file names; and each config's errors, one line each, whose keys then hold their defaults (the
-// same list when the base is the default branch). Read in this order: the default branch, its config, then the base's
+// same list when the base is the default branch), and the config.json path the default branch's read located, from the
+// top of the repository. Read in this order: the default branch, its config, then the base's
 // config, each config by branchConfig's reads. `pr` is { repo, host, base }. Throws as defaultBranch and branchConfig do.
 export function branchPolicies(forge, pr, prefix = '') {
   const seen = [];
   const policyErrors = [];
   const main = defaultBranch(forge, pr);
   const policy = branchConfig(forge, pr, main, prefix, { seen, parse: (text, file) => configFromText(text, file, policyErrors) });
+  // branchConfig reads the located config.json last.
+  const configFile = seen.at(-1);
   const baseErrors = pr.base === main ? policyErrors : [];
   const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix, { seen, parse: (text, file) => configFromText(text, file, baseErrors) });
-  return { main, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors };
+  return { main, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors, configFile };
 }
 
 // What the `none_needed` route of the review check reads from the two branches' configs (pr-auto-merge-docs.mjs
@@ -229,9 +277,11 @@ export function wholeFiles(forge, pr) {
 // A project below the root reviews only its own folder, so a file outside it has had no review, and its own folder's files
 // are guarded by their path from the project root. `policyFiles` are the paths branchPolicies read, the files the gate
 // reads its policy from, including a folder the pointer file names: a change to one, in any case, is off with the key on
-// or off, after the guarded-path refusal so that refusal keeps its message. `includeGuardedPaths` lifts only the
-// guarded-path refusal, the team having accepted that risk on both branches, and never for a policy file (POLICY_PATHS).
-export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, policyFiles = [] } = {}) {
+// or off, after the guarded-path refusal so that refusal keeps its message. `startDocs` is what the start hook loads, as
+// startDocs read it: a doc or index file of it is guarded too, and an unreadable answer is off, as no list would be
+// whole. `includeGuardedPaths` lifts only the guarded-path refusals, these included, the team having accepted that risk
+// on both branches, and never for a policy file (POLICY_PATHS).
+export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, policyFiles = [], startDocs = { docs: [], folder: null } } = {}) {
   if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
@@ -248,6 +298,12 @@ export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuar
   }
   const guarded = files.find(({ path }) => GUARDED_PATHS.test(path) || GUARDED_PATHS.test(path.slice(prefix.length)));
   if (guarded) return `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge`;
+  const unreadable = startUnreadable(startDocs);
+  if (unreadable) return unreadable;
+  for (const { path } of files) {
+    const loaded = startLoadProblem(path, startDocs);
+    if (loaded) return loaded;
+  }
   return readLine || null;
 }
 
@@ -359,12 +415,15 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
   // The pull request with every changed file, once the paths check has read the whole list: the review check sorts it.
   let listed = pr;
+  // What the start hook loads, read once the list is whole: the paths check and the review check both refuse on it.
+  let loaded = null;
   if (reason !== 'team') {
     const problem = checksProblem(policy, loadConfig(project), `${pr.repo} ${main}`);
     if (problem) [effective, reason, why] = [false, 'checks', problem];
     else {
       listed = prefix === null ? pr : wholeFiles(forge, pr);
-      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles });
+      if (prefix !== null && typeof listed !== 'string') loaded = startDocs(forge, pr, main, policies.configFile, prefix);
+      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles, startDocs: loaded ?? undefined });
       if (paths) [effective, reason, why] = [false, 'paths', paths];
     }
   }
@@ -385,7 +444,15 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
       } catch (error) {
         return fail(error.message);
       }
-      const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr) };
+      // One folder of the head's tree, for the none_needed route: a failed read says gh's own words.
+      const tree = (sha) => {
+        try {
+          return forge.tree(pr.repo, sha, { host: pr.host });
+        } catch (error) {
+          throw new Error(ghError(error));
+        }
+      };
+      const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree };
       const problem = changesRequested(pr) ?? reviewProblem(scoped(readLocalState(project, pr.number), project, pr.repo), pr.head, unreviewed);
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
       else if (problem) [effective, reason, why] = [false, 'review', problem];

@@ -161,7 +161,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, `pull`, `diff`, its diff as text,
   `nodeChange`, the pull request a GraphQL node id names, `changeEdits(repo, n, { host })`, when its body was last edited
   and its title last renamed, and `changeFiles`, every changed file past the 100 `change` lists.
-- The repository: `repo`, `repository`, `contents`, `visibility`, and `viewer`.
+- The repository: `repo`, `repository`, `contents`, `tree`, one folder of a commit's tree with each entry's mode, `visibility`, and `viewer`.
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment`, one of them by id,
   `postComment`, `editComment`, and `reactions`.
 - Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url, { host })`, which says whether a URL on the pull request's host is one of its comments, reviews, or review comments, found by its id.

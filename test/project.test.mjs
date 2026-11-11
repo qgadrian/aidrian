@@ -9,7 +9,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { findProject, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
+import { findProject, GUARDED_PATHS, knowledgeIn, normalizeRemote, openProject, projectAt, stateDir, stateRoot, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -615,3 +615,27 @@ function tempDir(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
+
+test('GUARDED_PATHS holds every host\'s instruction files, by name at any depth, and by folder or file where the host reads them', () => {
+  const families = {
+    'AGENTS.md and CLAUDE.md, at any depth': ['AGENTS.md', 'CLAUDE.md', 'packages/api/AGENTS.md', 'a/b/c/CLAUDE.md', 'apps/web/agents.md'],
+    'GEMINI.md': ['GEMINI.md', 'docs/GEMINI.md', 'a/b/gemini.md'],
+    'a host name with an infix': ['AGENTS.override.md', 'sub/AGENTS.override.md', 'CLAUDE.local.md', 'deep/er/CLAUDE.local.md'],
+    'other hosts\' names': ['AGENT.md', 'QWEN.md', 'WARP.md', 'CRUSH.md', 'CONVENTIONS.md', 'sub/conventions.md', 'x/Qwen.md'],
+    'GitHub Copilot': ['.github/copilot-instructions.md', '.github/instructions/a.instructions.md', '.github/instructions/deep/b.md'],
+    'Cursor': ['.cursor/rules/a.mdc', 'packages/x/.cursor/rules/a.mdc', '.cursorrules', 'packages/x/.cursorrules'],
+    'Cline': ['.clinerules', '.clinerules/a.md', 'pkg/.clinerules/b.md'],
+    'Windsurf': ['.windsurf/rules/a.md', 'pkg/.windsurf/rules/a.md', '.windsurfrules', 'pkg/.windsurfrules'],
+  };
+  for (const [family, files] of Object.entries(families)) {
+    for (const file of files) assert.ok(GUARDED_PATHS.test(file), `${family}: ${file}`);
+  }
+  for (const file of ['docs/agents.mdx', 'docs/agent-sources.md', 'docs/claude-notes.md', 'NOTSKILL.md', '.claude.md', 'src/.cursorrules.js', '.github/instructions-old.md', 'docs/cursor/a.md', 'windsurf.md', '.github/dependabot.yml', 'README.md']) {
+    assert.equal(GUARDED_PATHS.test(file), false, file);
+  }
+});
+
+test('knowledgeIn: the knowledge index folder beside a located config.json, with its repository prefix', () => {
+  assert.equal(knowledgeIn('.aidrian/config.json'), '.aidrian/knowledge');
+  assert.equal(knowledgeIn('apps/web/harness/config.json'), 'apps/web/harness/knowledge');
+});

@@ -317,6 +317,26 @@ test('the MCP merge tool is guarded too', (t) => {
   assert.equal(hook({ owner: 'acme', repo: 'notes', pullNumber: 6, sha: HEAD }).status, 0);
 });
 
+test('the merge tool of a GitHub MCP server a Claude Code plugin installs is guarded under its plugin name', (t) => {
+  const r = repo(t);
+  r.record(5, (state) => (outcome(state, 'received'), owe(state, 'request')));
+  const hook = (tool_name, toolInput, env = {}) => spawnSync(process.execPath, ['plugins/aidrian/scripts/hook-mcp-github.mjs'], {
+    input: JSON.stringify({ tool_name, cwd: r.dir, tool_input: toolInput }),
+    encoding: 'utf8',
+    env: { ...process.env, AIDRIAN_TELEMETRY: '0', ...env },
+  });
+  const given = { owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD };
+  for (const name of ['mcp__plugin_github_github__merge_pull_request', 'mcp__plugin_acme-tools_GitHub__merge_pull_request']) {
+    for (const env of [{}, { CLAUDECODE: '1' }]) {
+      const denied = hook(name, given, env);
+      assert.equal(denied.status, 2, `${name} ${JSON.stringify(env)}: ${denied.stderr}`);
+      assert.match(denied.stderr, /never sent/u);
+    }
+  }
+  // Another forge's server that shares the tool's name is not read as GitHub's, so its merge is not refused as unreadable.
+  assert.equal(hook('mcp__plugin_gitea_gitea__merge_pull_request', { owner: 'acme', repo: 'notes', index: 5 }).status, 0);
+});
+
 const REVIEWER = 'chatgpt-codex-connector[bot]';
 // A forge for pull request 5 at HEAD that records its posts; the bot's review of HEAD shows up from the `answerAt`-th
 // snapshot on (never with Infinity).

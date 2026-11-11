@@ -9,7 +9,8 @@
 // product feedback is owed; then the ready checks hold (lib/rules/github/ready-checks.mjs): none while a check on its head
 // has not finished, or one its last edit re-queues has not shown.
 // A host's own GitHub connector reaches this hook too: `githubCall` gives its call in the terms of the tool it stands for,
-// so this file reads one shape. Anything else this hook cannot read lets the call run.
+// so this file reads one shape. A host's own name for the GitHub MCP server, such as a plugin's on Claude Code, arrives here
+// already read as the standard one, by the host adapter's `hookInput`. Anything else this hook cannot read lets the call run.
 
 import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';

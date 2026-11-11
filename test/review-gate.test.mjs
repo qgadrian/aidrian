@@ -298,6 +298,27 @@ test('the MCP hook holds the gate for the GitHub comment tools', (t) => {
   assert.equal(hook({ owner: 'acme', repo: 'notes', issue_number: 5, body: '@codex review' }).status, 2);
 });
 
+test('the MCP hook holds the gate for the comment tools of a GitHub MCP server a Claude Code plugin installs', (t) => {
+  const { dir, project } = repo(t, { ...GATE, github: { ...GATE.github, reviewer: 'none' } });
+  const hook = (tool, toolInput) => spawnSync(process.execPath, ['plugins/aidrian/scripts/hook-mcp-github.mjs'], {
+    input: JSON.stringify({ tool_name: tool, cwd: dir, tool_input: toolInput }),
+    encoding: 'utf8',
+    env: { ...process.env, AIDRIAN_TELEMETRY: '0' },
+  });
+  const calls = [
+    ['mcp__plugin_github_github__add_issue_comment', { issue_number: 5 }],
+    ['mcp__plugin_github_github__add_reply_to_pull_request_comment', { pullNumber: 5 }],
+    ['mcp__plugin_github_github__pull_request_review_write', { pullNumber: 5 }],
+  ];
+  for (const [tool, number] of calls) {
+    const denied = hook(tool, { owner: 'acme', repo: 'notes', ...number, body: '@codex review' });
+    assert.equal(denied.status, 2, `${tool}: ${denied.stderr}`);
+    assert.match(denied.stderr, /pull request #5, and no review/u);
+  }
+  reviewed(project, 5);
+  for (const [tool, number] of calls) assert.equal(hook(tool, { owner: 'acme', repo: 'notes', ...number, body: '@codex review' }).status, 0, tool);
+});
+
 test('aidrian pr signoff --last signs off the one flow the last review left waiting, and refuses the rest', async (t) => {
   const { dir, project, head } = repo(t, { version: 1, review: { record: 'local' } });
   execFileSync('git', ['config', 'user.name', 'Tester'], { cwd: dir });

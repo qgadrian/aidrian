@@ -2343,3 +2343,22 @@ test('a machine with no record that runs extend on a public copy holding an unte
   assert.deepEqual([stopped.status, stopped.retry_recommended], ['incomplete', false]);
   assert.match(stopped.reason, /the open finding R2-9/u);
 });
+
+test('a machine that adopts a public copy finishes the review its passes finished: verdict citations stay on the copy', async (t) => {
+  const r = bookingRepo(t);
+  r.forge.visibility = () => 'PUBLIC';
+  const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
+  let runs = 0;
+  const exec = async () => (runs += 1, { status: 'done', findings: [], verdicts, dropped: [] });
+  const first = await r.step({ exec });
+  assert.equal(first.status, 'dispatch');
+  for (const pass of first.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify(verdicts) });
+  const done = await r.step({ exec });
+  assert.equal(done.status, 'received', JSON.stringify(done.flows));
+  const ran = runs;
+  // Another machine: no record of its own, only the public comment.
+  rmSync(recordFile(r.project, 7));
+  const again = await r.step({ exec });
+  assert.equal(again.status, 'received', JSON.stringify(again.flows));
+  assert.equal(runs, ran, 'no reviewer runs again');
+});

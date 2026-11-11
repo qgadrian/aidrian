@@ -29,7 +29,7 @@ import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
 import { tieTwins } from './findings.mjs';
-import { escapeLines, fillWithheld, flagName, isPrivate, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
+import { escapeLines, fillWithheld, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
 import { splitPasses } from './split.mjs';
@@ -305,7 +305,7 @@ const CITATION_LINE = 'A citation shows the cited line exists, not that it prove
 // The overrulings of a copy that keeps no override line of theirs: the invariant, the head, and a judge's name.
 function overruleLines(copy) {
   return (Array.isArray(copy.overrulings) ? copy.overrulings : []).filter(isObject)
-    .map((each) => `${each.flow}/${each.invariant} overruled on \`${String(each.head).slice(0, 7)}\`${typeof each.by === 'string' ? ` by ${each.by}` : ''} (an audit entry, not proof)`);
+    .map((each) => `${each.flow}/${each.invariant} overruled on \`${String(each.head).slice(0, 7)}\`${typeof each.by !== 'string' ? '' : each.by === JUDGE_RULING ? ' by a judge' : ` by ${each.by}`} (an audit entry, not proof)`);
 }
 
 // The one way a summary comment ends. Every visible line passes every text check, on every repository, or is left out
@@ -381,7 +381,7 @@ function outsideLines(copy, head, open) {
   const at = String(head).slice(0, 7);
   // A person's name shows only on a private repository's comment.
   const approver = (each) => (open && typeof each.login === 'string' ? ` by \`@${clip(each.login)}\`` : '');
-  const accepter = (each) => (typeof each.by === 'string' ? ` by ${clip(each.by)}` : '');
+  const accepter = (each) => (typeof each.by !== 'string' ? '' : each.by === JUDGE_RULING ? ' by a judge' : ` by ${clip(each.by)}`);
   const lines = [
     ...list('approvals').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: approved${approver(each)} on \`${at}\`: ${clip(each.url ?? 'no review link')}`),
     ...list('acceptances').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: accepted${accepter(each)} on \`${at}\` on outside evidence: ${clip(each.evidence ?? 'unknown')}${typeof each.reason === 'string' ? `: ${clip(each.reason)}` : ''} (an audit entry, not proof)`),

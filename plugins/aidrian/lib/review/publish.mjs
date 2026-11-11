@@ -302,7 +302,8 @@ const ENGINE_NAMES = ['codex-local', 'self', 'pr-bot', 'code-reviewer', 'securit
 const AXES = { severity: TABLE.severities, likelihood: TABLE.likelihoods, affects: TABLE.affects, cost: TABLE.costs ?? [] };
 const DISPOSITIONS = new Set([...TABLE.rules.map((rule) => rule.disposition), TABLE.default, TABLE.botSourceWithoutAxis, ...(TABLE.lateRound ? [TABLE.lateRound.disposition] : []), 'needs_axis'].filter(Boolean));
 const STATES = new Set([...FINDING_STATES, 'not_reported']);
-// The red flags of the check at the cap, by name: the part of a reason before its colon.
+// The red flags of the check at the cap, by name: the part of a reason before its colon, or a bare name as a posted copy
+// keeps it. extension.mjs reads them with this one function, so an adopted copy's flags are the same flags.
 const FLAG_NAMES = new Set(['not converging', 'looping', 'drifting', 'bloating']);
 export const flagName = (reason) => {
   const text = String(reason ?? '');
@@ -389,6 +390,15 @@ function privateCopy(value, checker, counter) {
     if (kept === undefined) counter.n += 1;
     else out[key] = kept;
   }
+  return judgeKept(value, out);
+}
+
+// What marks a ruling as a judge's, not the Human's: the prefix of its `by` (lib/review/approvals.mjs JUDGE_PREFIX,
+// which test/review-publish.test.mjs holds equal). A copy that cannot post the judge's name posts the prefix alone, so
+// another machine never reads a judge's ruling as the Human's.
+export const JUDGE_RULING = 'judge:';
+function judgeKept(source, out) {
+  if (typeof source.by === 'string' && source.by.startsWith(JUDGE_RULING) && typeof out.by !== 'string') out.by = JUDGE_RULING;
   return out;
 }
 
@@ -410,7 +420,7 @@ function allChecked(value, checker, counter) {
     if (kept === undefined) counter.n += 1;
     else out[key] = kept;
   }
-  return out;
+  return judgeKept(value, out);
 }
 
 // The allowlist (R1): one table, as code. Every key a function below does not name is left out and counted; a slice that
@@ -507,15 +517,30 @@ function allowlisted(state, post, counter) {
     return out;
   };
   const findings = (head) => list(finding(head));
-  const verdict = (source) => {
+  // A verdict's evidence stays only as a citation of the one shape a reviewer is asked for (flows.mjs citationProblem):
+  // `path:line` with a path git tracks at the pass's head and a line within it, `test:<name>`, or `capture:<key>`.
+  // Another machine then checks it as this one did, and the pass does not read as unverified there.
+  const citation = (head) => (value) => {
+    if (typeof value !== 'string' || value.length > 300) return drop();
+    const text = value.trim();
+    if (/^capture:[\w.:/@=+-]{1,200}$/u.test(text) || /^test:[\w .:/@+()#'-]{1,200}$/u.test(text)) return value;
+    const place = /^(.+?):(\d+)(?:-(\d+))?$/u.exec(text);
+    return place && path(head)(place[1]) && lineOk(head, place[1], Number(place[2])) && (!place[3] || lineOk(head, place[1], Number(place[3]))) ? value : drop();
+  };
+  const verdict = (head) => (source) => {
     if (!isObject(source) || !pair(source.flow, source.invariant)) return drop();
-    return object(source, { flow: (value) => value, invariant: (value) => value, verdict: word(new Set(['holds', 'violated', 'not_affected', 'cannot_verify'])) });
+    return object(source, { flow: (value) => value, invariant: (value) => value, verdict: word(new Set(['holds', 'violated', 'not_affected', 'cannot_verify'])), evidence: citation(head) });
   };
   const pairEntry = (extra) => (source) => {
     if (!isObject(source) || !pair(source.flow, source.invariant)) return drop();
     return object(source, { flow: (value) => value, invariant: (value) => value, ...extra });
   };
-  const judgeBy = check((value) => typeof value === 'string' && JUDGE.test(value) && names.reviewers.has(JUDGE.exec(value)[1]));
+  // A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone; a person's name
+  // is left out.
+  const judgeBy = (value) => {
+    if (typeof value !== 'string' || !value.startsWith(JUDGE_RULING)) return drop();
+    return JUDGE.test(value) && names.reviewers.has(JUDGE.exec(value)[1]) ? value : JUDGE_RULING;
+  };
   const acceptance = pairEntry({ head: sha, at: date, by: judgeBy, kind: word(), evidence: check((value) => typeof value === 'string' && URL.test(value)) });
   const keyed = (map, keyOk) => (value) => {
     if (!isObject(value)) return drop();
@@ -598,7 +623,7 @@ function allowlisted(state, post, counter) {
       list: (value) => (value === null ? null : findings(head)(value)),
       ruled: findings(head),
       carried: findings(head),
-      verdicts: list(verdict),
+      verdicts: list(verdict(head)),
     });
   };
   const capture = check((value) => typeof value === 'string' && CAPTURE_KEY.test(value));
@@ -814,12 +839,15 @@ export function residualRows(rows, state, { reading, checker = plainChecker() } 
   const failedBefore = checker.failed;
   const secure = securityIds(state);
   let withheld = 0;
+  // Every string a row keeps passes the checks: the title and the file decide whether the row keeps its text, and the
+  // pass and the severity of a row by id are left out when they fail.
+  const passes = (value) => typeof value !== 'string' || checker.allows(value);
   const out = rows.map((row) => {
     const security = !isFindingId(row.id) || secure.has(row.id);
-    const hidden = reading?.inside !== true || (security && reading?.visibility !== 'PRIVATE') || typeof row.title !== 'string' || !checker.allows(row.title);
-    if (!hidden) return row;
+    const hidden = reading?.inside !== true || (security && reading?.visibility !== 'PRIVATE') || typeof row.title !== 'string' || !checker.allows(row.title) || !passes(row.file);
+    if (!hidden && passes(row.pass) && passes(row.severity)) return row;
     withheld += 1;
-    return { pass: row.pass, ...(isFindingId(row.id) ? { id: row.id } : {}), severity: row.severity, text: WITHHELD };
+    return { ...(passes(row.pass) ? { pass: row.pass } : {}), ...(isFindingId(row.id) ? { id: row.id } : {}), ...(passes(row.severity) ? { severity: row.severity } : {}), text: WITHHELD };
   });
   if ('failed' in checker) checker.failed = failedBefore;
   return { rows: out, withheld };

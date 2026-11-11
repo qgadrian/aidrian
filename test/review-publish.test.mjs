@@ -10,7 +10,8 @@ import { refusalContext } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { postContext, readReading } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
-import { escapeLines, gitPaths, isPrivate, patternsOf, postedCopy, residualRows, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
+import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
+import { escapeLines, gitPaths, isPrivate, JUDGE_RULING, patternsOf, postedCopy, residualRows, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
 const NO_TERMS = { hosts: [], accounts: [], variables: [] };
@@ -307,4 +308,50 @@ test('on a public repository every posted string meets the configured patterns a
   const record = JSON.stringify(stateFromComment(body, 7));
   assert.doesNotMatch(record, /confidential|bluebird/iu, 'the path and the name in the posted record');
   assert.match(record, /src\/a\.js/u, 'a clean path stays');
+});
+
+test('a judge`s ruling stays a judge`s on every copy: an unnamed judge posts the prefix alone, and a Human`s posts no name', (t) => {
+  assert.equal(JUDGE_RULING, JUDGE_PREFIX, 'the prefix the evidence step reads');
+  const head = 'a'.repeat(40);
+  const pair = { flow: 'booking', invariant: 'cap', head, at: '2026-11-11T00:00:00.000Z' };
+  const state = {
+    ...emptyState(7, 'o/r'), revision: 3,
+    planNote: { head, passes: {}, pairs: [{ flow: 'booking', invariant: 'cap' }] },
+    acceptances: [{ ...pair, by: 'judge:architect', reason: 'r', kind: 'comment', evidence: 'https://github.com/o/r/pull/7#issuecomment-1' }, { ...pair, by: 'Jane Person', reason: 'r' }],
+    overrulings: [{ ...pair, by: 'judge:architect', reason: 'r' }],
+  };
+  const root = checkout(t, []);
+  for (const [label, post] of [
+    ['public', { reading: { visibility: 'PUBLIC', inside: true }, checker: textChecker({ context: CONTEXT, words: [] }), names: [] }],
+    ['private, the name withheld', { reading: PRIVATE, checker: textChecker({ context: CONTEXT, words: [], patterns: ['architect'], root }) }],
+  ]) {
+    const { copy } = postedCopy(state, post);
+    assert.deepEqual([isJudgeRuling(copy.acceptances[0]), isJudgeRuling(copy.overrulings[0])], [true, true], label);
+    assert.ok(!JSON.stringify(copy).includes('architect'), `${label}: the name is not posted`);
+    assert.equal(isJudgeRuling(copy.acceptances[1]), false, `${label}: the Human's stays the Human's`);
+    if (label === 'public') assert.ok(!JSON.stringify(copy).includes('Jane Person'), 'a person`s name is not posted publicly');
+  }
+});
+
+test('a verdict keeps evidence of a citation`s shape on a public copy, so another machine can check it; prose is left out', (t) => {
+  const root = checkout(t, []);
+  writeFileSync(path.join(root, 'a.js'), '1\n2\n3\n');
+  const git = (...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' }).stdout.trim();
+  git('add', '-A');
+  git('commit', '-qm', 'base');
+  const head = git('rev-parse', 'HEAD');
+  const verdicts = ['a.js:3', 'a.js:2-3', 'test:refund cap holds', 'capture:look-360', 'a.js:9', 'gone.js:1', 'because the code checks it'].map((evidence, i) => ({ flow: 'booking', invariant: `i${i}`, verdict: 'holds', evidence }));
+  const state = { ...emptyState(7, 'o/r'), revision: 2, planNote: { head, passes: { p: { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: verdicts.map(({ flow, invariant }) => ({ flow, invariant })) }, passes: { p: { head, verdicts } } };
+  const { copy } = postedCopy(state, { reading: { visibility: 'PUBLIC', inside: true }, checker: textChecker({ context: CONTEXT, words: [] }), root, names: [] });
+  assert.deepEqual(copy.passes.p.verdicts.map((each) => each.evidence ?? null), ['a.js:3', 'a.js:2-3', 'test:refund cap holds', 'capture:look-360', null, null, null]);
+});
+
+test('every string a residual row keeps meets the checks: a file matching a configured pattern withholds the row, a pass or severity that fails is left out', () => {
+  const checker = textChecker({ context: CONTEXT, words: [], patterns: ['secretproject'] });
+  const state = { ...emptyState(7, 'o/r'), planNote: { head: 'a'.repeat(40), passes: { p: { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] }, passes: { p: { head: 'a'.repeat(40), list: [{ id: 'R1-1', mint: '0000000a', title: 'A nit', severity: 'low' }] } } };
+  const reading = { visibility: 'PRIVATE', inside: true };
+  const { rows } = residualRows([{ pass: 'p', id: 'R1-1', title: 'A nit', file: 'src/secretproject.js', line: 1, severity: 'low' }], state, { reading, checker });
+  assert.deepEqual(rows, [{ pass: 'p', id: 'R1-1', severity: 'low', text: WITHHELD }]);
+  const named = residualRows([{ pass: 'slice:secretproject', id: 'R1-1', title: 'A nit', severity: 'low' }], state, { reading, checker });
+  assert.deepEqual(named.rows, [{ id: 'R1-1', severity: 'low', text: WITHHELD }]);
 });

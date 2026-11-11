@@ -11,7 +11,7 @@ import { DEFAULT_REVIEWER, exitCodeFor, runAwaitReview } from '../plugins/aidria
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/report-reviews.mjs';
 import {
-  atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
+  askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { untextedBlocking } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -909,4 +909,14 @@ test('a machine with no record that runs await-review on a public copy marks an 
   const written = readLocalState(bot.project, 42);
   assert.equal(written.passes['engine:codex-local'].list[0].adopted, true);
   assert.equal(untextedBlocking(written, written), 'R1-4', 'the step on this machine stops on it');
+});
+
+test('revalidate reads a posted copy`s bare red flag names as the flags they name: an approved grant survives identical signals', () => {
+  const looped = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one'), finding('b.js', 9, 'x')]), round(2, 'b', [finding('a.js', 2, 'two')], { added: 1, removed: 1, files: ['a.js'] })] });
+  const state = emptyState(7, 'o/r');
+  // The entry as an adopted posted copy holds it: each red flag by its name alone.
+  state.extensions = [{ source: 'plan', round: 2, head: 'b', status: 'granted', by: 'human', reasons: [], red_flags: ['looping'], human: { answer: 'approve' }, mode: 'ask', max: 2 }];
+  const entry = revalidate({ state, source: 'plan', round: 2, head: 'c0ffee1234', history: looped });
+  assert.deepEqual([entry.status, entry.human?.answer], ['granted', 'approve']);
+  assert.match(askQuestion(7, 3, null, ['looping', 'bloating: added 90 lines']), /red flags \(looping, bloating\)/u);
 });

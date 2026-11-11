@@ -24,6 +24,8 @@ import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
 import { postContext } from './dispatch.mjs';
+// One reading of a red flag, a full reason or the bare name a posted copy keeps (publish.mjs flagName).
+import { flagName } from './publish.mjs';
 import { isFindingId, twinMatch } from './findings.mjs';
 import { heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
 
@@ -256,7 +258,6 @@ export function botRounds(reviews, reviewComments, reviewer) {
 // round: an answer to it would approve that round too. `unreviewed` is the entry's { head }, when no round reviewed it.
 // `flags`, the red flags' reasons, are named so the Human approves past them knowingly: by name only, so the question
 // names no round but the one it grants.
-const flagName = (reason) => (reason.includes(':') ? reason.slice(0, reason.indexOf(':')) : 'no readable signal');
 export const askQuestion = (pr, round, unreviewed = null, flags = []) => {
   const warn = flags?.length ? ` The round history raised red flags (${[...new Set(flags.map(flagName))].join(', ')}), and the judge still recommends one more round.` : '';
   return unreviewed?.head

@@ -1174,7 +1174,10 @@ which the review step alone writes, are kept from the comment.
   or person's name. Without text, the waived-repeat lines show the count, the id, the file, and the severity; an Extra
   rounds line shows the status, who decided, and its red flags by name; a waiver line shows its kind, head, verdict,
   and judge; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
-  finding has no file or line there ([Reviewers](#reviewers)).
+  finding has no file or line there ([Reviewers](#reviewers)). A verdict keeps its evidence only as a citation
+  (`path:line` of a tracked file, `test:<name>`, or `capture:<key>`), so another machine checks it as this one did.
+  A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads
+  as the Human's.
 - **Text checks.** Every string that may be posted is checked first, on its text with whitespace runs collapsed and on
   a decoded copy, and a hit withholds it and never fails the step: token-shaped strings and local paths always (in the
   context the product feedback post uses, with the product-access terms and values), and the base branch's and the
@@ -1185,8 +1188,8 @@ which the review step alone writes, are kept from the comment.
   text check could not run on the machine that wrote it, naming no word, pattern, or list, and another machine is told
   the same. A check that fails only for a residual row withholds that row's text and holds nothing. What reports it says only `text
   withheld`, with a count, never the word, its pattern, or its list. The findings a step hands the session to fix keep
-  their text; the residual rows the session copies into the pull request body pass the same decision and name a withheld
-  finding by its id alone.
+  their text; the residual rows the session copies into the pull request body pass the same decision, every string of
+  a row included, and name a withheld finding by its id alone.
 - **Escaping.** The final body is escaped before it posts, code spans included: a zero-width space after each `@`,
   `<!--` and `-->` escaped, and a line that starts with `/` neutralized. The engine's marker lines are added after it,
   and the 60,000-character budget measures the escaped body.

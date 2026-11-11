@@ -745,7 +745,8 @@ and repository also passes, so a new session or machine need not review again.
   nothing, or puts the marker in its request.
 - The Bash rule refuses `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose
   body asks `@codex review` outside code and quotes, and `gh pr create --reviewer` or `gh pr edit --add-reviewer` naming `github.reviewer`.
-- A hook on the GitHub MCP comment tools refuses the same body, and on Codex on
+- A hook on the GitHub MCP comment tools refuses the same body, on Claude Code on
+  [those of a GitHub MCP server a plugin installs](providers/claude-code.md#a-github-mcp-server-from-a-plugin), and on Codex on
   [the GitHub connector's comment tools](providers/codex.md#github-through-the-app-connector).
 - A request to another repository passes. A request whose pull request number the rule cannot read is refused: name it.
 - `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1`, set by a person in their own shell, lets the request run and records an override

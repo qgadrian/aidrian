@@ -113,6 +113,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "^mcp__plugin_(?:[A-Za-z0-9-]+_)*[A-Za-z0-9-]*[Gg][Ii][Tt][Hh][Uu][Bb][A-Za-z0-9-]*(?:_[A-Za-z0-9-]+)*__(?:merge_pull_request|update_pull_request|update_pull_request_draft_state|add_issue_comment|add_reply_to_pull_request_comment|pull_request_review_write)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-mcp-github.mjs\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

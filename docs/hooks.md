@@ -458,7 +458,8 @@ On a host with no SessionEnd it is never recorded.
 
 A session must not merge a pull request while a review of its head is still open, or while a review the Human asked for
 was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, reads `gh pr merge`, a `gh api` PUT or POST
-to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull_request`, and on Codex
+to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull_request`, on Claude Code
+[a GitHub MCP server a plugin installs](providers/claude-code.md#a-github-mcp-server-from-a-plugin), and on Codex
 [the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project.
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
@@ -565,6 +566,8 @@ Limits:
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge
   that names the upstream is then not guarded: pass `--repo` when gh cannot answer.
 - A record written before this release has rounds but no outcome: a merge waits until `aidrian pr review` runs again.
+- On Claude Code, a GitHub MCP server a plugin installs under a name that holds no "github" is not read, and neither is
+  a merge through any other forge's server: [A GitHub MCP server from a plugin](providers/claude-code.md#a-github-mcp-server-from-a-plugin).
 - Three heredoc forms, which the [ready hold](#ready-hold) shares:
   - A heredoc piped into a shell from a group or a subshell, such as `{ cat <<'EOF'; } | bash` or `( cat <<'EOF' … ) | bash`,
     is not read, so a merge or a ready in it is not refused.
@@ -579,7 +582,8 @@ A session must not mark a draft ready while its [product feedback](config.md#pro
 sentence in a skill. The rule, `plugins/aidrian/lib/rules/github/ready-hold.mjs`, reads `gh pr ready` and a `gh api` call
 naming `markPullRequestReadyForReview`, whatever its endpoint (`graphql`, `/graphql`, or the full URL), in the Bash hook, and
 in the GitHub MCP hook the server's `update_pull_request` and `update_pull_request_draft_state` with a `draft` that is not
-`true`, and on Codex the GitHub connector's `mark_pull_request_ready_for_review`
+`true`, under the server's own name or, on Claude Code, [a plugin's](providers/claude-code.md#a-github-mcp-server-from-a-plugin),
+and on Codex the GitHub connector's `mark_pull_request_ready_for_review`
 ([its tools](providers/codex.md#github-through-the-app-connector)). It approves nothing and blocks no merge: `pr-auto-merge`
 and `aidrian pr checks` read nothing of it. In the Bash hook it runs after the merge guard, so a command that marks ready
 and merges leaves the guard its own time. It decides in this order:
@@ -632,8 +636,9 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
 - A script, an interpreter, `xargs`, a variable set in an earlier Bash call, a `gh alias` such as `gh rd 7`, and `curl` to the
   GraphQL endpoint.
 - The three heredoc forms the [merge guard](#merge-guard)'s limits list, which both rules share.
-- A GitHub MCP server installed under another name, such as a plugin's `mcp__plugin_<name>_github__…`, or a connector Codex
-  suffixes with a hash: the merge guard and the review gate share this gap, and a follow-up covers all three.
+- A GitHub MCP server installed under a name that holds no "github", such as a plugin `gh` with a server `gh`, or a connector
+  Codex suffixes with a hash: the merge guard and the review gate share this gap
+  ([A GitHub MCP server from a plugin](providers/claude-code.md#a-github-mcp-server-from-a-plugin)).
 - An `AIDRIAN_ALLOW_UNHELD_READY` entry in a host's settings `env` reaches every later session, as it does for every override;
   a follow-up covers them all.
 - `origin/HEAD` names the default branch for the call `status` skips: a session that rewrites it, on a pull request stacked
@@ -646,7 +651,7 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
 
 | On | Verified | Not verified |
 | --- | --- | --- |
-| Claude Code | The Bash form, through the real hook, in `test/ready-hold.test.mjs`, with a fake gh | The MCP form with a live GitHub MCP server: the tests run its documented input through the real hook |
+| Claude Code | The Bash form, through the real hook, in `test/ready-hold.test.mjs`, with a fake gh | The MCP form with a live GitHub MCP server, under its own name or a plugin's: the tests run its documented input through the real hook |
 | Codex | Nothing live: the Bash hook payload is the standard one, as for every Bash rule | The connector's `mark_pull_request_ready_for_review`, from the catalog a Codex 0.167.0 install cached on 2026-11-06, run through the real hook from `test/fixtures/hosts/codex/github.json` |
 
 The GitHub MCP server's input, read from its source at `pkg/github/pullrequests.go` and `pullrequests_granular.go`:

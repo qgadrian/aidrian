@@ -106,11 +106,12 @@ export function splitRuled(findings, settled) {
   for (const { already_ruled: raw, ...finding } of findings) {
     const { entry, note } = settledMatch(finding, raw, settled);
     if (entry) {
-      const { title, file, line, severity } = finding;
+      const { title, file, line, severity, security } = finding;
       const capped = 'file' in entry;
       const from = capped && !entry.residual ? 'prior' : 'residual';
       out.ruled.push({
-        title, file, line, severity, already_ruled: entry.raised ?? entry.title, from,
+        // The reviewer's security flag stays with the repeat, so recordFindings marks it whatever settled it.
+        title, file, line, severity, ...(security === true ? { security: true } : {}), already_ruled: entry.raised ?? entry.title, from,
         ...(capped ? { settled_severity: entry.severity } : {}), ...(entry.settled_by ? { settled_by: entry.settled_by } : {}), ...(entry.accepted_by ? { accepted_by: entry.accepted_by } : {}), ...(entry.residual ? { residual: entry.residual } : {}),
       });
       continue;

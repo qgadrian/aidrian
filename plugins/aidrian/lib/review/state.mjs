@@ -308,18 +308,17 @@ function overruleLines(copy) {
     .map((each) => `${each.flow}/${each.invariant} overruled on \`${String(each.head).slice(0, 7)}\`${typeof each.by === 'string' ? ` by ${each.by}` : ''} (an audit entry, not proof)`);
 }
 
-// The one way a summary comment ends. Every visible line passes the text checks, the full ones on a private
-// repository and the always-on one elsewhere, or is left out and counted; the count shows as the withheld notice.
+// The one way a summary comment ends. Every visible line passes every text check, on every repository, or is left out
+// and counted; the count shows as the withheld notice.
 // Then the lines are escaped (publish.mjs escapeLines), with no line exempt, and only then does the engine add its own
 // marker lines, in their fixed layout: the summary marker first, and last the record's marker, or, when that would pass
 // BODY_LIMIT, the held line and the held marker with the record's revision. The budget measures the escaped body.
 function withRecord(lines, copy, withheld, post, state) {
   const checker = post.checker ?? plainChecker();
-  const full = isPrivate(post.reading);
   let hidden = withheld;
   // One element can hold a line break: the checks and the escaping read every line of the body as it will post.
   const shown = lines.flatMap((line) => String(line).split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/u)).filter((line) => {
-    if (checker.allows(line, { full })) return true;
+    if (checker.allows(line)) return true;
     hidden += 1;
     return false;
   });

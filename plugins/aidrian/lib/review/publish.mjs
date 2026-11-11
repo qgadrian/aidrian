@@ -186,13 +186,13 @@ const flat = (text) => text.replace(/\s+/gu, ' ');
 // the pull request head's alone.
 export const patternsOf = (configs) => [...new Set(configs.flatMap((config) => config?.github?.publicText?.patterns ?? []))];
 
-// The one decision whether a string may be posted (R2). `allows(text, { full })` runs, on the raw text with each run of
-// whitespace collapsed and on the decoded copy refusedKind builds, the always-on check (token-shaped strings and local
-// paths, in `context`, which pr-product-feedback.mjs refusalContext builds, G5), and with `full` the public-text
-// `patterns` and the private words of the checkout `root` too, each under the budget. A hit in either copy withholds, and
-// so does a dropped search (out of time, out of budget, or one that does not compile), a `context` of null (the
-// knowledge index or a product-access doc could not be read), and, for a full check, a private-words copy that cannot be
-// read (H4). It never throws. `words` replaces what `root` gives, in tests.
+// The one decision whether a string may be posted (R2), for every string of a post on every repository: `allows(text)`
+// runs, on the raw text with each run of whitespace collapsed and on the decoded copy refusedKind builds, the always-on
+// check (token-shaped strings and local paths, in `context`, which pr-product-feedback.mjs refusalContext builds, G5),
+// the public-text `patterns`, and the private words of the checkout `root`, each under the budget. A hit in either copy
+// withholds, and so does a dropped search (out of time, out of budget, or one that does not compile), a `context` of null
+// (the knowledge index or a product-access doc could not be read), and a private-words copy that cannot be read (H4).
+// It never throws. `words` replaces what `root` gives, in tests.
 export function textChecker({ context = null, root = null, patterns = [], words, budget = timeBudget(STEP_MS, SEARCH_MS) } = {}) {
   const always = context;
   let privateWords = words;
@@ -217,22 +217,21 @@ export function textChecker({ context = null, root = null, patterns = [], words,
     if (index === null) checker.failed = true;
     return index === null || index >= 0;
   });
-  const decide = (text, full) => {
+  const decide = (text) => {
     if (always === null) return fail();
     if (refusedKind(flat(text), always) !== null) return false;
-    if (!full) return true;
     if (privateWords === null) return fail();
     return ![flat(text), flat(decodedCopy(text))].some((copy) => hit(privateWords, copy) || hit(sources, copy));
   };
   // Each answer is cached with whether a check failed for it, so a string read again flags the failure again.
   const cache = new Map();
-  checker.allows = (text, { full = true } = {}) => {
+  checker.allows = (text) => {
     if (typeof text !== 'string') return true;
-    const key = `${full ? 'f' : 'a'}${text}`;
+    const key = text;
     if (!cache.has(key)) {
       const before = checker.failed;
       checker.failed = false;
-      const allowed = decide(text, full);
+      const allowed = decide(text);
       cache.set(key, { allowed, failed: checker.failed });
       checker.failed ||= before;
     } else if (cache.get(key).failed) checker.failed = true;
@@ -347,7 +346,7 @@ export function postedCopy(state, post = {}) {
   const counter = { n: 0 };
   if (isPrivate(post.reading)) return { copy: privateCopy(state, checker, counter), withheld: counter.n };
   const copy = allowlisted(state, post, counter);
-  return { copy: alwaysChecked(copy, checker, counter), withheld: counter.n };
+  return { copy: allChecked(copy, checker, counter), withheld: counter.n };
 }
 
 // The record's own key names, which carry no data: the checks read only the keys that do, such as a pass id, a flow,
@@ -366,7 +365,7 @@ const FIXED_KEYS = new Set([
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
   'already_ruled', 'round', 'pass', 'requested_head',
 ]);
-const keyAllowed = (key, checker, options) => FIXED_KEYS.has(key) || checker.allows(key, options);
+const keyAllowed = (key, checker) => FIXED_KEYS.has(key) || checker.allows(key);
 
 // The whole record, less every string and every data-bearing key the full checks withhold (G2), each counted.
 function privateCopy(value, checker, counter) {
@@ -393,12 +392,13 @@ function privateCopy(value, checker, counter) {
   return out;
 }
 
-// The allowlisted copy, every string and every object key of it through the always-on check, as a backstop (G1).
-function alwaysChecked(value, checker, counter) {
-  if (typeof value === 'string') return checker.allows(value, { full: false }) ? value : undefined;
+// The allowlisted copy, every string and every data-bearing key of it through every text check, as a backstop (G1): a
+// path or a defined name can match a configured pattern or a private word too.
+function allChecked(value, checker, counter) {
+  if (typeof value === 'string') return checker.allows(value) ? value : undefined;
   if (Array.isArray(value)) {
     return value.flatMap((each) => {
-      const kept = alwaysChecked(each, checker, counter);
+      const kept = allChecked(each, checker, counter);
       if (kept === undefined) counter.n += 1;
       return kept === undefined ? [] : [kept];
     });
@@ -406,7 +406,7 @@ function alwaysChecked(value, checker, counter) {
   if (!isObject(value)) return value;
   const out = {};
   for (const [key, each] of Object.entries(value)) {
-    const kept = keyAllowed(key, checker, { full: false }) ? alwaysChecked(each, checker, counter) : undefined;
+    const kept = keyAllowed(key, checker) ? allChecked(each, checker, counter) : undefined;
     if (kept === undefined) counter.n += 1;
     else out[key] = kept;
   }

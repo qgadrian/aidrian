@@ -15,6 +15,8 @@ import { lateResiduals, recordPass, reviewStep } from '../plugins/aidrian/lib/re
 import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { contextFindings, heldWaiver as heldWaiverOf, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
+import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 
 const body = (items, section = 'Accepted residuals') => `## Summary\n\nWhy.\n\n## ${section}\n\n${items.map((item) => `- ${item}`).join('\n')}\n\n## Tests\n\n- npm test\n`;
 
@@ -1382,4 +1384,16 @@ test('every hold keys on the id a ruling names: on a record with no text, a fixe
   const bare = { ...emptyState(7, 'o/r'), passes: { p: { head: 'h', list: [{ file: 'src/a.js', state: 'fixed' }], carried: [{ file: 'src/a.js', severity: 'medium', residual: true, ended: true }] } } };
   assert.ok(heldWaiverOf(bare));
   assert.deepEqual(ruledLines(state).length, 0, 'every waiver ended with a listing: no line');
+});
+
+test('splitRuled keeps a repeat`s security flag, so a low security finding a residual waives posts no place', () => {
+  const settled = settledEntries({ priorFindings: [], acceptedResiduals: ['Token in the log'] });
+  const split = splitRuled([{ file: 'src/a.js', line: 2, title: 'Token logged', body: 'b', severity: 'low', security: true, already_ruled: 'Token in the log' }], settled);
+  assert.deepEqual([split.ruled.length, split.ruled[0].security], [1, true]);
+  const head = 'a'.repeat(40);
+  const state = { ...emptyState(7, 'o/r'), rounds: [{ head }], planNote: { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] } };
+  const recorded = recordFindings(state, 'engine:codex-local', { head, list: [], ruled: split.ruled }, { mint: true, paths: { tracked: () => true, lines: () => 10 } });
+  assert.equal(recorded.ruled[0].security, true, 'no earlier security finding seeds it: the flag does');
+  const { copy } = postedCopy(state, { reading: { visibility: 'PUBLIC', inside: true }, names: [] });
+  assert.deepEqual([copy.passes['engine:codex-local'].ruled[0].file, copy.passes['engine:codex-local'].ruled[0].line], [undefined, undefined]);
 });

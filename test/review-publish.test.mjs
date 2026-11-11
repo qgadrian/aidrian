@@ -33,7 +33,6 @@ test('the always-on check withholds token-shaped strings and local paths, on eve
   const checker = textChecker({ context: CONTEXT, words: [] });
   for (const text of [`a token ${TOKEN}`, `see ${['', 'Users', 'someone', 'notes.txt'].join('/')}`, `in ${homedir()}/x`, 'under ~/projects', 'the key sk-live_0123456789abcdef']) {
     assert.equal(checker.allows(text), false, text);
-    assert.equal(checker.allows(text, { full: false }), false, `${text}: the always-on check`);
   }
   assert.equal(checker.allows('Null check missing in the refund total'), true);
   assert.equal(checker.allows(`the token ${TOKEN.replace('_', '&#95;')}`), false, 'a decoded copy of the text is checked too');
@@ -42,7 +41,6 @@ test('the always-on check withholds token-shaped strings and local paths, on eve
 test('a dropped search counts as a hit, and a spent budget withholds what it has not checked', () => {
   const broken = textChecker({ context: CONTEXT, words: [], patterns: ['('] });
   assert.equal(broken.allows('anything at all'), false, 'a pattern that does not compile');
-  assert.equal(broken.allows('anything at all', { full: false }), true, 'the always-on check reads no pattern');
   const spent = textChecker({ context: CONTEXT, words: [], patterns: ['zzz'], budget: () => 0 });
   assert.equal(spent.allows('nothing matches here'), false, 'the budget is spent');
   const words = textChecker({ context: CONTEXT, words: ['zzz'], budget: () => 0 });
@@ -67,14 +65,12 @@ test('a pattern and a private word that match only the decoded copy withhold', (
   const root = checkout(t, ['bluebird']);
   const words = textChecker({ context: CONTEXT, root });
   assert.equal(words.allows('the blue%62ird release'), false, 'a private word, read from the checkout`s copy');
-  assert.equal(words.allows('the blue%62ird release', { full: false }), true, 'the always-on check reads no private word');
   assert.equal(words.allows('a plain sentence'), true);
 });
 
 test('a private-words copy that cannot be read withholds every string the private-words search would read', (t) => {
   const checker = textChecker({ context: CONTEXT, root: checkout(t, null) });
   assert.equal(checker.allows('a plain sentence'), false);
-  assert.equal(checker.allows('a plain sentence', { full: false }), true, 'the always-on check still runs alone');
   // On a private repository, a verdict's evidence is one such string; the record's own key names are no data and stay.
   const state = { ...emptyState(7, 'o/r'), revision: 6, passes: { p: { head: 'a'.repeat(40), verdicts: [{ flow: 'f', invariant: 'i', verdict: 'holds', evidence: 'src/a.js:3' }] } } };
   const { copy } = postedCopy(state, { reading: PRIVATE, checker });
@@ -106,7 +102,6 @@ test('a knowledge index that cannot be read withholds every string, and fails no
   const post = postContext({ forge: { visibility: () => 'PRIVATE', change: () => ({ isCrossRepository: false }), pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }) }, repo: 'o/r', n: 7, project, configs: [] });
   assert.deepEqual(post.reading, PRIVATE);
   assert.equal(post.checker.allows('a plain sentence'), false);
-  assert.equal(post.checker.allows('a plain sentence', { full: false }), false, 'the always-on check cannot run, so it withholds');
   const body = summaryBody({ ...emptyState(7, 'o/r'), revision: 1 }, null, 'x', post);
   assert.ok(body.startsWith('<!-- aidrian-review-summary -->'), 'the comment is still written');
 });
@@ -263,10 +258,15 @@ test('a hold because a check could not run says so, and a size hold says the siz
   assert.match(heldMessage(7, 5, 'size'), /too large for the pull request's comment/u);
 });
 
-test('a check that fails for a residual row holds no record: on a public repository the summary still posts', (t) => {
+test('a check that fails for a residual row holds no record: on a public repository the summary still posts', () => {
   const head = 'a'.repeat(40);
   const state = { ...emptyState(7, 'o/r'), revision: 5, rounds: [{ head, at: '2026-11-11T00:00:00.000Z' }] };
-  const checker = textChecker({ context: CONTEXT, root: checkout(t, null) });
+  // A checker whose check cannot run for the row's title alone.
+  const checker = { failed: false, allows(text) {
+    if (text !== 'A late nit') return true;
+    this.failed = true;
+    return false;
+  } };
   const rows = residualRows([{ pass: 'p', id: 'R1-1', title: 'A late nit', severity: 'low' }], state, { reading: { visibility: 'PUBLIC', inside: true }, checker });
   assert.equal(rows.rows[0].text, WITHHELD, 'the row`s title could not be checked, so it is withheld');
   const body = summaryBody(state, null, 'x', { reading: { visibility: 'PUBLIC', inside: true }, checker });
@@ -279,4 +279,32 @@ test('a private copy never posts this machine`s adopted mark', () => {
   const state = { ...emptyState(7, 'o/r'), revision: 2, passes: { p: { head, list: [{ id: 'R1-1', mint: '0000000a', title: 'x', adopted: true }] } } };
   const { copy } = postedCopy(state, { reading: PRIVATE, checker: { allows: () => true } });
   assert.deepEqual(copy.passes.p.list[0], { id: 'R1-1', mint: '0000000a', title: 'x' });
+});
+
+test('on a public repository every posted string meets the configured patterns and private words: a reason, a path, and a name', (t) => {
+  const root = checkout(t, ['bluebird']);
+  mkdirSync(path.join(root, 'src'));
+  for (const file of ['src/confidential.js', 'src/a.js']) writeFileSync(path.join(root, file), '1\n2\n3\n');
+  const git = (...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' }).stdout.trim();
+  git('add', '-A');
+  git('commit', '-qm', 'base');
+  const head = git('rev-parse', 'HEAD');
+  const checker = textChecker({ context: CONTEXT, root, patterns: ['CONFIDENTIAL'] });
+  const reviewer = 'bluebird-reviewer';
+  const state = {
+    ...emptyState(7, 'o/r'), revision: 2,
+    planNote: { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer, security: false } }, pairs: [] },
+    passes: { 'engine:codex-local': { head, reviewer, findings: 2, open: 2, files: ['src/confidential.js', 'src/a.js'], list: [
+      { id: 'R1-1', mint: '0000000a', title: 't', file: 'src/confidential.js', line: 1, severity: 'medium' },
+      { id: 'R1-2', mint: '0000000b', title: 't', file: 'src/a.js', line: 2, severity: 'medium' },
+    ] } },
+  };
+  const plan = { head, depth: 'single', reasons: ['CONFIDENTIAL project reason', 'rule 1: single'], engine: { name: 'codex-local', reason: 'auto' }, flows: [] };
+  const body = summaryBody(state, plan, 'fix_required', { reading: { visibility: 'PUBLIC', inside: true }, checker, root, names: [] });
+  const visible = body.split('\n').filter((line) => !line.startsWith('<!-- aidrian-review-state')).join('\n');
+  assert.doesNotMatch(visible, /CONFIDENTIAL|bluebird/iu, 'the visible reason and name');
+  assert.match(visible, /- rule 1: single/u, 'a clean reason stays');
+  const record = JSON.stringify(stateFromComment(body, 7));
+  assert.doesNotMatch(record, /confidential|bluebird/iu, 'the path and the name in the posted record');
+  assert.match(record, /src\/a\.js/u, 'a clean path stays');
 });

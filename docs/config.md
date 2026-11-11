@@ -161,7 +161,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.includeGuardedPaths` | `true` lets a pull request that changes a guarded path (the fixed list under `paths` in [Auto-merge](#auto-merge)) pass the `paths` check, but never a policy file: the files the gate reads its policy from, including a folder `.aidrian.json` names, and `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay refused. `false`, the default, keeps a guarded path off. It counts only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout. Every other check stays. Read the risk under [Auto-merge](#auto-merge) before setting it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`. |
-| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's "Merge anyway", at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
 | `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. The record commands read it as the pull request's base branch commits it, not from the working copy; only a command the forge names no base for reads no comment, keeps this machine's record, and publishes nothing. |
@@ -382,7 +382,7 @@ It does not reach a fork: gh never deletes a head branch in another repository.
 ## Unattended waiver
 
 It lets a session that runs without the Human merge a pull request whose review stopped at the round cap,
-on the word of a fresh judge instead of the Human's "Merge anyway".
+on the word of a fresh judge instead of the Human's answer to the merge guard's question.
 
 ### Turn it on
 

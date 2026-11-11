@@ -1,6 +1,6 @@
 // `aidrian pr waive <PR> --verdict waive|refuse --reason TEXT [--head SHA]`: a judge's verdict, recorded in the review
 // record (lib/review/state.mjs) under `waivers`, that the merge guard (lib/rules/github/merge-review.mjs) may take in place
-// of the Human's "Merge anyway" answer, so an unattended run can finish. docs/config.md#unattended-waiver.
+// of the Human's answer to the merge guard's question, so an unattended run can finish. docs/config.md#unattended-waiver.
 //
 // It covers one denial only, `round_cap`: the review step's outcome on the merge's own head is `round_limit`, the round
 // cap. Never a head the last review step did not cover, whatever that step's outcome (after `received` or `none_needed`
@@ -205,7 +205,7 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
 // What to run after a recorded verdict.
 const nextStep = (entry, pr, local) => (entry.verdict === 'waive'
   ? `merge with \`gh pr merge ${pr} --match-head-commit ${entry.head}\`: the merge guard accepts this verdict only while github.unattendedWaiver.allow is true on the base and default branches and the switch is on in ${local}`
-  : 'the guard stands: the Human merges, or answers "Merge anyway"');
+  : 'the guard stands: the Human merges, or answers the merge guard\'s question with "Merge with the findings filed"');
 
 // The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless the
 // base branch's `review.record` is "local", the pull request's summary comment. The entries owed on this machine are

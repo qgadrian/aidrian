@@ -1345,6 +1345,20 @@ test('extra rounds "ask": a converging review at the cap dispatches the judge, t
   assert.match(r.comments[0].body, /\*\*Extra rounds:\*\*\n- round 2 on `[0-9a-f]{7}`: granted by the Human \(Tester; an audit entry, not proof\)/u);
 });
 
+test('the merge guard reads the open count the step at the cap wrote, on the capped head only', async (t) => {
+  const guard = (r, head) => judgeMerge({ project: projectAt(r.dir), pr: 7, head, viewPr: () => null, answers: [] }) ?? '';
+  const { r, capped } = await toTheCap(t, {});
+  assert.equal(capped.status, 'extension_check');
+  assert.match(guard(r, capped.head), /is `extension_check`: stopped at its round limit, with 1 finding open, and not running\./u);
+  // A fix pushed after round 2: the cap meets a head no round reviewed, so the last round's count is not this head's.
+  const fixed = await toTheCap(t, {}, { fixFirst: true });
+  assert.equal(fixed.capped.status, 'extension_check');
+  const reason = guard(fixed.r, fixed.capped.head);
+  assert.match(reason, /is `extension_check`: stopped at its round limit, and not running\./u);
+  assert.match(reason, /stopped at its round limit\. Ship, and file what it left open as an issue\?/u);
+  assert.doesNotMatch(reason, /findings? open/u);
+});
+
 test('extra rounds: a fix pushed past the cap reaches the judge as unreviewed, and a stop says so on the pull request', async (t) => {
   const { r, capped, last } = await toTheCap(t, {}, { fixFirst: true });
   assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));

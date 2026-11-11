@@ -163,7 +163,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Product feedback post | `aidrian pr product-feedback post` on a pull request from outside the team without the Human's answer in the session, and from a subagent | none: the Human answers, or runs `post` in their own shell |
 | Ready hold, in a project that runs product feedback | Marking a draft ready while its [product feedback](config.md#product-feedback) is owed ([Ready hold](#ready-hold)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in their own shell before the session |
 | Ready checks | Marking a draft ready while a check on its head has not finished, or before a check its last edit re-queues has shown, and editing a title or body in the same call as a ready ([Ready checks](#ready-checks)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, the ready hold's, set the same way |
-| Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
+| Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers the guard's question, "Merge anyway" or, at the round cap, "Merge with the findings filed", or merges in their own shell; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
@@ -475,8 +475,8 @@ or with `state.dir` unset until the folder is outside. It refuses a checkout at 
 with `state.dir` set or unset: that denial says to move that checkout first, and that the Human merges until it is gone.
 It refuses a state folder whose path holds a line break the same way, which git's list of checkouts cannot show:
 that denial says to move the folder first, and that the Human merges until its path holds none.
-The hold applies with no review record too, and the `Merge anyway`
-answer of the waiver paragraph below does not waive it. With neither default-branch ref here it makes only the refusals about
+The hold applies with no review record too, and no answer of the waiver paragraphs below
+waives it. With neither default-branch ref here it makes only the refusals about
 a checkout, which need no base. So a repository with no `refs/remotes/origin/HEAD` whose default branch is not `main`
 gets no compare of `state.dir` or the project folder from a merge naming its number, unless a head lookup names the base;
 `git remote set-head origin --auto` sets that ref.
@@ -509,6 +509,20 @@ The Human waives it. The reason prints a question naming `#<PR>` and the head's 
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
+
+At the round cap, with nothing owed and the head's outcome `extension_check` or `round_limit`, the review is stopped
+and not running, so the reason offers no wait. It says the review is stopped at its round limit and not running, and
+asks "Review of pull request #<PR> at <sha7> stopped at its round limit, with <N> findings open. Ship, and file them as
+an issue?", or with one, "..., with 1 finding open. Ship, and file it as an issue?". The count is the open findings of the
+record's last round; it is left out, and the question ends "Ship, and file what it left open as an issue?", when that
+round is not for the head, records no count, or left none.
+The options are "Merge with the findings filed" and "Grant more review rounds", with neither marked preferred. "Merge with the findings filed", or
+"Merge anyway", lets the merge run under the same conditions as the paragraph above. On that answer the session files
+what the review left open as a follow-up issue first, then merges; the guard does not check the issue. "Grant more
+review rounds" merges nothing, and the reason names the route to one more round: the waiting check's own while the check
+at the cap waits for its judge or the Human, else `aidrian pr extend <PR> --human approve`, whose refusal names the
+route when no extension waits for the Human ([Extra rounds](review.md#extra-rounds)). `extension_ask` keeps the first
+question: the step waits for the Human's answer to the extra-round question there.
 
 Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr waive` stands in
 for that answer, for one denial only: `round_limit` on the merge's own head, with nothing owed. A head pushed after the

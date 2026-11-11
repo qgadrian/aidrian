@@ -15,6 +15,7 @@ import { recordPass, recordSignoff, reviewStep } from '../plugins/aidrian/lib/re
 import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
 import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { waitingRoute } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -167,6 +168,118 @@ test('the Human`s "Merge anyway" waives it, for that pull request and head, afte
   r.record(6, (state) => (outcome(state, 'received'), owe(state, 'request', '2026-11-03T14:20:00.000Z')));
   r.answer(question.replace('#5', '#6'), 'Merge anyway', '2026-11-03T14:10:00.000Z');
   assert.ok(r.run('gh pr merge 6'), 'an answer older than the request still owed');
+});
+
+// A review stopped at its round limit on HEAD: `status` is `extension_check` (the cap's check waits for its judge) or
+// `round_limit`; `rounds` are the record's rounds, and `extensions` its extra-round checks.
+const JUDGING = { source: 'plan', round: 1, head: HEAD, status: 'judging', mode: 'ask', red_flags: [] };
+const stopped = (status, { rounds = [{ head: HEAD, open: 2 }], extensions = status === 'extension_check' ? [JUDGING] : [], head = HEAD } = {}) => (state) => {
+  state.rounds.push(...rounds);
+  if (extensions.length) state.extensions = extensions;
+  outcome(state, status, head);
+};
+const OLD_TAIL = /"Wait for the review" \(first, recommended\) and "Merge anyway"/u;
+const asked = (reason) => /the question "([^"]+)"/u.exec(reason ?? '')?.[1];
+
+test('a review stopped at its round limit asks the Human to ship or to grant rounds, never to wait', (t) => {
+  const r = repo(t);
+  const question = 'Review of pull request #5 at abcdef1 stopped at its round limit, with 2 findings open. Ship, and file them as an issue?';
+  const grant = 'Run `aidrian pr extend 5 --human approve`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.';
+  for (const [status, route] of [['extension_check', waitingRoute(5, JUDGING)], ['round_limit', grant]]) {
+    r.record(5, stopped(status));
+    const reason = r.run('gh pr merge 5');
+    assert.equal(reason, `Blocked: this merges pull request #5 at abcdef1, and the review of head abcdef1 is \`${status}\`: stopped at its round limit, with 2 findings open, and not running. ` +
+      `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "Merge with the findings filed" and "Grant more review rounds", ` +
+      'and mark neither as preferred. When the Human picks "Merge with the findings filed", file the findings the review left open as a follow-up issue, then merge. ' +
+      `When the Human picks "Grant more review rounds", do not merge. ${route} Or the Human merges in their own shell.`, status);
+    assert.match(reason, /`aidrian pr extend 5 --human approve`/u, `${status}: both routes name the grant command`);
+    assert.doesNotMatch(reason, /Wait for the review/u, status);
+    assert.doesNotMatch(reason, /recommend/iu, status);
+    assert.doesNotMatch(reason, /\b(?:I|you|your)\b/u, status);
+    const mcp = checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: r.viewer() });
+    assert.equal(mcp, reason, `${status}: the MCP tool gets the same deny`);
+  }
+  assert.match(r.run('gh pr merge 5') ?? '', /its refusal names the route to one more round/u, 'round_limit: the refusal names the route');
+  const reasoned = repo(t);
+  reasoned.record(5, (state) => (stopped('round_limit')(state), (state.outcome.reason = 'the judge stopped')));
+  assert.match(reasoned.run('gh pr merge 5') ?? '', /is `round_limit` \(the judge stopped\): stopped at its round limit, with 2 findings open, and not running\./u);
+});
+
+test('the count is the last round`s, for the merge`s head only', (t) => {
+  const r = repo(t);
+  r.record(5, stopped('round_limit', { rounds: [{ head: HEAD, open: 5 }, { head: HEAD, open: 1 }] }));
+  const one = r.run('gh pr merge 5') ?? '';
+  assert.match(one, /is `round_limit`: stopped at its round limit, with 1 finding open, and not running\./u);
+  assert.equal(asked(one), 'Review of pull request #5 at abcdef1 stopped at its round limit, with 1 finding open. Ship, and file it as an issue?');
+  for (const [name, rounds] of [
+    ['a last round on another head', [{ head: HEAD, open: 2 }, { head: NEXT, open: 2 }]],
+    ['a round with no count', [{ head: HEAD }]],
+    ['a count of zero', [{ head: HEAD, open: 0 }]],
+    ['a count that is not a number', [{ head: HEAD, open: '2' }]],
+    ['no round at all', []],
+  ]) {
+    r.record(5, stopped('round_limit', { rounds }));
+    const reason = r.run('gh pr merge 5') ?? '';
+    assert.match(reason, /is `round_limit`: stopped at its round limit, and not running\./u, name);
+    assert.equal(asked(reason), 'Review of pull request #5 at abcdef1 stopped at its round limit. Ship, and file what it left open as an issue?', name);
+    assert.doesNotMatch(reason, /findings? open/u, name);
+  }
+});
+
+test('the Human`s "Merge with the findings filed" lets a capped review merge, and only a capped one', (t) => {
+  const r = repo(t);
+  const at = '2026-11-03T14:10:00.000Z';
+  for (const status of ['round_limit', 'extension_check']) {
+    r.record(5, stopped(status));
+    writeFileSync(r.transcript, '');
+    const question = asked(r.run('gh pr merge 5'));
+    assert.ok(question, status);
+    for (const [name, asks, label, when] of [
+      ['an answer about another head', question.replace('abcdef1', '1234567'), 'Merge with the findings filed', at],
+      ['an answer about another pull request', question.replace('#5', '#55'), 'Merge with the findings filed', at],
+      ['an answer older than the outcome', question, 'Merge with the findings filed', '2026-11-03T13:00:00.000Z'],
+      ['the Human granted rounds', question, 'Grant more review rounds', at],
+    ]) {
+      r.answer(asks, label, when);
+      assert.ok(r.run('gh pr merge 5'), `${status}: ${name}`);
+    }
+    r.answer(question, 'Merge with the findings filed', at);
+    assert.equal(r.run('gh pr merge 5'), null, status);
+    assert.equal(r.run('gh pr merge 5'), null, `${status}: and on every later call`);
+    r.answer(question, 'Merge anyway', at);
+    assert.equal(r.run('gh pr merge 5'), null, `${status}: "Merge anyway" still waives it`);
+  }
+  for (const [name, edit] of [
+    ['a running review', (state) => outcome(state, 'running')],
+    ['a check that waits for the Human', stopped('extension_ask', { extensions: [{ ...JUDGING, status: 'asking' }] })],
+    ['a capped status on another head', stopped('round_limit', { head: NEXT })],
+    ['a capped status with a review owed', (state) => (stopped('round_limit')(state), owe(state, 'request'))],
+  ]) {
+    r.record(5, edit);
+    writeFileSync(r.transcript, '');
+    const question = asked(r.run('gh pr merge 5'));
+    assert.ok(question, name);
+    r.answer(question, 'Merge with the findings filed', at);
+    assert.ok(r.run('gh pr merge 5'), name);
+  }
+});
+
+test('a review that runs, waits for the Human, covers another head, or is owed keeps the first question', (t) => {
+  const r = repo(t);
+  r.record(5, (state) => outcome(state, 'running'));
+  assert.equal(r.run('gh pr merge 5'), 'Blocked: this merges pull request #5 at abcdef1, and the review of head abcdef1 is `running`: run `aidrian pr review 5` until it returns `received` or `none_needed`. ' +
+    'Only the Human waives this: ask with AskUserQuestion, the question "Merge pull request #5 at abcdef1 before its review is finished?", the options "Wait for the review" ' +
+    '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". Or the Human merges in their own shell.');
+  for (const [name, edit] of [
+    ['a check that waits for the Human', stopped('extension_ask', { extensions: [{ ...JUDGING, status: 'asking' }] })],
+    ['a capped status on another head', stopped('round_limit', { head: NEXT })],
+    ['a capped status with a review owed', (state) => (stopped('round_limit')(state), owe(state, 'request'))],
+  ]) {
+    r.record(5, edit);
+    const reason = r.run('gh pr merge 5') ?? '';
+    assert.match(reason, OLD_TAIL, name);
+    assert.doesNotMatch(reason, /stopped at its round limit/u, name);
+  }
 });
 
 test('gh api merges are read: a PUT or POST to pulls/<n>/merge', (t) => {

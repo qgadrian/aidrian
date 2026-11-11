@@ -333,17 +333,20 @@ test('a judge`s ruling stays a judge`s on every copy: an unnamed judge posts the
   }
 });
 
-test('a verdict keeps evidence of a citation`s shape on a public copy, so another machine can check it; prose is left out', (t) => {
+test('a public copy posts no verdict evidence: prose under test:, an unknown capture, a violated citation, or a security finding`s place', (t) => {
   const root = checkout(t, []);
   writeFileSync(path.join(root, 'a.js'), '1\n2\n3\n');
   const git = (...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' }).stdout.trim();
   git('add', '-A');
   git('commit', '-qm', 'base');
   const head = git('rev-parse', 'HEAD');
-  const verdicts = ['a.js:3', 'a.js:2-3', 'test:refund cap holds', 'capture:look-360', 'a.js:9', 'gone.js:1', 'because the code checks it'].map((evidence, i) => ({ flow: 'booking', invariant: `i${i}`, verdict: 'holds', evidence }));
-  const state = { ...emptyState(7, 'o/r'), revision: 2, planNote: { head, passes: { p: { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: verdicts.map(({ flow, invariant }) => ({ flow, invariant })) }, passes: { p: { head, verdicts } } };
+  const cited = [['holds', 'test:the refund total trusts the request body, see the handler'], ['holds', 'capture:no-such-key'], ['violated', 'a.js:2'], ['holds', 'a.js:3']];
+  const verdicts = cited.map(([verdict, evidence], i) => ({ flow: 'booking', invariant: `i${i}`, verdict, evidence }));
+  const state = { ...emptyState(7, 'o/r'), revision: 2, planNote: { head, passes: { p: { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: verdicts.map(({ flow, invariant }) => ({ flow, invariant })) },
+    passes: { p: { head, verdicts, list: [{ id: 'R1-1', mint: '0000000a', title: 'Token logged', file: 'a.js', line: 3, severity: 'high' }] } } };
   const { copy } = postedCopy(state, { reading: { visibility: 'PUBLIC', inside: true }, checker: textChecker({ context: CONTEXT, words: [] }), root, names: [] });
-  assert.deepEqual(copy.passes.p.verdicts.map((each) => each.evidence ?? null), ['a.js:3', 'a.js:2-3', 'test:refund cap holds', 'capture:look-360', null, null, null]);
+  assert.deepEqual(copy.passes.p.verdicts.map((each) => [each.verdict, each.evidence ?? null]), [['holds', null], ['holds', null], ['violated', null], ['holds', null]]);
+  assert.doesNotMatch(JSON.stringify(copy), /a\.js:|refund|no-such-key/u);
 });
 
 test('every string a residual row keeps meets the checks: a file matching a configured pattern withholds the row, a pass or severity that fails is left out', () => {

@@ -2344,21 +2344,24 @@ test('a machine with no record that runs extend on a public copy holding an unte
   assert.match(stopped.reason, /the open finding R2-9/u);
 });
 
-test('a machine that adopts a public copy finishes the review its passes finished: verdict citations stay on the copy', async (t) => {
+test('a machine that adopts a public copy reruns a pass whose verdicts arrive without evidence, and then finishes', async (t) => {
   const r = bookingRepo(t);
   r.forge.visibility = () => 'PUBLIC';
   const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
   let runs = 0;
   const exec = async () => (runs += 1, { status: 'done', findings: [], verdicts, dropped: [] });
+  const attest = (step) => { for (const pass of step.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: step.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify(verdicts) }); };
   const first = await r.step({ exec });
   assert.equal(first.status, 'dispatch');
-  for (const pass of first.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify(verdicts) });
-  const done = await r.step({ exec });
-  assert.equal(done.status, 'received', JSON.stringify(done.flows));
+  attest(first);
+  assert.equal((await r.step({ exec })).status, 'received');
+  assert.doesNotMatch(JSON.stringify(stateFromComment(r.comments.at(-1).body, 7).passes), /src\/booking\/a\.js:1/u, 'the public copy posts no evidence');
   const ran = runs;
   // Another machine: no record of its own, only the public comment.
   rmSync(recordFile(r.project, 7));
   const again = await r.step({ exec });
-  assert.equal(again.status, 'received', JSON.stringify(again.flows));
-  assert.equal(runs, ran, 'no reviewer runs again');
+  assert.equal(again.status, 'dispatch', 'the agent pass is dispatched again, not left as fix_required');
+  attest(again);
+  assert.equal((await r.step({ exec })).status, 'received');
+  assert.ok(runs > ran, 'and the exec pass whose verdicts came without evidence ran again');
 });

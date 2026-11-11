@@ -1174,9 +1174,9 @@ which the review step alone writes, are kept from the comment.
   or person's name. Without text, the waived-repeat lines show the count, the id, the file, and the severity; an Extra
   rounds line shows the status, who decided, and its red flags by name; a waiver line shows its kind, head, verdict,
   and judge; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
-  finding has no file or line there ([Reviewers](#reviewers)). A verdict keeps its evidence only as a citation
-  (`path:line` of a tracked file, `test:<name>`, or `capture:<key>`), so another machine checks it as this one did.
-  A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads
+  finding has no file or line there ([Reviewers](#reviewers)). A verdict posts no evidence: a machine that adopts the
+  copy does not count a pass whose holds or not_affected verdicts arrive without it, and runs that pass again, so its
+  reviewer answers with evidence that machine checks. A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads
   as the Human's.
 - **Text checks.** Every string that may be posted is checked first, on its text with whitespace runs collapsed and on
   a decoded copy, and a hit withholds it and never fails the step: token-shaped strings and local paths always (in the

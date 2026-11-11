@@ -384,8 +384,8 @@ function privateCopy(value, checker, counter) {
   if (!isObject(value)) return value;
   const out = {};
   for (const [key, each] of Object.entries(value)) {
-    // `adopted` is this machine's own mark (fillWithheld): no copy posts it.
-    if (key === 'adopted') continue;
+    // `adopted` and `evidenceWithheld` are this machine's own marks (fillWithheld): no copy posts them.
+    if (key === 'adopted' || key === 'evidenceWithheld') continue;
     const kept = keyAllowed(key, checker) ? privateCopy(each, checker, counter) : undefined;
     if (kept === undefined) counter.n += 1;
     else out[key] = kept;
@@ -517,19 +517,9 @@ function allowlisted(state, post, counter) {
     return out;
   };
   const findings = (head) => list(finding(head));
-  // A verdict's evidence stays only as a citation of the one shape a reviewer is asked for (flows.mjs citationProblem):
-  // `path:line` with a path git tracks at the pass's head and a line within it, `test:<name>`, or `capture:<key>`.
-  // Another machine then checks it as this one did, and the pass does not read as unverified there.
-  const citation = (head) => (value) => {
-    if (typeof value !== 'string' || value.length > 300) return drop();
-    const text = value.trim();
-    if (/^capture:[\w.:/@=+-]{1,200}$/u.test(text) || /^test:[\w .:/@+()#'-]{1,200}$/u.test(text)) return value;
-    const place = /^(.+?):(\d+)(?:-(\d+))?$/u.exec(text);
-    return place && path(head)(place[1]) && lineOk(head, place[1], Number(place[2])) && (!place[3] || lineOk(head, place[1], Number(place[3]))) ? value : drop();
-  };
-  const verdict = (head) => (source) => {
+  const verdict = (source) => {
     if (!isObject(source) || !pair(source.flow, source.invariant)) return drop();
-    return object(source, { flow: (value) => value, invariant: (value) => value, verdict: word(new Set(['holds', 'violated', 'not_affected', 'cannot_verify'])), evidence: citation(head) });
+    return object(source, { flow: (value) => value, invariant: (value) => value, verdict: word(new Set(['holds', 'violated', 'not_affected', 'cannot_verify'])) });
   };
   const pairEntry = (extra) => (source) => {
     if (!isObject(source) || !pair(source.flow, source.invariant)) return drop();
@@ -623,7 +613,7 @@ function allowlisted(state, post, counter) {
       list: (value) => (value === null ? null : findings(head)(value)),
       ruled: findings(head),
       carried: findings(head),
-      verdicts: list(verdict(head)),
+      verdicts: list(verdict),
     });
   };
   const capture = check((value) => typeof value === 'string' && CAPTURE_KEY.test(value));
@@ -760,6 +750,14 @@ export function fillWithheld(remote, local) {
     if (!isObject(result) || !isObject(theirs) || !sameHead(result.head, theirs.head)) continue;
     fillKeys(result, theirs, ['contracts', 'cross_notes', 'dropped', 'files']);
     for (const verdict of Array.isArray(result.verdicts) ? result.verdicts : []) fillKeys(verdict, matching(theirs.verdicts, verdict, ['flow', 'invariant', 'verdict']));
+  }
+  // A pass whose holds or not_affected verdict arrived with no evidence, which a copy that is not private never posts,
+  // is marked for this machine: the review step does not count it as finished, so its reviewer answers again here.
+  for (const result of Object.values(isObject(remote.passes) ? remote.passes : {})) {
+    if (!isObject(result)) continue;
+    const unproven = (Array.isArray(result.verdicts) ? result.verdicts : []).some((verdict) => isObject(verdict) && ['holds', 'not_affected'].includes(verdict.verdict) && (typeof verdict.evidence !== 'string' || verdict.evidence.trim() === ''));
+    if (unproven) result.evidenceWithheld = true;
+    else delete result.evidenceWithheld;
   }
   for (const [flow, signoff] of Object.entries(isObject(remote.signoffs) ? remote.signoffs : {})) {
     const theirs = local.signoffs?.[flow];

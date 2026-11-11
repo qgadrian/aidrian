@@ -21,8 +21,6 @@ const compiles = (source, flags) => {
     return false;
   }
 };
-// What is wrong with a list of path globs, or null: an empty `re:`, or what review/config.mjs pathsProblem finds.
-const globsProblem = (list) => (list.includes('re:') ? 'has re: with no expression' : pathsProblem(list));
 // A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
 // (lib/rules/github/pr-body.mjs), so they are checked filled with a plain word.
 const isPattern = (value) => isText(value) && compiles(value.replaceAll('{types}', 'x').replaceAll('{issueKey}', 'x'), 'u');
@@ -44,9 +42,9 @@ export const TYPES = {
   text: [isText, 'a non-empty string'],
   textOrNull: [(value) => value === null || isText(value), 'a non-empty string or null'],
   texts: [isTexts, 'a list of non-empty strings'],
-  // Path globs as review globs take them (review/plan.mjs pathPattern), checked by review/config.mjs pathsProblem, and no
-  // empty `re:`, which would match every path.
-  globs: [(value) => isTexts(value) && !globsProblem(value), (value) => `a list of globs${isTexts(value) ? `, and it ${globsProblem(value)}` : ''}`],
+  // Path globs as review globs take them (review/plan.mjs pathPattern), checked by review/config.mjs pathsProblem, which
+  // also refuses an empty `re:`, since it would match every path.
+  globs: [(value) => isTexts(value) && !pathsProblem(value), (value) => `a list of globs${isTexts(value) ? `, and it ${pathsProblem(value)}` : ''}`],
   someTexts: [(value) => isTexts(value) && value.length > 0, 'a non-empty list of non-empty strings'],
   textsOrNull: [(value) => value === null || isTexts(value), 'a list of non-empty strings, or null'],
   patternOrNull: [(value) => value === null || isPattern(value), 'a regular expression as a string, or null'],

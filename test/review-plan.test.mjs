@@ -12,8 +12,21 @@ const codex = { name: 'codex-local', kind: 'exec', stage: 'independent' };
 const plan = (changes, review, extra = {}) => buildPlan({ head: 'h', base: 'b', changes, addedLines: {}, removedFiles: new Set(), config: config(review), engine: codex, ...extra });
 
 test('classify: ignored files count no lines; docs and assets cannot change behaviour; tests can', () => {
-  const sorted = classify([change('package-lock.json', 900), change('README.md', 5), change('src/a.test.js', 3), change('src/a.js', 7), change('logo.svg', 1)]);
-  assert.deepEqual(sorted, { ignored: ['package-lock.json'], nonBehaviour: ['README.md', 'logo.svg'], behaviour: ['src/a.test.js', 'src/a.js'], lines: 16 });
+  const sorted = classify([change('package-lock.json', 900), change('README.md', 5), change('src/a.test.js', 3), change('src/a.js', 7), change('logo.png', 1)]);
+  assert.deepEqual(sorted, { ignored: ['package-lock.json'], nonBehaviour: ['README.md', 'logo.png'], behaviour: ['src/a.test.js', 'src/a.js'], lines: 16 });
+});
+
+// The default review.nonBehaviour lets a pull request skip review, and with github.autoMerge.unreviewedPaths merge
+// unattended, so it holds only prose and raster or font assets: never a file that can carry code or dependencies.
+test('classify: under the default lists, prose and raster assets cannot change behaviour, and nothing that can carry code is with them', () => {
+  for (const file of ['README.md', 'docs/guide.md', 'LICENSE', 'NOTICE', 'a.png', 'img/b.jpg', 'fonts/c.woff2']) {
+    assert.deepEqual(classify([change(file)]).nonBehaviour, [file], `${file} is prose or an asset`);
+  }
+  // requirements.txt and constraints.txt pin dependencies, CMakeLists.txt is a build, an .mdx page compiles to JSX, an
+  // .svg can carry script, and a docs folder holds a docs site's config, scripts, and package manifest.
+  for (const file of ['requirements.txt', 'constraints.txt', 'CMakeLists.txt', 'page.mdx', 'logo.svg', 'docs/conf.py', 'docs/scripts/build.sh', 'docs/package.json']) {
+    assert.deepEqual(classify([change(file)]).behaviour, [file], `${file} can change behaviour`);
+  }
 });
 
 test('evaluateRules: rules add up, so order never hides a rule, and none only lowers through onlyFiles', () => {
@@ -138,6 +151,32 @@ test('a path entry may be re:<regex>: rules, flows, and tests match it, and a ba
   const errors = [];
   checkReview({ flows: { bad: { files: ['re:(unclosed'] } }, rules: [{ when: { anyFiles: ['re:['] }, depth: 'split' }] }, 'c.json', errors);
   assert.equal(errors.length, 2);
+});
+
+// An empty `re:` compiles to a pattern that matches every path, so one stray entry would sort every file as prose, or
+// as ignored, and the plan would skip the review.
+test('checkReview: an empty re: in review.nonBehaviour or review.ignore is an error, and only that entry is left out', () => {
+  const errors = [];
+  const prose = checkReview({ nonBehaviour: ['README.md', 're:'] }, 'c.json', errors);
+  assert.deepEqual(errors, ['c.json: "review.nonBehaviour" has re: with no expression']);
+  assert.deepEqual(prose.nonBehaviour, ['README.md'], 'the team\'s other entries stay, never the built-in list');
+  const reviewed = plan([change('src/app.js')], prose);
+  assert.equal(reviewed.depth, 'single', 'src/app.js still plans a review');
+  assert.deepEqual(plan([change('README.md')], prose).depth, 'none', 'the entry beside it still counts');
+
+  const ignoreErrors = [];
+  const ignore = checkReview({ ignore: ['re:'] }, 'c.json', ignoreErrors);
+  assert.deepEqual(ignoreErrors, ['c.json: "review.ignore" has re: with no expression']);
+  assert.deepEqual(ignore.ignore, []);
+  assert.deepEqual(classify([change('src/app.js')], ignore).ignored, [], 'no file is ignored because of it');
+});
+
+test('checkReview: an empty re: in a rule\'s when.onlyFiles is an error, so a none rule cannot cover every file', () => {
+  const errors = [];
+  const review = checkReview({ rules: [{ when: { onlyFiles: ['re:'] }, depth: 'none' }] }, 'c.json', errors);
+  assert.deepEqual(errors, ['c.json: "review.rules[0].when.onlyFiles" has re: with no expression']);
+  assert.deepEqual(review.rules, []);
+  assert.equal(plan([change('src/app.js')], review).depth, 'single');
 });
 
 test('mergePlans then mergeStages: a plan command pass for an agent folds into the built-in pass for it, and a shared flow keeps both files and reasons', () => {

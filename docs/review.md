@@ -36,7 +36,8 @@ another.
 ```
 
 - A path list takes globs and `re:<regex>` entries, matched against the `/`-separated path.
-  A `re:` entry that does not compile is a config error; the list keeps its other entries.
+  A `re:` entry that does not compile, or an empty `re:`, which would match every path, is a config error;
+  the list keeps its other entries.
 - `when` takes `onlyFiles` (every reviewed file matches), `anyFiles` (some changed file matches), and `lines.over`
   (changed lines, not counting `review.ignore`). That is all it will ever take: anything smarter is a plan command.
 - `depth: "none"` needs `onlyFiles`, so it only covers the files it names, and any rule that asks for more wins.
@@ -46,8 +47,13 @@ another.
   meets `independent-model`.
 
 `review.ignore` lists files no review reads and no size counts: lockfiles, snapshots, generated, vendored, and
-minified files by default. `review.nonBehaviour` lists files that cannot change behaviour: prose docs and static
-assets by default. Tests are not on it: deleting a test changes what the code is held to.
+minified files by default. `review.nonBehaviour` lists files that cannot change behaviour. By default it is Markdown,
+license notices, and raster images and fonts: `**/*.md`, `**/LICENSE`, `**/NOTICE`, and `.png`, `.jpg`, `.jpeg`,
+`.gif`, `.webp`, `.ico`, `.woff`, `.woff2`, and `.ttf` files. It leaves out what looks like prose but can carry code or
+dependencies: `.txt` (a `requirements.txt` or `CMakeLists.txt`), `.mdx` (compiled to JSX), `.svg` (can hold script),
+and any other file under `docs/`, such as a docs site's `conf.py`, scripts, or `package.json`. Tests are not on it:
+deleting a test changes what the code is held to. A project's own list replaces the default, so a project lists such
+files there only when it knows nothing runs them.
 
 ## Split
 
@@ -848,8 +854,8 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
      than 40 lines. A fix is how the pull request's own diff (each head against its merge base with the base branch)
      changed between rounds, line by line per file, without `review.ignore` files. Lines the base branch gained are in
      neither diff, so merging or rebasing on the base is no bloat, even in a file the pull request changes too. Only
-     code counts as fix growth: lines added to `review.nonBehaviour` files, such as Markdown and `docs/**`, are no
-     bloat, since rewording a doc across rounds is normal review work. A docs-only pull request never bloats.
+     code counts as fix growth: lines added to `review.nonBehaviour` files, such as Markdown, are no
+     bloat, since rewording a doc across rounds is normal review work. A pull request of only such files never bloats.
 
    Drifting and bloating measure a round from the head it first reviewed, so what a [quiet push](#rounds) added is that
    round's fix, and a file it added is not one the pull request first changed. The history's `fix` is measured the same

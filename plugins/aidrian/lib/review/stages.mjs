@@ -3,7 +3,8 @@
 // reviewers. Every return goes through the step's outcome writers on `s`, which lib/review/run.mjs defines.
 
 import { markerFor } from '../review-gate.mjs';
-import { ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
+import { ANSWERED, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
+import { sameCommit } from './state.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { lateRoundResidual } from '../finding-disposition.mjs';
 import { isClean, resolve } from './diff.mjs';
@@ -48,8 +49,8 @@ function countFailures(state, head, failures) {
 export async function runStages(s) {
   const { opts, config, env, forge, exec, awaitBot, root, cleanEnv, repo, n, head, baseTip, review, state, plan, map, resultFor, quietSince, dispositionTable, fallbacks, keptSignoffs, visualEntries, isVisual, passes, removedTests, maxRounds, grantFloor, flowStatus, finish, capReached, quotaStop } = s;
 
-  // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
-  // waits for every earlier pass.
+  // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, whose
+  // answer is awaited after every earlier pass.
   const finalStage = [...plan.stages].reverse().find((stage) => stage.passes.every((pass) => map[pass.reviewer]?.kind !== 'remote')) ?? null;
   const current = state.rounds.at(-1);
   // A quiet push since the round's head keeps the round: it moves to this head, its number, cap, and last-round flag
@@ -90,6 +91,59 @@ export async function runStages(s) {
   if (quiet) {
     openRound();
     plan.reasons = [...plan.reasons, `a comment, doc, or test-only change since ${roundBefore.head.slice(0, 7)}: the round stays open; the passes it touches re-review it`];
+  }
+
+  // The review bot's request: the gate's marker sums every code-reviewer pass that counts for this head (a
+  // carried-forward one too); with the gate on and none on record, nothing is posted. The plan's cap (the base branch's,
+  // plus valid extra rounds) is the bot's too: a cap an earlier request recorded counts only under the Human's override.
+  // A request past the base branch's cap uses an extra round, granted on the signals of this head: the wait posts
+  // nothing for another head (head_moved), and the next step reads the grant again on it.
+  const gate = () => {
+    if (!config.github.reviewGate.enabled) return {};
+    const reviewed = passes.filter((pass) => pass.kind === 'agent' && pass.reviewer === 'code-reviewer').map(resultFor).filter(Boolean);
+    if (!reviewed.length) return { reason: 'the review gate needs the code-reviewer pass on record before the bot is asked' };
+    const findings = reviewed.reduce((total, result) => total + result.findings, 0);
+    const open = reviewed.reduce((total, result) => total + result.open, 0);
+    return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
+  };
+  const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
+  const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1', validHead: head, grantFloor, ...extra }, { gate });
+  const headMoved = (bot) => finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
+  // The bot's answer for this head, recorded as its pass's result.
+  const recordBot = (pass, bot) => {
+    const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
+    state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
+    recorded = true;
+  };
+  // A request a wait posted, from either call, is on record for the head it asked about (`requested_head`), never
+  // the last head the wait saw: the pull request may have moved past either since. Returns whether it asked about
+  // this step's head.
+  const noteRequest = (bot) => {
+    if (!bot.requested) return false;
+    const asked = typeof bot.requested_head === 'string' ? bot.requested_head : head;
+    state.botRequest = { head: asked, at: new Date().toISOString() };
+    return sameCommit(asked, head);
+  };
+
+  // The bot is asked as soon as a round opens on a head and the gate allows it, so it reviews while this machine's
+  // passes, the agents, and CI run. Its stage still comes last: the step awaits its answer only once every earlier
+  // stage passed, so nothing reads as reviewed before the bot answers. One request per head (`botRequest`): the wait
+  // later only waits. A round the bot was asked on is kept, even when a local reviewer then fails. Every stop the
+  // request can meet but a moved head (the cap, a usage limit) is left to the bot's stage, where it always was.
+  const bot = passes.find((pass) => map[pass.reviewer]?.kind === 'remote' && !resultFor(pass));
+  if (bot && !sameCommit(state.botRequest?.head, head) && !gate().reason && openRound() !== 'round_limit') {
+    const asked = await botWait({ timeoutSec: 0 });
+    if (asked.status === 'head_moved') {
+      undoRound();
+      return headMoved(asked);
+    }
+    // A request for a newer head: this step's head is no longer the pull request's, so no reviewer runs on it.
+    if (asked.requested && !noteRequest(asked)) {
+      undoRound();
+      return finish('incomplete', { reason: `the pull request moved to ${String(asked.requested_head).slice(0, 7)}, and the review bot was asked about that head: run the step again`, retry_recommended: true });
+    }
+    if (ANSWERED.has(asked.status) && (!asked.head_sha || sameCommit(asked.head_sha, head))) recordBot(bot, asked);
+    else if (asked.requested) recorded = true;
   }
 
   // In the last round the final stage runs first and is judged last, once the earlier stages' verdicts are in.
@@ -162,29 +216,15 @@ export async function runStages(s) {
       }
       const remote = pending.find((pass) => map[pass.reviewer]?.kind === 'remote');
       if (remote) {
-        // The bot is asked only after every earlier pass has a result, with the review-gate marker from the
-        // code-reviewer's pass, and under the plan's own cap: nothing here raises the cap the request records.
+        // The bot's answer is awaited only after every earlier pass has a result, under the plan's own cap: nothing here
+        // raises the cap the request records. A head already asked about is only waited for, never asked about again.
         const waiting = plan.stages.slice(0, plan.stages.indexOf(stage)).flatMap((each) => each.passes).filter((pass) => !resultFor(pass));
         if (waiting.length) return finish('incomplete', { reason: `the review bot waits for ${waiting.map((pass) => pass.id).join(', ')}`, retry_recommended: true });
-        // The marker sums every code-reviewer pass that counts for this head (a carried-forward one too); with the gate
-        // on and none on record, nothing is posted.
-        const reviewed = passes.filter((pass) => pass.kind === 'agent' && pass.reviewer === 'code-reviewer').map(resultFor).filter(Boolean);
-        const gate = () => {
-          if (!config.github.reviewGate.enabled) return {};
-          if (!reviewed.length) return { reason: 'the review gate needs the code-reviewer pass on record before the bot is asked' };
-          const findings = reviewed.reduce((total, result) => total + result.findings, 0);
-          const open = reviewed.reduce((total, result) => total + result.open, 0);
-          return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
-        };
-        const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-        // The plan's cap (the base branch's, plus valid extra rounds) is the bot's too: a cap an earlier request recorded
-        // counts only under the Human's override.
-        // A request past the base branch's cap uses an extra round, granted on the signals of this head: the wait posts
-        // nothing for another head (head_moved), and the next step reads the grant again on it.
-        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1', validHead: head, grantFloor }, { gate });
+        const bot = await botWait({ request: !sameCommit(state.botRequest?.head, head) });
+        noteRequest(bot);
         if (bot.status === 'head_moved') {
           undoRound();
-          return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
+          return headMoved(bot);
         }
         if (bot.status === 'review_required') {
           undoRound();
@@ -197,9 +237,7 @@ export async function runStages(s) {
         }
         // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
         if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
-        const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
-        state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
-        recorded = true;
+        recordBot(remote, bot);
       }
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');
       if (agents.length) {

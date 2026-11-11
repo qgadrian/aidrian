@@ -648,9 +648,17 @@ context, so a line inside a string that looks like a comment, or a C-style line 
 as a comment; a miss like that costs one round of cap and never a review. The syntax table grows when a project asks
 for a language; it is not kept complete.
 
-`--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
-earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
-than the one under review counts for nothing. A flow's required checks are read for that commit too.
+`--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked when a head's round
+opens, before this machine's reviewers run and in the same step that dispatches the agent passes, so it reviews the
+head while they and CI do; with the [review gate](config.md#review-gate) on, it is asked in the first step after the
+code-reviewer pass is on record, with the gate's marker. The request goes out once per head, under the plan's round
+cap (`botRequest` on the record): later steps on that head only wait for the answer, and `aidrian pr await-review
+<n> --request` run by hand asks again. A round the bot was asked on is kept when a reviewer then fails. The bot's
+stage is still awaited and judged last: the step returns an earlier stage's findings first, and `received` only once
+the bot has answered, so a pull request is marked ready only on the bot's clean answer. A moved head ends the request
+at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
+bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for
+nothing. A flow's required checks are read for that commit too.
 
 **Merge from the base branch.** A head is a clean merge from the base branch when all four hold: it is a two-parent
 merge commit; its first parent is the head of the last `received` outcome; its other parent is an ancestor of the
@@ -1030,6 +1038,11 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   [merge guard](hooks.md#merge-guard) reads the outcome.
 - **Quiet pushes.** A round's `quiet` list holds the heads it moved from on [quiet pushes](#rounds), each `{ from, at }`
   with the time the round was opened on that head. A round without the list never moved.
+- **Bot request.** `botRequest` is `{ head, at }`: the head the step last asked the review bot about, so a later
+  step on that head waits for the answer and does not ask again ([Rounds](#rounds)). Either call to the bot that posts
+  a request records it, for the head the request names (`requested_head` of `aidrian pr await-review`, which a push
+  during the wait does not change): when the pull request moved past the step's head before the
+  request, the step ends `incomplete` before any reviewer runs, and the newer head is not asked about again.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head

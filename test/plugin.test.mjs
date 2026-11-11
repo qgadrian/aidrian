@@ -767,13 +767,103 @@ test('autopilot and the pull request carry a quorum\'s ruling, and each skill st
   assert.match(autopilot, /A `product` or `ux` decision goes through that file's route first: `references\/phases\.md` § Product decisions/);
   assert.match(autopilot, /the count of automatic quorum runs/);
   const phases = flat('plugins/aidrian/skills/autopilot/references/phases.md');
-  const section = phases.slice(phases.indexOf('## Product decisions'), phases.indexOf('## 1. Implement'));
+  const section = phases.slice(phases.indexOf('## Product decisions'), phases.indexOf('## 2. The draft pull request'));
   assert.match(section, /the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat, or that no end user took part, and independent work continues/);
   assert.match(section, /Count this session's automatic runs/);
   const write = flat('plugins/aidrian/skills/pr-write/SKILL.md');
   assert.match(write, /for a quorum's ruling, what would flip it, any settled fact's result, and that winners have varied between runs/);
   assert.match(write, /No plan paths, handoff files, agent names, worktree paths, or local paths/, 'a ledger path stays out of the body');
   for (const skill of ['autopilot', 'pr-write']) assert.ok(statSync(path.join(PLUGIN, 'skills', skill, 'SKILL.md')).size <= MAX_SKILL_BYTES, skill);
+});
+
+test('autopilot keeps each entry in its own file, and --continue enters where the session stands', () => {
+  // A run launched with --continue once had no entry: it started the task at implementation again, and could not take
+  // over an open pull request or another skill mid-way. SKILL.md holds the unattended core; each entry is its own file.
+  const dir = 'plugins/aidrian/skills/autopilot';
+  const core = flat(`${dir}/SKILL.md`);
+  const entry = core.slice(core.lastIndexOf('## '));
+  assert.ok(entry.startsWith('## Entry '), 'SKILL.md ends with its entry table');
+  for (const words of ['references/entry-task.md', 'references/entry-continue.md', 'only that one']) assert.ok(entry.includes(words), words);
+  for (const step of ['`issue-implement`', '`plan-implement`', '`planning-agent`', '`worktree-new`', 'gh pr list', 'git worktree list']) {
+    assert.ok(!core.includes(step), `SKILL.md holds no entry step: ${step}`);
+  }
+
+  const phases = flat(`${dir}/references/phases.md`);
+  assert.ok(!phases.includes('## 1. Implement'), 'phase 1 is the entry');
+  const order = ['## 2. The draft pull request', '## 3. Review rounds', '## 4. Stop at sign-off'].map((heading) => phases.indexOf(heading));
+  assert.ok(order.every((at, i) => at !== -1 && (i === 0 || at > order[i - 1])), `phases 2 to 4 keep their headings: ${order}`);
+  // The adopted pull request enters § 2 at this line, and an implementing skill is not entered again because its re-entry stops.
+  assert.ok(phases.slice(order[0], order[1]).includes('Record the pull request\'s number'), 'the line an adopted pull request enters at');
+  const reentry = flat('plugins/aidrian/skills/issue-implement/steps/phase-0-resolve.md');
+  assert.ok(reentry.slice(reentry.indexOf('## 5. Re-entry'), reentry.indexOf('## 6.')).includes('An open pull request: stop'), 'the engine stops on an open pull request');
+
+  const task = flat(`${dir}/references/entry-task.md`);
+  for (const words of ['## 1. Implement', 'the `issue-implement` skill on the issue',
+    '`planning-agent` writes a plan, then the `plan-implement` skill runs it', 'The launch approves a new branch']) assert.ok(task.includes(words), words);
+
+  const resume = flat(`${dir}/references/entry-continue.md`);
+  for (const words of [
+    'Read the state fresh, while the Human is here: the session\'s memory of it is a lead, never the record.',
+    'Launching with `--continue` approves the session\'s own worktree and branch, and no other: the `worktree-new` skill\'s reuse question is answered Reuse, with `--reuse-existing`, for that branch only.',
+    'finish that skill\'s own steps, with `SKILL.md` § Who decides in place of each question it would ask the Human',
+    'Nothing under way: ask for a task now, while the Human is here.',
+    'Start nothing new: what remains is what the session was already asked to do.',
+    'An open pull request on the branch is adopted, never implemented again: start no implementing skill on it.',
+    'Rounds the pull request already had count toward the cap.',
+    'git worktree list --porcelain', 'gh pr list --head <branch> --state open', 'references/phases.md',
+    'implement what remains, as § 6 says', 'this file\'s § 2 replaces its Workspace bullet',
+    'A skill loaded after the launch is never mid-way',
+    'A plan that comes back `open-questions` or `blocked` is parked, and the run stops.',
+    'Otherwise run the written plan with the engine the table picks for it: `issue-implement` for `<key>-implementation.md`, `plan-implement` for `<slug>-plan.md`.',
+  ]) assert.ok(resume.includes(words), words);
+  // A round equal to the cap can still be open on the same head, and an extra round can be granted: the command's status says
+  // when the cap is reached. With everything committed, an engine slice could never make its one commit.
+  for (const words of [
+    'The cap is the `status` it prints, never `round` against the cap: a round at the cap can still be open on the same head, and an extra round can be granted.',
+    '`round_limit` goes to the cap of `references/phases.md` § 4; any other status runs the round as its § 3 says.',
+    'Nothing uncommitted and nothing left to change: start no engine.',
+    'A gate that fails is work left to change: plan it as below.',
+    'Then open the draft through the `pr-write` skill with the inputs that file\'s Phase 7 passes, `<base>` from § 1 and the closing line of its acceptance criteria gate among them',
+  ]) assert.ok(resume.includes(words), words);
+  // pr-write stops on an unpushed branch and code-reviewer is read-only, so local-only commits are pushed before the draft.
+  // The check reads the pull request's branch on origin: an upstream can track another branch with nothing ahead.
+  const push = resume.indexOf('compare HEAD with the commit `git ls-remote --heads origin <branch>` prints');
+  for (const words of [
+    'runs `git push -u origin HEAD:<branch>` in the foreground, never with force: a remote head that is not an ancestor of HEAD stops the run',
+    'Confirm that `git ls-remote --heads origin <branch>` then prints HEAD; a rejected push stops the run',
+  ]) assert.ok(resume.indexOf(words) > push && push !== -1, words);
+  assert.ok(!resume.includes('@{u}'), 'the push check never reads the upstream');
+  assert.ok(push < resume.indexOf('Then open the draft through the `pr-write` skill'), 'the push comes before the draft');
+  // pr-review reviews the published head: a draft's uncommitted work is committed and pushed before its first round.
+  const handed = resume.indexOf('Before the first round of `references/phases.md` § 3, uncommitted changes that belong to the pull request go to their owner');
+  assert.ok(handed !== -1 && handed < resume.indexOf('Rounds the pull request already had count toward the cap.'), 'the handed-over edits are committed before the rounds');
+  for (const words of ['to finish, verify with the project\'s checks, commit, and push', 'confirm that `git ls-remote --heads origin <branch>` prints HEAD',
+    'Changes the run cannot attribute to the pull request stop it, as the branch preflight of the `orchestration` skill\'s `references/review-rules.md` says.']) {
+    assert.ok(resume.indexOf(words) > handed, words);
+  }
+  assert.match(flat('plugins/aidrian/skills/orchestration/references/review-rules.md'), /## Branch preflight .*`git status --porcelain` must be clean or hold only this pull request's work/u);
+  // Skipping the engine keeps its close gates and the base it passes: the path points to the engine's own steps.
+  const gates = resume.indexOf('Run the gates of Phase 5 of the `issue-implement` skill\'s `steps/phases-5-8-close.md` on `origin/<base>..HEAD`');
+  assert.ok(gates !== -1 && gates < push, 'the close gates run before the push');
+  const close = flat('plugins/aidrian/skills/issue-implement/steps/phases-5-8-close.md');
+  for (const words of ['## Phase 5: before the pull request', '**Acceptance criteria coverage.**', 'A gap turns `Fixes <ref>` into `Refs <ref>`',
+    '## Phase 7: the pull request', 'the base from phase 0, passed explicitly']) assert.ok(close.includes(words), `the engine's step the path points to: ${words}`);
+  for (const gone of ['a pull request already at the cap goes to', 'commits what is uncommitted, and pushes']) assert.ok(!resume.includes(gone), gone);
+  // plan-implement stops on a plan with issue_id, so a plan written for an issue session must not go through the one-line task row.
+  assert.ok(!resume.includes('as the one-line task row does'), 'the no-plan path names its own engine');
+  for (const own of ['knowledge', 'orchestration', 'worktree-new', 'pr-product-feedback', 'pr-auto-merge', 'session-handoff']) {
+    assert.ok(resume.slice(resume.indexOf('This run\'s own skills are')).split('.')[0].includes(`\`${own}\``), `own skill: ${own}`);
+  }
+  assert.ok(entry.includes('| `<task>`, or none | `references/entry-task.md` |'), 'a launch with no input is a task launch');
+  const rows = ['| A skill is mid-way that is not one of this run\'s own |', '| The branch has an open pull request', '| An implementing skill is mid-way', '| None of these |']
+    .map((row) => resume.indexOf(row));
+  assert.ok(rows.every((at, i) => at !== -1 && (i === 0 || at > rows[i - 1])), `the entry rows' order: ${rows}`);
+
+  const evalCase = path.join(PLUGIN, 'evals/autopilot-continue-no-work');
+  for (const file of ['case.yaml', 'prompt.md', 'scaffold.sh', 'graders/read-state.md', 'graders/asks-for-task.md', 'graders/no-engine.md', 'graders/no-dispatch.md']) {
+    assert.ok(existsSync(path.join(evalCase, file)), file);
+  }
+  assert.ok(readFileSync(path.join(evalCase, 'scaffold.sh'), 'utf8').includes("':(exclude)plugins/aidrian/skills/autopilot'"), 'only the plugin arm has the skill');
 });
 
 test('the docs say what the route does to a provisional ruling, a marker, and a ux ruling of a product class', () => {

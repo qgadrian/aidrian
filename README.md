@@ -31,7 +31,7 @@
 - **Tag**: a word, such as `testing`, that marks a doc in a bucket index. An agent reads the docs with the tags its task needs.
 - **`always` doc**: a doc in a bucket that every agent reads, whatever the tags.
 - **Orchestrator**: the agent that splits a task into parts and dispatches each one to the right agent.
-- **Autopilot**: the skill that runs one task from issue to pull request without the Human.
+- **Autopilot**: the skill that runs one task from issue to pull request without the Human, or takes over a session already under way.
 - **Review bot**: the GitHub app that reviews each pull request. The agents wait for it, then fix what it finds.
 - **Task worktree**: a git worktree in `.worktrees/`, one per task, so the main checkout stays clean.
 - **Dispatch**: one agent handing a task to another. The dispatch log records each one.

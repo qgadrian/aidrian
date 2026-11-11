@@ -1,6 +1,8 @@
 # Phases
 
-Read at the start of an autopilot run. Each phase names the skill that does the work.
+Read before an engine starts, since § 2 runs inside the engine's last phase, or before § 2 on an adopted pull request.
+Phase 1 is the run's entry.
+Each phase names the skill that does the work.
 Follow that skill as written, with the autopilot `SKILL.md` § Who decides in place of each question it would ask the Human.
 
 The bounds compose: the implementing skill's own per-slice fix cap holds inside phase 1,
@@ -32,30 +34,11 @@ With `autoStart` on, only the small, clear row follows `unattended`, as § Who d
   Its dependent work is parked.
 - When the route continues, follow that file's continue path, and record the `decided_provisional` in the report, with the ledger's path.
 
-## 1. Implement
+## Checkpoints
 
-Pick the engine by the input:
-
-| Input | Engine |
-| --- | --- |
-| An issue key or URL | the `issue-implement` skill on the issue |
-| A plan path whose frontmatter has `issue_id` or `issue_ref` | the `issue-implement` skill on that issue |
-| Any other plan path | the `plan-implement` skill on the plan |
-| A one-line task | `planning-agent` writes a plan, then the `plan-implement` skill runs it |
-
-- **A one-line task.** Dispatch `planning-agent` in the foreground with the task, the Human's launch words,
-  and the path `<state>/plans/<slug>-plan.md`, where `<state>` is the folder `aidrian state` prints
-  and `<slug>` is the task in a few lowercase words joined by `-`.
-  A plan that comes back `open-questions` or `blocked` leaves nothing to implement: park its questions and stop.
-- **An issue-anchored plan.** `plan-implement` stops on one, so read the plan's frontmatter before picking the engine.
-  Run `issue-implement` on its `issue_id`, else its `issue_ref`. That skill's phase 0 reads the plan only at
-  `<state>/plans/<key>-implementation.md` (the `planning-agent` skill's `references/plan-file.md`): a plan at another path is not the one it would run, so stop.
-- **Workspace.** The current checkout when it is a task worktree on the task's branch; otherwise the engine creates one
-  through the `orchestration` skill § 1. The launch approves a new branch, so the `worktree-new` skill's question is answered
-  for `branch_mode: new`. Its question about reusing an existing branch, and the question about changes in the main checkout,
-  are not: stop, since no work can start without a workspace.
-- The engine's slice plan, per-slice review, verification, and one commit per slice all hold.
-  A "stop and ask" inside it becomes park and go on; when it leaves no independent slice, the engine stops and so does the run.
+When `SKILL.md` § Checkpoints allows a brief, write it with the `session-handoff` skill, in this session and never through an agent,
+which knows nothing of the run.
+Checkpoint after the implementation is committed, after the draft opens, after each review round, and at any stop, before the report.
 
 ## 2. The draft pull request
 

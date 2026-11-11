@@ -1,12 +1,13 @@
 ---
 name: autopilot
-description: Run one issue, plan, or task unattended to a reviewed pull request, then report. Merges only when auto-merge is on.
+description: Run one issue, plan, or task unattended to a reviewed pull request, or hand over a session under way with --continue. Merges only when auto-merge is on.
 disable-model-invocation: true
 ---
 
 # autopilot
 
 Take one task from implementation to a reviewed pull request while the Human is away, then report. It merges only when auto-merge is on.
+Launched with `--continue`, it takes over a session already under way instead of starting a task.
 It runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
 It never redoes what the skills it runs already do.
 
@@ -17,29 +18,24 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 ## Inputs
 
 ```text
-<task> [--base <branch>] [--full-review] [--handoff]
+(<task> | --continue) [--base <branch>] [--full-review] [--handoff]
 ```
 
 - `<task>`: an issue key or URL, a plan path, or a one-line task description.
-  Missing or unclear: ask now, while the Human is here. Never guess the task.
+- `--continue`: take over the work this session has under way. Words typed with it are launch words, never a new task.
 - `--base`: the branch the pull request targets. Default: the one the implementing skill picks.
 - `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 calls for it.
 - `--handoff`: write a handoff brief at each checkpoint, as § Checkpoints says.
 
 ## What it is, and is not
 
-- It is a bounded runner: implementation, a draft pull request, review rounds, and a report. It cannot loop forever.
 - It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill
   that `references/phases.md` § 4 runs. Any other merge needs the Human's explicit say-so.
-- It is not an interview. Questions need the Human present, so settle them before launch.
 
 ## Before launch
 
-While the Human is here:
-
-- A vague or large task: run the `challenge` skill first, or the `plan-review` skill on an existing plan.
-- Best: launch from the task worktree, so the run never has to ask about one.
-- Record what the Human says at launch word for word, such as "skip the end-to-end run" or "five review rounds".
+While the Human is here, record what the Human says at launch word for word, such as "skip the end-to-end run"
+or "five review rounds". The entry file of § Entry names what else to settle now.
 
 ## Who decides
 
@@ -65,16 +61,16 @@ A handoff brief lets a fresh session resume the run. Write one only when the Hum
 `--handoff`, the launch words, or config.json `session.handoff.mode` set to `"auto"`.
 With `"ask"`, the default, or `"off"`, write none: the report carries what a resume needs.
 
-When allowed, write it with the `session-handoff` skill, in this session and never through an agent, which knows nothing of the run.
-Checkpoint after the implementation is committed, after the draft opens, after each review round, and at any stop, before the report.
+When allowed, `references/phases.md` § Checkpoints says when and how.
 Fold each parked decision, each `decided_provisional`, and each finding left open into the brief as it arises,
 with the count of automatic quorum runs. A failed write never blocks the run.
 
 ## Phases
 
-Read `references/phases.md` at the start, and follow it.
+Read `references/phases.md` before an engine starts, since its § 2 runs inside the engine's last phase,
+or before phase 2 on an adopted pull request, and follow it.
 
-1. Implement, to committed work on the task branch.
+1. The entry, as § Entry says: committed work on the task branch, or a pull request or skill taken over.
 2. Open the draft pull request through the `pr-write` skill.
 3. Review rounds: the bot review, when the project has a bot, through the `pr-review-loop` skill,
    and the `pr-review` skill when the phase says so.
@@ -107,6 +103,7 @@ by the names the start hook gives, never "you" or "I". In this order:
 
 1. **What shipped**: one or two lines, the pull request link, and the merge: merged, or why not, as the line
    `aidrian pr auto-merge` printed or the stop line of the `pr-merge-when-green` skill.
+   With no pull request, what the skill taken over produced.
 2. **Checks**: verification and CI status, and the bot review state of each round:
    `received`, `already_present`, `timed_out`, `blocked_quota`, `round_limit`, `extension_ask`, or `no_reviewer`.
 3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation; each quorum recommendation left waiting;
@@ -116,3 +113,12 @@ by the names the start hook gives, never "you" or "I". In this order:
    and fixes the last round pushed that no review has seen.
 5. **Next**: when a brief was written, its path and the resume line the `session-handoff` skill prints;
    otherwise the next action: ask the Human to review, or nothing once merged. Never suggest a merge beyond that.
+
+## Entry
+
+Read the launch's entry file at the start, and only that one.
+
+| Launch | Entry file |
+| --- | --- |
+| `<task>`, or none | `references/entry-task.md` |
+| `--continue` | `references/entry-continue.md` |

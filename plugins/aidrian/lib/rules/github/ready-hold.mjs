@@ -46,8 +46,11 @@ const MUTATION = 'markPullRequestReadyForReview';
 // A word close to `ready`, as text a shell is fed may spell it: `re""ady`, `"ready"`, or printf's `re%sdy`.
 const READY_LIKE = /re\S{0,4}dy/iu;
 // Only a command holding one of these can mark ready: every other Bash call pays for this one look. A glob or brace
-// character, or a substitution, can build a word the rule then reads as unreadable.
+// character, or a substitution, can build a word the rule then reads as unreadable. Quotes and backslashes the shell takes
+// out may sit anywhere in a word (`r""eady`, `r\e\a\d\y`), so the command is also tried without them.
 const CANDIDATE = /re\S{0,4}dy|markPullRequestReadyForReview|[$`{[*?]/iu;
+// Whether `command` may mark a pull request ready, by CANDIDATE. The ready checks hold shares it.
+export const mayMarkReady = (command) => CANDIDATE.test(command) || CANDIDATE.test(command.replace(/["'\\]/gu, ''));
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval']);
 const READY_VALUES = new Set(['-R', '--repo']);
 // gh reads a bool flag's value with Go's strconv.ParseBool: these are true.
@@ -111,12 +114,12 @@ const namesReady = (text) => {
 };
 
 // The forge methods whose answer is the same from any folder: each names its repository or node, as an `api` route does.
-const ANY_FOLDER = new Set(['nodeChange', 'repository', 'contents', 'pull', 'viewer', 'comment']);
+const ANY_FOLDER = new Set(['nodeChange', 'changeEdits', 'repository', 'contents', 'pull', 'viewer', 'comment']);
 
 // The forge (lib/forges), bounded by one deadline, at a folder: each call gets the time left, is stopped with SIGKILL at
 // it, and none starts past it. A call with the same arguments runs once, from any folder when ANY_FOLDER holds its method.
-// `forge` is the test seam: forgeFor's signature, (cwd, options) → the facade.
-function deadlineForge({ forge = forgeFor, now = Date.now, deadlineMs = DEADLINE_MS, startedAt = Infinity } = {}) {
+// `forge` is the test seam: forgeFor's signature, (cwd, options) → the facade. The ready checks hold shares it.
+export function deadlineForge({ forge = forgeFor, now = Date.now, deadlineMs = DEADLINE_MS, startedAt = Infinity } = {}) {
   const deadline = Math.min(now() + deadlineMs, startedAt + HOOK_BUDGET_MS);
   const seen = new Map();
   const call = (cwd, method, args) => {
@@ -230,7 +233,7 @@ const named = (call) => Boolean(call.ids || call.repo || call.url);
 // The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment; the rest are the
 // seams of deadlineForge.
 export function check(command, { cwd = process.cwd(), env = process.env, ...seams } = {}) {
-  if (env[OVERRIDE] === '1' || !CANDIDATE.test(command)) return null;
+  if (env[OVERRIDE] === '1' || !mayMarkReady(command)) return null;
   const found = walkCommands(command, cwd).flatMap((entry) => {
     const text = fedText(entry);
     if (text !== null) return namesReady(text) ? [{ entry, call: { fed: true } }] : [];

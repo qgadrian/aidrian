@@ -15,6 +15,7 @@ import * as prBody from '../lib/rules/github/pr-body.mjs';
 import * as publicText from '../lib/rules/github/public-text.mjs';
 import * as productFeedbackAnswer from '../lib/rules/product-feedback-answer.mjs';
 import * as productFeedbackPost from '../lib/rules/product-feedback-post.mjs';
+import * as readyChecks from '../lib/rules/github/ready-checks.mjs';
 import * as readyHold from '../lib/rules/github/ready-hold.mjs';
 import * as reviewRequest from '../lib/rules/github/review-request.mjs';
 import * as reviewRounds from '../lib/rules/github/review-rounds.mjs';
@@ -35,7 +36,8 @@ import * as processKill from '../lib/rules/process-kill.mjs';
 // it could waive, one git call and up to six gh calls, none begun 4 s after this process started (each stopped
 // at that deadline at the latest; lib/review/waiver.mjs); ready-hold, git for the committed config and then, when the
 // project may run product feedback, gh under one deadline for all its calls, which ends 4 s after this process started
-// at the latest; and main-checkout, git, which runs last. ready-hold runs after merge-review, so a command that marks a
+// at the latest; ready-checks, for a ready it can read, gh under the same kind of deadline, a view and at most one GraphQL
+// read; and main-checkout, git, which runs last. ready-hold runs after merge-review, so a command that marks a
 // pull request ready and merges it leaves the merge guard its own 3 s: the guard refuses a merge it cannot read, and the
 // hold lets the command run when its time is gone. A command none of them matched starts nothing beyond findProject.
 // Each rule's name keys its rows and its lesson.
@@ -61,6 +63,9 @@ const RULES = [
   // finds no time left and lets `gh pr ready` run. It needs a waivable merge and a ready in one slow command: contrived.
   ['merge-review', mergeReview],
   ['ready-hold', readyHold],
+  // After the ready hold, which pays nothing in a project without product feedback: one pr view, and one GraphQL read
+  // when no check is pending, under its own deadline that also ends 4 s after this process started.
+  ['ready-checks', readyChecks],
   ['main-checkout', mainCheckout],
 ];
 

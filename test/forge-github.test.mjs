@@ -18,7 +18,7 @@ const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'reactions',
-  'pull', 'diff', 'nodeChange', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
+  'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'commit', 'checkRuns', 'compare', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
 
@@ -509,4 +509,13 @@ test('the ready hold`s calls: a node id`s pull request through GraphQL, and SIGK
   const plain = recorded(() => '{}');
   plain.forge.pull('acme/notes', 7);
   assert.deepEqual(plain.calls[0].options, { cwd: '/repo' });
+});
+
+test('the ready checks hold`s edit times: one GraphQL call, naming a host only when it is not github.com', () => {
+  const { forge, args } = recorded(() => '{"data":{"repository":{"pullRequest":{"lastEditedAt":"2026-11-10T23:45:16Z","timelineItems":{"nodes":[]}}}}}');
+  assert.equal(forge.changeEdits('acme/notes', 12).data.repository.pullRequest.lastEditedAt, '2026-11-10T23:45:16Z');
+  forge.changeEdits('acme/notes', 12, { host: 'ghe.example.com' });
+  const query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
+  const tail = ['-f', `query=${query}`, '-F', 'o=acme', '-F', 'r=notes', '-F', 'n=12'];
+  assert.deepEqual(args(), [['api', 'graphql', ...tail], ['api', 'graphql', '--hostname', 'ghe.example.com', ...tail]]);
 });

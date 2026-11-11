@@ -25,7 +25,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
-| Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
+| Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback, then the [ready checks hold](#ready-checks) | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
 | After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent, and a subagent's background dispatch moved to the [foreground](#background-check) | Claude Code | no |
@@ -162,6 +162,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Product feedback answer | `--by human` on a [product feedback](config.md#product-feedback) item without the Human's answer in the session | none: the Human answers, or runs it in their own shell |
 | Product feedback post | `aidrian pr product-feedback post` on a pull request from outside the team without the Human's answer in the session, and from a subagent | none: the Human answers, or runs `post` in their own shell |
 | Ready hold, in a project that runs product feedback | Marking a draft ready while its [product feedback](config.md#product-feedback) is owed ([Ready hold](#ready-hold)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in their own shell before the session |
+| Ready checks | Marking a draft ready while a check on its head has not finished, or before a check its last edit re-queues has shown, and editing a title or body in the same call as a ready ([Ready checks](#ready-checks)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, the ready hold's, set the same way |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
@@ -346,9 +347,11 @@ What each rule matches:
   request, body file, or subcommand it cannot read is refused while a record holds a post; so is text fed to a shell, `xargs`,
   `parallel`, or a command it did not judge, such as `npx`, whose words name `product-feedback` and `post`, and a post in the same
   command as `record` or an aidrian call it cannot read. The deny says the Human can run `post` in their own shell.
-- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, but `--undo` with no
-  value or a true one, and a `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview`
-  ([Ready hold](#ready-hold)).
+- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, and with quotes or
+  backslashes the shell takes out anywhere in its words (`r""eady`), but `--undo` with no value or a true one, and a
+  `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview` ([Ready hold](#ready-hold)).
+- Ready checks: the same `gh pr ready` calls, but not the `gh api` form, and a `gh pr edit` with `--title`, `--body`, or
+  `--body-file` (`-t`, `-b`, `-F`), or any `gh pr create`, in the same command as one ([Ready checks](#ready-checks)).
 - Merge guard: `gh pr merge` but `--disable-auto` and a read of its `--help` or `-h`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
   sent as a PUT or a POST ([Merge guard](#merge-guard)).
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
@@ -642,6 +645,48 @@ A host that stops a hook at its timeout may let the command run. On Codex `rust-
 `PreToolUse` hook is recorded as failed and blocks nothing (`codex-rs/hooks/src/engine/command_runner.rs` and
 `events/pre_tool_use.rs`). On Claude Code it is not verified. The rule's own deadline ends first and lets the command run,
 so it fails open either way, and the test of a stalled gh checks that the hook ends inside 5 seconds.
+
+## Ready checks
+
+A session must not mark a draft ready while a check on its head has not finished: editing a pull request's title or body
+re-runs the workflows that listen for the edit, such as a Conventional Commit title check, and a ready sent in the same batch
+as the check read lands while that check is still queued. The rule, `plugins/aidrian/lib/rules/github/ready-checks.mjs`,
+runs in every project, product feedback or not, after the [ready hold](#ready-hold) in the Bash hook and in the GitHub MCP
+hook. It reads the ready calls the ready hold reads, and decides in this order:
+
+1. `AIDRIAN_ALLOW_UNHELD_READY=1` in the hook's own environment lets it run, as it does for the ready hold, and `--undo` runs.
+   A folder in no project, for the session and for gh, runs.
+2. A command that edits a title or body (`gh pr edit` with `--title`, `--body`, or `--body-file`) or opens a pull request
+   (`gh pr create`), and marks one ready, is refused with no network call, in either order. So is a GitHub MCP
+   `update_pull_request` that sets `draft: false` with a `title` or a `body`.
+3. One view of the pull request through the forge (`gh pr view <target> [-R <repo>] --json
+   url,number,isDraft,createdAt,statusCheckRollup`). A pull request that is not a draft runs: ready changes nothing. A check
+   run on the head that is not `COMPLETED` (queued, waiting, pending, in progress) or a status that is `PENDING` or
+   `EXPECTED` holds it, and the deny names each.
+4. With nothing pending, a draft opened, or whose body was edited or title changed, less than 30 seconds ago, with no check
+   started since, is held: GitHub takes a few seconds to queue a re-run, and until then the checks shown are the ones from
+   before. The body's last edit and the newest title rename come from one GraphQL read, made only when nothing is pending
+   and the draft was not just opened. The times are GitHub's; only the 30 seconds is read against this machine's clock, and
+   an edit time ahead of it by more than that runs. A check that started after the change lifts the hold, and so does the
+   end of the 30 seconds, for a project with no check that runs on an edit; the deny says when.
+
+Every deny names the route: wait with `gh pr checks <n> --watch` until every check reports, then mark it ready with
+`gh pr ready <n>` in a separate call. A check that finished and failed does not hold the draft; the review reads it.
+
+Its gh calls share one deadline, as the ready hold's do: 3.5 seconds from its first call, and never later than 4 seconds
+after the hook started, so a ready hold that spent the time leaves this one none, and the command runs.
+A view that fails, an edit read that fails, a call past the deadline, or a rollup it cannot read lets the command run.
+
+What it cannot read runs, and is out of its sight:
+
+- What the ready hold cannot read: a target or program the shell fills in, text fed to a shell, a script, and a `gh alias`.
+- A `gh api` call to `markPullRequestReadyForReview`, whose pull request is a node id.
+- A push followed at once by a ready in another call: the new head shows no check until GitHub queues one, and a push is not
+  a change this rule reads, unless the push opened the pull request less than 30 seconds ago.
+- An edit made in an earlier call more than 30 seconds before the ready, whose re-run GitHub has still not queued.
+
+It is verified on Claude Code through the real hooks in `test/ready-checks.test.mjs`, with a fake gh, and on Codex as the
+[ready hold](#where-the-ready-hold-is-verified) is: the Bash payload is the standard one, and the connector is not live.
 
 ## Main checkout
 

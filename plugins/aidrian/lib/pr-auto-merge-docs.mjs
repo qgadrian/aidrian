@@ -51,7 +51,8 @@ function changeProblem(named, changeType) {
 }
 
 // Why one changed file's path keeps the route off, or null. `file` is { path, changeType } from the top of the
-// repository; `own` its path from the project root.
+// repository; `own` its path from the project root. Each refusal reads the repository path, so a folder above the
+// project root counts too; HOST_INSTRUCTIONS and DOT_SEGMENT match at any depth, so the repository path covers both.
 function pathProblem({ path: file, changeType }, own) {
   const named = JSON.stringify(file);
   const changed = changeProblem(named, changeType);
@@ -59,7 +60,9 @@ function pathProblem({ path: file, changeType }, own) {
   if (GUARDED_PATHS.test(file) || GUARDED_PATHS.test(own)) return `it changes ${named}, which instructs AI sessions`;
   if (DOT_SEGMENT.test(file)) return `it changes ${named}, whose path has a folder or file name that starts with ".", which tools and AI hosts read as settings`;
   if (HOST_INSTRUCTIONS.test(file)) return `it changes ${named}, an instruction file of an AI host`;
-  if (TEST_FILES.some((pattern) => pattern.test(own)) || FIXTURES.test(own)) return `it changes ${named}, a test file, fixture, or golden file, which a test reads`;
+  // On both paths, as GUARDED_PATHS above: a project inside a fixtures/ or tests/ folder is itself test data.
+  const testRead = (each) => TEST_FILES.some((pattern) => pattern.test(each)) || FIXTURES.test(each);
+  if (testRead(file) || testRead(own)) return `it changes ${named}, a test file, fixture, or golden file, which a test reads`;
   return null;
 }
 

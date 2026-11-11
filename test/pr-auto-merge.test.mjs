@@ -574,6 +574,13 @@ test('review: a project below the root matches unreviewedPaths from its own fold
   assert.deepEqual(reasonOf(t, dotted, { files: own(listing(), '.x/web'), view: changing('.x/web/guide/a.md') }), [1, 'review'], 'a dot folder above the project root');
   assert.match(reviewOf(t, dotted, { files: own(listing(), '.x/web'), view: changing('.x/web/README.md') })[1], /it changes "\.x\/web\/README\.md", whose path has a folder or file name that starts with "\."/u);
 
+  for (const folder of ['fixtures/consumer', 'tests/consumer', 'golden/consumer', 'test/consumer', 'pkg/__fixtures__/consumer']) {
+    const nested = projectBelow(t, folder, policy());
+    const [code, line] = reviewOf(t, nested, { files: own(listing(), folder), view: changing(`${folder}/README.md`) });
+    assert.equal(code, 1, `a test or fixture folder above the project root: ${folder}`);
+    assert.match(line ?? '', new RegExp(`it changes ${JSON.stringify(`${folder}/README.md`).replaceAll('.', '\\.')}, a test file, fixture, or golden file, which a test reads`, 'u'), folder);
+  }
+
   const plugin = projectBelow(t, 'plugins/aidrian', policy());
   const [repoGuarded, said] = reviewOf(t, plugin, { files: own(lifted, 'plugins/aidrian'), view: changing('plugins/aidrian/skills/x/a.md') });
   assert.equal(repoGuarded, 1, 'a file guarded by its repository path alone, with includeGuardedPaths on');

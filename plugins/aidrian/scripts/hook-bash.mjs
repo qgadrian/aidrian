@@ -7,6 +7,7 @@
 import { block, runHook } from '../lib/hook-io.mjs';
 import * as attribution from '../lib/rules/attribution.mjs';
 import * as decisionsSet from '../lib/rules/decisions-set.mjs';
+import * as dependencyLink from '../lib/rules/dependency-link.mjs';
 import * as gitAmend from '../lib/rules/git-amend.mjs';
 import * as gitHookBypass from '../lib/rules/git-hook-bypass.mjs';
 import * as mergeReview from '../lib/rules/github/merge-review.mjs';
@@ -43,6 +44,7 @@ const RULES = [
   ['git-amend', gitAmend],
   ['process-kill', processKill],
   ['grep-exit-chain', grepExitChain],
+  ['dependency-link', dependencyLink],
   ['attribution', attribution],
   // Before the pull request body rule, whose title deny quotes the title: a private word gets this rule's deny first.
   ['public-text', publicText],

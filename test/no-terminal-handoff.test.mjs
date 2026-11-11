@@ -13,6 +13,7 @@ const BREAK_GLASS = new Set([
   'lib/review/in-force.mjs',
   'lib/review/visual.mjs',
   'lib/rules/attribution.mjs',
+  'lib/rules/dependency-link.mjs',
   'lib/rules/git-amend.mjs',
   'lib/rules/github/pr-body.mjs',
   'lib/rules/github/public-text.mjs',

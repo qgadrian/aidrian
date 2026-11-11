@@ -35,6 +35,11 @@ Read the goal first: the pull request body, the linked issue, and its non-goals,
 A gap the goal excludes is not a finding. Cite evidence for each finding, `path:line` at the head or a doc section,
 and say what a reader or user would see go wrong.
 
+A test or mutation run leaves the reviewed worktree as it was. Mutate only in a separate copy with its own install,
+such as `git -C <worktree> archive HEAD | tar -x -C <scratch>` and the project's install there from the lockfile, offline.
+Never link the worktree's dependency folder, such as `node_modules`, into the copy, and never run a package manager install
+against the worktree. If a run changed it anyway, restore it with `install --frozen-lockfile --offline` and report both in `risks`.
+
 When the dispatch hands you `flows` with invariants, answer each with a verdict and evidence as the dispatch's `brief`
 says, and challenge every earlier "holds" you cannot confirm yourself.
 

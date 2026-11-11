@@ -357,6 +357,23 @@ export function sessionActions(texts) {
   };
 }
 
+// The text of the transcript's first user message: a subagent's brief, the prompt its dispatcher wrote. A string, or the
+// text blocks of a content array joined by new lines; null when the first user message has neither.
+// SHORTCUT: a forked subagent's transcript starts with its parent's messages, so its first user message is the parent's;
+// a check that reads the brief then finds nothing of this agent's, which lets the stop end. Reading the fork's own
+// prompt would need the `.meta.json` beside the transcript to name where it starts.
+export function firstPrompt(text) {
+  for (const line of text.split('\n')) {
+    const entry = parseLine(line);
+    if (entry?.type !== 'user') continue;
+    const content = entry.message?.content;
+    if (typeof content === 'string') return content;
+    const texts = Array.isArray(content) ? content.filter((block) => block?.type === 'text' && typeof block.text === 'string') : [];
+    return texts.length ? texts.map((block) => block.text).join('\n') : null;
+  }
+  return null;
+}
+
 export function readText(file) {
   try {
     return readFileSync(file, 'utf8');

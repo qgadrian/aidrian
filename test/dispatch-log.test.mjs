@@ -192,6 +192,36 @@ test('the delivery check finds a claimed path under the state folder, the plugin
   assert.match(sent.stderr, /^Your report names `plans\/never-written\.md`, `tmp\/never-written\.md`, which does not exist\./u);
 });
 
+test('the delivery check sends a subagent back once for a handoff file its brief asked for and it did not write', (t) => {
+  const { base, dir, state, log, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  const own = path.join(dispatch, 'feat-12-S1-code-reviewer.json');
+  // Another agent's handoff, on a branch whose name holds this agent's: still not this agent's.
+  const other = path.join(dispatch, 'fix-code-reviewer-delivery-S1-backend-developer.json');
+  const transcript = path.join(base, 'agent-a6.jsonl');
+  const brief = `Review slice S1. Read the implementer's handoff at ${other}.\nWrite your machine handoff to \`${own}\` before you hand back.`;
+  writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: brief } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `A later message naming ${path.join(dispatch, 'x-code-reviewer.json')}` }] } }),
+  ].join('\n'));
+  const stop = (active, agentType = 'aidrian:code-reviewer') => hook('hook-subagent-stop.mjs', {
+    cwd: dir, agent_id: 'a6', agent_type: agentType, agent_transcript_path: transcript, last_assistant_message: 'Done: no findings.', stop_hook_active: active,
+  });
+  const sent = stop(false);
+  assert.equal(sent.status, 2);
+  assert.ok(sent.stderr.startsWith(`Your brief asks you to write your machine handoff to \`${own}\`, which does not exist.`), sent.stderr);
+  assert.ok(!sent.stderr.includes(other), 'a handoff named for another agent is not asked of this one');
+  assert.doesNotMatch(sent.stderr, /x-code-reviewer/u, 'only the brief, the first prompt, is read');
+  assert.equal(stop(true).status, 0, 'the second stop always ends');
+  assert.equal(stop(false, 'aidrian:critic').status, 0, 'an agent the brief names no handoff for is not sent back');
+  mkdirSync(dispatch, { recursive: true });
+  writeFileSync(own, '{}');
+  assert.equal(stop(false).status, 0, 'once the file exists, the stop ends');
+  assert.deepEqual(log().map((row) => [row.agent_type, row.delivered, row.sent_back]), [
+    ['aidrian:code-reviewer', 'missing', true], ['aidrian:code-reviewer', 'missing', false], ['aidrian:critic', 'chat', false], ['aidrian:code-reviewer', 'chat', false],
+  ]);
+});
+
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {
   const message = 'Wrote .../review/b-verdicts-r34-cr.json, …/dispatch/x-harness-mechanic.json, and ../docs/real.md.';
   assert.deepEqual(claimedPaths(message), ['../docs/real.md']);

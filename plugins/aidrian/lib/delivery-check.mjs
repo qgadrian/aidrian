@@ -4,6 +4,9 @@
 // a real report named a file from, and that the check once missed: the state folder (`dispatch/`, `plans/`, `reviews/`,
 // `tmp/`), the plugin and its skill folders (`references/tracker.md`, `skills/<name>/...`), the project and every worktree
 // of its repository, and any file the agent's own Read, Write, or Edit calls named, such as one in another project.
+// The check also reads the subagent's brief: a handoff file the brief asks this agent to write, an absolute
+// `<state>/dispatch/*.json` path whose name holds the agent's own, must exist when it stops. A handback can reach another
+// session than the one that dispatched it, or none once that one has ended, so the file is the record its dispatcher reads.
 // docs/hooks.md#delivery-check.
 
 import { existsSync, readdirSync } from 'node:fs';
@@ -12,7 +15,7 @@ import path from 'node:path';
 
 import { checkoutRoots, runGit } from './git.mjs';
 import { stateDir } from './project.mjs';
-import { readText, filesTouched } from './transcript.mjs';
+import { firstPrompt, readText, filesTouched } from './transcript.mjs';
 
 const CLAIMED_PATHS = 20;
 // A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template, and not after
@@ -25,14 +28,41 @@ const ELIDED = /(?:^|\/)\.{3,}(?:\/|$)/u;
 // This plugin's folder: lib/ is one below it.
 const PLUGIN_FOLDER = path.resolve(import.meta.dirname, '..');
 
-// The paths a subagent's last message presents as delivered, and those of them that exist nowhere: { claims, missing }.
+// The paths a subagent's last message presents as delivered, those of them that exist nowhere, and the handoff files its
+// brief asks for that it has not written: { claims, missing, unwritten }.
 export function checkDelivery(input, project) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
-  if (!claims.length) return { claims, missing: [] };
+  const unwritten = unwrittenHandoffs(input, project);
+  if (!claims.length) return { claims, missing: [], unwritten };
   const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });
-  return { claims, missing };
+  return { claims, missing, unwritten };
 }
+
+// The handoff files a subagent's brief asks it to write that do not exist: each absolute `<state>/dispatch/<name>.json`
+// in the transcript's first prompt whose `<name>` ends with the agent's own name, such as `feat-12-S1-code-reviewer.json`
+// or `S1-code-reviewer-result.json` for `aidrian:code-reviewer`. A path named for another agent, such as a handoff the brief tells it to read, is not its own.
+// No brief, no agent name, or no state folder: none.
+export function unwrittenHandoffs(input, project) {
+  const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
+  const transcript = agent && typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
+  const brief = transcript ? firstPrompt(transcript) : null;
+  if (!brief) return [];
+  let folder;
+  try {
+    folder = path.join(stateDir(project), 'dispatch');
+  } catch {
+    return [];
+  }
+  const named = [...brief.matchAll(new RegExp(`${escapeRegExp(folder)}/([\\w.@+-]+\\.json)`, 'gu'))];
+  // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
+  // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
+  const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
+  const own = named.filter((match) => word.test(match[1])).map((match) => match[0]);
+  return [...new Set(own)].filter((file) => !existsSync(file));
+}
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 // The .md and .json paths a message presents as delivered, once each, at most CLAIMED_PATHS. A path on any other line
 // is a mention, such as "docs/old.md does not exist", and is never checked; nor is a path shortened with `...` or `…`.

@@ -1,7 +1,8 @@
 // SubagentStop hook (Claude Code): one `stop` row in the dispatch log, then two checks that can send the subagent back.
 // The delivery check: every .md or .json path the subagent's last message names must exist; when one does not, it is sent
 // back once, on the first stop of its turn, to write it or correct its report, and the send-back is recorded as a lesson
-// for that agent type (lib/lesson-signals.mjs).
+// for that agent type (lib/lesson-signals.mjs). So is a handoff file its brief asked it to write and it did not
+// (unwrittenHandoffs): the file is the record its dispatcher reads, since a handback can reach another session or none.
 // The background check: no background shell or agent it started may still run (runningChildren). A subagent that ends its
 // turn goes idle: a shell task's end notice wakes it, but a subagent task's handback to an idle agent is refused, and the
 // work it waits on stalls until something else wakes it. So it is told to wait in the foreground, and sent back again at
@@ -15,7 +16,7 @@
 import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendBacks } from '../lib/child-send-backs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
-import { checkDelivery, runningChildren, sendsBack, stopAgent, stopRow } from '../lib/dispatch-rows.mjs';
+import { checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered } from '../lib/dispatch-rows.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
 import { findProject } from '../lib/project.mjs';
@@ -34,6 +35,14 @@ const childrenReason = (children, round) =>
   `This is send-back ${round} of ${CHILD_SEND_BACKS}. ` +
   'Next time, run a long push or CI wait as a foreground command with a timeout, and a reviewer agent in the foreground.';
 
+// What the subagent is told when its brief asked for a handoff file it has not written.
+const handoffReason = (files) =>
+  `Your brief asks you to write your machine handoff to ${files.map((file) => `\`${file}\``).join(', ')}, which does not exist. ` +
+  'Write the handoff JSON there now, then end your turn with a short summary. The file is the record your dispatcher reads: ' +
+  'a handback can reach another session than the one that dispatched you, or none once it has ended. ' +
+  'An agent with neither a file tool nor a shell returns the handoff as its last message and says so; ' +
+  'if the path belongs to another agent, say so.';
+
 // Whether the background check sends the subagent back on this stop, given `made` send-backs so far: the count is stored
 // first, and a stop past the first of its turn whose count cannot be stored is let end.
 function childrenSendBack(input, children, made) {
@@ -50,7 +59,7 @@ await runHook((input) => {
   const made = children.length ? childSendBacks(input) : 0;
   if (!children.length) forgetChildSendBacks(input);
   const forChildren = childrenSendBack(input, children, made);
-  const forDelivery = delivery.missing.length > 0 && sendsBack(input, delivery);
+  const forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
   if (config.telemetry.enabled) {
     appendEvent(project, config, stopRow(input, project, { delivery, children, sentBack: forChildren || forDelivery, docReads: config.telemetry.docReads }));
   }
@@ -64,12 +73,15 @@ await runHook((input) => {
   }
   const reasons = [];
   if (forDelivery) {
-    const { missing } = delivery;
-    recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing }), { config });
-    reasons.push(
-      `Your report names ${missing.map((file) => `\`${file}\``).join(', ')}, which does not exist. ` +
-        'If you meant to write it, write it now; if the path is wrong, correct your report; if you removed it on purpose, say so.',
-    );
+    const { missing, unwritten = [] } = delivery;
+    recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing: undelivered(delivery) }), { config });
+    if (missing.length) {
+      reasons.push(
+        `Your report names ${missing.map((file) => `\`${file}\``).join(', ')}, which does not exist. ` +
+          'If you meant to write it, write it now; if the path is wrong, correct your report; if you removed it on purpose, say so.',
+      );
+    }
+    if (unwritten.length) reasons.push(handoffReason(unwritten));
   }
   if (forChildren) reasons.push(childrenReason(children, made + 1));
   if (reasons.length) deny(reasons.join('\n\n'));

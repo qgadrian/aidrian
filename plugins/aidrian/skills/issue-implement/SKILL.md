@@ -45,11 +45,13 @@ Work anchored to a plan with no issue belongs to the `plan-implement` skill, whi
 - **A sanitized brief.** Each agent gets only its slice: id, goal, the acceptance criteria it covers, files in scope, non-goals,
   an upstream summary, the worktree's absolute path, the planned commit subject, its knowledge tags, and when to escalate.
   Never paste this skill, the conversation, or the whole issue description.
-- **Two delivery legs.** An agent allowed to write gets an absolute handoff path,
+- **Two delivery legs.** An agent with a file tool or a shell gets an absolute handoff path,
   `<state>/dispatch/<branch>-<slice>-<agent>.json`, where `<state>` is the folder `aidrian state` prints
   and each `/` in the branch becomes `-`.
   It writes its machine handoff there first, then sends a short summary as its last message.
-  An agent denied `Write`, such as `explorer`, returns the handoff as its last message instead.
+  The file is the record: a handback can reach another session, or none once the dispatcher has ended,
+  and an idle notice that replays a result already read is stale.
+  An agent with neither, such as `explorer`, returns the handoff as its last message instead.
 - **The tracker is read-only** except the writes `references/hard-rules.md` § Tracker writes lists, all made by this session.
   No dispatched agent writes to the tracker.
 - **No hand-back.** Work an agent can do is done now, or filed as a new issue through `agent-issue-writer`;
@@ -81,6 +83,10 @@ One concise report, in this order. Leave out a section with nothing to say.
 6. **Decided alone**: choices the Human should check, such as slice boundaries, a branch name, or a demoted finding.
 7. **Residual risks**: open risks, findings demoted with a one-line reason, and accepted residuals.
 8. **Pull request**: title, base, link, and the closing line, such as `Fixes ABC-123` or `Refs #123`.
+
+An item for the Human is one an agent tried and only the Human can clear, such as a permission, a credential, or a
+product decision. Each says what is needed, why no agent can do it, and how critical it is: blocking, high, medium, or low.
+The stop hook sends a final report back once when an item for the Human carries none of those four.
 
 When a blocker stops the run, report what is done, what blocks, and the one question that needs an answer.
 No restated issue, no "read file X" lines.

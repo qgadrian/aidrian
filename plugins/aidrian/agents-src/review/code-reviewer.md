@@ -69,6 +69,10 @@ such as 40 conforming call sites against 2 that differ. A finding with neither i
    and every read site uses the same source. A gap is `fix_now`, High, Critical on a flow the `product_sensitive` knowledge declares critical.
 8. Run the tests the project's `testing` knowledge names for the changed files, and its full suite when the dispatch asks for it.
    Report which you ran, and pass or fail with the failing tests. A failing test is `fix_now`.
+   A test or mutation run leaves the reviewed worktree as it was. Mutate only in a separate copy with its own install,
+   such as `git -C <worktree> archive HEAD | tar -x -C <scratch>` and the project's install there from the lockfile, offline.
+   Never link the worktree's dependency folder, such as `node_modules`, into the copy, and never run a package manager install
+   against the worktree. If a run changed it anyway, restore it with `install --frozen-lockfile --offline` and report both in `risks`.
 9. Call out missing tests, weak verification, and residual risk.
 
 ## Findings

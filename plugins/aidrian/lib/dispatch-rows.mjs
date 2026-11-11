@@ -43,14 +43,17 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
   };
 }
 
-// Whether the stop hook sends the subagent back, whether or not telemetry is on. A `missing` path sends it back on the
-// first stop of a turn (`stop_hook_active: false`) alone. A background task it started that still runs (runningChildren)
+// Every file a delivery check found owed: the claimed paths that do not exist, then the brief's handoffs not written.
+export const undelivered = (delivery) => [...delivery.missing, ...(delivery.unwritten ?? [])];
+
+// Whether the stop hook sends the subagent back, whether or not telemetry is on. A `missing` path, or an `unwritten`
+// handoff its brief asked for, sends it back on the first stop of a turn (`stop_hook_active: false`) alone. A background task it started that still runs (runningChildren)
 // sends it back while `made`, the send-backs in a row for that reason so far (child-send-backs.mjs), is under
 // CHILD_SEND_BACKS: one send-back is not enough, since a foreground wait the host moves to the background, or a watch the
 // agent arms instead, is one more task at the next stop. `made` defaults to one send-back per turn. A payload without
 // `stop_hook_active` (a host that does not send it) is never sent back.
 export const sendsBack = (input, delivery, children = [], made = input.stop_hook_active === false ? 0 : CHILD_SEND_BACKS) =>
-  (delivery.missing.length > 0 && input.stop_hook_active === false)
+  (undelivered(delivery).length > 0 && input.stop_hook_active === false)
   || (children.length > 0 && typeof input.stop_hook_active === 'boolean' && made < CHILD_SEND_BACKS);
 
 // A task status that is no longer in flight. Claude Code lists in-flight tasks only; this guards a host that lists more.
@@ -107,7 +110,8 @@ export function stopRow(input, project, {
   const own = transcript ? ownRequests(input) : undefined;
   const part = transcript ? partOf(aggregateUsage(transcript), own) : { perModel: {}, requests: 0, tool_requests: 0, tool_calls: 0 };
   const usage = part.perModel;
-  const { claims, missing } = delivery;
+  const { claims } = delivery;
+  const missing = undelivered(delivery);
   return {
     event: 'stop',
     ts: stamp(now),

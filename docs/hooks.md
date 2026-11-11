@@ -33,7 +33,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), then the [session-length reminder](#session-length) | Claude Code; the announce check also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio |
+| The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
@@ -149,6 +149,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
+| Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny names a copy with its own offline install from the lockfile | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
 | Public text, when turned on | An issue, pull request, or comment whose text matches [`github.publicText.patterns` or `.banned-terms.local`](config.md#public-text), or that the rule cannot read | `AIDRIAN_ALLOW_PUBLIC_TEXT=1` |
 | Attribution, when turned on | An agent's commit or new pull request without the [attribution](config.md#attribution) lines | `AIDRIAN_ALLOW_UNATTRIBUTED=1` |
@@ -438,7 +439,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 - A count toward an [automatic lesson](lessons.md#automatic-lessons): when one rule blocks the same session a third time,
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
-The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
+The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
 `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
@@ -877,6 +878,15 @@ the hook's folder, its checkout and the main checkout, the project, the project'
 skill's folder (`references/tracker.md`), or the end of a file the agent's own Read, Write, or Edit calls named, such as a
 doc in another project. An absolute or `~/` path is checked as written.
 A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
+
+The check also reads the subagent's brief, the first prompt of its transcript. A handoff file the brief asks this agent to
+write must exist when it stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
+or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
+for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not, the hook
+sends the agent back once, on the first stop of its turn, to write it. The file is the record its dispatcher reads:
+a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
+a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief
+says to read, is not asked of it. A forked subagent's first prompt is its parent's, so the check finds nothing there.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Background check
@@ -941,6 +951,25 @@ It runs on both hosts, from the same `hooks.json` entry. Claude Code is verified
 0.167.0 binary, and no live session has run it: [codex.md](providers/codex.md#hooks).
 Codex's transcript is not read, so there the message is the payload's alone;
 the reason names the question tool as each host's model calls it, `AskUserQuestion` or `request_user_input`.
+
+## Hand-back check
+
+When the main session ends a turn on a message that lists items for the Human and any item says nothing of how critical
+it is, the Stop hook sends it back once (`lib/stop-handback.mjs`). Such a list once handed the Human work no agent had
+tried. The agent tries each item first, through its owner, and keeps only real blocks that only the Human can clear,
+such as a permission, a credential, or a product decision. Each block that stays says what is needed, why no agent can
+do it, and how critical it is. Its second stop always ends.
+
+- A list counts when a label addressed to the Human comes before it: a heading, a bold line, or a line that ends in a colon,
+  such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
+  Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
+- An item is a top-level list entry with its continuation lines. The list ends at a heading, or at a paragraph after a blank line
+  that is neither an entry nor indented under one.
+- A fenced code block, read as the pull request body rule reads one (`lib/markdown-sections.mjs`), is skipped:
+  a Markdown example the message quotes is not work handed back, and a code block inside an item does not end its list.
+- An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
+
+The announce check runs first; a stop it sends back is not checked here.
 
 ## Session length
 

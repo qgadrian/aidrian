@@ -37,6 +37,10 @@ Do not read "only the declaration" or a stop at a local import as the answer: re
 - Prefer allowlists over blocklists for access control and validation.
 - Prefer established libraries over custom cryptography or authentication.
 - No hardcoded credentials, no secrets in logs, no needless exposure of personal data.
+- A test or mutation run leaves the reviewed worktree as it was. Mutate only in a separate copy with its own install,
+  such as `git -C <worktree> archive HEAD | tar -x -C <scratch>` and the project's install there from the lockfile, offline.
+  Never link the worktree's dependency folder, such as `node_modules`, into the copy, and never run a package manager install
+  against the worktree. If a run changed it anyway, restore it with `install --frozen-lockfile --offline` and report both in `risks`.
 - Lead each finding with the business question: who can realistically reach this in the next year, and what do they gain?
   A contrived path is an accepted residual; say so plainly and move on. Then give impact, exploit path, and fix direction.
 

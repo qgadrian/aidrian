@@ -22,7 +22,9 @@ export const DEFAULT_CONFIG = `${DEFAULT_DIR}/config.json`;
 const defaultRead = () => undefined;
 // The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and
 // what decides CI's verdict, and this plugin's own code that decides auto-merge, so the gate never approves a change to
-// itself. Not configurable. Under plugins/aidrian/: bin/; the module each bin/ script starts (lib/cli.mjs,
+// itself. Not configurable. What instructs an AI session is every host's, not one host's: HOST_NAMES and HOST_PATHS.
+// The knowledge docs the start hook loads differ per project, so the gate reads them from the default branch beside this
+// list (pr-auto-merge.mjs startDocs). Under plugins/aidrian/: bin/; the module each bin/ script starts (lib/cli.mjs,
 // lib/knowledge-cli.mjs), `aidrian pr` (lib/pr.mjs), the gate, the review that writes its record, every hook that
 // hooks.json runs, and every module and data file those load (test/auto-merge-guard.test.mjs walks them and fails on a
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
@@ -39,13 +41,26 @@ const GUARDED_LIB = [
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
+// The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
+// any infix, such as AGENTS.override.md, which Codex reads first, or CLAUDE.local.md; and AGENT.md, QWEN.md, WARP.md,
+// CRUSH.md, and CONVENTIONS.md.
+const HOST_NAMES = String.raw`(?:AGENTS?|CLAUDE|GEMINI|QWEN|WARP|CRUSH|CONVENTIONS)(?:\.[^/]+)?\.md`;
+// The instruction files and folders AI hosts read by path: Cursor's, Cline's, and Windsurf's at any depth, since they
+// read nested ones; GitHub Copilot's at the repository root or the project root.
+const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules)(?:/|$)|(?:^|/)(?:\.cursorrules|\.windsurfrules)$` +
+  String.raw`|^\.github/copilot-instructions\.md$|^\.github/instructions(?:/|$)`;
 export const GUARDED_PATHS = new RegExp(
-  String.raw`(?:^|/)(?:AGENTS\.md|CLAUDE\.md|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
+  String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
+    `|${HOST_PATHS}` +
     String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
     String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +
     `|^plugins/aidrian/(?:${GUARDED_PLUGIN})`,
   'iu',
 );
+
+// The knowledge index folder beside a config.json path, such as one configPathIn located: `<folder>/knowledge`, with the
+// same prefix, as openProject's `paths.knowledge` is.
+export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/knowledge`;
 
 // The files the gate reads its policy from, as names at any depth and in any case: config.json in a default project
 // folder, the pointer file, the local switch, and the default project folder's own entry. pr-auto-merge.mjs refuses them

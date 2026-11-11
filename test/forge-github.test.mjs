@@ -16,7 +16,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'visibility', 'viewer',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'commit', 'checkRuns', 'compare', 'deployments', 'deploymentStatuses', 'uploadImages',
@@ -373,6 +373,7 @@ test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents
   for (const read of [forge.conversationComments, forge.reviews, forge.reviewComments]) assert.deepEqual(read('acme/notes', 7, { host: 'ghe.acme.io' }), [{ id: 1 }, { id: 2 }]);
   assert.deepEqual(forge.changeFiles('acme/notes', 7, { host: 'ghe.acme.io' }), [{ id: 1 }, { id: 2 }], 'every page of the file list, joined');
   assert.equal(forge.pull('acme/notes', 7, { host: 'ghe.acme.io' }).login, 'me');
+  forge.tree('acme/notes', 'abcdef1234567890abcdef1234567890abcdef12', { host: 'ghe.acme.io' });
   assert.deepEqual(args(), [
     ['pr', 'view', '7', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
     ['pr', 'view', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
@@ -386,6 +387,8 @@ test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents
     // Past gh pr view's 100 files: the whole list, 100 a page, then the head again.
     ['api', ...H, 'repos/acme/notes/pulls/7/files?per_page=100', '--paginate', '--slurp'],
     ['api', ...H, 'repos/acme/notes/pulls/7'],
+    // The docs-only route: one folder of the head's tree at a time, never recursive.
+    ['api', ...H, 'repos/acme/notes/git/trees/abcdef1234567890abcdef1234567890abcdef12'],
   ]);
   const empty = recorded(() => '').forge;
   assert.deepEqual(empty.reviews('acme/notes', 7, { host: 'ghe.acme.io' }), [], 'an empty answer is no entries');

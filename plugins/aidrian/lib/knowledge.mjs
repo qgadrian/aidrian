@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from 'node:path';
 
 import { DEFAULTS, loadConfig, VERSION, versionProblem } from './config.mjs';
-import { fileBytes, insidePath, isDirectory, isFile, isObject, linksOutside, readJson } from './fs.mjs';
+import { fileBytes, insidePath, isDirectory, isFile, isObject, joinedInside, linksOutside, readJson } from './fs.mjs';
 
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
 const TAG = /^[a-z][a-z0-9_]*$/;
@@ -176,11 +176,37 @@ function editDistance(a, b) {
   return row[b.length];
 }
 
+// A bucket's doc path as its folder joins it: the path from the project root, or null when it leaves the bucket or is no
+// .md path. `joined` is insidePath's answer on a disk, or joinedInside's on a tree with none.
+const bucketDoc = (joined) => (joined && joined.endsWith('.md') ? joined : null);
+const notInBucket = (where, doc) => `${where}: ${JSON.stringify(doc)} must be a relative .md path inside the bucket`;
+
+// The `always` docs of one index file, from its text alone, as paths from the project root: what the start hook names to
+// every session. For a tree that is not checked out, such as the default branch on GitHub (pr-auto-merge.mjs startDocs):
+// it checks no file on any disk. Throws, naming `file`, on text whose `dir` or `always` loadBucket would reject by path.
+export function indexedAlways(text, file) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${file}: invalid JSON (${error.message})`);
+  }
+  if (!isObject(raw)) throw new Error(`${file}: an index must be an object`);
+  const dir = joinedInside('', raw.dir);
+  if (!dir) throw new Error(`${file}: "dir" must be a folder inside the project`);
+  if (!Array.isArray(raw.always ?? [])) throw new Error(`${file}: "always" must be a list of doc paths`);
+  return (raw.always ?? []).map((doc) => {
+    const rel = bucketDoc(joinedInside(dir, doc));
+    if (!rel) throw new Error(notInBucket(`${file}: "always"`, doc));
+    return rel;
+  });
+}
+
 // Returns the path relative to the project, or null after adding the reason to `errors`.
 function docPath(root, dir, doc, where, seen, errors) {
-  const rel = insidePath(root, dir, doc);
-  if (!rel || !rel.endsWith('.md')) {
-    errors.push(`${where}: ${JSON.stringify(doc)} must be a relative .md path inside the bucket`);
+  const rel = bucketDoc(insidePath(root, dir, doc));
+  if (!rel) {
+    errors.push(notInBucket(where, doc));
   } else if (!isFile(path.join(root, rel))) {
     errors.push(`${where}: ${rel} does not exist`);
   } else if (seen.includes(rel)) {

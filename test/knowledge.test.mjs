@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { indexedPaths, initBucket, listTags, loadKnowledge as loadKnowledgeOf, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { indexedAlways, indexedPaths, initBucket, listTags, loadKnowledge as loadKnowledgeOf, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -353,4 +353,19 @@ test('indexedPaths gives each doc path once, in index order, when two buckets in
   const buckets = [{ docs: [{ path: 'docs/a.md' }, { path: 'docs/b.md' }] }, { docs: [{ path: 'docs/a.md' }, { path: 'docs/c.md' }] }, { docs: [] }];
   assert.deepEqual(indexedPaths(buckets), ['docs/a.md', 'docs/b.md', 'docs/c.md']);
   assert.deepEqual(indexedPaths([]), []);
+});
+
+test('indexedAlways: an index\'s always docs from its text alone, as paths from the project root, and a broken index throws', () => {
+  const index = (raw) => JSON.stringify(raw);
+  assert.deepEqual(indexedAlways(index({ dir: 'docs', always: ['rules.md', 'deep/a.md'], docs: {} }), 'k/10.json'), ['docs/rules.md', 'docs/deep/a.md']);
+  assert.deepEqual(indexedAlways(index({ dir: 'docs', docs: {} }), 'k/10.json'), [], 'no always: none');
+  assert.deepEqual(indexedAlways(index({ dir: './docs/', always: ['./a.md'] }), 'k/10.json'), ['docs/a.md'], 'a path is normalised as the reader does');
+  for (const [text, why] of [
+    ['{', /k\/10\.json: invalid JSON/u],
+    [index([]), /k\/10\.json: .*an object/u],
+    [index({ dir: '../out', always: [] }), /"dir" must be a folder inside the project/u],
+    [index({ dir: 'docs', always: 'rules.md' }), /"always" must be a list of doc paths/u],
+    [index({ dir: 'docs', always: ['../x.md'] }), /"always": "\.\.\/x\.md" must be a relative \.md path inside the bucket/u],
+    [index({ dir: 'docs', always: ['rules.txt'] }), /must be a relative \.md path/u],
+  ]) assert.throws(() => indexedAlways(text, 'k/10.json'), why, text);
 });

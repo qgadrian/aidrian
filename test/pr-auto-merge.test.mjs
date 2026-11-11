@@ -58,21 +58,47 @@ const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles
 // `viewer`; `comments` holds the pull request's lists, `issues` (conversationComments), `reviews`, and `pulls` (reviewComments),
 // each a list or a function standing in for the call. `restFiles` is the paged file list `changeFiles` gives, or a
 // function standing in for it (by default a 404); `pullHead` is the head `pull` gives, or a function standing in for it.
+// A `files` value that is a list of names is a folder: `contents` lists it. `modes` maps a path from the top of the
+// repository to its git mode at the head, over every changed file of the view, which is a regular file unless named;
+// `tree` reads a folder of that tree by its SHA, the head itself for the root, or is a function standing in for it.
 // What gh prints and how each call reads it is the adapter's (test/forge-github.test.mjs).
+// The head's tree as the forge gives it, one folder a SHA: the root is HEAD, a folder `tree:<path>`. `modes` maps a path
+// from the top of the repository to its git mode; a folder on the way is a tree entry.
+function headTree(modes) {
+  const folders = new Map([[HEAD, []]]);
+  const shaOf = (folder) => (folder === '' ? HEAD : `tree:${folder}`);
+  for (const [file, mode] of Object.entries(modes)) {
+    const parts = file.split('/');
+    parts.forEach((part, i) => {
+      const parent = shaOf(parts.slice(0, i).join('/'));
+      if (!folders.has(parent)) folders.set(parent, []);
+      const entries = folders.get(parent);
+      if (entries.some((entry) => entry.path === part)) return;
+      const last = i === parts.length - 1;
+      const type = !last ? 'tree' : mode === '160000' ? 'commit' : 'blob';
+      entries.push({ path: part, mode: last ? mode : '040000', type, sha: last ? 'f'.repeat(40) : shaOf(parts.slice(0, i + 1).join('/')) });
+    });
+  }
+  return folders;
+}
 const notStubbed = () => {
   throw Object.assign(new Error('Command failed: gh api'), { stderr: 'gh: Not Found (HTTP 404)\n' });
 };
-function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {}, restFiles = notStubbed, pullHead = HEAD } = {}) {
+function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {}, restFiles = notStubbed, pullHead = HEAD, modes = {}, tree = null } = {}) {
   const calls = [];
   const list = (method, key) => (repo, n, { host } = {}) => {
     calls.push([method, repo, n, host]);
     const value = comments[key] ?? [];
     return typeof value === 'function' ? value() : value;
   };
+  const described = { number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view };
+  const present = Array.isArray(described.files) ? described.files.filter((file) => typeof file?.path === 'string' && file.changeType !== 'DELETED').map((file) => file.path) : [];
+  const paged = Array.isArray(restFiles) ? restFiles.filter((entry) => typeof entry?.filename === 'string' && entry.status !== 'removed').map((entry) => entry.filename) : [];
+  const folders = headTree({ ...Object.fromEntries([...present, ...paged].map((file) => [file, '100644'])), ...modes });
   const forge = {
     change: (target, fields) => {
       calls.push(['change', target, fields]);
-      return { number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view };
+      return described;
     },
     repository: (repo, { host } = {}) => {
       calls.push(['repository', repo, host]);
@@ -83,7 +109,15 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
       assert.match(ref, /^refs\/heads\/./u, 'a branch, never a tag of the same name');
       const key = `${repo}@${ref.slice('refs/heads/'.length)}:${file}`;
       if (!Object.hasOwn(files, key)) throw Object.assign(new Error(`Command failed: gh api ${repo} ${file}\ngh: Not Found (HTTP 404)`), { stderr: 'gh: Not Found (HTTP 404)\n' });
+      if (typeof files[key] === 'function') return files[key]();
+      if (Array.isArray(files[key])) return files[key].map((name) => ({ type: 'file', name, path: `${file}/${name}` }));
       return { type: 'file', encoding: 'base64', content: Buffer.from(files[key]).toString('base64') };
+    },
+    tree: (repo, sha, { host } = {}) => {
+      calls.push(['tree', repo, sha, host]);
+      if (typeof tree === 'function') return tree(sha);
+      if (!folders.has(sha)) throw Object.assign(new Error(`Command failed: gh api ${repo} tree ${sha}`), { stderr: 'gh: Not Found (HTTP 404)\n' });
+      return { sha, tree: folders.get(sha), truncated: false };
     },
     viewer: ({ host } = {}) => {
       calls.push(['viewer', host]);
@@ -138,11 +172,12 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
     ['repository', 'acme/notes', 'github.com'],
     ['contents', 'acme/notes', '.aidrian.json', 'refs/heads/main', 'github.com'],
     ['contents', 'acme/notes', '.aidrian/config.json', 'refs/heads/main', 'github.com'],
+    ['contents', 'acme/notes', '.aidrian/knowledge', 'refs/heads/main', 'github.com'],
     ['viewer', 'github.com'],
     ['conversationComments', 'acme/notes', 7, 'github.com'],
     ['reviews', 'acme/notes', 7, 'github.com'],
     ['reviewComments', 'acme/notes', 7, 'github.com'],
-  ], 'the base is the default branch: its config is read once');
+  ], 'the base is the default branch: its config is read once, then the knowledge folder beside it');
   const human = run(t, r, ['7']);
   assert.equal(human.code, 0);
   assert.equal(human.out.length, 1);
@@ -158,7 +193,7 @@ test('every forge call after the view names the host of the pull request\'s URL'
   });
   assert.equal(result.code, 0);
   const api = result.calls.filter((call) => call[0] !== 'change');
-  assert.equal(api.length, 7);
+  assert.equal(api.length, 8);
   for (const call of api) assert.equal(call.at(-1), 'ghe.acme.io', call[0]);
 });
 
@@ -441,11 +476,14 @@ test('review: a listed file that is a dot path, a host instruction file, a guard
     assert.match(line ?? '', OFF, file);
     assert.match(line, new RegExp(`it changes ${named(file)}, ${pattern}`, 'u'), file);
   };
-  for (const file of ['.github/copilot-instructions.md', '.github/prompts/a.prompt.md', '.kiro/steering/a.md', 'packages/x/.cursor/rules/a.md', '.changeset/a.md', '.opencode/a.md', '.cursorrules', 'docs/.md']) {
+  for (const file of ['.github/prompts/a.prompt.md', '.kiro/steering/a.md', '.changeset/a.md', '.opencode/a.md', 'docs/.md']) {
     refused(file, 'whose path has a folder or file name that starts with "\\.", which tools and AI hosts read as settings');
   }
-  for (const file of ['GEMINI.md', 'docs/GEMINI.md', 'AGENTS.override.md', 'sub/AGENTS.override.md', 'CLAUDE.local.md', 'AGENT.md', 'QWEN.md', 'WARP.md', 'CRUSH.md', 'CONVENTIONS.md', 'sub/conventions.md']) {
-    refused(file, 'an instruction file of an AI host');
+  // Every host's instruction file is on GUARDED_PATHS (issue #256): the paths check refuses it first, and with
+  // includeGuardedPaths on, this route still does.
+  for (const file of ['GEMINI.md', 'docs/GEMINI.md', 'AGENTS.override.md', 'sub/AGENTS.override.md', 'CLAUDE.local.md', 'AGENT.md', 'QWEN.md', 'WARP.md', 'CRUSH.md', 'CONVENTIONS.md', 'sub/conventions.md', '.github/copilot-instructions.md', 'packages/x/.cursor/rules/a.md', '.cursorrules']) {
+    assert.deepEqual(reasonOf(t, r, { files: everything(), view: changing('README.md', file) }), [1, 'paths'], file);
+    refused(file, 'which instructs AI sessions', everything({ includeGuardedPaths: true }));
   }
   for (const file of ['CLAUDE.md', 'docs/AGENTS.md', 'skills/x/SKILL.md']) {
     refused(file, 'which instructs AI sessions', everything({ includeGuardedPaths: true }));
@@ -595,12 +633,19 @@ test('reviewProblem: a none_needed is judged on the forge\'s files from the proj
   const review = { ignore: [], nonBehaviour: ['docs/**'] };
   const lists = [['acme/notes main', ['docs/**']]];
   const at = (...paths) => paths.map((path) => ({ path, changeType: 'MODIFIED' }));
-  const judged = (files, extra = {}) => reviewProblem(state, HEAD, { files: at(...files), prefix: 'apps/web/', review, lists, ...extra });
+  const startDocs = { docs: ['apps/web/docs/rules.md'], folder: 'apps/web/.aidrian/knowledge' };
+  const regular = (sha) => ({ sha, tree: [{ path: 'apps', type: 'tree', mode: '040000', sha: 'apps' }, { path: 'web', type: 'tree', mode: '040000', sha: 'web' }, { path: 'docs', type: 'tree', mode: '040000', sha: 'docs' }, { path: 'a.md', type: 'blob', mode: sha === 'docs' ? '100644' : '120000', sha: 'f' }], truncated: false });
+  const judged = (files, extra = {}) => reviewProblem(state, HEAD, { files: at(...files), prefix: 'apps/web/', review, lists, startDocs, tree: regular, ...extra });
   assert.equal(judged(['apps/web/docs/a.md']), null, 'a path from the project root');
   assert.match(judged(['docs/a.md']) ?? '', /it changes "docs\/a\.md", outside this project's folder/u);
   assert.match(judged(['apps/web/src/a.md']) ?? '', /it changes "apps\/web\/src\/a\.md", which the default branch's review\.nonBehaviour does not list/u);
   assert.match(judged(['apps/web/docs/.github/a.md']) ?? '', /starts with "\."/u, 'a dot folder below the project root');
-  assert.match(judged(['apps/web/docs/AGENTS.override.md']) ?? '', /an instruction file of an AI host/u, 'a host name below the project root');
+  assert.match(judged(['apps/web/docs/AGENTS.override.md']) ?? '', /which instructs AI sessions/u, 'a host name below the project root');
+  assert.match(judged(['apps/web/docs/rules.md']) ?? '', /a knowledge doc the start hook loads into every session/u, 'an always doc');
+  assert.match(judged(['apps/web/docs/a.md'], { startDocs: 'x.json: invalid JSON' }) ?? '', /the default branch's knowledge cannot say which docs the start hook loads into every session \(x\.json: invalid JSON\)/u);
+  assert.match(judged(['apps/web/docs/a.md'], { startDocs: undefined }) ?? '', /has not read what the start hook loads/u, 'no start docs: off');
+  assert.match(judged(['apps/web/docs/a.md'], { tree: undefined }) ?? '', /cannot read the head's tree/u, 'no tree reader: off');
+  assert.match(judged(['apps/web/docs/a.md'], { tree: (sha) => ({ ...regular(sha), tree: regular(sha).tree.map((entry) => ({ ...entry, mode: entry.type === 'blob' ? '120000' : entry.mode })) }) }) ?? '', /a symbolic link at the head/u);
   assert.match(reviewProblem(state, HEAD) ?? '', /^the review of head abcdef1 is `none_needed`/u, 'no file list or lists: as before');
   assert.match(judged([]) ?? '', /nothing was reviewed/u, 'an empty file list');
   assert.match(judged(['apps/web/docs/a.md'], { lists: [['acme/notes main', ['docs/**']], ['acme/notes feature', []]] }) ?? '', /lists no github\.autoMerge\.unreviewedPaths on acme\/notes feature/u);
@@ -1029,7 +1074,7 @@ test('both branches allow it: on, with the strategy and cleanup of the default b
   assert.equal(result.code, 0);
   const out = json(result);
   assert.deepEqual([out.allow, out.strategy, out.deleteBranch, out.deleteWorktree, out.base], [true, 'rebase', false, true, 'main']);
-  assert.equal(contentsReads(result.calls).length, 4, 'two branches: each read once');
+  assert.equal(contentsReads(result.calls).length, 5, 'two branches: each read once, and the default branch\'s knowledge folder');
 });
 
 test('a default branch gh cannot name exits 3', (t) => {
@@ -1207,4 +1252,144 @@ test('auto-merge refuses a head whose record holds a residual waiver above low',
   const { code, out, err } = run(t, r, ['7']);
   assert.equal(code, 1);
   assert.match([...out, ...err].join('\n'), /accepted residual "T: why" waived a finding above low severity/u);
+});
+
+// Issue #256: the paths check guards every AI host's instruction files, and the knowledge docs the start hook loads.
+const HOST_FILES = [
+  'AGENTS.md', 'packages/api/AGENTS.md', 'CLAUDE.md', 'a/b/CLAUDE.md', 'GEMINI.md', 'docs/GEMINI.md',
+  'AGENTS.override.md', 'sub/AGENTS.override.md', 'CLAUDE.local.md', 'sub/CLAUDE.local.md', 'AGENT.md', 'QWEN.md', 'sub/qwen.md',
+  '.github/copilot-instructions.md', '.github/instructions/a.instructions.md',
+  '.cursor/rules/a.mdc', 'packages/x/.cursor/rules/a.mdc', '.cursorrules', '.clinerules', '.clinerules/a.md', '.windsurf/rules/a.md', 'pkg/.windsurf/rules/a.md', '.windsurfrules',
+];
+
+test('a changed instruction file of any AI host is off (paths), at the root and nested, and includeGuardedPaths lifts it', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  for (const file of HOST_FILES) {
+    assert.deepEqual(reasonOf(t, r, onStack(branches(TEAM, TEAM), 'src/app.js', file)), [1, 'paths'], file);
+    assert.match(run(t, r, ['7'], onStack(branches(TEAM, TEAM), file)).out[0], new RegExp(`it changes ${named(file)}, which instructs AI sessions`, 'u'), file);
+    assert.deepEqual(reasonOf(t, r, onStack(branches(LIFTED, LIFTED), 'src/app.js', file)), [0, null], `lifted: ${file}`);
+  }
+});
+
+// The default branch's knowledge folder: `index` is each index file by name, as its text or a function standing in for
+// the read; `folder` the knowledge folder from the top of the repository; `listing` the folder's read, when not its names.
+const knowledge = (index = { '10-rules.json': { dir: 'docs', always: ['rules.md'], docs: {} } }, folder = '.aidrian/knowledge', listing = null) => ({
+  [`acme/notes@main:${folder}`]: listing ?? Object.keys(index),
+  ...Object.fromEntries(Object.entries(index).map(([name, raw]) => [`acme/notes@main:${folder}/${name}`, typeof raw === 'string' || typeof raw === 'function' ? raw : JSON.stringify(raw)])),
+});
+const started = (autoMerge = TEAM, index, folder) => ({ 'acme/notes@main:.aidrian/config.json': configText(autoMerge), ...knowledge(index, folder) });
+const changes = (files, ...paths) => ({ files, view: { files: paths.map((each) => (typeof each === 'string' ? { path: each, changeType: 'MODIFIED' } : each)), changedFiles: paths.length } });
+const LOADED = 'auto-merge off for #7: it changes "docs/rules.md", a knowledge doc the start hook loads into every session';
+const serverError = () => {
+  throw Object.assign(new Error('Command failed: gh api'), { stderr: 'gh: Server Error (HTTP 500)\n' });
+};
+
+test('a knowledge doc the default branch loads into every session is off (paths); a doc of its bucket it does not load is not', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const human = run(t, r, ['7'], changes(started(), 'src/app.js', 'docs/rules.md'));
+  assert.deepEqual([human.code, human.out[0]], [1, LOADED]);
+  assert.ok(contentsReads(human.calls).some((call) => call[2] === '.aidrian/knowledge' && call[3] === 'refs/heads/main'), 'the default branch\'s folder');
+  assert.ok(contentsReads(human.calls).some((call) => call[2] === '.aidrian/knowledge/10-rules.json' && call[3] === 'refs/heads/main'), 'and its index');
+  assert.deepEqual(reasonOf(t, r, changes(started(), 'DOCS/Rules.md')), [1, 'paths'], 'compared ignoring case');
+  for (const file of ['docs/guide.md', 'docs/rules.md.bak', 'other/rules.md']) assert.deepEqual(reasonOf(t, r, changes(started(), file)), [0, null], file);
+  const two = { '10-rules.json': { dir: 'docs', always: ['rules.md'], docs: {} }, '20-api.json': { dir: 'api/docs', always: ['a.md', 'deep/b.md'], docs: {} } };
+  for (const file of ['api/docs/a.md', 'api/docs/deep/b.md']) assert.deepEqual(reasonOf(t, r, changes(started(TEAM, two), file)), [1, 'paths'], `every bucket: ${file}`);
+  assert.deepEqual(reasonOf(t, r, changes(started(TEAM, { 'README.md': 'not an index' }, '.aidrian/knowledge'), 'docs/rules.md')), [0, null], 'a file that is no .json index');
+  assert.deepEqual(reasonOf(t, r, changes({ 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, 'docs/rules.md')), [0, null], 'no knowledge folder on the default branch (404): no docs');
+  assert.deepEqual(reasonOf(t, r, changes(started(LIFTED), 'docs/rules.md')), [0, null], 'includeGuardedPaths lifts it');
+
+  // A base other than the default branch: the default branch's indexes decide.
+  const stacked = { ...started(), 'acme/notes@feat/stack:.aidrian/config.json': configText(TEAM) };
+  assert.deepEqual(reasonOf(t, r, onStack(stacked, 'docs/rules.md')), [1, 'paths'], 'on a stack');
+});
+
+test('the knowledge folder a pointer file names is guarded whole, and a project below the root reads its own', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const moved = {
+    'acme/notes@main:.aidrian.json': JSON.stringify({ dir: 'harness' }),
+    'acme/notes@main:harness/config.json': configText(TEAM),
+    ...knowledge(undefined, 'harness/knowledge'),
+  };
+  const added = run(t, r, ['7'], changes(moved, { path: 'harness/knowledge/20-new.json', changeType: 'ADDED' }));
+  assert.deepEqual([added.code, added.out[0]], [1, 'auto-merge off for #7: it changes "harness/knowledge/20-new.json", in the default branch\'s knowledge folder, which decides what the start hook loads']);
+  assert.deepEqual(reasonOf(t, r, changes(moved, 'docs/rules.md')), [1, 'paths'], 'its always doc');
+  assert.deepEqual(reasonOf(t, r, changes(moved, 'harness/notes.md')), [0, null], 'beside the folder');
+
+  const below = projectBelow(t, 'apps/web', configText(TEAM));
+  const own = { 'acme/notes@main:apps/web/.aidrian/config.json': configText(TEAM), ...knowledge(undefined, 'apps/web/.aidrian/knowledge') };
+  const nested = run(t, below, ['7'], changes(own, 'apps/web/docs/rules.md'));
+  assert.deepEqual([nested.code, nested.out[0]], [1, 'auto-merge off for #7: it changes "apps/web/docs/rules.md", a knowledge doc the start hook loads into every session']);
+});
+
+test('a knowledge index the default branch cannot give is off (paths), naming it; includeGuardedPaths lifts it as it lifts the guard', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const cases = [
+    ['invalid JSON', started(TEAM, { '10-rules.json': '{' }), /\.aidrian\/knowledge\/10-rules\.json: invalid JSON/u],
+    ['an always doc outside the bucket', started(TEAM, { '10-rules.json': { dir: 'docs', always: ['../x.md'] } }), /10-rules\.json: "always": "\.\.\/x\.md" must be a relative \.md path inside the bucket/u],
+    ['an index read that fails', started(TEAM, { '10-rules.json': serverError }), /could not read \.aidrian\/knowledge\/10-rules\.json on acme\/notes main with gh \(gh: Server Error \(HTTP 500\)\)/u],
+    ['an index with no file content', started(TEAM, { '10-rules.json': () => ({ type: 'symlink', target: 'x' }) }), /no file content for \.aidrian\/knowledge\/10-rules\.json/u],
+    ['a folder read that fails', { ...started(), 'acme/notes@main:.aidrian/knowledge': serverError }, /could not read \.aidrian\/knowledge on acme\/notes main with gh \(gh: Server Error \(HTTP 500\)\)/u],
+    ['a folder that is a file', { ...started(), 'acme/notes@main:.aidrian/knowledge': () => ({ type: 'file', encoding: 'base64', content: '' }) }, /no listing of \.aidrian\/knowledge on acme\/notes main/u],
+  ];
+  for (const [name, files, why] of cases) {
+    const result = run(t, r, ['7'], changes(files, 'src/app.js'));
+    assert.equal(result.code, 1, name);
+    assert.match(result.out[0], /^auto-merge off for #7: the default branch's knowledge cannot say which docs the start hook loads into every session \(/u, name);
+    assert.match(result.out[0], why, name);
+  }
+  const lifted = { ...started(LIFTED), 'acme/notes@main:.aidrian/knowledge': serverError };
+  assert.deepEqual(reasonOf(t, r, changes(lifted, 'src/app.js')), [0, null], 'with includeGuardedPaths on, as for every guard');
+});
+
+test('review: a none_needed of a knowledge doc the start hook loads, or with indexes the default branch cannot give, is off whatever includeGuardedPaths says', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  const lifted = listing(['**'], { includeGuardedPaths: true });
+  const withKnowledge = (extra = {}) => ({ ...onMain(lifted), ...knowledge(), ...extra });
+  assert.deepEqual(reasonOf(t, r, changes(withKnowledge(), 'docs/guide.md')), [0, null], 'a doc it does not load');
+  const [code, line] = reviewOf(t, r, changes(withKnowledge(), 'docs/rules.md'));
+  assert.equal(code, 1);
+  assert.match(line, OFF);
+  assert.match(line, /it changes "docs\/rules\.md", a knowledge doc the start hook loads into every session/u);
+  const [broken, why] = reviewOf(t, r, changes(withKnowledge({ 'acme/notes@main:.aidrian/knowledge/10-rules.json': '{' }), 'docs/guide.md'));
+  assert.equal(broken, 1);
+  assert.match(why, OFF);
+  assert.match(why, /the default branch's knowledge cannot say which docs the start hook loads into every session \(.*10-rules\.json: invalid JSON/u);
+});
+
+// Issue #259: the none_needed route reads each changed file's mode at the head, and only a regular file passes.
+test('review: a none_needed whose changed file is a symlink or a submodule at the head, or whose tree cannot be read, is off', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  const every = onMain(listing(['**']));
+  const plain = run(t, r, ['7', '--json'], { files: every, view: changing('README.md', 'docs/deep/x.md') });
+  assert.deepEqual([plain.code, json(plain).reason], [0, null], 'an ordinary file passes');
+  assert.deepEqual(plain.calls.filter((call) => call[0] === 'tree'), [
+    ['tree', 'acme/notes', HEAD, 'github.com'], ['tree', 'acme/notes', 'tree:docs', 'github.com'], ['tree', 'acme/notes', 'tree:docs/deep', 'github.com'],
+  ], 'the head, then each folder on the way, each once');
+  assert.deepEqual(reasonOf(t, r, { files: every, view: changing('README.md'), modes: { 'README.md': '100755' } }), [0, null], 'an executable file is a regular file');
+  const removed = { files: [{ path: 'README.md', changeType: 'MODIFIED' }, { path: 'docs/old.md', changeType: 'DELETED' }], changedFiles: 2 };
+  assert.deepEqual(reasonOf(t, r, { files: every, view: removed }), [0, null], 'a deleted file is not at the head, and is not looked up');
+
+  const off = (options, why, name) => {
+    const [code, line] = reviewOf(t, r, { files: every, ...options });
+    assert.equal(code, 1, name);
+    assert.match(line ?? '', OFF, name);
+    assert.match(line, why, name);
+  };
+  off({ view: changing('README.md'), modes: { 'README.md': '120000' } }, /it changes "README\.md", a symbolic link at the head, which a server or site builder may follow/u, 'a symlink at README.md');
+  off({ view: changing('docs/x.md'), modes: { 'docs/x.md': '160000' } }, /it changes "docs\/x\.md", a submodule at the head, whose files no review read/u, 'a submodule at docs/x.md');
+  off({ view: changing('README.md'), tree: serverError }, /the head's tree at abcdef1 cannot be read \(gh: Server Error \(HTTP 500\)\)/u, 'a tree read that fails');
+  off({ view: changing('README.md'), tree: () => ({ sha: HEAD, tree: [{ path: 'README.md', mode: '100644', type: 'blob' }], truncated: true }) }, /the forge returned no whole tree of the repository root at head abcdef1/u, 'a truncated tree');
+  off({ view: changing('README.md'), tree: () => ({ sha: HEAD }) }, /the forge returned no whole tree of the repository root/u, 'no entries');
+  off({ view: changing('README.md'), tree: () => ({ sha: HEAD, tree: [], truncated: false }) }, /it changes "README\.md", which the head's tree does not hold/u, 'a file the head does not hold');
+  off({ view: changing('docs/x.md'), tree: () => ({ sha: HEAD, tree: [{ path: 'docs', mode: '120000', type: 'blob', sha: 'x' }], truncated: false }) }, /it changes "docs\/x\.md", below "docs", which is no folder at the head/u, 'a folder that is a link');
+  off({ view: changing('README.md'), modes: { 'README.md': '100664' } }, /whose mode at the head is 100664, not a regular file's/u, 'any other mode');
+  const received = repo(t);
+  received.record((state) => finished(state));
+  assert.deepEqual(run(t, received, ['7'], { files: every, view: changing('README.md') }).calls.filter((call) => call[0] === 'tree'), [], 'a received review reads no tree');
 });

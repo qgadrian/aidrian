@@ -77,6 +77,8 @@ export PATH="${aidrian_dir}bin:$PATH"
   so an MCP server `linear-server` reaches the hooks as `mcp__linear_server__<tool>`.
 - Hosted tools, such as web search, never reach a hook. No tracker write goes through one.
 - The names reminder runs on each prompt but prints nothing: it reads only Claude Code transcripts.
+- The round-cap raise reads no Codex transcript, so no answer or typed grant lets an agent set `AIDRIAN_ALLOW_EXTRA_ROUNDS`:
+  the Human runs the raise in their own shell, as the refusal writes it.
 - The Stop input holds `stop_hook_active` and `last_assistant_message`, and a Stop hook's exit 2 makes its stderr the
   continuation prompt: both come from the schema and messages the 0.167.0 binary embeds, and no live session has run them.
   So the [announce check](../hooks.md#announced-work) sends a Codex main session back once, naming `request_user_input`

@@ -511,6 +511,9 @@ test('review: files are sorted by the default branch\'s review lists, built-in o
   r.record((state) => noneNeeded(state));
   const all = listing(['**']);
   assert.deepEqual(reasonOf(t, r, { files: onMain(all), view: changing('README.md') }), [0, null], 'the built-in lists');
+  // The built-in review.nonBehaviour names no docs/ folder, so a docs site's config is behaviour, refused before its
+  // extension is looked at.
+  assert.match(reviewOf(t, r, { files: onMain(all), view: changing('docs/conf.py') })[1] ?? '', /it changes "docs\/conf\.py", which the default branch's review\.nonBehaviour does not list/u, 'docs/conf.py under the built-in list');
   assert.deepEqual(reasonOf(t, r, { files: onMain(all, { nonBehaviour: ['docs/**'] }), view: changing('docs/a.md') }), [0, null], 'its own list');
   assert.match(reviewOf(t, r, { files: onMain(all, { nonBehaviour: ['docs/**'] }), view: changing('README.md') })[1], /it changes "README\.md", which the default branch's review\.nonBehaviour does not list/u, 'its own list leaves README.md out');
   writeFileSync(path.join(r.dir, '.aidrian/config.json'), policy(all, { nonBehaviour: ['**'] }));

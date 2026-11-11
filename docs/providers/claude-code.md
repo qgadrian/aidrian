@@ -51,7 +51,7 @@ Claude Code runs every hook in [`hooks.json`](../../plugins/aidrian/hooks/hooks.
 There is nothing to trust or turn on.
 [hooks.md](../hooks.md) lists each hook; the ones marked Claude Code run only here.
 The [host adapter](../../plugins/aidrian/lib/hosts/claude-code.mjs) holds what the shared code reads from this host:
-its payloads need no mapping, since their names are the standard.
+its payloads need no mapping, since their names are the standard, but for [a GitHub MCP server from a plugin](#a-github-mcp-server-from-a-plugin).
 [Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified) has the evidence.
 
 Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, and reports `Hook cancelled`.
@@ -59,6 +59,28 @@ The session-end hook deletes the session's temporary files itself, and hands the
 to a detached worker, so a long session's transcripts never hold up the exit.
 For a session holding a [tracker refusal marker](../config.md#how-a-write-is-judged), it also writes one `hook_deny` row in process.
 That row reads no transcript and waits on no lock, so the hook stays within its budget.
+
+## A GitHub MCP server from a plugin
+
+Claude Code names a tool of an MCP server a plugin bundles `mcp__plugin_<plugin>_<server>__<tool>`
+([its hooks reference](https://code.claude.com/docs/en/hooks)), so the GitHub MCP server installed through the `github`
+plugin merges through `mcp__plugin_github_github__merge_pull_request`.
+The adapter reads such a call as `mcp__github__<tool>`, the name the [merge guard](../hooks.md#merge-guard),
+the [ready hold](../hooks.md#ready-hold), and the [review gate](../config.md#review-gate) read, when both hold:
+
+- The tool is one of those the GitHub MCP hook judges: `merge_pull_request`, `update_pull_request`,
+  `update_pull_request_draft_state`, `add_issue_comment`, `add_reply_to_pull_request_comment`, and `pull_request_review_write`.
+- One word of the plugin and server names, words split at `_`, holds `github` in any case, such as `github_github`,
+  `acme-tools_GitHub`, or `github-enterprise_gh`.
+
+The tool name alone is not enough: other forges' MCP servers, such as Gitea's and Bitbucket's, have a `merge_pull_request`
+or an `update_pull_request` of their own, and the merge guard refuses a merge whose head it cannot read.
+So a GitHub MCP server under a plugin or server name that holds no `github` is not read, and its calls run unchecked.
+The hook's payload keeps the name Claude Code sent as `raw_tool_name`, so a pattern a project wrote in that form still matches.
+A second `PreToolUse` group in `hooks.json`, last so that no other group's place moves, runs the GitHub MCP hook on these
+names, with the adapter's pattern, anchored and with no lookaround so that Codex reads it as well;
+`test/host-plugin-github.test.mjs` holds the two equal. Verified with the GitHub MCP server's documented input through the
+real hook, not with a live plugin install.
 
 ## Models and effort
 

@@ -24,11 +24,14 @@ export const DEFAULT_IGNORE = Object.freeze([
   '**/vendor/**', '**/*.min.js', '**/*.min.css', '**/*.map',
 ]);
 
-// The files that cannot change what the software does: prose docs and static assets. Tests are not here on purpose:
-// deleting or weakening a test changes what a change is held to. A project's `review.nonBehaviour` replaces it.
+// The files that cannot change what the software does: Markdown, license notices, and raster images and fonts. A file
+// that can carry code or dependencies is not here, though it looks like prose: a `.txt` can be requirements.txt or
+// CMakeLists.txt, an `.mdx` compiles to JSX, an `.svg` can hold script, and a docs folder holds a docs site's config,
+// scripts, and package manifest. Tests are not here on purpose either: deleting or weakening a test changes what a
+// change is held to. A project's `review.nonBehaviour` replaces this list.
 export const DEFAULT_NON_BEHAVIOUR = Object.freeze([
-  '**/*.md', '**/*.mdx', '**/*.txt', 'docs/**', '**/LICENSE', '**/NOTICE',
-  '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.webp', '**/*.svg', '**/*.ico', '**/*.woff', '**/*.woff2', '**/*.ttf',
+  '**/*.md', '**/LICENSE', '**/NOTICE',
+  '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.gif', '**/*.webp', '**/*.ico', '**/*.woff', '**/*.woff2', '**/*.ttf',
 ]);
 
 // The plan's reason when every reviewed file is one `review.nonBehaviour` lists: `aidrian pr auto-merge` reads it from a

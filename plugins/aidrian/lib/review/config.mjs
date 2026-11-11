@@ -78,8 +78,8 @@ export function checkReview(value, file, errors) {
     if (RECORDS.includes(value.record)) out.record = value.record;
     else bad('"review.record" must be "comment" or "local"');
   }
-  // A bad `re:` entry is an error and is left out, and the list keeps the team's other entries, never the built-in list:
-  // fewer entries mean more review, so a typo can only fail closed.
+  // A bad `re:` entry, one that does not compile or an empty one, is an error and is left out, and the list keeps the
+  // team's other entries, never the built-in list: fewer entries mean more review, so a typo can only fail closed.
   for (const key of ['ignore', 'nonBehaviour']) {
     if (!Object.hasOwn(value, key)) continue;
     if (!texts(value[key])) {
@@ -415,9 +415,11 @@ function checkSplit(split, bad) {
 }
 
 // The problem with a list of path entries (globs, or `re:<regular expression>`), or null. config-types.mjs `globs` checks
-// a config list of paths by it too, so both say the same.
+// a config list of paths by it too, so both say the same. An empty `re:` compiles to a pattern that matches every path:
+// in review.nonBehaviour or review.ignore it would sort every file as one no review reads, so it is an error everywhere.
 export function pathsProblem(list) {
   for (const entry of list) {
+    if (entry === 're:') return 'has re: with no expression';
     if (entry.startsWith('re:')) {
       const problem = regexProblem(entry.slice('re:'.length));
       if (problem) return `has ${entry}: ${problem}`;

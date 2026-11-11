@@ -484,6 +484,14 @@ test('.aidrian.local.json review.productFeedback may set only auto', (t) => {
   assert.deepEqual(at(true), ['.aidrian.local.json: "review.productFeedback" must be { "auto": true } or { "auto": false }']);
 });
 
+test('review.ignore and review.nonBehaviour: an empty re: is a config error, and the list keeps its other entries', (t) => {
+  for (const key of ['ignore', 'nonBehaviour']) {
+    const { config, errors } = loadConfig(project(t, { version: 1, review: { [key]: ['README.md', 're:'] } }));
+    assert.deepEqual(errors, [`.aidrian/config.json: "review.${key}" has re: with no expression`], key);
+    assert.deepEqual(config.review[key], ['README.md'], key);
+  }
+});
+
 test('review.productFeedback.maxPersonas is a whole number from 1 to 10, 2 by default', (t) => {
   const at = (productFeedback) => loadConfig(project(t, { version: 1, review: { productFeedback } }));
   assert.equal(DEFAULTS.review.productFeedback.maxPersonas, 2);

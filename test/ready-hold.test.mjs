@@ -531,3 +531,17 @@ test('the GitHub MCP hook holds the server\'s tools and Codex\'s connector tool 
     assert.match(held.stderr, /#7 ready/u);
   }
 });
+
+test('the GitHub MCP hook holds a ready through a GitHub MCP server a Claude Code plugin installs, under its plugin name', (t) => {
+  const dir = repo(t);
+  const mcp = (tool_name, tool_input, env) => hookRun(dir, 'hook-mcp-github.mjs', { tool_name, tool_input }, { head: HEAD }, env);
+  const given = { owner: 'acme', repo: 'notes', pullNumber: 7 };
+  for (const name of ['mcp__plugin_github_github__update_pull_request', 'mcp__plugin_github_github__update_pull_request_draft_state']) {
+    for (const env of [{}, { CLAUDECODE: '1' }]) {
+      const held = mcp(name, { ...given, draft: false }, env);
+      assert.equal(held.status, 2, `${name} ${JSON.stringify(env)}: ${held.stderr}`);
+      assert.match(held.stderr, /#7 ready/u);
+    }
+    assert.equal(mcp(name, { ...given, draft: true }).status, 0, name);
+  }
+});

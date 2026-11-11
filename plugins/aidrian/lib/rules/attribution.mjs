@@ -9,7 +9,7 @@
 // Each `git commit` is judged on its own message, read where it runs (shell-lex walkCommands): its -m values, the
 // heredoc of a -m `$(cat <<'EOF' … EOF)`, or its -F file, cleaned as git cleans it, with its --trailer values; then
 // `git interpret-trailers` in that folder says which trailers the commit gets. A help, dry-run, or status call passes.
-// A `gh pr create` body the rule cannot read is refused. `gh pr edit` passes: another session would attribute the same
+// A `gh pr create` body the rule cannot read is refused, naming the one cause pr-body `unreadBody` gives. `gh pr edit` passes: another session would attribute the same
 // pull request differently. A `gh pr create` that names a repository other than its checkout's asks for no lines
 // (pr-body `targetsAnotherRepo`).
 
@@ -22,7 +22,7 @@ import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
-import { lineWrites, readBody, stdinBody, readPrCall, readPrCalls, targetsAnotherRepo, unchangedHeredoc } from './github/pr-body.mjs';
+import { lineWrites, readBody, stdinBody, readPrCall, readPrCalls, targetsAnotherRepo, unchangedHeredoc, unreadBody } from './github/pr-body.mjs';
 import { invocationRepo } from './github/review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
@@ -94,9 +94,11 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const { project, config } = found;
     const body = readBody(call, dir, written);
     if (body === null) {
-      return hint('the attribution rule cannot read this pull request body (a variable, a command substitution, stdin, a missing ' +
-        `file, a device or a pipe, or none), so it cannot check its attribution. Pass a literal --body, a heredoc (--body "$(cat <<'EOF' … EOF)"), ` +
-        'or a --body-file that exists.');
+      // The one cause pr-body's reader names, so this hint agrees with the pull request body and public text denies.
+      const { cause, fix } = unreadBody(call, dir, written) ??
+        { cause: '`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template', fix: '' };
+      return hint(`the attribution rule cannot read this pull request body: ${cause}, so it cannot check its attribution. ${fix ? `${fix} ` : ''}` +
+        `Pass a literal --body, a heredoc (--body "$(cat <<'EOF' … EOF)"), or a --body-file that exists.`);
     }
     const head = staticText(call.head) ?? 'HEAD';
     const agents = prFields.includes('agents')

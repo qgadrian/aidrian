@@ -246,7 +246,7 @@ What each rule matches:
   Private words are checked on every call of the command before any config pattern runs, so config patterns never use up their time.
   A rule of this hook that fails lets the command through that rule only; the later rules still run.
   A body or title the rule cannot read is refused, with the two steps that pass for a body, and that includes a device or a pipe given as the body file.
-  The deny names the same one cause as the pull request body rule's, from the same reader (`unreadBody`), since this rule runs first:
+  The deny names the same one cause as the pull request body and attribution rules, from the same reader (`unreadBody`), since this rule runs first:
   a script or `sed -i` that edits the body file on the gh line gets the step that passes, gh as its own command after it.
   A call with no body flag whose text would come
   from an editor, a prompt, a template, or the commit messages is refused too. `--fill` with no `--title` is refused the same way.
@@ -260,6 +260,7 @@ What each rule matches:
   The pull request body rule has no MCP counterpart in the GitHub MCP hook either, so a post through an MCP tool goes unread by both.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
+  A body it cannot read is refused with the one cause the pull request body rule's reader names (`unreadBody`).
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
 - Review sign-off: `aidrian pr signoff`, with `--overrule`, `--accept`, and `--last` too, also as `node …/cli.mjs` or `node …/bin/aidrian`,

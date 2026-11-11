@@ -11,7 +11,7 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { escapedFixes } from '../plugins/aidrian/lib/review/bench.mjs';
 import { dedupe, packageRoots, partition, sliceKey, splitPasses } from '../plugins/aidrian/lib/review/split.mjs';
-import { emptyState, prunePasses, readLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, prunePasses, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const change = (file, lines = 10) => ({ file, added: lines, removed: 0, status: 'M' });
 
@@ -420,4 +420,29 @@ test('dedupe never throws on, and never merges, findings that have no title', ()
     ['cross', [{ id: 'R1-3', file: 'x.js', line: 10, severity: 'high' }, { id: 'R1-4', file: 'x.js', line: 12, title: 'Missing null check', severity: 'low' }]],
   ]);
   assert.deepEqual(merged.map((each) => each.id), ['R1-1', 'R1-2', 'R1-3', 'R1-4']);
+});
+
+test('a machine that adopts a public copy reruns the finished slices whose report it lacks, before the cross pass', async (t) => {
+  const r = repo(t);
+  const seen = [];
+  const exec = async (_reviewer, input) => {
+    seen.push(input.role === 'slice' ? input.files[0] : input.role);
+    if (input.role === 'cross') assert.deepEqual(input.slices.map((each) => each.contracts), [['a()'], ['b()'], ['c()'], ['d()']], 'the cross pass reads every slice`s report');
+    return { status: 'done', findings: [], verdicts: [], contracts: input.role === 'slice' ? [`${input.files[0].split('/')[1]}()`] : [], cross_notes: [], dropped: [] };
+  };
+  assert.equal((await r.step(exec)).status, 'running');
+  // Another machine adopts the public copy of this record, then writes it, as `aidrian pr extend` does.
+  const project = projectAt(r.dir);
+  const body = summaryBody(readLocalState(project, 3), null, 'running', { reading: { visibility: 'PUBLIC', inside: true }, root: r.dir, names: [] });
+  rmSync(recordFile(project, 3));
+  const adopted = readRecord(project, 3, [{ id: 1, body, author_association: 'MEMBER' }], 'o/r').state;
+  const marked = Object.entries(adopted.passes).filter(([, result]) => result.notesWithheld).map(([id]) => id);
+  assert.equal(marked.length, 2, 'both finished slices lost their report on the copy');
+  writeLocalState(project, adopted);
+  seen.length = 0;
+  let result = await r.step(exec);
+  while (result.status === 'running') result = await r.step(exec);
+  assert.equal(result.status, 'received');
+  assert.deepEqual(seen.slice(-1), ['cross']);
+  assert.equal(seen.filter((each) => each !== 'cross').length, 4, 'the two marked slices ran again with the two left');
 });

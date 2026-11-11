@@ -280,7 +280,10 @@ export function securityReading(state) {
 }
 
 // The ids of the findings securityReading reads as security.
-export const securityIds = (state) => new Set([...securityReading(state)].map((finding) => finding.id).filter(isFindingId));
+// A security ruling counts for the finding it names too (`ruled_id`), and a finding for its aliases: a residual row is
+// keyed by the finding a ruling repeats, which may no longer be listed.
+export const securityIds = (state) => new Set([...securityReading(state)]
+  .flatMap((finding) => [finding.id, finding.ruled_id, ...(Array.isArray(finding.aliases) ? finding.aliases : [])]).filter(isFindingId));
 
 // ---- The posted copy ----
 
@@ -384,8 +387,8 @@ function privateCopy(value, checker, counter) {
   if (!isObject(value)) return value;
   const out = {};
   for (const [key, each] of Object.entries(value)) {
-    // `adopted` and `evidenceWithheld` are this machine's own marks (fillWithheld): no copy posts them.
-    if (key === 'adopted' || key === 'evidenceWithheld') continue;
+    // `adopted`, `evidenceWithheld`, and `notesWithheld` are this machine's own marks (fillWithheld): no copy posts them.
+    if (key === 'adopted' || key === 'evidenceWithheld' || key === 'notesWithheld') continue;
     const kept = keyAllowed(key, checker) ? privateCopy(each, checker, counter) : undefined;
     if (kept === undefined) counter.n += 1;
     else out[key] = kept;
@@ -747,7 +750,16 @@ export function fillWithheld(remote, local) {
   }
   for (const [id, result] of Object.entries(isObject(remote.passes) ? remote.passes : {})) {
     const theirs = local.passes?.[id];
-    if (!isObject(result) || !isObject(theirs) || !sameHead(result.head, theirs.head)) continue;
+    if (!isObject(result)) continue;
+    // A slice's report to the cross-cutting pass that another machine recorded, and a copy left out, is marked: the
+    // review step does not count the slice as finished, so it runs again before the cross pass reads its report.
+    if (!isObject(theirs) || !sameHead(result.head, theirs.head)) {
+      if (id.startsWith('slice:') && !(Array.isArray(result.contracts) && Array.isArray(result.cross_notes))) result.notesWithheld = true;
+      continue;
+    }
+    // This machine's copy of the pass keeps its own mark: an earlier adoption that wrote it holds no report either.
+    if (theirs.notesWithheld === true) result.notesWithheld = true;
+    else delete result.notesWithheld;
     fillKeys(result, theirs, ['contracts', 'cross_notes', 'dropped', 'files']);
     for (const verdict of Array.isArray(result.verdicts) ? result.verdicts : []) fillKeys(verdict, matching(theirs.verdicts, verdict, ['flow', 'invariant', 'verdict']));
   }

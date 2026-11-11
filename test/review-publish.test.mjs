@@ -11,7 +11,8 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { postContext, readReading } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
-import { escapeLines, gitPaths, isPrivate, JUDGE_RULING, patternsOf, postedCopy, residualRows, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
+import { escapeLines, fillWithheld, gitPaths, isPrivate, JUDGE_RULING, patternsOf, postedCopy, residualRows, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
+import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
 import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
 const NO_TERMS = { hosts: [], accounts: [], variables: [] };
@@ -357,4 +358,41 @@ test('every string a residual row keeps meets the checks: a file matching a conf
   assert.deepEqual(rows, [{ pass: 'p', id: 'R1-1', severity: 'low', text: WITHHELD }]);
   const named = residualRows([{ pass: 'slice:secretproject', id: 'R1-1', title: 'A nit', severity: 'low' }], state, { reading, checker });
   assert.deepEqual(named.rows, [{ id: 'R1-1', severity: 'low', text: WITHHELD }]);
+});
+
+test('a security finding accepted late, then repeated as already ruled, keeps its residual row by id once its listing is gone', (t) => {
+  const root = checkout(t, []);
+  writeFileSync(path.join(root, 'a.js'), Array.from({ length: 30 }, (_, i) => `${i}\n`).join(''));
+  const git = (...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' }).stdout.trim();
+  git('add', '-A');
+  git('commit', '-qm', 'base');
+  const head = git('rev-parse', 'HEAD');
+  const paths = gitPaths(root).at(head);
+  const pass = 'engine:codex-local';
+  const state = { ...emptyState(7, 'o/r'), floored: true, rounds: [{ head, at: '2026-11-11T00:00:00.000Z' }],
+    planNote: { head, passes: { [pass]: { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] } };
+  // A low finding its reviewer flagged as security, accepted by the late-round rule.
+  recordFindings(state, pass, { head, list: [{ title: 'Token in the log', file: 'a.js', line: 10, severity: 'low', security: true, state: 'accepted', disposition: 'accepted_residual', accepted_by: 'late-round' }] }, { mint: true, paths });
+  const original = state.passes[pass].list[0].id;
+  // The next head: the reviewer repeats it as already ruled, and the listing leaves the pass.
+  state.rounds.push({ head, at: '2026-11-11T01:00:00.000Z' });
+  recordFindings(state, pass, { head, list: [], ruled: [{ title: 'Token still in the log', file: 'a.js', line: 10, severity: 'low', already_ruled: 'Token in the log', from: 'prior', settled_severity: 'low', accepted_by: 'late-round' }] }, { mint: true, paths });
+  assert.equal(state.passes[pass].ruled[0].ruled_id, original);
+  const rows = lateResiduals([{ id: pass }], () => state.passes[pass]);
+  assert.equal(rows[0].id, original, 'the row is keyed by the finding the ruling names');
+  const out = residualRows(rows, state, { reading: { visibility: 'PUBLIC', inside: true }, checker: textChecker({ context: CONTEXT, words: [] }) });
+  assert.deepEqual([out.rows[0].text, out.rows[0].title, out.rows[0].file, out.withheld], [WITHHELD, undefined, undefined, 1]);
+});
+
+test('an adopted slice result keeps no report another machine left out: it is marked; this machine`s own same-head result fills it', () => {
+  const head = 'a'.repeat(40);
+  const slice = 'slice:code-reviewer:0123456789';
+  const remote = { ...emptyState(7, 'o/r'), revision: 9, passes: { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0 } } };
+  fillWithheld(remote, emptyState(7, 'o/r'));
+  assert.equal(remote.passes[slice].notesWithheld, true, 'an attested agent slice from another machine');
+  const again = { ...emptyState(7, 'o/r'), revision: 9, passes: { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0 } } };
+  fillWithheld(again, { ...emptyState(7, 'o/r'), passes: { [slice]: { head, contracts: ['a()'], cross_notes: [] } } });
+  assert.deepEqual([again.passes[slice].notesWithheld, again.passes[slice].contracts], [undefined, ['a()']]);
+  const { copy } = postedCopy({ ...remote, revision: 9 }, { reading: PRIVATE, checker: { allows: () => true } });
+  assert.equal(copy.passes[slice].notesWithheld, undefined, 'no copy posts the mark');
 });

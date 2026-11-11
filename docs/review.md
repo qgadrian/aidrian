@@ -1176,7 +1176,8 @@ which the review step alone writes, are kept from the comment.
   and judge; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
   finding has no file or line there ([Reviewers](#reviewers)). A verdict posts no evidence: a machine that adopts the
   copy does not count a pass whose holds or not_affected verdicts arrive without it, and runs that pass again, so its
-  reviewer answers with evidence that machine checks. A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads
+  reviewer answers with evidence that machine checks. A split slice another machine finished arrives without its
+  contracts and cross-slice notes, so it runs again before the cross-cutting pass reads them. A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads
   as the Human's.
 - **Text checks.** Every string that may be posted is checked first, on its text with whitespace runs collapsed and on
   a decoded copy, and a hit withholds it and never fails the step: token-shaped strings and local paths always (in the

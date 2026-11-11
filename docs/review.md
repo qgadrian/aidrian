@@ -36,6 +36,7 @@ another.
 ```
 
 - A path list takes globs and `re:<regex>` entries, matched against the `/`-separated path.
+  A `re:` entry that does not compile is a config error; the list keeps its other entries.
 - `when` takes `onlyFiles` (every reviewed file matches), `anyFiles` (some changed file matches), and `lines.over`
   (changed lines, not counting `review.ignore`). That is all it will ever take: anything smarter is a plan command.
 - `depth: "none"` needs `onlyFiles`, so it only covers the files it names, and any rule that asks for more wins.
@@ -1060,7 +1061,8 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   here then takes the newer of the two.
 
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
-  reason, carried_from, carried_base }`, where `carried_from` and `carried_base` are set only on a `received` that a
+  reason, reasons, depth, carried_from, carried_base }`, where `reasons` and `depth`, set only on a `none_needed`, are its
+  plan's, which [auto-merge](config.md#when-it-is-on) reads, and `carried_from` and `carried_base` are set only on a `received` that a
   [clean merge from the base branch](#rounds) carried, and name the head that was reviewed and the base commit merged
   in. The summary comment shows that outcome under **Carried review**, rewritten from the record on every write. The early returns, `none_needed`, `unsatisfied`,
   and `too_large`, write it to the state folder only and post nothing; a `held` return writes nothing. Before any

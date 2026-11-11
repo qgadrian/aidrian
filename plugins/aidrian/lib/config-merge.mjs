@@ -50,7 +50,7 @@ export function merge(schema, defaults, values, prefix, file, errors, gateErrors
       out[key] = value;
     } else {
       const must = TYPES[type][1];
-      errors.push(`${file}: "${prefix}${key}" must be ${typeof must === 'function' ? must() : must}`);
+      errors.push(`${file}: "${prefix}${key}" must be ${typeof must === 'function' ? must(value) : must}`);
     }
   }
   return out;

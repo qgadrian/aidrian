@@ -50,8 +50,9 @@ export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'strin
 // A commit SHA as a command takes it: 7 to 40 hex.
 export const SHA_REF = /^[0-9a-f]{7,40}$/iu;
 
-// `outcome` is the review step's last return, { status, head, at, reason?, carried_from?, carried_base? }, which the
-// merge guard reads (lib/rules/github/merge-review.mjs). `carried_from` is the head whose `received` review a clean
+// `outcome` is the review step's last return, { status, head, at, reason?, reasons?, depth?, carried_from?, carried_base? }, which the
+// merge guard reads (lib/rules/github/merge-review.mjs). `reasons` and `depth`, on a `none_needed` alone, are its plan's, which
+// `aidrian pr auto-merge` reads (lib/pr-auto-merge.mjs reviewProblem). `carried_from` is the head whose `received` review a clean
 // merge from the base branch carried to `head` (lib/review/run.mjs), and `carried_base` the base commit it merged in;
 // the summary comment shows both under **Carried review** (carriedLines). `remerge` is { head, from }: the merge head
 // whose review covers only what the merge itself changed, and the reviewed head it builds on. `pending` holds the
@@ -91,9 +92,10 @@ export function answerPending(state, kind, { head, by, repo = null, isAncestor =
 // Notes the review step's return on `state`: its outcome, and, once finished by a review, every gate review owed on
 // that head or an earlier one it descends from answered.
 // `repo` is the step's repository: a gate review owed for another one stays owed.
-export function noteOutcome(state, { status, head, reason, carried_from, carried_base }, isAncestor = () => false, repo = null) {
+export function noteOutcome(state, { status, head, reason, carried_from, carried_base, plan }, isAncestor = () => false, repo = null) {
   const carried = typeof carried_from === 'string' ? { carried_from, ...(typeof carried_base === 'string' ? { carried_base } : {}) } : {};
-  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}), ...carried };
+  const reasons = status === 'none_needed' && Array.isArray(plan?.reasons) ? { reasons: plan.reasons.slice(0, MAX_REASONS).map(clip), depth: plan.depth } : {};
+  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}), ...reasons, ...carried };
   // A carried outcome ran no review, so it answers none: a review owed on the merge head stays owed.
   if (FINISHED.has(status) && typeof carried_from !== 'string') answerPending(state, 'review', { head, by: status, isAncestor, repo });
   return state;

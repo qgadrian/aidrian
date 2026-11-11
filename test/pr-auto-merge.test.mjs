@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,8 +9,10 @@ import test from 'node:test';
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import { pathsProblem, reviewProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { classify, evaluateRules } from '../plugins/aidrian/lib/review/plan.mjs';
+import { emptyState, noteOutcome, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 const OLD = '1234567890abcdef1234567890abcdef12345678';
@@ -291,7 +293,327 @@ test('review: no record, an outcome on an older head, an unfinished outcome, or 
   });
   assert.deepEqual(reasonOf(t, r), [1, 'review'], 'an entry still owed');
   r.record((state) => finished(state, HEAD, 'none_needed'));
-  assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType: 'MODIFIED' }] } }), [1, 'review'], 'a docs-only pull request that needed no review waits for the Human');
+  assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType: 'MODIFIED' }] } }), [1, 'review'], 'a none_needed record that names no plan reason, as one written before the reason was kept, waits for the Human');
+});
+
+// A `none_needed` outcome as the review step writes it for a pull request of only non-behaviour files: noteOutcome is
+// the writer, so the gate reads what a real step leaves.
+const ONLY_PROSE = 'only files that cannot change behaviour';
+const noneNeeded = (state, head = HEAD, reasons = [ONLY_PROSE], depth = 'none') =>
+  noteOutcome(state, { status: 'none_needed', head, plan: { depth, reasons, flows: [], stages: [] } });
+const changing = (...paths) => ({ files: paths.map((path) => ({ path, changeType: 'MODIFIED' })), changedFiles: paths.length });
+const reviewOf = (t, r, ghOptions) => {
+  const result = run(t, r, ['7'], ghOptions);
+  return [result.code, result.out[0]];
+};
+// A team's github.autoMerge with `unreviewedPaths`, and a branch's config.json with it and an optional `review` group.
+const LISTED = ['README.md', 'guide/**', 'img/**'];
+const listing = (paths = LISTED, extra = {}) => ({ ...TEAM, unreviewedPaths: paths, ...extra });
+const policy = (autoMerge = listing(), review = null) => JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge }, ...(review === null ? {} : { review }) });
+const onMain = (autoMerge, review) => ({ 'acme/notes@main:.aidrian/config.json': policy(autoMerge, review) });
+const listed = (view, extra = {}) => ({ files: onMain(), view, ...extra });
+const OFF = /^auto-merge off for #7: the review of head abcdef1 is `none_needed`, and /u;
+const named = (file) => JSON.stringify(file).replaceAll('.', '\\.');
+
+test('review: none_needed on the current head, of files the team lists in github.autoMerge.unreviewedPaths, is on', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  assert.deepEqual(reasonOf(t, r, listed(changing('README.md'))), [0, null], 'README.md');
+  assert.deepEqual(reasonOf(t, r, listed(changing('README.md', 'guide/a.md', 'img/b.png', 'img/d.ico', 'img/e.webp', 'img/f.jpeg', 'img/g.gif'))), [0, null], 'listed prose and raster images');
+  assert.deepEqual(reasonOf(t, r, { files: onMain(listing(), { nonBehaviour: ['**/*.md', '**/*.avif'] }), view: changing('README.md', 'img/c.avif') }), [0, null], 'an .avif the default branch\'s own list names');
+  const human = run(t, r, ['7'], listed(changing('README.md')));
+  assert.deepEqual([human.code, human.out], [0, ['auto-merge on for #7 at abcdef1: squash, delete the branch, keep the worktree']]);
+});
+
+test('review: none_needed for an earlier head, a missing record, or an owed review is off, as for a received review', (t) => {
+  const r = repo(t);
+  const docs = listed(changing('README.md'));
+  assert.deepEqual(reviewOf(t, r, docs), [1, 'auto-merge off for #7: this machine holds no review record for it: run `aidrian pr review`']);
+  r.record((state) => noneNeeded(state));
+  assert.deepEqual(reasonOf(t, r, docs), [0, null], 'on the current head it is on, so each refusal below is its own');
+  r.record((state) => noneNeeded(state, OLD));
+  assert.deepEqual(reviewOf(t, r, docs), [1, 'auto-merge off for #7: the last review covered 1234567, not head abcdef1']);
+  r.record((state) => noneNeeded(state, HEAD.slice(0, 7)));
+  assert.deepEqual(reasonOf(t, r, docs), [1, 'review'], 'a prefix of the head');
+  r.record((state) => {
+    noneNeeded(state);
+    state.pending.push({ kind: 'request', head: HEAD, at: '2026-11-03T14:10:00.000Z', by: 'the Human' });
+  });
+  assert.deepEqual(reviewOf(t, r, docs), [1, 'auto-merge off for #7: 1 review entry is still owed']);
+  r.record((state) => {
+    noneNeeded(state);
+    state.passes['engine:codex-local'] = { head: OLD, carried: [{ title: 'T', file: 'a.js', severity: 'medium', settled_severity: 'medium', already_ruled: 'T', from: 'residual', residual: 'T: why' }] };
+  });
+  assert.match(reviewOf(t, r, docs)[1], /accepted residual "T: why" waived a finding above low severity/u, 'a held waiver holds a none_needed too');
+});
+
+test('review: none_needed whose plan reasons are not exactly only files that cannot change behaviour is off', (t) => {
+  const r = repo(t);
+  const docs = listed(changing('README.md'));
+  r.record((state) => noneNeeded(state));
+  assert.deepEqual(reasonOf(t, r, docs), [0, null], 'the exact reason is on');
+  for (const [label, reasons] of [
+    ['nothing to review', ['nothing to review']],
+    ['a rule that lowered the depth', ['rule 1: none']],
+    ['an extra reason beside it', [ONLY_PROSE, 'rule 1: none']],
+    ['the reason twice', [ONLY_PROSE, ONLY_PROSE]],
+    ['no reason', []],
+    ['a reason in other words', ['only files that cannot change behaviour.']],
+  ]) {
+    r.record((state) => noneNeeded(state, HEAD, reasons));
+    const [code, line] = reviewOf(t, r, docs);
+    assert.equal(code, 1, label);
+    assert.match(line, /is `none_needed`, and its plan's reasons are not exactly \["only files that cannot change behaviour"\]/u, label);
+  }
+  r.record((state) => {
+    noneNeeded(state);
+    state.outcome.reasons = ONLY_PROSE;
+  });
+  assert.deepEqual(reasonOf(t, r, docs), [1, 'review'], 'reasons that are no list');
+  for (const depth of ['single', 'split', null]) {
+    r.record((state) => noneNeeded(state, HEAD, [ONLY_PROSE], depth));
+    const [code, line] = reviewOf(t, r, docs);
+    assert.equal(code, 1, `depth ${depth}`);
+    assert.match(line, /is `none_needed`, and its plan's depth is not `none`/u, `depth ${depth}`);
+  }
+});
+
+test('review: only a file github.autoMerge.unreviewedPaths lists on both the default branch and the base takes the none_needed route', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  assert.deepEqual(reasonOf(t, r, listed(changing('README.md'))), [0, null], 'a listed file');
+  const [code, line] = reviewOf(t, r, listed(changing('README.md', 'notes/a.md')));
+  assert.equal(code, 1, 'a file the list does not name');
+  assert.equal(line, 'auto-merge off for #7: the review of head abcdef1 is `none_needed`, and it changes "notes/a.md", which github.autoMerge.unreviewedPaths on acme/notes main does not list, so the merge waits for the Human');
+  for (const [label, autoMerge] of [['no list', TEAM], ['an empty list', listing([])]]) {
+    const [empty, said] = reviewOf(t, r, { files: onMain(autoMerge), view: changing('README.md') });
+    assert.equal(empty, 1, label);
+    assert.match(said, /and the team lists no github\.autoMerge\.unreviewedPaths on acme\/notes main, so the merge waits for the Human/u, label);
+  }
+  // The working copy, which is the head here, widens the list to every file; the default branch lists none.
+  writeFileSync(path.join(r.dir, '.aidrian/config.json'), policy(listing(['**'])));
+  assert.deepEqual(reasonOf(t, r, { files: onMain(TEAM), view: changing('README.md') }), [1, 'review'], 'a list on the head only');
+  const feature = (main, base) => ({
+    view: { ...changing('README.md'), baseRefName: 'feature' },
+    files: { ...onMain(main), 'acme/notes@feature:.aidrian/config.json': policy(base) },
+  });
+  assert.deepEqual(reasonOf(t, r, feature(listing(), listing())), [0, null], 'listed on both');
+  assert.match(reviewOf(t, r, feature(listing(), TEAM))[1], /lists no github\.autoMerge\.unreviewedPaths on acme\/notes feature/u, 'on the default branch, not the base');
+  assert.match(reviewOf(t, r, feature(TEAM, listing()))[1], /lists no github\.autoMerge\.unreviewedPaths on acme\/notes main/u, 'on the base, not the default branch');
+  assert.match(reviewOf(t, r, feature(listing(['guide/**']), listing()))[1], /it changes "README\.md", which github\.autoMerge\.unreviewedPaths on acme\/notes main does not list/u, 'each branch\'s list must name the file');
+  assert.match(reviewOf(t, r, feature(listing(), listing(['guide/**'])))[1], /it changes "README\.md", which github\.autoMerge\.unreviewedPaths on acme\/notes feature does not list/u, 'the base\'s list must name the file too');
+  assert.deepEqual(reasonOf(t, r, feature(listing(['re:^README\\.md$']), listing())), [0, null], 'a re: entry');
+  assert.deepEqual(reasonOf(t, r, feature(listing(['re:README\\.md']), listing())), [0, null], 'a re: entry matches the whole path');
+  assert.deepEqual(reasonOf(t, r, { files: onMain(listing(['re:README\\.md$'])), view: changing('prompts/README.md') }), [1, 'review'], 'a re: entry is anchored at both ends');
+  assert.deepEqual(reasonOf(t, r, { files: onMain(listing(['README.md'])), view: changing('prompts/README.md') }), [1, 'review'], 'a glob matches the whole path');
+});
+
+test('github.autoMerge.unreviewedPaths is a list of globs: a bad entry is a config error, and the gate refuses on it', (t) => {
+  for (const [value, problem] of [['README.md', 'must be a list of globs'], [[1], 'must be a list of globs'], [['README.md', 're:('], 'must be a list of globs, and it has re:\\(: Invalid regular expression'], [['README.md', 're:'], 'must be a list of globs, and it has re: with no expression']]) {
+    const errors = [];
+    const config = configFromText(JSON.stringify({ version: 1, github: { autoMerge: { unreviewedPaths: value } } }), '.aidrian/config.json', errors);
+    assert.match(errors.join('\n'), new RegExp(`"github\\.autoMerge\\.unreviewedPaths" ${problem}`, 'u'), JSON.stringify(value));
+    assert.deepEqual(config.github.autoMerge.unreviewedPaths, [], 'the default, an empty list');
+  }
+  const fine = [];
+  assert.deepEqual(configFromText(JSON.stringify({ version: 1, github: { autoMerge: { unreviewedPaths: ['README.md', 're:^docs/'] } } }), '.aidrian/config.json', fine).github.autoMerge.unreviewedPaths, ['README.md', 're:^docs/']);
+  assert.deepEqual(fine, []);
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  for (const [label, files] of [
+    ['on the default branch', onMain(listing(['README.md', 're:(']))],
+    ['on the base', { ...onMain(), 'acme/notes@feature:.aidrian/config.json': policy(listing(['re:['])) }],
+  ]) {
+    const [code, line] = reviewOf(t, r, { files, view: { ...changing('README.md'), baseRefName: label === 'on the base' ? 'feature' : 'main' } });
+    assert.equal(code, 1, label);
+    assert.match(line ?? '', /and the team's config cannot say which files may merge with no review \("\.aidrian\/config\.json on acme\/notes (?:main|feature): \\"github\.autoMerge\.unreviewedPaths\\" must be a list of globs/u, label);
+  }
+});
+
+test('review: a listed file that is a dot path, a host instruction file, a guarded path, a test file, ignored, behaviour, or of an unsafe extension keeps a none_needed off', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  const everything = (extra = {}) => onMain(listing(['**'], extra));
+  assert.deepEqual(reasonOf(t, r, { files: everything(), view: changing('README.md') }), [0, null], 'the list of every file lets a plain one through');
+  const refused = (file, pattern, files = everything()) => {
+    const [code, line] = reviewOf(t, r, { files, view: changing('README.md', file) });
+    assert.equal(code, 1, file);
+    assert.match(line ?? '', OFF, file);
+    assert.match(line, new RegExp(`it changes ${named(file)}, ${pattern}`, 'u'), file);
+  };
+  for (const file of ['.github/copilot-instructions.md', '.github/prompts/a.prompt.md', '.kiro/steering/a.md', 'packages/x/.cursor/rules/a.md', '.changeset/a.md', '.opencode/a.md', '.cursorrules', 'docs/.md']) {
+    refused(file, 'whose path has a folder or file name that starts with "\\.", which tools and AI hosts read as settings');
+  }
+  for (const file of ['GEMINI.md', 'docs/GEMINI.md', 'AGENTS.override.md', 'sub/AGENTS.override.md', 'CLAUDE.local.md', 'AGENT.md', 'QWEN.md', 'WARP.md', 'CRUSH.md', 'CONVENTIONS.md', 'sub/conventions.md']) {
+    refused(file, 'an instruction file of an AI host');
+  }
+  for (const file of ['CLAUDE.md', 'docs/AGENTS.md', 'skills/x/SKILL.md']) {
+    refused(file, 'which instructs AI sessions', everything({ includeGuardedPaths: true }));
+  }
+  for (const file of ['test/a.md', 'pkg/tests/a.md', 'a.test.md', 'b.spec.md', 'pkg/__tests__/a.md', 'spec/a.md', 'docs/fixtures/a.md', 'src/__fixtures__/a.md', 'testdata/a.md', 'golden/a.md', 'pkg/goldens/a.png']) {
+    refused(file, 'a test file, fixture, or golden file, which a test reads');
+  }
+  for (const file of ['package-lock.json', 'vendor/x.go', 'web/app.min.js', '__snapshots__/a.snap']) {
+    refused(file, 'which the default branch\'s review\\.ignore lists, so no review read it');
+  }
+  refused('src/app.js', 'which the default branch\'s review\\.nonBehaviour does not list');
+  for (const file of ['notes.txt', 'docs/a.mdx', 'logo.svg', 'docs/page.html', 'LICENSE', 'docs/conf.py']) {
+    refused(file, 'whose extension is not one a merge with no review may change \\(\\.md, \\.png, \\.jpg, \\.jpeg, \\.gif, \\.webp, \\.avif, \\.ico\\)', onMain(listing(['**']), { nonBehaviour: ['**'] }));
+  }
+  const [code, line] = reviewOf(t, r, { files: everything(), view: { files: [{ path: 'README.md', changeType: 'CHANGED' }], changedFiles: 1 } });
+  assert.equal(code, 1, 'a type change');
+  assert.match(line, /it changes "README\.md" as CHANGED, a type change, which may make it a link or a submodule/u);
+  const [copied, why] = reviewOf(t, r, { files: everything(), view: { files: [{ path: 'README.md', changeType: 'COPIED' }], changedFiles: 1 } });
+  assert.equal(copied, 1, 'a copy');
+  assert.match(why, /it adds "README\.md" as a copy of another file, which gh does not name/u);
+});
+
+test('review: files are sorted by the default branch\'s review lists, built-in or its own, never the head\'s or the base\'s', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  const all = listing(['**']);
+  assert.deepEqual(reasonOf(t, r, { files: onMain(all), view: changing('README.md') }), [0, null], 'the built-in lists');
+  assert.deepEqual(reasonOf(t, r, { files: onMain(all, { nonBehaviour: ['docs/**'] }), view: changing('docs/a.md') }), [0, null], 'its own list');
+  assert.match(reviewOf(t, r, { files: onMain(all, { nonBehaviour: ['docs/**'] }), view: changing('README.md') })[1], /it changes "README\.md", which the default branch's review\.nonBehaviour does not list/u, 'its own list leaves README.md out');
+  writeFileSync(path.join(r.dir, '.aidrian/config.json'), policy(all, { nonBehaviour: ['**'] }));
+  assert.deepEqual(reasonOf(t, r, { files: onMain(all, { nonBehaviour: ['docs/**'] }), view: changing('src/app.md') }), [1, 'review'], 'the head widens its own list');
+  const feature = { view: { ...changing('src/app.md'), baseRefName: 'feature' }, files: { ...onMain(all, { nonBehaviour: ['docs/**'] }), 'acme/notes@feature:.aidrian/config.json': policy(all, { nonBehaviour: ['**'] }) } };
+  assert.deepEqual(reasonOf(t, r, feature), [1, 'review'], 'a feature base widens its list');
+  assert.match(reviewOf(t, r, { files: onMain(all, { ignore: ['src/**'], nonBehaviour: ['docs/**'] }), view: changing('docs/a.md', 'src/app.md') })[1], /it changes "src\/app\.md", which the default branch's review\.ignore lists/u, 'an ignored file beside prose');
+  const badMain = { view: { ...changing('README.md'), baseRefName: 'feature' }, files: { ...onMain(all, { nonBehaviour: ['**/*.md', 're:('] }), 'acme/notes@feature:.aidrian/config.json': policy(all) } };
+  assert.match(reviewOf(t, r, badMain)[1] ?? '', /the default branch's config cannot say which files cannot change behaviour/u, 'a bad list on the default branch, whatever the base says');
+  for (const [label, review] of [['a review group that is no object', 5], ['a nonBehaviour that is no list', { nonBehaviour: '**' }], ['an ignore that is no list', { ignore: [1] }], ['a bad regular expression', { nonBehaviour: ['re:('] }], ['a bad regular expression in ignore', { ignore: ['re:[a'] }], ['a misspelt key', { nonBehavior: ['**'] }]]) {
+    const [broken, said] = reviewOf(t, r, { view: changing('README.md'), files: onMain(all, review) });
+    assert.equal(broken, 1, label);
+    assert.match(said ?? '', /is `none_needed`, and the default branch's config cannot say which files cannot change behaviour \("\.aidrian\/config\.json: (?:unknown key )?\\"review/u, label);
+  }
+});
+
+test('review.ignore and review.nonBehaviour check their re: entries, so a bad one is a config error, never a crash', () => {
+  for (const key of ['ignore', 'nonBehaviour']) {
+    const errors = [];
+    const config = configFromText(JSON.stringify({ version: 1, review: { [key]: ['docs/**', 're:('] } }), '.aidrian/config.json', errors);
+    assert.match(errors.join('\n'), new RegExp(`"review\\.${key}" has re:\\(`, 'u'), key);
+    assert.deepEqual(config.review[key], ['docs/**'], `${key} keeps the team's valid entries, never the built-in list`);
+    const fine = [];
+    assert.deepEqual(configFromText(JSON.stringify({ version: 1, review: { [key]: ['re:^docs/'] } }), '.aidrian/config.json', fine).review[key], ['re:^docs/'], key);
+    assert.deepEqual(fine, [], key);
+  }
+});
+
+test('a bad re: entry in review.nonBehaviour never widens the list: a code file stays behaviour, and the plan is no none_needed', () => {
+  const errors = [];
+  const { review } = configFromText(JSON.stringify({ version: 1, review: { nonBehaviour: ['README.md', 're:^a\\-b$'] } }), '.aidrian/config.json', errors);
+  assert.match(errors.join('\n'), /"review\.nonBehaviour" has re:\^a\\-b\$/u);
+  assert.deepEqual(review.nonBehaviour, ['README.md']);
+  const sorted = classify([{ file: 'docs/conf.py', added: 1, removed: 0 }], review);
+  assert.deepEqual(sorted.behaviour, ['docs/conf.py']);
+  assert.equal(evaluateRules([], ['docs/conf.py'], sorted).depth, 'single');
+});
+
+test('review: past gh pr view`s 100 files, a none_needed is judged on the whole paged list', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  const docs = Array.from({ length: 100 }, (_, i) => `guide/f-${String(i).padStart(3, '0')}.md`);
+  const view = { files: docs.map((path) => ({ path, changeType: 'MODIFIED' })), changedFiles: 101 };
+  const rest = (last, status = 'modified') => [...docs.map((filename) => ({ filename, status: 'modified' })), { filename: last, status }];
+  const [code, line] = reviewOf(t, r, listed(view, { restFiles: rest('src/app.js') }));
+  assert.equal(code, 1, 'the 101st file is code');
+  assert.match(line, /it changes "src\/app\.js", which/u);
+  assert.deepEqual(reasonOf(t, r, listed(view, { restFiles: rest('guide/f-100.md') })), [0, null], 'all 101 are listed docs');
+  assert.deepEqual(reasonOf(t, r, listed(view, { restFiles: rest('guide/f-100.md', 'changed') })), [1, 'review'], 'a REST status of changed');
+  assert.deepEqual(reasonOf(t, r, listed(view, { restFiles: rest('guide/f-100.md', 'removed') })), [0, null], 'a removed file');
+});
+
+test('review: none_needed on the head leaves every other refusal standing', (t) => {
+  const r = repo(t);
+  r.record((state) => noneNeeded(state));
+  const docs = changing('README.md');
+  assert.deepEqual(reasonOf(t, r, listed(docs)), [0, null], 'the same pull request with none of these is on, so each refusal below is its own');
+  assert.deepEqual(reasonOf(t, r, { files: onMain(listing(['**'])), view: changing('AGENTS.md') }), [1, 'paths'], 'a guarded prose file');
+  assert.deepEqual(reasonOf(t, r, listed({ ...docs, reviewDecision: 'CHANGES_REQUESTED' })), [1, 'review'], 'changes requested');
+  assert.deepEqual(reasonOf(t, r, listed({ ...docs, latestReviews: [{ author: { login: 'lead' }, state: 'CHANGES_REQUESTED' }] })), [1, 'review'], 'a latest review that requests changes');
+  assert.deepEqual(reasonOf(t, r, listed({ ...docs, author: { login: 'someone-else' } })), [1, 'author'], 'another author');
+  assert.deepEqual(reasonOf(t, r, listed(docs, { comments: { issues: [{ user: { login: 'mallory' }, author_association: 'NONE' }] } })), [1, 'outsider'], 'an outsider\'s comment');
+  assert.deepEqual(reasonOf(t, repo(t, { local: 'off' }), listed(docs)), [1, 'local'], 'a machine that has not opted in');
+});
+
+// A project in `folder` below the root of a temporary repository (never a real one, and no GIT_DIR), whose working copy
+// commits `config`, with a `none_needed` record on HEAD. The machine's switch is set on the project object the gate
+// reads, so no local file is written: { project }.
+function projectBelow(t, folder, config) {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  const below = path.join(dir, folder);
+  mkdirSync(path.join(below, '.aidrian'), { recursive: true });
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'git@github.com:acme/notes.git');
+  writeFileSync(path.join(below, '.aidrian/config.json'), config);
+  git('add', `${folder}/.aidrian/config.json`);
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'config');
+  const project = { ...projectAt(below), localAutoMerge: 'on' };
+  const state = emptyState(7, 'acme/notes');
+  noneNeeded(state);
+  writeLocalState(project, state);
+  return { project };
+}
+
+test('review: a project below the root matches unreviewedPaths from its own folder, and refusals read the repository path too', (t) => {
+  const below = projectBelow(t, 'apps/web', policy());
+  const own = (autoMerge, folder = 'apps/web') => ({ [`acme/notes@main:${folder}/.aidrian/config.json`]: policy(autoMerge) });
+  assert.deepEqual(reasonOf(t, below, { files: own(listing()), view: changing('apps/web/README.md') }), [0, null], 'README.md from the project root');
+  assert.deepEqual(reasonOf(t, below, { files: own(listing(['apps/web/README.md'])), view: changing('apps/web/README.md') }), [1, 'review'], 'a list entry is a path from the project root, not the repository');
+  const lifted = listing(['**'], { includeGuardedPaths: true });
+  const [guarded, why] = reviewOf(t, below, { files: own(lifted), view: changing('apps/web/.claude/notes.md') });
+  assert.equal(guarded, 1, 'a guarded folder at the project root, with includeGuardedPaths on');
+  assert.match(why, /it changes "apps\/web\/\.claude\/notes\.md", which instructs AI sessions/u);
+
+  const dotted = projectBelow(t, '.x/web', policy());
+  assert.deepEqual(reasonOf(t, dotted, { files: own(listing(), '.x/web'), view: changing('.x/web/guide/a.md') }), [1, 'review'], 'a dot folder above the project root');
+  assert.match(reviewOf(t, dotted, { files: own(listing(), '.x/web'), view: changing('.x/web/README.md') })[1], /it changes "\.x\/web\/README\.md", whose path has a folder or file name that starts with "\."/u);
+
+  for (const folder of ['fixtures/consumer', 'tests/consumer', 'golden/consumer', 'test/consumer', 'pkg/__fixtures__/consumer']) {
+    const nested = projectBelow(t, folder, policy());
+    const [code, line] = reviewOf(t, nested, { files: own(listing(), folder), view: changing(`${folder}/README.md`) });
+    assert.equal(code, 1, `a test or fixture folder above the project root: ${folder}`);
+    assert.match(line ?? '', new RegExp(`it changes ${JSON.stringify(`${folder}/README.md`).replaceAll('.', '\\.')}, a test file, fixture, or golden file, which a test reads`, 'u'), folder);
+  }
+
+  const plugin = projectBelow(t, 'plugins/aidrian', policy());
+  const [repoGuarded, said] = reviewOf(t, plugin, { files: own(lifted, 'plugins/aidrian'), view: changing('plugins/aidrian/skills/x/a.md') });
+  assert.equal(repoGuarded, 1, 'a file guarded by its repository path alone, with includeGuardedPaths on');
+  assert.match(said, /it changes "plugins\/aidrian\/skills\/x\/a\.md", which instructs AI sessions/u);
+});
+
+test('reviewProblem: a none_needed is judged on the forge\'s files from the project root, and with no lists it is off', () => {
+  const state = { pending: [], passes: {}, outcome: { status: 'none_needed', head: HEAD, reasons: [ONLY_PROSE], depth: 'none' } };
+  const review = { ignore: [], nonBehaviour: ['docs/**'] };
+  const lists = [['acme/notes main', ['docs/**']]];
+  const at = (...paths) => paths.map((path) => ({ path, changeType: 'MODIFIED' }));
+  const judged = (files, extra = {}) => reviewProblem(state, HEAD, { files: at(...files), prefix: 'apps/web/', review, lists, ...extra });
+  assert.equal(judged(['apps/web/docs/a.md']), null, 'a path from the project root');
+  assert.match(judged(['docs/a.md']) ?? '', /it changes "docs\/a\.md", outside this project's folder/u);
+  assert.match(judged(['apps/web/src/a.md']) ?? '', /it changes "apps\/web\/src\/a\.md", which the default branch's review\.nonBehaviour does not list/u);
+  assert.match(judged(['apps/web/docs/.github/a.md']) ?? '', /starts with "\."/u, 'a dot folder below the project root');
+  assert.match(judged(['apps/web/docs/AGENTS.override.md']) ?? '', /an instruction file of an AI host/u, 'a host name below the project root');
+  assert.match(reviewProblem(state, HEAD) ?? '', /^the review of head abcdef1 is `none_needed`/u, 'no file list or lists: as before');
+  assert.match(judged([]) ?? '', /nothing was reviewed/u, 'an empty file list');
+  assert.match(judged(['apps/web/docs/a.md'], { lists: [['acme/notes main', ['docs/**']], ['acme/notes feature', []]] }) ?? '', /lists no github\.autoMerge\.unreviewedPaths on acme\/notes feature/u);
+});
+
+test('a config like this repository\'s, listing its plain README files in github.autoMerge.unreviewedPaths, passes config check', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, '.aidrian'));
+  const unreviewedPaths = ['README.md', 'examples/consumer/README.md'];
+  const own = JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '.aidrian/config.json'), 'utf8'));
+  own.github.autoMerge = { ...own.github.autoMerge, unreviewedPaths };
+  writeFileSync(path.join(root, '.aidrian/config.json'), JSON.stringify(own));
+  const { config, errors } = loadConfig(projectAt(root));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.github.autoMerge.unreviewedPaths, unreviewedPaths);
 });
 
 test('review: a record for another repository with the same number is not this pull request\'s', (t) => {

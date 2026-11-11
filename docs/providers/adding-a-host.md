@@ -63,7 +63,7 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `fileEditTools`, `fileEdit(tool, input)` | Its file edit tools, and each call in a shape `fileEditOf` in `lib/hosts/index.mjs` lists |
 | `projectFolders` | Where a project keeps its skills and agents for it, if the plugin's lint can read them |
 | `modelsKey`, `modelChoices` | Its key under `models` in config.json, and what that key takes |
-| `capabilities.transcripts` | Whether `lib/transcript.mjs` reads its transcripts: cost rows, the names reminder, and the session-length reminder need it |
+| `capabilities.transcripts` | Whether `lib/transcript.mjs` reads its transcripts: cost rows, the names reminder, and the session-length reminder need it. `true` also opts the host into the `review-rounds` rule's reading of the Human's answers and typed grants of review rounds; `false` makes that rule hand the raise to the Human's own shell |
 | `capabilities.prFooterSettings` | The settings files that say whether it asks for a generated-by footer, when it does |
 | `capabilities.trackerGuard` | `verified` (`live`, `source`, or `none`), `evidence`, `unguardedRoutes`, and, when its hooks wait on a person, `hookTrust`, `trustStep`, and `offStep` |
 

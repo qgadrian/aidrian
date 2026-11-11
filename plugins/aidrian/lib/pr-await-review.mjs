@@ -21,7 +21,7 @@
 //      is on record (lib/review-gate.mjs), and put the record's marker in the request.
 //   6. With --request: at --max-rounds bot reviews (config.json `github.maxReviewRounds`) post nothing and end with
 //      `round_limit`; a long run of rounds is a design problem more review will not fix. Raising --max-rounds past
-//      the config value is the Human's call: it needs ROUNDS_OVERRIDE set in their own shell (roundCapProblem), whatever
+//      the config value is the Human's call: it needs ROUNDS_OVERRIDE, set on the Human's word (roundCapProblem), whatever
 //      reviews the pull request. A raised limit is recorded in the request comment; a later run keeps the highest one
 //      only while the Human's override is set in its own environment too (`keepRecordedCap`). Without it, the cap the
 //      run was given (the base branch's, plus the extra rounds still valid) is the cap: a marker an extra round wrote
@@ -120,9 +120,13 @@ export const exitCodeFor = (status) => {
   return 0;
 };
 
-// The variable the Human sets, in their own shell before the session starts, to let --max-rounds go past config.json
-// `github.maxReviewRounds`. An agent never sets it: more rounds is a decision the cap exists to hand back.
+// The variable that lets --max-rounds go past config.json `github.maxReviewRounds`: more rounds is a decision the cap
+// exists to hand back. The Human sets it in their own shell, or an agent sets it inline on the one command the Human
+// approved, by an AskUserQuestion answer or a typed TYPED_GRANT_FORM (lib/rules/github/review-rounds.mjs); on no other ground.
 export const ROUNDS_OVERRIDE = 'AIDRIAN_ALLOW_EXTRA_ROUNDS';
+
+// The line the Human types at the prompt to approve that command for every --max-rounds up to <N>.
+export const TYPED_GRANT_FORM = 'grant up to <N> review rounds on <owner>/<name>#<PR>';
 
 // Why `maxRounds` may not run, or null: a cap above the project's `cap` without ROUNDS_OVERRIDE in `env`. It judges the
 // command's own flag, so it holds for any reviewer the command waits on; a lower cap always runs.
@@ -130,7 +134,7 @@ export function roundCapProblem(maxRounds, cap, env = process.env) {
   if (maxRounds <= cap || env[ROUNDS_OVERRIDE] === '1') return null;
   return `--max-rounds ${maxRounds} goes past config.json github.maxReviewRounds (${cap}). More review rounds are the Human's ` +
     `decision: stop and ask them with AskUserQuestion to raise the cap, redesign, or stop, naming the pull request and --max-rounds ${maxRounds}. ` +
-    `On "Approve", ${ROUNDS_OVERRIDE}=1 goes inline on this exact command; an agent sets it on no other ground.`;
+    `On "Approve", or on the Human's typed \`${TYPED_GRANT_FORM}\`, ${ROUNDS_OVERRIDE}=1 goes inline on this exact command; an agent sets it on no other ground.`;
 }
 
 // `defaults` carries config.json `github.reviewer` and `github.maxReviewRounds`; flags win.

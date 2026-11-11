@@ -45,6 +45,7 @@ export default {
   projectFolders: { skills: '.claude/skills', agents: '.claude/agents' },
   capabilities: {
     // Reads Claude Code's transcripts (lib/transcript.mjs): cost, names reminder, session length, and attribution's model.
+    // Also opts it into the review-rounds rule's reading of the Human's answers and typed grants of review rounds.
     transcripts: true,
     // The settings files that say whether Claude Code asks for its generated-by footer, first that sets it wins.
     prFooterSettings: (root, env) => [

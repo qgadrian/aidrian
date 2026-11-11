@@ -328,8 +328,37 @@ Raising the round cap works the same way. On an answer naming `<owner>/<name>#<P
 runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly as written. The `review-rounds` rule refuses the
 variable in any other form, and in a checkout with several remotes, where no answer can name the one repository the command
 acts on; there the Human runs it in their own shell, as the refusal writes it, with the command's own subcommand and
-`--with-bot` or `--request`, since each counts its own rounds. Each refusal names what missed: the checkout, the command's form, or
-what the answers lack (none, none naming `<owner>/<name>#<PR>`, none naming `--max-rounds <N>`, or the label picked).
+`--with-bot` or `--request`, since each counts its own rounds.
+
+The Human may also grant rounds by typing, at the prompt, as a whole message in any letter case,
+`grant up to <N> review rounds on <owner>/<name>#<PR>`. It names the repository and the pull request, never "this pull
+request": a hook reads no forge, and a session may work in several checkouts. It approves the same commands for every
+`--max-rounds` up to `<N>`; `0` allows none, and withdraws a raise. The latest typed grant on that pull request decides.
+An answer that does not start with "Approve", to a question naming `<owner>/<name>#<PR>` and a `--max-rounds`, withdraws
+it unless the grant came later by both entries' timestamps; and a typed grant not earlier than an approving answer bounds
+that answer by its count, so `grant up to 0` after "Approve" refuses the raise. A missing or unreadable timestamp counts
+against the raise both ways.
+
+Only the Human's own typing counts: a prompt sent as `sdk` (by a script, or by the desktop app, which records typed
+prompts so), an accepted suggestion, a slash command, any agent, peer session, or tool text, and what the host tagged as
+pasted do not. The host tags only longer pastes as `<pasted_content>`; a short one, up to 800 characters and 2 line
+breaks, reads as typed. So the grant must be the whole message, after the tagged pastes are removed: a grant line quoted
+inside a longer message, or one beside a lone CR or a Unicode line separator or format character, does not count.
+The typed route is verified only in the terminal CLI, on Claude Code 2.1.299 to 2.1.322, from the `origin` and
+`promptSource` fields it writes, and only on a host the host layer says writes such a transcript, never an unknown one.
+The desktop app has no typed route: there the answer route works. A message typed while the agent works may arrive
+mid-turn as a `queued_command` attachment, which the rule does not read; when it does, the Human types the grant again
+after the turn (one the host holds until the turn ends counts). Relayed prompts, such as remote control or a bridge, are
+not verified. Codex has no typed route, nor an answer route, since the rule reads no Codex transcript.
+Both routes rest on the session transcript, a file in the agent's own account: an agent with a shell could forge an
+answer or a typed grant there, a residual both accept.
+
+Each refusal names what missed: the checkout, the command's form, a chain or prefix, no origin, a transcript the rule
+cannot read (the host's, none in the hook payload, or a file it cannot read), what the typed grant lacks (a host whose typed prompts
+the rule does not read, a lower count, a later answer that withdrew it, another pull request, a grant that came by another route, or a typed message that reads
+like a grant in another form, with the message to type), a typed grant that bounds an approving answer, or what the
+answers lack (none, none naming
+`<owner>/<name>#<PR>`, none naming `--max-rounds <N>`, the label picked, or a later answer that replaced an approval).
 While a check at the cap waits for the judge or the Human, the refusal names that route first, since it needs no variable:
 run the judge and record its verdict, or ask the Human the printed question and record the answer ([Extra rounds](#extra-rounds)).
 
@@ -611,8 +640,9 @@ of, is the head the step reviews, so the first step after a push opens a new rou
 A local commit past that head returns `incomplete`, with `local_head` and `retry_recommended: true`: push, then run
 the step again. A checkout on any other branch reviews the head GitHub reports. The cap is `github.maxReviewRounds` as the base branch commits it, so an
 edit to the working copy's config cannot raise it. At the cap, [extra rounds](#extra-rounds) may grant one more;
-raising the cap itself needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
-agent command that sets it, and a bot request posted any way but through `aidrian pr`. The last round runs the final stage first, so a pull request
+raising the cap itself needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, on the Human's answer or typed grant
+([Unattended rulings](#unattended-rulings)) or in their own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
+agent command that sets it on any other ground, and a bot request posted any way but through `aidrian pr`. The last round runs the final stage first, so a pull request
 always gets its independent review before the cap, then lets the earlier stages finish on the same head; it passes
 when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
 its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass
@@ -879,12 +909,13 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 **Trust.** The `review-extend` rule ([hooks.md](hooks.md#bash-rules)) lets an agent's `--human approve` run only when
 the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request (`#<PR>`) and the
 round it grants (`round <N>`), given after the judge's verdict, with the option that starts with "Approve". Claude Code
-writes that answer, not the agent. A host without such a transcript, such as Codex, leaves the approval to the Human,
+writes that answer to the transcript, a file in the agent's own account, so an agent with a shell could forge one there:
+a residual the rule accepts. A host without such a transcript, such as Codex, leaves the approval to the Human,
 who runs the command in their own shell. `--human deny` always runs. While the check waits for the judge, the deny of an
 approval names the judge's route: run the review step again with the options it ran with, such as `--with-bot` and
 `--max-rounds`, run the `dispatch` it prints, record its verdict, and run the step once more. After a
 judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
-`--max-rounds`, on the Human's answer, or in the Human's own shell in a checkout with several remotes.
+`--max-rounds`, on the Human's answer or typed grant, or in the Human's own shell in a checkout with several remotes.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
 signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one

@@ -241,6 +241,9 @@ function keptFindings(state, pass) {
   });
 }
 
+// `value` as one POSIX shell argument: in single quotes, each single quote inside written as '\''.
+export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+
 // Where an agent pass writes its findings file: under the state folder's `tmp/`, outside every checkout, so the full
 // text of its findings is never staged with a commit. The folder is made here. The name is the pass id with every
 // character but a letter, digit, `.`, `_`, or `-` as `-`, so it cannot leave the folder, then the first 8 hex digits
@@ -282,7 +285,9 @@ export function dispatchFor(s, pass, stage) {
     // Every agent pass reports its findings one by one, so the disposition table decides what blocks, and each finding
     // keeps its id and outcome in the finding index. The counts form stays accepted by attest, for a record an older
     // release dispatched.
-    record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file ${file}${input.flows.length ? ' --verdicts <file.json>' : ''}`,
+    // The findings file is the one path the command carries, as one shell argument: a state folder may hold a space
+    // or a quote. The pass id and the reviewer are names of the config's name format, and `<file.json>` a placeholder.
+    record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file ${shellQuote(file)}${input.flows.length ? ' --verdicts <file.json>' : ''}`,
   };
 }
 

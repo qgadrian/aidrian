@@ -14,7 +14,7 @@ import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../
 import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
 import { EXIT, recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
-import { closingRange } from '../plugins/aidrian/lib/review/dispatch.mjs';
+import { closingRange, findingsFile, shellQuote } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { listedTo, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -2379,7 +2379,7 @@ test('every agent pass records with --findings-file: an accepted finding whose d
   const [pass] = one.dispatch;
   const tag = createHash('sha256').update(pass.pass).digest('hex').slice(0, 8);
   const file = path.join(stateDir(r.project), 'tmp', 'review-7', `${pass.pass.replace(/[^\w.-]/gu, '-')}-${tag}.findings.json`);
-  assert.ok(pass.record.startsWith(`aidrian pr attest 7 --pass ${pass.pass} --head ${one.head} --reviewer code-reviewer --findings-file ${file}`), pass.record);
+  assert.ok(pass.record.startsWith(`aidrian pr attest 7 --pass ${pass.pass} --head ${one.head} --reviewer code-reviewer --findings-file '${file}'`), pass.record);
   assert.ok(path.relative(r.dir, file).startsWith('..'), 'the findings file is outside the checkout, under the state folder');
   const table = loadTable();
   for (const [axis, words] of [['severity', table.severities], ['likelihood', table.likelihoods], ['affects', table.affects], ['cost', table.costs]]) {
@@ -2626,4 +2626,21 @@ test('the findings file: two pass ids that read alike get different files, the s
     assert.equal(path.dirname(file), path.join(stateDir(r.project), 'tmp', 'review-7'));
     assert.match(path.basename(file), /^[\w.-]+-[0-9a-f]{8}\.findings\.json$/u);
   }
+});
+
+
+test('the record command passes the findings file as one shell argument, from a state folder whose path holds a space and a quote', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, state: { dir: "../st ate's" }, review: { flows: BOOKING } }, change: (write) => write('src/booking/a.js', '1\n2\n3\n') });
+  const one = await r.step({ exec: clean });
+  assert.equal(one.status, 'dispatch');
+  const [pass] = one.dispatch;
+  const file = findingsFile(r.project, 7, pass.pass);
+  assert.ok(file.includes("st ate's"), file);
+  // A POSIX shell reads the command back into its words; the verdicts placeholder is left out, since `<` redirects.
+  const words = spawnSync('sh', ['-c', `set -- ${pass.record.replace(' --verdicts <file.json>', '')}; for word in "$@"; do printf '%s\\n' "$word"; done`], { encoding: 'utf8' });
+  assert.equal(words.status, 0, words.stderr);
+  const argv = words.stdout.trimEnd().split('\n');
+  assert.equal(argv[argv.indexOf('--findings-file') + 1], file, 'the path arrives whole');
+  assert.deepEqual(argv.slice(0, 4), ['aidrian', 'pr', 'attest', '7']);
+  assert.equal(shellQuote("it's a b"), "'it'\\''s a b'");
 });

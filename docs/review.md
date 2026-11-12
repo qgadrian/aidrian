@@ -1378,8 +1378,9 @@ what went where (`inline_review`). Inline publishing has not been run beside the
 With `review.publish.inline` and `replies` on, every step whose record is posted and that reaches its stages, whatever
 status it returns, and a step that carries the review across a clean merge, answers the thread of each finding that
 closed: fixed, not reported again, or accepted. A step that stops before its stages, such as on a held record, answers
-none, and the next one does. `inline: false`, the local file's
-`inline: false`, `replies: false`, and `review.record: "local"` post no reply and resolve nothing.
+none, and the next one does. `inline: false`, the local file's `inline: false`, `replies: false`, and
+`review.record: "local"` post no reply and resolve nothing. A step's result holds `replies` only when some finding was
+due: with nothing to answer, it has no `replies` field.
 
 - **The reply.** One reply on the finding's thread: its marker line and the line `aidrian review, finding <id>`, then
   one of `Fixed in <compare link>.`, `Not reported again in <compare link>.`, or `Accepted as <disposition>.` The link
@@ -1399,9 +1400,10 @@ none, and the next one does. `inline: false`, the local file's
   and stays open (`replies.open`), and counts as done.
 - **Once.** The finding's `thread` keeps `replied` with the reply's id (`replyId`), and `resolved`, each set only once
   its own forge call succeeded, or for `resolved` once the thread read shows someone resolved it by hand;
-  `engine_comments` lists the reply. A step answers only what lacks a mark. An earlier
-  reply of the current user with the finding's marker, found when the thread is read, counts as the reply, so a mark a
-  stale write lost never posts a second one from this machine.
+  `engine_comments` lists the reply. A step answers only what lacks a mark. An earlier reply of the current user with
+  the finding's marker, found when the thread is read, counts as the reply, so a mark a stale write lost never posts a
+  second one from this machine. GitHub wraps each reply in a review of its own, an empty `COMMENTED` one: it carries
+  no marker, so `engine_comments` and `engine_comments_unmapped` ignore it.
 - **Retries.** A reply or resolve that fails, a reply the forge answered with no id, a thread that cannot be read or
   that the forge missed, or a reply the checks refuse, is named in `replies.unanswered`, with why in `replies.reasons`,
   and the next step tries it again; `pr-review-loop` runs the step once more on `received` with that list, and reports

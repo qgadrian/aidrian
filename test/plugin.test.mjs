@@ -1358,7 +1358,13 @@ test('each flow runs product feedback after its draft opens, and status and its 
 test('pr-review-loop skips the product feedback comment the gh user wrote, by the marker post writes', () => {
   const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   const collect = loop.slice(loop.indexOf('## 2. Collect'), loop.indexOf('## 3. Triage'));
-  assert.match(collect, /Skip a conversation comment the gh user wrote that carries the `aidrian-product-feedback` marker/u);
+  assert.match(collect, /Skip the gh user's `aidrian-product-feedback` comment/u);
+  // The engine's own posts: the step's two lists decide, never the login that posted them (lib/review/inline.mjs).
+  assert.match(collect, /For engine posts, see `references\/review-plan\.md`/u);
+  const plan = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/references/review-plan.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(plan, /`engine_comments\[\]` .*Skip exactly these ids/u);
+  assert.match(plan, /`engine_comments_unmapped\[\]`: .*as a local model's finding, whoever's login posted it: validate it before acting, and run `aidrian pr disposition` for it with `--source bot --round <round>`, never as a person's comment/u);
+  assert.match(plan, /Neither list, with `engine_comments_unread`: .*Read every post a member made that starts with a finding marker as unmapped/u);
   const lib = readFileSync(path.join(PLUGIN, 'lib/pr-product-feedback.mjs'), 'utf8');
   assert.match(lib, /<!-- aidrian-product-feedback: pr=/u, 'the marker name the loop skips is the one post writes');
 });

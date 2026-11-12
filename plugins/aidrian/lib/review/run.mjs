@@ -35,6 +35,7 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
 import { residualRows } from './publish.mjs';
+import { engineLists, postInline } from './inline.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
@@ -85,8 +86,19 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
     quotaStop: (pass, stage, reason, extra) => quotaStop(s, pass, stage, reason, extra),
   });
   const ended = await prepareStep(s);
-  if (ended) return ended;
-  return runStages(s);
+  return withPosts(s, ended ?? await runStages(s));
+}
+
+// What every result after the read of the marked posts says of them (lib/review/inline.mjs): the delete's outcome,
+// whether ids were minted, and the two lists of the engine's posts that pr-review-loop reads, mapped by the record the
+// step ends with, or all unmapped when it stopped before it had one; or, when they could not be read, why, and neither
+// list.
+function withPosts(s, result) {
+  if (s.deletes) result.comment_deletes = s.deletes;
+  if (s.unminted) result.ids_unminted = s.unminted;
+  if (s.marked?.items) Object.assign(result, engineLists(s.marked.items, s.state ?? null));
+  else if (s.marked) result.engine_comments_unread = s.marked.error;
+  return result;
 }
 
 // The current round's open findings, kept on its entry in the record, so the check at the cap can read each round's
@@ -183,6 +195,12 @@ function finish(s, status, extra) {
   answerRequests(s);
   noteFindings(s, extra);
   const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+  // A step that hands findings back as open posts its new blocking ones as one review on the head (review.publish.inline),
+  // and notes where each went in the finding index before the record is written.
+  if (s.onPr && Array.isArray(extra.open)) {
+    const inline = postInline(s, extra.open);
+    if (inline) result.inline_review = inline;
+  }
   // The residual rows the session copies into the pull request body pass the text decision: a finding whose text it
   // withholds is named by its id, and its row anchors nothing.
   const late = lateResiduals(passes, resultFor);

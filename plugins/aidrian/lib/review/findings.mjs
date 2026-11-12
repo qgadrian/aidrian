@@ -439,6 +439,38 @@ export function recordFindings(state, passId, result, options = {}) {
   return recorded;
 }
 
+// A new id and mint mark on `state`, `R<round>-<n>` with the counter raised, or null past the digit limits, where nothing
+// is minted.
+function mintId(state) {
+  const round = Math.max(1, Array.isArray(state.rounds) ? state.rounds.length : 0);
+  const next = (Number.isSafeInteger(state.idCounter) && state.idCounter > 0 ? state.idCounter : 0) + 1;
+  if (next > MAX_COUNTER || round > MAX_ROUND) return null;
+  state.idCounter = next;
+  return { id: `R${round}-${next}`, mint: randomBytes(4).toString('hex') };
+}
+
+// Gives the finding `oldId` of `state` a fresh id, for an id with no thread whose marker a comment on the pull request
+// already carries, so no second comment is ever posted under one id (R4). Every copy of the finding, in each pass's
+// lists, each round's findings, and the index, takes the new id and a mint mark of its own, and lists the old id in
+// `aliases`; every other key stays, the security mark, the state, and the pass among them, so a hold or a waiver that
+// names the old id still applies (settled.mjs). The index entry moves to the new id. Returns the new id, or null when
+// `oldId` is no id or the counter is at its digit limit, where nothing changes.
+export function freshId(state, oldId) {
+  if (!isFindingId(oldId) || !recordedFindings(state).some((finding) => finding.id === oldId)) return null;
+  const minted = mintId(state);
+  if (!minted) return null;
+  for (const finding of recordedFindings(state)) {
+    if (finding.id !== oldId) continue;
+    Object.assign(finding, { id: minted.id, mint: minted.mint, aliases: [...new Set([...listOf(finding.aliases).filter(isFindingId), oldId])] });
+  }
+  const index = indexOf(state);
+  if (isObject(index[oldId])) {
+    index[minted.id] = index[oldId];
+    delete index[oldId];
+  }
+  return minted.id;
+}
+
 function recordResult(state, passId, result, { mint = false, securityPass = false, paths = null, kept: checked = false, listed = null, plan = null, stage = null, reviewer = null, range = null } = {}) {
   const index = indexOf(state);
   const before = isObject(state.passes?.[passId]) ? state.passes[passId] : null;
@@ -458,13 +490,7 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
   const held = new Map(recordedFindings(state).filter((each) => isFindingId(each.id) && isMint(each.mint)).map((each) => [each.id, each]));
   const taken = new Set();
   const dropped = [];
-  const round = Math.max(1, Array.isArray(state.rounds) ? state.rounds.length : 0);
-  const fresh = () => {
-    const next = (Number.isSafeInteger(state.idCounter) && state.idCounter > 0 ? state.idCounter : 0) + 1;
-    if (next > MAX_COUNTER || round > MAX_ROUND) return null;
-    state.idCounter = next;
-    return { id: `R${round}-${next}`, mint: randomBytes(4).toString('hex') };
-  };
+  const fresh = () => mintId(state);
   const one = (raw) => {
     const { id, mint: mark, aliases, ruled_id: _named, security, returned_id: returned, ...finding } = raw;
     const kept = isFindingId(id) && isMint(mark) && held.get(id)?.mint === mark ? held.get(id) : null;

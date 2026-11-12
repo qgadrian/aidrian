@@ -17,8 +17,8 @@ export const FLOW_ID = /^[a-z0-9][a-z0-9-]*$/u;
 export const NAME = /^[\w.:-]+$/u;
 
 // What the review posts on the pull request beyond its record (docs/review.md#publishing): the summary comment's
-// findings table, and how a security finding shows on a repository that is not private (`publicSecurity`). `inline`
-// and `replies` are checked; neither posts anything.
+// findings table, the inline review of each step's new blocking findings (`inline`, lib/review/inline.mjs), and how a
+// security finding shows on a repository that is not private (`publicSecurity`). `replies` is checked; it posts nothing.
 export const PUBLISH_SUMMARIES = Object.freeze(['counts', 'findings']);
 export const PUBLIC_SECURITY = Object.freeze(['counts', 'full']);
 export const PUBLISH_DEFAULTS = Object.freeze({ summary: 'counts', inline: false, replies: true, publicSecurity: 'counts' });

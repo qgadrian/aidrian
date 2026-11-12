@@ -15,7 +15,8 @@ import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
-import { isFindingId, recordFindings } from './findings.mjs';
+import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
+import { deleteOwn, raiseFloor, readMarked } from './inline.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
 import { closingRange, postContext } from './dispatch.mjs';
 import * as quota from './quota.mjs';
@@ -121,9 +122,23 @@ export async function prepareStep(s) {
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = committed.review.record !== 'local';
   const comments = onPr ? forge.conversationComments(repo, n) : [];
+  // The members' marked posts (lib/review/inline.mjs), read once a step whose record is posted, before anything here
+  // writes: the lists of the engine's posts, the counter floor, and the delete's unmapped comments come from them.
+  const marked = onPr ? readMarked(forge, repo, n, comments) : null;
+  s.marked = marked;
+  // The delete of the engine's own comment for a security finding follows the record's state and no switch (J2): it runs
+  // before either stop below, whatever review.publish.inline, the local file, and review.record say, under either value
+  // of the team's publicSecurity, which the local file cannot change: "full" spares only a post that holds no text.
+  const publicSecurity = committed.review?.publish?.publicSecurity ?? 'counts';
+  const sweep = (record, mode) => deleteOwn({ forge, repo, n, state: record, items: marked?.items ?? null, mode, publicSecurity });
   const summary = summaryToEdit(comments, () => forge.viewer());
   const record = readRecord(project, n, comments, repo);
-  if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held, record.why), held: record.held, retry_recommended: false };
+  if (record.held !== undefined) {
+    // From this machine's own record alone, and no write: every write raises the revision the hold compares.
+    s.deletes = sweep(readLocalState(project, n), 'held');
+    return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held, record.why), held: record.held, retry_recommended: false };
+  }
+  s.deletes = sweep(record.state, onPr ? 'posted' : 'local');
   // A record built on another machine's posted copy can hold an open, blocking finding whose text stayed on that machine:
   // no reviewer here can judge a fix of it. The step stops before it adopts the record or runs a reviewer, and this
   // machine's own record notes the stop, so its merge guard keeps refusing the head. The review goes on on the machine
@@ -135,8 +150,16 @@ export async function prepareStep(s) {
     return { status: 'incomplete', pr: n, repo, head, reason, retry_recommended: false };
   }
   let state = record.state;
-  // The record is floored before any id is minted: `aidrian pr attest` mints only into a floored record.
-  state.floored = true;
+  // The record is floored before any id is minted: `aidrian pr attest` mints only into a floored record. Where the
+  // record is posted, the floor is the highest id among the members' markers (R4); a read of them that failed before
+  // the record's first id floors nothing, so neither this step nor attest mints one.
+  const counted = Number.isSafeInteger(state.idCounter) && state.idCounter > 0;
+  if (marked?.items) raiseFloor(state, marked.items);
+  state.floored = !onPr || Boolean(marked?.items) || counted;
+  if (!state.floored) s.unminted = `${marked.error}: no finding id is minted until they can be read`;
+  if (Number.isSafeInteger(state.idCounter) && state.idCounter >= MAX_COUNTER) {
+    return { status: 'incomplete', pr: n, repo, head, reason: `the finding id counter of #${n} is at its limit of ${MAX_COUNTER}, raised by a marker on the pull request: the Human decides how the review goes on`, retry_recommended: false };
+  }
   const paths = gitPaths(root);
   // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
   let posting = null;
@@ -300,7 +323,7 @@ export async function prepareStep(s) {
   // A finding attest stored without an id, as on a record no step had floored, takes one now, from the same function.
   for (const [id, result] of Object.entries(state.passes)) {
     if (!isObject(result) || !['list', 'ruled', 'carried'].some((key) => Array.isArray(result[key]) && result[key].some((finding) => isObject(finding) && !isFindingId(finding.id)))) continue;
-    recordFindings(state, id, result, { mint: true, securityPass: state.planNote.passes[id]?.security === true || state.dispatched?.[id]?.security === true, kept: true, range: closingRange(root, base) });
+    recordFindings(state, id, result, { mint: state.floored === true, securityPass: state.planNote.passes[id]?.security === true || state.dispatched?.[id]?.security === true, kept: true, range: closingRange(root, base) });
   }
 
   const keptSignoffs = await keptSignoffsOf({ root, head, baseTip, cleanEnv, review, harnessFiles, plan, state });

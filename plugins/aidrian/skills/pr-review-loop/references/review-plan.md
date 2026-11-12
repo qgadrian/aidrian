@@ -104,6 +104,27 @@ the change does not touch. A push that touches only comments, docs, or tests kee
 still re-review it, in delta context; a quiet push changes only the round count. `residuals` on any result lists the
 late-round low findings the step accepted, which go into the body's Accepted residuals.
 
+## Engine posts
+
+With `review.publish.inline` on, the engine posts each step's new blocking findings on the diff, under the gh user's
+login or another member's, each post starting with `<!-- aidrian-review-finding:<id> -->`. Every step's JSON lists them,
+whatever its status, so step 2 never takes one for a person's comment:
+
+- `engine_comments[]` (`{ kind, id, findings, login }`): the posts the review record maps. Skip exactly these ids.
+- `engine_comments_unmapped[]`: every other post a member made that starts with a finding marker, such as one another
+  member's machine posted. Read each as a local model's finding, whoever's login posted it: validate it before acting,
+  and run `aidrian pr disposition` for it with `--source bot --round <round>`, never as a person's comment.
+- Neither list, with `engine_comments_unread`: the step could not read them. Read every post a member made that starts
+  with a finding marker as unmapped.
+- A post that starts with a finding marker by someone who is no member stays an outsider's comment, and a reply with no
+  marker in an engine thread stays a review item.
+- `comment_deletes.waiting` names an engine comment of a security finding that waits for another member's machine to
+  delete it: report it, and run nothing for it. `left` and `failed` list one this step did not delete; `textless`, one
+  kept because it holds none of its finding's text.
+
+Never cite an engine post, a finding's, the review summary, or the product feedback comment, as `--evidence`:
+`aidrian pr signoff --accept` refuses it.
+
 ## Stops
 
 - `human_required`: a flow the Human signs off, or with `stage`, a stage the Human chose to review in place of a

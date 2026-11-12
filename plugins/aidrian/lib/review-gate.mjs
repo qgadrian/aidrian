@@ -20,7 +20,13 @@ import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit } from './review/state.mjs';
+import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
+import { FINDING_MARKER } from './review/inline.mjs';
+
+// The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
+// the product feedback comment's. Such a post is never outside evidence, whoever's login posted it.
+const ENGINE_MARKERS = [`<!-- ${FINDING_MARKER}:`, SUMMARY_MARKER, '<!-- aidrian-product-feedback:'];
+export const engineMarked = (body) => typeof body === 'string' && ENGINE_MARKERS.some((marker) => body.trimStart().startsWith(marker));
 
 // Re-exported for the callers that read them here.
 export { originRepo, remoteRepos, repoName };
@@ -394,14 +400,15 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
       host = new URL(where.change(pr, 'url', { repo })?.url).hostname;
     } catch {}
     const checkEvidence = (url) => {
-      let kind;
+      let found;
       try {
-        kind = where.changeEvidence(repo, pr, url, host ? { host } : {});
+        found = where.changeEvidence(repo, pr, url, { ...(host ? { host } : {}), withBody: true });
       } catch (error) {
         throw new Error(`--evidence ${url} could not be checked on ${repo}#${pr}: ${String(error?.message ?? error).split('\n')[0].slice(0, 200)}`);
       }
-      if (!kind) throw new Error(`--evidence ${url} is not a comment, review, or review comment of ${repo}#${pr} that the forge can find: cite the URL of the comment or review that holds an attachment, never the attachment's own URL`);
-      return kind;
+      if (!found?.kind) throw new Error(`--evidence ${url} is not a comment, review, or review comment of ${repo}#${pr} that the forge can find: cite the URL of the comment or review that holds an attachment, never the attachment's own URL`);
+      if (engineMarked(found.body)) throw new Error(`--evidence ${url} is a post of the review engine itself (a finding, the review summary, or the product feedback), never outside evidence: cite a person's comment or review`);
+      return found.kind;
     };
     recordAccept(project, { pr, repo, flow: flags.flow, invariant: flags.accept, head: flags.head, by, reason: flags.reason, evidence: flags.evidence, checkEvidence, remote: remoteState(repo, pr, undefined, held), dryRun });
     return done(`${by}'s acceptance of invariant ${flags.accept} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s acceptance: invariant ${flags.accept} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the outside evidence ${flags.evidence}. Run \`aidrian pr review\` again.`);

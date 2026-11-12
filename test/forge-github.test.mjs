@@ -1,6 +1,8 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
@@ -17,8 +19,9 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
-  'conversationComments', 'comment', 'postComment', 'editComment', 'reactions',
+  'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
+  'postReview', 'reviewComment', 'deleteReviewComment',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
 
@@ -164,12 +167,13 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
   assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
   assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
   assert.equal(facade.repoIdentity, repoIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
+  assert.equal(facade.MAX_BODY, 65_536, 'the adapter names GitHub\'s longest body, and the facade gives it to shared code');
 });
 
 test('changeEvidence: a comment, review, or review comment of the pull request, each read by its id', () => {
@@ -544,4 +548,139 @@ test('compareUrl: a link from two full-hex SHAs on the forge`s own address of th
     ['o/r/x', a, b], ['o', a, b], ['-o/r', a, b], ['o/..', a, b], ['o/r?x=1', a, b], ['o/r#7', a, b], [null, a, b],
   ]) assert.equal(none.forge.compareUrl(repo, from, to), null, `${repo} ${from} ${to}`);
   assert.equal(none.calls.length, 0, 'no call for SHAs or a name that fail');
+});
+
+// ---- The inline review's writes and reads (lib/review/inline.mjs) ----
+
+const SHA40 = 'a'.repeat(40);
+const httpError = (status) => Object.assign(new Error(`Command failed: gh api\ngh: Something (HTTP ${status})`), { stderr: `gh: Something (HTTP ${status})` });
+
+test('postReview: one POST of the review as JSON on stdin, the event always COMMENT, then its inline comments read back', () => {
+  const { forge, calls } = recorded((call) => (call.includes('--method') ? '{"id":501}' : '[[{"id":61,"body":"b1","path":"src/a.js","line":3,"extra":1}]]'));
+  const answer = forge.postReview('o/r', 7, { commitId: SHA40, body: '<!-- m -->\nbody', comments: [{ path: 'src/a.js', line: 3, side: 'RIGHT', body: 'b1' }], event: 'APPROVE' });
+  assert.deepEqual(answer, { refused: false, id: 501, comments: [{ id: 61, body: 'b1', path: 'src/a.js', line: 3 }] });
+  assert.deepEqual(calls.map((call) => call.args), [
+    ['api', 'repos/o/r/pulls/7/reviews', '--method', 'POST', '--input', '-'],
+    ['api', 'repos/o/r/pulls/7/reviews/501/comments', '--paginate', '--slurp'],
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].options.input), {
+    commit_id: SHA40, body: '<!-- m -->\nbody', event: 'COMMENT', comments: [{ path: 'src/a.js', line: 3, side: 'RIGHT', body: 'b1' }],
+  }, 'an event passed in changes nothing: the adapter sets COMMENT, and takes no event');
+  assert.ok(!calls[0].args.includes('-F') && !calls[0].args.includes('-f'), 'no field flag carries pull request text');
+});
+
+test('postReview: a path and a body that start with @, and a body "true", reach GitHub as literal strings', () => {
+  const { forge, calls } = recorded((call) => (call.includes('--method') ? '{"id":5}' : '[]'));
+  forge.postReview('o/r', 7, { commitId: SHA40, body: 'true', comments: [{ path: '@etc/passwd', line: 1, side: 'RIGHT', body: '@/etc/hosts' }] });
+  const sent = JSON.parse(calls[0].options.input);
+  assert.deepEqual([sent.body, sent.comments[0].path, sent.comments[0].body], ['true', '@etc/passwd', '@/etc/hosts']);
+  assert.equal(typeof sent.body, 'string');
+  // The conversation writes send their body as a raw -f field, which gh never reads as a file or a boolean.
+  const plain = recorded(() => '{"id":9}');
+  plain.forge.postComment('o/r', 7, '@/etc/passwd');
+  plain.forge.editComment('o/r', 9, 'true');
+  assert.deepEqual(plain.args(), [
+    ['api', 'repos/o/r/issues/7/comments', '--method', 'POST', '-f', 'body=@/etc/passwd'],
+    ['api', 'repos/o/r/issues/comments/9', '--method', 'PATCH', '-f', 'body=true'],
+  ]);
+});
+
+test('postReview: any 4xx answer is a refusal in the result, any other failure throws, and a failed read of its comments keeps the review', () => {
+  for (const status of [400, 403, 404, 422]) {
+    const { forge } = recorded(() => { throw httpError(status); });
+    assert.deepEqual(forge.postReview('o/r', 7, { commitId: SHA40, body: 'b', comments: [] }), { refused: true }, String(status));
+  }
+  for (const status of [500, 502]) {
+    const { forge } = recorded(() => { throw httpError(status); });
+    assert.throws(() => forge.postReview('o/r', 7, { commitId: SHA40, body: 'b', comments: [] }), new RegExp(`HTTP ${status}`, 'u'));
+  }
+  const network = recorded(() => { throw new Error('gh api did not finish in 60 s and was stopped'); });
+  assert.throws(() => network.forge.postReview('o/r', 7, { commitId: SHA40, body: 'b', comments: [] }), /did not finish/u);
+  const unread = recorded((call) => (call.includes('--method') ? '{"id":8}' : (() => { throw httpError(502); })()));
+  assert.deepEqual(unread.forge.postReview('o/r', 7, { commitId: SHA40, body: 'b', comments: [] }), { refused: false, id: 8, comments: null });
+  assert.throws(() => recorded().forge.postReview('o/r', 7, { commitId: 'abc', body: 'b' }), /full SHA/u);
+});
+
+test('every write route and every read of one comment is built from a safe positive integer alone', () => {
+  const { forge, args } = recorded(() => '{"id":9}');
+  for (const bad of ['1/../../x', '12abc', '@1', 1.5, -3, 0, '', null, undefined, Number.MAX_SAFE_INTEGER + 1, '9'.repeat(17)]) {
+    assert.throws(() => forge.deleteComment('o/r', bad), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.deleteReviewComment('o/r', bad), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.reviewComment('o/r', 7, bad), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.comment('o/r', bad), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.editComment('o/r', bad, 'b'), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.postComment('o/r', bad, 'b'), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.postReview('o/r', bad, { commitId: SHA40, body: 'b' }), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.postReview('o/r', 7, { commitId: SHA40, body: 'b', comments: [{ path: 'a', line: bad, body: 'b' }] }), /must be a positive whole number/u, String(bad));
+  }
+  assert.deepEqual(args(), [], 'no call is made for any of them');
+});
+
+test('the two deletes: DELETE of one review comment and of one conversation comment, an empty answer read as null', () => {
+  const { forge, args } = recorded(() => '');
+  assert.equal(forge.deleteReviewComment('o/r', 61), null);
+  assert.equal(forge.deleteComment('o/r', '62'), null);
+  assert.deepEqual(args(), [
+    ['api', 'repos/o/r/pulls/comments/61', '--method', 'DELETE'],
+    ['api', 'repos/o/r/issues/comments/62', '--method', 'DELETE'],
+  ]);
+  const broken = recorded(() => { throw httpError(403); }).forge;
+  assert.throws(() => broken.deleteComment('o/r', 62), /HTTP 403/u, 'a failed delete throws, so the step names it and tries again');
+});
+
+test('reviewComment and comment with the pull request named: each held to that pull request, and comment without it answers as before', () => {
+  const { forge, args } = recorded((call) => ({
+    'repos/o/r/pulls/comments/1': '{"id":1,"pull_request_url":"https://api.github.com/repos/o/r/pulls/7"}',
+    'repos/o/r/pulls/comments/2': '{"id":2,"pull_request_url":"https://api.github.com/repos/o/r/pulls/8"}',
+    'repos/o/r/issues/comments/3': '{"id":3,"issue_url":"https://api.github.com/repos/o/r/issues/7"}',
+    'repos/o/r/issues/comments/4': '{"id":4,"issue_url":"https://api.github.com/repos/o/other/issues/7"}',
+  })[call[1]] ?? (() => { throw httpError(404); })());
+  assert.equal(forge.reviewComment('o/r', 7, 1).id, 1);
+  assert.equal(forge.reviewComment('o/r', 7, 2), null, 'a review comment of another pull request');
+  assert.equal(forge.reviewComment('o/r', 7, 5), null, 'GitHub finds no such comment');
+  assert.equal(forge.comment('o/r', 3, { pr: 7 }).id, 3);
+  assert.equal(forge.comment('o/r', 4, { pr: 7 }), null, 'a comment of another repository');
+  assert.equal(forge.comment('o/r', 5, { pr: 7 }), null, 'GitHub finds no such comment');
+  assert.equal(forge.comment('o/r', 4).id, 4, 'without the option, the comment as GitHub answers it');
+  assert.throws(() => forge.comment('o/r', 5), /HTTP 404/u, 'and a 404 throws, as before');
+  assert.deepEqual(args().map((call) => call[1]), ['repos/o/r/pulls/comments/1', 'repos/o/r/pulls/comments/2', 'repos/o/r/pulls/comments/5', 'repos/o/r/issues/comments/3', 'repos/o/r/issues/comments/4', 'repos/o/r/issues/comments/5', 'repos/o/r/issues/comments/4', 'repos/o/r/issues/comments/5']);
+  const broken = recorded(() => { throw httpError(502); }).forge;
+  assert.throws(() => broken.reviewComment('o/r', 7, 1), /HTTP 502/u);
+  assert.throws(() => broken.comment('o/r', 1, { pr: 7 }), /HTTP 502/u);
+});
+
+test('changeEvidence withBody: the item`s kind and its text, so a sign-off can refuse an engine post', () => {
+  const { forge } = recorded((call) => ({
+    'repos/o/r/issues/comments/11': '{"issue_url":"https://api.github.com/repos/o/r/issues/7","body":"<!-- aidrian-review-summary -->"}',
+    'repos/o/r/pulls/7/reviews/21': '{"id":21,"body":"looks right"}',
+    'repos/o/r/pulls/comments/31': '{"pull_request_url":"https://api.github.com/repos/o/r/pulls/7"}',
+  })[call[1]] ?? (() => { throw httpError(404); })());
+  const pr = 'https://github.com/o/r/pull/7';
+  assert.deepEqual(forge.changeEvidence('o/r', 7, `${pr}#issuecomment-11`, { withBody: true }), { kind: 'comment', body: '<!-- aidrian-review-summary -->' });
+  assert.deepEqual(forge.changeEvidence('o/r', 7, `${pr}#pullrequestreview-21`, { withBody: true }), { kind: 'review', body: 'looks right' });
+  assert.deepEqual(forge.changeEvidence('o/r', 7, `${pr}#discussion_r31`, { withBody: true }), { kind: 'review_comment', body: '' });
+  assert.equal(forge.changeEvidence('o/r', 7, `${pr}#discussion_r32`, { withBody: true }), null);
+  assert.equal(forge.changeEvidence('o/r', 7, `${pr}#issuecomment-11`), 'comment', 'without it, the kind alone, as before');
+});
+
+test('runGh hands a request body to a real gh child on its stdin, and gives a call with none no stdin', (t) => {
+  // A fake gh on PATH that logs what it reads on stdin, one line a call: execFileSync drops `input` unless stdin is a
+  // pipe. It answers a call that sends a body with a review id, and any other call with an empty list.
+  const bin = mkdtempSync(path.join(tmpdir(), 'aidrian-fake-gh-'));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const log = path.join(bin, 'stdin.log');
+  writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\nprintf '%s\\n' "$(cat)" >> '${log}'\ncase "$*" in *--input*) printf '{"id":5}' ;; *) printf '[]' ;; esac\n`);
+  chmodSync(path.join(bin, 'gh'), 0o755);
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  t.after(() => { process.env.PATH = before; });
+  const read = () => readFileSync(log, 'utf8').split('\n').slice(0, -1);
+  assert.equal(runGh(['api', 'x', '--input', '-'], { input: '{"a":1}' }), '{"id":5}');
+  runGh(['api', 'x']);
+  assert.deepEqual(read(), ['{"a":1}', ''], 'the body reaches gh, and a call with no input reads an empty stdin');
+  // The adapter's postReview through the same real child: the whole request arrives, its text as written.
+  const forge = createGithubForge({ cwd: bin });
+  const sha = 'a'.repeat(40);
+  assert.deepEqual(forge.postReview('o/r', 7, { commitId: sha, body: '@/etc/passwd', comments: [{ path: '@a.js', line: 2, side: 'RIGHT', body: 'true' }] }), { refused: false, id: 5, comments: [] });
+  assert.deepEqual(JSON.parse(read()[2]), { commit_id: sha, body: '@/etc/passwd', event: 'COMMENT', comments: [{ path: '@a.js', line: 2, side: 'RIGHT', body: 'true' }] });
 });

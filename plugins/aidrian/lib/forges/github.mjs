@@ -20,6 +20,8 @@ export const GITHUB_JSON = 'application/vnd.github+json';
 
 // The review rounds of one pull request with their comments, at most PAGE of each, in one GraphQL call.
 export const REVIEWS_PAGE = 100;
+// The longest body GitHub takes for a comment, a review, or a review comment, in characters.
+export const MAX_BODY = 65_536;
 const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -54,6 +56,19 @@ const namesItem = (apiUrl, kind, repo, n) => {
 
 // gh's default host, which a call names only when it is another.
 const DEFAULT_HOST = 'github.com';
+
+// A pull request or comment number as a route takes it: a safe positive integer, given as a number or as digits alone.
+// Anything else throws before any call, so no route is built from text a pull request supplies.
+const idOf = (value, what) => {
+  const number = typeof value === 'number' || (typeof value === 'string' && /^\d{1,16}$/u.test(value)) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error(`${what} must be a positive whole number`);
+  return number;
+};
+
+// Whether gh failed on an answer GitHub gave with a 4xx status, such as 422 for a review line outside the diff.
+const clientError = (error) => /\(HTTP 4\d\d\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
+// Whether gh failed on GitHub's 404.
+const notFound = (error) => /\(HTTP 404\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
 
 // One `gh pr checks` row in the forge's shape: its name and state, the workflow, event, and run that reported it, and
 // `workflowId`, the workflow file's id (filled in by workflowIds), null until it is read. `host` and `repo` name the
@@ -111,18 +126,23 @@ function workflowIds(rows, listRuns) {
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
 export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null } = {}) {
-  const gh = (args, { timeoutMs: limit = timeoutMs } = {}) =>
-    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }) });
+  const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
+    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
   const json = (args) => JSON.parse(gh(args));
   const given = (ref) => ref !== undefined && ref !== null && ref !== '';
-  // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`.
-  const rest = (route, { paginate = false, method, fields, host } = {}) => {
+  // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`, each
+  // value a literal string, and `input`, a request body, as JSON on gh's stdin: never `-F`, which reads a leading `@` as
+  // a file and `true` as a boolean. `empty` reads an answer with no body, such as a delete's, as null.
+  const rest = (route, { paginate = false, method, fields, input, empty = false, host } = {}) => {
     const args = ['api', ...(host ? ['--hostname', host] : []), route, ...(mediaType === null ? [] : ['--header', `Accept: ${mediaType}`])];
     if (paginate) args.push('--paginate', '--slurp');
     if (method) args.push('--method', method);
     for (const [key, value] of Object.entries(fields ?? {})) args.push('-f', `${key}=${value}`);
-    if (mediaType === null) return paginate ? JSON.parse(gh(args) || '[]').flat() : json(args);
-    const parsed = JSON.parse(gh(args) || 'null');
+    if (input !== undefined) args.push('--input', '-');
+    const answer = gh(args, input === undefined ? {} : { input: JSON.stringify(input) });
+    if (empty) return answer.trim() === '' ? null : JSON.parse(answer);
+    if (mediaType === null) return paginate ? JSON.parse(answer || '[]').flat() : JSON.parse(answer);
+    const parsed = JSON.parse(answer || 'null');
     return paginate && Array.isArray(parsed) ? parsed.flat() : parsed;
   };
   const list = (route, { host } = {}) => rest(route, { paginate: true, host });
@@ -187,10 +207,67 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     viewer: ({ host } = {}) => rest('user', { host })?.login,
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
-    // One comment of a conversation, by its id.
-    comment: (repo, id, { host } = {}) => rest(`repos/${repo}/issues/comments/${id}`, { host }),
-    postComment: (repo, n, body, { host } = {}) => rest(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body }, host }),
-    editComment: (repo, id, body, { host } = {}) => rest(`repos/${repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body }, host }),
+    // One comment of a conversation, by its id. With `pr`, it is held to that pull request of `repo`: a comment whose
+    // `issue_url` names any other, or that GitHub does not find (HTTP 404), is null; any other failure throws.
+    comment: (repo, id, { host, pr } = {}) => {
+      const route = `repos/${repo}/issues/comments/${idOf(id, 'a comment id')}`;
+      if (pr === undefined || pr === null) return rest(route, { host });
+      const number = idOf(pr, 'a pull request number');
+      let found;
+      try {
+        found = rest(route, { host });
+      } catch (error) {
+        if (notFound(error)) return null;
+        throw error;
+      }
+      return namesItem(found?.issue_url, 'issues', repo, number) ? found : null;
+    },
+    postComment: (repo, n, body, { host } = {}) => rest(`repos/${repo}/issues/${idOf(n, 'a pull request number')}/comments`, { method: 'POST', fields: { body }, host }),
+    editComment: (repo, id, body, { host } = {}) => rest(`repos/${repo}/issues/comments/${idOf(id, 'a comment id')}`, { method: 'PATCH', fields: { body }, host }),
+    deleteComment: (repo, id) => rest(`repos/${repo}/issues/comments/${idOf(id, 'a comment id')}`, { method: 'DELETE', empty: true }),
+    // One review of pull request `n`, with its inline comments, as one request: the event is always COMMENT, so a review
+    // the engine posts never approves or requests changes, and no option sets another. `comments` are
+    // { path, line, side, body }, `line` on the head `commitId`'s side of the diff. Returns { refused: false, id, comments },
+    // the review's id and its inline comments as GitHub lists them ({ id, body, path, line }, null when that read fails),
+    // or { refused: true } when GitHub answers with a 4xx status, such as a line outside the diff. Any other failure
+    // throws as gh threw it.
+    postReview: (repo, n, { commitId, body, comments = [] } = {}) => {
+      const number = idOf(n, 'a pull request number');
+      if (typeof commitId !== 'string' || !/^[0-9a-f]{40}$/u.test(commitId)) throw new Error('a review needs the full SHA of its commit');
+      const request = {
+        commit_id: commitId,
+        body: String(body ?? ''),
+        event: 'COMMENT',
+        comments: comments.map((each) => ({ path: String(each.path), line: idOf(each.line, 'a line number'), side: each.side === 'LEFT' ? 'LEFT' : 'RIGHT', body: String(each.body) })),
+      };
+      let review;
+      try {
+        review = rest(`repos/${repo}/pulls/${number}/reviews`, { method: 'POST', input: request });
+      } catch (error) {
+        if (clientError(error)) return { refused: true };
+        throw error;
+      }
+      const id = idOf(review?.id, 'the review id GitHub answered');
+      let posted = null;
+      try {
+        posted = list(`repos/${repo}/pulls/${number}/reviews/${id}/comments`).map((each) => ({ id: each?.id, body: each?.body, path: each?.path, line: each?.line }));
+      } catch {}
+      return { refused: false, id, comments: posted };
+    },
+    // One review comment of pull request `n`, by its id, held to that pull request: one whose `pull_request_url` names any
+    // other, or that GitHub does not find (HTTP 404), is null; any other failure throws.
+    reviewComment: (repo, n, id) => {
+      const number = idOf(n, 'a pull request number');
+      let found;
+      try {
+        found = rest(`repos/${repo}/pulls/comments/${idOf(id, 'a comment id')}`);
+      } catch (error) {
+        if (notFound(error)) return null;
+        throw error;
+      }
+      return namesItem(found?.pull_request_url, 'pulls', repo, number) ? found : null;
+    },
+    deleteReviewComment: (repo, id) => rest(`repos/${repo}/pulls/comments/${idOf(id, 'a comment id')}`, { method: 'DELETE', empty: true }),
     // The reactions on the pull request itself; `content`, such as `+1`, keeps that one kind, read as the reviews report
     // always has: its paging flags before the route.
     reactions: (repo, n, content = null) => {
@@ -212,7 +289,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // read by its id and held to this pull request; or null for any other URL, such as an uploaded file's, or when
     // GitHub finds no such item (HTTP 404). Any other failure throws as gh threw it. `host` is the GitHub host the pull
     // request lives on, github.com unless named: a link on any other host is no part of it, and is never asked about.
-    changeEvidence: (repo, n, url, { host = DEFAULT_HOST } = {}) => {
+    // `withBody` answers { kind, body } instead, the item's text as GitHub holds it, so a caller can tell whose post it is.
+    changeEvidence: (repo, n, url, { host = DEFAULT_HOST, withBody = false } = {}) => {
       let parsed;
       try {
         parsed = new URL(String(url));
@@ -229,13 +307,21 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         try {
           return rest(route, at);
         } catch (error) {
-          if (/\(HTTP 404\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`)) return null;
+          if (notFound(error)) return null;
           throw error;
         }
       };
-      if (kind === 'issuecomment-') return namesItem(found(`repos/${repo}/issues/comments/${id}`)?.issue_url, 'issues', repo, n) ? 'comment' : null;
-      if (kind === 'pullrequestreview-') return found(`repos/${repo}/pulls/${n}/reviews/${id}`) ? 'review' : null;
-      return namesItem(found(`repos/${repo}/pulls/comments/${id}`)?.pull_request_url, 'pulls', repo, n) ? 'review_comment' : null;
+      const answer = (item, name) => {
+        if (!item) return null;
+        return withBody ? { kind: name, body: typeof item.body === 'string' ? item.body : '' } : name;
+      };
+      if (kind === 'issuecomment-') {
+        const item = found(`repos/${repo}/issues/comments/${id}`);
+        return answer(namesItem(item?.issue_url, 'issues', repo, n) ? item : null, 'comment');
+      }
+      if (kind === 'pullrequestreview-') return answer(found(`repos/${repo}/pulls/${n}/reviews/${id}`), 'review');
+      const item = found(`repos/${repo}/pulls/comments/${id}`);
+      return answer(namesItem(item?.pull_request_url, 'pulls', repo, n) ? item : null, 'review_comment');
     },
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
     // REVIEWS_PAGE of each, with each list's `totalCount`.

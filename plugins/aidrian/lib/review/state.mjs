@@ -4,7 +4,11 @@
 // With config.json `review.record: "local"` it is kept in the state folder only, and another machine cannot read it.
 //
 // The record is the reviewers' word, not proof: an agent with a shell can write it. What protects the review is that
-// every entry is visible in the pull request, overrides included.
+// every entry is visible in the pull request, overrides included: on a repository that is not private, by its engine
+// keys alone. The comment carries the posted copy of the record (lib/review/publish.mjs postedCopy), never the record
+// itself, and its visible lines are rendered from that copy: finding text, reasons, and names a check withholds stay on
+// the machine that recorded them. A machine that builds on another's posted copy fills them from its own record
+// (fillWithheld).
 //
 // The comment carries the record brotli-compressed under `aidrian-review-state-br:`; the older plain-base64 marker is
 // still read. A write by this release leaves one record; a write by an older one keeps the compressed marker and adds a
@@ -24,6 +28,8 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
+import { tieTwins } from './findings.mjs';
+import { escapeLines, fillWithheld, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
 import { splitPasses } from './split.mjs';
@@ -35,6 +41,9 @@ const HELD = /<!--\s*aidrian-review-state-held:(\d+)\s*-->/u;
 // The longest summary comment written with its record; past it the record is held. Under GitHub's 65,536.
 export const BODY_LIMIT = 60_000;
 export const HELD_LINE = '_Record kept locally; too large for a comment. Another machine waits for the one that wrote it._';
+// The held line of a record held because a text check could not run where it was written. It names no word, pattern,
+// or list.
+export const CHECK_HELD_LINE = '_Record kept locally; a text check could not run on the machine that wrote it. Another machine waits for that one._';
 // A decoded record larger than this is not a review record.
 const MAX_RECORD = 32 * 1024 * 1024;
 // The longest free text, such as a reason, the visible summary shows.
@@ -119,6 +128,8 @@ export function mergePending(a, b) {
 }
 
 const file = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}-review.json`);
+// The file that holds this machine's review record of `pr`.
+export const recordFile = file;
 
 function wellFormed(state, pr) {
   return isObject(state) && state.version === 1 && state.pr === pr && Array.isArray(state.rounds) && isObject(state.passes) && isObject(state.signoffs);
@@ -133,8 +144,10 @@ export function readLocalState(project, pr) {
   }
 }
 
-// Every write raises the record's revision, so the newer of two records is the one written last.
+// Every write raises the record's revision, so the newer of two records is the one written last. Before it, every twin
+// of a security finding the record holds takes the mark (findings.mjs tieTwins), so the copy it posts carries it.
 export function writeLocalState(project, state) {
+  tieTwins(state);
   state.revision = (state.revision ?? 0) + 1;
   state.updatedAt = new Date().toISOString();
   const target = file(project, state.pr);
@@ -186,20 +199,46 @@ export function heldRevision(body) {
   return match ? Number(match[1]) : null;
 }
 
+// Why a held summary comment holds its record: `check` when its held line says a text check could not run, else `size`.
+export const heldWhy = (body) => (typeof body === 'string' && endLines(body)[1] === CHECK_HELD_LINE ? 'check' : 'size');
+
 // What a machine without the held record is told: the review step returns it as `incomplete`, and `aidrian pr extend`
-// and `aidrian pr await-review` fail with it.
-export const heldMessage = (pr, revision) => `the review record of #${pr} is at revision ${revision} on the machine that wrote it, too large for the pull request's comment: continue the review on that machine, or wait until its next write fits the comment again. If that machine is gone, the Human deletes the review summary comment of #${pr}; the review then restarts from this machine's record, or from round 1 with none`;
+// and `aidrian pr await-review` fail with it. `why` is the hold's cause (heldWhy); a caller that does not know it gets
+// both.
+const HOLD_CAUSE = {
+  size: ['too large for the pull request\'s comment', 'or wait until its next write fits the comment again'],
+  check: ['because a text check could not run there', 'or wait until its checks run again'],
+  undefined: ['too large for the pull request\'s comment or because a text check could not run there', 'or wait until its next write posts the record again'],
+};
+export const heldMessage = (pr, revision, why) => {
+  const [cause, wait] = HOLD_CAUSE[why] ?? HOLD_CAUSE.undefined;
+  return `the review record of #${pr} is at revision ${revision} on the machine that wrote it, ${cause}: continue the review on that machine, ${wait}. If that machine is gone, the Human deletes the review summary comment of #${pr}; the review then restarts from this machine's record, or from round 1 with none`;
+};
 
 // The record to build on: { state }, the newer of this machine's and the one the pull request's summary comment
-// carries (an empty one when neither exists), or { held: revision } when the comment holds a record this machine's is
-// older than. `comments` are the pull request's comments as read; [] under `review.record: "local"`.
+// carries (an empty one when neither exists), or { held: revision, why } when the comment holds a record this machine's
+// is older than, `why` its cause (heldWhy). `comments` are the pull request's comments as read; [] under `review.record: "local"`.
 export function readRecord(project, pr, comments, repo) {
   const body = summaryComment(comments)?.body;
   const local = readLocalState(project, pr);
   const remote = stateFromComment(body, pr);
   const held = remote ? null : heldRevision(body);
-  if (held !== null && (local?.revision ?? 0) < held) return { held };
-  return { state: newer(local, remote) ?? emptyState(pr, repo) };
+  if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };
+  const chosen = newer(local, remote);
+  // The posted copy holds less than the record: what it withheld is filled from this machine's own record. A machine
+  // with none fills from an empty one, so every finding of the copy is marked adopted.
+  if (chosen && chosen === remote) fillWithheld(remote, local ?? emptyState(pr, repo));
+  return { state: chosen ?? emptyState(pr, repo) };
+}
+
+// Notes `outcome` on this machine's record of `pr` without making it a newer record: its revision and write time stay,
+// so a higher-revision posted copy still wins the next read. The review step's stop on a finding it holds no text for
+// writes it, so the merge guard keeps refusing the head.
+export function noteLocalOutcome(project, pr, repo, outcome) {
+  const state = noteOutcome(readLocalState(project, pr) ?? emptyState(pr, repo), outcome);
+  const target = file(project, pr);
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 // The newer of two records: the higher revision, which every write raises, then the later write. Every write first
@@ -212,50 +251,89 @@ export function newer(a, b) {
   return String(b.updatedAt ?? '') > String(a.updatedAt ?? '') ? b : a;
 }
 
-// The summary comment's text: a table a person reads, then the marker with the record.
-export function summaryBody(state, plan, status) {
-  const lines = [SUMMARY_MARKER, `### Review: ${status}`, ''];
+// The summary comment's text: the lines a person reads, then the marker with the record. `post` is the write's post
+// context (lib/review/publish.mjs postedCopy): the record goes on the pull request as its posted copy, and every line the
+// record feeds is rendered from that copy, so a line shows nothing the copy lacks. The status, the plan line, its reasons,
+// the engine, and the flows come from `plan`, the step's own.
+export function summaryBody(state, plan, status, post = {}) {
+  const planLines = [];
   if (plan) {
-    lines.push(`Head \`${plan.head.slice(0, 7)}\`, depth **${plan.depth}**, round ${state.rounds.length}.`);
-    if (plan.reasons.length) lines.push('', ...plan.reasons.slice(0, MAX_REASONS).map((reason) => `- ${clip(reason)}`));
-    if (plan.reasons.length > MAX_REASONS) lines.push(`- and ${plan.reasons.length - MAX_REASONS} more`);
-    if (plan.engine) lines.push(`- engine: ${plan.engine.name} (${clip(plan.engine.reason)})`);
+    planLines.push(`Head \`${plan.head.slice(0, 7)}\`, depth **${plan.depth}**, round ${state.rounds.length}.`);
+    if (plan.reasons.length) planLines.push('', ...plan.reasons.slice(0, MAX_REASONS).map((reason) => `- ${clip(reason)}`));
+    if (plan.reasons.length > MAX_REASONS) planLines.push(`- and ${plan.reasons.length - MAX_REASONS} more`);
+    if (plan.engine) planLines.push(`${ENGINE_LINE}${plan.engine.name} (${clip(plan.engine.reason)})`);
   }
-  const passes = Object.entries(state.passes);
-  if (passes.length) {
-    lines.push('', '| Pass | Head | Findings | Open |', '| --- | --- | --- | --- |');
-    for (const [id, result] of passes) lines.push(`| ${id} | \`${String(result.head).slice(0, 7)}\` | ${result.findings ?? 0} | ${result.open ?? 0} |`);
-  }
-  for (const flow of plan?.flows ?? []) {
+  const flowLines = (plan?.flows ?? []).map((flow) => {
     const signoff = state.signoffs[flow.id];
     const human = !flow.humanSigned ? 'needed' : signoff?.head === plan.head ? 'recorded (an audit entry, not proof)' : `recorded on \`${String(signoff?.head).slice(0, 7)}\` and kept: nothing since touches the flow`;
-    lines.push(`- flow **${flow.id}**${flow.unspecified ? ' (unspecified: no invariants stated)' : ''}: ${flow.signed ? 'signed by its reviewer' : 'not signed'}${flow.signoff === 'human' ? `; Human sign-off ${human}` : ''}`);
+    return `- flow **${flow.id}**${flow.unspecified ? ' (unspecified: no invariants stated)' : ''}: ${flow.signed ? 'signed by its reviewer' : 'not signed'}${flow.signoff === 'human' ? `; Human sign-off ${human}` : ''}`;
+  });
+  return assemble({ header: `### Review: ${status}`, planLines, flowLines, outsideHead: plan?.head ?? null }, state, post);
+}
+
+// The record-fed lines, from the posted copy `copy`, and the summary's whole text around them.
+function assemble({ header, planLines, flowLines, outsideHead }, state, post) {
+  const { copy, withheld } = postedCopy(state, post);
+  const open = isPrivate(post.reading);
+  const lines = [header, '', ...planLines];
+  const passes = Object.entries(isObject(copy.passes) ? copy.passes : {});
+  if (passes.length) {
+    lines.push('', '| Pass | Head | Findings | Open |', '| --- | --- | --- | --- |');
+    for (const [id, result] of passes) lines.push(`| ${id} | \`${String(result.head ?? 'unknown').slice(0, 7)}\` | ${result.findings ?? 0} | ${result.open ?? 0} |`);
   }
-  if (state.visual) {
-    const visual = state.visual;
+  lines.push(...flowLines);
+  if (isObject(copy.visual)) {
+    const visual = copy.visual;
     lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${clip(visual.reason)})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
   }
-  lines.push(...outsideLines(state, plan?.head));
-  lines.push(...quotaLines(state));
-  lines.push(...ruledLines(state));
-  lines.push(...carriedLines(state));
-  lines.push(...extensionLines(state));
-  lines.push(...waiverLines(state));
-  if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${clip(each)}`));
-  lines.push('', 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.');
-  return withRecord(lines, state);
+  lines.push(...outsideLines(copy, outsideHead, open));
+  lines.push(...quotaLines(copy));
+  lines.push(...ruledLines(copy));
+  lines.push(...carriedLines(copy));
+  lines.push(...extensionLines(copy));
+  lines.push(...waiverLines(copy));
+  const overrides = [...(Array.isArray(copy.overrides) ? copy.overrides : []), ...(open ? [] : overruleLines(copy))];
+  if (overrides.length) lines.push('', OVERRIDES_HEADING, ...overrides.map((each) => `- ${clip(each)}`));
+  lines.push('', CITATION_LINE);
+  return withRecord(lines, copy, withheld, post, state);
 }
 
-// The one way a summary comment ends: the visible `lines`, then the record's marker, or, when that would pass
-// BODY_LIMIT, the held line and the held marker with the record's revision.
-function withRecord(lines, state) {
-  const record = `<!-- aidrian-review-state-br:${brotliCompressSync(Buffer.from(JSON.stringify(state))).toString('base64')} -->`;
-  const body = [...lines, record].join('\n');
-  if (body.length <= BODY_LIMIT) return body;
-  return [...lines, HELD_LINE, `<!-- aidrian-review-state-held:${state.revision ?? 0} -->`].join('\n');
+const OVERRIDES_HEADING = '**Overrides used:**';
+const ENGINE_LINE = '- engine: ';
+const CITATION_LINE = 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.';
+
+// The overrulings of a copy that keeps no override line of theirs: the invariant, the head, and a judge's name.
+function overruleLines(copy) {
+  return (Array.isArray(copy.overrulings) ? copy.overrulings : []).filter(isObject)
+    .map((each) => `${each.flow}/${each.invariant} overruled on \`${String(each.head).slice(0, 7)}\`${typeof each.by !== 'string' ? '' : each.by === JUDGE_RULING ? ' by a judge' : ` by ${each.by}`} (an audit entry, not proof)`);
 }
 
-const RECORD_LINE = (line) => STATE.test(line) || STATE_BR.test(line) || HELD.test(line) || line === HELD_LINE;
+// The one way a summary comment ends. Every visible line passes every text check, on every repository, or is left out
+// and counted; the count shows as the withheld notice.
+// Then the lines are escaped (publish.mjs escapeLines), with no line exempt, and only then does the engine add its own
+// marker lines, in their fixed layout: the summary marker first, and last the record's marker, or, when that would pass
+// BODY_LIMIT, the held line and the held marker with the record's revision. The budget measures the escaped body.
+function withRecord(lines, copy, withheld, post, state) {
+  const checker = post.checker ?? plainChecker();
+  let hidden = withheld;
+  // One element can hold a line break: the checks and the escaping read every line of the body as it will post.
+  const shown = lines.flatMap((line) => String(line).split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/u)).filter((line) => {
+    if (checker.allows(line)) return true;
+    hidden += 1;
+    return false;
+  });
+  if (hidden) shown.push('', `_${WITHHELD}: ${hidden} ${hidden === 1 ? 'value' : 'values'} of the review record are not shown on the pull request._`);
+  const escaped = [SUMMARY_MARKER, ...escapeLines(shown)];
+  const holdWith = (line) => [...escaped, line, `<!-- aidrian-review-state-held:${state.revision ?? 0} -->`].join('\n');
+  const held = holdWith(HELD_LINE);
+  // A check the copy or its lines needed that could not run, or a copy that lost what makes it a record, holds the
+  // record on this machine rather than post one another machine would read as the review starting over.
+  if (checker.failed) return holdWith(CHECK_HELD_LINE);
+  if (!wellFormed(copy, state.pr) || copy.revision !== state.revision) return held;
+  const record = `<!-- aidrian-review-state-br:${brotliCompressSync(Buffer.from(JSON.stringify(copy))).toString('base64')} -->`;
+  const body = [...escaped, record].join('\n');
+  return body.length <= BODY_LIMIT ? body : held;
+}
 
 export const isSummary = (body) => typeof body === 'string' && body.startsWith(SUMMARY_MARKER);
 
@@ -296,14 +374,17 @@ function currentLogin(viewer) {
 // The invariants evidence outside the tool closed on `head`, apart from the reviewers' verdicts: each approval by a named
 // approver's review on the forge, and each acceptance by the Human. The login is in code, so the edited comment never
 // mentions the approver again.
-function outsideLines(state, head) {
-  const outside = state.outside;
-  if (!outside || !head || !sameCommit(outside.head, head)) return [];
-  const list = (key) => (Array.isArray(outside[key]) ? outside[key] : []);
+function outsideLines(copy, head, open) {
+  const outside = copy.outside;
+  if (!isObject(outside) || !head || !sameCommit(outside.head, head)) return [];
+  const list = (key) => (Array.isArray(outside[key]) ? outside[key] : []).filter(isObject);
   const at = String(head).slice(0, 7);
+  // A person's name shows only on a private repository's comment.
+  const approver = (each) => (open && typeof each.login === 'string' ? ` by \`@${clip(each.login)}\`` : '');
+  const accepter = (each) => (typeof each.by !== 'string' ? '' : each.by === JUDGE_RULING ? ' by a judge' : ` by ${clip(each.by)}`);
   const lines = [
-    ...list('approvals').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: approved by \`@${clip(each.login)}\` on \`${at}\`: ${clip(each.url ?? 'no review link')}`),
-    ...list('acceptances').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: accepted by ${clip(each.by)} on \`${at}\` on outside evidence: ${clip(each.evidence)}: ${clip(each.reason)} (an audit entry, not proof)`),
+    ...list('approvals').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: approved${approver(each)} on \`${at}\`: ${clip(each.url ?? 'no review link')}`),
+    ...list('acceptances').map((each) => `- ${clip(`${each.flow}/${each.invariant}`)}: accepted${accepter(each)} on \`${at}\` on outside evidence: ${clip(each.evidence ?? 'unknown')}${typeof each.reason === 'string' ? `: ${clip(each.reason)}` : ''} (an audit entry, not proof)`),
   ];
   return lines.length ? ['', '**Outside evidence:**', ...lines] : [];
 }
@@ -313,22 +394,23 @@ const EXTRA_HEADING = '**Extra rounds:**';
 const STOPS = new Set(['stopped', 'denied']);
 
 // Every check at the round cap, and who decided it: the signals, the judge, the Human, or the ceiling. A blank line,
-// the heading, and one line per check; nothing when there is none.
-function extensionLines(state) {
-  const extensions = (state.extensions ?? []).filter((entry) => entry.status !== 'new');
+// the heading, and one line per check; nothing when there is none. Its reasons and the Human's name show only where the
+// copy holds them.
+function extensionLines(copy) {
+  const extensions = (Array.isArray(copy.extensions) ? copy.extensions : []).filter((entry) => isObject(entry) && entry.status !== 'new');
   if (!extensions.length) return [];
   const lines = ['', EXTRA_HEADING];
   for (const entry of extensions) {
-    const who = entry.by === 'human' ? `the Human (${entry.human?.by ?? 'unknown'}; an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by}` : null;
-    const reasons = (entry.reasons ?? []).slice(0, 3).map(clip);
+    const who = entry.by === 'human' ? `the Human (${typeof entry.human?.by === 'string' ? `${entry.human.by}; ` : ''}an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by}` : null;
+    const reasons = (Array.isArray(entry.reasons) ? entry.reasons : []).slice(0, 3).map(clip);
     const at = entry.head ? ` on \`${String(entry.head).slice(0, 7)}\`` : '';
     const round = `${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}`;
     // A decision over red flags names them, so a round granted past one says so on the pull request.
-    const flags = entry.status !== 'judging' && entry.red_flags?.length ? ` (over red flags: ${[...new Set(entry.red_flags.map((reason) => (reason.includes(':') ? reason.slice(0, reason.indexOf(':')) : 'no readable signal')))].join(', ')})` : '';
+    const flags = entry.status !== 'judging' && entry.red_flags?.length ? ` (over red flags: ${[...new Set(entry.red_flags.map(flagName))].join(', ')})` : '';
     lines.push(`- ${round}${at}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}${flags}`);
     // The cap stood on a fix no round reviewed: the Human sees it before merging. A plan round on that head since, after
     // a later grant, reviewed it.
-    const reviewed = entry.source !== 'bot' && (state.rounds ?? []).some((each) => sameCommit(each.head, entry.unreviewed?.head));
+    const reviewed = entry.source !== 'bot' && (copy.rounds ?? []).some((each) => sameCommit(each.head, entry.unreviewed?.head));
     if (entry.unreviewed?.head && STOPS.has(entry.status) && !reviewed) {
       lines.push(`- fix head \`${String(entry.unreviewed.head).slice(0, 7)}\`, pushed after ${round} on \`${String(entry.unreviewed.from).slice(0, 7)}\`, is reviewed by no pass: the cap stopped the review before it`);
     }
@@ -339,12 +421,13 @@ function extensionLines(state) {
 export const WAIVER_HEADING = '**Merge guard waivers:**';
 
 // Every judge verdict recorded for the merge guard (`waivers`, lib/review/waiver.mjs): a blank line, the heading, and
-// one line per entry; nothing when there is none. The judge's word, so each line says it is no proof.
-export function waiverLines(state) {
-  const waivers = (Array.isArray(state?.waivers) ? state.waivers : []).filter(isObject);
+// one line per entry; nothing when there is none. The judge's word, so each line says it is no proof. A reason shows
+// only where the copy holds it.
+export function waiverLines(copy) {
+  const waivers = (Array.isArray(copy?.waivers) ? copy.waivers : []).filter(isObject);
   if (!waivers.length) return [];
   return ['', WAIVER_HEADING, ...waivers.map((entry) =>
-    `- ${clip(entry.kind)} on \`${String(entry.head).slice(0, 7)}\`: ${clip(entry.verdict)} by ${clip(entry.judge ?? 'unknown')}: ${clip(entry.reason ?? '')} (an audit entry, not proof)`)];
+    `- ${clip(entry.kind ?? 'unknown')} on \`${String(entry.head).slice(0, 7)}\`: ${clip(entry.verdict ?? 'unknown')} by ${clip(entry.judge ?? 'a judge')}${typeof entry.reason === 'string' ? `: ${clip(entry.reason)}` : ''} (an audit entry, not proof)`)];
 }
 
 export const CARRIED_HEADING = '**Carried review:**';
@@ -360,37 +443,39 @@ export function carriedLines(state) {
   return ['', CARRIED_HEADING, `- head \`${short(outcome.head)}\`${merged} carries the review of \`${short(outcome.carried_from)}\`: no reviewer ran on it`];
 }
 
-// The headings of the lists refreshSummary rewrites from the record.
-const REWRITTEN = new Set([CARRIED_HEADING, EXTRA_HEADING, WAIVER_HEADING]);
-
-// A summary comment's text with `state` in place of the record it carried, and its Carried review, Extra rounds, and
-// Merge guard waivers lists rewritten from it; the rest, which only the review step can write, is kept as it was.
-export function refreshSummary(body, state) {
-  const kept = [];
+// A summary comment's text with `state` in place of the record it carried. It keeps only the lines the step's plan
+// feeds, which no other writer holds: the status, the plan line and its reasons, the engine, and the flows. Every block
+// the record feeds is rendered again from the posted copy (assemble), the Outside evidence block while its head is the
+// outcome's, so a string an earlier body showed does not survive this write.
+export function refreshSummary(body, state, post = {}) {
   const lines = String(body).split('\n');
-  for (let i = 0; i < lines.length; i += 1) {
-    if (RECORD_LINE(lines[i])) continue;
-    if (REWRITTEN.has(lines[i])) {
-      if (kept.at(-1) === '') kept.pop();
-      while (lines[i + 1]?.startsWith('- ')) i += 1;
-      continue;
+  const header = lines.find((line) => line.startsWith('### Review: ')) ?? '### Review: unknown';
+  const planLines = [];
+  const at = lines.findIndex((line) => line.startsWith('Head `'));
+  if (at !== -1) {
+    planLines.push(lines[at]);
+    // The plan block is the head line, then its reasons after a blank line, ending with the engine line, or the
+    // engine line alone. A run of bullets that ends with no engine line is another block, such as the quota stops.
+    if (lines[at + 1]?.startsWith(ENGINE_LINE)) planLines.push(lines[at + 1]);
+    else if (lines[at + 1] === '') {
+      let end = at + 2;
+      while (lines[end]?.startsWith('- ') && !lines[end].startsWith(ENGINE_LINE) && !lines[end].startsWith('- flow **')) end += 1;
+      if (lines[end]?.startsWith(ENGINE_LINE) && end > at + 2) planLines.push('', ...lines.slice(at + 2, end + 1));
     }
-    kept.push(lines[i]);
   }
-  const extra = [...carriedLines(state), ...extensionLines(state), ...waiverLines(state)];
-  const at = kept.findIndex((line) => line === '**Overrides used:**' || line.startsWith('A citation shows'));
-  const before = at === -1 ? kept : kept.slice(0, at > 0 && kept[at - 1] === '' ? at - 1 : at);
-  const after = at === -1 ? [] : kept.slice(before.length);
-  return withRecord([...before, ...extra, ...after], state);
+  const flowLines = lines.filter((line) => line.startsWith('- flow **'));
+  const outcome = isObject(state.outcome) ? state.outcome : null;
+  return assemble({ header, planLines, flowLines, outsideHead: outcome?.head ?? null }, state, post);
 }
 
 // Writes `state`, already written to the state folder, to the pull request's summary comment, as the review step does,
-// so another machine reads the same record. `io` is { comments(), post(body), edit(id, body), viewer() }. With no summary
-// comment to edit (summaryToEdit), or none this user may edit, it posts one under `status`. Returns the error message, or null.
-export function publishState(state, io, status) {
+// so another machine reads the same record. `io` is { comments(), post(body), edit(id, body), viewer() }, and `post`
+// the write's post context (lib/review/publish.mjs postContext). With no summary comment to edit (summaryToEdit), or
+// none this user may edit, it posts one under `status`. Returns the error message, or null.
+export function publishState(state, io, status, post = {}) {
   try {
     const summary = summaryToEdit(io.comments(), io.viewer);
-    writeSummary(summary, (id) => io.edit(id, refreshSummary(summary.body, state)), () => io.post(summaryBody(state, null, status)));
+    writeSummary(summary, (id) => io.edit(id, refreshSummary(summary.body, state, post)), () => io.post(summaryBody(state, null, status, post)));
     return null;
   } catch (error) {
     return error.message;

@@ -97,14 +97,16 @@ export function splitPasses(reviewer, slices, { kind, halved = {} } = {}) {
 }
 
 // One finding per mistake across passes: the same file, lines within 3, and the same title words. The kept finding
-// has the highest severity, and `sources` names every pass that reported it.
+// has the highest severity, and `sources` names every pass that reported it. A finding without a title, as one recorded
+// on another machine reads here, is never merged: its words are unknown.
 const RANK = { critical: 3, high: 2, medium: 1, low: 0 };
-const words = (title) => title.toLowerCase().replace(/[^a-z0-9 ]+/gu, ' ').split(/\s+/u).filter((word) => word.length > 3).sort().join(' ');
+const words = (title) => (typeof title === 'string' ? title : '').toLowerCase().replace(/[^a-z0-9 ]+/gu, ' ').split(/\s+/u).filter((word) => word.length > 3).sort().join(' ');
+const titled = (finding) => typeof finding.title === 'string' && finding.title.trim() !== '';
 export function dedupe(lists) {
   const kept = [];
   for (const [source, findings] of lists) {
     for (const finding of findings) {
-      const twin = kept.find((each) => each.file === finding.file && Math.abs(each.line - finding.line) <= 3 && words(each.title) === words(finding.title));
+      const twin = !titled(finding) ? null : kept.find((each) => titled(each) && each.file === finding.file && Math.abs(each.line - finding.line) <= 3 && words(each.title) === words(finding.title));
       if (!twin) kept.push({ ...finding, sources: [source] });
       else {
         if (RANK[finding.severity] > RANK[twin.severity]) Object.assign(twin, { ...finding, sources: twin.sources });

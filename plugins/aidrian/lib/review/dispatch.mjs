@@ -2,12 +2,16 @@
 // the visual capture that runs before a visual reviewer is dispatched. Each takes the step context `s` of
 // lib/review/run.mjs.
 
+import { isLogin } from '../forges/index.mjs';
 import { showPrefix } from '../git.mjs';
+import { refusalContext } from '../pr-product-feedback.mjs';
 import { fromOutside } from '../pr-resolve.mjs';
+import { stateDir } from '../project.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
 import { blocks } from './findings.mjs';
 import { belowRootBrief, flowBaseBrief, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
-import { contextFindings, recordSettled, residualTexts } from './settled.mjs';
+import { contextFindings, inputCopy, recordSettled, residualTexts } from './settled.mjs';
+import { patternsOf, textChecker } from './publish.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
 import { inBaseWorktree, runHook } from './base-worktree.mjs';
@@ -66,6 +70,46 @@ function fromInside(s) {
   return s.inside;
 }
 
+// { visibility, inside } for pull request `n` of `repo`, read through the forge: the visibility as the forge names it,
+// or null when the read fails, and whether the pull request comes from inside the team, false on a failed read. A
+// write posts the whole record only on { visibility: 'PRIVATE', inside: true } (publish.mjs isPrivate).
+export function readReading(forge, repo, n) {
+  let visibility = null;
+  try {
+    const value = forge.visibility(repo);
+    visibility = typeof value === 'string' ? value : null;
+  } catch {}
+  let inside = false;
+  try {
+    inside = fromOutside(forge.change(String(n), 'isCrossRepository', { repo })?.isCrossRepository, forge.pull(repo, n)) === false;
+  } catch {}
+  return { visibility, inside };
+}
+
+// The names of the configs' reviewers and their agents, which the posted copy may name (publish.mjs postedCopy).
+export const namesOf = (configs) => [...new Set(configs.flatMap((config) => Object.entries(config?.review?.reviewers ?? {})
+  .flatMap(([key, reviewer]) => [key, reviewer?.agent]).filter((each) => typeof each === 'string')))];
+
+// The post context of one write to the summary comment (publish.mjs postedCopy): the forge's reading of the pull
+// request, a text checker in the always-on check's context (pr-product-feedback.mjs refusalContext: null when a
+// knowledge index or a product-access doc cannot be read, so every string is withheld) with the public-text patterns of
+// every config given and this checkout's private words, the checkout root, the reviewer names of the first config, the
+// base branch's committed one, and the forge's login check. Every write of the record builds it here, so all five read the repository the same way.
+export function postContext({ forge, repo, n, project, configs = [], env = process.env, reading = undefined }) {
+  let context = null;
+  try {
+    context = refusalContext(project, { state: stateDir(project), env });
+  } catch {}
+  return {
+    reading: reading ?? readReading(forge, repo, n),
+    checker: textChecker({ context, root: project?.root ?? null, patterns: patternsOf(configs) }),
+    root: project?.root ?? null,
+    // Names come from the base branch's committed config alone, `configs[0]`: a checkout's edit cannot define one.
+    names: namesOf(configs.slice(0, 1)),
+    isLogin,
+  };
+}
+
 // The accepted residuals an exec pass reads: the items of the pull request body's section, or none when the pull request
 // comes from outside. Null for any other reviewer.
 function passResiduals(s, pass) {
@@ -111,7 +155,7 @@ export function passInput(s, pass, stage) {
     ...split,
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
     pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows,
-    priorFindings: residuals ? [...contextFindings(earlier), ...recordSettled(state, prior, residuals)] : earlier,
+    priorFindings: residuals ? [...contextFindings(earlier), ...recordSettled(state, prior, residuals)] : earlier.map(inputCopy),
     ...(residuals ? { acceptedResiduals: residuals } : {}),
     ...(scope ? { remerge: head } : {}),
     // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:

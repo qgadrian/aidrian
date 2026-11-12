@@ -32,6 +32,7 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { branchPolicies, refusingBranches } from '../pr-auto-merge.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
 import { holdToBase } from './in-force.mjs';
+import { postContext } from './dispatch.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export const VERDICTS = Object.freeze(['waive', 'refuse']);
@@ -235,7 +236,7 @@ export async function runWaive(args, project, config, deps = {}) {
   }
   const local = readLocalState(project, opts.pr);
   const record = readRecord(project, opts.pr, comments, repo);
-  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held));
+  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why));
   const { state } = record;
   state.pending = mergePending(local?.pending, state.pending);
   let current = null;
@@ -254,7 +255,7 @@ export async function runWaive(args, project, config, deps = {}) {
   const again = readLocalState(project, opts.pr);
   if ((again?.revision ?? null) !== (local?.revision ?? null)) throw new Error(`the review record of #${opts.pr} changed while the verdict was recorded: run again`);
   writeLocalState(project, state);
-  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `waiver ${opts.verdict}`) : null;
+  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `waiver ${opts.verdict}`, postContext({ forge, repo, n: opts.pr, project, configs: [committed, config], env: deps.env ?? process.env })) : null;
   console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: nextStep(entry, opts.pr, project.paths.local), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
 }

@@ -13,8 +13,8 @@ export const KINDS = Object.freeze(['exec', 'agent']);
 export const SIGNOFFS = Object.freeze(['reviewer', 'human']);
 // Where the review record goes: the state folder and one summary comment on the pull request, or the state folder only.
 export const RECORDS = Object.freeze(['comment', 'local']);
-const FLOW_ID = /^[a-z0-9][a-z0-9-]*$/u;
-const NAME = /^[\w.:-]+$/u;
+export const FLOW_ID = /^[a-z0-9][a-z0-9-]*$/u;
+export const NAME = /^[\w.:-]+$/u;
 
 export const REVIEW_DEFAULTS = Object.freeze({
   engine: null,

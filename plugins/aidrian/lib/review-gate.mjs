@@ -371,7 +371,7 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     if (typeof current !== 'string' || !SHA.test(current)) throw new Error(`could not read the head of ${repo}#${pr} from the forge: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha>`);
     const remote = remoteState(repo, pr, forge, await holdToNamedBase(project, config, repo, view.baseRefName));
     const record = readReviewRecord(project, pr, remote ?? [], repo);
-    if (record.held !== undefined) throw new Error(heldMessage(pr, record.held));
+    if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why));
     if (record.state.repo && repoName(record.state.repo) !== repo) throw new Error(`the review record of #${pr} is for ${repoName(record.state.repo) ?? record.state.repo}, not ${repo}: --last signs off the pull request that record names. Give --repo ${repoName(record.state.repo) ?? record.state.repo}, or the long form`);
     const { flow, head } = lastSignoff(record.state, { pr, repo, head: current });
     // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it

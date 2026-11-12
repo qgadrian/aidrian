@@ -21,6 +21,10 @@ import { baseProblem, boundedReads, holdToBase, insideCheckout, recourse } from 
 import { runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+
+// A summary comment a private repository's write leaves, from inside the team, with its checks passing every string:
+// the whole record, its free text included (lib/review/publish.mjs postedCopy).
+const OPEN = { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } };
 import { runWaive } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { check, judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
@@ -1205,7 +1209,7 @@ test('with no base from the forge, attest and signoff read no comment, and the r
   // The lookup fails, and the comments read would answer with a member's summary at a higher revision.
   const bin = folderFor(t);
   const seen = path.join(bin, 'seen');
-  const body = summaryBody({ ...emptyState(7, 'o/r'), revision: 99, overrides: ['FROM-COMMENT'] }, null, 'x');
+  const body = summaryBody({ ...emptyState(7, 'o/r'), revision: 99, overrides: ['FROM-COMMENT'] }, null, 'x', OPEN);
   writeFileSync(path.join(bin, 'comments.json'), JSON.stringify([[{ id: 1, body, user: { login: 'someone' }, author_association: 'MEMBER' }]]));
   writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ntouch "${seen}"\ncat "${path.join(bin, 'comments.json')}"\n`, { mode: 0o755 });
   const before = process.env.PATH;
@@ -1445,7 +1449,7 @@ async function awaitAtCap(t, baseRecord, headRecord, { base = { ref: 'main' } } 
   const github = { extraRounds: 'ask' };
   const r = repo(t, { baseConfig: { version: 1, github, review: { record: baseRecord } }, headConfig: { version: 1, github, review: { record: headRecord } } });
   const at = '2026-08-23T08:00:00Z';
-  const body = summaryBody({ ...emptyState(7, 'o/r'), revision: 9, overrides: ['FROM-COMMENT'] }, null, 'x');
+  const body = summaryBody({ ...emptyState(7, 'o/r'), revision: 9, overrides: ['FROM-COMMENT'] }, null, 'x', OPEN);
   r.comments.push({ id: 1, body, user: { login: 'someone' }, author_association: 'MEMBER', created_at: at });
   const reviews = [1, 2, 3].map((id) => ({ id, user: { login: DEFAULT_REVIEWER }, submitted_at: at, commit_id: r.git('rev-parse', 'main'), state: 'COMMENTED' }));
   const forge = {

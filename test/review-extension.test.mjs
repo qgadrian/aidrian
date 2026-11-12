@@ -11,10 +11,18 @@ import { DEFAULT_REVIEWER, exitCodeFor, runAwaitReview } from '../plugins/aidria
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/report-reviews.mjs';
 import {
-  atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
+  askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
+import { untextedBlocking } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, mismatch, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
+
+// A summary written on a private repository, from inside the team, whose checks pass every string: these tests read
+// the whole record back (test/review-state.test.mjs holds what other readings post).
+const OPEN = { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } };
+// What a fake forge answers for a private repository and a pull request from inside the team (publish.mjs readReading).
+const PRIVATE_PR = { visibility: () => 'PRIVATE' };
+const INSIDE = { author_association: 'MEMBER', base: { ref: 'main', repo: { fork: false } } };
 
 const finding = (file, line, title) => ({ file, line, title });
 const round = (n, head, findings, fix = null) => ({ round: n, head, open: findings.length, findings, fix });
@@ -30,9 +38,11 @@ test('signals: converging is fewer open findings than the round before, and anyt
 });
 
 test('signals: looping is a finding back at the same place, or under the same title, after a fix', () => {
-  const place = signals({ rounds: [round(1, 'a', [finding('src/a.js', 10, 'null check missing'), finding('src/b.js', 1, 'other')]), round(2, 'b', [finding('src/a.js', 12, 'race on save')])] });
-  assert.deepEqual([place.looping, place.evidence.looping[0].match, place.evidence.looping[0].earlier_round], [true, 'place', 1]);
-  assert.match(place.reasons.find((reason) => reason.startsWith('looping')), /"race on save" at src\/a\.js:12 in round 2, first in round 1/u);
+  const place = signals({ rounds: [round(1, 'a', [finding('src/a.js', 10, 'null check missing'), finding('src/b.js', 1, 'other')]), round(2, 'b', [{ ...finding('src/a.js', 12, 'race on save'), id: 'R2-3' }])] });
+  assert.deepEqual([place.looping, place.evidence.looping[0].match, place.evidence.looping[0].earlier_round, place.evidence.looping[0].id], [true, 'place', 1, 'R2-3']);
+  // A reason names the finding by its id, never by its title.
+  assert.match(place.reasons.find((reason) => reason.startsWith('looping')), /such as R2-3 at src\/a\.js:12 in round 2, first in round 1/u);
+  assert.doesNotMatch(place.reasons.find((reason) => reason.startsWith('looping')), /race on save/u);
   const title = signals({ rounds: [round(1, 'a', [finding('src/a.js', 10, '**Guard the `refund` total**'), finding('q.js', 1, 'q')]), round(2, 'b', [finding('src/c.js', 99, 'guard the refund total')])] });
   assert.deepEqual([title.looping, title.evidence.looping[0].match], [true, 'title']);
   const fresh = signals({ rounds: [round(1, 'a', [finding('src/a.js', 10, 'null check'), finding('q.js', 1, 'q')]), round(2, 'b', [finding('src/a.js', 30, 'race on save')])] });
@@ -144,7 +154,7 @@ test('atCap on a head no round reviewed: the judge is told, the question names t
   recordHuman(state, { answer: 'deny', by: 'Tester' });
   const denied = atCap({ state, source: 'plan', round: 2, head: 'c0ffee1234', policy: { mode: 'ask', max: 2 }, history, pr: 7 });
   assert.deepEqual([denied.status, denied.unreviewed_head], ['round_limit', true]);
-  assert.match(summaryBody(state, null, 'round_limit'), /- round 2 on `c0ffee1`: denied[^\n]*\n- fix head `c0ffee1`, pushed after round 2 on `b`, is reviewed by no pass/u);
+  assert.match(summaryBody(state, null, 'round_limit', OPEN), /- round 2 on `c0ffee1`: denied[^\n]*\n- fix head `c0ffee1`, pushed after round 2 on `b`, is reviewed by no pass/u);
 });
 
 test('revalidate: a push that bloats an open decision sends it back to the judge with the red flag, and names the fix as unreviewed', () => {
@@ -168,7 +178,7 @@ test('atCap at the ceiling: no history is read, and lastReviewed alone says the 
   };
   const [state, fix] = atCeiling(() => 'b');
   assert.deepEqual([fix.status, fix.extension.by, fix.unreviewed_head], ['round_limit', 'ceiling', true]);
-  assert.match(summaryBody(state, null, 'round_limit'), /- round 3 on `c0ffee1`: stopped by the ceiling[^\n]*\n- fix head `c0ffee1`, pushed after round 3 on `b`, is reviewed by no pass/u);
+  assert.match(summaryBody(state, null, 'round_limit', OPEN), /- round 3 on `c0ffee1`: stopped by the ceiling[^\n]*\n- fix head `c0ffee1`, pushed after round 3 on `b`, is reviewed by no pass/u);
   const [, same] = atCeiling(() => 'c0ffee1234');
   assert.deepEqual([same.status, 'unreviewed_head' in same], ['round_limit', false], 'the last round reviewed this head');
 });
@@ -176,9 +186,9 @@ test('atCap at the ceiling: no history is read, and lastReviewed alone says the 
 test('the summary: a fix head a plan round reviewed since is not listed as unreviewed', () => {
   const state = emptyState(7, 'o/r');
   state.extensions = [{ source: 'plan', round: 2, head: 'c0ffee1234', status: 'stopped', by: 'judge', reasons: ['nit'], unreviewed: { head: 'c0ffee1234', from: 'b' } }];
-  assert.match(summaryBody(state, null, 'round_limit'), /is reviewed by no pass/u);
+  assert.match(summaryBody(state, null, 'round_limit', OPEN), /is reviewed by no pass/u);
   state.rounds = [{ head: 'a' }, { head: 'b' }, { head: 'c0ffee1234' }];
-  assert.doesNotMatch(summaryBody(state, null, 'round_limit'), /is reviewed by no pass/u);
+  assert.doesNotMatch(summaryBody(state, null, 'round_limit', OPEN), /is reviewed by no pass/u);
 });
 
 test('aidrian pr extend: its arguments are checked before anything is recorded', () => {
@@ -377,7 +387,8 @@ const onPr42 = (n) => {
 // The bot's rounds at the cap of 3, as `aidrian pr await-review --request` reads them: `comments` per review. The pull
 // request's conversation comments live in `issue` across runs, as on GitHub, so a summary comment one run writes is the
 // record the next run, or another machine, reads.
-function botProject(t, config = {}) {
+// `visibility` is what the forge reads the repository as.
+function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-botcap-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const base = path.join(root, 'repo');
@@ -405,14 +416,15 @@ function botProject(t, config = {}) {
     const requests = [];
     const forge = {
       repo: () => 'acme/notes',
-      change: () => ({ number: 42 }),
+      visibility: () => visibility,
+      change: () => ({ number: 42, isCrossRepository: false }),
       viewer: () => 'someone',
       postComment: (_repo, n, body) => {
         onPr42(n);
         return body.startsWith('@codex review') ? (requests.push({ body }), {}) : post(body);
       },
       editComment: (_repo, id, body) => edit(Number(id), body),
-      pull: (_repo, n) => (onPr42(n), { title: 'Cap refunds', body: 'Refunds never exceed the charge.', base: { ref: 'main' }, head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } }),
+      pull: (_repo, n) => (onPr42(n), { ...INSIDE, title: 'Cap refunds', body: 'Refunds never exceed the charge.', head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } }),
       commit: () => ({ commit: { committer: { date: T(1) } } }),
       reviews: (_repo, n) => {
         onPr42(n);
@@ -430,7 +442,7 @@ function botProject(t, config = {}) {
   // `aidrian pr extend` as the CLI runs it, with the review step's forge over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
     repo: 'acme/notes', env: {},
-    forge: { change: () => ({ headRefOid: head, baseRefName: 'main' }), conversationComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
+    forge: { visibility: () => visibility, pull: () => INSIDE, change: () => ({ headRefOid: head, baseRefName: 'main', isCrossRepository: false }), conversationComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
   });
   // Another machine: this one's state folder is gone, and only the pull request's comments remain.
   const forget = () => rmSync(path.join(base, '../state'), { recursive: true, force: true });
@@ -644,7 +656,8 @@ function gitBot(t, config, { working = null } = {}) {
   const inline = findings.flatMap((each, i) => each.map(([file, line, title]) => ({ pull_request_review_id: i + 1, path: file, line, body: title })));
   const forge = {
     repo: () => 'acme/notes',
-    change: () => ({ number: 42 }),
+    ...PRIVATE_PR,
+    change: () => ({ number: 42, isCrossRepository: false }),
     postComment: (_repo, n, body) => {
       onPr42(n);
       const comment = { id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', created_at: at(), body };
@@ -657,7 +670,7 @@ function gitBot(t, config, { working = null } = {}) {
       onPr42(n);
       pulls += 1;
       hooks.beforePull?.(pulls);
-      return { title: 'Cap refunds', body: 'goal', base: { ref: 'main' }, head: { sha: git('rev-parse', 'HEAD'), ref: 'feat', repo: { full_name: 'acme/notes' } } };
+      return { ...INSIDE, title: 'Cap refunds', body: 'goal', head: { sha: git('rev-parse', 'HEAD'), ref: 'feat', repo: { full_name: 'acme/notes' } } };
     },
     commit: () => ({ commit: { committer: { date: at() } } }),
     reviews: (_repo, n) => (onPr42(n), reviews),
@@ -857,4 +870,53 @@ test('revalidate: a push that raises no new red flag keeps the Human`s approval 
   const bloated = () => ({ ...flat(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')], { added: 100, code_added: 100, removed: 0, files: ['a.js'] })] });
   const back = revalidate({ state, source: 'plan', round: 2, head: 'deadbee123', history: bloated });
   assert.deepEqual([back.status, back.human, back.reasons[0].split(':')[0]], ['judging', undefined, 'bloating'], 'a new flag name revokes the approval');
+});
+
+test('signals: a repeat raises its red flag by id with no text, by place, and by title where both are held; each evidence entry carries its id', () => {
+  const byId = signals({ rounds: [round(1, 'a', [{ id: 'R1-1', file: null, line: null }, { id: 'R1-2' }]), round(2, 'b', [{ id: 'R1-1' }])] });
+  assert.deepEqual([byId.looping, byId.evidence.looping[0].match, byId.evidence.looping[0].id], [true, 'id', 'R1-1']);
+  assert.match(byId.reasons.find((reason) => reason.startsWith('looping')), /such as R1-1 in round 2/u);
+  const noText = signals({ rounds: [round(1, 'a', [{ id: 'R1-1', file: 'src/a.js', line: 4 }, { id: 'R1-2' }]), round(2, 'b', [{ id: 'R2-5', file: 'src/a.js', line: 6 }])] });
+  assert.deepEqual([noText.looping, noText.evidence.looping[0].match, noText.evidence.looping[0].id], [true, 'place', 'R2-5'], 'by place where a title is missing');
+  const titled = signals({ rounds: [round(1, 'a', [{ id: 'R1-1', title: 'Refund total unchecked' }, { id: 'R1-2' }]), round(2, 'b', [{ id: 'R2-5', title: 'refund TOTAL unchecked' }])] });
+  assert.equal(titled.evidence.looping[0].match, 'title');
+  const untitled = signals({ rounds: [round(1, 'a', [{ id: 'R1-1', file: 'a.js', line: 1 }, { id: 'R1-2' }]), round(2, 'b', [{ id: 'R2-5', file: 'b.js', line: 90 }])] });
+  assert.equal(untitled.looping, false, 'no id, no place, and no title held: no match');
+  const drift = signals({ rounds: [round(1, 'a', [{ id: 'R1-1', file: 'a.js', line: 1 }]), round(2, 'b', [{ id: 'R2-5', file: 'z.js', line: 3 }])], originalFiles: ['a.js'] });
+  assert.deepEqual(drift.evidence.drifting.map((entry) => entry.id), ['R2-5']);
+});
+
+test('await-review and extend on a public repository post the check at the cap with no reason, and the local record keeps it', async (t) => {
+  const bot = botProject(t, {}, { visibility: 'PUBLIC' });
+  assert.equal((await bot.run(converging)).out.status, 'extension_check');
+  assert.equal(await bot.extend(['--verdict', 'extend', '--reason', 'SENTINEL f.js:3 is a valid high finding']), 0);
+  const [summary] = bot.issue;
+  assert.equal(stateFromComment(summary.body, 42).extensions[0].status, 'asking', 'the decision is on the pull request');
+  assert.doesNotMatch(summary.body.split('\n').filter((line) => !line.startsWith('<!-- aidrian-review-state')).join('\n'), /SENTINEL/u);
+  assert.doesNotMatch(JSON.stringify(stateFromComment(summary.body, 42)), /SENTINEL|One|Two|Three/u, 'no reason and no finding title in the posted record');
+  assert.match(readLocalState(bot.project, 42).extensions[0].reasons[0], /SENTINEL/u);
+});
+
+test('a machine with no record that runs await-review on a public copy marks an untexted finding adopted, so its next step stops', async (t) => {
+  const bot = botProject(t, {}, { visibility: 'PUBLIC' });
+  assert.equal((await bot.run(converging)).out.status, 'extension_check');
+  const mine = readLocalState(bot.project, 42);
+  const head = 'f'.repeat(40);
+  const theirs = { ...mine, revision: mine.revision + 3, planNote: { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] }, passes: { 'engine:codex-local': { head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ id: 'R1-4', mint: 'abcdef02', severity: 'high', state: 'open', disposition: 'fix_now' }] } } };
+  bot.issue[0].body = summaryBody(theirs, null, 'x', OPEN);
+  bot.forget();
+  await bot.run(converging);
+  const written = readLocalState(bot.project, 42);
+  assert.equal(written.passes['engine:codex-local'].list[0].adopted, true);
+  assert.equal(untextedBlocking(written, written), 'R1-4', 'the step on this machine stops on it');
+});
+
+test('revalidate reads a posted copy`s bare red flag names as the flags they name: an approved grant survives identical signals', () => {
+  const looped = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one'), finding('b.js', 9, 'x')]), round(2, 'b', [finding('a.js', 2, 'two')], { added: 1, removed: 1, files: ['a.js'] })] });
+  const state = emptyState(7, 'o/r');
+  // The entry as an adopted posted copy holds it: each red flag by its name alone.
+  state.extensions = [{ source: 'plan', round: 2, head: 'b', status: 'granted', by: 'human', reasons: [], red_flags: ['looping'], human: { answer: 'approve' }, mode: 'ask', max: 2 }];
+  const entry = revalidate({ state, source: 'plan', round: 2, head: 'c0ffee1234', history: looped });
+  assert.deepEqual([entry.status, entry.human?.answer], ['granted', 'approve']);
+  assert.match(askQuestion(7, 3, null, ['looping', 'bloating: added 90 lines']), /red flags \(looping, bloating\)/u);
 });

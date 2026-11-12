@@ -469,7 +469,7 @@ test('aidrian pr signoff --last refuses a review record held on another machine'
   };
   const { config } = loadConfig(project);
   for (const args of [['--last'], ['--last', '--check']]) {
-    await assert.rejects(runSignoff(['7', ...args, '--repo', 'acme/notes'], project, config, { forge }), { message: heldMessage(7, 99) }, args.join(' '));
+    await assert.rejects(runSignoff(['7', ...args, '--repo', 'acme/notes'], project, config, { forge }), { message: heldMessage(7, 99, 'size') }, args.join(' '));
   }
   assert.equal(readFileSync(recordFile, 'utf8'), before);
 });

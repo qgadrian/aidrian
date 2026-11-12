@@ -693,7 +693,8 @@ function commentRecord(project) {
   remote.passes = { 'engine:codex': { head: 'c', findings: 0, open: 0 } };
   remote.outcome = { status: 'fix_required', head: 'c', at: '2026-11-03T10:00:00Z' };
   remote.pending = [{ id: 'remote', kind: 'request', head: 'c', at: '2026-11-03T09:00:00Z', by: 't' }];
-  const comments = [{ id: 1, body: summaryBody(remote, null, 'fix_required'), author_association: 'MEMBER' }];
+  // A private repository's comment, from inside the team, with its checks passing every string: the whole record.
+  const comments = [{ id: 1, body: summaryBody(remote, null, 'fix_required', { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } }), author_association: 'MEMBER' }];
   const record = { ...readRecord(project, 5, comments, 'acme/notes'), comments };
   record.state.extensions = [{ source: 'bot', round: 3, status: 'asking' }];
   let edited = null;

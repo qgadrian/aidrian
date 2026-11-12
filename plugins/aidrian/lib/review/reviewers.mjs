@@ -15,10 +15,11 @@ import path from 'node:path';
 
 import { isObject } from '../fs.mjs';
 import { showPrefix } from '../git.mjs';
+import { flagged } from './findings.mjs';
 import { offeredCarried, settledBrief, settledEntries, splitRuled } from './settled.mjs';
 
 // The schema Codex is held to strictly, with --output-schema. A project's exec reviewer prints the same shape, and
-// cleanOutput lets it leave out `already_ruled` and `body`, and keeps no other key.
+// cleanOutput lets it leave out `already_ruled`, `security`, and `body`, and keeps no other key.
 export const FINDINGS_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
@@ -32,7 +33,7 @@ export const FINDINGS_SCHEMA = Object.freeze({
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['file', 'line', 'title', 'body', 'severity', 'already_ruled'],
+        required: ['file', 'line', 'title', 'body', 'severity', 'already_ruled', 'security'],
         properties: {
           file: { type: 'string' },
           line: { type: 'integer' },
@@ -41,6 +42,9 @@ export const FINDINGS_SCHEMA = Object.freeze({
           severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
           // Empty for a new finding, else the settled entry it repeats, verbatim (settledEntries).
           already_ruled: { type: 'string' },
+          // Whether the finding is a security problem: a security finding's text and place stay off a pull request
+          // that is not private (docs/review.md#reviewers).
+          security: { type: 'boolean' },
         },
       },
     },
@@ -143,7 +147,13 @@ export function cleanOutput(raw) {
     // Only the schema's keys: a key the schema does not name, such as a `state` or a `disposition`, never reaches the record.
     // The title reaches the summary comment and a body's residual row, so it is one line, at the length parseFindings caps.
     const title = finding.title.replace(/\s*[\n\v\f\r\u0085\u2028\u2029]+\s*/gu, ' ').trim().slice(0, MAX_TITLE);
-    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity };
+    // A finding with no title is malformed, as parseFindings holds it: no reviewer here could weigh a fix of it.
+    if (!title) {
+      dropped.push(`findings[${i}] has no title`);
+      return [];
+    }
+    // A `security` value that is not a boolean counts as true: the flag only ever withholds more.
+    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity, ...(flagged(finding.security) ? { security: true } : {}) };
     if (typeof finding.already_ruled === 'string') return [{ ...kept, already_ruled: finding.already_ruled }];
     // A bad `already_ruled` never loses the finding: it is read as a new one.
     if (finding.already_ruled !== undefined) dropped.push(`findings[${i}].already_ruled is not a string: kept as a new finding`);
@@ -189,6 +199,7 @@ export function reviewPrompt(input, prefix = '') {
         : input.files ? `Report findings only in these files: ${input.files.join(', ')}.` : 'Report findings in any changed file.',
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
+    'Set `security` to true on a finding that is a security problem, such as a leak, an injection, or a broken access check, and to false on every other finding.',
     settledBrief(settledEntries(input)),
     input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
     input.flows.length ? `For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers' verdicts are listed: challenge every "holds" you cannot confirm yourself. Where an invariant has a \`source\`, the section of the project doc it cites, judge against that source: \`text\` is only the question. ${VERDICT_MEANING}` : '',

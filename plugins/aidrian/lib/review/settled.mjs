@@ -9,7 +9,7 @@
 import { isObject } from '../fs.mjs';
 import { residualItems } from '../decisions.mjs';
 import { LIST_ITEM } from '../markdown-sections.mjs';
-import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, noHigher, PRIOR_CAP, RESIDUAL_CAP, settledMatch, severityOf } from './findings.mjs';
+import { ACCEPTABLE_DISPOSITIONS, blocks, FINDING_STATES, isFindingId, noHigher, PRIOR_CAP, RESIDUAL_CAP, settledMatch, severityOf } from './findings.mjs';
 // A call-time cycle (state.mjs imports ruledLines): neither module reads the other's bindings while it loads.
 import { clip } from './state.mjs';
 
@@ -64,6 +64,10 @@ export function settledEntries(input) {
   return [...prior, ...residuals];
 }
 
+// A recorded finding without the engine's own keys, as a pass input carries it: its id, mint mark, the id it repeats,
+// and its marks stay on the record, and no reviewer is shown a mark it could copy.
+export const inputCopy = ({ id: _id, mint: _mint, ruled_id: _ruled, aliases: _aliases, security: _security, ...finding }) => finding;
+
 // One recorded finding as an exec pass reads it for context (contextFindings). An accepted one also loses the words that
 // say so, `accepted_by` and a disposition that can be accepted; a fix_now stays, since the finding still has to be fixed.
 function contextCopy({ state, already_ruled: _ruled, carried: _carried, residual: _residual, settled_by: _by, ...finding }) {
@@ -80,7 +84,7 @@ function contextCopy({ state, already_ruled: _ruled, carried: _carried, residual
 // recordSettled, with its record-wide checks, offers. A `state` of fixed or open stays: it settles nothing, and tells the
 // reviewer where the finding stands.
 export function contextFindings(findings) {
-  return findings.filter(isObject).map(contextCopy);
+  return findings.filter(isObject).map((finding) => contextCopy(inputCopy(finding)));
 }
 
 // The prompt's rule for settled findings. It names the input's fields, never their texts: those stay in the JSON input,
@@ -102,11 +106,12 @@ export function splitRuled(findings, settled) {
   for (const { already_ruled: raw, ...finding } of findings) {
     const { entry, note } = settledMatch(finding, raw, settled);
     if (entry) {
-      const { title, file, line, severity } = finding;
+      const { title, file, line, severity, security } = finding;
       const capped = 'file' in entry;
       const from = capped && !entry.residual ? 'prior' : 'residual';
       out.ruled.push({
-        title, file, line, severity, already_ruled: entry.raised ?? entry.title, from,
+        // The reviewer's security flag stays with the repeat, so recordFindings marks it whatever settled it.
+        title, file, line, severity, ...(security === true ? { security: true } : {}), already_ruled: entry.raised ?? entry.title, from,
         ...(capped ? { settled_severity: entry.severity } : {}), ...(entry.settled_by ? { settled_by: entry.settled_by } : {}), ...(entry.accepted_by ? { accepted_by: entry.accepted_by } : {}), ...(entry.residual ? { residual: entry.residual } : {}),
       });
       continue;
@@ -139,18 +144,32 @@ const aboveLow = (word) => severityOf(word) !== 'low';
 // A waiver above low: an entry with a residual whose severity or cap is above low. An unknown word counts as above, so a
 // record this cannot weigh waits for the Human too.
 const waiverAboveLow = (each) => Boolean(each?.residual) && (aboveLow(each.severity) || ('settled_severity' in each && aboveLow(each.settled_severity)));
-// The finding a waiver names, however the reviewer worded its repeat.
-const waiverKey = (each) => where({ title: each.already_ruled ?? each.title, file: each.file });
-// The title and file of every finding a pass lists as fixed. Only `aidrian pr attest` writes that state: the step strips
-// it from an exec reviewer's output.
-const fixedListings = (state) => new Set(Object.values(state?.passes ?? {}).flatMap((result) => (Array.isArray(result?.list) ? result.list : []))
-  .filter((finding) => isObject(finding) && finding.state === 'fixed').map(where));
+// Every hold keys on the id a ruling names (`ruled_id`, findings.mjs recordFindings), never on a title, so a record
+// that holds no text loosens no hold. A waiver of a record written before ids names its finding by title and file
+// instead, and one with neither names nothing a listing can match: its hold stays.
+const waiverTitle = (each) => trim(each?.already_ruled ?? each?.title);
+// Whether two waivers name one finding: by id when both carry one, else by title and file where both hold a title. A
+// rule the step offers again has its id only once it is recorded, and this machine holds its text.
+const sameWaiver = (a, b) => (isFindingId(a.ruled_id) && isFindingId(b.ruled_id)
+  ? a.ruled_id === b.ruled_id
+  : Boolean(waiverTitle(a)) && waiverTitle(a) === waiverTitle(b) && trim(a.file) === trim(b.file));
+// The findings the passes list as fixed: their ids, and the title and file of each with a title, for a waiver written
+// before ids. Only `aidrian pr attest` writes that state: the step strips it from an exec reviewer's output.
+function fixedListings(state) {
+  const fixed = Object.values(state?.passes ?? {}).flatMap((result) => (Array.isArray(result?.list) ? result.list : []))
+    .filter((finding) => isObject(finding) && finding.state === 'fixed');
+  return { ids: new Set(fixed.map((finding) => finding.id).filter(isFindingId)), places: new Set(fixed.filter((finding) => trim(finding.title)).map(where)) };
+}
+// Whether a listing holds the finding a waiver names as fixed: its id, or, for a waiver with none, its title and file.
+const listedFixed = (fixed, each) => (isFindingId(each.ruled_id)
+  ? fixed.ids.has(each.ruled_id)
+  : Boolean(waiverTitle(each)) && fixed.places.has(where({ title: waiverTitle(each), file: each.file })));
 
 // The waiver above low that holds auto-merge, or null: the first any pass record holds, on any head, ended or standing, but
 // an ended one only until a listing holds its title and file as fixed.
 export function heldWaiver(state) {
   const fixed = fixedListings(state);
-  return everyEntry(state).find((each) => waiverAboveLow(each) && !(each.ended && fixed.has(waiverKey(each)))) ?? null;
+  return everyEntry(state).find((each) => waiverAboveLow(each) && !(each.ended && listedFixed(fixed, each))) ?? null;
 }
 
 // One entry for each finding a waiver above low on any pass record names, except what `offered` still holds above low and
@@ -158,11 +177,10 @@ export function heldWaiver(state) {
 // slice a repack deletes leaves its waivers on the passes that ran.
 function unofferedWaivers(state, offered) {
   const fixed = fixedListings(state);
-  const seen = new Set(offered.filter(waiverAboveLow).map(waiverKey));
+  const seen = offered.filter(waiverAboveLow);
   return everyEntry(state).filter(waiverAboveLow).filter((each) => {
-    const key = waiverKey(each);
-    if (fixed.has(key) || seen.has(key)) return false;
-    seen.add(key);
+    if (listedFixed(fixed, each) || seen.some((other) => sameWaiver(other, each))) return false;
+    seen.push(each);
     return true;
   });
 }
@@ -242,7 +260,7 @@ export function recordSettled(state, prior, residuals = []) {
     .filter((finding) => isObject(finding) && finding.from === 'prior' && trim(finding.already_ruled));
   const ruledOn = new Set(rulings.map((finding) => where({ title: finding.already_ruled, file: finding.file })));
   const accepted = listed.filter(({ finding }) => finding.state === 'accepted' && !blocks(finding) && !live.has(where(finding)))
-    .map(({ id, finding }) => ({ ...finding, settled_by: id, ...(ruledOn.has(where(finding)) ? { already_ruled: trim(finding.title), carried: true } : {}) }));
+    .map(({ id, finding }) => ({ ...inputCopy(finding), settled_by: id, ...(ruledOn.has(where(finding)) ? { already_ruled: trim(finding.title), carried: true } : {}) }));
   const carried = rulings
     .map(({ file, line, severity, settled_severity: cap, settled_by: by, accepted_by: acceptedBy, already_ruled: name }) => ({
       title: trim(name), file, ...(line ? { line } : {}), severity: severityOf(cap) ?? severity, state: 'accepted', already_ruled: trim(name), carried: true, ...(trim(by) ? { settled_by: trim(by) } : {}), ...(trim(acceptedBy) ? { accepted_by: trim(acceptedBy) } : {}),
@@ -280,6 +298,11 @@ const plain = (text, max = 80) => clip(String(text ?? '').slice(0, max)).replace
 // The same, as an inline code span with each backtick inside turned into a quote, so no link, image, autolink, or
 // emphasis in reviewer text renders.
 const code = (text, max) => `\`${plain(text, max).replaceAll('`', "'")}\``;
+// A finding's `key` text as a code span, or, where the copy the summary reads holds none, its id: the summary names a
+// finding without its text by id.
+const named = (each, key) => (trim(each?.[key]) ? code(each[key]) : isFindingId(each?.id) ? code(each.id) : 'a finding');
+const fileOf = (each) => (trim(each?.file) ? code(each.file) : 'no file');
+const repeats = (each) => (trim(each?.already_ruled) ? code(each.already_ruled) : isFindingId(each?.ruled_id) ? code(each.ruled_id) : 'a settled finding');
 
 // A waived repeat's severity, and the severity it settled up to when that is on record, as the summary comment names them.
 function weighed(each) {
@@ -290,7 +313,7 @@ function weighed(each) {
 // Who settled one waived repeat, as the summary comment names it.
 function settledBy(each) {
   if (trim(each?.residual)) return `settled by the accepted residual ${code(each.residual)}`;
-  if (each?.from === 'residual') return 'settled by an accepted residual';
+  if (each?.from === 'residual' || each?.residual === true) return 'settled by an accepted residual';
   return `settled by ${trim(each?.settled_by) ? code(each.settled_by) : 'a prior finding'}`;
 }
 
@@ -300,7 +323,8 @@ function passLine(id, result, what, entries, describe) {
   return `- ${plain(id)} on \`${String(result.head).slice(0, 7)}\`: ${entries.length} ${what}: ${entries.slice(0, MAX_LISTED).map(describe).join('; ')}${more}`;
 }
 
-// The summary comment's lines on what each exec pass waived: a blank line, the heading, then per pass one line with the
+// The summary comment's lines on what each exec pass waived, read from the posted copy (state.mjs assemble), where a
+// finding with no text is named by its id: a blank line, the heading, then per pass one line with the
 // count and titles of its repeats waived as already ruled (`ruled`), each with its severity, what it repeats, and who
 // settled that, one with the accepted residuals it holds as standing (`carried` entries with a `residual`), written on
 // each head whether or not the reviewer repeated them, and one with the waivers it holds as ended that no listing holds as
@@ -309,13 +333,13 @@ export function ruledLines(state) {
   const fixed = fixedListings(state);
   const lines = Object.entries(state?.passes ?? {}).flatMap(([id, result]) => {
     const ruled = Array.isArray(result?.ruled) ? result.ruled : [];
-    const waivers = (Array.isArray(result?.carried) ? result.carried : []).filter((each) => trim(each?.residual));
+    const waivers = (Array.isArray(result?.carried) ? result.carried : []).filter((each) => trim(each?.residual) || each?.residual === true);
     const standing = waivers.filter((each) => !each.ended);
-    const ended = waivers.filter((each) => each.ended && !fixed.has(waiverKey(each)));
+    const ended = waivers.filter((each) => each.ended && !listedFixed(fixed, each));
     return [
-      ...(ruled.length ? [passLine(id, result, 'waived as already ruled, never counted open', ruled, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}repeats ${code(each?.already_ruled)}, ${settledBy(each)})`)] : []),
-      ...(standing.length ? [passLine(id, result, 'standing on an accepted residual', standing, (each) => `${code(each?.title)} (${code(each?.file)}, ${weighed(each)}${settledBy(each)})`)] : []),
-      ...(ended.length ? [passLine(id, result, 'ended without a fix', ended, (each) => `${code(each?.already_ruled ?? each?.title)} (${code(each?.file)}, ${severityOf(each?.settled_severity) ?? severityOf(each?.severity) ?? 'unknown severity'}, once waived by the accepted residual ${code(each.residual)})`)] : []),
+      ...(ruled.length ? [passLine(id, result, 'waived as already ruled, never counted open', ruled, (each) => `${named(each, 'title')} (${fileOf(each)}, ${weighed(each)}repeats ${repeats(each)}, ${settledBy(each)})`)] : []),
+      ...(standing.length ? [passLine(id, result, 'standing on an accepted residual', standing, (each) => `${named(each, 'title')} (${fileOf(each)}, ${weighed(each)}${settledBy(each)})`)] : []),
+      ...(ended.length ? [passLine(id, result, 'ended without a fix', ended, (each) => `${trim(each?.already_ruled) ? code(each.already_ruled) : named(each, 'title')} (${fileOf(each)}, ${severityOf(each?.settled_severity) ?? severityOf(each?.severity) ?? 'unknown severity'}, once waived by ${trim(each?.residual) ? `the accepted residual ${code(each.residual)}` : 'an accepted residual'})`)] : []),
     ];
   });
   return lines.length ? ['', RULED_HEADING, ...lines] : [];

@@ -8,7 +8,7 @@ import { sameCommit } from './state.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { lateRoundResidual } from '../finding-disposition.mjs';
 import { isClean, resolve } from './diff.mjs';
-import { blocks } from './findings.mjs';
+import { blocks, recordFindings } from './findings.mjs';
 import { withEndedWaivers } from './settled.mjs';
 import { dedupe } from './split.mjs';
 import { approveLine } from './approvals.mjs';
@@ -192,11 +192,13 @@ export async function runStages(s) {
           // there too, marked ended, so the hold on auto-merge outlives the anchor.
           const ruled = Array.isArray(outcome.ruled) ? outcome.ruled : [];
           const carried = withEndedWaivers(state, ruled, Array.isArray(outcome.carried) ? outcome.carried : []);
-          state.passes[pass.id] = {
+          // Every finding gets its id, its security mark, and its checked file and line from the one function that
+          // writes them (findings.mjs recordFindings), which stores the pass's result.
+          recordFindings(state, pass.id, {
             head, reviewer: pass.reviewer, seconds, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
-          };
+          }, { mint: state.floored === true, securityPass: state.planNote?.passes?.[pass.id]?.security === true, paths: s.paths.at(head) });
           recorded = true;
         }
         const outOfQuota = outcomes.find(([, outcome]) => outcome.status === 'quota');
@@ -244,8 +246,9 @@ export async function runStages(s) {
       if (agents.length) {
         recorded = true;
         if (visualEntries.length && agents.some(isVisual) && s.manifest?.status !== 'captured') await captureAndAttach(s);
-        // What each dispatched pass covers, so its attest records the same files.
-        state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null }])) };
+        // What each dispatched pass covers, so its attest records the same files, and its stage and whether the head's
+        // plan requires the security reviewer for it, which its attest's findings take (findings.mjs recordFindings).
+        state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, stage: stage.name, security: state.planNote?.passes?.[pass.id]?.security === true }])) };
         return finish('dispatch', { stage: stage.name, dispatch: agents.map((pass) => dispatchFor(s, pass, stage)) });
       }
     }

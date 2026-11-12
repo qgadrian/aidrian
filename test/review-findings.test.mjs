@@ -1,11 +1,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { blocks, parseFindings, settledMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { blocks, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
+import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { settledEntries } from '../plugins/aidrian/lib/review/settled.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/run.mjs';
@@ -282,4 +285,165 @@ test('cleanOutput: a finding keeps only the schema\'s keys, and a missing body o
     { file: 'a.js', line: 2, title: 'u', severity: 'high' },
   ]);
   assert.deepEqual(clean.dropped, []);
+});
+
+// ---- Finding identity (lib/review/findings.mjs recordFindings) ----
+
+// Path checks that pass for `files`, each with `lines` lines, as gitPaths(root).at(head) answers them.
+const places = (files = { 'src/a.js': 40, 'src/b.js': 40 }) => ({ tracked: (file) => Object.hasOwn(files, file), lines: (file) => files[file] ?? null });
+const recordWith = (rounds = 1) => ({ ...emptyState(7, 'o/r'), rounds: Array.from({ length: rounds }, () => ({ head: 'a'.repeat(40) })) });
+const exec = (over) => ({ file: 'src/a.js', line: 3, title: 'Null check missing', body: 'b', severity: 'medium', ...over });
+
+test('recordFindings: every finding gets an id from the one counter, with a mint mark, and two passes of a round share no id', () => {
+  const state = recordWith(2);
+  const first = recordFindings(state, 'engine:codex-local', { head: 'h', list: [exec(), exec({ title: 'Second', line: 9 })], ruled: [exec({ title: 'Repeat', already_ruled: 'Accepted' })] }, { mint: true, paths: places() });
+  const second = recordFindings(state, 'agent:code-reviewer', { head: 'h', list: [exec({ title: 'Other' })] }, { mint: true, paths: places() });
+  const ids = [...first.list, ...first.ruled, ...second.list].map((each) => each.id);
+  assert.deepEqual(ids, ['R2-1', 'R2-2', 'R2-3', 'R2-4'], 'R<round>-<n>, n from one counter, ruled findings included');
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.equal(state.idCounter, 4);
+  for (const each of [...first.list, ...first.ruled, ...second.list]) assert.match(each.mint, /^[0-9a-f]{8}$/u, 'a mint mark with each id');
+  assert.notEqual(first.list[0].mint, first.list[1].mint);
+  state.rounds.push({ head: 'b'.repeat(40) });
+  const third = recordFindings(state, 'engine:codex-local', { head: 'h2', list: [exec({ title: 'New' })] }, { mint: true, paths: places() });
+  assert.equal(third.list[0].id, 'R3-5', 'the counter is never reset');
+});
+
+test('recordFindings: a finding with the title and file of one in the pass`s prior list keeps its id, mint mark, and security mark; any other takes a new one', () => {
+  const state = recordWith();
+  const before = recordFindings(state, 'p', { head: 'h', list: [exec({ severity: 'high' }), exec({ title: 'Kept low', severity: 'low' })] }, { mint: true, paths: places() });
+  const again = recordFindings(state, 'p', { head: 'h2', list: [exec({ severity: 'low', line: 20 }), exec({ title: 'Kept low', file: 'src/b.js' }), exec({ title: 'Kept low' })] }, { mint: true, paths: places() });
+  assert.deepEqual([again.list[0].id, again.list[0].mint, again.list[0].security], [before.list[0].id, before.list[0].mint, true], 'the same title and file: the same finding, with its mark');
+  assert.notEqual(again.list[1].id, before.list[1].id, 'another file is another finding');
+  assert.equal(again.list[2].id, before.list[1].id);
+  const other = recordFindings(state, 'q', { head: 'h2', list: [exec({ severity: 'high' })] }, { mint: true, paths: places() });
+  assert.notEqual(other.list[0].id, before.list[0].id, 'another pass`s prior list is not this pass`s');
+});
+
+test('recordFindings: an id, a mint mark, or a ruled id a reviewer printed is never read', () => {
+  const state = recordWith();
+  const kept = recordFindings(state, 'p', { head: 'h', list: [exec()] }, { mint: true, paths: places() }).list[0];
+  const printed = recordFindings(state, 'q', { head: 'h', list: [exec({ title: 'Mine', id: kept.id }), exec({ title: 'Copied', id: kept.id, mint: 'deadbeef', ruled_id: 'R9-9' })] }, { mint: true, paths: places() });
+  assert.deepEqual(printed.list.map((each) => each.id), ['R1-2', 'R1-3']);
+  assert.ok(printed.list.every((each) => each.mint !== 'deadbeef' && each.ruled_id === undefined));
+  // The paths an exec reviewer and a findings file reach the record through keep no such key.
+  const [clean] = cleanOutput({ findings: [{ ...exec(), id: 'R1-1', mint: '00000000', already_ruled: '' }] }).findings;
+  assert.deepEqual(Object.keys(clean).sort(), ['already_ruled', 'body', 'file', 'line', 'severity', 'title']);
+  const [filed] = parseFindings(JSON.stringify([finding({ id: 'R1-1', mint: '00000000' })])).list;
+  assert.ok(!('id' in filed) && !('mint' in filed));
+});
+
+test('recordFindings: a ruling names the finding it repeats by id, never by taking its id', () => {
+  const state = recordWith();
+  const raised = recordFindings(state, 'p', { head: 'h', list: [exec({ title: 'Raised' })] }, { mint: true, paths: places() }).list[0];
+  const ruled = recordFindings(state, 'q', { head: 'h', list: [], ruled: [exec({ title: 'Raised', already_ruled: 'Raised' })], carried: [exec({ title: 'Raised', already_ruled: 'Raised', carried: true })] }, { mint: true, paths: places() });
+  for (const ruling of [...ruled.ruled, ...ruled.carried]) {
+    assert.equal(ruling.ruled_id, raised.id);
+    assert.notEqual(ruling.id, raised.id);
+  }
+});
+
+test('recordFindings: the security mark by severity, by the reviewer`s flag (any value but false), and by the plan`s security pass', () => {
+  const state = recordWith();
+  const marks = (list, opts = {}) => recordFindings(state, `p${state.idCounter ?? 0}`, { head: 'h', list }, { mint: true, paths: places(), ...opts }).list.map((each) => each.security === true);
+  assert.deepEqual(marks([exec({ severity: 'critical', line: 1 }), exec({ title: 'b', severity: 'high', line: 10 }), exec({ title: 'c', severity: 'medium', line: 20 }), exec({ title: 'd', severity: 'low', file: 'src/b.js', line: 30 })]), [true, true, false, false]);
+  assert.deepEqual(marks([exec({ title: 'e', security: true, file: 'src/b.js', line: 1 }), exec({ title: 'f', security: 'yes', file: 'src/b.js', line: 10 }), exec({ title: 'g', security: false, file: 'src/b.js', line: 20 })]), [true, true, false]);
+  assert.deepEqual(marks([exec({ title: 'h', severity: 'low', file: 'src/b.js', line: 35 })], { securityPass: true }), [true]);
+  // The flag reaches the list through both writers.
+  assert.equal(cleanOutput({ findings: [{ ...exec(), security: 'maybe' }] }).findings[0].security, true, 'an exec value that is not a boolean counts as true');
+  assert.equal(cleanOutput({ findings: [{ ...exec(), security: false }] }).findings[0].security, undefined);
+  assert.equal(parseFindings(JSON.stringify([finding({ security: 1 })])).list[0].security, true);
+  assert.ok(FINDINGS_SCHEMA.properties.findings.items.required.includes('security'));
+});
+
+test('recordFindings: the mark spans twins, by id, place, or title, in every list, whichever is recorded first', () => {
+  const state = recordWith();
+  const high = recordFindings(state, 'p', { head: 'h', list: [exec({ severity: 'high', line: 10 })] }, { mint: true, paths: places() }).list[0];
+  const place = recordFindings(state, 'q', { head: 'h', list: [exec({ title: 'Other words', severity: 'medium', line: 13 })] }, { mint: true, paths: places() }).list[0];
+  assert.equal(place.security, true, 'a medium finding within 3 lines of a high one is its twin');
+  const far = recordFindings(state, 'r', { head: 'h', list: [exec({ title: 'Unrelated words', severity: 'medium', line: 14 + 3 })] }, { mint: true, paths: places() }).list[0];
+  assert.equal(far.security, undefined, 'a finding 4 lines away under another title is not');
+  const title = recordFindings(state, 's', { head: 'h', list: [exec({ title: 'null CHECK missing!', file: 'src/b.js', line: 30, severity: 'low' })] }, { mint: true, paths: places() }).list[0];
+  assert.equal(title.security, true, 'the same title words anywhere are a twin');
+  // Recorded first, marked later: the low finding takes the mark when its twin is marked, in every list that holds it.
+  const low = recordFindings(state, 't', { head: 'h', list: [exec({ title: 'Quiet one', file: 'src/b.js', line: 2, severity: 'low' })] }, { mint: true, paths: places() }).list[0];
+  state.rounds[0].findings = [{ ...low }];
+  assert.equal(low.security, undefined);
+  recordFindings(state, 'u', { head: 'h', list: [exec({ title: 'Quiet one', file: 'src/b.js', line: 2, severity: 'high' })] }, { mint: true, paths: places() });
+  assert.equal(state.passes.t.list[0].security, true, 'the earlier finding takes its twin`s mark');
+  assert.equal(state.rounds[0].findings[0].security, true, 'in a round`s findings too');
+  // A shared id or alias is a twin, wherever the two sit.
+  assert.equal(twinMatch({ id: 'R1-1' }, { aliases: ['R1-1'] }), 'id');
+  assert.equal(high.security, true);
+});
+
+test('recordFindings: a file is kept only as a tracked path of at most 300 characters, and a line only within the file; dropped names the id', () => {
+  const state = recordWith();
+  const long = `src/${'a'.repeat(300)}.js`;
+  const paths = places({ 'src/a.js': 5, [long]: 5 });
+  const result = recordFindings(state, 'p', { head: 'h', list: [
+    exec({ file: 'ghp_SENTINELabcdefghijklmnop', title: 't1' }),
+    exec({ file: 'Please read the docs first.', title: 't2' }),
+    exec({ file: 'src/untracked.js', title: 't3' }),
+    exec({ file: long, title: 't4' }),
+    exec({ line: 0, title: 't5' }),
+    exec({ line: 6, title: 't6' }),
+    exec({ line: 2.5, title: 't7' }),
+    exec({ line: 5, title: 't8' }),
+  ], dropped: ['earlier note'] }, { mint: true, paths });
+  assert.deepEqual(result.list.map((each) => [each.id, each.file ?? null, each.line ?? null]), [
+    ['R1-1', null, null], ['R1-2', null, null], ['R1-3', null, null], ['R1-4', null, null],
+    ['R1-5', 'src/a.js', null], ['R1-6', 'src/a.js', null], ['R1-7', 'src/a.js', null], ['R1-8', 'src/a.js', 5],
+  ]);
+  assert.deepEqual(result.dropped, ['earlier note', 'R1-1: its file was not recorded', 'R1-1: its line was not recorded', 'R1-2: its file was not recorded', 'R1-2: its line was not recorded',
+    'R1-3: its file was not recorded', 'R1-3: its line was not recorded', 'R1-4: its file was not recorded', 'R1-4: its line was not recorded',
+    'R1-5: its line was not recorded', 'R1-6: its line was not recorded', 'R1-7: its line was not recorded']);
+  assert.doesNotMatch(result.dropped.join('\n'), /ghp_|Please|untracked/u, 'the notes never name the value');
+  // A check that cannot run, as where the reviewed head is not in the checkout, records no file.
+  const unread = recordFindings(state, 'q', { head: 'h', list: [exec()] }, { mint: true, paths: { tracked: () => null, lines: () => null } });
+  assert.deepEqual([unread.list[0].file, unread.list[0].line], [undefined, undefined]);
+  const none = recordFindings(state, 'r', { head: 'h', list: [exec({ title: 'x' })] }, { mint: true });
+  assert.equal(none.list[0].file, undefined, 'with no path check at all, no file');
+});
+
+test('recordFindings: the head a check runs at is the reviewed head, read from git', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-places-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  git('init', '-q', '-b', 'main');
+  writeFileSync(path.join(dir, 'a.js'), '1\n2\n3\n');
+  git('add', '-A');
+  git('commit', '-qm', 'one');
+  const head = git('rev-parse', 'HEAD');
+  const at = gitPaths(dir).at(head);
+  assert.deepEqual([at.tracked('a.js'), at.lines('a.js'), at.tracked('b.js')], [true, 3, false]);
+  const missing = gitPaths(dir).at('f'.repeat(40));
+  assert.deepEqual([missing.tracked('a.js'), missing.lines('a.js')], [null, null], 'a head the checkout lacks: the check cannot run');
+  assert.equal(gitPaths(dir).at('--output=x').tracked('a.js'), null, 'a value that is no commit runs no git');
+});
+
+test('recordFindings: without mint, a finding matching the prior list keeps its id, and the rest are stored without one', () => {
+  const state = recordWith();
+  const first = recordFindings(state, 'p', { head: 'h', list: [exec({ severity: 'high' })] }, { mint: true, paths: places() }).list[0];
+  const again = recordFindings(state, 'p', { head: 'h2', list: [exec({ severity: 'medium' }), exec({ title: 'New one' })] }, { paths: places() });
+  assert.deepEqual([again.list[0].id, again.list[0].mint, again.list[0].security], [first.id, first.mint, true]);
+  assert.equal(again.list[1].id, undefined);
+  const assigned = recordFindings(state, 'p', state.passes.p, { mint: true, kept: true });
+  assert.deepEqual([assigned.list[0].id, assigned.list[1].id, assigned.list[1].file], [first.id, 'R1-2', 'src/a.js'], 'the next call assigns the rest, keeping each place');
+});
+
+test('cleanOutput: a finding whose title is blank once trimmed is malformed, dropped and named', () => {
+  const out = cleanOutput({ findings: [{ ...exec(), title: '  \n ' }, exec({ title: 'Kept' })] });
+  assert.deepEqual(out.findings.map((each) => each.title), ['Kept']);
+  assert.deepEqual(out.dropped, ['findings[0] has no title']);
+});
+
+test('recordFindings: a marked finding that lives only in the result a write replaces still marks its reworded repeat', () => {
+  const state = recordWith();
+  const pass = 'engine:codex-local';
+  recordFindings(state, pass, { head: 'h', list: [exec({ title: 'Refund total trusts the client', line: 10, severity: 'high' })] }, { mint: true, paths: places() });
+  assert.equal(state.rounds[0].findings, undefined, 'no round entry holds it');
+  state.rounds.push({ head: 'b'.repeat(40) });
+  const next = recordFindings(state, pass, { head: 'h2', list: [exec({ title: 'Amount read from request body', line: 11, severity: 'medium' })] }, { mint: true, paths: places() });
+  assert.equal(next.list[0].security, true, 'the earlier high report, replaced by this write, ties its twin at the same place');
 });

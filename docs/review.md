@@ -506,7 +506,9 @@ A visual reviewer records its pass with `--findings-file` rather than counts, so
 ```
 
 A finding blocks the pass while it is open and not `acceptable_as_is`, or accepted with a disposition that cannot be
-accepted (`fix_now`, or no likelihood and affects yet). Any agent pass may record this way. Flow results gate the
+accepted (`fix_now`, or no likelihood and affects yet). Any agent pass may record this way. A finding may add
+`"security": true` for a security problem; any value but `false` counts as true ([Reviewers](#reviewers)). An `id` or a
+mint mark in the file is never read: the engine gives each finding its [id](#finding-ids). Flow results gate the
 review step; they are not a merge gate by themselves, so protect the branch with the checks the review posts.
 
 ## Paths
@@ -547,8 +549,8 @@ A project adds its own in `review.reviewers`:
 ```
 
 - `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`,
-  `acceptedResiduals`) and prints `{ "findings": [{ file, line, title, body, severity, already_ruled }], "verdicts": [...] }`;
-  a finding keeps only those keys, and `already_ruled` may be left out. It runs with no session, override, or
+  `acceptedResiduals`) and prints `{ "findings": [{ file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
+  a finding keeps only those keys, and `already_ruled` and `security` may be left out. It runs with no session, override, or
   git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL.
   Output that does not parse is a failure, never a pass; malformed findings are dropped and named.
   A failure is `incomplete` and retried; the third is `stuck`; a split slice that times out splits instead ([Split](#split)).
@@ -592,10 +594,11 @@ A project adds its own in `review.reviewers`:
   and anchor nothing. While any pass record holds such a waiver above `low`, as `ruled` or `carried`, on any head,
   `aidrian pr auto-merge` refuses, naming the residual, and the merge waits for the Human.
   - The hold outlives the line. A pass that re-runs and is no longer offered a waiver above `low`, whatever ended the
-    anchor, keeps it in `carried`, marked `ended`, as one entry for that title and file. A result attested over a pass
-    keeps that record's `ruled` and `carried`. A reviewer's output cannot end the hold; a listing of that title and file as
-    `fixed` does: at once for an ended entry, and at the pass's next run for a standing one. An ended entry settles nothing
-    and anchors nothing, and until such a listing the summary comment names it as ended without a fix, never as standing. The
+    anchor, keeps it in `carried`, marked `ended`, as one entry for that finding. A result attested over a pass
+    keeps that record's `ruled` and `carried`. The hold keys on the finding's [id](#finding-ids), never its title: a
+    waiver above `low` holds auto-merge until the Human merges, and a listing of the same title and file as `fixed` ends
+    nothing. The hold's message names the id where the record holds no text. An ended entry settles nothing
+    and anchors nothing, and the summary comment names it as ended without a fix, never as standing. The
     pass input gives it among `priorFindings` as a context copy with nothing that settles, so a reviewer weighs it again.
   - It names one when the residual's text opens with the finding's exact title, a colon, and a reason: `<title>: <why>`,
     the shape the [body template](../plugins/aidrian/skills/pr-write/references/body-template.md) gives a residual line,
@@ -629,6 +632,25 @@ A project adds its own in `review.reviewers`:
   `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings <n> --fixed <n> --verdicts -`, the
   agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
+
+**The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
+`security` (Codex's schema requires the key, a project's exec reviewer and `--findings-file` may leave it out, and any
+value but `false` counts as true), or when the head's plan requires `agent:security-engineer` and the pass is in its
+`local` or `independent` stage. The engine stores that mark on the finding, and a finding that keeps its id keeps it.
+The mark covers a twin: a finding at the same place (the same file and lines within 3), under the same title words
+where the record at hand holds both titles, or sharing its id, an alias, or the id a ruling names, whichever was recorded
+first. So a second
+pass's report of a security finding, the cross-cutting pass's repeat of a slice's, and a lower-severity report after the
+first one closed are security findings too. On a repository that is not private, the posted record holds no file or
+line for a security finding, in its own entries or in an extra round's looping and drifting evidence, and its residual
+row names it by id ([The record](#the-record)). The match errs toward withholding: a nearby finding under the same file
+can be read as a twin.
+
+**Names on the pull request.** A reviewer, an agent, a stage, a pass id, and a flow and invariant pair are posted only
+where the plan or the config defines them: the plan note the step keeps, which holds every pass an engine plan of the
+pull request named, the passes it dispatched, the base branch's reviewers, and the engine's own names. Any other value, such as a name a reviewer or `aidrian pr attest`
+supplied, is counted and left out, and a record with no plan note posts no name. On a private repository the comment
+is the whole record, and every string of it, and of its visible lines, is scanned by the [text checks](#the-posted-copy) first.
 
 ### The engine
 
@@ -1033,7 +1055,9 @@ It goes on as it would with a read that fails, or no time left.
 Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
 place: the rounds, each pass's result per head, the verdicts, the sign-offs, and the overrides used. Another machine
 reads it from the comment, and only from a comment whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`:
-a stranger's comment supplies no record, and is never edited. It is the reviewers' word, not proof, and it is all visible on the pull request.
+a stranger's comment supplies no record, and is never edited. It is the reviewers' word, not proof. What the comment
+shows of it depends on the repository ([The posted copy](#the-posted-copy)): every entry's decision, head, and who decided
+by role, and on a private repository the text too.
 A step run by a non-member edits the summary comment that `gh` user wrote, which still supplies no record.
 With no comment of that user's, or when the user cannot be read, it attempts the last member's summary comment, and posts a new one when there is none
 or GitHub refuses the edit with a 403; it never edits a non-member's.
@@ -1109,6 +1133,76 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof.
   A record without the list has none. The [merge guard](hooks.md#merge-guard) reads them only while the team's
   `github.unattendedWaiver.allow` and this machine's switch are both on: [Unattended waiver](config.md#unattended-waiver).
+
+### Finding ids
+
+Every finding a pass records, a repeat a reviewer returned as already ruled included, gets an id, `R<round>-<n>`: the
+round it was first recorded in, and `<n>` from one counter the record keeps for the pull request (`idCounter`), never
+reset and never reused, so no two findings of a pull request share an id. With each id the engine mints, it sets a
+mint mark of 8 hex digits from its random source, kept beside the id wherever the finding is listed. An id or a mark a
+reviewer or a findings file prints is never read. A finding reported again with the same title and file in the same
+pass keeps its id and its marks; any other finding takes a new one. A ruling names the finding it repeats by
+`ruled_id`, and every [hold](#accepted-residuals-against-decisions) keys on that id, never on a title, so a record
+that holds no text loosens no hold. A finding's `file` is kept only as a path of at most 300 characters that git tracks
+at the reviewed head, and its `line` only as a positive line number within that file; otherwise neither is recorded,
+the finding keeps its id, and the pass's `dropped` notes name the id, never the value. A check that cannot run, as on a
+checkout without the reviewed head, records neither. The looping signal at the [round cap](#extra-rounds) matches by
+id, by place, or by title where both titles are held, and its reason names the id, never the title.
+
+A step marks the record as floored before it mints an id, and notes on `dispatched`, for each agent pass, its stage and
+whether the plan requires the security reviewer for it. `aidrian pr attest` mints ids only into a floored record, for a
+pass the step dispatched: elsewhere a repeat keeps its id, the rest are stored without one, and the next step gives
+them theirs. An agent pass still records counts, so only a visual pass, or one that uses `--findings-file`, lists its
+findings one by one.
+
+### The posted copy
+
+The summary comment never carries the record itself: it carries a copy for the pull request, and the state folder
+keeps everything. The visible lines are rendered from that copy, so a line shows nothing the copy lacks, and every
+write rewrites every block the record feeds; only the status, the plan line and its reasons, the engine, and the flows,
+which the review step alone writes, are kept from the comment.
+
+- **Private** means the write read the repository's visibility through the forge as exactly `PRIVATE`, for a pull
+  request from inside the team. `INTERNAL`, any other answer, a failed read, and a pull request from outside are not
+  private. (The visual capture's [attach mode](#visual-review) reads `INTERNAL` as private for its uploads; finding
+  text takes the stricter reading.) On a private repository the copy is the whole record, less every string the text
+  checks withhold, and every collaborator, the edit history, and a later visibility change see it: a repository made
+  public later shows what was posted while it read `PRIVATE`. `review.record: "local"` keeps the record's text off the
+  pull request altogether.
+- **Not private.** The copy holds only the engine's own keys, each value only when it has the shape of its key (a SHA,
+  a date, a count, a word the engine defines, a defined name, a tracked path): no title, body, evidence, reason, note,
+  or person's name. Without text, the waived-repeat lines show the count, the id, the file, and the severity; an Extra
+  rounds line shows the status, who decided, and its red flags by name; a waiver line shows its kind, head, verdict,
+  and judge; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
+  finding has no file or line there ([Reviewers](#reviewers)). A verdict posts no evidence: a machine that adopts the
+  copy does not count a pass whose holds or not_affected verdicts arrive without it, and runs that pass again, so its
+  reviewer answers with evidence that machine checks. A split slice another machine finished arrives without its
+  contracts and cross-slice notes, so it runs again before the cross-cutting pass reads them. A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads
+  as the Human's.
+- **Text checks.** Every string that may be posted is checked first, on its text with whitespace runs collapsed and on
+  a decoded copy, and a hit withholds it and never fails the step: token-shaped strings and local paths always (in the
+  context the product feedback post uses, with the product-access terms and values), and the base branch's and the
+  checkout's `github.publicText.patterns` and the private words of `.banned-terms.local`. They fail closed: a search that
+  runs out of time or does not compile, a spent budget (200 ms a search, 10 s a write), a private-words copy that cannot
+  be read, or a knowledge index or product-access doc that cannot be read withholds. When a check could not run that
+  way, for the copy or its visible lines, the write holds the record instead of posting a copy: its held line says a
+  text check could not run on the machine that wrote it, naming no word, pattern, or list, and another machine is told
+  the same. A check that fails only for a residual row withholds that row's text and holds nothing. What reports it says only `text
+  withheld`, with a count, never the word, its pattern, or its list. The findings a step hands the session to fix keep
+  their text; the residual rows the session copies into the pull request body pass the same decision, every string of
+  a row included, and name a withheld finding by its id alone.
+- **Escaping.** The final body is escaped before it posts, code spans included: a zero-width space after each `@`,
+  `<!--` and `-->` escaped, and a line that starts with `/` neutralized. The engine's marker lines are added after it,
+  and the 60,000-character budget measures the escaped body.
+- **A second machine.** A machine that builds on a higher-revision copy keeps what its own record holds: a finding's
+  text, place, and security mark by its id and mint mark together, and a string outside a finding by its entry's head
+  and time. A restarted record that reuses an id, or another machine that minted the same id, gets none of it. Adopting
+  a copy never clears a security mark, and every write stores the mark on each twin the record at hand ties. A review
+  step whose record holds an open, blocking finding with no text stops as `incomplete` with `retry_recommended: false`
+  before it runs a reviewer, and this machine's merge guard keeps refusing the head: the review goes on on the machine
+  that recorded the finding. If that machine is gone, the Human deletes the review summary comment and this machine's
+  record file, which the stop names, and the review restarts from round 1: a command that wrote the adopted record,
+  such as `aidrian pr extend`, keeps the finding in that file. No other command fails for a missing text.
 
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot

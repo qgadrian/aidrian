@@ -14,7 +14,7 @@ import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
 import { EXIT, recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
-import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
@@ -51,8 +51,12 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
   const comments = [];
+  // A private repository, and a pull request from inside the team: the summary comment carries the whole record
+  // (lib/review/publish.mjs postedCopy). A test of another reading sets its own.
   const forge = {
-    change: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
+    visibility: () => 'PRIVATE',
+    pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }),
+    change: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7', isCrossRepository: false }),
     repo: () => 'o/r',
     conversationComments: () => comments,
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
@@ -68,6 +72,10 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
 }
 
 const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });
+// A summary written on a private repository, from inside the team, whose checks pass every string.
+const OPEN = { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } };
+// A residual row without the id the step names its finding by.
+const unnamed = ({ id: _id, ...row }) => row;
 // The `next` entry of an unverified invariant: its acceptance command, and `notes` beside it.
 const acceptCommand = (flow, id, head) => `aidrian pr signoff 7 --flow ${flow} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}`;
 const unverifiedNext = (flow, id, head, notes = []) => ({ invariant: id, state: 'unverified', commands: [acceptCommand(flow, id, head)], notes });
@@ -325,7 +333,8 @@ test('from round N, an exec reviewer\'s low finding is an accepted residual the 
   r.commit();
   const late = await r.step({ exec });
   assert.deepEqual([late.status, late.round], ['received', N]);
-  assert.deepEqual(late.residuals, [{ pass: 'engine:codex-local', title: 'off by one', file: 'src/app.js', line: 1, severity: 'low' }]);
+  assert.deepEqual(late.residuals.map(unnamed), [{ pass: 'engine:codex-local', title: 'off by one', file: 'src/app.js', line: 1, severity: 'low' }]);
+  assert.match(late.residuals[0].id, /^R\d+-\d+$/u, 'the row names its finding by id');
   const pass = readLocalState(r.project, 7).passes['engine:codex-local'];
   assert.deepEqual([pass.open, pass.findings, pass.list[0].state, pass.list[0].disposition], [0, 1, 'accepted', 'accepted_residual']);
 });
@@ -896,7 +905,7 @@ test('deleting only an ignored flow test, with nothing else to review, still sto
 test('a pass recorded on a stale local copy builds on the pull request`s newer record', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'q\n') });
   const remote = { version: 1, revision: 9, updatedAt: '2026-10-31T00:00:00.000Z', pr: 7, repo: 'o/r', rounds: [{ head: 'x' }], passes: { other: { head: 'x', open: 2 } }, signoffs: {}, overrides: [], failures: {} };
-  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'mine', head: 'h', reviewer: 'r', findings: 0, fixed: 0, remote: [{ id: 1, body: summaryBody(remote, null, 'x'), author_association: 'MEMBER' }] });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'mine', head: 'h', reviewer: 'r', findings: 0, fixed: 0, remote: [{ id: 1, body: summaryBody(remote, null, 'x', OPEN), author_association: 'MEMBER' }] });
   const { readLocalState } = await import('../plugins/aidrian/lib/review/state.mjs');
   const state = readLocalState(r.project, 7);
   assert.deepEqual([state.revision, Object.keys(state.passes).sort(), state.passes.other.open], [10, ['mine', 'other'], 2]);
@@ -1889,7 +1898,8 @@ test('a named approver`s review of the head closes an unverified invariant once 
   const on = await r.step({ exec: clean });
   assert.equal(on.status, 'received');
   assert.deepEqual(on.approvals.closed, [{ flow: 'look', invariant: 'matches-design', login: 'amy-designer', url: 'https://github.com/o/r/pull/7#pullrequestreview-41', at: null }]);
-  assert.match(r.comments[0].body, new RegExp(`- look/matches-design: approved by \`@amy-designer\` on \`${head.slice(0, 7)}\`: https://github\\.com/o/r/pull/7#pullrequestreview-41`, 'u'));
+  // The posted body is escaped, code spans included: a zero-width space follows the @, so the approver is not mentioned.
+  assert.match(r.comments[0].body, new RegExp(`- look/matches-design: approved by \`@\u200bamy-designer\` on \`${head.slice(0, 7)}\`: https://github\\.com/o/r/pull/7#pullrequestreview-41`, 'u'));
 });
 
 test('approvals: the team switch is the base branch`s, and a forge read that fails closes nothing while the step still answers', async (t) => {
@@ -2011,7 +2021,9 @@ test('a reviewer citing an ingested capture closes an unverified invariant on th
   cite(`capture:${key}`);
   const closed = await r.step({ exec: clean });
   assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the ingested capture is the evidence that closes it');
-  assert.match(summaryOf(r), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable \\(no base URL: .*; ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
+  // The repository reads as public, so the posted line names no reason and no person; the record keeps both.
+  assert.doesNotMatch(summaryOf(r), /Tester|e2e-runner/u, 'the public comment names no reason and no person');
+  assert.match(summaryBody(readLocalState(r.project, 7), null, 'x', OPEN), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable \\(no base URL: .*; ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
 });
 
 // The late order: the images are ingested after the visual reviewer answered. The step dispatches no visual reviewer
@@ -2084,8 +2096,10 @@ test('the summary`s visual line fits every ingest note into its clip: whole entr
     ingestCaptures({ project: r.project, pr: 7, head, files: [shot], source, by: 'Tester' });
   }
   await r.step({ exec: clean });
-  const line = summaryOf(r).split('\n').find((each) => each.startsWith('- visual capture of'));
-  assert.match(line, /no base URL: .*; ingested, not captured: ingest-look-0-[0-9a-f]{6} from `@x a+…` by `Tester`.* and \d more, listed in the captures comment\)/u, line);
+  assert.doesNotMatch(summaryOf(r), /Tester|e2e @/u, 'the public comment names no reason and no person');
+  // The line as a private repository's comment shows it, from the record.
+  const line = summaryBody(readLocalState(r.project, 7), null, 'x', OPEN).split('\n').find((each) => each.startsWith('- visual capture of'));
+  assert.match(line, /no base URL: .*; ingested, not captured: ingest-look-0-[0-9a-f]{6} from `@\u200bx a+…` by `Tester`.* and \d more, listed in the captures comment\)/u, line);
   assert.equal((line.match(/`/gu) ?? []).length % 2, 0, 'every code span is closed');
   assert.doesNotMatch(outsideSpans(line), /@/u, line);
 });
@@ -2177,4 +2191,177 @@ test('reviewInForce: a pull request cannot turn on unattended rulings for itself
   const { review, changed } = reviewInForce(base, head);
   assert.deepEqual([review.unattendedSignoff, changed], [{ allow: false }, ['unattendedSignoff']]);
   assert.deepEqual(reviewInForce(null, head).review.unattendedSignoff, { allow: false }, 'with no base config, the default holds');
+});
+
+// ---- Finding ids and the posted copy, through the step ----
+
+const BOOKING = { booking: { files: ['src/booking/**'] } };
+const bookingRepo = (t, github = {}) => repo(t, { baseConfig: { version: 1, github, review: { flows: BOOKING } }, change: (write) => write('src/booking/a.js', '1\n2\n3\n') });
+const attestFile = (r, pass, head, list) => recordPass(r.project, { pr: 7, repo: 'o/r', pass, head, reviewer: 'code-reviewer', findingsText: JSON.stringify(list) });
+const filed = (over) => ({ title: 'Refund total unchecked', file: 'src/booking/a.js', line: 2, severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open', ...over });
+
+test('attest mints no id on a record no step floored, or for a pass with no dispatch note; a repeat keeps its id; the next step assigns the rest', async (t) => {
+  const r = bookingRepo(t);
+  const head = r.git('rev-parse', 'HEAD');
+  attestFile(r, 'agent:code-reviewer:booking', head, [filed()]);
+  assert.equal(readLocalState(r.project, 7).passes['agent:code-reviewer:booking'].list[0].id, undefined, 'no step floored the record');
+  const one = await r.step({ exec: clean });
+  assert.equal(one.status, 'dispatch');
+  const state = readLocalState(r.project, 7);
+  assert.equal(state.floored, true);
+  const [dispatched] = one.dispatch;
+  assert.deepEqual([state.dispatched[dispatched.pass].stage, state.dispatched[dispatched.pass].security], ['local', false], 'the dispatch note');
+  assert.match(dispatched.record, /--findings <n> --fixed <n>/u, 'an agent pass still records counts');
+  const assigned = state.passes['agent:code-reviewer:booking']?.list?.[0];
+  if (assigned) assert.match(assigned.id, /^R\d+-\d+$/u, 'the step assigned the stored finding its id');
+  attestFile(r, dispatched.pass, head, [filed()]);
+  const first = readLocalState(r.project, 7).passes[dispatched.pass].list[0];
+  assert.match(first.id, /^R\d+-\d+$/u, 'a dispatched pass on a floored record mints');
+  attestFile(r, dispatched.pass, head, [filed({ state: 'fixed' }), filed({ title: 'Another one', line: 3 })]);
+  const again = readLocalState(r.project, 7).passes[dispatched.pass].list;
+  assert.deepEqual([again[0].id, again[0].mint], [first.id, first.mint], 'a finding reported again with its title and file keeps its id');
+  assert.notEqual(again[1].id, first.id);
+  attestFile(r, 'agent:never-dispatched', head, [filed()]);
+  assert.equal(readLocalState(r.project, 7).passes['agent:never-dispatched'].list[0].id, undefined, 'a pass with no dispatch note mints none');
+});
+
+test('the exec step keeps a finding`s id while it is reported again with its title and file', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\nexport const b = 3;\n') });
+  const exec = async () => ({ status: 'done', findings: [{ ...finding, severity: 'medium' }], verdicts: [], dropped: [] });
+  await r.step({ exec });
+  const first = readLocalState(r.project, 7).passes['engine:codex-local'].list[0];
+  r.write('src/app.js', 'export const app = 3;\nexport const b = 3;\n');
+  r.commit();
+  await r.step({ exec });
+  const again = readLocalState(r.project, 7).passes['engine:codex-local'].list[0];
+  assert.deepEqual([again.id, again.mint], [first.id, first.mint]);
+  assert.equal(readLocalState(r.project, 7).rounds[1].findings[0].id, first.id, 'a round`s findings carry the id');
+});
+
+test('the residual rows: a row whose text the decision withholds is named by id, and a refused file is in no row; fix_required keeps the text', async (t) => {
+  const N = loadTable().lateRoundFrom;
+  for (const [label, visibility, over] of [
+    ['a token-shaped title', 'PRIVATE', { title: 'leaks ghp_abcdefghijklmnopqrstuvwx0123', file: 'ghp_abcdefghijklmnopqrstuvwx0123' }],
+    ['a security finding on a public repository', 'PUBLIC', { security: true }],
+  ]) {
+    const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 8, extraRounds: 'off' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+    r.forge.visibility = () => visibility;
+    const exec = async () => ({ status: 'done', findings: [{ ...finding, severity: 'low', ...over }], verdicts: [], dropped: [] });
+    for (let round = 1; round < N; round += 1) {
+      const early = await r.step({ exec });
+      assert.equal(early.status, 'fix_required');
+      if (round === 1) assert.equal(early.open[0].findings[0].title, over.title ?? finding.title, `${label}: the findings a session fixes keep their text`);
+      r.write('src/app.js', `export const app = ${100 + round};\n`);
+      r.commit();
+    }
+    const late = await r.step({ exec });
+    assert.equal(late.status, 'received', label);
+    assert.equal(late.residuals.length, 1);
+    assert.deepEqual(Object.keys(late.residuals[0]).sort(), ['id', 'pass', 'severity', 'text'], `${label}: ${JSON.stringify(late.residuals)}`);
+    assert.equal(late.residuals[0].text, 'text withheld');
+    assert.equal(late.withheld, 1);
+    assert.doesNotMatch(JSON.stringify(late.residuals), /ghp_|Refund|off by one/u);
+  }
+});
+
+test('the review step stops on an open, blocking finding it holds no text for, and aidrian pr extend on the same record does not', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  assert.equal(capped.status, 'extension_check');
+  const local = readLocalState(r.project, 7);
+  const other = { ...local, revision: local.revision + 5, passes: { ...local.passes, 'engine:codex-local': { head: capped.head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ id: 'R2-9', mint: 'abcdef01', severity: 'high', state: 'open', disposition: 'fix_now' }] } } };
+  r.comments.length = 0;
+  r.comments.push({ id: 1, body: summaryBody(other, null, 'x', OPEN), author_association: 'MEMBER' });
+  let ran = 0;
+  const stopped = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  assert.deepEqual([stopped.status, stopped.retry_recommended, ran], ['incomplete', false, 0]);
+  assert.match(stopped.reason, /the open finding R2-9, whose text is on the machine that recorded it/u);
+  assert.equal(readLocalState(r.project, 7).outcome.status, 'incomplete', 'this machine`s merge guard refuses the head');
+  assert.equal(readLocalState(r.project, 7).revision, local.revision, 'the stop adopts nothing');
+  const { code } = await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a valid finding', '--head', capped.head]);
+  assert.equal(code, 0, 'extend still records its verdict');
+});
+
+test('the step`s summary on a public repository holds no finding text, in its lines or its record', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  const exec = async () => ({ status: 'done', findings: [{ ...finding, title: 'SENTINEL title', body: 'SENTINEL body', severity: 'medium' }], verdicts: [], dropped: [] });
+  assert.equal((await r.step({ exec })).status, 'fix_required');
+  const body = summaryOf(r);
+  assert.doesNotMatch(body.split('\n').filter((line) => !line.startsWith('<!-- aidrian-review-state')).join('\n'), /SENTINEL/u);
+  assert.doesNotMatch(JSON.stringify(stateFromComment(body, 7)), /SENTINEL/u);
+  const [posted] = stateFromComment(body, 7).passes['engine:codex-local'].list;
+  assert.deepEqual([posted.file, posted.line], ['src/app.js', 1], 'an exec finding keeps its place on a head whose plan does not require the security reviewer');
+  assert.equal(readLocalState(r.project, 7).passes['engine:codex-local'].list[0].title, 'SENTINEL title', 'the local record keeps it');
+});
+
+test('the plan note keeps every pass an engine plan named, so a pass a later plan drops keeps its name on the pull request', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, review: { flows: BOOKING } }, baseFiles: { 'src/booking/a.js': '1\n' }, change: (write) => { write('src/booking/a.js', '2\n'); write('src/app.js', 'export const app = 2;\n'); } });
+  const first = await r.step({ exec: clean });
+  const flowPass = first.plan.stages.flatMap((stage) => stage.passes).find((id) => id.startsWith('agent:'));
+  assert.ok(flowPass, JSON.stringify(first.plan));
+  r.write('src/booking/a.js', '1\n');
+  r.commit('back to the base');
+  const second = await r.step({ exec: clean });
+  assert.ok(!second.plan.stages.flatMap((stage) => stage.passes).includes(flowPass), 'the head`s plan no longer names it');
+  const note = readLocalState(r.project, 7).planNote;
+  assert.ok(note.passes[flowPass], 'the note still does');
+  attestFile(r, 'agent:never-planned', second.head, [filed()]);
+  assert.equal(readLocalState(r.project, 7).planNote.passes['agent:never-planned'], undefined, 'a pass attest alone supplied is never added');
+});
+
+test('the stop on an adopted finding with no text names the record file; deleting the comment alone, after extend wrote it, is not enough', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  const local = readLocalState(r.project, 7);
+  const other = { ...local, revision: local.revision + 5, passes: { ...local.passes, 'engine:codex-local': { head: capped.head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ id: 'R2-9', mint: 'abcdef01', severity: 'high', state: 'open', disposition: 'fix_now' }] } } };
+  r.comments.length = 0;
+  r.comments.push({ id: 1, body: summaryBody(other, null, 'x', OPEN), author_association: 'MEMBER' });
+  assert.equal((await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a valid finding', '--head', capped.head])).code, 0, 'extend writes the adopted record');
+  r.comments.length = 0;
+  const stopped = await r.step({ exec: clean });
+  assert.equal(stopped.status, 'incomplete', 'the comment is gone, and this machine`s record still holds the finding');
+  const file = recordFile(r.project, 7);
+  assert.ok(stopped.reason.includes(file), stopped.reason);
+  rmSync(file);
+  const fresh = await r.step({ exec: clean });
+  assert.notEqual(fresh.status, 'incomplete', 'with the record file gone too, the review restarts');
+  assert.equal(fresh.round, 1);
+});
+
+test('a machine with no record that runs extend on a public copy holding an untexted blocking finding: its next step stops', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  const local = readLocalState(r.project, 7);
+  // Another machine's copy on a public repository: its finding's text stayed there.
+  const theirs = { ...local, revision: local.revision + 5, passes: { ...local.passes, 'engine:codex-local': { head: capped.head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ id: 'R2-9', mint: 'abcdef01', title: 'Theirs', severity: 'high', state: 'open', disposition: 'fix_now' }] } } };
+  theirs.planNote = { ...theirs.planNote, passes: { ...theirs.planNote.passes, 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } } };
+  r.comments.length = 0;
+  r.comments.push({ id: 1, body: summaryBody(theirs, null, 'x', { reading: { visibility: 'PUBLIC', inside: true }, root: r.dir, names: [] }), author_association: 'MEMBER' });
+  assert.equal(stateFromComment(r.comments[0].body, 7).passes['engine:codex-local'].list[0].title, undefined, 'the copy holds no text');
+  rmSync(recordFile(r.project, 7));
+  assert.equal((await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a valid finding', '--head', capped.head])).code, 0);
+  assert.equal(readLocalState(r.project, 7).passes['engine:codex-local'].list[0].adopted, true, 'extend wrote the finding as adopted');
+  const stopped = await r.step({ exec: clean });
+  assert.deepEqual([stopped.status, stopped.retry_recommended], ['incomplete', false]);
+  assert.match(stopped.reason, /the open finding R2-9/u);
+});
+
+test('a machine that adopts a public copy reruns a pass whose verdicts arrive without evidence, and then finishes', async (t) => {
+  const r = bookingRepo(t);
+  r.forge.visibility = () => 'PUBLIC';
+  const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
+  let runs = 0;
+  const exec = async () => (runs += 1, { status: 'done', findings: [], verdicts, dropped: [] });
+  const attest = (step) => { for (const pass of step.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: step.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify(verdicts) }); };
+  const first = await r.step({ exec });
+  assert.equal(first.status, 'dispatch');
+  attest(first);
+  assert.equal((await r.step({ exec })).status, 'received');
+  assert.doesNotMatch(JSON.stringify(stateFromComment(r.comments.at(-1).body, 7).passes), /src\/booking\/a\.js:1/u, 'the public copy posts no evidence');
+  const ran = runs;
+  // Another machine: no record of its own, only the public comment.
+  rmSync(recordFile(r.project, 7));
+  const again = await r.step({ exec });
+  assert.equal(again.status, 'dispatch', 'the agent pass is dispatched again, not left as fix_required');
+  attest(again);
+  assert.equal((await r.step({ exec })).status, 'received');
+  assert.ok(runs > ran, 'and the exec pass whose verdicts came without evidence ran again');
 });

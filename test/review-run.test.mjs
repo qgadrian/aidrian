@@ -2644,3 +2644,16 @@ test('the record command passes the findings file as one shell argument, from a 
   assert.deepEqual(argv.slice(0, 4), ['aidrian', 'pr', 'attest', '7']);
   assert.equal(shellQuote("it's a b"), "'it'\\''s a b'");
 });
+
+
+test('the findings file of a merged pass with three long flow ids still fits a file name, distinct and stable', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const flows = (tail) => Array.from({ length: 3 }, (_, i) => `${'f'.repeat(78)}${i}${tail}`);
+  const ids = ['a', 'b'].map((tail) => `agent:code-reviewer:${flows(tail).join('+')}`);
+  const [one, two] = ids.map((id) => findingsFile(r.project, 7, id));
+  for (const file of [one, two]) assert.ok(Buffer.byteLength(path.basename(file)) <= 255, `${Buffer.byteLength(path.basename(file))} bytes`);
+  assert.notEqual(one, two, 'two ids that share a long prefix differ by the hash of the whole id');
+  assert.equal(findingsFile(r.project, 7, ids[0]), one, 'the same id, the same file');
+  writeFileSync(one, '[]');
+  assert.equal(readFileSync(one, 'utf8'), '[]', 'the file can be written');
+});

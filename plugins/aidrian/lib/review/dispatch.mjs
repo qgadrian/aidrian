@@ -246,8 +246,11 @@ export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}
 
 // Where an agent pass writes its findings file: under the state folder's `tmp/`, outside every checkout, so the full
 // text of its findings is never staged with a commit. The folder is made here. The name is the pass id with every
-// character but a letter, digit, `.`, `_`, or `-` as `-`, so it cannot leave the folder, then the first 8 hex digits
-// of the raw id's SHA-256, so two ids that read alike, such as `flow:a-b:c` and `flow:a:b-c`, never share a file.
+// character but a letter, digit, `.`, `_`, or `-` as `-`, so it cannot leave the folder, cut to its first
+// FILE_PREFIX characters, since a merged pass joins up to three flow ids of any length, then the first 8 hex digits of
+// the whole raw id's SHA-256, so two ids that read alike, such as `flow:a-b:c` and `flow:a:b-c`, or two that share a
+// long prefix, never share a file. Every character left is ASCII, so the name stays far under 255 bytes.
+export const FILE_PREFIX = 100;
 export function findingsFile(project, n, passId) {
   const dir = path.join(stateDir(project), 'tmp', `review-${n}`);
   try {
@@ -255,7 +258,7 @@ export function findingsFile(project, n, passId) {
   } catch {}
   const id = String(passId);
   const tag = createHash('sha256').update(id).digest('hex').slice(0, 8);
-  return path.join(dir, `${id.replace(/[^\w.-]/gu, '-')}-${tag}.findings.json`);
+  return path.join(dir, `${id.replace(/[^\w.-]/gu, '-').slice(0, FILE_PREFIX)}-${tag}.findings.json`);
 }
 
 // One agent pass's entry in a `dispatch` result: who runs it, on what, and the command that records it.

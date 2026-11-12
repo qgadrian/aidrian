@@ -3045,3 +3045,86 @@ test('replies: a finding answered and then marked security loses the engine`s re
   assert.deepEqual(readLocalState(r.project, 7).index['R1-1'].thread, { reviewId: 900, replied: true, resolved: true });
   assert.equal(third.replies, undefined, 'and nothing is posted again');
 });
+
+// ---- A security mark the step sets itself (the second sweep in run.mjs finish) ----
+
+// The twin of the posted finding R1-1, at its place, that its reviewer flags as security: recording it marks R1-1 in the
+// same step, after the step's first sweep.
+const securityTwin = { file: 'src/app.js', line: 1, title: 'the number leaks a secret', body: 'flagged', severity: 'low', security: true };
+// The same twin returned as a repeat of a residual the pull request body accepts: a ruling, which never blocks, so the
+// step that records it returns received.
+const RESIDUAL = 'The number may leak in a log line';
+const rulingTwin = { ...securityTwin, already_ruled: RESIDUAL };
+const withResidual = (r) => {
+  const change = r.forge.change;
+  r.forge.change = (...args) => ({ ...change(...args), body: `## Summary\n\nWhy.\n\n## Accepted residuals\n\n- ${RESIDUAL}\n` });
+};
+
+test('the delete in the step that sets the mark: an exec pass`s security twin deletes the engine`s reply and root that step, and its record maps neither', async (t) => {
+  const { r, posts } = await postedThenFixed(t);
+  const answered = await r.step({ exec: clean });
+  const replyId = readLocalState(r.project, 7).index['R1-1'].thread.replyId;
+  assert.ok(answered.replies?.replied?.includes('R1-1') && Number.isSafeInteger(replyId));
+  // The next push: its exec pass reports the security twin.
+  r.write('src/app.js', 'export const app = 4;\n');
+  r.commit('next');
+  r.forge.visibility = () => 'PUBLIC';
+  posts.calls.length = 0;
+  const marked = await r.step({ exec: async () => found(securityTwin) });
+  assert.equal(readLocalState(r.project, 7).index['R1-1'].security, true, 'the step`s own exec pass set the mark');
+  assert.deepEqual(marked.comment_deletes.deleted.map((each) => each.id), [replyId, 1000], 'the reply, then the root, in the same step');
+  assert.ok(!posts.reviewComments.some((each) => each.id === replyId || each.id === 1000));
+  const posted = stateFromComment(summaryComment(r).body, 7).index['R1-1'];
+  assert.equal(posted.security, true);
+  assert.equal(posted.thread?.commentId, undefined, 'the posted record points at no deleted comment');
+  assert.equal(posted.thread?.replyId, undefined);
+  assert.equal(marked.comment_deletes.deleted.length, new Set(marked.comment_deletes.deleted.map((each) => each.id)).size, 'each comment deleted once');
+  posts.calls.length = 0;
+  const after = await r.step({ exec: async () => found(securityTwin) });
+  assert.ok(!posts.calls.some((name) => name.startsWith('delete')), 'the step after it deletes nothing more');
+  assert.equal(after.comment_deletes, undefined);
+});
+
+test('the delete in the step that sets the mark, on a step that returns received; a private repository keeps the comment', async (t) => {
+  const { r, posts } = await postedThenFixed(t);
+  withResidual(r);
+  r.forge.visibility = () => 'PUBLIC';
+  const received = await r.step({ exec: async () => found(rulingTwin) });
+  assert.equal(received.status, 'received');
+  assert.equal(readLocalState(r.project, 7).index['R1-1'].security, true, 'the ruling, a twin, marked the posted finding');
+  assert.deepEqual(received.comment_deletes.deleted.map((each) => each.id), [1000]);
+  assert.ok(!posts.reviewComments.some((each) => each.id === 1000));
+  assert.equal(stateFromComment(summaryComment(r).body, 7).index['R1-1'].thread?.commentId, undefined);
+  assert.equal(received.replies, undefined, 'and no reply goes to the finding the step marked');
+
+  const kept = await postedThenFixed(t);
+  withResidual(kept.r);
+  const quiet = await kept.r.step({ exec: async () => found(rulingTwin) });
+  assert.equal(quiet.status, 'received');
+  assert.equal(quiet.comment_deletes, undefined, 'on a private repository nothing is deleted');
+  assert.ok(kept.posts.reviewComments.some((each) => each.id === 1000));
+});
+
+test('the delete in the step that sets the mark follows publicSecurity "full": a root that holds the finding`s text goes, the textless reply stays', async (t) => {
+  const { r, posts } = await postedThenFixed(t, { version: 1, review: { publish: { inline: true, publicSecurity: 'full' } } });
+  await r.step({ exec: clean });
+  const replyId = readLocalState(r.project, 7).index['R1-1'].thread.replyId;
+  r.write('src/app.js', 'export const app = 4;\n');
+  r.commit('next');
+  r.forge.visibility = () => 'PUBLIC';
+  const marked = await r.step({ exec: async () => found(securityTwin) });
+  assert.deepEqual([marked.comment_deletes.deleted.map((each) => each.id), marked.comment_deletes.textless.map((each) => each.id)], [[1000], [replyId]]);
+  assert.ok(posts.reviewComments.some((each) => each.id === replyId) && !posts.reviewComments.some((each) => each.id === 1000));
+});
+
+test('the two sweeps of a step read the repository`s visibility once between them, on a private repository that keeps the comment', async (t) => {
+  const { r, posts } = await postedThenMarked(t);
+  let reads = 0;
+  r.forge.visibility = () => (reads += 1, 'PRIVATE');
+  posts.calls.length = 0;
+  const step = await r.step({ exec: async () => found(mediumFinding) });
+  assert.equal(step.comment_deletes, undefined, 'a private repository keeps the comment');
+  assert.ok(posts.reviewComments.some((each) => each.id === 1000));
+  // One read for the step's post context, one shared by both sweeps.
+  assert.equal(reads, 2, 'the second sweep reuses the first sweep`s read');
+});

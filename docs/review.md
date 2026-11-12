@@ -1361,9 +1361,14 @@ what went where (`inline_review`). Inline publishing has not been run beside the
   that does not read as `PRIVATE`, under either `publicSecurity` value. Under `"counts"` every such comment goes, since even one with its text withheld shows the
   finding's place; under `"full"` a comment whose section of that finding holds no reviewer text, as the engine posts a
   security finding there, stays (`comment_deletes.textless`). The other findings a deleted fallback comment listed read
-  as unposted, and a later step posts them again. Each machine does so on its next step, whether it set the mark or reads it in the posted
-  record, and whatever `inline`, the local file, and `review.record` say; it also runs before a step stops for a held
-  record, from this machine's record alone and with no write, and before a stop for a finding with no text. It reaches a
+  as unposted, and a later step posts them again. Each machine does so on its next step, whether it set the mark or
+  reads it in the posted record, and whatever `inline`, the local file, and `review.record` say; it also runs before a
+  step stops for a held record, from this machine's record alone and with no write, and before a stop for a finding
+  with no text. A step that sets the mark itself, through what its own reviewers report, its plan, or the ids it gives
+  late, and goes on to its result, deletes in that same step: the delete runs again when the step finishes, before it
+  posts anything or writes the record, and skips every comment it already dealt with. A step that stops early after
+  its plan note or late ids set a mark (`too_large`, `unsatisfied`, `none_needed`) posts nothing and publishes no
+  record; the next step deletes. It reaches a
   comment the record maps and, where the record is posted, a marked comment of this user that no record maps, a reply
   whose mark a stale write lost among them. A deleted reply keeps the thread's `replied` mark, so it is not posted again;
   under `"full"` a reply, which holds no finding text, stays. Before

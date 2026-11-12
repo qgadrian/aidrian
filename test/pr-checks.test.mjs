@@ -10,7 +10,7 @@ import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { checkoutRepos, computeVerdict, currentRows, namesRemote, parseCliArgs, runChecks } from '../plugins/aidrian/lib/pr-checks.mjs';
 
 const row = (name, state) => ({ name, state });
-const verdict = (rows, policy) => computeVerdict(rows, policy).verdict;
+const verdict = (rows, policy, options) => computeVerdict(rows, policy, options).verdict;
 
 test('every check terminal and none failing is ready; a skip is named, never silent', () => {
   const result = computeVerdict([row('lint', 'SUCCESS'), row('unit', 'SUCCESS'), row('docs', 'SKIPPED')]);
@@ -57,6 +57,25 @@ test('conditionalChecks: once it has an entry, only a listed check may skip; any
   assert.deepEqual([required.verdict, required.reason], ['failing', 'e2e=SKIPPED (required)'], 'required wins over conditional');
 });
 
+test('on a draft, a skip the rules would fail has not run yet: ready, named under draft_skips; never once ready', () => {
+  // The incident: a workflow gates its jobs on the pull request not being a draft, so on the draft they report SKIPPED,
+  // and the ready step, which waits for a ready verdict, could never mark it ready.
+  const rows = [row('Lint', 'SKIPPED'), row('E2E', 'SKIPPED'), row('Test DB', 'SKIPPED'), row('Vercel', 'SUCCESS')];
+  const policy = { requiredChecks: ['E2E'], conditionalChecks: ['Test DB'] };
+  const draft = computeVerdict(rows, policy, { draft: true });
+  assert.deepEqual(
+    [draft.verdict, draft.reason, draft.skipped, draft.unexpected_skips, draft.draft_skips],
+    ['ready', '1 pass; skipped: Test DB; not run on the draft, judged once it is marked ready: Lint, E2E', ['Test DB'], [], ['Lint', 'E2E']],
+  );
+  const ready = computeVerdict(rows, policy);
+  assert.deepEqual([ready.verdict, ready.reason, ready.draft_skips], ['failing', 'E2E=SKIPPED (required); unexpected skip: Lint', []]);
+  // A draft relaxes only the skip: a failure, a pending check, a neutral result, and an unregistered required check still hold.
+  assert.equal(verdict([row('E2E', 'SKIPPED'), row('unit', 'FAILURE')], policy, { draft: true }), 'failing');
+  assert.equal(verdict([row('E2E', 'SKIPPED'), row('unit', 'IN_PROGRESS')], policy, { draft: true }), 'pending');
+  assert.equal(computeVerdict([row('E2E', 'SUCCESS'), row('docs', 'NEUTRAL')], policy, { draft: true }).reason, 'unexpected skip: docs');
+  assert.equal(verdict([row('Lint', 'SKIPPED')], policy, { draft: true }), 'pending', 'a required check that never reported');
+});
+
 test('a superseded run and a skipped matrix template row are left out: a draft-then-ready pull request reads ready', () => {
   // The incident: the run started while the pull request was a draft skipped the matrix job under its template name, and
   // the run after it was marked ready, on the same head, passed every expanded shard and the aggregator.
@@ -69,7 +88,7 @@ test('a superseded run and a skipped matrix template row are left out: a draft-t
     { name: 'Vercel', state: 'SUCCESS', workflow: null, event: null, run: null },
   ];
   const policy = { conditionalChecks: ['Test DB'] };
-  assert.deepEqual(computeVerdict(rows, policy), { verdict: 'ready', reason: '8 pass', failing: [], pending: [], skipped: [], unexpected_skips: [] });
+  assert.deepEqual(computeVerdict(rows, policy), { verdict: 'ready', reason: '8 pass', failing: [], pending: [], skipped: [], unexpected_skips: [], draft_skips: [] });
   assert.deepEqual(currentRows(rows).map((row) => row.name), [...[1, 2, 3, 4, 5, 6].map((shard) => `🎭 E2E Shard ${shard}`), 'E2E gate', 'Vercel']);
   // Without the newer run, the template row is still dropped, and the old run's own skip is still named.
   assert.equal(computeVerdict(rows.slice(0, 2), policy).reason, 'unexpected skip: E2E gate');
@@ -118,6 +137,31 @@ test('runChecks exits by verdict, reads the rows of a pending check, and exits 3
   assert.equal(runChecks([], config, forgeWith(() => { throw new Error('gh: not found'); })), 3);
   assert.deepEqual(lines.slice(0, 3), ['ready: 1 pass', 'failing: e2e=FAILURE', 'pending: 1 not terminal: e2e']);
   assert.equal(lines.at(-1), 'error: could not read the checks with gh (gh: not found)');
+});
+
+test('runChecks reads whether the pull request is a draft only when a check skipped, and a failed read keeps the strict rules', (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  t.mock.method(console, 'error', (line) => lines.push(line));
+  const config = { github: { ...DEFAULTS.github, requiredChecks: ['E2E'] } };
+  const views = [];
+  const forge = (rows, isDraft) => ({
+    checks: () => rows,
+    change: (...given) => {
+      views.push(given);
+      if (isDraft instanceof Error) throw isDraft;
+      return { isDraft };
+    },
+  });
+  const skipped = [row('E2E', 'SKIPPED')];
+  assert.equal(runChecks(['7', '-R', 'acme/notes'], config, forge(skipped, true), () => [identity('acme/notes')]), 0);
+  assert.deepEqual(views, [['7', 'isDraft', { repo: 'acme/notes' }]]);
+  assert.equal(lines.at(-1), 'ready: 0 pass; not run on the draft, judged once it is marked ready: E2E');
+  assert.equal(runChecks(['7'], config, forge(skipped, false)), 1, 'a ready pull request');
+  assert.equal(runChecks(['7'], config, forge(skipped, new Error('gh: HTTP 502'))), 1, 'an unreadable view');
+  views.length = 0;
+  assert.equal(runChecks(['7'], config, forge([row('E2E', 'SUCCESS')], true)), 0);
+  assert.deepEqual(views, [], 'nothing skipped: no view');
 });
 
 test('-R works only for a remote of this checkout, whose config.json holds the policy; another repository is an error', (t) => {

@@ -326,12 +326,22 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // gh never reads as a file or a boolean. Returns the reply as GitHub answers it, with its `id`.
     replyToReviewComment: (repo, n, commentId, body) => rest(`repos/${repo}/pulls/${idOf(n, 'a pull request number')}/comments/${idOf(commentId, 'a comment id')}/replies`, { method: 'POST', fields: { body: String(body ?? '') } }),
     // Resolves the review thread of pull request `n` that review comment `commentId` starts: the thread is found by that
-    // comment's id, so no caller handles a GraphQL node id. Returns { resolved: true }; throws when no thread starts
-    // there, when the call fails, or when GitHub does not answer that the thread is resolved.
-    resolveThread: (repo, n, commentId) => {
+    // comment's id, so no caller handles a GraphQL node id. With `only`, the ids of the comments the caller allows in the
+    // thread (its root and the caller's own replies), the thread as read just now must hold no other comment and be read
+    // whole; else nothing is resolved and it answers { resolved: false, others: true }, so a reply that landed since the
+    // caller's own read keeps the thread open. Returns { resolved: true } for a thread resolved, by this call or before;
+    // throws when no thread starts there, when the call fails, or when GitHub does not answer that it is resolved.
+    resolveThread: (repo, n, commentId, { only } = {}) => {
+      const listed = Array.isArray(only) ? only : [only];
+      const allowed = only === undefined ? null : new Set(listed.map((id) => idOf(id, 'a comment id')));
       const thread = threadAt(repo, n, commentId);
       if (!thread) throw new Error('no review thread of the pull request starts at that comment');
       if (thread.isResolved === true) return { resolved: true };
+      if (allowed) {
+        const nodes = Array.isArray(thread.comments?.nodes) ? thread.comments.nodes : [];
+        const whole = Number.isSafeInteger(thread.comments?.totalCount) && thread.comments.totalCount <= nodes.length;
+        if (!whole || nodes.some((each) => !allowed.has(restId(each?.fullDatabaseId)))) return { resolved: false, others: true };
+      }
       if (typeof thread.id !== 'string' || !NODE_ID.test(thread.id)) throw new Error('GitHub answered the review thread with no id');
       const answer = json(['api', 'graphql', '-f', `query=${RESOLVE_MUTATION}`, '-f', `id=${thread.id}`]);
       if (answer?.data?.resolveReviewThread?.thread?.isResolved !== true) throw new Error('GitHub did not resolve the review thread');

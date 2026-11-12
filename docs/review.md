@@ -1393,9 +1393,10 @@ none, and the next one does. `inline: false`, the local file's
   holds its root, was missed, and is unanswered. A thread another member's login started was posted by that member's machine: this
   machine posts nothing on it, and lists it in `replies.waiting` with that login, which `pr-review-loop` reports as
   waiting on that machine. The record keeps no login.
-- **When it is resolved.** After the reply, the step resolves the thread only when nobody else has replied in it. A
-  thread someone else replied in, the same login without the marker included, keeps the reply and stays open
-  (`replies.open`), and counts as done.
+- **When it is resolved.** After the reply, the step resolves the thread only when nobody else has replied in it. The
+  forge reads the thread again just before it resolves it, so a reply that lands while the engine posts its own still
+  keeps the thread open. A thread someone else replied in, the same login without the marker included, keeps the reply
+  and stays open (`replies.open`), and counts as done.
 - **Once.** The finding's `thread` keeps `replied` with the reply's id (`replyId`), and `resolved`, each set only once
   its own forge call succeeded, or for `resolved` once the thread read shows someone resolved it by hand;
   `engine_comments` lists the reply. A step answers only what lacks a mark. An earlier

@@ -177,9 +177,11 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `{ resolved, complete, comments }`, its comments in order in the shape the other comment reads give (`id`, `body`,
   `user.login`, `author_association`), `complete` false when the forge gave only part of them, or null when no thread of
   the pull request starts there; `replyToReviewComment(repo, n, commentId, body)`, one reply in that thread, answering
-  the reply with its `id`; and `resolveThread(repo, n, commentId)`, which resolves that thread, found by its root
-  comment's id, so shared code handles no forge-side thread id (GitHub: a GraphQL node id). It answers
-  `{ resolved: true }` and throws on any failure, so the step tries again. The engine replies once a finding with a
+  the reply with its `id`; and `resolveThread(repo, n, commentId, { only })`, which resolves that thread, found by its
+  root comment's id, so shared code handles no forge-side thread id (GitHub: a GraphQL node id). With `only`, the ids
+  of the comments the caller allows there, it reads the thread again first and resolves nothing when that read holds
+  any other comment or is only part of the thread, answering `{ resolved: false, others: true }`. It answers
+  `{ resolved: true }` for a resolved thread and throws on any failure, so the step tries again. The engine replies once a finding with a
   thread closes ([Publishing](../review.md#publishing)).
   Every write route, and every read of one comment, is built from a safe positive integer alone, and
   text from a pull request reaches a write as a literal string: on GitHub, JSON on gh's stdin or a raw `-f` field, never

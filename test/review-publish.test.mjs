@@ -1233,9 +1233,11 @@ function replyForge(threads = {}, { failReply = false, failResolve = false, fail
       threads[id].comments.push(reply);
       return reply;
     },
-    resolveThread: (repo, n, id) => {
-      calls.push(['resolve', id]);
+    // As the adapter does: the thread read again, and nothing resolved when it holds a comment outside `only`.
+    resolveThread: (repo, n, id, { only } = {}) => {
+      calls.push(['resolve', id, only]);
       if (failResolve) throw new Error('gh: (HTTP 502)');
+      if (Array.isArray(only) && threads[id].comments.some((comment) => !only.includes(comment.id))) return { resolved: false, others: true };
       threads[id].resolved = true;
       return { resolved: true };
     },
@@ -1499,4 +1501,20 @@ test('replies: a thread the lookup misses while the step`s read still holds its 
   assert.deepEqual([gone.unanswered, gone.left, gone.reasons], [[], ['R1-1'], undefined], 'a root the read no longer holds is gone');
   const failing = replyForge(threadOf('R1-1'), { failResolve: true });
   assert.deepEqual(answerThreads(replyStep(repliesState(closedEntry('R1-1')), failing.forge)).reasons, { 'R1-1': 'the resolve failed' }, 'every unanswered id has its reason');
+});
+
+test('replies: a person who replies between the step`s read and the resolve keeps the thread open: replied is set, resolved is not', () => {
+  const state = repliesState(closedEntry('R1-1'));
+  const posts = replyForge(threadOf('R1-1'));
+  const post = posts.forge.replyToReviewComment;
+  posts.forge.replyToReviewComment = (...args) => {
+    const reply = post(...args);
+    posts.threads[1001].comments.push({ id: 1450, body: 'wait, not fixed', user: { login: 'someone' }, author_association: 'NONE' });
+    return reply;
+  };
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([result.replied, result.resolved, result.open, result.unanswered], [['R1-1'], [], ['R1-1'], []]);
+  assert.deepEqual(posts.calls.find(([name]) => name === 'resolve'), ['resolve', 1001, [1001, 2001]], 'the resolve allows the root and the engine`s own reply alone');
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001 });
+  assert.notEqual(posts.threads[1001].resolved, true, 'the thread is not resolved');
 });

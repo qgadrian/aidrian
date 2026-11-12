@@ -699,6 +699,17 @@ test('resolveThread: the thread found by its root comment`s id, then one resolve
   assert.throws(() => recorded(() => threadsPage([])).forge.resolveThread('o/r', 7, 61), /no review thread/u);
   const refused = recorded((call) => (call.some((arg) => arg.startsWith('query=mutation')) ? '{"data":{"resolveReviewThread":null}}' : threadsPage([['PRRT_kw1', false, 61]])));
   assert.throws(() => refused.forge.resolveThread('o/r', 7, 61), /did not resolve/u, 'an answer that is not a resolved thread throws, so the step tries again');
+  // With `only`, the thread read just now must hold no other comment: one that landed since the caller's read keeps it open.
+  const others = recorded(() => threadsPage([['PRRT_kw1', false, 61, [62, 63]]]));
+  assert.deepEqual(others.forge.resolveThread('o/r', 7, 61, { only: [61, 62] }), { resolved: false, others: true });
+  assert.equal(others.calls.length, 1, 'no mutation is sent');
+  const alone = recorded((call) => (call.some((arg) => arg.startsWith('query=mutation')) ? '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}' : threadsPage([['PRRT_kw1', false, 61, [62]]])));
+  assert.deepEqual(alone.forge.resolveThread('o/r', 7, 61, { only: [61, 62] }), { resolved: true });
+  assert.equal(alone.calls.length, 2, 'a thread of the allowed comments alone is resolved');
+  const partial = recorded(() => JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [{ id: 'PRRT_kw1', isResolved: false, comments: { totalCount: 101, nodes: [{ fullDatabaseId: '61', body: 'x', author: { login: 'me' } }] } }] } } } } }));
+  assert.deepEqual(partial.forge.resolveThread('o/r', 7, 61, { only: [61] }), { resolved: false, others: true }, 'a thread read only in part is not resolved');
+  assert.equal(partial.calls.length, 1);
+  for (const bad of ['1/../x', -1, 1.5, '@2']) assert.throws(() => recorded().forge.resolveThread('o/r', 7, 61, { only: [61, bad] }), /must be a positive whole number/u, String(bad));
   const odd = recorded(() => threadsPage([['bad id; x', false, 61]]));
   assert.throws(() => odd.forge.resolveThread('o/r', 7, 61), /no id/u);
   assert.equal(odd.calls.length, 1, 'a node id of another shape is never sent back');

@@ -624,10 +624,22 @@ export function answerThreads(s) {
       out.open.push(id);
       continue;
     }
+    // The forge reads the thread again just before it resolves it, and resolves nothing when a comment other than the
+    // root and this user's marked replies landed since this step's read: that thread stays open, as one replied in (R8).
+    const only = [thread.commentId, ...rest.filter(ours).map((comment) => comment.id), thread.replyId].filter(Number.isSafeInteger);
+    let resolved;
     try {
-      forge.resolveThread(repo, n, thread.commentId);
+      resolved = forge.resolveThread(repo, n, thread.commentId, { only: [...new Set(only)] });
     } catch {
       miss(id, 'the resolve failed');
+      continue;
+    }
+    if (resolved?.others === true) {
+      out.open.push(id);
+      continue;
+    }
+    if (resolved?.resolved !== true) {
+      miss(id, 'the forge did not answer that the thread is resolved');
       continue;
     }
     thread.resolved = true;

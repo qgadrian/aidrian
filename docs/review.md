@@ -1277,7 +1277,8 @@ shows of the findings ([config](config.md#keys)):
   ([Reviewers](#reviewers)), and its twin, shows only in a count while it is open; once closed, its row holds its id,
   severity, outcome, and closing range only. Its title, body, file, and line are in no post and not in the posted copy
   of the record, on any later step, and its residual row in a step's result is named by id, with no title, and anchors
-  nothing. `"full"` posts a security finding's location and disposition as any other finding's; its text never.
+  nothing. `"full"` posts a security finding's location and disposition as any other finding's, and gives its residual
+  row its file and line: never its title, body, evidence, or reason, in a post, the posted copy, or a residual row.
 - `inline` and `replies` are checked; neither posts anything.
 - `review.record: "local"` posts nothing, whatever `review.publish` says.
 - `.aidrian.local.json` may set only `summary: "counts"` and `inline: false`, which post less. Any other key or value

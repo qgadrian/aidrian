@@ -507,13 +507,20 @@ test('a security finding and its twin on a repository that is not private: count
   assert.ok(rowsOf(full).includes('| R1-1 | src/a.js:10 | high | fix\\_now | open |'));
   assert.deepEqual([stateFromComment(full, 7).index['R1-1'].file, stateFromComment(full, 7).index['R1-1'].line], ['src/a.js', 10], 'and the posted copy holds its place');
   assert.doesNotMatch(full, /SENTINEL/u, 'never its text on a repository that is not private');
+  const posted = JSON.stringify(stateFromComment(full, 7));
+  assert.doesNotMatch(posted, /SENTINEL/u, 'nor in the posted copy of the record: no title, body, evidence, or reason');
 });
 
-test('publicSecurity "full": a security finding`s residual row reads as any other`s', () => {
+test('publicSecurity "full": a security finding`s residual row keeps its place, never its text, on a repository that is not private', () => {
   const state = { ...emptyState(7, 'o/r'), passes: { p: { head: 'h', list: [{ id: 'R1-1', mint: '00000001', title: 'Leak', file: 'a.js', severity: 'high', security: true }] } } };
   const row = { pass: 'p', id: 'R1-1', title: 'Leak', file: 'a.js', line: 1, severity: 'high' };
-  const reading = { visibility: 'PUBLIC', inside: true };
   const checker = textChecker({ context: CONTEXT, words: [] });
-  assert.equal(residualRows([row], state, { reading, checker }).rows[0].text, WITHHELD);
-  assert.deepEqual(residualRows([row], state, { reading, checker, publish: { publicSecurity: 'full' } }).rows, [row]);
+  for (const reading of [{ visibility: 'PUBLIC', inside: true }, { visibility: 'INTERNAL', inside: true }, { visibility: null, inside: true }]) {
+    assert.deepEqual(residualRows([row], state, { reading, checker }).rows, [{ pass: 'p', id: 'R1-1', severity: 'high', text: WITHHELD }], `${reading.visibility}: counts`);
+    const full = residualRows([row], state, { reading, checker, publish: { publicSecurity: 'full' } });
+    assert.deepEqual(full.rows, [{ pass: 'p', id: 'R1-1', file: 'a.js', line: 1, severity: 'high', text: WITHHELD }], `${reading.visibility}: full lifts the place alone`);
+    assert.equal(full.withheld, 1);
+  }
+  assert.deepEqual(residualRows([row], state, { reading: PRIVATE, checker, publish: { publicSecurity: 'full' } }).rows, [row], 'on a private repository the row is whole');
+  assert.deepEqual(residualRows([{ ...row, file: TOKEN }], state, { reading: { visibility: 'PUBLIC', inside: true }, checker, publish: { publicSecurity: 'full' } }).rows, [{ pass: 'p', id: 'R1-1', severity: 'high', text: WITHHELD }], 'a file the checks withhold is left out, and its line goes with it');
 });

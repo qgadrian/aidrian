@@ -346,7 +346,8 @@ function namesBy(state, names) {
 // checkout's config, the paths of the pull request's diff, which count as named by git, and the forge's login check.
 // Missing, a reading is not private, a checker is the plain one, with no root no path check can run, so no path is
 // kept, and with no login check no login is. `post.publish.publicSecurity` "full" posts a security finding's file and
-// line as any other finding's; anything else withholds them on a reading that is not private (R5).
+// line as any other finding's, and nothing more: no title, body, evidence, or reason, as for every finding there;
+// anything else withholds them on a reading that is not private (R5).
 // What stays on this machine on every repository never posts: an index entry's recording reviewer, the title of an
 // entry closed as fixed or not reported again, and the ids a dispatch note listed (Q2-A3).
 export function postedCopy(state, post = {}) {
@@ -449,7 +450,7 @@ function allowlisted(state, post, counter) {
   const paths = post.root ? gitPaths(post.root) : null;
   const diffPaths = post.diffPaths instanceof Set ? post.diffPaths : new Set();
   const secure = securityReading(state);
-  // Under publicSecurity "full" a security finding keeps its place; its mark still posts.
+  // Under publicSecurity "full" a security finding keeps its place, and only its place; its mark still posts.
   const full = post.publish?.publicSecurity === 'full';
   const placeless = full ? new Set() : secure;
   const secureIds = new Set([...placeless].map((finding) => finding.id).filter(isFindingId));
@@ -868,26 +869,31 @@ export function untextedBlocking(state, local = null) {
 // ---- The residual rows of a step's result ----
 
 // The late-round residual rows a step's result lists for the pull request body, through the text decision: a row whose
-// finding's text it withholds is named by its id and severity alone, with no title, file, or line, so it anchors
-// nothing. Text is withheld on a pull request from outside the team, for a security finding (securityIds, a row with no
-// id among them) on a repository that is not private unless `publish.publicSecurity` is "full", and where the full
-// checks withhold the title. Returns { rows, withheld }.
+// finding's text it withholds is named by its id and severity alone, with no title, so it anchors nothing. Text is
+// withheld on a pull request from outside the team, for a security finding (securityIds, a row with no id among them)
+// on a repository that is not private, and where the full checks withhold the title. Under `publish.publicSecurity`
+// "full", a security finding's withheld row on a repository that is not private also keeps its file and line, which
+// the checks pass, and never its text. Returns { rows, withheld }.
 export function residualRows(rows, state, { reading, checker = plainChecker(), publish } = {}) {
   // The rows are the session's to copy, not the comment's: a check that fails here withholds the row's text and holds
   // no record, so the flag the summary reads is left as it was.
   const failedBefore = checker.failed;
-  // Under publicSecurity "full" a security finding's row reads as any other's; a row with no id never does.
-  const secure = publish?.publicSecurity === 'full' ? new Set() : securityIds(state);
+  const secure = securityIds(state);
+  const full = publish?.publicSecurity === 'full';
   let withheld = 0;
   // Every string a row keeps passes the checks: the title and the file decide whether the row keeps its text, and the
   // pass and the severity of a row by id are left out when they fail.
   const passes = (value) => typeof value !== 'string' || checker.allows(value);
   const out = rows.map((row) => {
     const security = !isFindingId(row.id) || secure.has(row.id);
-    const hidden = reading?.inside !== true || (security && reading?.visibility !== 'PRIVATE') || typeof row.title !== 'string' || !checker.allows(row.title) || !passes(row.file);
+    const unshown = security && reading?.visibility !== 'PRIVATE';
+    const hidden = reading?.inside !== true || unshown || typeof row.title !== 'string' || !checker.allows(row.title) || !passes(row.file);
     if (!hidden && passes(row.pass) && passes(row.severity)) return row;
     withheld += 1;
-    return { ...(passes(row.pass) ? { pass: row.pass } : {}), ...(isFindingId(row.id) ? { id: row.id } : {}), ...(passes(row.severity) ? { severity: row.severity } : {}), text: WITHHELD };
+    // "full" lifts the place of a security finding with an id, from inside the team, and nothing else.
+    const placed = full && unshown && isFindingId(row.id) && reading?.inside === true && typeof row.file === 'string' && passes(row.file);
+    const place = placed ? { file: row.file, ...(Number.isSafeInteger(row.line) && row.line >= 1 ? { line: row.line } : {}) } : {};
+    return { ...(passes(row.pass) ? { pass: row.pass } : {}), ...(isFindingId(row.id) ? { id: row.id } : {}), ...place, ...(passes(row.severity) ? { severity: row.severity } : {}), text: WITHHELD };
   });
   if ('failed' in checker) checker.failed = failedBefore;
   return { rows: out, withheld };

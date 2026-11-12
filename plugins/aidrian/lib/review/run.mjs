@@ -35,7 +35,7 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
 import { residualRows } from './publish.mjs';
-import { engineLists, postInline } from './inline.mjs';
+import { answerThreads, engineLists, postInline } from './inline.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
@@ -200,6 +200,12 @@ function finish(s, status, extra) {
   if (s.onPr && Array.isArray(extra.open)) {
     const inline = postInline(s, extra.open);
     if (inline) result.inline_review = inline;
+  }
+  // Every step answers each closed finding's thread that still lacks its reply or its resolve (review.publish.replies),
+  // whatever its status, so one a step could not answer is tried again by the next; `replies.unanswered` names those.
+  if (s.onPr) {
+    const replies = answerThreads(s);
+    if (replies) result.replies = replies;
   }
   // The residual rows the session copies into the pull request body pass the text decision: a finding whose text it
   // withholds is named by its id, and its row anchors nothing.

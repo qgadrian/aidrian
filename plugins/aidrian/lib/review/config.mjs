@@ -18,7 +18,8 @@ export const NAME = /^[\w.:-]+$/u;
 
 // What the review posts on the pull request beyond its record (docs/review.md#publishing): the summary comment's
 // findings table, the inline review of each step's new blocking findings (`inline`, lib/review/inline.mjs), and how a
-// security finding shows on a repository that is not private (`publicSecurity`). `replies` is checked; it posts nothing.
+// security finding shows on a repository that is not private (`publicSecurity`), and, with `inline` on, the reply on each
+// finding's thread once it closes (`replies`, inline.mjs answerThreads).
 export const PUBLISH_SUMMARIES = Object.freeze(['counts', 'findings']);
 export const PUBLIC_SECURITY = Object.freeze(['counts', 'full']);
 export const PUBLISH_DEFAULTS = Object.freeze({ summary: 'counts', inline: false, replies: true, publicSecurity: 'counts' });

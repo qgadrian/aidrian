@@ -16,7 +16,7 @@ import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, rou
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
-import { deleteOwn, raiseFloor, readMarked } from './inline.mjs';
+import { answerThreads, deleteOwn, fillThreads, raiseFloor, readMarked } from './inline.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
 import { closingRange, postContext } from './dispatch.mjs';
 import * as quota from './quota.mjs';
@@ -138,6 +138,9 @@ export async function prepareStep(s) {
     s.deletes = sweep(readLocalState(project, n), 'held');
     return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held, record.why), held: record.held, retry_recommended: false };
   }
+  // An inline comment an earlier step could not read back holds its review's id alone: its comment id is filled in from
+  // the marked posts first, so the delete, the lists, and the replies read it as the engine's own.
+  if (marked?.items) fillThreads(record.state, marked.items);
   s.deletes = sweep(record.state, onPr ? 'posted' : 'local');
   // A record built on another machine's posted copy can hold an open, blocking finding whose text stayed on that machine:
   // no reviewer here can judge a fix of it. The step stops before it adopts the record or runs a reviewer, and this
@@ -195,7 +198,11 @@ export async function prepareStep(s) {
     mergeNote = `the merge from ${info.baseRefName} could not be read (${stderrTail(error.message, { chars: 200 })}): the whole change is reviewed`;
   }
   if (baseMerge?.clean) {
+    // A carried review answers the closed findings' threads as a finished step does (inline.mjs answerThreads), before
+    // the record is written, so their marks are kept and posted.
+    const replies = onPr ? answerThreads(s) : null;
     const carried = settle({
+      ...(replies ? { replies } : {}),
       status: 'received', pr: n, repo, head, base, carried_from: reviewedHead, carried_base: mergedBase, round: state.rounds.length, depth: 'none',
       max_rounds: roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) }).maxRounds,
       plan: { depth: 'none', reasons: [`a clean merge from ${info.baseRefName}: the review of ${reviewedHead.slice(0, 7)} carries to this head`], flows: [], stages: [] },

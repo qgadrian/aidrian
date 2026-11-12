@@ -12,6 +12,8 @@
 //   own inline or fallback comment for a security finding goes, each checked through the forge at the point of action.
 // - The inline review (postInline): one review a step, each new blocking finding on an added line of the diff as its
 //   own thread, the rest in its body, and one conversation comment in its place when the forge refuses it.
+// - The replies (answerThreads): once a finding with a thread closes, one reply on that thread with its outcome, and the
+//   thread resolved when it is the engine's alone.
 //
 // Every forge call goes through the step's forge (lib/forges/index.mjs): no route, status code, or gh message here.
 
@@ -21,7 +23,7 @@ import { isObject } from '../fs.mjs';
 import { showPrefix } from '../git.mjs';
 import { diffLines } from './diff.mjs';
 import { blocks, FINDING_ID, freshId, isFindingId, severityOf } from './findings.mjs';
-import { capped, escapeLines, LINE_BREAK, plainFence, POST_CAP, quotedLines, securityIds, TEXT_CAP, TITLE_CAP, WITHHELD } from './publish.mjs';
+import { capped, escapeLines, LINE_BREAK, plainFence, POST_CAP, quotedLines, replyLines, securityIds, TEXT_CAP, TITLE_CAP, WITHHELD } from './publish.mjs';
 
 export const FINDING_MARKER = 'aidrian-review-finding';
 // The most inline comments one review holds; the rest are listed in its body and get their thread from a later review.
@@ -53,8 +55,9 @@ const KINDS = Object.freeze({ comment: 'comment', review: 'review', reviewCommen
 
 // Every conversation comment (`conversation`, as the step read them), review, and review comment of the pull request, as
 // { items }: each { kind, id, login, member, markers, starts }, `starts` false for a review comment that replies in a
-// thread. { error } when a read fails or answers anything but a list of items with a safe-integer id: a partial read
-// counts as failed, since the floor and the lists fail closed.
+// thread, and on a review comment `review`, the id of the review that holds it (null when the forge names none).
+// { error } when a read fails or answers anything but a list of items with a safe-integer id: a partial read counts as
+// failed, since the floor and the lists fail closed.
 export function readMarked(forge, repo, n, conversation) {
   let lists;
   try {
@@ -66,9 +69,11 @@ export function readMarked(forge, repo, n, conversation) {
   for (const [kind, list] of lists) {
     if (!Array.isArray(list) || list.some((each) => !isObject(each) || !Number.isSafeInteger(each.id))) return { error: 'the pull request\'s comments and reviews were read only in part' };
     for (const each of list) {
+      const review = Number.isSafeInteger(each.pull_request_review_id) ? each.pull_request_review_id : null;
       items.push({
         kind, id: each.id, login: typeof each.user?.login === 'string' ? each.user.login : null, member: isTrustedCommenter(each),
         markers: leadingMarkers(each.body), starts: !(kind === KINDS.reviewComment && each.in_reply_to_id !== undefined && each.in_reply_to_id !== null),
+        ...(kind === KINDS.reviewComment ? { review } : {}),
       });
     }
   }
@@ -101,6 +106,7 @@ function mappedPosts(state) {
   for (const entry of entries(state)) {
     const thread = isObject(entry.thread) ? entry.thread : {};
     add(KINDS.reviewComment, thread.commentId, entry);
+    add(KINDS.reviewComment, thread.replyId, entry);
     add(KINDS.comment, thread.fallbackId, entry);
     add(KINDS.review, thread.reviewId, entry);
   }
@@ -108,9 +114,9 @@ function mappedPosts(state) {
 }
 
 // The two lists of the engine's posts a step returns (R7, G3), from the marked items of members: `engine_comments`, each
-// one whose own id the index of `state` maps to a finding its markers name, and `engine_comments_unmapped`, the rest, all
-// of them with no `state`. Each entry is { kind, id, findings, login }. A reply with no marker and a marked post by
-// someone who is no member are on neither.
+// one whose own id the index of `state` maps to a finding its markers name, a thread's root or the engine's reply in it,
+// and `engine_comments_unmapped`, the rest, all of them with no `state`. Each entry is { kind, id, findings, login }.
+// A reply with no marker and a marked post by someone who is no member are on neither.
 export function engineLists(items, state = null) {
   const mapped = state ? mappedPosts(state) : new Map();
   const shown = (item) => ({ kind: item.kind, id: item.id, findings: item.markers, login: item.login });
@@ -119,33 +125,53 @@ export function engineLists(items, state = null) {
   return { engine_comments: marked.filter(own).map(shown), engine_comments_unmapped: marked.filter((item) => !own(item)).map(shown) };
 }
 
+// Fills in the comment id of each entry whose thread holds a review's id alone, as postInline leaves an inline comment
+// whose review it could not read back: from `items` (readMarked's), the one review comment of a member that starts a
+// thread, is held by that same review, and whose leading markers name the entry's id. A review body's finding has no such
+// comment and keeps the review's id alone. Returns the ids filled in.
+export function fillThreads(state, items) {
+  if (!Array.isArray(items)) return [];
+  const filled = [];
+  for (const entry of entries(state)) {
+    const thread = entry.thread;
+    if (!isObject(thread) || !Number.isSafeInteger(thread.reviewId) || thread.commentId !== undefined || thread.fallbackId !== undefined) continue;
+    const found = memberMarked(items).filter((item) => item.kind === KINDS.reviewComment && item.starts && item.review === thread.reviewId && item.markers.includes(entry.id));
+    if (found.length !== 1) continue;
+    thread.commentId = found[0].id;
+    filled.push(entry.id);
+  }
+  return filled;
+}
+
 // ---- The delete ----
 
 const sameLogin = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 
-// Takes comment `id` of `kind` out of every entry's thread that maps it, and an emptied thread off its entry: a deleted
-// fallback comment's other findings then read as unposted, and a later step posts them again.
+// Takes comment `id` of `kind` out of every entry's thread that maps it, a thread's root or the engine's reply in it, and
+// an emptied thread off its entry: a deleted fallback comment's other findings then read as unposted, and a later step
+// posts them again. A deleted reply keeps `replied`, so no step posts it again.
 function unmap(state, kind, id) {
-  const key = kind === KINDS.reviewComment ? 'commentId' : 'fallbackId';
+  const keys = kind === KINDS.reviewComment ? ['commentId', 'replyId'] : ['fallbackId'];
   for (const entry of entries(state)) {
-    if (!isObject(entry.thread) || entry.thread[key] !== id) continue;
-    delete entry.thread[key];
+    if (!isObject(entry.thread)) continue;
+    for (const key of keys) if (entry.thread[key] === id) delete entry.thread[key];
     if (!Object.keys(entry.thread).length) delete entry.thread;
   }
 }
 
-// Deletes the engine's own inline comment or fallback comment of each security-marked id of `state` (G4, H1, J2, K2), on
-// a repository that does not read as PRIVATE, under either publicSecurity value, whatever review.publish.inline, the
-// local file, and review.record say: a delete removes and never posts. Under "counts" every such comment goes, since even
+// Deletes the engine's own inline comment, its reply in that thread, or its fallback comment of each security-marked id
+// of `state` (G4, H1, J2, K2), on a repository that does not read as PRIVATE, under either publicSecurity value,
+// whatever review.publish.inline, the local file, and review.record say: a delete removes and never posts. Under "counts" every such comment goes, since even
 // one with its text withheld shows the finding's place. Under "full" a place may show, so a comment whose section of
 // that finding holds no reviewer text, as postInline posts a security finding there, is spared and listed as
 // `textless`; one posted with its text before the mark goes. `mode` is "posted" (the record is on the pull request),
 // "local" (review.record "local": the comments the record maps alone), or "held" (a held record: this machine's own
 // record alone, and no change to it, since no record is written there). `items` is readMarked's, null when it failed or
 // was not made.
-// Candidates: each comment the record maps to such an id, less one a whole read (`items`) no longer holds, which is gone
-// and gets no call; and where the record is posted, each review comment that starts a thread or conversation comment
-// the forge's current user wrote whose leading markers name such an id or alias, though no record maps it. With no
+// Candidates: each comment the record maps to such an id, the reply first, then the root, then the fallback comment, less
+// one a whole read (`items`) no longer holds, which is gone and gets no call; and where the record is posted, each review
+// comment, a thread's root or a reply in it, or conversation comment the forge's current user wrote whose leading markers
+// name such an id or alias, though no record maps it, so a reply whose mark a stale write lost still goes. With no
 // candidate, no forge call. Else the visibility and the current user are read, and each candidate is read by its own id
 // in its own kind, held to the pull request, and deleted only when the current user wrote it and its body starts with
 // that id's marker in the fixed layout. One another member wrote is left and listed as waiting on that login's machine;
@@ -171,7 +197,7 @@ export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity =
   const candidates = [];
   for (const entry of entries(state)) {
     if (!idsOf(entry).some((id) => secure.has(id)) || !isObject(entry.thread)) continue;
-    for (const [kind, id] of [[KINDS.reviewComment, entry.thread.commentId], [KINDS.comment, entry.thread.fallbackId]]) {
+    for (const [kind, id] of [[KINDS.reviewComment, entry.thread.replyId], [KINDS.reviewComment, entry.thread.commentId], [KINDS.comment, entry.thread.fallbackId]]) {
       if (!Number.isSafeInteger(id)) continue;
       if (whole && !present.has(`${kind}:${id}`)) {
         out.gone.push({ finding: entry.id, kind, id });
@@ -183,7 +209,7 @@ export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity =
     }
   }
   const mapped = mappedPosts(state);
-  const unmapped = mode === 'posted' && whole ? memberMarked(items).filter((item) => item.kind !== KINDS.review && item.starts
+  const unmapped = mode === 'posted' && whole ? memberMarked(items).filter((item) => item.kind !== KINDS.review
     && !mapped.has(`${item.kind}:${item.id}`) && item.markers.some((id) => secure.has(id))) : [];
   if (mode === 'posted' && !whole) out.unmapped_unread = true;
   if (!candidates.length && !unmapped.length) return out.gone.length || out.unmapped_unread ? out : null;
@@ -429,9 +455,8 @@ export function postInline(s, open) {
   }
   if (answer?.refused === true) return fallback(s, { result, sent, bodyIds, inBody, full });
   const reviewId = answer.id;
-  // SHORTCUT: when the read of the review's comments fails, an inline comment's entry keeps the review's id alone, and
-  // reads as posted in the body: it is never posted twice, and its comment shows as unmapped in the lists. A later step
-  // that matched it by its marker would map it.
+  // When the read of the review's comments fails, an inline comment's entry keeps the review's id alone, and reads as
+  // posted in the body: it is never posted twice. A later step maps its comment by its marker (fillThreads).
   const byMarker = new Map((Array.isArray(answer.comments) ? answer.comments : []).filter((each) => Number.isSafeInteger(each?.id))
     .map((each) => [leadingMarkers(each.body)[0], each.id]));
   for (const { part } of sent) {
@@ -462,4 +487,164 @@ function fallback(s, { result, sent, bodyIds, inBody, full }) {
   for (const id of comment.ids) state.index[id].thread = { fallbackId };
   s.marked.items.push({ kind: KINDS.comment, id: fallbackId, login: null, member: true, markers: comment.ids, starts: true });
   return { ...refused, posted: true, fallback_comment: fallbackId, in_body: comment.ids };
+}
+
+// ---- The replies ----
+
+// The states a finding's thread is answered in: closed as fixed or not reported again, or accepted.
+// SHORTCUT: an accepted finding can open again (findings.mjs entryState); only fixed and not_reported are final. Its
+// thread keeps the reply `Accepted as <disposition>.` and stays resolved, and when it later closes as fixed or not
+// reported again, no second reply is posted: `replied` and `resolved` never clear. That is enough for now because the
+// summary's findings table, the step's open list, and the merge guard still show the finding open. The fix, a reply
+// per outcome and an unresolve when the finding opens again, changes the marks' shape and adds a forge write, so it
+// waits for its own plan revision (#287).
+const ANSWERED = new Set(['fixed', 'not_reported', 'accepted']);
+// The lists of a step's delete (deleteOwn) whose findings get no reply: a comment it deleted, or one it meant to and did
+// not, which holds what may be a security finding's text (G4).
+const UNDELETED = ['deleted', 'waiting', 'left', 'failed'];
+
+// Answers the thread of each closed finding (review.publish.replies, with inline on): one reply, the marker line and the
+// attribution line, then `Fixed in <compare link>.`, `Not reported again in <compare link>.`, or `Accepted as
+// <disposition>.` (publish.mjs replyLines), checked by the text checks and escaped as every post is (R3), and no
+// reviewer text. Then the thread is resolved, when nobody else has replied in it (R8). `s` is the step context, with
+// `deletes`, the step's deleteOwn result. Records on the entry's thread `replied` and the reply's `replyId`, and
+// `resolved`, each only once its own forge call succeeded (A5), and adds the reply to the step's read of the marked posts.
+// - A finding is answered while its thread holds a root comment id and lacks either mark, on every step, so one a
+//   step could not answer is tried again by the next. A security finding the reading does not show (the projection's
+//   securityIds) gets no reply, nor one the delete named (G4).
+// - Before a reply, its thread is read through the forge. A reply goes only to a thread whose root is that same comment,
+//   written by the forge's current user, whose leading markers name the finding's id. One another member wrote is not
+//   this machine's to answer (Q2-A5): it is listed in `waiting` with the root's login as the forge returned it, and the
+//   record keeps no login. Any other root, and a thread whose root the step's read of the review comments no longer
+//   holds, gets nothing and is listed in `left`, which nothing acts on. A thread the read finds none for, though that
+//   read still holds its root, was missed, and is unanswered. A reply the current user posted earlier with the
+//   finding's marker counts as the reply, so a mark a stale write lost never posts a second.
+// - A thread anyone else replied in, the current user without the marker included, stays open, and counts as done:
+//   listed in `open`. One already resolved counts as resolved.
+// Returns null when no finding is due, else { replied, resolved, open, waiting, left, unanswered }: the ids replied to and
+// resolved on this step, those left open, those waiting on another machine ({ finding, login }), those not this
+// machine's, and the ids still unanswered, which the next step tries again, with `reasons` by id (`error` says why when
+// none could be tried).
+export function answerThreads(s) {
+  const { forge, repo, n, state } = s;
+  const context = s.post();
+  if (context.publish?.inline !== true || context.publish?.replies !== true) return null;
+  const shown = context.reading?.visibility === 'PRIVATE' || context.publish?.publicSecurity === 'full';
+  const secure = shown ? new Set() : securityIds(state);
+  const undeleted = new Set(UNDELETED.flatMap((key) => (Array.isArray(s.deletes?.[key]) ? s.deletes[key] : [])).map((each) => each.finding));
+  const due = entries(state).filter((entry) => ANSWERED.has(entry.state) && isObject(entry.thread) && Number.isSafeInteger(entry.thread.commentId)
+    && !(entry.thread.replied === true && entry.thread.resolved === true) && !idsOf(entry).some((id) => secure.has(id) || undeleted.has(id)));
+  if (!due.length) return null;
+  const out = { replied: [], resolved: [], open: [], waiting: [], left: [], unanswered: [] };
+  // Why each unanswered id is: the step's result says so, by id.
+  const reasons = {};
+  const miss = (id, reason) => {
+    out.unanswered.push(id);
+    reasons[id] = reason;
+  };
+  // Whether the step's own read of the pull request's review comments still holds the comment `id`: a thread read that
+  // finds no thread there missed it, and is tried again. With no such read, the step cannot tell, and tries again too.
+  const held = (id) => !Array.isArray(s.marked?.items) || s.marked.items.some((item) => item.kind === KINDS.reviewComment && item.id === id);
+  let viewer = null;
+  try {
+    viewer = forge.viewer();
+  } catch {}
+  if (typeof viewer !== 'string' || viewer === '') {
+    const error = 'the forge\'s current user could not be read';
+    for (const entry of due) miss(entry.id, error);
+    return { ...out, reasons, error };
+  }
+  // A reply's check withholds nothing the record holds: the flag the summary reads stays as it was.
+  const failedBefore = context.checker.failed;
+  for (const entry of due) {
+    const { id, thread } = entry;
+    let read;
+    try {
+      read = forge.reviewThread(repo, n, thread.commentId);
+    } catch {
+      miss(id, 'the thread could not be read');
+      continue;
+    }
+    // A root the step's read of the review comments no longer holds is gone: nothing is left to answer. One it still
+    // holds is a thread the lookup missed.
+    if (read === null) {
+      if (held(thread.commentId)) miss(id, 'no thread was found at its comment, which the pull request still holds');
+      else out.left.push(id);
+      continue;
+    }
+    if (!isObject(read) || !Array.isArray(read.comments) || read.complete !== true) {
+      miss(id, 'the thread was read only in part');
+      continue;
+    }
+    const [root, ...rest] = read.comments;
+    if (!isObject(root) || root.id !== thread.commentId || !leadingMarkers(root.body).includes(id)) {
+      out.left.push(id);
+      continue;
+    }
+    if (!sameLogin(root.user?.login, viewer)) {
+      if (isTrustedCommenter(root)) out.waiting.push({ finding: id, login: typeof root.user?.login === 'string' ? root.user.login : null });
+      else out.left.push(id);
+      continue;
+    }
+    const ours = (comment) => isObject(comment) && sameLogin(comment.user?.login, viewer) && leadingMarkers(comment.body).includes(id);
+    if (thread.replied !== true) {
+      const earlier = rest.find((comment) => ours(comment) && Number.isSafeInteger(comment.id));
+      if (earlier) Object.assign(thread, { replied: true, replyId: earlier.id });
+      else {
+        const body = replyLines(entry, context.compareUrl).map((line) => ({ raw: [markerLine(id), attributionLine(id), line].join('\n'), line }))
+          .find((each) => context.checker.allows(each.raw));
+        if (!body) {
+          miss(id, 'the text checks withheld every form of the reply');
+          continue;
+        }
+        let answer;
+        try {
+          answer = forge.replyToReviewComment(repo, n, thread.commentId, withMarkers([id], [{ text: attributionLine(id) }, { text: body.line }]));
+        } catch {
+          miss(id, 'the reply failed');
+          continue;
+        }
+        // A reply the forge answered with no id is not marked: the next step finds it on the thread, with its id, as an
+        // earlier reply, so it is never left unmapped.
+        if (!Number.isSafeInteger(answer?.id)) {
+          miss(id, 'the forge answered the reply with no id');
+          continue;
+        }
+        Object.assign(thread, { replied: true, replyId: answer.id });
+        s.marked?.items?.push({ kind: KINDS.reviewComment, id: answer.id, login: viewer, member: true, markers: [id], starts: false, review: null });
+        out.replied.push(id);
+      }
+    }
+    if (thread.resolved === true) continue;
+    if (read.resolved === true) {
+      thread.resolved = true;
+      continue;
+    }
+    if (rest.some((comment) => !ours(comment))) {
+      out.open.push(id);
+      continue;
+    }
+    // The forge reads the thread again just before it resolves it, and resolves nothing when a comment other than the
+    // root and this user's marked replies landed since this step's read: that thread stays open, as one replied in (R8).
+    const only = [thread.commentId, ...rest.filter(ours).map((comment) => comment.id), thread.replyId].filter(Number.isSafeInteger);
+    let resolved;
+    try {
+      resolved = forge.resolveThread(repo, n, thread.commentId, { only: [...new Set(only)] });
+    } catch {
+      miss(id, 'the resolve failed');
+      continue;
+    }
+    if (resolved?.others === true) {
+      out.open.push(id);
+      continue;
+    }
+    if (resolved?.resolved !== true) {
+      miss(id, 'the forge did not answer that the thread is resolved');
+      continue;
+    }
+    thread.resolved = true;
+    out.resolved.push(id);
+  }
+  if ('failed' in context.checker) context.checker.failed = failedBefore;
+  return Object.keys(reasons).length ? { ...out, reasons } : out;
 }

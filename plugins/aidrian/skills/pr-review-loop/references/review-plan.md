@@ -122,6 +122,16 @@ whatever its status, so step 2 never takes one for a person's comment:
   delete it: report it, and run nothing for it. `left` and `failed` list one this step did not delete; `textless`, one
   kept because it holds none of its finding's text.
 
+Once a finding with a thread closes, the step replies on that thread with its outcome and resolves it when nobody else
+replied there; `replies` on its result says what it did. Never answer or resolve an engine thread yourself:
+
+- `replies.unanswered`: the ids whose reply or resolve failed, with why in `replies.reasons`. On `received`, run the
+  step once more, then report the ids still listed with their reasons.
+- `replies.waiting` (`{ finding, login }`): a thread another member's machine posted, which waits for that machine. Run no
+  extra step for it; report each as waiting on that `login`'s machine.
+- `replies.open`: a thread someone else replied in keeps the reply and stays open; it is done.
+- `replies.left`: a thread that is not this machine's to answer, or whose root is gone. Report it; run nothing for it.
+
 Never cite an engine post, a finding's, the review summary, or the product feedback comment, as `--evidence`:
 `aidrian pr signoff --accept` refuses it.
 

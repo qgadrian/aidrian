@@ -44,6 +44,8 @@ function pushedRepo(t) {
     change: () => ({ number: 7, headRefOid: reported.head, headRefName: 'feat', baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
     repo: () => 'o/r',
     conversationComments: () => [],
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: () => {},
     editComment: () => {},
   };

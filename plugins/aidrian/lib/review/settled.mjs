@@ -156,17 +156,28 @@ const waiverAboveLow = (each) => Boolean(each?.residual) && (aboveLow(each.sever
 // that holds no text loosens no hold. A waiver of a record written before ids names its finding by title and file
 // instead, and one with neither names nothing a listing can match: its hold stays.
 const waiverTitle = (each) => trim(each?.already_ruled ?? each?.title);
-// Whether two waivers name one finding: by id when both carry one, else by title and file where both hold a title. A
-// rule the step offers again has its id only once it is recorded, and this machine holds its text.
-const sameWaiver = (a, b) => (isFindingId(a.ruled_id) && isFindingId(b.ruled_id)
-  ? a.ruled_id === b.ruled_id
+// Every id a finding answers to: its own and its aliases, the ids it held before a fresh one (findings.mjs freshId).
+const idsOf = (finding) => [finding?.id, ...(Array.isArray(finding?.aliases) ? finding.aliases : [])].filter(isFindingId);
+// The current id of each id a finding of `state` held before (an alias), so a hold that names the old id still holds.
+function currentIds(state) {
+  const current = new Map();
+  for (const entry of Object.values(isObject(state?.index) ? state.index : {})) {
+    if (isObject(entry) && isFindingId(entry.id)) for (const alias of idsOf(entry)) current.set(alias, entry.id);
+  }
+  return (id) => current.get(id) ?? id;
+}
+// Whether two waivers name one finding: by id, an alias read as the id it became, when both carry one, else by title
+// and file where both hold a title. A rule the step offers again has its id only once it is recorded, and this machine
+// holds its text.
+const sameWaiver = (a, b, current = (id) => id) => (isFindingId(a.ruled_id) && isFindingId(b.ruled_id)
+  ? current(a.ruled_id) === current(b.ruled_id)
   : Boolean(waiverTitle(a)) && waiverTitle(a) === waiverTitle(b) && trim(a.file) === trim(b.file));
-// The findings the passes list as fixed: their ids, and the title and file of each with a title, for a waiver written
-// before ids. Only `aidrian pr attest` writes that state: the step strips it from an exec reviewer's output.
+// The findings the passes list as fixed: their ids and aliases, and the title and file of each with a title, for a
+// waiver written before ids. Only `aidrian pr attest` writes that state: the step strips it from an exec reviewer's output.
 function fixedListings(state) {
   const fixed = Object.values(state?.passes ?? {}).flatMap((result) => (Array.isArray(result?.list) ? result.list : []))
     .filter((finding) => isObject(finding) && finding.state === 'fixed');
-  return { ids: new Set(fixed.map((finding) => finding.id).filter(isFindingId)), places: new Set(fixed.filter((finding) => trim(finding.title)).map(where)) };
+  return { ids: new Set(fixed.flatMap(idsOf)), places: new Set(fixed.filter((finding) => trim(finding.title)).map(where)) };
 }
 // Whether a listing holds the finding a waiver names as fixed: its id, or, for a waiver with none, its title and file.
 const listedFixed = (fixed, each) => (isFindingId(each.ruled_id)
@@ -185,9 +196,10 @@ export function heldWaiver(state) {
 // slice a repack deletes leaves its waivers on the passes that ran.
 function unofferedWaivers(state, offered) {
   const fixed = fixedListings(state);
+  const current = currentIds(state);
   const seen = offered.filter(waiverAboveLow);
   return everyEntry(state).filter(waiverAboveLow).filter((each) => {
-    if (listedFixed(fixed, each) || seen.some((other) => sameWaiver(other, each))) return false;
+    if (listedFixed(fixed, each) || seen.some((other) => sameWaiver(other, each, current))) return false;
     seen.push(each);
     return true;
   });

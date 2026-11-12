@@ -54,8 +54,8 @@ aidrian pr checks <n>                                        # one line: ready, 
 ```
 
 For thread state, query `reviewThreads` with `isResolved` and `isOutdated` through `gh api graphql`, and skip
-resolved threads. A failing check is a review item too. Skip a conversation comment the gh user wrote that carries the
-`aidrian-product-feedback` marker: `aidrian pr product-feedback answer` answers its items.
+resolved threads. A failing check is a review item too. Skip the gh user's `aidrian-product-feedback` comment:
+`aidrian pr product-feedback answer` answers it. For engine posts, see `references/review-plan.md`.
 
 ## 3. Triage
 

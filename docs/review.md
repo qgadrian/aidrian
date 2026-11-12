@@ -1281,10 +1281,13 @@ shows of the findings ([config](config.md#keys)):
   ([Reviewers](#reviewers)), and its twin, shows only in a count while it is open; once closed, its row holds its id,
   severity, outcome, and closing range only. Its title, body, file, and line are in no post and not in the posted copy
   of the record, on any later step, and its residual row in a step's result is named by id, with no title, and anchors
-  nothing. `"full"` posts a security finding's location and disposition as any other finding's, and gives its residual
-  row its file and line: never its title, body, evidence, or reason, in a post, the posted copy, or a residual row.
-- `inline` and `replies` are checked; neither posts anything.
-- `review.record: "local"` posts nothing, whatever `review.publish` says.
+  nothing. `"full"` posts a security finding's location and disposition as any other finding's, gives its residual
+  row its file and line, and gives it an [inline](#inline-reviews) thread or review body line with its id, severity,
+  location, and `text withheld`: never its title, body, evidence, or reason, in a post, the posted copy, or a residual row.
+- `inline: true` posts each step's new blocking findings on the diff ([Inline reviews](#inline-reviews), below).
+  `replies` is checked; it posts nothing yet.
+- `review.record: "local"` posts nothing, whatever `review.publish` says; the [delete](#inline-reviews) of the engine's own
+  comment for a security finding still runs.
 - `.aidrian.local.json` may set only `summary: "counts"` and `inline: false`, which post less. Any other key or value
   there, `publicSecurity: "full"` included, is a config error, and the team's value stays.
 
@@ -1296,3 +1299,73 @@ shows what was posted while it read `PRIVATE`. For a repository that may go publ
 
 On a repository that is not private, finding text stays on the machine that recorded it: a review with an open,
 blocking finding goes on only on that machine ([The posted copy](#the-posted-copy), A second machine).
+
+### Inline reviews
+
+With `review.publish.inline: true`, a step that hands findings back as open (`fix_required`, or the cap in its place)
+posts one review on its head, always a plain comment that neither approves nor requests changes, and its result says
+what went where (`inline_review`). Inline publishing has not been run beside the review bot.
+
+- **What gets a thread.** Each blocking finding with no post yet that sits on an added line of the diff from the merge
+  base to the head, read with renames as the forge shows them (an unchanged line of a moved file is no added line), at a
+  file and line that pass the file and line check there and whose path the text checks pass, gets an inline comment: at most 25, the
+  most severe first. The rest are listed in the review body by id alone, and get their thread from a later review while
+  they still block. Any other blocking finding goes in the review body, its location printed only
+  from a file and line that pass that check and a path the text checks pass. A finding posted once, in a thread, a
+  review body, or a fallback comment, is never posted again, but for the other findings of a fallback comment the
+  delete below removed: its index entry keeps `thread`, the forge's ids alone (`{ reviewId, commentId }`, or
+  `{ fallbackId }`), and the posted record still holds no finding text.
+- **Security findings.** On a repository that does not read as `PRIVATE`, a security finding and its twin are read by
+  the same reading the posted record takes. Under `publicSecurity: "counts"` they get no thread and no line in a review
+  body. Under `"full"` they get one, holding the id, the severity, the location, and `text withheld`, never the text.
+- **Text.** On a pull request from outside the team, or where a text check withholds a finding's title or body, its
+  post holds the id, the severity, and `text withheld`. A title is capped at 200 characters, a body at 2,000, and a review
+  body or fallback comment at 60,000, before escaping, each cut counted in one line. The escaped body is checked against
+  the forge's longest body (65,536 characters on GitHub), and a finding that no longer fits is listed by id and posted by
+  a later step. Each line that lists leftover findings names at most 20 ids and counts the rest, so it never crowds
+  every finding out of a post.
+- **Escaping.** Every line of every post is escaped as the summary is, with no line exempt. In reviewer text every link
+  is made inert before the escaping, whatever its form (an inline link, a reference definition, an autolink, an HTML
+  anchor, a protocol-relative target, one slash or a backslash after the scheme), so an at-sign in a link target is
+  escaped too; then each line is quoted. A fence opener on any line, after any quote or list prefix, keeps its info
+  string only when that is a plain language name other than `suggestion`, so a `suggestion` fence in any case, at any
+  length, quoted, or spelled with a character reference posts as a plain fence, and the forge offers no change to apply.
+- **Markers.** Every inline comment starts with `<!-- aidrian-review-finding:<id> -->`, and a review body or fallback
+  comment with the marker line of each finding it lists; then comes the visible line `aidrian review, finding <id>`. The
+  id is read from the finding index, never from a reviewer's output, and the marker lines are added after the escaping,
+  so a marker line in reviewer text is escaped and never read. Only that fixed layout is read.
+- **The counter floor.** Every step whose record is posted reads the pull request's comments, reviews, and review
+  comments once, and raises the id counter past the highest id among the markers of members of the repository, so an id
+  a restarted record forgot is never minted again. A marker whose round has more than three digits or whose number has
+  more than six is ignored, and a step stops as `incomplete` rather than mint past those digits. The read fails closed:
+  when it fails or is read only in part before the record's first id, the step mints no id and says so (`ids_unminted`),
+  and `aidrian pr attest` stores none; on a later step it posts no review. A finding with no post whose marker a member's
+  post already carries takes a fresh id first; the fresh id keeps every engine key, the security mark among them, and
+  lists the old id in `aliases`, so a hold or a waiver that names the old id still applies.
+- **The fallback.** A review the forge refuses, such as for a line outside its diff, is posted once as one conversation
+  comment with the same content (`inline_review.refused`). A fallback that fails, or a review whose post fails, leaves
+  its findings unposted (`unposted`), and the next step tries again.
+- **The engine's posts in the loop.** Every step whose record is posted, whatever its status and whatever `inline`
+  says, lists each comment and review that a member wrote and that starts with a finding marker in the fixed layout:
+  `engine_comments`, those the finding index maps to that marker's finding, and `engine_comments_unmapped`, the rest,
+  all of them when the step stops before it maps anything. A step that cannot read them returns neither list and says
+  why (`engine_comments_unread`). `pr-review-loop` skips the first list, and reads the second, or every marked post by a
+  member when neither list came back, as a local model's finding, never as a person's comment, whoever's login posted it.
+  A marked post by someone who is no member stays an outsider's, and a reply with no marker in an engine thread stays a
+  review item. `aidrian pr signoff --accept` refuses as `--evidence` a post that starts with an engine marker: a
+  finding's, the review summary's, or the product feedback's.
+- **The delete.** When a finding, or its twin, becomes a security finding after its post (a later round rates it high, it
+  is carried onto a head whose plan requires the security reviewer, or its twin is recorded as one), the engine deletes
+  its own inline comment or fallback comment for it, on a repository that does not read as `PRIVATE`, under either
+  `publicSecurity` value. Under `"counts"` every such comment goes, since even one with its text withheld shows the
+  finding's place; under `"full"` a comment whose section of that finding holds no reviewer text, as the engine posts a
+  security finding there, stays (`comment_deletes.textless`). The other findings a deleted fallback comment listed read
+  as unposted, and a later step posts them again. Each machine does so on its next step, whether it set the mark or reads it in the posted
+  record, and whatever `inline`, the local file, and `review.record` say; it also runs before a step stops for a held
+  record, from this machine's record alone and with no write, and before a stop for a finding with no text. It reaches a
+  comment the record maps and, where the record is posted, a marked comment of this user that no record maps. Before
+  each delete it reads that comment by its id and deletes it only when it is on this pull request, this user wrote it,
+  and it starts with that finding's marker; another member's comment waits for that member's machine
+  (`comment_deletes.waiting`), and anything else is left and listed. A review body cannot be deleted, so it keeps the
+  text it held, and so does a notification email the forge already sent. Under `review.record: "local"` the delete reads
+  this machine's record alone: a comment whose mark another machine set, or that no record maps, is deleted by hand.

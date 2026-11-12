@@ -11,8 +11,10 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { postContext, readReading } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
-import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
+import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, quotedLines, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
+import { attributionLine, deleteOwn, engineLists, fitBody, leadingMarkers, markerLine, MAX_LISTED, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
+import { MAX_BODY } from '../plugins/aidrian/lib/forges/index.mjs';
 import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, refreshSummary, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
 const NO_TERMS = { hosts: [], accounts: [], variables: [] };
@@ -580,4 +582,625 @@ test('a finding closed as fixed at a moved location keeps that location, checked
     const index = stateFromComment(body, 7).index;
     assert.deepEqual([a, b].map((id) => [index[id].file, index[id].line]), [['src/a.js', 30], ['src/d.js', 30]], 'the posted index keeps them too');
   }
+});
+
+// ---- Inline reviews (lib/review/inline.mjs) ----
+
+const PASS = 'engine:codex-local';
+const PUBLIC = { visibility: 'PUBLIC', inside: true };
+const MINT = 'abcd0123';
+
+// A repository whose head adds `added` lines to src/a.js after its first line, and the files `extra` names: { root, base,
+// head }.
+function inlineRepo(t, { added = 3, extra = {}, base: baseFiles = {}, remove = [] } = {}) {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-inline-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.email=t@example.com', '-c', 'user.name=T', ...args], { cwd: root, encoding: 'utf8' }).stdout.trim();
+  const write = (file, text) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  };
+  git('init', '-q', '-b', 'main');
+  write('src/a.js', 'line 1\n');
+  write('src/old.js', 'kept\nkept\nkept\n');
+  for (const [file, text] of Object.entries(baseFiles)) write(file, text);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  write('src/a.js', `line 1\n${Array.from({ length: added }, (_, i) => `added ${i + 2}`).join('\n')}\n`);
+  for (const [file, text] of Object.entries(extra)) write(file, text);
+  for (const file of remove) rmSync(path.join(root, file));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'head');
+  return { root, base, head: git('rev-parse', 'HEAD') };
+}
+
+const listed = (id, extra = {}) => ({ id, mint: MINT, title: `finding ${id}`, body: 'what is wrong', file: 'src/a.js', line: 2, severity: 'medium', likelihood: 'likely', affects: 'users', disposition: 'fix_now', state: 'open', ...extra });
+// A record whose one pass lists `findings`, each with its open index entry.
+function inlineState(head, findings, { note = { stage: 'local', reviewer: 'codex-local', security: false } } = {}) {
+  const list = findings.map((finding) => ({ ...finding }));
+  const index = Object.fromEntries(findings.map((finding) => {
+    const { body: _body, ...entry } = finding;
+    return [finding.id, { ...entry, pass: PASS, stage: 'local', placed: head, seen: head }];
+  }));
+  const counter = Math.max(0, ...findings.map((finding) => Number(finding.id.split('-')[1])));
+  return { ...emptyState(7, 'o/r'), idCounter: counter, floored: true, rounds: [{ head, at: '2026-11-12T00:00:00.000Z' }], passes: { [PASS]: { head, reviewer: 'codex-local', files: null, findings: list.length, open: list.length, list } }, planNote: { head, passes: { [PASS]: note } }, index };
+}
+const openOf = (state) => [{ pass: PASS, findings: state.passes[PASS].list }];
+// A forge that records every call: postReview answers each inline comment with an id from 1001, unless `refuse`.
+function inlineForge(overrides = {}) {
+  const calls = [];
+  const forge = {
+    postReview: (repo, n, review) => (calls.push(['postReview', review]), { refused: false, id: 900, comments: review.comments.map((comment, i) => ({ id: 1001 + i, body: comment.body })) }),
+    postComment: (repo, n, body) => (calls.push(['postComment', body]), { id: 77 }),
+    ...overrides,
+  };
+  return { forge, calls };
+}
+const allow = () => ({ allows: () => true, failed: false });
+function inlineStep({ root, base, head }, state, forge, { reading = PRIVATE, publish = { inline: true, publicSecurity: 'counts' }, checker = allow(), items = [] } = {}) {
+  return { forge, repo: 'o/r', n: 7, head, base, root, state, paths: gitPaths(root), marked: { items }, post: () => ({ reading, checker, publish }) };
+}
+const reviewOf = (calls) => calls.find(([name]) => name === 'postReview')?.[1];
+
+test('inline: a blocking finding on an added line gets a thread; one on an unchanged line, or in a file the check refuses, goes in the body', (t) => {
+  const r = inlineRepo(t);
+  const state = inlineState(r.head, [listed('R1-1'), listed('R1-2', { line: 1 }), listed('R1-3', { file: 'src/gone.js', line: 2 }), listed('R1-4', { file: 'src/old.js', line: 3 })]);
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  assert.deepEqual([result.posted, result.threads, result.in_body], [true, ['R1-1'], ['R1-2', 'R1-3', 'R1-4']]);
+  const review = reviewOf(calls);
+  assert.equal(review.commitId, r.head);
+  assert.deepEqual(review.comments.map(({ path: file, line, side }) => [file, line, side]), [['src/a.js', 2, 'RIGHT']]);
+  assert.ok(review.comments[0].body.startsWith(`${markerLine('R1-1')}\n${attributionLine('R1-1')}\n`));
+  assert.deepEqual(leadingMarkers(review.body), ['R1-1', 'R1-2', 'R1-3', 'R1-4'], 'the body names every finding it holds, in the fixed layout');
+  assert.match(review.body, /src\/a\.js:1/u);
+  assert.match(review.body, /src\/old\.js:3/u);
+  assert.ok(!review.body.includes('src/gone.js'), 'a file that is no tracked path is printed in no review body');
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001 });
+  assert.deepEqual(['R1-2', 'R1-3', 'R1-4'].map((id) => state.index[id].thread), [{ reviewId: 900 }, { reviewId: 900 }, { reviewId: 900 }]);
+  // The posted copy keeps the forge's ids, numbers alone, and still no finding text.
+  const { copy } = postedCopy(state, { reading: PUBLIC, root: r.root, names: [] });
+  assert.deepEqual(copy.index['R1-1'].thread, { reviewId: 900, commentId: 1001 });
+  assert.ok(!JSON.stringify(copy).includes('finding R1-1') && !JSON.stringify(copy).includes('what is wrong'));
+});
+
+test('inline: one post per id, a finding listed twice posts once, and a later step posts nothing again', (t) => {
+  const r = inlineRepo(t);
+  const state = inlineState(r.head, [listed('R1-1')]);
+  const { forge, calls } = inlineForge();
+  const step = inlineStep(r, state, forge);
+  postInline(step, [...openOf(state), { pass: 'slice:x', findings: [{ ...state.passes[PASS].list[0] }] }]);
+  assert.equal(reviewOf(calls).comments.length, 1, 'one comment for one id, though two passes list it');
+  assert.equal(postInline(step, openOf(state)), null, 'a finding with a thread is never posted again');
+  state.index['R1-1'].thread = { fallbackId: 5 };
+  assert.equal(postInline(step, openOf(state)), null, 'nor one a fallback comment holds');
+  state.index['R1-1'].thread = { reviewId: 3 };
+  assert.equal(postInline(step, openOf(state)), null, 'nor one a review body holds');
+  assert.equal(calls.length, 1);
+});
+
+test('inline: a review holds at most 25 threads, the most severe first; the rest are listed in its body by id', (t) => {
+  const r = inlineRepo(t, { added: 27 });
+  const findings = Array.from({ length: 27 }, (_, i) => listed(`R1-${i + 1}`, { line: i + 2, severity: i === 26 ? 'critical' : 'medium' }));
+  const state = inlineState(r.head, findings);
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  const review = reviewOf(calls);
+  assert.equal(review.comments.length, MAX_THREADS);
+  assert.equal(result.threads[0], 'R1-27', 'the critical finding first');
+  assert.deepEqual(result.listed, ['R1-25', 'R1-26']);
+  assert.match(review.body, /2 more findings on the diff, posted by a later step: R1-25, R1-26$/mu, 'listed by id alone');
+  assert.ok(!leadingMarkers(review.body).includes('R1-25'), 'a listed finding is not posted');
+  assert.equal(state.index['R1-25'].thread, undefined, 'and gets its thread from a later review');
+  const next = inlineForge();
+  postInline(inlineStep(r, state, next.forge), openOf(state));
+  assert.deepEqual(reviewOf(next.calls).comments.map((comment) => comment.line), [26, 27]);
+});
+
+test('inline: a security finding and its twin get no thread and no line on a repository that is not private, under "counts"', (t) => {
+  const r = inlineRepo(t);
+  const findings = [listed('R1-1', { severity: 'high' }), listed('R1-2', { line: 3, title: 'another wording' }), listed('R1-3', { file: 'src/old.js', line: 1, title: 'elsewhere' })];
+  for (const reading of [PUBLIC, { visibility: 'INTERNAL', inside: true }, { visibility: null, inside: true }]) {
+    const state = inlineState(r.head, findings);
+    const { forge, calls } = inlineForge();
+    const result = postInline(inlineStep(r, state, forge, { reading }), openOf(state));
+    assert.deepEqual([result.threads, result.in_body], [[], ['R1-3']], reading.visibility);
+    const review = reviewOf(calls);
+    assert.ok(!/R1-1|R1-2/u.test(review.body), 'neither the security finding nor its twin is named');
+  }
+  const state = inlineState(r.head, findings);
+  const { forge } = inlineForge();
+  assert.deepEqual(postInline(inlineStep(r, state, forge, { reading: PRIVATE }), openOf(state)).threads, ['R1-1', 'R1-2'], 'a private repository posts them');
+  for (const reading of [PUBLIC, { visibility: 'INTERNAL', inside: true }, { visibility: null, inside: true }]) {
+    const full = inlineState(r.head, findings);
+    const posts = inlineForge();
+    assert.deepEqual(postInline(inlineStep(r, full, posts.forge, { reading, publish: { inline: true, publicSecurity: 'full' } }), openOf(full)).threads, ['R1-1', 'R1-2'], '"full" gives them their threads');
+    for (const comment of reviewOf(posts.calls).comments) {
+      assert.ok(!comment.body.split('\n').some((line) => line.startsWith('>')) && !comment.body.includes('what is wrong') && !comment.body.includes('another wording'), `${reading.visibility}: "full" posts no title and no body`);
+      assert.match(comment.body, new RegExp(`\\*\\*(high|medium)\\*\\*\\n${WITHHELD}$`, 'u'), 'only the id, the severity, its place by its anchor, and text withheld');
+    }
+    assert.match(reviewOf(posts.calls).body, /on the diff at `src\/a\.js:2`/u, 'the place shows under "full"');
+  }
+  // A finding on a pass the plan flags as requiring the security reviewer reads as security too.
+  const flagged = inlineState(r.head, [listed('R1-1')], { note: { stage: 'local', reviewer: 'codex-local', security: true } });
+  assert.equal(postInline(inlineStep(r, flagged, inlineForge().forge, { reading: PUBLIC }), openOf(flagged)), null);
+});
+
+test('inline: from outside the team, and where a check withholds the text, a post holds the id, the severity, and text withheld', (t) => {
+  const r = inlineRepo(t);
+  for (const [reading, checker] of [[{ visibility: 'PRIVATE', inside: false }, allow()], [PRIVATE, { allows: (text) => !text.includes('secret'), failed: false }]]) {
+    const state = inlineState(r.head, [listed('R1-1', { title: 'a secret title', body: 'a secret body' }), listed('R1-2', { line: 1, title: 'a secret too', body: 'more' })]);
+    const { forge, calls } = inlineForge();
+    postInline(inlineStep(r, state, forge, { reading, checker }), openOf(state));
+    const review = reviewOf(calls);
+    for (const body of [review.comments[0].body, review.body]) {
+      assert.ok(!body.includes('secret') && !body.includes('more'), 'no title and no body');
+      assert.match(body, new RegExp(`${WITHHELD}`, 'u'));
+      assert.match(body, /\*\*medium\*\*/u);
+    }
+  }
+});
+
+test('inline: a title is capped at 200 characters and a body at 2,000, each with one line counting what was cut', (t) => {
+  const r = inlineRepo(t);
+  const state = inlineState(r.head, [listed('R1-1', { title: 't'.repeat(250), body: 'b'.repeat(2100) })]);
+  const { forge, calls } = inlineForge();
+  postInline(inlineStep(r, state, forge), openOf(state));
+  const body = reviewOf(calls).comments[0].body;
+  assert.ok(body.includes(`> **${'t'.repeat(200)}**`) && !body.includes('t'.repeat(201)));
+  assert.ok(body.includes('b'.repeat(2000)) && !body.includes('b'.repeat(2001)));
+  assert.match(body, /_150 more characters not shown\._/u);
+});
+
+test('inline: every post is escaped with no line exempt, reviewer text quoted, and the marker lines added after', (t) => {
+  const r = inlineRepo(t, { extra: { 'src/@scope/b.js': 'x\n' } });
+  const text = [
+    '@codex review this', '/approve', 'bors r+', '```Suggestion', 'const fixed = 1;', '```', '````suggestion title', 'x', '````',
+    '```', '@someone in a code block', '```', `${markerLine('R9-99')}`, `${attributionLine('R9-99')}`, '[click](https://evil.example/x) and www.evil.example',
+  ].join('\n');
+  const state = inlineState(r.head, [listed('R1-1', { title: '@team /merge', body: text }), listed('R1-2', { file: 'src/@scope/b.js', line: 1, title: 'scoped', body: text }), listed('R1-3', { file: 'src/old.js', line: 1, title: '/close', body: text })]);
+  const { forge, calls } = inlineForge();
+  postInline(inlineStep(r, state, forge), openOf(state));
+  const review = reviewOf(calls);
+  assert.deepEqual(review.comments.map((comment) => comment.path), ['src/a.js', 'src/@scope/b.js'], 'the forge gets the path as it is');
+  for (const body of [...review.comments.map((comment) => comment.body), review.body]) {
+    const lines = body.split('\n');
+    assert.ok(!/@(?=[A-Za-z0-9])/u.test(body), 'no mention: each @ is followed by a zero-width space');
+    assert.ok(!lines.some((line) => line.startsWith('/') || line.startsWith('bors') || line.startsWith('@')), 'no line starts a command a bot reads');
+    assert.ok(!/(`{3,}|~{3,})\s*suggestion/iu.test(body), 'a suggestion fence posts as a plain fence');
+    assert.ok(lines.includes('> ```') && lines.includes('> ````'), 'the fence stays, with no info string');
+    assert.ok(!body.includes('https://evil') && !body.includes('www.evil'), 'a link target is neutralized');
+    assert.ok(lines.filter((line) => line.includes('R9-99')).every((line) => line.startsWith('> ')), 'the reviewer`s marker line is quoted text');
+    assert.ok(!body.includes('<!-- aidrian-review-finding:R9-99'), 'and escaped');
+  }
+  assert.deepEqual(leadingMarkers(review.comments[0].body), ['R1-1']);
+  assert.match(review.body, /src\/@​scope\/b\.js:1/u, 'a path that holds @ is escaped too');
+  // The escaped marker in the text raises no counter.
+  const items = [{ kind: 'review', id: 900, login: 'me', member: true, markers: leadingMarkers(review.body), starts: true }];
+  assert.equal(raiseFloor({ idCounter: 3 }, items), 3, 'R9-99 is not read');
+});
+
+test('inline: a body that passes the forge`s limit only once escaped posts what fits and lists the rest by id', (t) => {
+  const r = inlineRepo(t);
+  const findings = Array.from({ length: 25 }, (_, i) => listed(`R1-${i + 1}`, { line: 1, body: '-->'.repeat(666) }));
+  const state = inlineState(r.head, findings);
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  const review = reviewOf(calls);
+  const raw = 25 * 2000;
+  assert.ok(raw < 60_000, 'the raw text fits the cap');
+  assert.ok(review.body.length <= MAX_BODY, 'the escaped body fits the forge`s limit');
+  assert.ok(result.listed.length > 0 && result.in_body.length + result.listed.length === 25);
+  assert.match(review.body, new RegExp(`${result.listed.length} more findings not shown here, posted by a later step: ${result.listed.join(', ')}`, 'u'));
+  assert.ok(result.listed.every((id) => state.index[id].thread === undefined));
+});
+
+test('inline: a refused review falls back to one conversation comment with the same content; a failed fallback leaves the findings for the next step', (t) => {
+  const r = inlineRepo(t);
+  const state = inlineState(r.head, [listed('R1-1'), listed('R1-2', { line: 1 })]);
+  const refusing = inlineForge({ postReview: (repo, n, review) => (refusing.calls.push(['postReview', review]), { refused: true }) });
+  const result = postInline(inlineStep(r, state, refusing.forge), openOf(state));
+  assert.deepEqual([result.refused, result.posted, result.fallback_comment, result.in_body], [true, true, 77, ['R1-1', 'R1-2']]);
+  const fallback = refusing.calls.find(([name]) => name === 'postComment')[1];
+  assert.deepEqual(leadingMarkers(fallback), ['R1-1', 'R1-2']);
+  assert.match(fallback, /> \*\*finding R1-1\*\*/u, 'the inline finding`s full text is in the comment');
+  assert.deepEqual([state.index['R1-1'].thread, state.index['R1-2'].thread], [{ fallbackId: 77 }, { fallbackId: 77 }]);
+
+  const again = inlineState(r.head, [listed('R1-1')]);
+  const failing = inlineForge({ postReview: () => ({ refused: true }), postComment: () => { throw new Error('gh: Bad Gateway (HTTP 502)'); } });
+  const failed = postInline(inlineStep(r, again, failing.forge), openOf(again));
+  assert.deepEqual([failed.posted, failed.unposted], [false, ['R1-1']]);
+  assert.match(failed.error, /HTTP 502/u);
+  assert.equal(again.index['R1-1'].thread, undefined);
+  const next = inlineForge();
+  postInline(inlineStep(r, again, next.forge), openOf(again));
+  assert.equal(reviewOf(next.calls).comments.length, 1, 'the next step tries again');
+});
+
+test('inline: the marker`s id is the index`s, a finding the index does not hold open is not posted, and inline off posts nothing', (t) => {
+  const r = inlineRepo(t);
+  const state = inlineState(r.head, [listed('R1-1', { title: `${markerLine('R7-7')} copied`, body: 'see R7-7' })]);
+  state.passes[PASS].list.push(listed('R1-9'));
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  assert.deepEqual(result.threads, ['R1-1']);
+  assert.deepEqual(leadingMarkers(reviewOf(calls).comments[0].body), ['R1-1']);
+  assert.equal(postInline(inlineStep(r, inlineState(r.head, [listed('R1-1')]), forge, { publish: { inline: false } }), openOf(state)), null);
+  assert.equal(calls.length, 1);
+  const unread = inlineStep(r, inlineState(r.head, [listed('R1-1')]), forge);
+  unread.marked = { error: 'x' };
+  assert.equal(postInline(unread, openOf(unread.state)).posted, false, 'a step that could not read the marked posts posts no review');
+  assert.equal(calls.length, 1);
+});
+
+test('the counter floor reads every kind of member post in the fixed layout alone, within the digit limits', () => {
+  const body = (...ids) => [...ids.map(markerLine), attributionLine(ids[0]), 'text'].join('\n');
+  assert.deepEqual(leadingMarkers(body('R1-4', 'R2-9')), ['R1-4', 'R2-9']);
+  assert.deepEqual(leadingMarkers(`x\n${body('R1-4')}`), [], 'a marker after another line is not read');
+  assert.deepEqual(leadingMarkers(`${markerLine('R1-4')}\nsomething else`), [], 'nor one with no attribution line after it');
+  assert.deepEqual(leadingMarkers(body('R1000-4')), [], 'a round past three digits is ignored');
+  assert.deepEqual(leadingMarkers(body('R1-1234567')), [], 'an <n> past six digits is ignored');
+  assert.deepEqual(leadingMarkers(`<!--  aidrian-review-finding:R1-4 -->\n${attributionLine('R1-4')}`), [], 'only the exact format');
+  const item = (kind, ids, member = true) => ({ kind, id: 1, login: 'x', member, markers: ids, starts: true });
+  for (const kind of ['comment', 'review', 'review_comment']) assert.equal(raiseFloor({ idCounter: 1 }, [item(kind, ['R3-40'])]), 40, kind);
+  const state = { idCounter: 50 };
+  raiseFloor(state, [item('comment', ['R3-40'])]);
+  assert.equal(state.idCounter, 50, 'the floor only raises');
+  const none = { idCounter: 1 };
+  raiseFloor(none, [item('comment', ['R1-90'], false)]);
+  assert.equal(none.idCounter, 1, 'a marker by someone who is no member raises nothing');
+});
+
+test('readMarked: each kind with its markers, a reply apart; a failed or partial read is an error', () => {
+  const marked = (id) => [markerLine(id), attributionLine(id), 'x'].join('\n');
+  const forge = {
+    reviews: () => [{ id: 2, body: marked('R1-2'), user: { login: 'me' }, author_association: 'OWNER' }],
+    reviewComments: () => [{ id: 3, body: marked('R1-3'), user: { login: 'me' }, author_association: 'MEMBER' }, { id: 4, body: 'thanks', in_reply_to_id: 3, user: { login: 'pat' }, author_association: 'COLLABORATOR' }],
+  };
+  const { items } = readMarked(forge, 'o/r', 7, [{ id: 1, body: marked('R1-1'), user: { login: 'eve' }, author_association: 'NONE' }]);
+  assert.deepEqual(items.map(({ kind, id, member, markers, starts }) => [kind, id, member, markers, starts]), [
+    ['comment', 1, false, ['R1-1'], true], ['review', 2, true, ['R1-2'], true], ['review_comment', 3, true, ['R1-3'], true], ['review_comment', 4, true, [], false],
+  ]);
+  assert.ok(readMarked({ ...forge, reviews: () => { throw new Error('down'); } }, 'o/r', 7, []).error);
+  assert.ok(readMarked({ ...forge, reviewComments: () => [{ body: 'no id' }] }, 'o/r', 7, []).error, 'a partial read');
+  assert.ok(readMarked(forge, 'o/r', 7, null).error, 'an unread conversation');
+});
+
+test('inline: an id with no thread whose marker a member`s post carries takes a fresh id, keeping every engine key and listing the old one as its alias', (t) => {
+  const r = inlineRepo(t);
+  const state = inlineState(r.head, [listed('R1-1')]);
+  state.idCounter = 5;
+  const items = [{ kind: 'review_comment', id: 44, login: 'pat', member: true, markers: ['R1-1'], starts: true }];
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge, { items }), openOf(state));
+  assert.deepEqual(result.threads, ['R1-6']);
+  assert.deepEqual(leadingMarkers(reviewOf(calls).comments[0].body), ['R1-6'], 'no second comment under the old id');
+  assert.equal(state.index['R1-1'], undefined);
+  const entry = state.index['R1-6'];
+  assert.deepEqual([entry.aliases, entry.pass, entry.stage, entry.state, entry.severity, entry.placed], [['R1-1'], PASS, 'local', 'open', 'medium', r.head]);
+  assert.notEqual(entry.mint, MINT, 'with a mint mark of its own');
+  assert.equal(state.passes[PASS].list[0].id, 'R1-6');
+});
+
+test('engine_comments and engine_comments_unmapped: mapped by the index, unmapped otherwise; a reply and a non-member`s post on neither', () => {
+  const state = { index: {
+    'R1-1': { id: 'R1-1', thread: { reviewId: 900, commentId: 61 } },
+    'R1-2': { id: 'R1-2', thread: { reviewId: 900 } },
+    'R1-3': { id: 'R1-3', aliases: ['R1-0'], thread: { fallbackId: 70 } },
+  } };
+  const item = (kind, id, markers, { member = true, starts = true, login = 'me' } = {}) => ({ kind, id, login, member, markers, starts });
+  const items = [
+    item('review_comment', 61, ['R1-1']),
+    item('review', 900, ['R1-1', 'R1-2']),
+    item('comment', 70, ['R1-0']),
+    item('review_comment', 62, ['R1-1'], { login: 'pat' }),
+    item('review_comment', 63, ['R1-5'], { login: 'pat' }),
+    item('review_comment', 64, [], { starts: false }),
+    item('comment', 71, ['R1-1'], { member: false, login: 'eve' }),
+  ];
+  const lists = engineLists(items, state);
+  assert.deepEqual(lists.engine_comments.map((each) => each.id), [61, 900, 70]);
+  assert.deepEqual(lists.engine_comments_unmapped.map((each) => each.id), [62, 63], 'another member`s marked comment, mapped or not by its id, is unmapped');
+  assert.deepEqual(lists.engine_comments[0], { kind: 'review_comment', id: 61, findings: ['R1-1'], login: 'me' });
+  assert.deepEqual(engineLists(items, null).engine_comments_unmapped.map((each) => each.id), [61, 900, 70, 62, 63], 'with no record, every marked post is unmapped');
+});
+
+// ---- The delete of the engine's own comment for a security finding ----
+
+const VIEWER = 'me';
+const ownBody = (...ids) => [...ids.map(markerLine), attributionLine(ids[0]), 'text'].join('\n');
+// A forge for the delete: `comments` by id, each { kind, body, login, pr, member }; the visibility; every call recorded.
+function deleteForge({ comments = {}, visibility = 'PUBLIC', failDelete = false, failRead = false } = {}) {
+  const calls = [];
+  const read = (kind) => (repo, nOrId, maybeId, options) => {
+    const id = kind === 'review_comment' ? maybeId : nOrId;
+    const pr = kind === 'review_comment' ? nOrId : maybeId?.pr;
+    calls.push([`read ${kind}`, id]);
+    if (failRead) throw new Error('gh: Bad Gateway (HTTP 502)');
+    const comment = comments[id];
+    if (!comment || comment.kind !== kind || comment.pr !== pr) return null;
+    return { id, body: comment.body, user: { login: comment.login ?? VIEWER }, author_association: comment.member === false ? 'NONE' : 'MEMBER' };
+  };
+  const forge = {
+    visibility: () => (calls.push(['visibility']), visibility),
+    viewer: () => (calls.push(['viewer']), VIEWER),
+    reviewComment: read('review_comment'),
+    comment: read('comment'),
+    deleteReviewComment: (repo, id) => (calls.push(['delete review_comment', id]), failDelete ? (() => { throw new Error('gh: (HTTP 502)'); })() : null),
+    deleteComment: (repo, id) => (calls.push(['delete comment', id]), failDelete ? (() => { throw new Error('gh: (HTTP 502)'); })() : null),
+  };
+  return { forge, calls };
+}
+const securityState = (entries, note = { stage: 'local', reviewer: 'codex-local', security: false }) => ({
+  ...emptyState(7, 'o/r'), planNote: { passes: { [PASS]: note } },
+  index: Object.fromEntries(entries.map((entry) => [entry.id, { mint: MINT, state: 'open', pass: PASS, severity: 'medium', ...entry }])),
+});
+const sweep = (forge, state, extra = {}) => deleteOwn({ forge, repo: 'o/r', n: 7, state, items: null, mode: 'local', publicSecurity: 'counts', ...extra });
+
+test('the delete: a finding rated high after its inline post, one on a head that requires the security reviewer, and a twin of a high finding lose their comment', () => {
+  const cases = [
+    ['rated high after its post', securityState([{ id: 'R1-1', severity: 'high', thread: { reviewId: 900, commentId: 61 } }])],
+    ['carried onto a head whose plan requires the security reviewer', securityState([{ id: 'R1-1', thread: { reviewId: 900, commentId: 61 } }], { stage: 'local', reviewer: 'codex-local', security: true })],
+    ['a medium finding whose twin is recorded as high', securityState([{ id: 'R1-1', file: 'src/a.js', line: 2, thread: { reviewId: 900, commentId: 61 } }, { id: 'R1-2', file: 'src/a.js', line: 3, severity: 'high' }])],
+  ];
+  for (const [name, state] of cases) {
+    const { forge, calls } = deleteForge({ comments: { 61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 } } });
+    const out = sweep(forge, state);
+    assert.deepEqual(out.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 61 }], name);
+    assert.deepEqual(calls, [['visibility'], ['viewer'], ['read review_comment', 61], ['delete review_comment', 61]], name);
+    assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900 }, `${name}: the delete takes the comment's id out of the thread`);
+    const again = deleteForge();
+    assert.equal(sweep(again.forge, state), null, `${name}: a later step reads no comment for it`);
+    assert.deepEqual(again.calls, []);
+  }
+});
+
+test('the delete leaves another member`s comment, listed as waiting, and deletes nothing for an unmarked, wrongly marked, or foreign comment, or a failed read', () => {
+  const state = () => securityState([
+    { id: 'R1-1', severity: 'high', thread: { commentId: 61 } },
+    { id: 'R1-2', severity: 'high', thread: { commentId: 62 } },
+    { id: 'R1-3', severity: 'high', thread: { commentId: 63 } },
+    { id: 'R1-4', severity: 'high', thread: { commentId: 64 } },
+    { id: 'R1-5', severity: 'high', thread: { fallbackId: 65 } },
+  ]);
+  const comments = {
+    61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7, login: 'pat' },
+    62: { kind: 'review_comment', body: 'my own words, no marker', pr: 7 },
+    63: { kind: 'review_comment', body: ownBody('R1-9'), pr: 7 },
+    64: { kind: 'review_comment', body: ownBody('R1-4'), pr: 8 },
+    65: { kind: 'comment', body: ownBody('R1-5'), pr: 7, login: 'eve', member: false },
+  };
+  const held = state();
+  const { forge, calls } = deleteForge({ comments });
+  const out = sweep(forge, held);
+  assert.deepEqual(out.deleted, []);
+  assert.deepEqual(out.waiting, [{ finding: 'R1-1', kind: 'review_comment', id: 61, login: 'pat' }]);
+  assert.deepEqual(out.left.map((each) => each.id), [62, 63, 64, 65]);
+  assert.ok(!calls.some(([name]) => name.startsWith('delete')));
+  assert.deepEqual(Object.values(held.index).map((entry) => entry.thread), Object.values(state().index).map((entry) => entry.thread), 'every thread unchanged');
+  const failing = deleteForge({ comments, failRead: true });
+  assert.deepEqual(sweep(failing.forge, state()).left.length, 5, 'a read that fails deletes nothing');
+});
+
+test('the delete: a failed delete is named and tried again; a deleted fallback comment`s other findings are posted again', (t) => {
+  const state = securityState([{ id: 'R1-1', severity: 'high', thread: { fallbackId: 70 } }]);
+  const comments = { 70: { kind: 'comment', body: ownBody('R1-1', 'R1-2'), pr: 7 } };
+  const failing = deleteForge({ comments, failDelete: true });
+  assert.deepEqual(sweep(failing.forge, state).failed, [{ finding: 'R1-1', kind: 'comment', id: 70 }]);
+  assert.deepEqual(state.index['R1-1'].thread, { fallbackId: 70 });
+  const { forge, calls } = deleteForge({ comments });
+  assert.deepEqual(sweep(forge, state).deleted, [{ finding: 'R1-1', kind: 'comment', id: 70 }], 'the next step tries again');
+  assert.ok(calls.some(([name, id]) => name === 'delete comment' && id === 70));
+
+  const r = inlineRepo(t);
+  const posted = inlineState(r.head, [listed('R1-1', { severity: 'high' }), listed('R1-2', { file: 'src/old.js', line: 1, title: 'elsewhere' })]);
+  posted.index['R1-1'].thread = { fallbackId: 70 };
+  posted.index['R1-2'].thread = { fallbackId: 70 };
+  sweep(deleteForge({ comments }).forge, posted);
+  assert.equal(posted.index['R1-2'].thread, undefined, 'the other finding the comment listed reads as unposted');
+  const next = inlineForge();
+  assert.deepEqual(postInline(inlineStep(r, posted, next.forge, { reading: PUBLIC }), openOf(posted)).in_body, ['R1-2'], 'and a later step posts it again');
+});
+
+test('the delete: no candidate makes no forge call, and a private repository keeps the comment', () => {
+  const quiet = new Proxy({}, { get: (_, name) => () => assert.fail(`no forge call: ${String(name)}`) });
+  assert.equal(sweep(quiet, securityState([{ id: 'R1-1', thread: { commentId: 61 } }])), null, 'no security finding');
+  assert.equal(sweep(quiet, securityState([{ id: 'R1-1', severity: 'high' }])), null, 'a security finding with no comment');
+  const { forge, calls } = deleteForge({ visibility: 'PRIVATE', comments: { 61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 } } });
+  sweep(forge, securityState([{ id: 'R1-1', severity: 'high', thread: { commentId: 61 } }]));
+  assert.deepEqual(calls, [['visibility']], 'a repository that reads PRIVATE keeps the comment');
+});
+
+test('the delete runs under publicSecurity "full" too: a post that holds the finding`s text goes, one that holds none is spared', () => {
+  const posted = (...ids) => [...ids.map(markerLine), ...ids.flatMap((id) => [attributionLine(id), '**medium**', `> **${id} described**`, '> how to exploit it'])].join('\n');
+  const textless = (id) => [markerLine(id), attributionLine(id), '**high**', WITHHELD].join('\n');
+  const state = () => securityState([
+    { id: 'R1-1', severity: 'high', thread: { commentId: 61 } },
+    { id: 'R1-2', severity: 'high', thread: { commentId: 62 } },
+    { id: 'R1-3', severity: 'high', thread: { fallbackId: 70 } },
+  ]);
+  const comments = {
+    61: { kind: 'review_comment', body: posted('R1-1'), pr: 7 },
+    62: { kind: 'review_comment', body: textless('R1-2'), pr: 7 },
+    // A fallback comment whose section of R1-3 holds no text, beside another finding's that does: it is spared.
+    70: { kind: 'comment', body: [markerLine('R1-3'), markerLine('R1-4'), attributionLine('R1-3'), '**high**', WITHHELD, '', attributionLine('R1-4'), '**low**', '> other text'].join('\n'), pr: 7 },
+  };
+  const full = deleteForge({ comments });
+  const out = sweep(full.forge, state(), { publicSecurity: 'full' });
+  assert.deepEqual(out.deleted.map((each) => each.id), [61], 'the comment posted with its text before the mark');
+  assert.deepEqual(out.textless.map((each) => each.id), [62, 70]);
+  const counts = deleteForge({ comments });
+  assert.deepEqual(sweep(counts.forge, state()).deleted.map((each) => each.id), [61, 62, 70], 'under "counts" even a text-less post goes: its place shows');
+});
+
+test('the delete reaches a marked comment no record maps, of a security id or its alias; it leaves one of another id, another member`s, and every unmapped one under a local record', () => {
+  const state = () => securityState([{ id: 'R1-1', severity: 'high', aliases: ['R1-0'] }, { id: 'R1-2' }]);
+  const item = (kind, id, markers, login = VIEWER) => ({ kind, id, login, member: true, markers, starts: true });
+  const items = [item('review_comment', 81, ['R1-1']), item('comment', 82, ['R1-0']), item('review_comment', 83, ['R1-2']), item('review_comment', 84, ['R1-1'], 'pat'), item('review', 85, ['R1-1'])];
+  const comments = { 81: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 }, 82: { kind: 'comment', body: ownBody('R1-0'), pr: 7 } };
+  const { forge, calls } = deleteForge({ comments });
+  const out = sweep(forge, state(), { items, mode: 'posted' });
+  assert.deepEqual(out.deleted.map((each) => each.id), [81, 82]);
+  assert.deepEqual(out.waiting, [{ finding: 'R1-1', kind: 'review_comment', id: 84, login: 'pat' }]);
+  assert.ok(!calls.some(([, id]) => id === 83 || id === 85), 'one of an id that is not security-marked, and a review body, get no call');
+  const unread = deleteForge({ comments: { 61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 } } });
+  const partial = sweep(unread.forge, securityState([{ id: 'R1-1', severity: 'high', thread: { commentId: 61 } }]), { items: null, mode: 'posted' });
+  assert.deepEqual([partial.deleted.map((each) => each.id), partial.unmapped_unread], [[61], true], 'a failed read of the marked comments deletes what the record maps and says it looked for no other');
+  const local = deleteForge({ comments });
+  assert.equal(sweep(local.forge, state(), { items, mode: 'local' }), null, 'under a local record an unmapped comment is left');
+  assert.deepEqual(local.calls, []);
+});
+
+test('the delete on a held record changes no record, and a mapped comment a whole read no longer holds gets no call', () => {
+  const state = securityState([{ id: 'R1-1', severity: 'high', thread: { commentId: 61 } }]);
+  const before = JSON.stringify(state);
+  const { forge } = deleteForge({ comments: { 61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 } } });
+  const items = [{ kind: 'review_comment', id: 61, login: VIEWER, member: true, markers: ['R1-1'], starts: true }];
+  assert.deepEqual(sweep(forge, state, { items, mode: 'held' }).deleted.map((each) => each.id), [61]);
+  assert.equal(JSON.stringify(state), before, 'a held record is not changed');
+  const after = deleteForge();
+  const out = sweep(after.forge, state, { items: [], mode: 'posted' });
+  assert.deepEqual([out.gone, after.calls], [[{ finding: 'R1-1', kind: 'review_comment', id: 61 }], []], 'the step after it makes no call for that comment');
+  assert.equal(state.index['R1-1'].thread, undefined, 'and its write takes the id out of the thread');
+});
+
+test('inline: a review body is capped at 60,000 characters before escaping, the findings past it listed by id for a later step', (t) => {
+  const r = inlineRepo(t);
+  const findings = Array.from({ length: 32 }, (_, i) => listed(`R1-${i + 1}`, { line: 1, body: 'x'.repeat(2000) }));
+  const state = inlineState(r.head, findings);
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  const review = reviewOf(calls);
+  assert.ok(result.listed.length > 0, 'some findings are past the cap');
+  const shown = review.body.split('\n').filter((line) => !line.startsWith('<!-- ') && !line.includes('not shown here')).join('\n');
+  assert.ok(shown.length <= 60_000, `the raw sections fit the cap: ${shown.length}`);
+  assert.equal(result.in_body.length + result.listed.length, 32);
+  assert.ok(result.listed.every((id) => state.index[id].thread === undefined));
+});
+
+test('inline: every link form in reviewer text is inert, an at-sign in a link target included, and every fence opener drops a suggestion info string', (t) => {
+  const r = inlineRepo(t);
+  const text = [
+    '[profile](https://github.com/@octocat)', 'see https://github.com/@team for it', '[b](//evil.example/x)', '[c](https:/evil.example)',
+    '[d](https:\\evil.example)', '[e]: https://evil.example', 'and [e] again', '<a href="https://evil.example">click</a>', '<https://evil.example>',
+    '> ```suggestion', 'x', '> ```', '```&#115;uggestion', 'y', '```', '```&#x73;uggestion', '```', '- ~~~~SUGGESTION', '~~~~',
+  ].join('\n');
+  const state = inlineState(r.head, [listed('R1-1', { body: text }), listed('R1-2', { file: 'src/old.js', line: 1, body: text })]);
+  const { forge, calls } = inlineForge();
+  postInline(inlineStep(r, state, forge), openOf(state));
+  const review = reviewOf(calls);
+  for (const body of [review.comments[0].body, review.body]) {
+    assert.ok(!/@(?=[A-Za-z0-9])/u.test(body), 'no at-sign before a login character, inside a link or not');
+    assert.ok(!/\]\(|\]:|<a\b|<https?:|[a-z]:\/|[a-z]:\\/iu.test(body), 'no link, reference definition, HTML anchor, or autolink stays whole');
+    assert.ok(!/(?:`{3,}|~{3,}).*(?:uggestion|&#)/iu.test(body), 'no fence opener keeps a suggestion info string, however spelled');
+    assert.ok(body.split('\n').includes('> > ```'), 'a quoted fence stays a fence, with no info string');
+  }
+});
+
+test('fitBody: the not-shown-here notice counts in the fit, so a body that fits only without it leaves one more finding out', () => {
+  const part = (id, size) => ({ id, lines: [{ text: attributionLine(id) }, { text: '-->'.repeat(size) }] });
+  // The largest second part that fits beside the first when nothing is left: the body is then at the forge's limit.
+  let size = 1;
+  while (fitBody([part('R1-1', 1000), part('R1-2', size + 1)]).left.length === 0) size += 1;
+  assert.ok(fitBody([part('R1-1', 1000), part('R1-2', size)]).body.length > MAX_BODY - 30, 'the pair fills the body to within a few characters of the limit');
+  const result = fitBody([part('R1-1', 1000), part('R1-2', size), part('R1-3', 30_000)]);
+  assert.ok(result.body.length <= MAX_BODY, `the body with its notice fits: ${result.body.length}`);
+  assert.deepEqual(result.left, ['R1-2', 'R1-3'], 'the part that fit only without the notice is left out too');
+  assert.match(result.body, /2 more findings not shown here, posted by a later step: R1-2, R1-3$/u);
+});
+
+test('inline: a path the text checks refuse is printed nowhere and anchors nothing; the finding goes in the body with no location', (t) => {
+  const r = inlineRepo(t, { extra: { 'clients/acme/billing.js': 'x\n' } });
+  const state = inlineState(r.head, [listed('R1-1', { file: 'clients/acme/billing.js', line: 1, title: 'bill' })]);
+  const { forge, calls } = inlineForge();
+  const checker = { allows: (text) => !text.includes('acme'), failed: false };
+  const result = postInline(inlineStep(r, state, forge, { checker }), openOf(state));
+  assert.deepEqual([result.threads, result.in_body], [[], ['R1-1']]);
+  const review = reviewOf(calls);
+  assert.deepEqual(review.comments, []);
+  assert.ok(!review.body.includes('acme'), 'the path is in no post');
+  assert.match(review.body, /aidrian review, finding R1-1\n\*\*medium\*\*\n/u);
+});
+
+test('inline: an unchanged line of a renamed file is no added line: it goes in the body, and the edited line gets its thread', (t) => {
+  const lines = Array.from({ length: 10 }, (_, i) => `const line${i + 1} = ${i + 1};`);
+  const moved = lines.map((line, i) => (i === 4 ? 'const line5 = 50;' : line));
+  const r = inlineRepo(t, { base: { 'src/before.js': `${lines.join('\n')}\n` }, extra: { 'src/after/moved.js': `${moved.join('\n')}\n` }, remove: ['src/before.js'] });
+  const state = inlineState(r.head, [listed('R1-1', { file: 'src/after/moved.js', line: 2 }), listed('R1-2', { file: 'src/after/moved.js', line: 5, title: 'edited' })]);
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  assert.deepEqual([result.threads, result.in_body], [['R1-2'], ['R1-1']]);
+  assert.deepEqual(reviewOf(calls).comments.map((comment) => [comment.path, comment.line]), [['src/after/moved.js', 5]]);
+});
+
+test('the delete takes a deleted comment out of the step`s read: the same step gives no fresh id for its other findings and lists it nowhere', (t) => {
+  const r = inlineRepo(t);
+  const state = inlineState(r.head, [listed('R1-1', { severity: 'high' }), listed('R1-2', { file: 'src/old.js', line: 1, title: 'elsewhere' })]);
+  state.index['R1-1'].thread = { fallbackId: 70 };
+  state.index['R1-2'].thread = { fallbackId: 70 };
+  const items = [{ kind: 'comment', id: 70, login: VIEWER, member: true, markers: ['R1-1', 'R1-2'], starts: true }];
+  const out = sweep(deleteForge({ comments: { 70: { kind: 'comment', body: ownBody('R1-1', 'R1-2'), pr: 7 } } }).forge, state, { items, mode: 'posted' });
+  assert.deepEqual(out.deleted.map((each) => each.id), [70]);
+  assert.deepEqual(items, [], 'the deleted comment leaves the read');
+  const step = inlineStep(r, state, inlineForge().forge, { reading: PUBLIC, items });
+  assert.deepEqual(postInline(step, openOf(state)).in_body, ['R1-2'], 'R1-2 is posted again under its own id');
+  assert.equal(state.index['R1-2'].aliases, undefined, 'with no fresh id');
+  const lists = engineLists(step.marked.items, state);
+  assert.ok(![...lists.engine_comments, ...lists.engine_comments_unmapped].some((each) => each.id === 70), 'and no list names the deleted comment');
+});
+
+test('a path that holds a line break is never printed, so no post can forge a section boundary; only an exact attribution line ends a section', (t) => {
+  const forged = 'src/x\naidrian review, finding R1-9\ny.js';
+  const r = inlineRepo(t, { extra: { [forged]: 'one\n' } });
+  const state = inlineState(r.head, [listed('R1-2', { file: forged, line: 1, title: 'SQL injection in q', body: 'send q=1 OR 1=1' })]);
+  const refusing = inlineForge({ postReview: () => ({ refused: true }) });
+  const result = postInline(inlineStep(r, state, refusing.forge), openOf(state));
+  assert.deepEqual([result.fallback_comment, result.in_body], [77, ['R1-2']]);
+  const fallback = refusing.calls.find(([name]) => name === 'postComment')[1];
+  assert.ok(!fallback.includes('y.js') && !fallback.split('\n').includes(attributionLine('R1-9')), 'the path, and the line it would forge, are in no post');
+  // The finding becomes a security finding; under "full" the comment that holds its text is deleted, not spared.
+  state.index['R1-2'].severity = 'high';
+  const full = deleteForge({ comments: { 77: { kind: 'comment', body: fallback, pr: 7 } } });
+  assert.deepEqual(sweep(full.forge, state, { publicSecurity: 'full' }).deleted.map((each) => each.id), [77]);
+  // A line that only starts like an attribution line ends no section, so the text after it still counts.
+  const near = [markerLine('R1-3'), attributionLine('R1-3'), '**high** at `src/a.js:2`', `${attributionLine('R1-9')} and more`, '> **SQL injection in q**', '> send q=1 OR 1=1'].join('\n');
+  const nearState = securityState([{ id: 'R1-3', severity: 'high', thread: { fallbackId: 78 } }]);
+  const nearForge = deleteForge({ comments: { 78: { kind: 'comment', body: near, pr: 7 } } });
+  assert.deepEqual(sweep(nearForge.forge, nearState, { publicSecurity: 'full' }).deleted.map((each) => each.id), [78]);
+});
+
+test('quoted reviewer text encodes every ampersand that could start a reference, so none spells a scheme, a www, a mention, or a fence', () => {
+  const lines = quotedLines(['[a](https&#58;//evil.example)', 'https&colon;//evil.example', 'www&period;evil.example', '&#64;team', '```&#115;uggestion', 'a && b', 'x &amp y', '&lt;a href&gt;'].join('\n'));
+  assert.deepEqual(lines, [
+    '> [a]​(https&amp;#58;//evil.example)', '> https&amp;colon;//evil.example', '> www&amp;period;evil.example', '> &amp;#64;team', '> ```',
+    '> a && b', '> x &amp;amp y', '> &amp;lt;a href&amp;gt;',
+  ]);
+  assert.ok(lines.every((line) => !/&(?!amp;)(?=[#A-Za-z])/u.test(line)), 'no ampersand that could start a reference reaches the renderer');
+});
+
+test('inline: the lines that list leftover findings are bounded, so 200 findings on a long path full of @ still post a review that fits', (t) => {
+  // The bot's probe: a 293-character path whose every @ escapes to two characters, and 175 findings past the 25 threads.
+  const dir = `src/${'@a-'.repeat(80)}`;
+  const file = `${dir}/${'x'.repeat(293 - dir.length - 4)}.js`;
+  assert.equal(file.length, 293);
+  const r = inlineRepo(t, { extra: { [file]: `${Array.from({ length: 200 }, (_, i) => `const v${i} = ${i};`).join('\n')}\n` } });
+  const findings = Array.from({ length: 200 }, (_, i) => listed(`R1-${i + 1}`, { file, line: i + 1 }));
+  const state = inlineState(r.head, findings);
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  const review = reviewOf(calls);
+  assert.ok(review, 'a review is posted');
+  assert.equal(review.comments.length, MAX_THREADS);
+  assert.ok(review.body.length <= MAX_BODY, `the body fits the forge's limit: ${review.body.length}`);
+  assert.deepEqual(result.in_body, [], 'no finding sat outside the diff');
+  assert.equal(result.listed.length, 175);
+  const ids = Array.from({ length: MAX_LISTED }, (_, i) => `R1-${i + 26}`).join(', ');
+  assert.match(review.body, new RegExp(`175 more findings on the diff, posted by a later step: ${ids}, and ${175 - MAX_LISTED} more$`, 'mu'));
+  // The fit's own notice is bounded the same way: a section still fits beside a thousand leftover findings.
+  const part = (id, size) => ({ id, lines: [{ text: attributionLine(id) }, { text: '-->'.repeat(size) }] });
+  const fitted = fitBody([part('R1-1', 666), ...Array.from({ length: 1000 }, (_, i) => part(`R2-${i + 1}`, 30_000))]);
+  assert.deepEqual(fitted.ids, ['R1-1']);
+  assert.ok(fitted.body.length <= MAX_BODY);
+  assert.match(fitted.body, new RegExp(`1000 more findings not shown here, posted by a later step: R2-1, .*R2-${MAX_LISTED}, and ${1000 - MAX_LISTED} more$`, 'u'));
 });

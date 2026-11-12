@@ -444,6 +444,8 @@ test('a review step that needs no review leaves a finished outcome the guard rea
     change: () => ({ number: 8, headRefOid: head, baseRefName: 'main' }),
     repo: () => 'acme/notes',
     conversationComments: () => comments,
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
     editComment: () => {},
   };
@@ -476,6 +478,8 @@ async function plannedReadme(t, plan) {
     change: () => ({ number: 10, headRefOid: head, baseRefName: 'main' }),
     repo: () => 'acme/notes',
     conversationComments: () => [],
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: () => ({}),
     editComment: () => ({}),
   };
@@ -518,6 +522,8 @@ function feature(r) {
     change: () => ({ number: 9, headRefOid: head, baseRefName: 'main' }),
     repo: () => 'acme/notes',
     conversationComments: () => comments,
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
     editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };

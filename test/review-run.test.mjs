@@ -62,6 +62,8 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
     change: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7', isCrossRepository: false }),
     repo: () => 'o/r',
     conversationComments: () => comments,
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
     editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
@@ -2118,7 +2120,13 @@ test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --acc
   ]) });
   await r.step({ exec: clean });
   const evidence = 'https://github.com/o/r/pull/7#pullrequestreview-5';
-  const forge = { change: () => ({ url: 'https://github.com/o/r/pull/7' }), changeEvidence: (_repo, _n, url) => (url === evidence ? 'review' : null) };
+  // The engine's own posts, each a comment of this pull request, are never outside evidence (R7, G3).
+  const engine = {
+    'https://github.com/o/r/pull/7#discussion_r11': { kind: 'review_comment', body: '<!-- aidrian-review-finding:R1-1 -->\naidrian review, finding R1-1\n**medium**' },
+    'https://github.com/o/r/pull/7#issuecomment-12': { kind: 'comment', body: '<!-- aidrian-review-summary -->\n### Review: received' },
+    'https://github.com/o/r/pull/7#issuecomment-13': { kind: 'comment', body: '<!-- aidrian-product-feedback: pr=7 repo=o/r -->\nfeedback' },
+  };
+  const forge = { change: () => ({ url: 'https://github.com/o/r/pull/7' }), changeEvidence: (_repo, _n, url, { withBody }) => (url === evidence ? { kind: 'review', body: 'The designer approved the screenshots.' } : withBody ? engine[url] ?? null : null) };
   const lines = [];
   t.mock.method(console, 'log', (line) => lines.push(line));
   const signoff = (...args) => runSignoff(['7', ...args, '--head', first.head, '--repo', 'o/r', '--check'], projectAt(r.dir), loadConfig(projectAt(r.dir)).config, { forge });
@@ -2127,6 +2135,9 @@ test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --acc
   assert.equal(await signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', evidence, '--reason', 'the designer approved it'), 0);
   await assert.rejects(signoff('--flow', 'look'), /flow look takes no Human sign-off/u);
   await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', 'https://github.com/o/r/pull/7#issuecomment-1', '--reason', 'x'), /is not a comment, review, or review comment of o\/r#7 that the forge can find/u);
+  for (const url of Object.keys(engine)) {
+    await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', url, '--reason', 'x'), /is a post of the review engine itself .* never outside evidence/u, url);
+  }
   await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', 'https://github.com/user-attachments/assets/shot-1', '--reason', 'x'), /cite the URL of the comment or review that holds an attachment, never the attachment's own URL/u, 'an upload is refused, with the way to cite it');
   await assert.rejects(signoff('--flow', 'look', '--accept', 'keeps-copy', '--evidence', evidence, '--reason', 'x'), /is not unverified on/u);
   await assert.rejects(signoff('--flow', 'look', '--overrule', 'matches-design', '--reason', 'x'), /is not disputed on/u);
@@ -2660,4 +2671,233 @@ test('the findings file of a merged pass with three long flow ids still fits a f
   assert.equal(findingsFile(r.project, 7, ids[0]), one, 'the same id, the same file');
   writeFileSync(one, '[]');
   assert.equal(readFileSync(one, 'utf8'), '[]', 'the file can be written');
+});
+
+// ---- Inline reviews on a whole step (lib/review/inline.mjs) ----
+
+const INLINE = { version: 1, review: { publish: { inline: true } } };
+const mediumFinding = { file: 'src/app.js', line: 1, title: 'the app number is wrong', body: 'It should stay 1.', severity: 'medium' };
+// The forge double of `repo` with the inline review's reads and writes: every post is kept, by the viewer `me`, a
+// member; every call is named in `calls`. `refuse` makes postReview refuse.
+function inlineForge(r) {
+  const calls = [];
+  const reviews = [];
+  const reviewComments = [];
+  const author = { user: { login: 'me' }, author_association: 'MEMBER' };
+  const named = (name, fn) => (...args) => (calls.push(name), fn(...args));
+  const { postComment, conversationComments, editComment } = r.forge;
+  Object.assign(r.forge, {
+    viewer: named('viewer', () => 'me'),
+    conversationComments: named('conversationComments', conversationComments),
+    postComment: named('postComment', (...args) => {
+      postComment(...args);
+      Object.assign(r.comments.at(-1), author);
+      return { id: r.comments.at(-1).id };
+    }),
+    editComment: named('editComment', editComment),
+    reviews: named('reviews', () => reviews),
+    reviewComments: named('reviewComments', () => reviewComments),
+    postReview: named('postReview', (_repo, _n, review) => {
+      if (r.refuse) return { refused: true };
+      const id = 900 + reviews.length;
+      reviews.push({ id, body: review.body, ...author });
+      const posted = review.comments.map((comment, i) => ({ id: 1000 + reviewComments.length + i, body: comment.body, path: comment.path, line: comment.line, pull_request_review_id: id, ...author }));
+      reviewComments.push(...posted);
+      return { refused: false, id, comments: posted.map(({ id: each, body }) => ({ id: each, body })) };
+    }),
+    reviewComment: named('reviewComment', (_repo, _n, id) => reviewComments.find((each) => each.id === id) ?? null),
+    comment: named('comment', (_repo, id) => r.comments.find((each) => each.id === id) ?? null),
+    deleteReviewComment: named('deleteReviewComment', (_repo, id) => (reviewComments.splice(reviewComments.findIndex((each) => each.id === id), 1), null)),
+    deleteComment: named('deleteComment', (_repo, id) => (r.comments.splice(r.comments.findIndex((each) => each.id === id), 1), null)),
+    visibility: named('visibility', r.forge.visibility),
+  });
+  return { calls, reviews, reviewComments };
+}
+const summaryComment = (r) => r.comments.find((comment) => comment.body.startsWith('<!-- aidrian-review-summary -->'));
+
+test('inline on: one whole step posts one review with the finding`s thread, records it, and a second step posts nothing and lists it as mapped', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  const exec = async () => found(mediumFinding);
+  const first = await r.step({ exec });
+  assert.equal(first.status, 'fix_required');
+  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'postReview', 'postComment'], 'the step`s forge calls, in order');
+  assert.deepEqual([first.inline_review.posted, first.inline_review.threads, first.inline_review.review_id], [true, ['R1-1'], 900]);
+  assert.deepEqual(posts.reviewComments.map((each) => [each.path, each.line]), [['src/app.js', 1]]);
+  assert.ok(posts.reviewComments[0].body.startsWith('<!-- aidrian-review-finding:R1-1 -->\naidrian review, finding R1-1\n'));
+  const local = readLocalState(r.project, 7);
+  assert.deepEqual(local.index['R1-1'].thread, { reviewId: 900, commentId: 1000 });
+  assert.deepEqual(stateFromComment(summaryComment(r).body, 7).index['R1-1'].thread, { reviewId: 900, commentId: 1000 }, 'the posted record holds the thread');
+  assert.deepEqual(first.engine_comments.map((each) => [each.kind, each.id]), [['review_comment', 1000], ['review', 900]], 'what this step posted is the engine`s, mapped');
+  assert.deepEqual(first.engine_comments_unmapped, []);
+  assert.ok(!posts.calls.some((name) => name.startsWith('delete') || name === 'reviewComment'), 'no candidate for the delete, so no call for it');
+
+  posts.calls.length = 0;
+  const second = await r.step({ exec });
+  assert.equal(second.inline_review, undefined, 'a second step posts nothing');
+  assert.ok(!posts.calls.includes('postReview'));
+  assert.deepEqual(second.engine_comments.map((each) => each.id), [900, 1000], 'and lists the thread as mapped');
+  assert.deepEqual(second.engine_comments_unmapped, []);
+});
+
+test('inline: a step that cannot read the marked posts returns neither list, and before the first id mints nothing; later it posts no review', async (t) => {
+  for (const broken of [() => { throw new Error('gh: Bad Gateway (HTTP 502)'); }, () => [{ body: 'no id' }]]) {
+    const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+    const posts = inlineForge(r);
+    r.forge.reviewComments = broken;
+    const first = await r.step({ exec: async () => found(mediumFinding) });
+    assert.equal(first.status, 'fix_required');
+    assert.ok(first.engine_comments_unread && !('engine_comments' in first) && !('engine_comments_unmapped' in first));
+    assert.match(first.ids_unminted, /no finding id is minted/u);
+    assert.equal(readLocalState(r.project, 7).passes['engine:codex-local'].list[0].id, undefined, 'no id is minted');
+    assert.equal(readLocalState(r.project, 7).floored, false, 'and attest mints none either');
+    assert.ok(!posts.calls.includes('postReview'));
+  }
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  r.forge.reviews = () => { throw new Error('gh: Bad Gateway (HTTP 502)'); };
+  const state = { ...emptyState(7, 'o/r'), idCounter: 3 };
+  writeLocalState(r.project, state);
+  const later = await r.step({ exec: async () => found(mediumFinding) });
+  assert.equal(readLocalState(r.project, 7).passes['engine:codex-local'].list[0].id, 'R1-4', 'a record past its first id still mints');
+  assert.deepEqual([later.inline_review.posted, posts.calls.includes('postReview')], [false, false], 'and posts no review');
+});
+
+test('inline: attest on a fresh record after a deleted summary stores no id, and the next step assigns ids above the highest marker', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  const first = await r.step({ exec: async () => found(mediumFinding, { ...mediumFinding, title: 'second', line: 1, file: 'src/app.js', body: 'b' }) });
+  assert.deepEqual(first.inline_review.threads.length + first.inline_review.in_body.length, 2);
+  // The Human deletes the summary comment, and this machine's record is gone: the review restarts.
+  r.comments.splice(r.comments.indexOf(summaryComment(r)), 1);
+  rmSync(path.join(stateDir(r.project), 'reviews'), { recursive: true, force: true });
+  const attested = recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'agent:code-reviewer', head: first.head, reviewer: 'code-reviewer', findingsText: JSON.stringify([{ title: 'attested', file: 'src/app.js', line: 1, state: 'open', severity: 'medium', likelihood: 'plausible', affects: 'internal', cost: 'bounded' }]) });
+  assert.equal(attested.list[0].id, undefined, 'attest on a fresh record stores no id');
+  await r.step({ exec: async () => found(mediumFinding) });
+  const ids = Object.keys(readLocalState(r.project, 7).index);
+  assert.ok(ids.length && ids.every((id) => Number(id.split('-')[1]) > 2), `every id is above R1-2, the highest marker: ${ids}`);
+  assert.equal(posts.reviewComments.filter((each) => each.body.startsWith('<!-- aidrian-review-finding:R1-1 -->')).length, 1, 'no second comment under an id a marker carries');
+});
+
+test('inline: a held record and a step that cannot read the posts: every marked post unmapped, or neither list', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  await r.step({ exec: async () => found(mediumFinding) });
+  const summary = summaryComment(r);
+  summary.body = holdComment(summary.body, readLocalState(r.project, 7).revision + 3);
+  const held = await r.step({ exec: () => assert.fail('no reviewer runs') });
+  assert.equal(held.held !== undefined, true);
+  assert.deepEqual(held.engine_comments, [], 'a step that stops before it maps anything maps nothing');
+  assert.deepEqual(held.engine_comments_unmapped.map((each) => each.id).sort(), [1000, 900].sort());
+  r.forge.reviews = () => { throw new Error('down'); };
+  const unread = await r.step({ exec: () => assert.fail('no reviewer runs') });
+  assert.ok(unread.engine_comments_unread && !('engine_comments' in unread) && !('engine_comments_unmapped' in unread));
+  assert.ok(posts.reviews.length === 1);
+});
+
+// A first step that posts the finding inline on a private repository, then the finding marked security in this machine's
+// record: the next step runs on a public reading.
+async function postedThenMarked(t, baseConfig = INLINE) {
+  const r = repo(t, { baseConfig, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  const first = await r.step({ exec: async () => found(mediumFinding) });
+  assert.deepEqual(first.inline_review.threads, ['R1-1']);
+  const state = readLocalState(r.project, 7);
+  state.index['R1-1'].security = true;
+  writeLocalState(r.project, state);
+  r.forge.visibility = () => 'PUBLIC';
+  return { r, posts, first };
+}
+
+test('the delete follows the record, no switch: the local file`s inline false and a base branch that set review.record "local" after the post each delete their own comment', async (t) => {
+  const local = await postedThenMarked(t);
+  local.r.write('.aidrian.local.json', JSON.stringify({ review: { publish: { inline: false } } }));
+  const off = await local.r.step({ exec: async () => found(mediumFinding) });
+  assert.deepEqual(off.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 1000 }]);
+  assert.equal(local.posts.reviewComments.length, 0, 'the comment is gone');
+  assert.ok(!local.posts.calls.slice(local.posts.calls.indexOf('deleteReviewComment')).includes('postReview'), 'and nothing is posted');
+  assert.deepEqual(readLocalState(local.r.project, 7).index['R1-1'].thread, { reviewId: 900 }, 'the write takes the id out of the thread');
+
+  const based = await postedThenMarked(t);
+  based.r.git('switch', '-q', 'main');
+  based.r.write('.aidrian/config.json', JSON.stringify({ version: 1, review: { record: 'local', publish: { inline: true } } }));
+  based.r.git('add', '-A');
+  based.r.git('commit', '-q', '-m', 'record local');
+  based.r.git('switch', '-q', 'feat');
+  const quiet = await based.r.step({ exec: async () => found(mediumFinding) });
+  assert.deepEqual(quiet.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 1000 }], 'review.record "local" stops no delete');
+  assert.ok(!('engine_comments' in quiet) && !('engine_comments_unread' in quiet), 'a local record reads no pull request comment');
+});
+
+test('the delete on a member`s machine that reads a mark another machine set, also on a step that stops for a finding with no text', async (t) => {
+  const { r, posts } = await postedThenMarked(t);
+  // This machine's record carries no mark; another machine's posted copy, at a higher revision, does.
+  const state = readLocalState(r.project, 7);
+  delete state.index['R1-1'].security;
+  writeLocalState(r.project, state);
+  const remote = { ...readLocalState(r.project, 7), revision: state.revision + 4 };
+  remote.index = { ...remote.index, 'R1-1': { ...remote.index['R1-1'], security: true }, 'R1-7': { id: 'R1-7', mint: 'abcdef01', severity: 'medium', state: 'open', disposition: 'fix_now', pass: 'engine:codex-local' } };
+  remote.passes = { ...remote.passes, 'engine:codex-local': { ...remote.passes['engine:codex-local'], list: [...remote.passes['engine:codex-local'].list, { id: 'R1-7', mint: 'abcdef01', severity: 'medium', state: 'open', disposition: 'fix_now' }] } };
+  summaryComment(r).body = summaryBody(remote, null, 'x', OPEN);
+  const stopped = await r.step({ exec: () => assert.fail('no reviewer runs') });
+  assert.equal(stopped.status, 'incomplete');
+  assert.match(stopped.reason, /the open finding R1-7, whose text is on the machine that recorded it/u);
+  assert.deepEqual(stopped.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 1000 }], 'the delete runs before the stop');
+  assert.equal(posts.reviewComments.length, 0);
+});
+
+test('the delete on a held record: this machine`s own comment goes, the record`s revision stays, and the step after it makes no call for it', async (t) => {
+  const { r, posts } = await postedThenMarked(t);
+  const revision = readLocalState(r.project, 7).revision;
+  const summary = summaryComment(r);
+  summary.body = holdComment(summary.body, revision + 3);
+  const held = await r.step({ exec: () => assert.fail('no reviewer runs') });
+  assert.equal(held.held, revision + 3);
+  assert.deepEqual(held.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 1000 }]);
+  assert.equal(readLocalState(r.project, 7).revision, revision, 'no record is written');
+  assert.deepEqual(readLocalState(r.project, 7).index['R1-1'].thread, { reviewId: 900, commentId: 1000 }, 'the hold stays as it was');
+  posts.calls.length = 0;
+  const again = await r.step({ exec: () => assert.fail('no reviewer runs') });
+  assert.deepEqual(again.comment_deletes.gone, [{ finding: 'R1-1', kind: 'review_comment', id: 1000 }]);
+  assert.ok(!posts.calls.includes('reviewComment') && !posts.calls.includes('deleteReviewComment'), 'no call for a comment the whole read no longer holds');
+});
+
+test('the delete reaches an unmapped marked comment of a security id, and leaves one of another id and another member`s', async (t) => {
+  const { r, posts } = await postedThenMarked(t);
+  const mark = (id) => `<!-- aidrian-review-finding:${id} -->\naidrian review, finding ${id}\ntext`;
+  // A comment a lost write left unmapped, one of an id that is not security-marked, and another member's.
+  posts.reviewComments.push(
+    { id: 2001, body: mark('R1-1'), user: { login: 'me' }, author_association: 'MEMBER' },
+    { id: 2002, body: mark('R1-9'), user: { login: 'me' }, author_association: 'MEMBER' },
+    { id: 2003, body: mark('R1-1'), user: { login: 'pat' }, author_association: 'COLLABORATOR' },
+  );
+  const result = await r.step({ exec: async () => found(mediumFinding) });
+  assert.deepEqual(result.comment_deletes.deleted.map((each) => each.id).sort(), [1000, 2001]);
+  assert.deepEqual(result.comment_deletes.waiting, [{ finding: 'R1-1', kind: 'review_comment', id: 2003, login: 'pat' }]);
+  assert.deepEqual(posts.reviewComments.map((each) => each.id), [2002, 2003]);
+});
+
+test('inline: a member`s marker at the counter`s digit limit stops the step as incomplete rather than mint past it, and one past the limit is ignored', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  const mark = (id) => `<!-- aidrian-review-finding:${id} -->\naidrian review, finding ${id}\ntext`;
+  posts.reviewComments.push({ id: 3001, body: mark('R1-1234567'), user: { login: 'pat' }, author_association: 'MEMBER' });
+  const ignored = await r.step({ exec: async () => found(mediumFinding) });
+  assert.equal(readLocalState(r.project, 7).passes['engine:codex-local'].list[0].id, 'R1-1', 'a marker past six digits raises nothing');
+  assert.deepEqual(ignored.engine_comments_unmapped, [], 'and is no marker at all');
+  posts.reviewComments.push({ id: 3002, body: mark('R1-999999'), user: { login: 'pat' }, author_association: 'MEMBER' });
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  let ran = 0;
+  const stopped = await r.step({ exec: async () => (ran += 1, found(mediumFinding)) });
+  assert.deepEqual([stopped.status, stopped.retry_recommended, ran], ['incomplete', false, 0]);
+  assert.match(stopped.reason, /the finding id counter of #7 is at its limit/u);
+});
+
+test('the delete runs under publicSecurity "full" too: a comment posted with its text before the mark goes, and the step posts no text for it', async (t) => {
+  const { r, posts } = await postedThenMarked(t, { version: 1, review: { publish: { inline: true, publicSecurity: 'full' } } });
+  const result = await r.step({ exec: async () => found(mediumFinding) });
+  assert.deepEqual(result.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 1000 }]);
+  assert.equal(posts.reviewComments.length, 0);
+  assert.ok(!posts.reviews.slice(1).some((review) => review.body.includes('It should stay 1.')), 'no later post carries its text');
 });

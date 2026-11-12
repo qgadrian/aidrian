@@ -254,6 +254,52 @@ export function escapeLines(lines) {
   return lines.map((line) => neutralized(String(line)).replaceAll('-->', '--&gt;').replace(/^(\s*)\//u, '$1​/'));
 }
 
+// What an inline review posts of a finding's text, capped before it is escaped (G7): a title, a body, and a whole review
+// body or fallback comment.
+export const TITLE_CAP = 200;
+export const TEXT_CAP = 2_000;
+export const POST_CAP = 60_000;
+// Every line break a body can hold: a post reads each line of it as it will show.
+export const LINE_BREAK = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/u;
+// A fence opener after any blockquote, list, and space prefix, with its info string: a fence keeps its info string only
+// when that is a plain language name and not `suggestion` in any case, so a `suggestion` fence, one spelled with a
+// character reference, and one quoted in reviewer text all post as a plain fence, and the forge offers no change to apply.
+const FENCE_OPENER = /^((?:[ \t>]|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*)(`{3,}|~{3,})(.*)$/u;
+const LANGUAGE = /^[A-Za-z0-9_+#.-]{1,30}$/u;
+export function plainFence(line) {
+  const match = FENCE_OPENER.exec(line);
+  if (!match) return line;
+  const info = match[3].trim();
+  return info === '' || (LANGUAGE.test(info) && !/suggestion/iu.test(info)) ? line : `${match[1]}${match[2]}`;
+}
+
+// Reviewer text with every link inert, the way the table cell encoder neutralizes an autolink, whatever the link's
+// form: a zero-width space breaks each scheme's colon from what follows (`https://`, `https:/`, `https:\`), each `www.`,
+// each `](` and `]:` (an inline link and a reference definition, a protocol-relative target among them), and each `<`
+// that could open a tag or an autolink, such as `<a href>`.
+const neutralLinks = (line) => line
+  .replace(/([A-Za-z][A-Za-z0-9+.-]*):(?=[/\\])/gu, '$1:\u200b')
+  .replace(/(?<![\w.-])www\./giu, 'www\u200b.')
+  .replace(/\](?=[(:])/gu, ']\u200b')
+  .replace(/<(?=[A-Za-z/!?])/gu, '<\u200b');
+
+// One line of reviewer text as an inline review posts it (R3, G7), from its raw text: a suggestion fence made a plain
+// fence; every `&` that could start a character reference (one followed by `#` or a letter) encoded as `&amp;`, so no
+// reference reaches the renderer to spell a scheme, a mention, or a fence the steps below would miss, and code such as
+// `a && b` stays readable; its links made inert first, so no at-sign in a link target escapes the mention
+// check; escaped as every line of a post is (escapeLines); then quoted, so no line of it starts a command a bot reads. A
+// marker line in the text is escaped like any other, so no reader of markers counts it.
+export function quotedLines(text) {
+  const lines = String(text).split(LINE_BREAK).map((line) => neutralLinks(plainFence(line).replace(/&(?=[#A-Za-z])/gu, '&amp;')));
+  return escapeLines(lines).map((line) => plainFence(`> ${line}`));
+}
+
+// `text` cut to `cap` characters, with the count of what was cut: { text, cut }.
+export const capped = (text, cap) => {
+  const whole = String(text ?? '').trim();
+  return whole.length > cap ? { text: whole.slice(0, cap), cut: whole.length - cap } : { text: whole, cut: 0 };
+};
+
 // ---- Security findings ----
 
 
@@ -373,6 +419,7 @@ const FIXED_KEYS = new Set([
   'human', 'answer', 'session', 'unreviewed', 'title', 'body', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost',
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
   'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
+  'thread', 'reviewId', 'commentId', 'fallbackId',
 ]);
 
 // The record less what stays on this machine on every repository (postedCopy), as a copy.
@@ -532,6 +579,8 @@ function allowlisted(state, post, counter) {
       closed_in: (value) => object(value, { from: sha, to: sha }),
       seen: sha,
       placed: sha,
+      // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone.
+      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int }),
     });
     const file = source.file;
     if (typeof file === 'string' && !hidePlace && path(head)(file)) {

@@ -152,7 +152,7 @@ A forge is where a pull request lives: its checks, reviews, comments, and reposi
 | File | What it holds |
 | --- | --- |
 | `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs, killSignal }` and returns the frozen method object below. `run` is the test seam for the forge's command, and `killSignal` the signal that stops a call at `timeoutMs`, as the ready hold asks for SIGKILL |
-| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, the facade's helper `repoIdentity(value)` from `identity.mjs`, and `isLogin(name)`, whether a name is shaped like the forge's login, as an invariant's `approvers` must be. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
+| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, the facade's helper `repoIdentity(value)` from `identity.mjs`, `isLogin(name)`, whether a name is shaped like the forge's login, as an invariant's `approvers` must be, and `MAX_BODY`, the longest body the forge takes for a comment or a review, which the adapter names (65,536 characters on GitHub) and an inline review checks its escaped length against. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
 | `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
 
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
@@ -162,9 +162,19 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `nodeChange`, the pull request a GraphQL node id names, `changeEdits(repo, n, { host })`, when its body was last edited
   and its title last renamed, and `changeFiles`, every changed file past the 100 `change` lists.
 - The repository: `repo`, `repository`, `contents`, `tree`, one folder of a commit's tree with each entry's mode, `visibility`, and `viewer`.
-- Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment`, one of them by id,
-  `postComment`, `editComment`, and `reactions`.
-- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url, { host })`, which says whether a URL on the pull request's host is one of its comments, reviews, or review comments, found by its id.
+- Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment(repo, id, { host, pr })`,
+  one of them by id, held to pull request `pr` when the option names it (null for a comment of any other, or one the forge
+  does not find), `postComment`, `editComment`, `deleteComment(repo, id)`, and `reactions`.
+- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url, { host, withBody })`, which says whether a URL on the pull request's host is one of its comments, reviews, or review comments, found by its id, and with `withBody` gives that item's text too, so the sign-off check refuses an engine post.
+- Inline review: `postReview(repo, n, { commitId, body, comments })`, one review of the head with its inline comments
+  (`{ path, line, side, body }`), always a plain comment: the adapter sets the event, and takes none. It answers
+  `{ refused: false, id, comments }`, the review's id and its inline comments with their ids, or `{ refused: true }` when the
+  forge refuses the review, such as for a line outside the diff (GitHub: any 4xx answer), and throws any other failure:
+  shared code reads no status code and no forge message. `reviewComment(repo, n, id)`, one review comment by its id, held
+  to pull request `n`, and `deleteReviewComment(repo, id)`: the delete of the engine's own comment for a security finding
+  reads it first. Every write route, and every read of one comment, is built from a safe positive integer alone, and
+  text from a pull request reaches a write as a literal string: on GitHub, JSON on gh's stdin or a raw `-f` field, never
+  `-F`, which reads a leading `@` as a file.
 - Commits: `commit`, `checkRuns`, `compare`, `deployments` of one commit and `deploymentStatuses` of one deployment,
   and `uploadImages` for a pull request's captures.
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review

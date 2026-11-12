@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { blocks, listedTo, listing, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
@@ -581,4 +581,42 @@ test('a finding outside its slice`s files, beside a cross pass with no file list
   const { state, ids, slice } = twoRounds({ ...AGENT, file: 'src/c.js', line: 3 }, places({ 'src/a.js': 40, 'src/c.js': 40 }));
   assert.deepEqual(ids, [ids[0], ids[0], ids[0]]);
   assert.deepEqual(Object.values(state.index).map((entry) => [entry.id, entry.state, entry.pass, entry.file]), [[ids[0], 'open', slice, 'src/c.js']]);
+});
+
+test('freshId: a new id and mint mark on every copy of the finding, every engine key kept, the old id in aliases', () => {
+  const state = recordWith();
+  const [kept, other] = recordFindings(state, 'p', { head: 'h', list: [exec({ severity: 'high' }), exec({ title: 'Other', line: 30 })] }, { mint: true, paths: places() }).list;
+  const old = kept.id;
+  const otherId = other.id;
+  state.rounds.at(-1).findings = [{ id: old, mint: kept.mint, title: kept.title, security: true }];
+  const before = { ...state.index[old] };
+  const id = freshId(state, old);
+  assert.equal(id, 'R1-3', 'from the one counter');
+  assert.equal(state.index[old], undefined, 'the entry moves to the new id');
+  const entry = state.index[id];
+  const { id: _a, mint: _b, aliases: _c, ...keys } = entry;
+  const { id: _d, mint: _e, aliases: _f, ...was } = before;
+  assert.deepEqual(keys, was, 'every engine key of the old id, its security mark among them');
+  assert.equal(entry.security, true);
+  assert.deepEqual(entry.aliases, [old]);
+  assert.ok(/^[0-9a-f]{8}$/u.test(entry.mint) && entry.mint !== before.mint, 'a mint mark of its own');
+  const listedCopy = state.passes.p.list[0];
+  assert.deepEqual([listedCopy.id, listedCopy.mint, listedCopy.aliases, listedCopy.security], [id, entry.mint, [old], true]);
+  assert.deepEqual([state.rounds.at(-1).findings[0].id, state.rounds.at(-1).findings[0].aliases], [id, [old]]);
+  assert.equal(state.passes.p.list[1].id, otherId, 'another finding keeps its id');
+  assert.equal(freshId(state, 'R9-9'), null, 'an id the record does not hold');
+  assert.equal(state.idCounter, 3, 'and mints nothing for it');
+});
+
+test('no id is minted past the digit limit: recordFindings stores the finding without one, and freshId mints none', () => {
+  const state = recordWith();
+  state.idCounter = MAX_COUNTER;
+  const recorded = recordFindings(state, 'p', { head: 'h', list: [exec()] }, { mint: true, paths: places() });
+  assert.equal(recorded.list[0].id, undefined);
+  assert.equal(state.idCounter, MAX_COUNTER);
+  state.idCounter = 1;
+  const named = recordFindings(state, 'q', { head: 'h', list: [exec({ title: 'Named' })] }, { mint: true, paths: places() }).list[0];
+  state.idCounter = MAX_COUNTER;
+  assert.equal(freshId(state, named.id), null);
+  assert.equal(state.passes.q.list[0].id, named.id, 'the finding keeps its id');
 });

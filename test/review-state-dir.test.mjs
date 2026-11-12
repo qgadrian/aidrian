@@ -90,6 +90,8 @@ function repo(t, { baseConfig, headConfig, files = {}, baseFiles = {}, links = {
     repo: () => 'o/r',
     pull: () => ({ draft: false, base: { ref: 'main' }, head: { sha: head } }),
     conversationComments: () => comments,
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
     editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };

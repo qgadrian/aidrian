@@ -15,7 +15,7 @@ import { lateResiduals, recordPass, reviewStep } from '../plugins/aidrian/lib/re
 import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { contextFindings, heldWaiver as heldWaiverOf, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
+import { freshId, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 
 const body = (items, section = 'Accepted residuals') => `## Summary\n\nWhy.\n\n## ${section}\n\n${items.map((item) => `- ${item}`).join('\n')}\n\n## Tests\n\n- npm test\n`;
@@ -338,6 +338,8 @@ function repo(t, firstBody, github = {}, { rule = { depth: 'single' }, review = 
     pull,
     repo: () => 'o/r',
     conversationComments: () => comments,
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: (_repo, _n, text) => comments.push({ id: comments.length + 1, body: text, author_association: 'MEMBER' }),
     editComment: (_repo, id, text) => (comments.find((comment) => comment.id === id).body = text),
   };
@@ -708,6 +710,27 @@ test('the auto-merge hold ends when a listing holds that finding`s id as fixed, 
     assert.deepEqual([endedOn(h4.record), contextCopies(inputs.at(-1))], [[], []], 'the entry leaves the record and the input');
     assert.equal(hold(), null, 'and the hold stays ended');
   }
+});
+
+test('a hold and a waiver that name an old id still apply through its alias once the finding takes a fresh id', async (t) => {
+  const { r, run, hold } = await waivedAboveLow(t);
+  r.setBody(body([]));
+  await run([], COMMENT_PUSH);
+  const state = readLocalState(r.project, 7);
+  const named = heldWaiverOf(state).ruled_id;
+  assert.match(named, /^R\d+-\d+$/u);
+  const fresh = freshId(state, named);
+  assert.ok(fresh && fresh !== named, 'the finding the waiver names took a fresh id');
+  writeLocalState(r.project, state);
+  assert.ok(hold(), 'the waiver that names the old id still holds auto-merge');
+  assert.equal(heldWaiverOf(readLocalState(r.project, 7))?.ruled_id, named);
+  // A listing that holds the finding, now under its fresh id, as fixed ends the hold: the old id is its alias.
+  const after = readLocalState(r.project, 7);
+  const pass = Object.keys(after.passes).find((id) => (after.passes[id].list ?? []).some((finding) => finding.id === fresh))
+    ?? Object.keys(after.passes).find((id) => Array.isArray(after.passes[id].list));
+  after.passes[pass].list = [...(after.passes[pass].list ?? []).filter((finding) => finding.id !== fresh), { id: fresh, aliases: [named], title: 'x', state: 'fixed', severity: 'medium', disposition: 'fix_now' }];
+  writeLocalState(r.project, after);
+  assert.equal(hold(), null, 'the hold ends once a listing holds the finding as fixed under its fresh id');
 });
 
 test('the auto-merge hold stays after a waiver above low ends without a fix: the residual limit', async (t) => {

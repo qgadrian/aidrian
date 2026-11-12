@@ -61,6 +61,8 @@ function repo(t, { baseConfig = { version: 1 }, baseFiles = {}, feature = { 'src
     change: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
     repo: () => 'o/r',
     conversationComments: () => comments,
+    reviews: () => [],
+    reviewComments: () => [],
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
     editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };

@@ -39,11 +39,13 @@ function fileList(numstat, names) {
 }
 
 // The added lines per file, the files that lost lines and the lines they lost, and each file's hunks, from one unified
-// diff with no context.
-export function diffLines(root, from, to, files = null) {
+// diff with no context. `addedAt` holds each file's added line numbers on the `to` side, the lines a review comment
+// may anchor to. `renames` reads a moved file as the forge's diff shows it, its unchanged lines not added: the inline
+// review's anchors take it; every other reader keeps a moved file's every line, as the review reads it.
+export function diffLines(root, from, to, files = null, { renames = false } = {}) {
   // Unquoted paths (core.quotePath=false), so a header names `src/café.ts` as the file list does; no external diff or
   // text conversion, so the lines are the file's own.
-  return parseUnified(git(root, ['-c', 'core.quotePath=false', 'diff', '--relative', '--unified=0', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]));
+  return parseUnified(git(root, ['-c', 'core.quotePath=false', 'diff', '--relative', '--unified=0', '--no-color', renames ? '--find-renames' : '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]));
 }
 
 function parseUnified(text) {
@@ -53,7 +55,10 @@ function parseUnified(text) {
   // `{ [file]: [{ added, removed }] }`: unchanged code lies between two hunks, so a comment that opens in one and closes
   // in the next can hide it (quietDelta).
   const hunks = {};
+  const addedAt = {};
   let file = null;
+  // The `to` side's number of the next added line, from the hunk header `@@ -a,b +c,d @@`.
+  let next = null;
   let hunk = null;
   let old = null;
   let header = false;
@@ -67,11 +72,14 @@ function parseUnified(text) {
     else if (header && line.startsWith('+++ ')) file = line === '+++ /dev/null' ? old : line.slice('+++ b/'.length);
     else if (line.startsWith('@@')) {
       header = false;
+      const start = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u.exec(line);
+      next = start ? Number(start[1]) : null;
       hunk = { added: [], removed: [] };
       if (file) (hunks[file] ??= []).push(hunk);
     } else if (header) continue;
     else if (line.startsWith('+') && file) {
       (addedLines[file] ??= []).push(line.slice(1));
+      if (next !== null) (addedAt[file] ??= []).push(next++);
       hunk?.added.push(line.slice(1));
     } else if (line.startsWith('-') && file) {
       removedFiles.add(file);
@@ -79,7 +87,7 @@ function parseUnified(text) {
       hunk?.removed.push(line.slice(1));
     }
   }
-  return { addedLines, removedFiles, removedLines, hunks };
+  return { addedLines, removedFiles, removedLines, hunks, addedAt };
 }
 
 // A quiet delta: a change that touches only prose, tests, or code comments, which the review step lets keep its round

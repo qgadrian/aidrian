@@ -16,13 +16,16 @@ export const GH_EXEC_OPTIONS = Object.freeze({ encoding: 'utf8', stdio: ['ignore
 // a timeout names the command and how long it waited.
 // `timeoutMs` raises the limit for a call that is long by nature, such as an upload of many files. `killSignal` is the
 // signal that stops gh at the limit, such as SIGKILL for a hook that cannot wait on a gh that ignores the default.
-export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null } = {}) {
+// `input` is gh's stdin, such as a request body for `gh api --input -`: the text goes as it is, never read as a flag's value.
+// Node hands `input` to the child only through a piped stdin, so a call with one pipes it; every other call ignores stdin.
+export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null, input } = {}) {
   try {
     return exec('gh', args, {
       ...GH_EXEC_OPTIONS,
       ...(cwd === undefined ? {} : { cwd }),
       ...(timeoutMs === GH_TIMEOUT_MS ? {} : { timeout: timeoutMs }),
       ...(killSignal === null ? {} : { killSignal }),
+      ...(input === undefined ? {} : { input, stdio: ['pipe', 'pipe', 'pipe'] }),
     });
   } catch (err) {
     if (err?.code === 'ETIMEDOUT') {

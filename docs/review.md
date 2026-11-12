@@ -1309,8 +1309,8 @@ what went where (`inline_review`). Inline publishing has not been run beside the
 - **What gets a thread.** Each blocking finding with no post yet that sits on an added line of the diff from the merge
   base to the head, read with renames as the forge shows them (an unchanged line of a moved file is no added line), at a
   file and line that pass the file and line check there and whose path the text checks pass, gets an inline comment: at most 25, the
-  most severe first. The rest are listed in the review body by id, location, and severity, and get their thread from a
-  later review while they still block. Any other blocking finding goes in the review body, its location printed only
+  most severe first. The rest are listed in the review body by id alone, and get their thread from a later review while
+  they still block. Any other blocking finding goes in the review body, its location printed only
   from a file and line that pass that check and a path the text checks pass. A finding posted once, in a thread, a
   review body, or a fallback comment, is never posted again, but for the other findings of a fallback comment the
   delete below removed: its index entry keeps `thread`, the forge's ids alone (`{ reviewId, commentId }`, or
@@ -1322,7 +1322,8 @@ what went where (`inline_review`). Inline publishing has not been run beside the
   post holds the id, the severity, and `text withheld`. A title is capped at 200 characters, a body at 2,000, and a review
   body or fallback comment at 60,000, before escaping, each cut counted in one line. The escaped body is checked against
   the forge's longest body (65,536 characters on GitHub), and a finding that no longer fits is listed by id and posted by
-  a later step.
+  a later step. Each line that lists leftover findings names at most 20 ids and counts the rest, so it never crowds
+  every finding out of a post.
 - **Escaping.** Every line of every post is escaped as the summary is, with no line exempt. In reviewer text every link
   is made inert before the escaping, whatever its form (an inline link, a reference definition, an autolink, an HTML
   anchor, a protocol-relative target, one slash or a backslash after the scheme), so an at-sign in a link target is

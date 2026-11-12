@@ -13,7 +13,7 @@ import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
 import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, quotedLines, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
-import { attributionLine, deleteOwn, engineLists, fitBody, leadingMarkers, markerLine, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
+import { attributionLine, deleteOwn, engineLists, fitBody, leadingMarkers, markerLine, MAX_LISTED, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
 import { MAX_BODY } from '../plugins/aidrian/lib/forges/index.mjs';
 import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, refreshSummary, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -680,7 +680,7 @@ test('inline: one post per id, a finding listed twice posts once, and a later st
   assert.equal(calls.length, 1);
 });
 
-test('inline: a review holds at most 25 threads, the most severe first; the rest are listed in its body by id, location, and severity', (t) => {
+test('inline: a review holds at most 25 threads, the most severe first; the rest are listed in its body by id', (t) => {
   const r = inlineRepo(t, { added: 27 });
   const findings = Array.from({ length: 27 }, (_, i) => listed(`R1-${i + 1}`, { line: i + 2, severity: i === 26 ? 'critical' : 'medium' }));
   const state = inlineState(r.head, findings);
@@ -690,7 +690,7 @@ test('inline: a review holds at most 25 threads, the most severe first; the rest
   assert.equal(review.comments.length, MAX_THREADS);
   assert.equal(result.threads[0], 'R1-27', 'the critical finding first');
   assert.deepEqual(result.listed, ['R1-25', 'R1-26']);
-  assert.match(review.body, /2 more findings on the diff, posted by a later step: R1-25 \(medium, src\/a\.js:26\), R1-26 \(medium, src\/a\.js:27\)/u);
+  assert.match(review.body, /2 more findings on the diff, posted by a later step: R1-25, R1-26$/mu, 'listed by id alone');
   assert.ok(!leadingMarkers(review.body).includes('R1-25'), 'a listed finding is not posted');
   assert.equal(state.index['R1-25'].thread, undefined, 'and gets its thread from a later review');
   const next = inlineForge();
@@ -1177,4 +1177,30 @@ test('quoted reviewer text encodes every ampersand that could start a reference,
     '> a && b', '> x &amp;amp y', '> &amp;lt;a href&amp;gt;',
   ]);
   assert.ok(lines.every((line) => !/&(?!amp;)(?=[#A-Za-z])/u.test(line)), 'no ampersand that could start a reference reaches the renderer');
+});
+
+test('inline: the lines that list leftover findings are bounded, so 200 findings on a long path full of @ still post a review that fits', (t) => {
+  // The bot's probe: a 293-character path whose every @ escapes to two characters, and 175 findings past the 25 threads.
+  const dir = `src/${'@a-'.repeat(80)}`;
+  const file = `${dir}/${'x'.repeat(293 - dir.length - 4)}.js`;
+  assert.equal(file.length, 293);
+  const r = inlineRepo(t, { extra: { [file]: `${Array.from({ length: 200 }, (_, i) => `const v${i} = ${i};`).join('\n')}\n` } });
+  const findings = Array.from({ length: 200 }, (_, i) => listed(`R1-${i + 1}`, { file, line: i + 1 }));
+  const state = inlineState(r.head, findings);
+  const { forge, calls } = inlineForge();
+  const result = postInline(inlineStep(r, state, forge), openOf(state));
+  const review = reviewOf(calls);
+  assert.ok(review, 'a review is posted');
+  assert.equal(review.comments.length, MAX_THREADS);
+  assert.ok(review.body.length <= MAX_BODY, `the body fits the forge's limit: ${review.body.length}`);
+  assert.deepEqual(result.in_body, [], 'no finding sat outside the diff');
+  assert.equal(result.listed.length, 175);
+  const ids = Array.from({ length: MAX_LISTED }, (_, i) => `R1-${i + 26}`).join(', ');
+  assert.match(review.body, new RegExp(`175 more findings on the diff, posted by a later step: ${ids}, and ${175 - MAX_LISTED} more$`, 'mu'));
+  // The fit's own notice is bounded the same way: a section still fits beside a thousand leftover findings.
+  const part = (id, size) => ({ id, lines: [{ text: attributionLine(id) }, { text: '-->'.repeat(size) }] });
+  const fitted = fitBody([part('R1-1', 666), ...Array.from({ length: 1000 }, (_, i) => part(`R2-${i + 1}`, 30_000))]);
+  assert.deepEqual(fitted.ids, ['R1-1']);
+  assert.ok(fitted.body.length <= MAX_BODY);
+  assert.match(fitted.body, new RegExp(`1000 more findings not shown here, posted by a later step: R2-1, .*R2-${MAX_LISTED}, and ${1000 - MAX_LISTED} more$`, 'u'));
 });

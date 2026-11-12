@@ -307,8 +307,14 @@ const rendered = (lines) => lines.flatMap((line) => (line.quoted ? quotedLines(l
 // One post's body: the leading marker lines of `ids`, added after the escaping, then `lines` rendered.
 const withMarkers = (ids, lines) => [...ids.map(markerLine), ...rendered(lines)].join('\n');
 
+// The most ids one line of a post lists; the rest are counted. A list of leftover findings is bounded on its own, so it
+// never crowds every section out of a body: ids only (each at most R999-999999), no location, at most MAX_LISTED.
+export const MAX_LISTED = 20;
+const idList = (ids) => (ids.length > MAX_LISTED ? `${ids.slice(0, MAX_LISTED).join(', ')}, and ${ids.length - MAX_LISTED} more` : ids.join(', '));
+const findings = (count) => `${count} more ${count === 1 ? 'finding' : 'findings'}`;
+
 // The line that lists the ids a body could not hold.
-const notice = (left) => (left.length ? [{ text: '' }, { text: `${left.length} more ${left.length === 1 ? 'finding' : 'findings'} not shown here, posted by a later step: ${left.join(', ')}` }] : []);
+const notice = (left) => (left.length ? [{ text: '' }, { text: `${findings(left.length)} not shown here, posted by a later step: ${idList(left)}` }] : []);
 
 // A body of several findings' sections, as many as fit: the raw text at most POST_CAP characters, and the escaped body
 // with its markers at most the forge's MAX_BODY, each measured with the `trailer` and with the notice of what is left at
@@ -341,7 +347,7 @@ export function fitBody(parts, trailer = []) {
 //   second takes a fresh one first (findings.mjs freshId).
 // - A finding gets an inline comment on an added line of the diff from the merge base to `head`, at a file and line that
 //   pass the File and line check there, at most MAX_THREADS of them, the most severe first; the rest are listed in the
-//   review body by id, location, and severity, unposted. Any other goes in the body, its location printed only from a
+//   review body by id alone, at most MAX_LISTED of them and the rest counted, unposted. Any other goes in the body, its location printed only from a
 //   file and line that pass that check.
 // - On a pull request from outside the team, where a text check withholds the title or the body, and for a security
 //   finding (securityIds) on a repository that does not read as PRIVATE, which only publicSecurity "full" lets through,
@@ -406,7 +412,7 @@ export function postInline(s, open) {
   const drafted = threads.map((part) => ({ part, path: `${prefix}${part.place.file}`, line: part.place.line, side: 'RIGHT', body: withMarkers([part.id], section({ id: part.id, severity: part.severity, ...part.text })) }));
   const comments = drafted.filter((comment) => comment.body.length <= MAX_BODY);
   const tooLong = drafted.filter((comment) => comment.body.length > MAX_BODY).map((comment) => comment.part.id);
-  const overflow = listed.length ? [{ text: '' }, { text: `${listed.length} more ${listed.length === 1 ? 'finding' : 'findings'} on the diff, posted by a later step: ${listed.map((part) => `${part.id} (${part.severity}${part.shownPlace ? `, ${part.shownPlace}` : ''})`).join(', ')}` }] : [];
+  const overflow = listed.length ? [{ text: '' }, { text: `${findings(listed.length)} on the diff, posted by a later step: ${idList(listed.map((part) => part.id))}` }] : [];
   const onDiff = (part) => ({ id: part.id, lines: [{ text: attributionLine(part.id) }, { text: `**${part.severity}**, on the diff at \`${part.shownPlace.replaceAll('`', '')}\`` }] });
   const review = fitBody([...comments.map(({ part }) => onDiff(part)), ...inBody.map((part) => full(part, part.shownPlace))], overflow);
   const result = { posted: false, threads: [], in_body: [], listed: [...listed.map((part) => part.id), ...tooLong, ...review.left], ...(unminted.length ? { unminted } : {}) };

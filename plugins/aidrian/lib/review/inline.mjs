@@ -167,8 +167,8 @@ function unmap(state, kind, id) {
 // `textless`; one posted with its text before the mark goes. `mode` is "posted" (the record is on the pull request),
 // "local" (review.record "local": the comments the record maps alone), or "held" (a held record: this machine's own
 // record alone, and no change to it, since no record is written there). `items` is readMarked's, null when it failed or
-// was not made. `done` holds the comments, as `<kind>:<id>`, an earlier sweep of the same step already dealt with
-// (handledKeys): none of them is read or listed again. `readVisibility` reads the repository's visibility, by default
+// was not made. `done` holds the comments, as `<kind>:<id>`, an earlier sweep of the same step settled whichever ids
+// are security (handledKeys): none of them is read or listed again. `readVisibility` reads the repository's visibility, by default
 // through the forge; a step passes one that keeps its first answer, so its second sweep reads it no second time.
 // Candidates: each comment the record maps to such an id, the reply first, then the root, then the fallback comment, less
 // one a whole read (`items`) no longer holds, which is gone and gets no call; and where the record is posted, each review
@@ -267,13 +267,29 @@ export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity =
 // The lists a delete result holds, each of { finding, kind, id }.
 const DELETE_LISTS = ['deleted', 'waiting', 'left', 'failed', 'gone', 'textless'];
 
-// The comments a delete result dealt with, as `<kind>:<id>`: what a later sweep of the same step passes as `done`.
-export const handledKeys = (out) => new Set(DELETE_LISTS.flatMap((key) => (Array.isArray(out?.[key]) ? out[key] : [])).map((each) => `${each.kind}:${each.id}`));
+// The lists whose comments a sweep settled whichever ids are security: deleted, gone, one whose delete failed (the next
+// step tries again), and another member's. A comment spared as `textless`, or `left`, was judged against the ids that
+// were security then: a mark the step sets later may name another finding it holds, so a later sweep reads it again.
+const SETTLED_LISTS = ['deleted', 'gone', 'failed', 'waiting'];
 
-// Two delete results of one step as one: each list joined, and `unmapped_unread` when either says so. Null when both are.
+// The comments a delete result settled, as `<kind>:<id>`: what a later sweep of the same step passes as `done`.
+export const handledKeys = (out) => new Set(SETTLED_LISTS.flatMap((key) => (Array.isArray(out?.[key]) ? out[key] : [])).map((each) => `${each.kind}:${each.id}`));
+
+// Two delete results of one step as one, `b` the later: each list joined, and `unmapped_unread` when either says so.
+// Null when both are. A comment the later sweep lists counts as it says there, so one textless or left in the first
+// and deleted in the second is listed as deleted alone; and a list names a comment once for each finding.
 export function mergeDeletes(a, b) {
   if (!a || !b) return a ?? b ?? null;
-  const out = Object.fromEntries(DELETE_LISTS.map((key) => [key, [...(a[key] ?? []), ...(b[key] ?? [])]]));
+  const key = (each) => `${each.kind}:${each.id}`;
+  const later = new Set(DELETE_LISTS.flatMap((name) => (b[name] ?? []).map(key)));
+  const deleted = new Set([...(a.deleted ?? []), ...(b.deleted ?? [])].map(key));
+  const out = Object.fromEntries(DELETE_LISTS.map((name) => {
+    const seen = new Set();
+    const joined = [...(a[name] ?? []).filter((each) => !later.has(key(each))), ...(b[name] ?? [])]
+      .filter((each) => name === 'deleted' || !deleted.has(key(each)))
+      .filter((each) => !seen.has(`${key(each)}:${each.finding}`) && seen.add(`${key(each)}:${each.finding}`));
+    return [name, joined];
+  }));
   return a.unmapped_unread || b.unmapped_unread ? { ...out, unmapped_unread: true } : out;
 }
 

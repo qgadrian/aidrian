@@ -13,7 +13,7 @@ import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
 import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, quotedLines, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
-import { answerThreads, attributionLine, deleteOwn, engineLists, fillThreads, fitBody, leadingMarkers, markerLine, MAX_LISTED, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
+import { answerThreads, attributionLine, deleteOwn, engineLists, fillThreads, fitBody, handledKeys, mergeDeletes, leadingMarkers, markerLine, MAX_LISTED, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
 import { MAX_BODY } from '../plugins/aidrian/lib/forges/index.mjs';
 import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, refreshSummary, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -1517,4 +1517,43 @@ test('replies: a person who replies between the step`s read and the resolve keep
   assert.deepEqual(posts.calls.find(([name]) => name === 'resolve'), ['resolve', 1001, [1001, 2001]], 'the resolve allows the root and the engine`s own reply alone');
   assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001 });
   assert.notEqual(posts.threads[1001].resolved, true, 'the thread is not resolved');
+});
+
+// ---- The second sweep of a step rechecks a comment the first spared as textless ----
+
+// One fallback comment holding two findings' sections: R1-1's without its text, R1-2's quoted, or without it too.
+const twoSections = (secondText) => [markerLine('R1-1'), markerLine('R1-2'), attributionLine('R1-1'), '**high** at `src/a.js:2`', WITHHELD, '',
+  attributionLine('R1-2'), '**medium** at `src/a.js:3`', secondText ? '> what is wrong' : WITHHELD].join('\n');
+
+test('the second sweep rechecks a comment the first spared as textless: another of its findings marked security in the step deletes it then', () => {
+  const state = securityState([{ id: 'R1-1', severity: 'high', thread: { fallbackId: 77 } }, { id: 'R1-2', thread: { fallbackId: 77 } }]);
+  const { forge, calls } = deleteForge({ comments: { 77: { kind: 'comment', body: twoSections(true), pr: 7 } } });
+  const first = sweep(forge, state, { publicSecurity: 'full' });
+  assert.deepEqual([first.textless.map((each) => [each.finding, each.id]), first.deleted], [[['R1-1', 77]], []], 'the first sweep spares it for R1-1, whose section holds no text');
+  assert.ok(!handledKeys(first).has('comment:77'), 'a textless comment is not settled for the step');
+  // The step then marks R1-2 as security, as its own reviewers or plan can.
+  state.index['R1-2'].severity = 'high';
+  calls.length = 0;
+  const second = sweep(forge, state, { publicSecurity: 'full', done: handledKeys(first) });
+  assert.deepEqual(second.deleted.map((each) => [each.finding, each.id]), [['R1-2', 77]], 'the second sweep deletes it in that same step');
+  assert.ok(calls.some(([name, id]) => name === 'delete comment' && id === 77));
+  const merged = mergeDeletes(first, second);
+  assert.deepEqual([merged.deleted.map((each) => each.id), merged.textless], [[77], []], 'the merged result lists it as deleted alone');
+});
+
+test('the second sweep reads a comment still textless for every final security id again, and deletes nothing', () => {
+  const state = securityState([{ id: 'R1-1', severity: 'high', thread: { fallbackId: 77 } }, { id: 'R1-2', thread: { fallbackId: 77 } }]);
+  const { forge, calls } = deleteForge({ comments: { 77: { kind: 'comment', body: twoSections(false), pr: 7 } } });
+  const first = sweep(forge, state, { publicSecurity: 'full' });
+  state.index['R1-2'].severity = 'high';
+  calls.length = 0;
+  const second = sweep(forge, state, { publicSecurity: 'full', done: handledKeys(first) });
+  assert.ok(calls.some(([name, id]) => name === 'read comment' && id === 77), 'read again');
+  assert.ok(!calls.some(([name]) => name.startsWith('delete')), 'and not deleted');
+  assert.deepEqual(second.textless.map((each) => each.finding).sort(), ['R1-1', 'R1-2']);
+  const merged = mergeDeletes(first, second);
+  assert.deepEqual(merged.textless.map((each) => [each.finding, each.id]).sort(), [['R1-1', 77], ['R1-2', 77]], 'once for each finding');
+  // A comment the first sweep deleted, or whose delete failed, or another member's, is settled: the second reads none.
+  for (const key of ['deleted', 'failed', 'waiting', 'gone']) assert.ok(handledKeys({ [key]: [{ finding: 'R1-1', kind: 'comment', id: 77 }] }).has('comment:77'), key);
+  for (const key of ['textless', 'left']) assert.ok(!handledKeys({ [key]: [{ finding: 'R1-1', kind: 'comment', id: 77 }] }).has('comment:77'), key);
 });

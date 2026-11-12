@@ -1366,7 +1366,9 @@ what went where (`inline_review`). Inline publishing has not been run beside the
   step stops for a held record, from this machine's record alone and with no write, and before a stop for a finding
   with no text. A step that sets the mark itself, through what its own reviewers report, its plan, or the ids it gives
   late, and goes on to its result, deletes in that same step: the delete runs again when the step finishes, before it
-  posts anything or writes the record, and skips every comment it already dealt with. A step that stops early after
+  posts anything or writes the record. It skips a comment it already deleted, failed to delete, or left to another
+  member's machine; one it kept, such as one spared under `"full"` for holding none of a finding's text, is checked
+  again against every finding that is a security finding by then. A step that stops early after
   its plan note or late ids set a mark (`too_large`, `unsatisfied`, `none_needed`) posts nothing and publishes no
   record; the next step deletes. It reaches a
   comment the record maps and, where the record is posted, a marked comment of this user that no record maps, a reply

@@ -5,6 +5,7 @@ import { merge } from './config-merge.mjs';
 import { DECISIONS_SCHEMA, LOCAL_DECISIONS_SCHEMA } from './config-schema.mjs';
 import { lowerMode } from './decisions.mjs';
 import { isObject } from './fs.mjs';
+import { PUBLISH_DEFAULTS } from './review/config.mjs';
 
 // `team`, the `decisions` of config.json, with the local file's `decisions` over it, as `project.localDecisions` holds
 // it. The local file may set `mode` and `domains`, each held to the team's `maxMode`; `unreviewed.remind`; and
@@ -61,4 +62,15 @@ export function resolveUnattendedWaiver(github, local) {
   if (github?.unattendedWaiver?.allow !== true) return { effective: false, reason: 'team' };
   if (local !== 'on') return { effective: false, reason: 'local' };
   return { effective: true, reason: null };
+}
+
+// `review.publish` in force: the team's, from the base branch's config.json, with what the local file may set over it
+// (R10): `summary` "counts" and `inline` false, which only ever post less. Any other local key or value is an error
+// (review/config.mjs checkLocalReview), and the team's value stays. With no team value, the defaults.
+export function resolvePublish(team, local) {
+  const out = { ...PUBLISH_DEFAULTS, ...(isObject(team) ? team : {}) };
+  if (!isObject(local)) return out;
+  if (local.summary === 'counts') out.summary = 'counts';
+  if (local.inline === false) out.inline = false;
+  return out;
 }

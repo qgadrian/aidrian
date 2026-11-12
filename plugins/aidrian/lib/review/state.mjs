@@ -28,8 +28,8 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
-import { tieTwins } from './findings.mjs';
-import { escapeLines, fillWithheld, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
+import { recordFindings } from './findings.mjs';
+import { escapeLines, fillWithheld, findingsTable, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
 import { splitPasses } from './split.mjs';
@@ -144,10 +144,11 @@ export function readLocalState(project, pr) {
   }
 }
 
-// Every write raises the record's revision, so the newer of two records is the one written last. Before it, every twin
-// of a security finding the record holds takes the mark (findings.mjs tieTwins), so the copy it posts carries it.
+// Every write raises the record's revision, so the newer of two records is the one written last. Before it, the one
+// writer of finding ids keeps the finding index, giving an entry to each id that has none, and every twin of a security
+// finding the record holds takes the mark (findings.mjs recordFindings), so the copy it posts carries both.
 export function writeLocalState(project, state) {
-  tieTwins(state);
+  recordFindings(state, null, null);
   state.revision = (state.revision ?? 0) + 1;
   state.updatedAt = new Date().toISOString();
   const target = file(project, state.pr);
@@ -281,6 +282,8 @@ function assemble({ header, planLines, flowLines, outsideHead }, state, post) {
     lines.push('', '| Pass | Head | Findings | Open |', '| --- | --- | --- | --- |');
     for (const [id, result] of passes) lines.push(`| ${id} | \`${String(result.head ?? 'unknown').slice(0, 7)}\` | ${result.findings ?? 0} | ${result.open ?? 0} |`);
   }
+  // With review.publish.summary "findings", each finding and its outcome, from the copy's finding index.
+  if (post.publish?.summary === 'findings') lines.push(...findingsTable(copy, post));
   lines.push(...flowLines);
   if (isObject(copy.visual)) {
     const visual = copy.visual;

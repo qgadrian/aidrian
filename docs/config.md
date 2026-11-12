@@ -166,6 +166,10 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. The record commands read it as the pull request's base branch commits it, not from the working copy; only a command the forge names no base for reads no comment, keeps this machine's record, and publishes nothing. |
+| `review.publish.summary` | What the summary comment shows of the findings: `"counts"`, the default, each pass's counts; `"findings"` adds a table of each finding's id, location, severity, disposition, and outcome, with no finding text: [Publishing](review.md#publishing). Read from the base branch, as `review.record` is; under `review.record: "local"` nothing is posted, whatever this group says. An unknown key or value is a config error. |
+| `review.publish.publicSecurity` | How a security finding shows on a repository that does not read as private: `"counts"`, the default, a count while it is open and a row of its id, severity, outcome, and closing range once closed; `"full"`, its location and disposition like any other finding's. Its text is never posted there. |
+| `review.publish.inline`, `review.publish.replies` | `false` and `true` by default. Both are checked; neither posts anything. |
+| `review.publish` in `.aidrian.local.json` | This machine's choice, which only ever posts less: `"summary": "counts"` and `"inline": false`, and nothing else. Any other key or value there, `"publicSecurity": "full"` included, is a config error, and the team's value stays. |
 | `review.productFeedback.maxPersonas` | How many personas `persona-audit` [picks for a pull request](personas.md#a-pull-request-link-alone): a whole number from 1 to 10, 2 by default. A run that names personas, or `all`, has no cap. |
 | `review.productFeedback.auto` | `true` makes a pull request that changes a user-facing file owe [product feedback](#product-feedback). `false`, the default. Read from the default branch and the base, never the working copy: it is on when either says true. With neither list below, it is an error here, and `status` reads it as clear. |
 | `review.productFeedback.files` | The globs, or `re:` patterns, of the user-facing files. `null`, the default, uses `review.visual.targets[].files`. Read from the default branch and the base, as their union. |
@@ -529,8 +533,9 @@ and keep the detail in the state folder. The [Bash rules](hooks.md#bash-rules) l
 to their invariants, the reviewers a project adds, and the [visual capture](review.md#visual-review).
 [review.md](review.md) describes every key but `review.productFeedback`,
 which [personas.md](personas.md#a-pull-request-link-alone) and [Product feedback](#product-feedback) do.
-Three machine settings live in `.aidrian.local.json`: the engine, `review.engine`, unless the project sets it here,
-the visual capture's base URL, `review.visual.baseUrl`, and `review.productFeedback.auto`.
+Four machine settings live in `.aidrian.local.json`: the engine, `review.engine`, unless the project sets it here,
+the visual capture's base URL, `review.visual.baseUrl`, `review.productFeedback.auto`, and `review.publish`, which may
+only post less than the team's: `summary` `"counts"` and `inline` `false` ([Publishing](review.md#publishing)).
 
 ## Product feedback
 
@@ -736,7 +741,8 @@ aidrian pr attest <PR> --check     # exit 0 recorded, 3 not
 ```
 
 Inside `aidrian pr review`, the full-diff agent pass it dispatches, recorded with
-`aidrian pr attest <PR> --pass agent:<name> --head <sha> ...`, is that record too, so the bot request needs no second
+`aidrian pr attest <PR> --pass agent:<name> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json` (an agent pass
+records its findings one by one; the counts form above stays accepted), is that record too, so the bot request needs no second
 attest; so is an agent pass its flows merged into, `agent:<name>:<flows>`, when it read the whole diff. A pass over a
 flow's or a slice's files alone, the cross pass, and an engine pass do not count.
 

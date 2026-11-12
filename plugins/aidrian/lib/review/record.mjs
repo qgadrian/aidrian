@@ -4,8 +4,9 @@
 import { forgeFor } from '../forges/index.mjs';
 import { overruleRefusal } from './approvals.mjs';
 import { isObject } from '../fs.mjs';
-import { parseFindings, recordFindings } from './findings.mjs';
+import { notedPlan, parseFindings, recordFindings } from './findings.mjs';
 import { parseVerdicts } from './flows.mjs';
+import { closingRange } from './dispatch.mjs';
 import { gitPaths } from './publish.mjs';
 import * as quota from './quota.mjs';
 import { heldMessage, readRecord, sameCommit, writeLocalState } from './state.mjs';
@@ -55,9 +56,15 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
   const result = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
   // Ids come from the one function that writes them (findings.mjs recordFindings). Attest mints one only into a record a
   // step has floored, for a pass that step dispatched: elsewhere a finding keeps the id of its match in the pass's prior
-  // list, and the rest wait for the next step.
+  // list, and the rest wait for the next step. A returned id counts only among the ids the dispatch note says the pass's
+  // input listed; the head's plan is the one the plan note names. A finding listed as fixed closes on this head, its
+  // range from the head that last held it open, else the merge base the plan note names, else the delta base.
   const mint = state.floored === true && typeof note?.stage === 'string';
-  const recorded = recordFindings(state, pass, result, { mint, securityPass: note?.security === true, paths: gitPaths(project.root).at(head) });
+  const base = (state.planNote?.head === head ? state.planNote.base : null) ?? note?.base ?? null;
+  const recorded = recordFindings(state, pass, result, {
+    mint, securityPass: note?.security === true, paths: gitPaths(project.root).at(head), listed: Array.isArray(note?.listed) ? note.listed : null,
+    plan: notedPlan(state), stage: note?.stage ?? null, range: closingRange(project.root, base),
+  });
   writeLocalState(project, state);
   return recorded;
 }

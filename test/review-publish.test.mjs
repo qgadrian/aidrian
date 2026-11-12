@@ -11,9 +11,9 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { postContext, readReading } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
-import { escapeLines, fillWithheld, gitPaths, isPrivate, JUDGE_RULING, patternsOf, postedCopy, residualRows, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
+import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
-import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
+import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, refreshSummary, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
 const NO_TERMS = { hosts: [], accounts: [], variables: [] };
 // The always-on check's context with nothing named but this machine's home.
@@ -395,4 +395,189 @@ test('an adopted slice result keeps no report another machine left out: it is ma
   assert.deepEqual([again.passes[slice].notesWithheld, again.passes[slice].contracts], [undefined, ['a()']]);
   const { copy } = postedCopy({ ...remote, revision: 9 }, { reading: PRIVATE, checker: { allows: () => true } });
   assert.equal(copy.passes[slice].notesWithheld, undefined, 'no copy posts the mark');
+});
+
+
+// ---- The findings table (review.publish.summary "findings") ----
+
+// A checkout whose head tracks src/a.js and src/b.js, 40 lines each.
+function tracked(t) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-table-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, 'src'));
+  for (const file of ['src/a.js', 'src/b.js']) writeFileSync(path.join(dir, file), Array.from({ length: 40 }, (_, i) => `${i}\n`).join(''));
+  git('add', '-A');
+  git('commit', '-qm', 'base');
+  return { root: dir, head: git('rev-parse', 'HEAD') };
+}
+const SEEN = '5'.repeat(40);
+const entry = (n, over = {}) => ({ id: `R1-${n}`, mint: n.toString(16).padStart(8, '0'), title: `SENTINEL${n} problem`, file: 'src/a.js', line: n % 40 + 1, severity: 'medium', state: 'open', disposition: 'fix_now', pass: 'engine:codex-local', stage: 'independent', reviewer: 'codex-local', ...over });
+const withIndex = (head, entries) => ({
+  ...emptyState(7, 'o/r'), revision: 2, idCounter: entries.length,
+  planNote: { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] },
+  passes: { 'engine:codex-local': { head, reviewer: 'codex-local', findings: 0, open: 0, list: [] } },
+  index: Object.fromEntries(entries.map((each) => [each.id, { seen: head, ...each }])),
+});
+const tablePost = (root, over = {}) => ({ reading: { visibility: 'PUBLIC', inside: true }, checker: textChecker({ context: CONTEXT, words: [] }), root, names: [], publish: { summary: 'findings', publicSecurity: 'counts' }, compareUrl: (from, to) => `https://github.com/o/r/compare/${from}...${to}`, ...over });
+const rowsOf = (body) => body.split('\n').filter((line) => /^\| R\d+-\d+ \|/u.test(line));
+
+test('the findings table: at most 40 rows, blocking findings first, then by severity, the rest counted in one line, and no finding text', (t) => {
+  const { root, head } = tracked(t);
+  const entries = [
+    ...Array.from({ length: 30 }, (_, i) => entry(i + 1, { severity: 'low', state: 'accepted', disposition: 'acceptable_as_is' })),
+    ...Array.from({ length: 15 }, (_, i) => entry(i + 31, { severity: i % 2 ? 'medium' : 'critical', disposition: 'fix_now', security: false })),
+  ];
+  const body = summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { reading: PRIVATE }));
+  const rows = rowsOf(body);
+  assert.equal(rows.length, MAX_ROWS);
+  assert.ok(rows.slice(0, 15).every((row) => / \| open \|$/u.test(row)), 'the blocking ones first');
+  assert.ok(rows.slice(0, 8).every((row) => row.includes('| critical |')), 'then the most severe');
+  assert.match(body, /^- 5 more findings, not listed: the table holds 40\.$/mu);
+  assert.doesNotMatch(body.split('\n').filter((line) => !line.startsWith('<!--')).join('\n'), /SENTINEL/u, 'no finding text, even on a private repository');
+  assert.equal(summaryBody(withIndex(head, entries), null, 'x', { ...tablePost(root), publish: { summary: 'counts' } }).includes('**Findings:**'), false, 'summary "counts" adds nothing');
+});
+
+test('the findings table`s outcomes: open, fixed in and not reported again in a compare link or the short SHAs, accepted as its disposition', (t) => {
+  const { root, head } = tracked(t);
+  const from = 'a'.repeat(40);
+  const entries = [
+    entry(1),
+    entry(2, { state: 'fixed', closed_in: { from, to: head } }),
+    entry(3, { state: 'not_reported', closed_in: { from, to: head } }),
+    entry(4, { state: 'accepted', disposition: 'accepted_residual', severity: 'low' }),
+    entry(5, { state: 'fixed', closed_in: { from, to: head } }),
+  ];
+  const linked = rowsOf(summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { compareUrl: (a, b) => (a === from && b === head ? `https://github.com/o/r/compare/${a}...${b}` : null) })));
+  const range = `${from.slice(0, 7)}...${head.slice(0, 7)}`;
+  assert.deepEqual(linked, [
+    '| R1-1 | src/a.js:2 | medium | fix\\_now | open |',
+    `| R1-2 | src/a.js:3 | medium | fix\\_now | fixed in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
+    `| R1-3 | src/a.js:4 | medium | fix\\_now | not reported again in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
+    `| R1-5 | src/a.js:6 | medium | fix\\_now | fixed in [${range}](https://github.com/o/r/compare/${from}...${head}) |`,
+    '| R1-4 | src/a.js:5 | low | accepted\\_residual | accepted as accepted\\_residual |',
+  ]);
+  const plain = rowsOf(summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { compareUrl: () => null })));
+  assert.equal(plain[1], `| R1-2 | src/a.js:3 | medium | fix\\_now | fixed in ${range} |`, 'no link from the forge: the short SHAs as text');
+});
+
+test('tableCell: one line, table and HTML metacharacters escaped, autolinks and owner/repo#n references neutralized, and only a plain https link', () => {
+  assert.equal(tableCell('a\nb | c'), 'a b \\| c');
+  assert.equal(tableCell('<img src=x> & *b* _i_ `c` [l](u)'), '&lt;img src=x&gt; &amp; \\*b\\* \\_i\\_ \\`c\\` \\[l\\](u)');
+  assert.equal(tableCell('see https://evil.example and www.evil.example'), 'see https:​//evil.example and www​.evil.example');
+  assert.equal(tableCell('closes o/r#12 and #7'), 'closes o/r#​12 and #​7');
+  assert.equal(tableCell('src/GH-12.md and gh-3'), 'src/GH-\u200b12.md and gh-\u200b3', 'GitHub`s GH-<n> reference too');
+  assert.equal(escapeLines([tableCell('docs/GH-12.md')])[0], 'docs/GH-\u200b12.md', 'and the post`s escaping keeps it neutral');
+  assert.equal(tableCell('fixed in', { label: 'a...b', href: 'https://github.com/o/r/compare/a...b' }), 'fixed in [a...b](https://github.com/o/r/compare/a...b)');
+  for (const href of ['javascript:alert(1)', 'https://x/ y', 'https://x/(y)', 'http://x', null]) assert.equal(tableCell('fixed in', { label: 'a...b', href }), 'fixed in a...b', String(href));
+});
+
+test('the findings table prints a location only from a file git tracks at the entry`s head and a line within it, on every reading', (t) => {
+  const { root, head } = tracked(t);
+  const entries = [entry(1, { file: 'src/gone.js' }), entry(2, { line: 999 }), entry(3, { file: '/etc/passwd' }), entry(4, { file: 'src/b.js', line: 7 })];
+  for (const reading of [PRIVATE, { visibility: 'PUBLIC', inside: true }]) {
+    const rows = rowsOf(summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { reading })));
+    assert.deepEqual(rows.map((row) => row.split(' | ')[1]), ['', 'src/a.js', '', 'src/b.js:7'], JSON.stringify(reading));
+  }
+});
+
+test('a security finding and its twin on a repository that is not private: counted while open; once closed, a row of id, severity, outcome, and range alone; INTERNAL and a failed read are not private', (t) => {
+  const { root, head } = tracked(t);
+  const from = 'a'.repeat(40);
+  const entries = [
+    entry(1, { severity: 'high', security: true, line: 10 }),
+    entry(2, { severity: 'medium', line: 11 }),
+    entry(3, { severity: 'high', state: 'fixed', closed_in: { from, to: head }, line: 30 }),
+    entry(4, { severity: 'low', file: 'src/b.js', line: 2 }),
+  ];
+  for (const reading of [{ visibility: 'PUBLIC', inside: true }, { visibility: 'INTERNAL', inside: true }, { visibility: null, inside: false }, { visibility: 'PRIVATE', inside: false }]) {
+    const body = summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { reading }));
+    const rows = rowsOf(body);
+    assert.match(body, /^- 2 open security findings, counted and not listed/mu, `${JSON.stringify(reading)}: the open one and its twin at its place`);
+    assert.deepEqual(rows.map((row) => row.split(' | ')[0]), ['| R1-4', '| R1-3']);
+    assert.ok(rows[1].startsWith('| R1-3 |  | high |  | fixed in ['), `${JSON.stringify(reading)}: ${rows[1]}`);
+    const copy = stateFromComment(body, 7);
+    for (const id of ['R1-1', 'R1-2', 'R1-3']) assert.deepEqual([copy.index[id].file, copy.index[id].line, copy.index[id].title], [undefined, undefined, undefined], id);
+  }
+  const shown = rowsOf(summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { reading: PRIVATE })));
+  assert.equal(shown.length, 4, 'on a private repository every finding is a row');
+  const full = summaryBody(withIndex(head, entries), null, 'x', tablePost(root, { publish: { summary: 'findings', publicSecurity: 'full' } }));
+  assert.equal(rowsOf(full).length, 4, 'publicSecurity "full": a security finding is a row like any other');
+  assert.ok(rowsOf(full).includes('| R1-1 | src/a.js:10 | high | fix\\_now | open |'));
+  assert.deepEqual([stateFromComment(full, 7).index['R1-1'].file, stateFromComment(full, 7).index['R1-1'].line], ['src/a.js', 10], 'and the posted copy holds its place');
+  assert.doesNotMatch(full, /SENTINEL/u, 'never its text on a repository that is not private');
+  const posted = JSON.stringify(stateFromComment(full, 7));
+  assert.doesNotMatch(posted, /SENTINEL/u, 'nor in the posted copy of the record: no title, body, evidence, or reason');
+});
+
+test('publicSecurity "full": a security finding`s residual row keeps its place, never its text, on a repository that is not private', () => {
+  const state = { ...emptyState(7, 'o/r'), passes: { p: { head: 'h', list: [{ id: 'R1-1', mint: '00000001', title: 'Leak', file: 'a.js', severity: 'high', security: true }] } } };
+  const row = { pass: 'p', id: 'R1-1', title: 'Leak', file: 'a.js', line: 1, severity: 'high' };
+  const checker = textChecker({ context: CONTEXT, words: [] });
+  for (const reading of [{ visibility: 'PUBLIC', inside: true }, { visibility: 'INTERNAL', inside: true }, { visibility: null, inside: true }]) {
+    assert.deepEqual(residualRows([row], state, { reading, checker }).rows, [{ pass: 'p', id: 'R1-1', severity: 'high', text: WITHHELD }], `${reading.visibility}: counts`);
+    const full = residualRows([row], state, { reading, checker, publish: { publicSecurity: 'full' } });
+    assert.deepEqual(full.rows, [{ pass: 'p', id: 'R1-1', file: 'a.js', line: 1, severity: 'high', text: WITHHELD }], `${reading.visibility}: full lifts the place alone`);
+    assert.equal(full.withheld, 1);
+  }
+  assert.deepEqual(residualRows([row], state, { reading: PRIVATE, checker, publish: { publicSecurity: 'full' } }).rows, [row], 'on a private repository the row is whole');
+  assert.deepEqual(residualRows([{ ...row, file: TOKEN }], state, { reading: { visibility: 'PUBLIC', inside: true }, checker, publish: { publicSecurity: 'full' } }).rows, [{ pass: 'p', id: 'R1-1', severity: 'high', text: WITHHELD }], 'a file the checks withhold is left out, and its line goes with it');
+});
+
+test('a finding first recorded as accepted keeps its recording head: the table keeps its file and line, also on a later refresh with no diff paths', (t) => {
+  const { root, head } = tracked(t);
+  const state = { ...emptyState(7, 'o/r'), revision: 2, floored: true, rounds: [{ head }], planNote: { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] } };
+  const late = { title: 'A late nit', file: 'src/a.js', line: 5, severity: 'low', state: 'accepted', disposition: 'accepted_residual', accepted_by: 'late-round' };
+  const ruled = { title: 'A repeat', file: 'src/b.js', line: 7, severity: 'low', already_ruled: 'Settled one', from: 'prior' };
+  recordFindings(state, 'engine:codex-local', { head, reviewer: 'codex-local', findings: 2, open: 0, list: [late], ruled: [ruled] }, { mint: true, paths: gitPaths(root).at(head), stage: 'independent' });
+  const ids = [...state.passes['engine:codex-local'].list, ...state.passes['engine:codex-local'].ruled].map((each) => each.id);
+  for (const id of ids) assert.equal(state.index[id].seen, head, `${id}: its recording head`);
+  const post = (over = {}) => tablePost(root, { names: [], ...over });
+  const where = (body) => rowsOf(body).map((row) => row.split(' | ').slice(0, 2).join(' | '));
+  const first = summaryBody(state, null, 'x', post({ diffPaths: new Set() }));
+  assert.deepEqual(where(first), [`| ${ids[0]} | src/a.js:5`, `| ${ids[1]} | src/b.js:7`]);
+  // Later the pass moves to a head this checkout does not hold, and an edit refreshes the comment with no diff paths.
+  state.passes['engine:codex-local'] = { head: '9'.repeat(40), reviewer: 'codex-local', findings: 0, open: 0, list: [] };
+  state.revision += 1;
+  const later = refreshSummary(first, state, post());
+  assert.deepEqual(where(later), [`| ${ids[0]} | src/a.js:5`, `| ${ids[1]} | src/b.js:7`], 'still both');
+});
+
+test('a finding closed as fixed at a moved location keeps that location, checked at the head that recorded it, in the table and the posted index', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-moved-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const lines = (n) => Array.from({ length: n }, (_, i) => `${i}\n`).join('');
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, 'src/a.js'), lines(10));
+  writeFileSync(path.join(dir, 'src/b.js'), lines(10));
+  git('add', '-A');
+  git('commit', '-qm', 'one');
+  const h1 = git('rev-parse', 'HEAD');
+  writeFileSync(path.join(dir, 'src/a.js'), lines(40));
+  git('mv', 'src/b.js', 'src/d.js');
+  writeFileSync(path.join(dir, 'src/d.js'), lines(40));
+  git('add', '-A');
+  git('commit', '-qm', 'two');
+  const h2 = git('rev-parse', 'HEAD');
+  const paths = gitPaths(dir);
+  const note = { head: h2, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] };
+  const state = { ...emptyState(7, 'o/r'), revision: 2, floored: true, rounds: [{ head: h1 }], planNote: note };
+  const open = (title, file) => ({ title, file, line: 5, severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open', disposition: 'fix_now' });
+  const range = (seen, to) => ({ from: seen, to });
+  recordFindings(state, 'engine:codex-local', { head: h1, reviewer: 'codex-local', list: [open('In a', 'src/a.js'), open('In b', 'src/b.js')] }, { mint: true, paths: paths.at(h1), stage: 'independent', range });
+  const [a, b] = state.passes['engine:codex-local'].list.map((each) => each.id);
+  state.rounds.push({ head: h2 });
+  const fixed = (title, file, id) => ({ ...open(title, file), line: 30, state: 'fixed', returned_id: id });
+  recordFindings(state, 'engine:codex-local', { head: h2, reviewer: 'codex-local', list: [fixed('In a', 'src/a.js', a), fixed('In b', 'src/d.js', b)] }, { mint: true, paths: paths.at(h2), listed: [a, b], stage: 'independent', range });
+  assert.deepEqual([a, b].map((id) => [state.index[id].state, state.index[id].file, state.index[id].line, state.index[id].closed_in]), [['fixed', 'src/a.js', 30, { from: h1, to: h2 }], ['fixed', 'src/d.js', 30, { from: h1, to: h2 }]], 'closed on h2, its range still starting where it was last open');
+  for (const diffPaths of [new Set(['src/a.js', 'src/d.js']), new Set()]) {
+    const body = summaryBody(state, null, 'x', tablePost(dir, { diffPaths }));
+    const rows = rowsOf(body).map((row) => row.split(' | ').slice(0, 2).join(' | '));
+    assert.deepEqual(rows, [`| ${a} | src/a.js:30`, `| ${b} | src/d.js:30`], `diff paths: ${[...diffPaths].join(', ') || 'none'}`);
+    const index = stateFromComment(body, 7).index;
+    assert.deepEqual([a, b].map((id) => [index[id].file, index[id].line]), [['src/a.js', 30], ['src/d.js', 30]], 'the posted index keeps them too');
+  }
 });

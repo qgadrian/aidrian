@@ -12,6 +12,7 @@
 //   after it, in their fixed layout.
 // - Which findings are security findings (securityReading), for the copy and the residual rows of a step's result.
 // - What a machine keeps of its own record when it builds on another machine's posted copy (fillWithheld).
+// - The findings table of review.publish.summary "findings" (findingsTable), every cell through one encoder (tableCell).
 //
 // docs/review.md#the-record describes the rules.
 
@@ -28,7 +29,7 @@ import { isObject } from '../fs.mjs';
 import { runGit } from '../git.mjs';
 import { NAME } from './config.mjs';
 import { fileAt } from './diff.mjs';
-import { blocks, FINDING_STATES, isFindingId, isMint, MAX_PATH, recordedFindings, securitySeverity, twinClosure } from './findings.mjs';
+import { blocks, FINDING_STATES, isClosed, isFindingId, isMint, MAX_PATH, recordedFindings, securitySeverity, severityOf, twinClosure } from './findings.mjs';
 import { DEPTHS, ONLY_NON_BEHAVIOUR } from './plan.mjs';
 
 // The words that report a withholding, whatever matched: never the matched text, its pattern, or the list it is on.
@@ -344,11 +345,15 @@ function namesBy(state, names) {
 // textChecker, the checkout root the path checks run in, the reviewer and agent names of the base branch's and the
 // checkout's config, the paths of the pull request's diff, which count as named by git, and the forge's login check.
 // Missing, a reading is not private, a checker is the plain one, with no root no path check can run, so no path is
-// kept, and with no login check no login is.
+// kept, and with no login check no login is. `post.publish.publicSecurity` "full" posts a security finding's file and
+// line as any other finding's, and nothing more: no title, body, evidence, or reason, as for every finding there;
+// anything else withholds them on a reading that is not private (R5).
+// What stays on this machine on every repository never posts: an index entry's recording reviewer, the title of an
+// entry closed as fixed or not reported again, and the ids a dispatch note listed (Q2-A3).
 export function postedCopy(state, post = {}) {
   const checker = post.checker ?? plainChecker();
   const counter = { n: 0 };
-  if (isPrivate(post.reading)) return { copy: privateCopy(state, checker, counter), withheld: counter.n };
+  if (isPrivate(post.reading)) return { copy: privateCopy(withoutLocal(state), checker, counter), withheld: counter.n };
   const copy = allowlisted(state, post, counter);
   return { copy: allChecked(copy, checker, counter), withheld: counter.n };
 }
@@ -367,8 +372,20 @@ const FIXED_KEYS = new Set([
   'previous_open', 'fix_added', 'fix_added_all', 'original_added', 'limit', 'earlier_round', 'match', 'red_flags', 'stale_judge',
   'human', 'answer', 'session', 'unreviewed', 'title', 'body', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost',
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
-  'already_ruled', 'round', 'pass', 'requested_head',
+  'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
 ]);
+
+// The record less what stays on this machine on every repository (postedCopy), as a copy.
+function withoutLocal(state) {
+  const view = JSON.parse(JSON.stringify(state));
+  for (const entry of Object.values(isObject(view?.index) ? view.index : {})) {
+    if (!isObject(entry)) continue;
+    delete entry.reviewer;
+    if (isClosed(entry)) delete entry.title;
+  }
+  for (const note of Object.values(isObject(view?.dispatched) ? view.dispatched : {})) if (isObject(note)) delete note.listed;
+  return view;
+}
 const keyAllowed = (key, checker) => FIXED_KEYS.has(key) || checker.allows(key);
 
 // The whole record, less every string and every data-bearing key the full checks withhold (G2), each counted.
@@ -433,7 +450,10 @@ function allowlisted(state, post, counter) {
   const paths = post.root ? gitPaths(post.root) : null;
   const diffPaths = post.diffPaths instanceof Set ? post.diffPaths : new Set();
   const secure = securityReading(state);
-  const secureIds = new Set([...secure].map((finding) => finding.id).filter(isFindingId));
+  // Under publicSecurity "full" a security finding keeps its place, and only its place; its mark still posts.
+  const full = post.publish?.publicSecurity === 'full';
+  const placeless = full ? new Set() : secure;
+  const secureIds = new Set([...placeless].map((finding) => finding.id).filter(isFindingId));
   const known = new Set(recordedFindings(state).map((finding) => finding.id).filter(isFindingId));
   const drop = () => {
     counter.n += 1;
@@ -478,12 +498,15 @@ function allowlisted(state, post, counter) {
   const findingId = check(isFindingId);
   const paths_ = (head) => list(check(path(head)));
 
-  // A finding: in `list`, `ruled`, `carried`, and a round's `findings`. Its file and line stay only for a finding the
-  // projection does not read as security, as a path git tracks at `head` and a line within that file.
-  const finding = (head) => (source) => {
+  // A finding: in `list`, `ruled`, `carried`, a round's `findings`, and the index (`local` names the index's local
+  // keys, which are left out uncounted). Its file and line stay only for a finding the projection does not read as
+  // security, as a path git tracks at `head` and a line within that file.
+  const finding = (head, local = {}) => (source) => {
     if (!isObject(source)) return drop();
     const securityFinding = secure.has(source);
+    const hidePlace = placeless.has(source);
     const out = object(source, {
+      ...local,
       id: findingId,
       aliases: list(findingId),
       mint: check(isMint),
@@ -506,9 +529,12 @@ function allowlisted(state, post, counter) {
       carried: bool,
       residual: (value) => (typeof value === 'string' && value.trim() !== '') || value === true ? true : drop(),
       ruled_id: findingId,
+      closed_in: (value) => object(value, { from: sha, to: sha }),
+      seen: sha,
+      placed: sha,
     });
     const file = source.file;
-    if (typeof file === 'string' && !securityFinding && path(head)(file)) {
+    if (typeof file === 'string' && !hidePlace && path(head)(file)) {
       out.file = file;
       if (source.line !== undefined && source.line !== null) {
         if (lineOk(head, file, source.line)) out.line = source.line;
@@ -520,6 +546,9 @@ function allowlisted(state, post, counter) {
     return out;
   };
   const findings = (head) => list(finding(head));
+  // An index entry: a finding, its place checked at the head that recorded it (`placed`), else, for an entry an earlier
+  // write left without one, the head that last held it open, else the head that closed it.
+  const indexEntry = (source) => (isObject(source) ? finding(source.placed ?? source.seen ?? source.closed_in?.to, { reviewer: () => undefined })(source) : drop());
   const verdict = (source) => {
     if (!isObject(source) || !pair(source.flow, source.invariant)) return drop();
     return object(source, { flow: (value) => value, invariant: (value) => value, verdict: word(new Set(['holds', 'violated', 'not_affected', 'cannot_verify'])) });
@@ -673,9 +702,12 @@ function allowlisted(state, post, counter) {
         by: check((each) => isWord(each) || names.reviewers.has(each)),
       }),
     })),
-    dispatched: keyed((value) => object(value, { head: sha, files: (files) => (files === null ? null : paths_(value?.head)(files)), stage, security: bool }), name(names.passes)),
+    dispatched: keyed((value) => object(value, { head: sha, files: (files) => (files === null ? null : paths_(value?.head)(files)), stage, security: bool, base: sha, listed: () => undefined }), name(names.passes)),
+    index: keyed(indexEntry, isFindingId),
     planNote: (value) => object(value, {
       head: sha,
+      base: sha,
+      current: list(passId),
       passes: keyed((entry) => object(entry, { stage, reviewer, security: bool }), name(names.passes)),
       pairs: list(pairEntry({})),
     }),
@@ -839,26 +871,122 @@ export function untextedBlocking(state, local = null) {
 // ---- The residual rows of a step's result ----
 
 // The late-round residual rows a step's result lists for the pull request body, through the text decision: a row whose
-// finding's text it withholds is named by its id and severity alone, with no title, file, or line, so it anchors
-// nothing. Text is withheld on a pull request from outside the team, for a security finding (securityIds, a row with no
-// id among them) on a repository that is not private, and where the full checks withhold the title. Returns
-// { rows, withheld }.
-export function residualRows(rows, state, { reading, checker = plainChecker() } = {}) {
+// finding's text it withholds is named by its id and severity alone, with no title, so it anchors nothing. Text is
+// withheld on a pull request from outside the team, for a security finding (securityIds, a row with no id among them)
+// on a repository that is not private, and where the full checks withhold the title. Under `publish.publicSecurity`
+// "full", a security finding's withheld row on a repository that is not private also keeps its file and line, which
+// the checks pass, and never its text. Returns { rows, withheld }.
+export function residualRows(rows, state, { reading, checker = plainChecker(), publish } = {}) {
   // The rows are the session's to copy, not the comment's: a check that fails here withholds the row's text and holds
   // no record, so the flag the summary reads is left as it was.
   const failedBefore = checker.failed;
   const secure = securityIds(state);
+  const full = publish?.publicSecurity === 'full';
   let withheld = 0;
   // Every string a row keeps passes the checks: the title and the file decide whether the row keeps its text, and the
   // pass and the severity of a row by id are left out when they fail.
   const passes = (value) => typeof value !== 'string' || checker.allows(value);
   const out = rows.map((row) => {
     const security = !isFindingId(row.id) || secure.has(row.id);
-    const hidden = reading?.inside !== true || (security && reading?.visibility !== 'PRIVATE') || typeof row.title !== 'string' || !checker.allows(row.title) || !passes(row.file);
+    const unshown = security && reading?.visibility !== 'PRIVATE';
+    const hidden = reading?.inside !== true || unshown || typeof row.title !== 'string' || !checker.allows(row.title) || !passes(row.file);
     if (!hidden && passes(row.pass) && passes(row.severity)) return row;
     withheld += 1;
-    return { ...(passes(row.pass) ? { pass: row.pass } : {}), ...(isFindingId(row.id) ? { id: row.id } : {}), ...(passes(row.severity) ? { severity: row.severity } : {}), text: WITHHELD };
+    // "full" lifts the place of a security finding with an id, from inside the team, and nothing else.
+    const placed = full && unshown && isFindingId(row.id) && reading?.inside === true && typeof row.file === 'string' && passes(row.file);
+    const place = placed ? { file: row.file, ...(Number.isSafeInteger(row.line) && row.line >= 1 ? { line: row.line } : {}) } : {};
+    return { ...(passes(row.pass) ? { pass: row.pass } : {}), ...(isFindingId(row.id) ? { id: row.id } : {}), ...place, ...(passes(row.severity) ? { severity: row.severity } : {}), text: WITHHELD };
   });
   if ('failed' in checker) checker.failed = failedBefore;
   return { rows: out, withheld };
+}
+
+// ---- The findings table (review.publish.summary "findings") ----
+
+// The most rows the table shows; the rest is counted in one line under it.
+export const MAX_ROWS = 40;
+export const TABLE_HEADING = '**Findings:**';
+const HREF = /^https:\/\/[^\s<>()[\]|`"'\\]{1,500}$/u;
+
+// One cell of the findings table, the one encoder every cell goes through: one line; Markdown's `\ ` * _ [ ] |` and the
+// HTML metacharacters `& < >` escaped, so no cell closes the row, opens a tag, or formats; and autolinks (`://`, `www.`)
+// and `#<n>` and `GH-<n>` references, `owner/repo#<n>` among them, neutralized with a zero-width space. A `link` ({ label, href })
+// follows the text, as a link only when `href` is a plain https URL, else as its label alone. The post's escaping
+// (escapeLines) then runs on the whole line, as on every other.
+export function tableCell(text, link = null) {
+  const encode = (value) => String(value ?? '')
+    .replace(/[\s\u0085\u2028\u2029]+/gu, ' ').trim()
+    .replace(/[\\`*_[\]|]/gu, '\\$&')
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replace(/:\/\//gu, ':\u200b//')
+    .replace(/(?<![\w.-])www\./giu, 'www\u200b.')
+    .replace(/#(?=\d)/gu, '#\u200b')
+    .replace(/(?<![\w-])(GH)-(?=\d)/giu, '$1-\u200b');
+  const shown = encode(text);
+  if (!link || typeof link.label !== 'string') return shown;
+  const label = encode(link.label);
+  const target = typeof link.href === 'string' && HREF.test(link.href) ? `[${label}](${link.href})` : label;
+  return [shown, target].filter(Boolean).join(' ');
+}
+
+const SEVERITY_RANK = TABLE.severities;
+const rank = (entry) => {
+  const at = SEVERITY_RANK.indexOf(severityOf(entry.severity));
+  return at === -1 ? SEVERITY_RANK.length : at;
+};
+const idOrder = (id) => (FINDING_ID_PARTS.exec(id) ?? [0, 0, 0]).slice(1).map(Number);
+const FINDING_ID_PARTS = /^R(\d+)-(\d+)$/u;
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+// The summary's findings table, from the posted copy `copy`, its finding index: a heading, then at most MAX_ROWS rows,
+// blocking findings first, then by severity, then by id, each with the id, the location, the severity, the disposition,
+// and the outcome (`open`, `fixed in` or `not reported again in` its closing range, `accepted as` its disposition), and
+// no finding text; then one line for the rows left out. A location is printed only from a file that is at most
+// MAX_PATH characters and named by git at the entry's head or by the pull request's diff, and a line within that file:
+// the File and line check, which runs here too, as for a record an older release wrote. A closing range is a link only
+// where the forge builds one (`post.compareUrl`), else the two short SHAs as text. On a reading that is not private,
+// under publicSecurity "counts", a security finding (the copy's mark, or a critical or high severity) is counted while
+// open, and once closed its row holds its id, severity, outcome, and closing range only (R5).
+export function findingsTable(copy, post = {}) {
+  const entries = Object.values(isObject(copy?.index) ? copy.index : {}).filter((entry) => isObject(entry) && isFindingId(entry.id));
+  if (!entries.length) return [];
+  const shown = isPrivate(post.reading) || post.publish?.publicSecurity === 'full';
+  const hidden = (entry) => !shown && (entry.security === true || securitySeverity(entry.severity));
+  const counted = entries.filter((entry) => hidden(entry) && entry.state === 'open');
+  const blocking = (entry) => entry.state === 'open' && blocks(entry);
+  const rows = entries.filter((entry) => !counted.includes(entry)).sort((a, b) => {
+    const keys = [[blocking(b), blocking(a)].map(Number), [rank(a), rank(b)], ...idOrder(a.id).map((part, i) => [part, idOrder(b.id)[i]])];
+    for (const [x, y] of keys) if (x !== y) return x - y;
+    return 0;
+  });
+  const paths = post.root ? gitPaths(post.root) : null;
+  const diffPaths = post.diffPaths instanceof Set ? post.diffPaths : new Set();
+  const place = (entry) => {
+    const head = entry.placed ?? entry.seen ?? entry.closed_in?.to ?? copy.passes?.[entry.pass]?.head;
+    const file = entry.file;
+    if (hidden(entry) || typeof file !== 'string' || file.length > MAX_PATH || file.trim() === '') return '';
+    if (!(diffPaths.has(file) || paths?.tracked(head, file) === true)) return '';
+    const count = paths?.lines(head, file);
+    const line = Number.isSafeInteger(entry.line) && entry.line >= 1 && Number.isSafeInteger(count) && entry.line <= count ? entry.line : null;
+    return line === null ? file : `${file}:${line}`;
+  };
+  const range = (entry) => {
+    const { from, to } = isObject(entry.closed_in) ? entry.closed_in : {};
+    if (!isSha(from) || !isSha(to)) return null;
+    const href = post.compareUrl?.(from, to);
+    return { label: `${from.slice(0, 7)}...${to.slice(0, 7)}`, href: typeof href === 'string' ? href : null };
+  };
+  const disposition = (entry) => (!hidden(entry) && DISPOSITIONS.has(entry.disposition) ? entry.disposition : '');
+  const outcome = (entry) => {
+    if (entry.state === 'fixed') return tableCell(range(entry) ? 'fixed in' : 'fixed', range(entry));
+    if (entry.state === 'not_reported') return tableCell(range(entry) ? 'not reported again in' : 'not reported again', range(entry));
+    if (entry.state === 'accepted') return tableCell(disposition(entry) ? `accepted as ${disposition(entry)}` : 'accepted');
+    return tableCell(entry.state === 'open' ? 'open' : 'unknown');
+  };
+  const row = (entry) => `| ${[tableCell(entry.id), tableCell(place(entry)), tableCell(severityOf(entry.severity) ?? ''), tableCell(disposition(entry)), outcome(entry)].join(' | ')} |`;
+  const lines = ['', TABLE_HEADING];
+  if (rows.length) lines.push('', '| Finding | Location | Severity | Disposition | Outcome |', '| --- | --- | --- | --- | --- |', ...rows.slice(0, MAX_ROWS).map(row));
+  if (rows.length > MAX_ROWS) lines.push(`- ${plural(rows.length - MAX_ROWS, 'more finding')}, not listed: the table holds ${MAX_ROWS}.`);
+  if (counted.length) lines.push(`- ${plural(counted.length, 'open security finding')}, counted and not listed: the repository does not read as private.`);
+  return lines;
 }

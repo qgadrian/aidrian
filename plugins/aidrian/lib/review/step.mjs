@@ -17,7 +17,7 @@ import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord
 import { isObject } from '../fs.mjs';
 import { isFindingId, recordFindings } from './findings.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
-import { postContext } from './dispatch.mjs';
+import { closingRange, postContext } from './dispatch.mjs';
 import * as quota from './quota.mjs';
 import { readManifest, visualMatrix, visualRoutes } from './visual.mjs';
 import { headToReview } from './pushed.mjs';
@@ -45,13 +45,17 @@ const touches = (changes, files) => (files === null ? changes.length > 0 : chang
 // named stays, with the stage, the reviewer, and whether the plan requires the security reviewer for it (true in the
 // local and independent stages of a plan that requires `agent:security-engineer`), the head's own plan's word winning
 // for its passes; and every flow and invariant pair of its flows. A pass that attest alone supplied is never added.
-function planNote(plan, map, earlier) {
+// `current` lists the head's own plan, which `aidrian pr attest` lists the finding index to (findings.mjs notedPlan),
+// and `base` is the merge base, which a finding attest closes takes its range from when it was last open on no ancestor.
+function planNote(plan, map, earlier, base) {
   const passes = plan.stages.flatMap((stage) => stage.passes);
   const security = plan.require.includes('agent:security-engineer') || satisfies('agent:security-engineer', passes, map);
   const before = earlier && typeof earlier.passes === 'object' && earlier.passes ? earlier.passes : {};
   const pairs = [...(Array.isArray(earlier?.pairs) ? earlier.pairs : []), ...plan.flows.flatMap((flow) => (flow.invariants ?? []).map((invariant) => ({ flow: flow.id, invariant: invariant.id })))];
   return {
     head: plan.head,
+    base,
+    current: passes.map((pass) => pass.id),
     passes: { ...before, ...Object.fromEntries(plan.stages.flatMap((stage) => stage.passes.map((pass) => [pass.id, { stage: stage.name, reviewer: pass.reviewer, security: security && ['local', 'independent'].includes(stage.name) }]))) },
     pairs: [...new Map(pairs.map((pair) => [JSON.stringify([pair.flow, pair.invariant]), pair])).values()],
   };
@@ -292,11 +296,11 @@ export async function prepareStep(s) {
   }
   // The plan note for this head (G1, H6): each pass of the plan with its stage, its reviewer, and whether the plan
   // requires the security reviewer for it, and the flows' invariant pairs. The posted copy names only what it holds.
-  state.planNote = planNote(plan, map, state.planNote);
+  state.planNote = planNote(plan, map, state.planNote, base);
   // A finding attest stored without an id, as on a record no step had floored, takes one now, from the same function.
   for (const [id, result] of Object.entries(state.passes)) {
     if (!isObject(result) || !['list', 'ruled', 'carried'].some((key) => Array.isArray(result[key]) && result[key].some((finding) => isObject(finding) && !isFindingId(finding.id)))) continue;
-    recordFindings(state, id, result, { mint: true, securityPass: state.planNote.passes[id]?.security === true || state.dispatched?.[id]?.security === true, kept: true });
+    recordFindings(state, id, result, { mint: true, securityPass: state.planNote.passes[id]?.security === true || state.dispatched?.[id]?.security === true, kept: true, range: closingRange(root, base) });
   }
 
   const keptSignoffs = await keptSignoffsOf({ root, head, baseTip, cleanEnv, review, harnessFiles, plan, state });

@@ -9,7 +9,8 @@ import test from 'node:test';
 import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { splitPasses } from '../plugins/aidrian/lib/review/split.mjs';
-import { escapeLines, postedCopy, textChecker, untextedBlocking } from '../plugins/aidrian/lib/review/publish.mjs';
+import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
+import { escapeLines, gitPaths, postedCopy, textChecker, untextedBlocking } from '../plugins/aidrian/lib/review/publish.mjs';
 import {
   BODY_LIMIT, clip, emptyState, HELD_LINE, heldMessage, heldRevision, prunePasses, publishState, readLocalState, readRecord, refreshSummary, stateFromComment, summaryBody, writeLocalState,
 } from '../plugins/aidrian/lib/review/state.mjs';
@@ -575,6 +576,10 @@ test('a machine that adopts a copy ties its own closed high finding`s twin, and 
   const theirs = { ...mine, revision: mine.revision + 3, rounds: [{ head, at: ISO, findings: [{ ...high, file: undefined, line: undefined }] }, { head, at: ISO, findings: [] }], passes: { 'engine:codex-local': { head, reviewer: 'codex-local', findings: 1, open: 1, list: [medium] } } };
   delete theirs.rounds[0].findings[0].file;
   delete theirs.rounds[0].findings[0].line;
+  // Its finding index came from the copy too, which holds no place for a security finding.
+  theirs.index = JSON.parse(JSON.stringify(mine.index));
+  delete theirs.index['R1-1'].file;
+  delete theirs.index['R1-1'].line;
   const posted = summaryBody(theirs, null, 'x', { reading: { visibility: 'PUBLIC', inside: true }, checker: checker(), root, names: [] });
   assert.equal(stateFromComment(posted, 7).passes['engine:codex-local'].list[0].file, 'src/a.js', 'the other machine could tie nothing: it held no place for the high finding');
   const adopted = readRecord(project, 7, [{ id: 1, body: posted, author_association: 'MEMBER' }], 'o/r').state;
@@ -653,4 +658,77 @@ test('a machine fills its own override lines only into a copy of its own review'
   assert.equal(same.overrides.length, 2, 'the same first round: this machine`s line is filled');
   const other = readRecord(project, 7, [{ id: 1, body: copy([{ head: 'e'.repeat(40), at: ISO }]), author_association: 'MEMBER' }], 'o/r').state;
   assert.deepEqual(other.overrides, ['round 2 ran the independent stage first'], 'a restarted review gets none');
+});
+
+
+// ---- The finding index in the posted copy (S1b) ----
+
+test('the posted copy with the finding index: no title in the index or in a refused id`s dropped note on any reading but PRIVATE, and no title of a closed entry on any', (t) => {
+  const { root, head } = checkout(t);
+  const state = sentinelRecord(head);
+  recordFindings(state, 'agent:code-reviewer', { head, reviewer: 'code-reviewer', findings: 1, open: 1, verdicts: [], list: [{ title: `${S} refused`, body: `${S} body`, file: 'src/b.js', line: 5, severity: 'medium', state: 'open', disposition: 'fix_now', returned_id: `R9-9 ${S}` }] }, { mint: true, paths: gitPaths(root).at(head), listed: [] });
+  const [refused] = state.passes['agent:code-reviewer'].list;
+  assert.deepEqual(state.passes['agent:code-reviewer'].dropped, [`${refused.id}: its returned id is not an open finding its input listed, so it was read as no id`]);
+  assert.deepEqual(Object.keys(state.index).sort(), ['R1-1', 'R1-2', 'R1-3', refused.id].sort(), 'every id has its entry');
+  Object.assign(state.index['R1-1'], { state: 'not_reported', closed_in: { from: head, to: head } });
+  assert.equal(state.index['R1-1'].title, `${S} title`, 'this machine keeps it');
+  for (const [label, reading] of NOT_PRIVATE) {
+    const post = reading === undefined ? {} : { reading, checker: checker(), root, names: [] };
+    for (const [how, body] of writes(state, head, post)) {
+      const record = stateFromComment(body, 7);
+      assert.ok(!JSON.stringify(record).includes(S), `${label}, ${how}: S in the decoded record`);
+      assert.ok(record.index[refused.id], `${label}, ${how}: the entry is posted by its id`);
+      assert.ok(!('reviewer' in record.index[refused.id]), `${label}, ${how}: the recording reviewer stays local`);
+    }
+  }
+  const { copy } = postedCopy(state, { reading: PRIVATE_READING, checker: { allows: () => true }, root, names: [] });
+  assert.equal(copy.index['R1-1'].title, undefined, 'a closed entry holds no title on a private repository either');
+  assert.equal(copy.index[refused.id].title, `${S} refused`, 'an open one does, there');
+  assert.ok(!('reviewer' in copy.index[refused.id]));
+  assert.ok(!JSON.stringify(copy.passes['agent:code-reviewer'].dropped).includes(S), 'the refused id`s note names it by its own id alone');
+});
+
+test('the twin match reads the index: an agent finding rated medium at an exec high finding`s place, and a medium report after the high id closed as fixed, post no file or line', (t) => {
+  const { root, head } = checkout(t);
+  const paths = gitPaths(root).at(head);
+  const note = { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false }, 'agent:code-reviewer': { stage: 'local', reviewer: 'code-reviewer', security: false } }, pairs: [] };
+  const state = { ...emptyState(7, 'o/r'), revision: 2, floored: true, rounds: [{ head, at: ISO }], planNote: note, dispatched: { 'agent:code-reviewer': { head, files: null, stage: 'local', security: false } } };
+  const [high] = recordFindings(state, 'engine:codex-local', { head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ title: 'Refund total unchecked', file: 'src/a.js', line: 10, severity: 'high' }] }, { mint: true, paths }).list;
+  const agent = (line) => recordFindings(state, 'agent:code-reviewer', { head, reviewer: 'code-reviewer', findings: 1, open: 1, list: [{ title: `Other words ${line}`, file: 'src/a.js', line, severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open', disposition: 'fix_now' }] }, { mint: true, paths }).list[0];
+  const post = { reading: { visibility: 'PUBLIC', inside: true }, checker: checker(), root, names: [] };
+  const medium = agent(11);
+  let posted = postedCopy(state, post).copy;
+  assert.deepEqual([posted.passes['agent:code-reviewer'].list[0].file, posted.passes['agent:code-reviewer'].list[0].line, posted.passes['agent:code-reviewer'].list[0].security], [undefined, undefined, true], 'the itemized twin of the exec high finding');
+  assert.deepEqual([posted.index[medium.id].file, posted.index[medium.id].security], [undefined, true]);
+  // The high finding's id closes as fixed; nothing but its closed entry holds it.
+  recordFindings(state, 'engine:codex-local', { head, reviewer: 'codex-local', findings: 0, open: 0, list: [] }, { mint: true, paths });
+  delete state.passes['agent:code-reviewer'];
+  Object.assign(state.index[high.id], { state: 'fixed', closed_in: { from: head, to: head } });
+  delete state.index[medium.id];
+  const after = agent(12);
+  assert.notEqual(after.id, high.id);
+  posted = postedCopy(state, post).copy;
+  assert.deepEqual([posted.passes['agent:code-reviewer'].list[0].file, posted.passes['agent:code-reviewer'].list[0].line, posted.passes['agent:code-reviewer'].list[0].security], [undefined, undefined, true], 'the report after the id closed');
+});
+
+test('prunePasses deletes no index entry', () => {
+  const slices = [{ key: 'apps/web', files: ['apps/web/a.ts'] }];
+  const index = { 'R1-1': { id: 'R1-1', mint: '00000001', title: 't', state: 'open', pass: 'slice:codex-local:0123456789' } };
+  const state = { ...emptyState(7, 'o/r'), index: JSON.parse(JSON.stringify(index)), passes: { 'slice:codex-local:0123456789': { head: 'h', files: ['gone.ts'], findings: 1, open: 1, list: [{ id: 'R1-1', mint: '00000001', title: 't' }] } } };
+  prunePasses(state, slices);
+  assert.deepEqual([Object.keys(state.passes), state.index], [[], index]);
+});
+
+test('the record with 200 itemized findings in one pass, each with a full body and an index entry, fits the comment or is held, on a private repository', () => {
+  const next = rng(201);
+  const head = 'c'.repeat(40);
+  const list = Array.from({ length: 200 }, (_, i) => ({ id: `R1-${i + 1}`, mint: (i + 1).toString(16).padStart(8, '0'), file: `src/f${i % 7}.js`, line: 10 + i, title: prose(next, 8), body: prose(next, 300), severity: ['high', 'medium', 'low'][i % 3], likelihood: 'plausible', affects: 'users', state: 'open', disposition: 'fix_now' }));
+  const state = { ...emptyState(7, 'o/r'), revision: 3, idCounter: 200, passes: { 'engine:codex-local': { head, reviewer: 'codex-local', findings: 200, open: 200, list } } };
+  recordFindings(state, null, null);
+  assert.equal(Object.keys(state.index).length, 200);
+  const body = summaryBody(state, null, 'fix_required', { ...OPEN, publish: { summary: 'findings' } });
+  assert.ok(body.length <= BODY_LIMIT, `${body.length} characters`);
+  const record = stateFromComment(body, 7);
+  if (record) assert.deepEqual([record.passes['engine:codex-local'].list.length, Object.keys(record.index).length], [200, 200]);
+  else assert.equal(heldRevision(body), 3, 'held, as before');
 });

@@ -1184,3 +1184,43 @@ function project(t, config) {
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify(config));
   return findProject(dir);
 }
+
+test('review.publish: counts and no inline by default; every key and value is checked, and an unknown one is an error', (t) => {
+  const at = (publish) => loadConfig(project(t, { version: 1, review: { publish } }));
+  assert.deepEqual(DEFAULTS.review.publish, { summary: 'counts', inline: false, replies: true, publicSecurity: 'counts' });
+  const set = { summary: 'findings', inline: true, replies: false, publicSecurity: 'full' };
+  assert.deepEqual(at(set).errors, []);
+  assert.deepEqual(at(set).config.review.publish, set);
+  const file = '.aidrian/config.json';
+  for (const [publish, error] of [
+    [{ summary: 'table' }, `${file}: "review.publish.summary" must be "counts" or "findings"`],
+    [{ publicSecurity: 'none' }, `${file}: "review.publish.publicSecurity" must be "counts" or "full"`],
+    [{ inline: 'yes' }, `${file}: "review.publish.inline" must be true or false`],
+    [{ replies: 1 }, `${file}: "review.publish.replies" must be true or false`],
+    [{ threshold: 'high' }, `${file}: unknown key "review.publish.threshold"`],
+    ['findings', `${file}: "review.publish" must be an object`],
+  ]) {
+    const loaded = at(publish);
+    assert.deepEqual(loaded.errors, [error], JSON.stringify(publish));
+    assert.deepEqual(loaded.config.review.publish, DEFAULTS.review.publish, `${JSON.stringify(publish)}: a bad value keeps the default`);
+  }
+});
+
+test('.aidrian.local.json review.publish may set only summary "counts" and inline false, and the team`s value stays for any other', async (t) => {
+  const { resolvePublish } = await import('../plugins/aidrian/lib/config-local.mjs');
+  const at = (publish) => {
+    const found = project(t, { version: 1 });
+    writeFileSync(path.join(found.root, '.aidrian.local.json'), JSON.stringify({ review: { publish } }));
+    return loadConfig(findProject(found.root)).errors;
+  };
+  const only = '"review.publish" in the local settings file may set only "summary": "counts" and "inline": false';
+  assert.deepEqual(at({ summary: 'counts', inline: false }), []);
+  for (const [key, value] of [['summary', 'findings'], ['inline', true], ['publicSecurity', 'full'], ['publicSecurity', 'counts'], ['replies', false]]) {
+    assert.deepEqual(at({ [key]: value }), [`.aidrian.local.json: "review.publish.${key}" is the team's: ${only}`], `${key}: ${value}`);
+  }
+  assert.deepEqual(at('counts'), [`.aidrian.local.json: ${only}`]);
+  const team = { summary: 'findings', inline: true, replies: true, publicSecurity: 'counts' };
+  assert.deepEqual(resolvePublish(team, { summary: 'counts', inline: false }), { ...team, summary: 'counts', inline: false }, 'the local file posts less');
+  assert.deepEqual(resolvePublish({ ...team, summary: 'counts' }, { summary: 'findings', inline: true, publicSecurity: 'full' }), { ...team, summary: 'counts' }, 'it never posts more, and publicSecurity stays the team`s');
+  assert.deepEqual(resolvePublish(undefined, undefined), DEFAULTS.review.publish);
+});

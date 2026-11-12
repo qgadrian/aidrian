@@ -16,9 +16,17 @@ export const RECORDS = Object.freeze(['comment', 'local']);
 export const FLOW_ID = /^[a-z0-9][a-z0-9-]*$/u;
 export const NAME = /^[\w.:-]+$/u;
 
+// What the review posts on the pull request beyond its record (docs/review.md#publishing): the summary comment's
+// findings table, and how a security finding shows on a repository that is not private (`publicSecurity`). `inline`
+// and `replies` are checked; neither posts anything.
+export const PUBLISH_SUMMARIES = Object.freeze(['counts', 'findings']);
+export const PUBLIC_SECURITY = Object.freeze(['counts', 'full']);
+export const PUBLISH_DEFAULTS = Object.freeze({ summary: 'counts', inline: false, replies: true, publicSecurity: 'counts' });
+
 export const REVIEW_DEFAULTS = Object.freeze({
   engine: null,
   record: 'comment',
+  publish: PUBLISH_DEFAULTS,
   rules: [],
   ignore: DEFAULT_IGNORE,
   nonBehaviour: DEFAULT_NON_BEHAVIOUR,
@@ -78,6 +86,7 @@ export function checkReview(value, file, errors) {
     if (RECORDS.includes(value.record)) out.record = value.record;
     else bad('"review.record" must be "comment" or "local"');
   }
+  if (Object.hasOwn(value, 'publish')) out.publish = checkPublish(value.publish, bad);
   // A bad `re:` entry, one that does not compile or an empty one, is an error and is left out, and the list keeps the
   // team's other entries, never the built-in list: fewer entries mean more review, so a typo can only fail closed.
   for (const key of ['ignore', 'nonBehaviour']) {
@@ -109,6 +118,27 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'productFeedback')) out.productFeedback = checkProductFeedback(value.productFeedback, bad);
   // Nothing says what is user-facing. `auto` stays true, so `aidrian pr product-feedback status` reads it as clear.
   if (out.productFeedback.auto === true && !out.productFeedback.files && !out.visual) bad(FEEDBACK_NO_LIST);
+  return out;
+}
+
+// `review.publish`: what the review posts. Every key is checked, and an unknown key or value is an error that keeps the
+// default for that key.
+function checkPublish(publish, bad) {
+  const out = { ...PUBLISH_DEFAULTS };
+  if (!isObject(publish)) {
+    bad('"review.publish" must be an object');
+    return out;
+  }
+  const words = { summary: PUBLISH_SUMMARIES, publicSecurity: PUBLIC_SECURITY };
+  for (const [key, value] of Object.entries(publish)) {
+    if (Object.hasOwn(words, key)) {
+      if (words[key].includes(value)) out[key] = value;
+      else bad(`"review.publish.${key}" must be ${words[key].map((each) => `"${each}"`).join(' or ')}`);
+    } else if (key === 'inline' || key === 'replies') {
+      if (typeof value === 'boolean') out[key] = value;
+      else bad(`"review.publish.${key}" must be true or false`);
+    } else bad(`unknown key "review.publish.${key}"`);
+  }
   return out;
 }
 
@@ -363,12 +393,28 @@ export function checkLocalReview(value, file, errors) {
     errors.push(`${file}: "review" must be an object`);
     return 'auto';
   }
-  for (const key of Object.keys(value)) if (!['engine', 'visual', 'productFeedback'].includes(key)) errors.push(`${file}: unknown key "review.${key}"; only "review.engine", "review.visual", and "review.productFeedback.auto" are machine settings`);
+  for (const key of Object.keys(value)) if (!['engine', 'visual', 'productFeedback', 'publish'].includes(key)) errors.push(`${file}: unknown key "review.${key}"; only "review.engine", "review.visual", "review.productFeedback.auto", and "review.publish" are machine settings`);
   if (Object.hasOwn(value, 'productFeedback')) checkLocalFeedback(value.productFeedback, file, errors);
+  if (Object.hasOwn(value, 'publish')) checkLocalPublish(value.publish, file, errors);
   if (value.engine === undefined) return 'auto';
   if (engineName(value.engine)) return value.engine;
   errors.push(`${file}: ${ENGINE_PROBLEM}`);
   return 'auto';
+}
+
+// `review.publish` of the local settings file may only post less than the team's (R10): `summary` "counts" and `inline`
+// false. Any other key or value, `publicSecurity` "full" included, is an error, and the team's value stays
+// (config-local.mjs resolvePublish).
+const LOCAL_PUBLISH = '"review.publish" in the local settings file may set only "summary": "counts" and "inline": false';
+function checkLocalPublish(publish, file, errors) {
+  if (!isObject(publish)) {
+    errors.push(`${file}: ${LOCAL_PUBLISH}`);
+    return;
+  }
+  const allowed = { summary: 'counts', inline: false };
+  for (const [key, value] of Object.entries(publish)) {
+    if (!Object.hasOwn(allowed, key) || value !== allowed[key]) errors.push(`${file}: "review.publish.${key}" is the team's: ${LOCAL_PUBLISH}`);
+  }
 }
 
 // `review.productFeedback` of the local settings file may set only `auto`, true or false.

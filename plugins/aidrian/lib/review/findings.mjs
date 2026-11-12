@@ -90,6 +90,8 @@ const text = (value, max) => (typeof value === 'string' && value.trim() !== '' ?
 // An `already_ruled` that is not a string, names nothing in `settled`, or fails settledMatch's file or severity test is
 // left out, and noted: the finding is read as it stands. So is one on a finding whose own disposition cannot be accepted
 // (ruling).
+// A finding's `id` is the id of the priorFindings entry it reports again, kept as `returned_id` for recordFindings to
+// check; a mint mark is never read.
 // SHORTCUT: `aidrian pr attest` (lib/review/record.mjs recordPass) passes no `settled` list yet, so on that path every
 // `already_ruled` is left out and the finding read as it stands: safe, since nothing is waived, and enough while only
 // exec reviewers return repeats. Wiring recordSettled and residualTexts into recordPass would replace it.
@@ -125,6 +127,8 @@ export function parseFindings(raw, settled = []) {
       ...(text(finding.evidence, 300) ? { evidence: text(finding.evidence, 300) } : {}),
       ...(ruled ? { already_ruled: ruled.title } : {}),
       ...(flagged(finding.security) ? { security: true } : {}),
+      // The id of a priorFindings entry the reviewer reports again: recordFindings checks it, and never stores it.
+      ...(finding.id !== undefined && finding.id !== '' ? { returned_id: finding.id } : {}),
       state: finding.state,
       disposition: decided.disposition,
     };
@@ -225,19 +229,22 @@ export function twinClosure(findings, seed) {
 }
 
 const GROUPS = ['list', 'ruled', 'carried'];
+const listOf = (value) => (Array.isArray(value) ? value : []);
 
-// Every finding a record holds, as the objects themselves: each pass's `list`, `ruled`, and `carried`, then each
-// round's `findings`.
+// Every finding a record holds, as the objects themselves: each pass's `list`, `ruled`, and `carried`, each round's
+// `findings`, then each entry of the finding index (`index`), closed entries included, so the twin match reads them too.
 export function recordedFindings(state) {
   const passes = Object.values(isObject(state?.passes) ? state.passes : {}).filter(isObject)
-    .flatMap((result) => GROUPS.flatMap((key) => (Array.isArray(result[key]) ? result[key] : [])));
-  const rounds = (Array.isArray(state?.rounds) ? state.rounds : []).filter(isObject).flatMap((round) => (Array.isArray(round.findings) ? round.findings : []));
-  return [...passes, ...rounds].filter(isObject);
+    .flatMap((result) => GROUPS.flatMap((key) => listOf(result[key])));
+  const rounds = listOf(state?.rounds).filter(isObject).flatMap((round) => listOf(round.findings));
+  const index = Object.values(isObject(state?.index) ? state.index : {});
+  return [...passes, ...rounds, ...index].filter(isObject);
 }
 
 // Stores the security mark on every finding `state` holds that is marked, critical or high, or a twin of one, in every
-// list that holds it (K1). The mark only widens. Every write of the record runs it (state.mjs writeLocalState), so a
-// twin this machine ties, after it adopts another machine's copy too, stays tied in the copy it posts.
+// list that holds it and in the index (K1). The mark only widens. Every write of the record runs it (state.mjs
+// writeLocalState, through recordFindings), so a twin this machine ties, after it adopts another machine's copy too,
+// stays tied in the copy it posts.
 export function tieTwins(state) {
   for (const finding of twinClosure(recordedFindings(state), securitySeed)) finding.security = true;
   return state;
@@ -245,18 +252,175 @@ export function tieTwins(state) {
 
 const trimmed = (value) => (typeof value === 'string' ? value.trim() : '');
 const placeKey = (finding) => JSON.stringify([trimmed(finding.title), trimmed(finding.file)]);
+const FULL_SHA = /^[0-9a-f]{40}$/u;
 
-// The one writer of finding ids (A1): records `result` as pass `passId`'s result on `state`, and returns it. Both writers
-// of a pass's findings call it, `aidrian pr attest` (lib/review/record.mjs recordPass) and the step's write of an exec
-// reviewer's findings (lib/review/stages.mjs), and the step calls it again for a pass whose findings attest stored
-// without ids. Each finding of the result's `list`, `ruled`, and `carried`:
+// ---- The finding index (docs/review.md#finding-ids) ----
+
+// The states an index entry closes in. Both are final: an id closed as fixed or not reported again is never reopened,
+// and a finding reported after it is a new finding with a new id (B4).
+export const CLOSED_STATES = Object.freeze(['fixed', 'not_reported']);
+export const isClosed = (entry) => CLOSED_STATES.includes(entry?.state);
+// What an index entry keeps of its finding: the title is its only text. `reviewer`, the recording pass's, stays local.
+const ENTRY_KEYS = ['title', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost', 'disposition', 'accepted_by'];
+
+const indexOf = (state) => {
+  if (!isObject(state.index)) state.index = {};
+  return state.index;
+};
+
+// The state an index entry takes from a finding recorded in a pass result's `group`: a listing as fixed closes it, a
+// ruling or a carried ruling is accepted, and a listing is accepted only when it reads as accepted and no longer blocks.
+function entryState(finding, group) {
+  if (group !== 'list') return 'accepted';
+  if (finding.state === 'fixed') return 'fixed';
+  return finding.state === 'accepted' && !blocks(finding) ? 'accepted' : 'open';
+}
+
+// Closes `entry` as `outcome` on head `to`, with `closed_in`, the range the closing pass reviewed, from `range(seen, to)`
+// (A4): two full SHAs, or none when the range cannot be read.
+function closeEntry(entry, outcome, to, range) {
+  entry.state = outcome;
+  const span = typeof range === 'function' && FULL_SHA.test(String(to ?? '')) ? range(entry.seen, to) : null;
+  if (FULL_SHA.test(String(span?.from ?? '')) && FULL_SHA.test(String(span?.to ?? ''))) entry.closed_in = { from: span.from, to: span.to };
+}
+
+// Writes one recorded finding into the index, under its id: its title, place, and axes, its state, the pass, stage,
+// and reviewer that recorded it, the head its file and line were checked at (`placed`), the head that last recorded it
+// open or accepted (`seen`, where a range that closes it starts), and a security mark that never clears. A closed
+// entry is final and takes nothing more.
+function enter(index, finding, group, at) {
+  const before = isObject(index[finding.id]) ? index[finding.id] : null;
+  if (isClosed(before)) return;
+  // The spread keeps `adopted: true`, not cleared by a fresh local report, so closeOmitted keeps skipping the entry: an accepted residual of the adoption path (#276).
+  const entry = { ...(before ?? {}), id: finding.id };
+  for (const key of ['mint', 'aliases']) if (finding[key] !== undefined) entry[key] = Array.isArray(finding[key]) ? [...finding[key]] : finding[key];
+  for (const key of ENTRY_KEYS) {
+    if (finding[key] !== undefined && finding[key] !== null) entry[key] = finding[key];
+    else if (key !== 'title') delete entry[key];
+  }
+  const state = entryState(finding, group);
+  Object.assign(entry, { state, pass: at.pass });
+  if (at.stage) entry.stage = at.stage;
+  if (at.reviewer) entry.reviewer = at.reviewer;
+  if (finding.security === true || before?.security === true) entry.security = true;
+  // Every write sets the file and line together with the head they were checked at, in any state, fixed included:
+  // the posted copy and the findings table check them there again. `seen` is only where a closing range starts.
+  if (FULL_SHA.test(String(at.head ?? ''))) entry.placed = at.head;
+  if ((state === 'open' || state === 'accepted') && FULL_SHA.test(String(at.head ?? ''))) entry.seen = at.head;
+  if (state === 'fixed') closeEntry(entry, 'fixed', at.head, at.range);
+  index[finding.id] = entry;
+}
+
+// The pass's stage and reviewer as the record notes them: the plan note's word, else the dispatch note's stage and the
+// result's reviewer.
+const stageOf = (state, passId) => state.planNote?.passes?.[passId]?.stage ?? state.dispatched?.[passId]?.stage ?? null;
+const reviewerOf = (state, passId, result) => state.planNote?.passes?.[passId]?.reviewer ?? result?.reviewer ?? null;
+
+// Gives an index entry to each id the record holds that has none, as on the first write over a record an earlier
+// release wrote (A3): each pass's findings, then each round's.
+function indexHeld(state, range) {
+  const index = indexOf(state);
+  for (const [passId, result] of Object.entries(isObject(state.passes) ? state.passes : {})) {
+    if (!isObject(result)) continue;
+    const at = { pass: passId, stage: stageOf(state, passId), reviewer: reviewerOf(state, passId, result), head: result.head, range };
+    for (const group of GROUPS) for (const finding of listOf(result[group])) if (isObject(finding) && isFindingId(finding.id) && !index[finding.id]) enter(index, finding, group, at);
+  }
+  for (const round of listOf(state.rounds).filter(isObject)) {
+    for (const finding of listOf(round.findings)) {
+      if (!isObject(finding) || !isFindingId(finding.id) || index[finding.id]) continue;
+      enter(index, finding, 'list', { pass: finding.pass ?? null, stage: stageOf(state, finding.pass), reviewer: reviewerOf(state, finding.pass, null), head: round.head, range });
+    }
+  }
+}
+
+// Whether a pass with `files` (null: every file) holds `file`.
+const holds = (pass, file) => !Array.isArray(pass.files) || (typeof file === 'string' && pass.files.includes(file));
+
+// Whether a pass result lists the finding `id` in its `list`.
+const lists = (result, id) => isObject(result) && listOf(result.list).some((each) => each?.id === id);
+
+// The one pass of `plan`, the head's plan as [{ id, reviewer, stage, files }], that each open entry of the index is
+// listed to (Q2-A3), as a Map from the entry's id to that pass's id, or to null. An entry stays with the pass that
+// recorded it while that pass is in the plan and holds its file, has no file list, or lists the entry's id in its latest
+// result; an entry with no file stays with it too. Any other entry goes to the first pass of the same reviewer and stage
+// that holds its file, so only a cut that moves or a slice that runs as two halves hands an entry on, with its id. No
+// entry is listed to two passes.
+export function listing(state, plan) {
+  const out = new Map();
+  const byId = new Map(listOf(plan).map((pass) => [pass.id, pass]));
+  for (const [id, entry] of Object.entries(isObject(state?.index) ? state.index : {})) {
+    if (!isObject(entry) || entry.state !== 'open') continue;
+    const own = byId.get(entry.pass);
+    const stays = own && (holds(own, entry.file) || typeof entry.file !== 'string' || lists(state.passes?.[own.id], id));
+    const to = stays ? own : listOf(plan).find((pass) => pass.reviewer === entry.reviewer && pass.stage === entry.stage && holds(pass, entry.file));
+    out.set(id, to?.id ?? null);
+  }
+  return out;
+}
+
+// The ids listed to pass `passId` of `plan`.
+export const listedTo = (state, plan, passId) => [...listing(state, plan)].filter(([, to]) => to === passId).map(([id]) => id);
+
+// The head's plan as the record notes it (`planNote.current`, with each pass's stage and reviewer, and its files as its
+// dispatch note or its result has them), for a write that plans nothing, such as `aidrian pr attest`; null without a note.
+export function notedPlan(state) {
+  const note = isObject(state?.planNote) ? state.planNote : null;
+  if (!note || !Array.isArray(note.current)) return null;
+  return note.current.filter((id) => typeof id === 'string').map((id) => ({
+    id, reviewer: note.passes?.[id]?.reviewer ?? null, stage: note.passes?.[id]?.stage ?? null,
+    files: state.dispatched?.[id]?.files ?? state.passes?.[id]?.files ?? null,
+  }));
+}
+
+// How a pass result holds index entry `id`: 'list' when it lists it, 'ruled' when a ruling or a carried ruling has its
+// id or names it, else null.
+function heldBy(result, id) {
+  if (!isObject(result)) return null;
+  if (listOf(result.list).some((each) => each?.id === id)) return 'list';
+  return ['ruled', 'carried'].some((key) => listOf(result[key]).some((each) => each?.id === id || each?.ruled_id === id)) ? 'ruled' : null;
+}
+
+// Closes, as not reported again, every open entry this machine holds the text of whose stage is `complete` (every
+// pass of it has a result for the head), and, for an entry whose stage the plan no longer has, once every stage is: an
+// entry listed to a pass whose result for `head` lists findings one by one and does not hold it, and an entry listed to
+// no pass that no pass of the plan holds. An entry any pass of the plan lists in its result for `head` is held, whichever
+// pass it is listed to. One a pass holds as a ruling is accepted, never omitted. Nothing here closes an entry as fixed:
+// nobody confirmed a fix (A1, B4, Q2-A3).
+function closeOmitted(state, plan, { head, complete, range }) {
+  const stages = new Set(plan.map((pass) => pass.stage));
+  const everyStage = [...stages].every((name) => complete.has(name));
+  const atHead = plan.map((pass) => state.passes?.[pass.id]).filter((result) => isObject(result) && result.head === head);
+  for (const [id, to] of listing(state, plan)) {
+    const entry = state.index[id];
+    if (trimmed(entry.title) === '' || entry.adopted === true) continue;
+    if (!(stages.has(entry.stage) ? complete.has(entry.stage) : everyStage)) continue;
+    if (atHead.some((result) => lists(result, id))) continue;
+    const holders = to === null ? plan.map((pass) => state.passes?.[pass.id]) : [state.passes?.[to]];
+    const held = holders.map((result) => heldBy(result, id)).find(Boolean) ?? null;
+    if (held === 'ruled') entry.state = 'accepted';
+    if (held) continue;
+    if (to !== null && !(holders[0]?.head === head && Array.isArray(holders[0].list))) continue;
+    closeEntry(entry, 'not_reported', head, range);
+  }
+}
+
+// The one writer of finding ids (A1): records `result` as pass `passId`'s result on `state`, returns it, and keeps the
+// finding index. Both writers of a pass's findings call it, `aidrian pr attest` (lib/review/record.mjs recordPass) and
+// the step's write of an exec reviewer's findings (lib/review/stages.mjs); the step calls it again for a pass whose
+// findings attest stored without ids, and with no result at each stage's judgment, where it closes what the stage's
+// passes left out; every write of the record calls it with neither, which keeps the index (state.mjs writeLocalState).
+// Each finding of the result's `list`, `ruled`, and `carried`:
 //   - keeps its id when the record already holds that finding, its id and mint mark together (a stored entry, such as an
-//     ended waiver the step copies), else takes the id, mint mark, aliases, and security mark of a finding of the pass's
-//     prior result with the same title and file, each prior finding once, else takes a new id when `mint` allows it,
-//     else is stored without one. An id or a mark a reviewer printed is never read.
+//     ended waiver the step copies). Else a finding that is no ruling takes the id it returned (`returned_id`) when that
+//     is exactly R<digits>-<digits>, one of `listed`, the ids the pass's input listed, and still open in the index (R4);
+//     any other returned value is read as no id and named in the result's `dropped` notes, never by its value. Else it
+//     takes the id of an entry `listed` holds with its title and file, then of a finding of the pass's prior result with
+//     its title and file whose id is neither closed nor listed to another pass, then, with `plan`, of an open entry listed
+//     to no pass whose pass left the plan, so the first pass to claim it keeps it. Each id once. Else it takes a new id
+//     when `mint` allows it, else is stored without one. An id or a mark a reviewer printed is never read.
 //   - is a security finding (R5) when it is critical or high, its reviewer flagged it, `securityPass` says the head's
-//     plan requires the security reviewer and the pass is in its local or independent stage, or the prior finding it
-//     carries its id from had the mark.
+//     plan requires the security reviewer and the pass is in its local or independent stage, or the finding or entry it
+//     takes its id from had the mark.
 //   - keeps its `file` only as a path of at most MAX_PATH characters that `paths.tracked` says git tracks at the reviewed
 //     head, and its `line` only as a positive integer at most `paths.lines` of that file (H3). Otherwise neither is
 //     recorded, and the result's `dropped` notes name the finding's id, never the value. With no `paths`, the check
@@ -264,10 +428,29 @@ const placeKey = (finding) => JSON.stringify([trimmed(finding.title), trimmed(fi
 //     the step's call that gives ids to findings attest stored without one.
 //   - when it is a ruling, names the finding it repeats by `ruled_id`: a raised finding the record holds by that title
 //     and file (a pass's listing, then a round's entry, never another ruling), else the one its prior ruling named.
-// Then every twin of a marked finding the record holds takes the mark (tieTwins).
-export function recordFindings(state, passId, result, { mint = false, securityPass = false, paths = null, kept: checked = false } = {}) {
+//   - goes into the index under its id (A3): open, accepted, or closed as fixed with `closed_in` from `range(seen, to)`.
+// With `plan` and `complete` (the names of the stages whose every pass has a result for `head`), the open entries the
+// passes left out close as not reported again (closeOmitted). Then every twin of a marked finding takes the mark (tieTwins).
+export function recordFindings(state, passId, result, options = {}) {
+  indexHeld(state, options.range ?? null);
+  const recorded = typeof passId === 'string' && isObject(result) ? recordResult(state, passId, result, options) : null;
+  if (Array.isArray(options.plan) && options.complete instanceof Set) closeOmitted(state, options.plan, options);
+  tieTwins(state);
+  return recorded;
+}
+
+function recordResult(state, passId, result, { mint = false, securityPass = false, paths = null, kept: checked = false, listed = null, plan = null, stage = null, reviewer = null, range = null } = {}) {
+  const index = indexOf(state);
   const before = isObject(state.passes?.[passId]) ? state.passes[passId] : null;
-  const prior = before ? GROUPS.flatMap((key) => (Array.isArray(before[key]) ? before[key] : [])).filter((each) => isObject(each) && isFindingId(each.id)) : [];
+  const where = Array.isArray(plan) ? listing(state, plan) : null;
+  const planIds = new Set(listOf(plan).map((pass) => pass.id));
+  // A prior finding keeps its id only while that id is neither closed nor listed to another pass.
+  const free = (id) => !isClosed(index[id]) && !(where?.get(id) && where.get(id) !== passId);
+  const prior = before ? GROUPS.flatMap((key) => listOf(before[key])).filter((each) => isObject(each) && isFindingId(each.id) && free(each.id)) : [];
+  const listedIds = new Set(listOf(listed).filter(isFindingId));
+  const open = (id) => isObject(index[id]) && index[id].state === 'open' && isMint(index[id].mint);
+  const shown = [...listedIds].filter(open).map((id) => index[id]);
+  const orphans = where ? [...where].filter(([id, to]) => to === null && !planIds.has(index[id].pass) && open(id)).map(([id]) => index[id]) : [];
   // The raised findings a ruling may name: the record's before this write, which still holds the pass's prior result.
   const raisedBefore = recordedFindings(state).filter((each) => isFindingId(each.id) && !trimmed(each.already_ruled));
   const ruledBefore = new Map(recordedFindings(state).filter((each) => trimmed(each.already_ruled) && isFindingId(each.ruled_id))
@@ -283,18 +466,26 @@ export function recordFindings(state, passId, result, { mint = false, securityPa
     return { id: `R${round}-${next}`, mint: randomBytes(4).toString('hex') };
   };
   const one = (raw) => {
-    const { id, mint: mark, aliases, ruled_id: _named, security, ...finding } = raw;
+    const { id, mint: mark, aliases, ruled_id: _named, security, returned_id: returned, ...finding } = raw;
     const kept = isFindingId(id) && isMint(mark) && held.get(id)?.mint === mark ? held.get(id) : null;
     // A ruling carries a prior ruling's id, and a finding a prior finding's: a ruling never takes the id of the finding
-    // it repeats, whose title it shares.
+    // it repeats, whose title it shares, nor an id it returned.
     const ruling = Boolean(trimmed(finding.already_ruled));
-    const match = kept ?? prior.find((each) => !taken.has(each) && Boolean(trimmed(each.already_ruled)) === ruling && placeKey(each) === placeKey(finding));
-    if (match) taken.add(match);
+    const unclaimed = (each) => !taken.has(each.id) && placeKey(each) === placeKey(finding);
+    const asked = !kept && !ruling && returned !== undefined && returned !== null && returned !== '';
+    const named = asked && isFindingId(returned) && listedIds.has(returned) && open(returned) && !taken.has(returned) ? index[returned] : null;
+    const match = kept ?? named
+      ?? (ruling ? null : shown.find(unclaimed))
+      ?? prior.find((each) => unclaimed(each) && Boolean(trimmed(each.already_ruled)) === ruling)
+      ?? (ruling ? null : orphans.find(unclaimed))
+      ?? null;
+    if (match) taken.add(match.id);
     const identity = match ? { id: match.id, mint: match.mint, ...(Array.isArray(match.aliases) && match.aliases.length ? { aliases: match.aliases.filter(isFindingId) } : {}) } : mint ? fresh() : null;
     const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || securityPass;
     const out = { ...(identity ?? {}), ...finding, ...(marked ? { security: true } : {}) };
-    if (checked) return out;
     const name = identity?.id ?? 'a finding with no id';
+    if (asked && !named) dropped.push(`${name}: its returned id is not an open finding its input listed, so it was read as no id`);
+    if (checked) return out;
     const file = typeof out.file === 'string' && out.file.length <= MAX_PATH && out.file.trim() !== '' && paths?.tracked(out.file) === true ? out.file : null;
     if (out.file !== undefined && out.file !== null && file === null) dropped.push(`${name}: its file was not recorded`);
     const count = file === null ? null : paths.lines(file);
@@ -313,11 +504,12 @@ export function recordFindings(state, passId, result, { mint = false, securityPa
     const target = raised.find((each) => placeKey(each) === key)?.id ?? ruledBefore.get(key);
     if (target) ruling.ruled_id = target;
   }
-  // The new findings take the mark of a twin in the record as it stood before this write, the result it replaces
-  // included, so a marked finding that lives only in that result still ties its reworded repeat.
+  // The new findings take the mark of a twin in the record as it stood before this write, the result it replaces and
+  // the index included, so a marked finding that lives only in that result or in a closed entry still ties its repeat.
   const recordedNow = new Set(Object.values(groups).flat());
   for (const finding of twinClosure([...recordedFindings(state), ...recordedNow], securitySeed)) if (recordedNow.has(finding)) finding.security = true;
   state.passes[passId] = recorded;
-  tieTwins(state);
+  const at = { pass: passId, stage: stage ?? stageOf(state, passId), reviewer: reviewer ?? reviewerOf(state, passId, result), head: result.head, range };
+  for (const group of GROUPS) for (const finding of listOf(groups[group])) if (isFindingId(finding.id)) enter(index, finding, group, at);
   return recorded;
 }

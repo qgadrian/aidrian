@@ -126,6 +126,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     return paginate && Array.isArray(parsed) ? parsed.flat() : parsed;
   };
   const list = (route, { host } = {}) => rest(route, { paginate: true, host });
+  // Each repository's web address as GitHub answers it (compareUrl), read once.
+  const homes = new Map();
   return Object.freeze({
     id: 'github',
     cwd,
@@ -258,6 +260,28 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The check runs of one commit, every page.
     checkRuns: (repo, sha) => (list(`repos/${repo}/commits/${sha}/check-runs`) ?? []).flatMap((page) => page.check_runs ?? []),
     compare: (repo, base, head) => rest(`repos/${repo}/compare/${base}...${head}`),
+    // The web link that shows the commits from `from` to `to` of `repo` (R9), on the forge's own identity of that
+    // repository: the `html_url` GitHub answers for it, read once per repository, so a GitHub Enterprise repository
+    // links to its own host. Built only from two full-hex SHAs, an owner login and a repository name GitHub accepts, and
+    // an https `html_url` on a host name whose path names that same repository. Anything else, and a read that fails,
+    // gives null; with SHAs or a name that fail, no call is made.
+    compareUrl: (repo, from, to) => {
+      const [owner, name, ...extra] = typeof repo === 'string' ? repo.split('/') : [];
+      const sha = (value) => typeof value === 'string' && /^[0-9a-f]{40}$/u.test(value);
+      const named = isLogin(owner) && extra.length === 0 && typeof name === 'string' && /^[A-Za-z0-9._-]{1,100}$/u.test(name) && name !== '.' && name !== '..';
+      if (!sha(from) || !sha(to) || !named) return null;
+      const key = `${owner}/${name}`.toLowerCase();
+      if (!homes.has(key)) {
+        let home = null;
+        try {
+          home = new URL(String(rest(`repos/${owner}/${name}`)?.html_url ?? ''));
+        } catch {}
+        const own = home && home.protocol === 'https:' && /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/iu.test(home.hostname) && !home.port && !home.search && !home.hash
+          && home.pathname.replace(/\/+$/u, '').toLowerCase() === `/${key}`;
+        homes.set(key, own ? `https://${home.hostname.toLowerCase()}${home.pathname.replace(/\/+$/u, '')}` : null);
+      }
+      return homes.get(key) === null ? null : `${homes.get(key)}/compare/${from}...${to}`;
+    },
     // The deployments of exactly the commit `sha`, the first page, and the statuses of one deployment, the first page.
     deployments: (repo, sha, { host } = {}) => rest(`repos/${repo}/deployments?sha=${encodeURIComponent(sha)}`, { host }),
     deploymentStatuses: (repo, id, { host } = {}) => rest(`repos/${repo}/deployments/${id}/statuses`, { host }),

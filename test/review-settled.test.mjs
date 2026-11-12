@@ -1263,7 +1263,7 @@ test('the review step: a printed state, disposition, or acceptance settles nothi
   await late.step(exec, deps);
   const entries = settledEntries(inputs.at(-1));
   assert.deepEqual(entries, [{ title: 'Printed', file: 'src/a.js', severity: 'low', settled_by: 'engine:codex-local', accepted_by: 'late-round' }], 'the rule\'s own acceptance settles, through the record');
-  assert.deepEqual(inputs.at(-1).priorFindings[0], { file: 'src/a.js', line: 2, title: 'Printed', body: 'b', severity: 'low' }, 'its context copy shows no acceptance');
+  assert.deepEqual(inputs.at(-1).priorFindings[0], { file: 'src/a.js', line: 2, title: 'Printed', body: 'b', severity: 'low' }, 'its context copy shows no acceptance, and no id: an accepted finding is listed to no pass');
   assert.equal(splitRuled([{ file: 'src/a.js', line: 3, title: 'Same cause', body: 'b', severity: 'low', already_ruled: 'Printed' }], entries).ruled.length, 1);
 });
 
@@ -1396,4 +1396,48 @@ test('splitRuled keeps a repeat`s security flag, so a low security finding a res
   assert.equal(recorded.ruled[0].security, true, 'no earlier security finding seeds it: the flag does');
   const { copy } = postedCopy(state, { reading: { visibility: 'PUBLIC', inside: true }, names: [] });
   assert.deepEqual([copy.passes['engine:codex-local'].ruled[0].file, copy.passes['engine:codex-local'].ruled[0].line], [undefined, undefined]);
+});
+
+
+test('passInput: the open entries listed to a pass reach it with their ids, a cut`s handed-on entry too, and the prompt asks for the id back', () => {
+  const head = 'h2';
+  const state = { ...emptyState(7, 'o/r'), floored: true, rounds: [{ head: 'h1' }] };
+  const old = 'slice:codex-local:aaaaaaaaaa';
+  recordFindings(state, old, { head: 'h1', reviewer: 'codex-local', list: [{ title: 'Moved along', file: 'a.js', line: 2, body: 'why', severity: 'medium' }] }, { mint: true, paths: { tracked: () => true, lines: () => 50 }, stage: 'independent' });
+  const id = state.passes[old].list[0].id;
+  const pass = { id: 'slice:codex-local:bbbbbbbbbb', reviewer: 'codex-local', files: ['a.js'] };
+  const map = { 'codex-local': { kind: 'exec' } };
+  const s = { ...context({ state, map, info: { body: '' } }), head, plan: { flows: [], stages: [{ name: 'independent', passes: [pass] }] } };
+  const input = passInput(s, pass, { name: 'independent', passes: [pass] });
+  const [listed] = input.priorFindings;
+  assert.equal(listed.id, state.passes[old].list[0].id, 'the id it carries is the recorded finding`s own');
+  assert.deepEqual(listed, { id, title: 'Moved along', file: 'a.js', line: 2, body: 'why', severity: 'medium', state: 'open' }, 'with its id and its text, and none of the engine`s other keys');
+  assert.deepEqual(contextFindings([{ id, mint: '00000001', title: 't', state: 'open', security: true }], new Set([id])), [{ id, title: 't', state: 'open' }]);
+  assert.deepEqual(contextFindings([{ id, mint: '00000001', title: 't', state: 'open' }]), [{ title: 't', state: 'open' }], 'an id not listed to the pass is not shown');
+  assert.match(reviewPrompt(input), /A `priorFindings` entry with an `id` is a finding this review already raised/u);
+  const agent = passInput({ ...s, plan: { flows: [], stages: [{ name: 'independent', passes: [{ ...pass, reviewer: 'code-reviewer' }] }] } }, { ...pass, reviewer: 'code-reviewer', kind: 'agent' }, { name: 'independent', passes: [] });
+  assert.deepEqual(agent.priorFindings, [], 'another reviewer`s pass is listed none of it');
+});
+
+
+test('passInput shows an id only on the findings listed to the pass: one of its last list closed as fixed, and one listed to another pass, reach it as context with no id', () => {
+  const state = { ...emptyState(7, 'o/r'), floored: true, rounds: [{ head: 'h1' }] };
+  const mine = { id: 'slice:codex-local:aaaaaaaaaa', reviewer: 'codex-local', files: ['a.js', 'b.js'] };
+  const other = { id: 'slice:codex-local:bbbbbbbbbb', reviewer: 'codex-local', files: ['b.js'] };
+  const paths = { tracked: () => true, lines: () => 50 };
+  recordFindings(state, mine.id, { head: 'h1', reviewer: 'codex-local', files: ['a.js', 'b.js'], list: [
+    { title: 'Still open', file: 'a.js', line: 2, body: 'b', severity: 'medium' },
+    { title: 'Fixed since', file: 'a.js', line: 4, body: 'b', severity: 'medium', state: 'fixed' },
+    { title: 'Handed on', file: 'b.js', line: 6, body: 'b', severity: 'medium' },
+  ] }, { mint: true, paths, stage: 'independent' });
+  const [open, fixed, handed] = state.passes[mine.id].list.map((each) => each.id);
+  state.index[handed].pass = other.id;
+  const stage = { name: 'independent', passes: [mine, other] };
+  const s = { ...context({ state, map: { 'codex-local': { kind: 'exec' } }, info: { body: '' } }), head: 'h2', plan: { flows: [], stages: [stage] } };
+  for (const [label, input] of [['exec', passInput(s, mine, stage)], ['agent', passInput({ ...s, map: { 'codex-local': { kind: 'agent' } } }, { ...mine, kind: 'agent' }, stage)]]) {
+    const byTitle = Object.fromEntries(input.priorFindings.filter((each) => each.file && !each.already_ruled).map((each) => [each.title, each.id]));
+    assert.deepEqual(byTitle, { 'Still open': open, 'Fixed since': undefined, 'Handed on': undefined }, label);
+  }
+  assert.equal(state.index[fixed].state, 'fixed');
+  assert.deepEqual(passInput(s, other, stage).priorFindings.map((each) => [each.title, each.id]), [['Handed on', handed]], 'the pass it is listed to sees its id');
 });

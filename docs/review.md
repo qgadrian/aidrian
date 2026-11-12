@@ -498,18 +498,28 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 
 ### Findings one by one
 
-A visual reviewer records its pass with `--findings-file` rather than counts, so the
-[disposition table](../plugins/aidrian/lib/finding-disposition.json) decides what blocks, not the reviewer's word:
+Every agent pass, a visual reviewer's included, records with `--findings-file` rather than counts, so for an agent pass
+the [disposition table](../plugins/aidrian/lib/finding-disposition.json), not the reviewer's count, decides what blocks
+and what closes. The reviewer is read-only and writes no file: it returns the findings in the `findings` array of its
+final JSON, and the session that dispatched it writes that array to the file `record` names, then runs `record`:
 
 ```json
 [{ "title": "Label clipped at 360px", "file": "src/app/x.tsx", "line": 4, "severity": "medium", "likelihood": "routine", "affects": "users", "state": "open" }]
 ```
 
 A finding blocks the pass while it is open and not `acceptable_as_is`, or accepted with a disposition that cannot be
-accepted (`fix_now`, or no likelihood and affects yet). Any agent pass may record this way. A finding may add
-`"security": true` for a security problem; any value but `false` counts as true ([Reviewers](#reviewers)). An `id` or a
-mint mark in the file is never read: the engine gives each finding its [id](#finding-ids). Flow results gate the
-review step; they are not a merge gate by themselves, so protect the branch with the checks the review posts.
+accepted (`fix_now`, or no likelihood and affects yet): one the reviewer calls accepted still blocks then. This is
+stricter than the count it replaces, which took the reviewer's word for what it accepted. The counts form,
+`--findings <n> --fixed <n>`, is still accepted, for a pass an older release dispatched, and is read as before.
+A finding may add `"security": true` for a security problem; any value but `false` counts as true
+([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
+checks it ([Finding ids](#finding-ids)), and a mint mark in the file is never read.
+
+Each finding then has an outcome in the finding index: `open`; `fixed`, when a pass lists it as fixed; `accepted`, when
+it is accepted and no longer blocks, or repeated as already ruled; or `not_reported`, when the pass it is listed to
+returns a result for the head without it. Only `aidrian pr attest` closes a finding as fixed: a finding left out is
+never read as fixed. Flow results gate the review step; they are not a merge gate by themselves, so protect the branch
+with the checks the review posts.
 
 ## Paths
 
@@ -549,8 +559,12 @@ A project adds its own in `review.reviewers`:
 ```
 
 - `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`,
-  `acceptedResiduals`) and prints `{ "findings": [{ file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
-  a finding keeps only those keys, and `already_ruled` and `security` may be left out. It runs with no session, override, or
+  `acceptedResiduals`) and prints `{ "findings": [{ id, file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
+  a finding keeps only those keys, and `id`, `already_ruled`, and `security` may be left out. `id` is the id of the
+  `priorFindings` entry a finding reports again, reworded or not, and empty for a new finding (Codex's schema requires
+  the key); the engine checks it before it counts ([Finding ids](#finding-ids)). A `priorFindings` entry carries an `id`
+  only when the finding index lists that open finding to this pass, its own or one handed on to it, and the review
+  prompt asks for that id back; every other entry is context, with no id. It runs with no session, override, or
   git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL.
   Output that does not parse is a failure, never a pass; malformed findings are dropped and named.
   A failure is `incomplete` and retried; the third is `stuck`; a split slice that times out splits instead ([Split](#split)).
@@ -629,8 +643,11 @@ A project adds its own in `review.reviewers`:
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
   `codex-local` reads the checkout at the head.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
-  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings <n> --fixed <n> --verdicts -`, the
-  agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json --verdicts -`, its
+  findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
+  JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
+  never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
+  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
@@ -641,8 +658,9 @@ The mark covers a twin: a finding at the same place (the same file and lines wit
 where the record at hand holds both titles, or sharing its id, an alias, or the id a ruling names, whichever was recorded
 first. So a second
 pass's report of a security finding, the cross-cutting pass's repeat of a slice's, and a lower-severity report after the
-first one closed are security findings too. On a repository that is not private, the posted record holds no file or
-line for a security finding, in its own entries or in an extra round's looping and drifting evidence, and its residual
+first one closed are security findings too; the twin match reads the finding index as well, closed entries included. On
+a repository that is not private, unless [`review.publish.publicSecurity`](#publishing) is `"full"`, the posted record
+holds no file or line for a security finding, in its own entries, the index, or an extra round's looping and drifting evidence, and its residual
 row names it by id ([The record](#the-record)). The match errs toward withholding: a nearby finding under the same file
 can be read as a twin.
 
@@ -1140,8 +1158,9 @@ Every finding a pass records, a repeat a reviewer returned as already ruled incl
 round it was first recorded in, and `<n>` from one counter the record keeps for the pull request (`idCounter`), never
 reset and never reused, so no two findings of a pull request share an id. With each id the engine mints, it sets a
 mint mark of 8 hex digits from its random source, kept beside the id wherever the finding is listed. An id or a mark a
-reviewer or a findings file prints is never read. A finding reported again with the same title and file in the same
-pass keeps its id and its marks; any other finding takes a new one. A ruling names the finding it repeats by
+reviewer or a findings file prints is never taken as its id unchecked. A finding reported again keeps its id and its
+marks: by the id it returns, by its title and file among the entries its pass was listed, or by its title and file in
+the pass's last list ([The finding index](#finding-ids), below); any other finding takes a new one. A ruling names the finding it repeats by
 `ruled_id`, and every [hold](#accepted-residuals-against-decisions) keys on that id, never on a title, so a record
 that holds no text loosens no hold. A finding's `file` is kept only as a path of at most 300 characters that git tracks
 at the reviewed head, and its `line` only as a positive line number within that file; otherwise neither is recorded,
@@ -1149,11 +1168,43 @@ the finding keeps its id, and the pass's `dropped` notes name the id, never the 
 checkout without the reviewed head, records neither. The looping signal at the [round cap](#extra-rounds) matches by
 id, by place, or by title where both titles are held, and its reason names the id, never the title.
 
-A step marks the record as floored before it mints an id, and notes on `dispatched`, for each agent pass, its stage and
-whether the plan requires the security reviewer for it. `aidrian pr attest` mints ids only into a floored record, for a
-pass the step dispatched: elsewhere a repeat keeps its id, the rest are stored without one, and the next step gives
-them theirs. An agent pass still records counts, so only a visual pass, or one that uses `--findings-file`, lists its
-findings one by one.
+A step marks the record as floored before it mints an id, and notes on `dispatched`, for each agent pass, its stage,
+whether the plan requires the security reviewer for it, the delta base its input named, and the ids it listed.
+`aidrian pr attest` mints ids only into a floored record, for a pass the step dispatched: elsewhere a repeat keeps its
+id, the rest are stored without one, and the next step gives them theirs.
+
+**The finding index.** The record keeps one index of findings, keyed by id, beside the passes, for the life of the pull
+request: each finding's title, place, and axes, its outcome ([Findings one by one](#findings-one-by-one)), the pass,
+stage, and reviewer that recorded it, `placed`, the head that recorded its file and line, in any state, where every
+later write checks them again, `seen`, the head that last recorded it open or accepted, where a closing range starts,
+its security mark, which never clears, and, once closed, `closed_in`.
+A record an earlier release wrote gets an entry for each id it holds on its first write.
+A pass's list still holds each of its findings in full; a re-recorded list and a pruned pass delete no entry.
+
+- *Listing.* Each open entry is listed to one pass of the head's plan: the pass that recorded it, while that pass is in
+  the plan and still holds its file, has no file list, or lists the entry's id in its latest result, and always for an
+  entry with no file; else one pass of the same reviewer and stage whose files hold it, so a cut that moves, or a slice
+  that runs as two halves, hands the entry on with its id; else no pass. No entry is listed to two passes. A pass's
+  `priorFindings` carry the entries listed to it, each with its id; every other finding they show, such as one of its
+  own last list that closed or was handed to another pass, carries no id.
+- *A returned id.* An `id` a finding returns counts only when it is exactly `R<digits>-<digits>`, names an entry that
+  same pass's input listed, and that entry is still open. Any other value is read as no id, kept off the record, and
+  named in the pass's `dropped` notes by the finding's own id, never by the value; the finding is kept. A finding with
+  no valid id takes the id of an entry its input listed with the same title and file, then of an open entry listed to
+  no pass whose pass left the plan, and the first pass to claim such an entry keeps it.
+- *Omission.* An entry any pass of the head's plan lists in its result for the head is held. Any other open entry
+  listed to a pass closes as `not_reported` only when that pass has a result for the head that lists findings and does
+  not hold it, at the first step where every pass of its stage has a result for the head;
+  an entry listed to no pass closes there when no pass holds it, and one whose stage the plan no longer has, once every
+  stage has its results. A finding the pass returned as already ruled is `accepted`, not left out. An entry this machine
+  holds no text for is never closed by omission, and a step that stops on an open, blocking finding with no text closes
+  nothing.
+- *No reopening.* An id closed as `fixed` or `not_reported` is final: a finding reported after it, by id or by title and
+  file, is a new finding with a new id. The looping signal still ties the two, by place or by title.
+- *Closing range.* A closed entry gets `closed_in: { from, to }`, two full SHAs: `to` is the head of the result that
+  closed it, and `from` the head that last recorded it open or accepted when that is an ancestor of `to`, else the
+  merge base. A fix in a quiet push gets that push alone, and a rebased head gets a range git can show. An entry closed
+  as `fixed` or `not_reported` posts no title on any repository.
 
 ### The posted copy
 
@@ -1207,3 +1258,41 @@ which the review step alone writes, are kept from the comment.
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot
 see it or resume the review; it starts a record of its own.
+
+## Publishing
+
+`review.publish` in config.json, read from the base branch as `review.record` is, decides what the summary comment
+shows of the findings ([config](config.md#keys)):
+
+```json
+"review": { "publish": { "summary": "findings", "publicSecurity": "counts" } }
+```
+
+- `summary: "counts"`, the default, is the comment as it was: each pass's counts. `"findings"` adds a **Findings**
+  table, rendered from the posted copy's finding index: each finding's id, location, severity, disposition, and
+  outcome, `open`, `fixed in <range>`, `not reported again in <range>`, or `accepted as <disposition>`, and no finding
+  text on any repository. It holds at most 40 rows, blocking findings first, then by severity; one line counts the rest.
+  A closing range is a link to the forge's compare view, built only from two full SHAs and the repository the forge
+  names, else the two short SHAs as text. A location shows only for a file git tracks at the finding's head, or the
+  pull request's diff names, and a line within it. Every cell goes through one encoder: one line, with table, Markdown,
+  and HTML characters escaped, and links and `owner/repo#n` references neutralized. The record still fits the comment or
+  is held, as before.
+- `publicSecurity: "counts"`, the default: on a repository that does not read as private, a security finding
+  ([Reviewers](#reviewers)), and its twin, shows only in a count while it is open; once closed, its row holds its id,
+  severity, outcome, and closing range only. Its title, body, file, and line are in no post and not in the posted copy
+  of the record, on any later step, and its residual row in a step's result is named by id, with no title, and anchors
+  nothing. `"full"` posts a security finding's location and disposition as any other finding's, and gives its residual
+  row its file and line: never its title, body, evidence, or reason, in a post, the posted copy, or a residual row.
+- `inline` and `replies` are checked; neither posts anything.
+- `review.record: "local"` posts nothing, whatever `review.publish` says.
+- `.aidrian.local.json` may set only `summary: "counts"` and `inline: false`, which post less. Any other key or value
+  there, `publicSecurity: "full"` included, is a config error, and the team's value stays.
+
+**What counts as private.** The table reads the repository as private only on an exact `PRIVATE` reading of its
+visibility in that step, for a pull request from inside the team; `INTERNAL`, any other value, and a failed read are not
+private. (The visual capture's attach mode reads `INTERNAL` as private for its uploads.) A repository made public later
+shows what was posted while it read `PRIVATE`. For a repository that may go public, set `summary: "counts"` and
+`inline: false`, and `review.record: "local"` to keep the record's text off the pull request.
+
+On a repository that is not private, finding text stays on the machine that recorded it: a review with an open,
+blocking finding goes on only on that machine ([The posted copy](#the-posted-copy), A second machine).

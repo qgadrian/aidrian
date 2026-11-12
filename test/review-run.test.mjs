@@ -1,6 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,8 @@ import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../
 import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
 import { EXIT, recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
+import { closingRange, findingsFile, shellQuote } from '../plugins/aidrian/lib/review/dispatch.mjs';
+import { listedTo, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
@@ -895,7 +898,7 @@ test('newer: the record with the higher revision wins, whatever its counts', asy
 
 test('deleting only an ignored flow test, with nothing else to review, still stops the review', async (t) => {
   const flows = { booking: { files: ['src/booking/**'], tests: ['test/booking*'] } };
-  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, baseFiles: { 'test/booking.snap': 'x\n' }, change: (write, dir) => rmSync(path.join(dir, 'test/booking.snap')) });
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, baseFiles: { 'test/booking.snap': 'x\n' }, change: (_write, dir) => rmSync(path.join(dir, 'test/booking.snap')) });
   const result = await r.step({ exec: clean });
   assert.deepEqual([result.status, result.tests_removed?.[0]?.deleted], ['fix_required', ['test/booking.snap']]);
   recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'booking', head: result.head, by: 'Tester' });
@@ -2211,7 +2214,8 @@ test('attest mints no id on a record no step floored, or for a pass with no disp
   assert.equal(state.floored, true);
   const [dispatched] = one.dispatch;
   assert.deepEqual([state.dispatched[dispatched.pass].stage, state.dispatched[dispatched.pass].security], ['local', false], 'the dispatch note');
-  assert.match(dispatched.record, /--findings <n> --fixed <n>/u, 'an agent pass still records counts');
+  assert.match(dispatched.record, /--findings-file \S+\.findings\.json/u, 'an agent pass records its findings one by one');
+  assert.doesNotMatch(dispatched.record, /--findings <n>/u);
   const assigned = state.passes['agent:code-reviewer:booking']?.list?.[0];
   if (assigned) assert.match(assigned.id, /^R\d+-\d+$/u, 'the step assigned the stored finding its id');
   attestFile(r, dispatched.pass, head, [filed()]);
@@ -2364,4 +2368,296 @@ test('a machine that adopts a public copy reruns a pass whose verdicts arrive wi
   attest(again);
   assert.equal((await r.step({ exec })).status, 'received');
   assert.ok(runs > ran, 'and the exec pass whose verdicts came without evidence ran again');
+});
+
+
+// ---- Findings one by one, with the finding index (S1b) ----
+
+test('every agent pass records with --findings-file: an accepted finding whose disposition cannot be accepted still blocks, and the counts form is read as before', async (t) => {
+  const r = bookingRepo(t);
+  const one = await r.step({ exec: clean });
+  const [pass] = one.dispatch;
+  const tag = createHash('sha256').update(pass.pass).digest('hex').slice(0, 8);
+  const file = path.join(stateDir(r.project), 'tmp', 'review-7', `${pass.pass.replace(/[^\w.-]/gu, '-')}-${tag}.findings.json`);
+  assert.ok(pass.record.startsWith(`aidrian pr attest 7 --pass ${pass.pass} --head ${one.head} --reviewer code-reviewer --findings-file '${file}'`), pass.record);
+  assert.ok(path.relative(r.dir, file).startsWith('..'), 'the findings file is outside the checkout, under the state folder');
+  const table = loadTable();
+  for (const [axis, words] of [['severity', table.severities], ['likelihood', table.likelihoods], ['affects', table.affects], ['cost', table.costs]]) {
+    assert.ok(Array.isArray(words) && words.length, axis);
+    assert.match(pass.brief, new RegExp(`\`${axis}\``, 'u'), `the brief names ${axis}, which the disposition table reads`);
+  }
+  // A reviewer is read-only: it returns its findings, and the session that dispatched it writes the file.
+  assert.match(pass.brief, /Write no file\. Return every finding in the `findings` array of your final JSON/u);
+  assert.match(pass.brief, /The dispatching session writes that array to the findings file `record` names and runs `record`/u);
+  assert.doesNotMatch(pass.brief, /\b(?:write|save|create)s? (?:every finding|the findings|a file|it) (?:to|in)\b/iu, 'the brief asks the reviewer to write nothing');
+  attestFile(r, pass.pass, one.head, [filed({ state: 'accepted' })]);
+  const blocked = await r.step({ exec: clean });
+  assert.equal(blocked.status, 'fix_required');
+  assert.deepEqual(blocked.open.map((each) => [each.pass, each.open]), [[pass.pass, 1]], 'the table decides: accepted, but fix_now, so it blocks');
+  assert.equal(blocked.open[0].findings[0].disposition, 'fix_now');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: one.head, reviewer: 'code-reviewer', findings: 1, fixed: 0, accepted: 1 });
+  assert.equal(readLocalState(r.project, 7).passes[pass.pass].open, 0, 'the counts form still records, as before');
+  const next = await r.step({ exec: clean });
+  assert.ok(!(next.open ?? []).some((each) => each.pass === pass.pass), 'and its count is read');
+});
+
+test('attest: priorFindings carries each id, a returned id keeps it, a refused one is noted, and what the pass leaves out closes as not reported again with its range', async (t) => {
+  const r = bookingRepo(t);
+  const one = await r.step({ exec: clean });
+  const [first] = one.dispatch;
+  attestFile(r, first.pass, one.head, [filed(), filed({ title: 'Second defect', line: 3 })]);
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  const [a, b] = readLocalState(r.project, 7).passes[first.pass].list.map((each) => each.id);
+  r.write('src/booking/a.js', '1\n2\n3\n4\n');
+  const h2 = r.commit();
+  const two = await r.step({ exec: clean });
+  const [again] = two.dispatch;
+  assert.equal(again.pass, first.pass);
+  assert.deepEqual(again.priorFindings.map((each) => each.id).sort(), [a, b].sort(), 'each prior finding with its id');
+  assert.match(again.brief, /set the finding's `id` to that entry's `id`, verbatim/u);
+  const note = readLocalState(r.project, 7).dispatched[again.pass];
+  assert.deepEqual([note.base, [...note.listed].sort()], [one.head, [a, b].sort()], 'the dispatch note keeps the delta base and the listed ids');
+  attestFile(r, again.pass, h2, [filed({ title: 'Refund sum is never validated', id: a }), filed({ title: 'Third defect', line: 4, id: 'R9-9' })]);
+  const recorded = readLocalState(r.project, 7).passes[again.pass];
+  assert.equal(recorded.list[0].id, a, 'a reworded repeat that returns its id keeps it');
+  assert.notEqual(recorded.list[1].id, 'R9-9');
+  assert.deepEqual(recorded.dropped, [`${recorded.list[1].id}: its returned id is not an open finding its input listed, so it was read as no id`]);
+  await r.step({ exec: clean });
+  let index = readLocalState(r.project, 7).index;
+  assert.deepEqual([index[a].state, index[b].state], ['open', 'not_reported'], 'left out, it closes as not reported again, never as fixed');
+  assert.deepEqual(index[b].closed_in, { from: one.head, to: h2 });
+  assert.equal(index[b].title, 'Second defect', 'the local record keeps its title');
+  // Round 3: the fix of `a` is attested as fixed; `b` reported again is a new finding.
+  r.write('src/booking/a.js', '1\n2\n3\n4\n5\n');
+  const h3 = r.commit();
+  const three = await r.step({ exec: clean });
+  attestFile(r, three.dispatch[0].pass, h3, [filed({ title: 'Refund sum is never validated', state: 'fixed', id: a }), filed({ title: 'Second defect', line: 3, id: b })]);
+  const last = readLocalState(r.project, 7);
+  index = last.index;
+  assert.deepEqual([index[a].state, index[a].closed_in], ['fixed', { from: h2, to: h3 }], 'a fix closes on the head it was attested, from the head that last held it open');
+  assert.notEqual(last.passes[three.dispatch[0].pass].list[1].id, b, 'a closed id is final, by id or by title and file');
+  assert.equal(index[b].state, 'not_reported');
+});
+
+test('the exec step: context copies carry each id, a reworded repeat that returns its id keeps it, and a finding left out closes with its range', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\nexport const b = 3;\n') });
+  const inputs = [];
+  let answer = [{ ...finding, severity: 'medium' }, { ...finding, title: 'Second defect', line: 2, severity: 'medium' }];
+  const exec = async (_reviewer, input) => (inputs.push(input), { status: 'done', findings: answer, verdicts: [], dropped: [] });
+  await r.step({ exec });
+  const h1 = r.git('rev-parse', 'HEAD');
+  const [a, b] = readLocalState(r.project, 7).passes['engine:codex-local'].list.map((each) => each.id);
+  r.write('src/app.js', 'export const app = 3;\nexport const b = 3;\n');
+  const h2 = r.commit();
+  answer = [{ ...finding, title: 'Off by one, said otherwise', severity: 'medium', returned_id: a }];
+  await r.step({ exec });
+  assert.deepEqual(inputs.at(-1).priorFindings.map((each) => each.id), [a, b], 'the pass`s context copies carry each id');
+  const state = readLocalState(r.project, 7);
+  assert.equal(state.passes['engine:codex-local'].list[0].id, a);
+  assert.equal(state.idCounter, 2, 'no second id is minted');
+  assert.deepEqual([state.index[a].state, state.index[b].state, state.index[b].closed_in], ['open', 'not_reported', { from: h1, to: h2 }]);
+  assert.equal(state.index[a].title, 'Off by one, said otherwise', 'the entry holds the latest wording');
+});
+
+const anyPath = { tracked: () => true, lines: () => 100 };
+const P = (id, files, reviewer = 'codex-local', stage = 'independent') => ({ id, reviewer, stage, files });
+const E = (over) => ({ file: 'src/a.js', line: 3, title: 'Null check missing', body: 'b', severity: 'medium', ...over });
+
+test('a cut that moves, and a slice that runs as two halves, beside the cross pass: a repeat under the same title and a reworded repeat that returns its id keep their ids, and nothing closes', () => {
+  const old = 'slice:codex-local:aaaaaaaaaa';
+  const cross = P('cross:codex-local', null);
+  const [H1, H2] = ['1'.repeat(40), '2'.repeat(40)];
+  const range = (seen, to) => ({ from: seen, to });
+  // src/gone.js is no tracked path, so that finding is recorded with no file; src/c.js is outside the old slice's files.
+  const paths = { tracked: (file) => file !== 'src/gone.js', lines: () => 100 };
+  const before = [P(old, ['src/a.js', 'src/b.js']), cross];
+  for (const [label, next, outsideTo] of [
+    ['a cut that moves', [P('slice:codex-local:cccccccccc', ['src/a.js', 'src/c.js']), P('slice:codex-local:dddddddddd', ['src/b.js']), P('slice:codex-local:eeeeeeeeee', ['src/e.js']), cross], 'slice:codex-local:cccccccccc'],
+    ['two halves', [P(`${old}.a`, ['src/a.js']), P(`${old}.b`, ['src/b.js']), cross], cross.id],
+  ]) {
+    const state = { ...emptyState(7, 'o/r'), rounds: [{ head: H1 }], floored: true };
+    const found = [E(), E({ title: 'B side', file: 'src/b.js' }), E({ title: 'Deleted test', file: 'src/gone.js' }), E({ title: 'Caller outside', file: 'src/c.js' })];
+    recordFindings(state, old, { head: H1, reviewer: 'codex-local', list: found }, { mint: true, paths, plan: before, stage: 'independent' });
+    recordFindings(state, cross.id, { head: H1, reviewer: 'codex-local', list: [] }, { mint: true, paths, plan: before, stage: 'independent' });
+    recordFindings(state, null, null, { plan: before, head: H1, complete: new Set(['independent']), range });
+    const [a, b, none, outside] = state.passes[old].list.map((each) => each.id);
+    assert.equal(state.index[none].file, undefined, `${label}: the finding with no file`);
+    assert.deepEqual(Object.values(state.index).map((entry) => entry.state), ['open', 'open', 'open', 'open'], `${label}: beside the cross pass, nothing closes on the head that recorded them`);
+    assert.deepEqual([...listedTo(state, before, old)].sort(), [a, b, none, outside].sort(), `${label}: all stay with the slice that lists them`);
+    const counter = state.idCounter;
+    state.rounds.push({ head: H2 });
+    const where = { [a]: next[0].id, [b]: next[1].id, [none]: cross.id, [outside]: outsideTo };
+    for (const [id, to] of Object.entries(where)) assert.ok(listedTo(state, next, to).includes(id), `${label}: ${id} is handed on to ${to}`);
+    const reports = new Map(next.map((pass) => [pass.id, []]));
+    reports.get(where[a]).push(E());
+    reports.get(where[b]).push(E({ title: 'The B side, reworded', file: 'src/b.js', returned_id: b }));
+    reports.get(where[none]).push(E({ title: 'The deleted test, reworded', file: 'src/gone.js', returned_id: none }));
+    reports.get(where[outside]).push(E({ title: 'Caller outside', file: 'src/c.js' }));
+    for (const pass of next) recordFindings(state, pass.id, { head: H2, reviewer: 'codex-local', list: reports.get(pass.id) }, { mint: true, paths, listed: listedTo(state, next, pass.id), plan: next, stage: 'independent', range });
+    recordFindings(state, null, null, { plan: next, head: H2, complete: new Set(['independent']), range });
+    for (const id of [a, b, none, outside]) assert.ok(state.passes[where[id]].list.some((each) => each.id === id), `${label}: ${id} stays`);
+    assert.equal(state.idCounter, counter, `${label}: no second id is minted`);
+    assert.deepEqual([a, b, none, outside].map((id) => [state.index[id].state, state.index[id].pass]), [a, b, none, outside].map((id) => ['open', where[id]]), `${label}: nothing closes as not reported again`);
+  }
+});
+
+test('a pass gone after replanning: its entry, held by no pass of its reviewer and stage, closes; another pass claims it first, and only once', () => {
+  const [H1, H2] = ['1'.repeat(40), '2'.repeat(40)];
+  const range = (seen, to) => ({ from: seen, to });
+  const gone = 'slice:codex-local:aaaaaaaaaa';
+  const build = () => {
+    const state = { ...emptyState(7, 'o/r'), rounds: [{ head: H1 }, { head: H2 }], floored: true };
+    recordFindings(state, gone, { head: H1, reviewer: 'codex-local', list: [E()] }, { mint: true, paths: anyPath, plan: [P(gone, ['src/a.js'])], stage: 'independent' });
+    return [state, state.passes[gone].list[0].id];
+  };
+  const plan = [P('engine:codex-local', ['src/b.js']), P('agent:code-reviewer', null, 'code-reviewer', 'local')];
+  const [state, id] = build();
+  assert.deepEqual(listedTo(state, plan, 'agent:code-reviewer'), [], 'listed to no pass');
+  recordFindings(state, 'engine:codex-local', { head: H2, reviewer: 'codex-local', list: [] }, { mint: true, paths: anyPath, plan, stage: 'independent', range });
+  recordFindings(state, 'agent:code-reviewer', { head: H2, reviewer: 'code-reviewer', list: [] }, { mint: true, paths: anyPath, plan, stage: 'local', range });
+  recordFindings(state, null, null, { plan, head: H2, complete: new Set(['local', 'independent']), range });
+  assert.deepEqual([state.index[id].state, state.index[id].closed_in], ['not_reported', { from: H1, to: H2 }]);
+  const [claimed, its] = build();
+  const first = recordFindings(claimed, 'agent:code-reviewer', { head: H2, reviewer: 'code-reviewer', list: [E()] }, { mint: true, paths: anyPath, plan, stage: 'local', range });
+  const second = recordFindings(claimed, 'engine:codex-local', { head: H2, reviewer: 'codex-local', list: [E()] }, { mint: true, paths: anyPath, plan, stage: 'independent', range });
+  assert.equal(first.list[0].id, its, 'the first pass to report its title and file claims the entry');
+  assert.notEqual(second.list[0].id, its, 'a second is a new finding');
+  assert.equal(claimed.index[its].pass, 'agent:code-reviewer');
+});
+
+test('closed_in: a fix in a quiet push gets that push alone, and a rebased head the range from the merge base', (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const seen = r.git('rev-parse', 'HEAD');
+  const base = r.git('merge-base', 'main', seen);
+  r.write('src/app.js', 'export const app = 2;\n// quiet\n');
+  const quiet = r.commit();
+  assert.deepEqual(closingRange(r.dir, base)(seen, quiet), { from: seen, to: quiet });
+  r.git('switch', '-q', '-c', 'rebased', 'main');
+  r.write('src/app.js', 'export const app = 3;\n');
+  const rebased = r.commit();
+  assert.deepEqual(closingRange(r.dir, base)(seen, rebased), { from: base, to: rebased }, 'the head that last held it is no ancestor');
+  assert.equal(closingRange(r.dir, base)(seen, rebased.slice(0, 7)), null, 'never a short SHA');
+});
+
+test('a record an earlier release wrote gets an index entry for each id it holds on its first write, and a re-recorded list or a pruned pass deletes none', (t) => {
+  const r = bookingRepo(t);
+  const head = r.git('rev-parse', 'HEAD');
+  const s1a = { ...emptyState(7, 'o/r'), revision: 3, floored: true, idCounter: 3,
+    rounds: [{ head, at: '2026-11-11T00:00:00.000Z', findings: [{ id: 'R1-3', mint: '33333333', title: 'Only in a round', file: 'src/booking/a.js', line: 1, severity: 'low', pass: 'gone' }] }],
+    passes: { 'engine:codex-local': { head, reviewer: 'codex-local', findings: 2, open: 1, list: [{ id: 'R1-1', mint: '11111111', title: 'Open one', file: 'src/booking/a.js', line: 2, severity: 'medium' }, { id: 'R1-2', mint: '22222222', title: 'Fixed one', severity: 'low', state: 'fixed', disposition: 'drop_unless_cited' }] } } };
+  mkdirSync(path.dirname(recordFile(r.project, 7)), { recursive: true });
+  writeFileSync(recordFile(r.project, 7), JSON.stringify(s1a));
+  assert.equal(readLocalState(r.project, 7).index, undefined);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'agent:other', head, reviewer: 'code-reviewer', findings: 0, fixed: 0 });
+  const { index } = readLocalState(r.project, 7);
+  assert.deepEqual(Object.keys(index).sort(), ['R1-1', 'R1-2', 'R1-3']);
+  assert.deepEqual([index['R1-1'].state, index['R1-2'].state, index['R1-3'].state], ['open', 'fixed', 'open']);
+  assert.equal(index['R1-1'].reviewer, 'codex-local');
+  const state = readLocalState(r.project, 7);
+  state.passes['engine:codex-local'].list = [];
+  delete state.passes['agent:other'];
+  writeLocalState(r.project, state);
+  assert.deepEqual(Object.keys(readLocalState(r.project, 7).index).sort(), ['R1-1', 'R1-2', 'R1-3'], 'a list re-recorded without them, or a pass gone, deletes no entry');
+});
+
+test('a review step that stops on an open, blocking finding with no text closes no index entry', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  const local = readLocalState(r.project, 7);
+  local.index = { 'R1-5': { id: 'R1-5', mint: '55555555', title: 'Left out', file: 'src/booking/a.js', severity: 'medium', state: 'open', pass: 'engine:codex-local', stage: 'independent', reviewer: 'codex-local', seen: capped.head } };
+  writeFileSync(recordFile(r.project, 7), JSON.stringify(local));
+  const other = { ...local, revision: local.revision + 5, passes: { ...local.passes, 'engine:codex-local': { head: capped.head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ id: 'R2-9', mint: 'abcdef01', severity: 'high', state: 'open', disposition: 'fix_now' }] } } };
+  r.comments.length = 0;
+  r.comments.push({ id: 1, body: summaryBody(other, null, 'x', OPEN), author_association: 'MEMBER' });
+  const stopped = await r.step({ exec: clean });
+  assert.deepEqual([stopped.status, stopped.retry_recommended], ['incomplete', false]);
+  assert.deepEqual(readLocalState(r.project, 7).index, local.index, 'nothing closed');
+});
+
+test('review.record "local" posts nothing, whatever review.publish says', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, review: { record: 'local', publish: { summary: 'findings', inline: true, publicSecurity: 'full' } } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.postComment = () => assert.fail('nothing is posted');
+  r.forge.editComment = () => assert.fail('nothing is edited');
+  r.forge.conversationComments = () => assert.fail('nothing is read');
+  const result = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
+  assert.equal(result.status, 'fix_required');
+  assert.equal(r.comments.length, 0);
+});
+
+test('summary "findings": the step`s comment lists each finding and its outcome, with no text, and a security finding only as a count while open', async (t) => {
+  const lines = (n) => Array.from({ length: 30 }, (_, i) => `export const v${i} = ${i === 0 ? n : i};\n`).join('');
+  const r = repo(t, { baseConfig: { version: 1, review: { publish: { summary: 'findings' } } }, change: (write) => write('src/app.js', lines(2)) });
+  r.forge.visibility = () => 'PUBLIC';
+  r.forge.compareUrl = (repo, from, to) => `https://github.com/${repo}/compare/${from}...${to}`;
+  let answer = [{ ...finding, title: 'SENTINEL first', severity: 'medium' }, { ...finding, title: 'SENTINEL second', line: 2, severity: 'medium' }, { ...finding, title: 'SENTINEL leaked', line: 25, severity: 'low', security: true }];
+  const exec = async () => ({ status: 'done', findings: answer, verdicts: [], dropped: [] });
+  await r.step({ exec });
+  const h1 = r.git('rev-parse', 'HEAD');
+  let body = summaryOf(r);
+  assert.match(body, /\*\*Findings:\*\*/u);
+  assert.match(body, /\| R1-1 \| src\/app\.js:1 \| medium \|  \| open \|/u);
+  assert.match(body, /- 1 open security finding, counted and not listed/u);
+  assert.doesNotMatch(body, /SENTINEL|R1-3/u);
+  r.write('src/app.js', lines(3));
+  const h2 = r.commit();
+  answer = [];
+  await r.step({ exec });
+  body = summaryOf(r);
+  assert.ok(body.includes(`| R1-2 | src/app.js:2 | medium |  | not reported again in [${h1.slice(0, 7)}...${h2.slice(0, 7)}](https://github.com/o/r/compare/${h1}...${h2}) |`), body);
+  assert.ok(body.includes(`| R1-3 |  | low |  | not reported again in [${h1.slice(0, 7)}...${h2.slice(0, 7)}]`), 'the closed security finding: its id, severity, outcome, and range only');
+  assert.doesNotMatch(body, /SENTINEL/u);
+});
+
+
+test('a finding attest stored without an id, listed as fixed on a record no step floored, gets its id and its closing range at the next step', async (t) => {
+  const r = bookingRepo(t);
+  const head = r.git('rev-parse', 'HEAD');
+  attestFile(r, 'agent:code-reviewer:booking', head, [filed({ state: 'fixed' })]);
+  assert.equal(readLocalState(r.project, 7).passes['agent:code-reviewer:booking'].list[0].id, undefined);
+  await r.step({ exec: clean });
+  const state = readLocalState(r.project, 7);
+  const [fixed] = state.passes['agent:code-reviewer:booking'].list;
+  assert.match(fixed.id, /^R\d+-\d+$/u);
+  assert.deepEqual([state.index[fixed.id].state, state.index[fixed.id].closed_in], ['fixed', { from: r.git('merge-base', 'main', head), to: head }]);
+});
+
+test('the findings file: two pass ids that read alike get different files, the same id the same file, each under the state folder`s tmp', async (t) => {
+  const { findingsFile } = await import('../plugins/aidrian/lib/review/dispatch.mjs');
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const [one, two] = ['flow:a-b:c', 'flow:a:b-c'].map((id) => findingsFile(r.project, 7, id));
+  assert.notEqual(one, two);
+  assert.equal(findingsFile(r.project, 7, 'flow:a-b:c'), one, 'the same id, the same file');
+  for (const file of [one, two, findingsFile(r.project, 7, '../../x/../y')]) {
+    assert.equal(path.dirname(file), path.join(stateDir(r.project), 'tmp', 'review-7'));
+    assert.match(path.basename(file), /^[\w.-]+-[0-9a-f]{8}\.findings\.json$/u);
+  }
+});
+
+
+test('the record command passes the findings file as one shell argument, from a state folder whose path holds a space and a quote', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, state: { dir: "../st ate's" }, review: { flows: BOOKING } }, change: (write) => write('src/booking/a.js', '1\n2\n3\n') });
+  const one = await r.step({ exec: clean });
+  assert.equal(one.status, 'dispatch');
+  const [pass] = one.dispatch;
+  const file = findingsFile(r.project, 7, pass.pass);
+  assert.ok(file.includes("st ate's"), file);
+  // A POSIX shell reads the command back into its words; the verdicts placeholder is left out, since `<` redirects.
+  const words = spawnSync('sh', ['-c', `set -- ${pass.record.replace(' --verdicts <file.json>', '')}; for word in "$@"; do printf '%s\\n' "$word"; done`], { encoding: 'utf8' });
+  assert.equal(words.status, 0, words.stderr);
+  const argv = words.stdout.trimEnd().split('\n');
+  assert.equal(argv[argv.indexOf('--findings-file') + 1], file, 'the path arrives whole');
+  assert.deepEqual(argv.slice(0, 4), ['aidrian', 'pr', 'attest', '7']);
+  assert.equal(shellQuote("it's a b"), "'it'\\''s a b'");
+});
+
+
+test('the findings file of a merged pass with three long flow ids still fits a file name, distinct and stable', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const flows = (tail) => Array.from({ length: 3 }, (_, i) => `${'f'.repeat(78)}${i}${tail}`);
+  const ids = ['a', 'b'].map((tail) => `agent:code-reviewer:${flows(tail).join('+')}`);
+  const [one, two] = ids.map((id) => findingsFile(r.project, 7, id));
+  for (const file of [one, two]) assert.ok(Buffer.byteLength(path.basename(file)) <= 255, `${Buffer.byteLength(path.basename(file))} bytes`);
+  assert.notEqual(one, two, 'two ids that share a long prefix differ by the hash of the whole id');
+  assert.equal(findingsFile(r.project, 7, ids[0]), one, 'the same id, the same file');
+  writeFileSync(one, '[]');
+  assert.equal(readFileSync(one, 'utf8'), '[]', 'the file can be written');
 });

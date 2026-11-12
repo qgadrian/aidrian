@@ -8,6 +8,9 @@
 //     is an unexpected skip, listed under `unexpected_skips`, and failing.
 //   - `requiredChecks`: every check whose name contains an entry must be SUCCESS, and at least one must exist. Checks
 //     register over time, so a required entry with no check yet is pending, never ready.
+//   - On a draft, a SKIPPED check that either rule above would fail is listed under `draft_skips` instead: a workflow may
+//     skip its jobs while the pull request is a draft, so they have not run yet, and the ready step must be able to mark
+//     the draft ready for them to run. Once it is ready, the rules above apply again. Draft is read only when a row skipped.
 // A row from a superseded run of the same workflow file on the same head, and a skipped matrix template row (`${{ ... }}`
 // in its name), are left out before any of these (currentRows).
 // The policy is this checkout's, so `-R` may name only a repository that is a remote of this checkout, by its host and
@@ -41,13 +44,14 @@ export function currentRows(rows) {
 }
 
 // The verdict over the check rows (forge.checks: `name`, `state`, and the run fields currentRows reads):
-// { verdict, reason, failing, pending, skipped, unexpected_skips }.
-export function computeVerdict(given, { requiredChecks = [], ignoreCancelledChecks = [], conditionalChecks = [] } = {}) {
+// { verdict, reason, failing, pending, skipped, unexpected_skips, draft_skips }. `draft`: the pull request is a draft.
+export function computeVerdict(given, { requiredChecks = [], ignoreCancelledChecks = [], conditionalChecks = [] } = {}, { draft = false } = {}) {
   const rows = currentRows(given);
   const failing = [];
   const pending = [];
   const skipped = [];
   const unexpected = [];
+  const notRun = [];
   const required = (name) => requiredChecks.some((part) => name.includes(part));
   const maySkip = (name) => !conditionalChecks.length || conditionalChecks.some((part) => name.includes(part));
   for (const row of rows) {
@@ -55,18 +59,24 @@ export function computeVerdict(given, { requiredChecks = [], ignoreCancelledChec
     if (NON_TERMINAL.has(state)) pending.push(row.name);
     else if (HARD_FAIL.has(state)) failing.push(`${row.name}=${state}`);
     else if (state === 'CANCELLED' && !required(row.name) && ignoreCancelledChecks.some((part) => row.name.includes(part))) skipped.push(`${row.name} (cancelled)`);
-    else if ((state === 'SKIPPED' || state === 'NEUTRAL') && !required(row.name)) (maySkip(row.name) ? skipped : unexpected).push(row.name);
+    else if ((state === 'SKIPPED' || state === 'NEUTRAL') && !required(row.name) && maySkip(row.name)) skipped.push(row.name);
+    else if (state === 'SKIPPED' && draft) notRun.push(row.name);
+    else if ((state === 'SKIPPED' || state === 'NEUTRAL') && !required(row.name)) unexpected.push(row.name);
     else if (state !== 'SUCCESS') failing.push(`${row.name}=${state || '?'}${required(row.name) ? ' (required)' : ''}`);
   }
   for (const part of requiredChecks) {
     if (!rows.some((row) => row.name.includes(part))) pending.push(`${part} (required, not reported yet)`);
   }
-  const lists = { failing, pending, skipped, unexpected_skips: unexpected };
+  const lists = { failing, pending, skipped, unexpected_skips: unexpected, draft_skips: notRun };
   const problems = [...failing, ...(unexpected.length ? [`unexpected skip: ${unexpected.join(', ')}`] : [])];
   if (problems.length) return { verdict: 'failing', reason: problems.join('; '), ...lists };
   if (pending.length) return { verdict: 'pending', reason: `${pending.length} not terminal: ${pending.join(', ')}`, ...lists };
-  const passed = rows.length - skipped.length;
-  return { verdict: 'ready', reason: `${passed} pass${skipped.length ? `; skipped: ${skipped.join(', ')}` : ''}`, ...lists };
+  const passed = rows.length - skipped.length - notRun.length;
+  const notes = [
+    ...(skipped.length ? [`skipped: ${skipped.join(', ')}`] : []),
+    ...(notRun.length ? [`not run on the draft, judged once it is marked ready: ${notRun.join(', ')}`] : []),
+  ];
+  return { verdict: 'ready', reason: [`${passed} pass`, ...notes].join('; '), ...lists };
 }
 
 // [PR] [-R owner/repo] [--json]. `-R` needs an explicit number: a branch lookup in another repository is ambiguous.
@@ -169,7 +179,17 @@ export function runChecks(
     return fail(`could not read the checks with gh (${String(error?.message ?? error).split('\n')[0]})`);
   }
   if (!Array.isArray(rows) || rows.length === 0) return fail('gh returned no checks for this pull request');
-  const result = computeVerdict(rows, config.github);
+  // Only a skip can read differently on a draft, so the pull request is read only then. A view that fails reads as not a
+  // draft: the strict rules.
+  let draft = false;
+  if (rows.some((row) => String(row.state ?? '').toUpperCase() === 'SKIPPED')) {
+    try {
+      draft = forge.change(prNumber ?? undefined, 'isDraft', { repo })?.isDraft === true;
+    } catch {
+      draft = false;
+    }
+  }
+  const result = computeVerdict(rows, config.github, { draft });
   console.log(asJson ? JSON.stringify(result) : `${result.verdict}: ${result.reason}`);
   return EXIT_BY_VERDICT[result.verdict];
 }

@@ -1175,10 +1175,11 @@ id, the rest are stored without one, and the next step gives them theirs.
 
 **The finding index.** The record keeps one index of findings, keyed by id, beside the passes, for the life of the pull
 request: each finding's title, place, and axes, its outcome ([Findings one by one](#findings-one-by-one)), the pass,
-stage, and reviewer that recorded it, the head that last recorded it open or accepted (where its file and line
-were checked), its security mark, which never clears, and,
-once closed, `closed_in`. A record an earlier release wrote gets an entry for each id it holds on its first write. A
-pass's list still holds each of its findings in full; a re-recorded list and a pruned pass delete no entry.
+stage, and reviewer that recorded it, `placed`, the head that recorded its file and line, in any state, where every
+later write checks them again, `seen`, the head that last recorded it open or accepted, where a closing range starts,
+its security mark, which never clears, and, once closed, `closed_in`.
+A record an earlier release wrote gets an entry for each id it holds on its first write.
+A pass's list still holds each of its findings in full; a re-recorded list and a pruned pass delete no entry.
 
 - *Listing.* Each open entry is listed to one pass of the head's plan: the pass that recorded it, while that pass is in
   the plan and still holds its file, has no file list, or lists the entry's id in its latest result, and always for an

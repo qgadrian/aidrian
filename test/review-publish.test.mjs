@@ -543,3 +543,41 @@ test('a finding first recorded as accepted keeps its recording head: the table k
   const later = refreshSummary(first, state, post());
   assert.deepEqual(where(later), [`| ${ids[0]} | src/a.js:5`, `| ${ids[1]} | src/b.js:7`], 'still both');
 });
+
+test('a finding closed as fixed at a moved location keeps that location, checked at the head that recorded it, in the table and the posted index', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-moved-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const lines = (n) => Array.from({ length: n }, (_, i) => `${i}\n`).join('');
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, 'src/a.js'), lines(10));
+  writeFileSync(path.join(dir, 'src/b.js'), lines(10));
+  git('add', '-A');
+  git('commit', '-qm', 'one');
+  const h1 = git('rev-parse', 'HEAD');
+  writeFileSync(path.join(dir, 'src/a.js'), lines(40));
+  git('mv', 'src/b.js', 'src/d.js');
+  writeFileSync(path.join(dir, 'src/d.js'), lines(40));
+  git('add', '-A');
+  git('commit', '-qm', 'two');
+  const h2 = git('rev-parse', 'HEAD');
+  const paths = gitPaths(dir);
+  const note = { head: h2, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] };
+  const state = { ...emptyState(7, 'o/r'), revision: 2, floored: true, rounds: [{ head: h1 }], planNote: note };
+  const open = (title, file) => ({ title, file, line: 5, severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open', disposition: 'fix_now' });
+  const range = (seen, to) => ({ from: seen, to });
+  recordFindings(state, 'engine:codex-local', { head: h1, reviewer: 'codex-local', list: [open('In a', 'src/a.js'), open('In b', 'src/b.js')] }, { mint: true, paths: paths.at(h1), stage: 'independent', range });
+  const [a, b] = state.passes['engine:codex-local'].list.map((each) => each.id);
+  state.rounds.push({ head: h2 });
+  const fixed = (title, file, id) => ({ ...open(title, file), line: 30, state: 'fixed', returned_id: id });
+  recordFindings(state, 'engine:codex-local', { head: h2, reviewer: 'codex-local', list: [fixed('In a', 'src/a.js', a), fixed('In b', 'src/d.js', b)] }, { mint: true, paths: paths.at(h2), listed: [a, b], stage: 'independent', range });
+  assert.deepEqual([a, b].map((id) => [state.index[id].state, state.index[id].file, state.index[id].line, state.index[id].closed_in]), [['fixed', 'src/a.js', 30, { from: h1, to: h2 }], ['fixed', 'src/d.js', 30, { from: h1, to: h2 }]], 'closed on h2, its range still starting where it was last open');
+  for (const diffPaths of [new Set(['src/a.js', 'src/d.js']), new Set()]) {
+    const body = summaryBody(state, null, 'x', tablePost(dir, { diffPaths }));
+    const rows = rowsOf(body).map((row) => row.split(' | ').slice(0, 2).join(' | '));
+    assert.deepEqual(rows, [`| ${a} | src/a.js:30`, `| ${b} | src/d.js:30`], `diff paths: ${[...diffPaths].join(', ') || 'none'}`);
+    const index = stateFromComment(body, 7).index;
+    assert.deepEqual([a, b].map((id) => [index[id].file, index[id].line]), [['src/a.js', 30], ['src/d.js', 30]], 'the posted index keeps them too');
+  }
+});

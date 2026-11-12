@@ -285,8 +285,9 @@ function closeEntry(entry, outcome, to, range) {
 }
 
 // Writes one recorded finding into the index, under its id: its title, place, and axes, its state, the pass, stage,
-// and reviewer that recorded it, the head that last recorded it open or accepted (`seen`), and a security mark that
-// never clears. A closed entry is final and takes nothing more.
+// and reviewer that recorded it, the head its file and line were checked at (`placed`), the head that last recorded it
+// open or accepted (`seen`, where a range that closes it starts), and a security mark that never clears. A closed
+// entry is final and takes nothing more.
 function enter(index, finding, group, at) {
   const before = isObject(index[finding.id]) ? index[finding.id] : null;
   if (isClosed(before)) return;
@@ -302,8 +303,9 @@ function enter(index, finding, group, at) {
   if (at.stage) entry.stage = at.stage;
   if (at.reviewer) entry.reviewer = at.reviewer;
   if (finding.security === true || before?.security === true) entry.security = true;
-  // The head that last recorded it open or accepted: where its file and line were checked, which the posted copy and
-  // the findings table check them at again, and where a range that closes it starts.
+  // Every write sets the file and line together with the head they were checked at, in any state, fixed included:
+  // the posted copy and the findings table check them there again. `seen` is only where a closing range starts.
+  if (FULL_SHA.test(String(at.head ?? ''))) entry.placed = at.head;
   if ((state === 'open' || state === 'accepted') && FULL_SHA.test(String(at.head ?? ''))) entry.seen = at.head;
   if (state === 'fixed') closeEntry(entry, 'fixed', at.head, at.range);
   index[finding.id] = entry;

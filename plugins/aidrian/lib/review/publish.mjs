@@ -372,7 +372,7 @@ const FIXED_KEYS = new Set([
   'previous_open', 'fix_added', 'fix_added_all', 'original_added', 'limit', 'earlier_round', 'match', 'red_flags', 'stale_judge',
   'human', 'answer', 'session', 'unreviewed', 'title', 'body', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost',
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
-  'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'current', 'to',
+  'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
 ]);
 
 // The record less what stays on this machine on every repository (postedCopy), as a copy.
@@ -531,6 +531,7 @@ function allowlisted(state, post, counter) {
       ruled_id: findingId,
       closed_in: (value) => object(value, { from: sha, to: sha }),
       seen: sha,
+      placed: sha,
     });
     const file = source.file;
     if (typeof file === 'string' && !hidePlace && path(head)(file)) {
@@ -545,8 +546,9 @@ function allowlisted(state, post, counter) {
     return out;
   };
   const findings = (head) => list(finding(head));
-  // An index entry: a finding, its place checked at the head that last held it open, else the head that closed it.
-  const indexEntry = (source) => (isObject(source) ? finding(source.seen ?? source.closed_in?.to, { reviewer: () => undefined })(source) : drop());
+  // An index entry: a finding, its place checked at the head that recorded it (`placed`), else, for an entry an earlier
+  // write left without one, the head that last held it open, else the head that closed it.
+  const indexEntry = (source) => (isObject(source) ? finding(source.placed ?? source.seen ?? source.closed_in?.to, { reviewer: () => undefined })(source) : drop());
   const verdict = (source) => {
     if (!isObject(source) || !pair(source.flow, source.invariant)) return drop();
     return object(source, { flow: (value) => value, invariant: (value) => value, verdict: word(new Set(['holds', 'violated', 'not_affected', 'cannot_verify'])) });
@@ -960,7 +962,7 @@ export function findingsTable(copy, post = {}) {
   const paths = post.root ? gitPaths(post.root) : null;
   const diffPaths = post.diffPaths instanceof Set ? post.diffPaths : new Set();
   const place = (entry) => {
-    const head = entry.seen ?? entry.closed_in?.to ?? copy.passes?.[entry.pass]?.head;
+    const head = entry.placed ?? entry.seen ?? entry.closed_in?.to ?? copy.passes?.[entry.pass]?.head;
     const file = entry.file;
     if (hidden(entry) || typeof file !== 'string' || file.length > MAX_PATH || file.trim() === '') return '';
     if (!(diffPaths.has(file) || paths?.tracked(head, file) === true)) return '';

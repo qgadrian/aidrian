@@ -898,7 +898,7 @@ test('newer: the record with the higher revision wins, whatever its counts', asy
 
 test('deleting only an ignored flow test, with nothing else to review, still stops the review', async (t) => {
   const flows = { booking: { files: ['src/booking/**'], tests: ['test/booking*'] } };
-  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, baseFiles: { 'test/booking.snap': 'x\n' }, change: (write, dir) => rmSync(path.join(dir, 'test/booking.snap')) });
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, baseFiles: { 'test/booking.snap': 'x\n' }, change: (_write, dir) => rmSync(path.join(dir, 'test/booking.snap')) });
   const result = await r.step({ exec: clean });
   assert.deepEqual([result.status, result.tests_removed?.[0]?.deleted], ['fix_required', ['test/booking.snap']]);
   recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'booking', head: result.head, by: 'Tester' });

@@ -290,6 +290,7 @@ function closeEntry(entry, outcome, to, range) {
 function enter(index, finding, group, at) {
   const before = isObject(index[finding.id]) ? index[finding.id] : null;
   if (isClosed(before)) return;
+  // The spread keeps `adopted: true`, not cleared by a fresh local report, so closeOmitted keeps skipping the entry: an accepted residual of the adoption path (#276).
   const entry = { ...(before ?? {}), id: finding.id };
   for (const key of ['mint', 'aliases']) if (finding[key] !== undefined) entry[key] = Array.isArray(finding[key]) ? [...finding[key]] : finding[key];
   for (const key of ENTRY_KEYS) {

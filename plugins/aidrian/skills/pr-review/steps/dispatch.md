@@ -82,7 +82,8 @@ The review turns the axes into a verdict, so a contrived finding becomes an acce
   A second miss is a coverage gap: report it.
 - A finding without `likelihood` or `affects` goes back to its agent once. Never fill in an axis yourself.
 - `needs_input` or `blocked` goes to the user as it is; it is not a finished review.
-- For an agent run from a dispatch entry of `aidrian pr review`, one with `pass` and `record`, write its findings to a file, one
-  object each with its axes, `state`, and the `id` of the `priorFindings` entry it repeats, then run `record`:
+- For an agent run from a dispatch entry of `aidrian pr review`, one with `pass` and `record`: the agent is read-only and writes
+  no file. It returns its findings in the `findings` array of its final JSON, one object each with its axes, `state`, and the
+  `id` of the `priorFindings` entry it repeats. Write that array, as it is, to the file `record` names, then run `record`:
   `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json --verdicts -`, its final JSON
   on stdin. Use the path `record` names, under the state folder: never a file in the checkout. Never retype a verdict or its evidence.

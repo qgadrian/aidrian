@@ -37,10 +37,12 @@ only after its answer, so the pull request stays a draft until the bot is clean.
   and may be cited as `capture:<key>` too.
 - `record`: the command that records the pass, `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who>
   --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json`, with `--verdicts <file.json>` when the pass judges flows. The step names that file
-  under the state folder, outside every checkout, so the findings' text is never committed: write it there. Pipe the agent's final
-  JSON to `record` as it is, with `--verdicts -` in place of the file, and never retype a verdict; `--verdicts FILE`
-  still reads a file. The agent writes each finding to the findings file with its axes and state, and the disposition
-  table decides what stays open, not the agent's count (`aidrian pr disposition --vocab` lists the words):
+  under the state folder, outside every checkout, so the findings' text is never committed. The agent is read-only
+  and writes no file: it returns each finding, with its axes and state, in the `findings` array of its final JSON.
+  This session writes that array, as it is, to the file `record` names, then pipes the agent's final JSON to `record`,
+  with `--verdicts -` in place of the file, and never retypes a finding or a verdict; `--verdicts FILE` still reads a
+  file. The disposition table decides what stays open, not the agent's count (`aidrian pr disposition --vocab` lists
+  the words):
 
   ```json
   [{ "id": "", "title": "Label clipped at 360px", "file": "src/app/x.tsx", "line": 4, "severity": "medium", "likelihood": "routine", "affects": "users", "cost": "trivial", "state": "open" }]

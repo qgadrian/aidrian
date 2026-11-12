@@ -294,5 +294,7 @@ export function dispatchFor(s, pass, stage) {
   };
 }
 
-// How an agent writes the findings file its record command reads.
-export const FINDINGS_FILE_BRIEF = 'Write every finding to the findings file `record` names, under the state folder and outside the checkout, one object each: `title`, `file`, `line`, `body`, `severity`, `likelihood`, `affects`, `cost`, and `state` (`open`, `fixed`, or `accepted`), and `security` true for a security problem; `aidrian pr disposition --vocab` lists the words. The disposition table, not your count, decides what blocks.';
+// How an agent returns the findings its record command reads. A reviewer is read-only (code-reviewer has no Write or
+// Edit, and the Codex reviewer creates no file), so it writes nothing: the session that dispatched it writes the
+// `findings` array of its final JSON to the file `record` names, then runs `record`.
+export const FINDINGS_FILE_BRIEF = 'Write no file. Return every finding in the `findings` array of your final JSON, one object each: `id`, `title`, `file`, `line`, `body`, `severity`, `likelihood`, `affects`, `cost`, and `state` (`open`, `fixed`, or `accepted`), and `security` true for a security problem; `aidrian pr disposition --vocab` lists the words. The dispatching session writes that array to the findings file `record` names and runs `record`. The disposition table, not your count, decides what blocks.';

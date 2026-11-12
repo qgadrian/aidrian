@@ -500,7 +500,8 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 
 Every agent pass, a visual reviewer's included, records with `--findings-file` rather than counts, so for an agent pass
 the [disposition table](../plugins/aidrian/lib/finding-disposition.json), not the reviewer's count, decides what blocks
-and what closes:
+and what closes. The reviewer is read-only and writes no file: it returns the findings in the `findings` array of its
+final JSON, and the session that dispatched it writes that array to the file `record` names, then runs `record`:
 
 ```json
 [{ "title": "Label clipped at 360px", "file": "src/app/x.tsx", "line": 4, "severity": "medium", "likelihood": "routine", "affects": "users", "state": "open" }]
@@ -643,9 +644,10 @@ A project adds its own in `review.reviewers`:
   `codex-local` reads the checkout at the head.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
   `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json --verdicts -`, its
-  findings one by one in the file, which the step names under the state folder, outside every checkout, so their text is
-  never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, then the first 8 hex
-  digits of the id's SHA-256, so two passes never share a file ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
+  JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
+  never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
+  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set

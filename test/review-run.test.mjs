@@ -2386,6 +2386,10 @@ test('every agent pass records with --findings-file: an accepted finding whose d
     assert.ok(Array.isArray(words) && words.length, axis);
     assert.match(pass.brief, new RegExp(`\`${axis}\``, 'u'), `the brief names ${axis}, which the disposition table reads`);
   }
+  // A reviewer is read-only: it returns its findings, and the session that dispatched it writes the file.
+  assert.match(pass.brief, /Write no file\. Return every finding in the `findings` array of your final JSON/u);
+  assert.match(pass.brief, /The dispatching session writes that array to the findings file `record` names and runs `record`/u);
+  assert.doesNotMatch(pass.brief, /\b(?:write|save|create)s? (?:every finding|the findings|a file|it) (?:to|in)\b/iu, 'the brief asks the reviewer to write nothing');
   attestFile(r, pass.pass, one.head, [filed({ state: 'accepted' })]);
   const blocked = await r.step({ exec: clean });
   assert.equal(blocked.status, 'fix_required');

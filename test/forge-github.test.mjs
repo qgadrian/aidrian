@@ -21,7 +21,7 @@ const FACADE = [
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
-  'postReview', 'reviewComment', 'deleteReviewComment',
+  'postReview', 'reviewComment', 'deleteReviewComment', 'reviewThread', 'replyToReviewComment', 'resolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
 
@@ -612,6 +612,10 @@ test('every write route and every read of one comment is built from a safe posit
     assert.throws(() => forge.postComment('o/r', bad, 'b'), /must be a positive whole number/u, String(bad));
     assert.throws(() => forge.postReview('o/r', bad, { commitId: SHA40, body: 'b' }), /must be a positive whole number/u, String(bad));
     assert.throws(() => forge.postReview('o/r', 7, { commitId: SHA40, body: 'b', comments: [{ path: 'a', line: bad, body: 'b' }] }), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.replyToReviewComment('o/r', 7, bad, 'b'), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.replyToReviewComment('o/r', bad, 61, 'b'), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.reviewThread('o/r', 7, bad), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.resolveThread('o/r', bad, 61), /must be a positive whole number/u, String(bad));
   }
   assert.deepEqual(args(), [], 'no call is made for any of them');
 });
@@ -626,6 +630,78 @@ test('the two deletes: DELETE of one review comment and of one conversation comm
   ]);
   const broken = recorded(() => { throw httpError(403); }).forge;
   assert.throws(() => broken.deleteComment('o/r', 62), /HTTP 403/u, 'a failed delete throws, so the step names it and tries again');
+});
+
+// One page of GraphQL review threads: each [id, isResolved, root comment id, more comments], with `next` the cursor; each
+// comment's id is its fullDatabaseId, a string, as GitHub answers it.
+const threadsPage = (threads, next = null) => JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+  pageInfo: { hasNextPage: next !== null, endCursor: next },
+  nodes: threads.map(([id, resolved, root, extra = []]) => ({ id, isResolved: resolved, comments: { totalCount: 1 + extra.length, nodes: [
+    { fullDatabaseId: String(root), body: `<!-- root ${root} -->`, authorAssociation: 'OWNER', author: { login: 'me' } },
+    ...extra.map((each) => ({ fullDatabaseId: String(each), body: 'reply', authorAssociation: 'NONE', author: { login: 'someone' } })),
+  ] } })),
+} } } } });
+
+test('reviewThread: the thread a review comment starts, read page by page through GraphQL, in the facade`s comment shape', () => {
+  const { forge, calls } = recorded((call) => (call.some((arg) => arg === 'after=c1') ? threadsPage([['T2', true, 62, [63]]]) : threadsPage([['T1', false, 61]], 'c1')));
+  assert.deepEqual(forge.reviewThread('o/r', 7, 62), {
+    resolved: true,
+    complete: true,
+    comments: [
+      { id: 62, body: '<!-- root 62 -->', user: { login: 'me' }, author_association: 'OWNER' },
+      { id: 63, body: 'reply', user: { login: 'someone' }, author_association: 'NONE' },
+    ],
+  });
+  assert.equal(calls.length, 2, 'every page until the thread is found');
+  const [first, second] = calls.map((call) => call.args);
+  assert.deepEqual(first.slice(0, 2), ['api', 'graphql']);
+  assert.ok(first.includes('o=o') && first.includes('r=r') && first.includes('n=7'));
+  assert.equal(first[first.indexOf('n=7') - 1], '-F', 'only the pull request number, a checked integer, goes as a typed field');
+  assert.equal(first[first.indexOf('o=o') - 1], '-f');
+  assert.ok(second.includes('after=c1'));
+  assert.equal(recorded(() => threadsPage([['T1', false, 61]])).forge.reviewThread('o/r', 7, 62), null, 'no thread starts at that comment');
+  const long = recorded(() => JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [{ id: 'T', isResolved: false, comments: { totalCount: 101, nodes: [{ fullDatabaseId: '5', body: 'x', author: { login: 'me' } }] } }] } } } } }));
+  assert.equal(long.forge.reviewThread('o/r', 7, 5).complete, false, 'a thread past the 100 comments read is read only in part');
+  assert.throws(() => recorded(() => '{"data":null}').forge.reviewThread('o/r', 7, 5), /no list/u);
+  // Review comment ids are past 32 bits: the query asks for fullDatabaseId, never the deprecated databaseId.
+  const big = 4552514677;
+  const wide = recorded(() => threadsPage([['T9', false, big, [big + 1]]]));
+  assert.deepEqual(wide.forge.reviewThread('o/r', 7, big).comments.map((each) => each.id), [big, big + 1]);
+  const query = wide.calls[0].args.find((arg) => arg.startsWith('query='));
+  assert.ok(query.includes('fullDatabaseId') && !/[{\s]databaseId\b/u.test(query), 'fullDatabaseId alone');
+  // An id of any other shape names no comment, and matches no root.
+  const odd = (value) => recorded(() => JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [{ id: 'T', isResolved: false, comments: { totalCount: 1, nodes: [{ fullDatabaseId: value, body: 'x', author: { login: 'me' } }] } }] } } } } }));
+  for (const value of ['5x', '-5', '5.0', '05', '99999999999999999', null, { n: 5 }]) assert.equal(odd(value).forge.reviewThread('o/r', 7, 5), null, JSON.stringify(value));
+  assert.equal(odd(5).forge.reviewThread('o/r', 7, 5).comments[0].id, 5, 'a number answer reads as the same id');
+});
+
+test('replyToReviewComment: one POST to the comment`s replies, its body a raw -f field that starts with @ or reads true', () => {
+  const { forge, args } = recorded(() => '{"id":88,"body":"b"}');
+  assert.deepEqual(forge.replyToReviewComment('o/r', 7, 61, '@/etc/passwd'), { id: 88, body: 'b' });
+  forge.replyToReviewComment('o/r', '7', '61', 'true');
+  assert.deepEqual(args(), [
+    ['api', 'repos/o/r/pulls/7/comments/61/replies', '--method', 'POST', '-f', 'body=@/etc/passwd'],
+    ['api', 'repos/o/r/pulls/7/comments/61/replies', '--method', 'POST', '-f', 'body=true'],
+  ]);
+  assert.ok(!args().flat().includes('-F'), 'no typed field carries the body');
+});
+
+test('resolveThread: the thread found by its root comment`s id, then one resolveReviewThread mutation; no node id reaches the caller', () => {
+  const { forge, calls } = recorded((call) => (call.some((arg) => arg.startsWith('query=mutation')) ? '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}' : threadsPage([['PRRT_kw1', false, 61]])));
+  assert.deepEqual(forge.resolveThread('o/r', 7, 61), { resolved: true });
+  const mutation = calls[1].args;
+  assert.deepEqual(mutation.slice(0, 2), ['api', 'graphql']);
+  assert.match(mutation[3], /^query=mutation\(\$id:ID!\)\{resolveReviewThread\(input:\{threadId:\$id\}\)/u);
+  assert.deepEqual(mutation.slice(4), ['-f', 'id=PRRT_kw1']);
+  const done = recorded(() => threadsPage([['PRRT_kw1', true, 61]]));
+  assert.deepEqual(done.forge.resolveThread('o/r', 7, 61), { resolved: true });
+  assert.equal(done.calls.length, 1, 'a thread already resolved needs no mutation');
+  assert.throws(() => recorded(() => threadsPage([])).forge.resolveThread('o/r', 7, 61), /no review thread/u);
+  const refused = recorded((call) => (call.some((arg) => arg.startsWith('query=mutation')) ? '{"data":{"resolveReviewThread":null}}' : threadsPage([['PRRT_kw1', false, 61]])));
+  assert.throws(() => refused.forge.resolveThread('o/r', 7, 61), /did not resolve/u, 'an answer that is not a resolved thread throws, so the step tries again');
+  const odd = recorded(() => threadsPage([['bad id; x', false, 61]]));
+  assert.throws(() => odd.forge.resolveThread('o/r', 7, 61), /no id/u);
+  assert.equal(odd.calls.length, 1, 'a node id of another shape is never sent back');
 });
 
 test('reviewComment and comment with the pull request named: each held to that pull request, and comment without it answers as before', () => {

@@ -419,7 +419,7 @@ const FIXED_KEYS = new Set([
   'human', 'answer', 'session', 'unreviewed', 'title', 'body', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost',
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
   'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
-  'thread', 'reviewId', 'commentId', 'fallbackId',
+  'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved',
 ]);
 
 // The record less what stays on this machine on every repository (postedCopy), as a copy.
@@ -579,8 +579,9 @@ function allowlisted(state, post, counter) {
       closed_in: (value) => object(value, { from: sha, to: sha }),
       seen: sha,
       placed: sha,
-      // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone.
-      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int }),
+      // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone, and the closing reply's
+      // marks (answerThreads): its id, and whether it was posted and the thread resolved.
+      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int, replyId: int, replied: bool, resolved: bool }),
     });
     const file = source.file;
     if (typeof file === 'string' && !hidePlace && path(head)(file)) {
@@ -1038,4 +1039,27 @@ export function findingsTable(copy, post = {}) {
   if (rows.length > MAX_ROWS) lines.push(`- ${plural(rows.length - MAX_ROWS, 'more finding')}, not listed: the table holds ${MAX_ROWS}.`);
   if (counted.length) lines.push(`- ${plural(counted.length, 'open security finding')}, counted and not listed: the repository does not read as private.`);
   return lines;
+}
+
+// ---- The closing reply (review.publish.replies) ----
+
+// The outcome line a closed finding's reply may show, as candidates, the fullest first: `Fixed in <compare link>.`,
+// `Not reported again in <compare link>.`, or `Accepted as <disposition>.`, each built from the engine's own values
+// alone: the closing range's two full SHAs, a link only where the forge builds one (`compareUrl`) and it is a plain
+// https URL, else the two short SHAs as text; and a disposition word of the table. Then the same line with less, down to
+// the bare outcome, so a check that withholds the link still lets a reply post. No reviewer text is ever in one. An
+// entry that is not closed gives none.
+export function replyLines(entry, compareUrl = () => null) {
+  if (!isObject(entry)) return [];
+  if (entry.state === 'accepted') return [...(DISPOSITIONS.has(entry.disposition) ? [`Accepted as ${entry.disposition}.`] : []), 'Accepted.'];
+  const words = { fixed: 'Fixed', not_reported: 'Not reported again' }[entry.state];
+  if (!words) return [];
+  const { from, to } = isObject(entry.closed_in) ? entry.closed_in : {};
+  if (!isSha(from) || !isSha(to)) return [`${words}.`];
+  const label = `${from.slice(0, 7)}...${to.slice(0, 7)}`;
+  let href = null;
+  try {
+    href = compareUrl(from, to);
+  } catch {}
+  return [...(typeof href === 'string' && HREF.test(href) ? [`${words} in [${label}](${href}).`] : []), `${words} in ${label}.`, `${words}.`];
 }

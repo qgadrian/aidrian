@@ -13,7 +13,7 @@ import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
 import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, quotedLines, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
-import { attributionLine, deleteOwn, engineLists, fitBody, leadingMarkers, markerLine, MAX_LISTED, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
+import { answerThreads, attributionLine, deleteOwn, engineLists, fillThreads, fitBody, leadingMarkers, markerLine, MAX_LISTED, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
 import { MAX_BODY } from '../plugins/aidrian/lib/forges/index.mjs';
 import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, refreshSummary, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -1203,4 +1203,300 @@ test('inline: the lines that list leftover findings are bounded, so 200 findings
   assert.deepEqual(fitted.ids, ['R1-1']);
   assert.ok(fitted.body.length <= MAX_BODY);
   assert.match(fitted.body, new RegExp(`1000 more findings not shown here, posted by a later step: R2-1, .*R2-${MAX_LISTED}, and ${1000 - MAX_LISTED} more$`, 'u'));
+});
+
+// ---- Replies (lib/review/inline.mjs answerThreads) ----
+
+const FROM = 'a'.repeat(40);
+const TO = 'b'.repeat(40);
+const COMPARE = `https://github.com/o/r/compare/${FROM}...${TO}`;
+// A closed index entry posted as an inline thread: the review 900, its root comment 1000 + the id's number.
+const closedEntry = (id, extra = {}) => ({ id, mint: MINT, file: 'src/a.js', line: 2, severity: 'medium', disposition: 'fix_now', state: 'fixed', pass: PASS, stage: 'local', closed_in: { from: FROM, to: TO }, thread: { reviewId: 900, commentId: 1000 + Number(id.split('-')[1]) }, ...extra });
+const repliesState = (...entries) => ({ ...emptyState(7, 'o/r'), idCounter: 9, floored: true, planNote: { head: TO, passes: { [PASS]: { stage: 'local', reviewer: 'codex-local', security: false } } }, index: Object.fromEntries(entries.map((entry) => [entry.id, entry])) });
+const rootOf = (id, extra = {}) => ({ id: 1000 + Number(id.split('-')[1]), body: [markerLine(id), attributionLine(id), '> what is wrong'].join('\n'), user: { login: VIEWER }, author_association: 'OWNER', ...extra });
+// A forge whose threads are `threads` (root comment id -> { resolved, comments }), recording every call; a reply joins its
+// thread with an id from 2001.
+function replyForge(threads = {}, { failReply = false, failResolve = false, failRead = false } = {}) {
+  const calls = [];
+  let next = 2001;
+  const forge = {
+    viewer: () => (calls.push(['viewer']), VIEWER),
+    reviewThread: (repo, n, id) => {
+      calls.push(['reviewThread', id]);
+      if (failRead) throw new Error('gh: (HTTP 502)');
+      return threads[id] ? { resolved: false, complete: true, ...threads[id], comments: [...threads[id].comments] } : null;
+    },
+    replyToReviewComment: (repo, n, id, body) => {
+      calls.push(['reply', id, body]);
+      if (failReply) throw new Error('gh: (HTTP 502)');
+      const reply = { id: next++, body, user: { login: VIEWER }, author_association: 'OWNER' };
+      threads[id].comments.push(reply);
+      return reply;
+    },
+    resolveThread: (repo, n, id) => {
+      calls.push(['resolve', id]);
+      if (failResolve) throw new Error('gh: (HTTP 502)');
+      threads[id].resolved = true;
+      return { resolved: true };
+    },
+  };
+  return { forge, calls, threads };
+}
+const threadOf = (id, rest = []) => ({ [1000 + Number(id.split('-')[1])]: { comments: [rootOf(id), ...rest] } });
+function replyStep(state, forge, { reading = PUBLIC, publish = { inline: true, replies: true, publicSecurity: 'counts' }, checker = allow(), compareUrl = () => COMPARE, deletes = null, items = [] } = {}) {
+  return { forge, repo: 'o/r', n: 7, state, deletes, marked: { items }, post: () => ({ reading, checker, publish, compareUrl }) };
+}
+const replies = (calls) => calls.filter(([name]) => name === 'reply');
+
+test('replies: fixed, not reported again, and accepted each get one reply, the marker and attribution lines, then the outcome, and no reviewer text', () => {
+  const state = repliesState(closedEntry('R1-1', { title: 'the secret title' }), closedEntry('R1-2', { state: 'not_reported' }), closedEntry('R1-3', { state: 'accepted', disposition: 'acceptable_as_is', closed_in: undefined }));
+  const { forge, calls } = replyForge({ ...threadOf('R1-1'), ...threadOf('R1-2'), ...threadOf('R1-3') });
+  const result = answerThreads(replyStep(state, forge));
+  assert.deepEqual([result.replied, result.resolved, result.unanswered], [['R1-1', 'R1-2', 'R1-3'], ['R1-1', 'R1-2', 'R1-3'], []]);
+  const bodies = Object.fromEntries(replies(calls).map(([, id, body]) => [id, body]));
+  assert.equal(bodies[1001], [markerLine('R1-1'), attributionLine('R1-1'), `Fixed in [aaaaaaa...bbbbbbb](${COMPARE}).`].join('\n'));
+  assert.equal(bodies[1002], [markerLine('R1-2'), attributionLine('R1-2'), `Not reported again in [aaaaaaa...bbbbbbb](${COMPARE}).`].join('\n'));
+  assert.equal(bodies[1003], [markerLine('R1-3'), attributionLine('R1-3'), 'Accepted as acceptable_as_is.'].join('\n'));
+  assert.ok(!Object.values(bodies).some((body) => body.includes('secret') || body.includes('what is wrong')), 'a reply holds no reviewer text');
+  for (const body of Object.values(bodies)) assert.equal(leadingMarkers(body).length, 1, 'each reply starts with its finding`s marker in the fixed layout');
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001, resolved: true });
+  // The posted copy keeps the marks and the reply's id, numbers and booleans alone.
+  const { copy } = postedCopy(state, { reading: PUBLIC, names: [] });
+  assert.deepEqual(copy.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001, resolved: true });
+});
+
+test('replies: escaping runs on the final raw body; a link the forge does not build, or the checks refuse, falls back to the short SHAs', () => {
+  const state = repliesState(closedEntry('R1-1'));
+  const tagged = replyForge(threadOf('R1-1'));
+  answerThreads(replyStep(state, tagged.forge, { compareUrl: () => `${COMPARE}?x=@bot` }));
+  const [, , body] = replies(tagged.calls)[0];
+  assert.ok(body.includes('x=@​bot') && !/(?<![\w/])@bot/u.test(body.replaceAll('@​', '')), 'a mention in the link is neutralized');
+  for (const options of [{ compareUrl: () => null }, { compareUrl: () => 'javascript:alert(1)' }, { checker: { allows: (text) => !text.includes('https://'), failed: false } }]) {
+    const fresh = repliesState(closedEntry('R1-1'));
+    const posts = replyForge(threadOf('R1-1'));
+    answerThreads(replyStep(fresh, posts.forge, options));
+    assert.equal(replies(posts.calls)[0][2].split('\n').at(-1), 'Fixed in aaaaaaa...bbbbbbb.');
+  }
+  const refused = repliesState(closedEntry('R1-1'));
+  const checker = { allows: () => false, failed: false };
+  const none = replyForge(threadOf('R1-1'));
+  const result = answerThreads(replyStep(refused, none.forge, { checker }));
+  assert.deepEqual([replies(none.calls), result.unanswered, refused.index['R1-1'].thread.replied], [[], ['R1-1'], undefined], 'a reply every candidate of which the checks refuse is not posted, and the next step tries again');
+});
+
+test('replies: once; the reply posts and the resolve fails, then the next step only resolves', () => {
+  const state = repliesState(closedEntry('R1-1'));
+  const posts = replyForge(threadOf('R1-1'), { failResolve: true });
+  const first = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([first.replied, first.resolved, first.unanswered], [['R1-1'], [], ['R1-1']]);
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001 }, 'replied is set, resolved is not');
+  const next = replyForge(posts.threads);
+  const second = answerThreads(replyStep(state, next.forge));
+  assert.deepEqual([replies(next.calls), second.resolved, second.unanswered], [[], ['R1-1'], []], 'the next step only resolves');
+  assert.equal(state.index['R1-1'].thread.resolved, true);
+  const third = replyForge(posts.threads);
+  assert.equal(answerThreads(replyStep(state, third.forge)), null, 'a thread with both marks is done');
+  assert.deepEqual(third.calls, [], 'and gets no call');
+  const failing = repliesState(closedEntry('R1-1'));
+  const broken = replyForge(threadOf('R1-1'), { failReply: true });
+  assert.deepEqual(answerThreads(replyStep(failing, broken.forge)).unanswered, ['R1-1']);
+  assert.equal(failing.index['R1-1'].thread.replied, undefined, 'a failed reply sets no mark');
+  assert.ok(!broken.calls.some(([name]) => name === 'resolve'), 'and nothing is resolved before the reply');
+});
+
+test('replies: an earlier marked reply of the current user found on the thread counts as replied, so a lost mark posts no second', () => {
+  const state = repliesState(closedEntry('R1-1'));
+  const earlier = { id: 1500, body: [markerLine('R1-1'), attributionLine('R1-1'), 'Fixed.'].join('\n'), user: { login: 'ME' }, author_association: 'OWNER' };
+  const posts = replyForge(threadOf('R1-1', [earlier]));
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([replies(posts.calls), result.resolved], [[], ['R1-1']], 'no second reply, and the thread is the engine`s alone, so it is resolved');
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 1500, resolved: true });
+  const lists = engineLists([{ kind: 'review_comment', id: 1500, login: 'ME', member: true, markers: ['R1-1'], starts: false }], state);
+  assert.deepEqual(lists.engine_comments.map((each) => each.id), [1500], 'engine_comments lists the reply the index maps');
+});
+
+test('replies: a root that carries another id, an unmarked root, and a gone thread get no reply and are not unanswered', () => {
+  const state = repliesState(closedEntry('R1-1'), closedEntry('R1-2'), closedEntry('R1-3'));
+  const threads = { 1001: { comments: [rootOf('R1-9', { id: 1001 })] }, 1002: { comments: [rootOf('R1-2', { body: 'plain text' })] } };
+  const posts = replyForge(threads);
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([replies(posts.calls), result.left, result.unanswered], [[], ['R1-1', 'R1-2', 'R1-3'], []]);
+  assert.ok(!posts.calls.some(([name]) => name === 'resolve'));
+});
+
+test('replies: a thread someone else replied in gets the reply and stays open, which counts as done', () => {
+  for (const other of [{ user: { login: 'someone' }, author_association: 'NONE' }, { user: { login: VIEWER }, author_association: 'OWNER' }]) {
+    const state = repliesState(closedEntry('R1-1'));
+    const posts = replyForge(threadOf('R1-1', [{ id: 1400, body: 'I disagree', ...other }]));
+    const result = answerThreads(replyStep(state, posts.forge));
+    assert.deepEqual([result.replied, result.resolved, result.open, result.unanswered], [['R1-1'], [], ['R1-1'], []], `a reply by ${other.user.login} without the marker`);
+    assert.ok(!posts.calls.some(([name]) => name === 'resolve'), 'never resolved');
+    assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001 });
+  }
+});
+
+test('replies: a thread another member`s login started waits for that machine, with its login, and is not unanswered', () => {
+  const state = repliesState(closedEntry('R1-1'), closedEntry('R1-2'));
+  const threads = { ...threadOf('R1-1'), ...threadOf('R1-2') };
+  threads[1001].comments[0] = rootOf('R1-1', { user: { login: 'teammate' }, author_association: 'MEMBER' });
+  threads[1002].comments[0] = rootOf('R1-2', { user: { login: 'outsider' }, author_association: 'NONE' });
+  const posts = replyForge(threads);
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([result.waiting, result.left, result.unanswered, replies(posts.calls)], [[{ finding: 'R1-1', login: 'teammate' }], ['R1-2'], [], []]);
+  assert.ok(!JSON.stringify(state).includes('teammate'), 'the record stores no login');
+});
+
+test('replies: a security finding the reading does not show, and one the delete named, get no reply; an open finding and one with no thread get none', () => {
+  const security = repliesState(closedEntry('R1-1', { severity: 'high' }));
+  const posts = replyForge(threadOf('R1-1'));
+  assert.equal(answerThreads(replyStep(security, posts.forge)), null);
+  assert.deepEqual(posts.calls, []);
+  const shown = replyForge(threadOf('R1-1'));
+  assert.deepEqual(answerThreads(replyStep(repliesState(closedEntry('R1-1', { severity: 'high' })), shown.forge, { reading: PRIVATE })).replied, ['R1-1'], 'a private repository answers it');
+  for (const key of ['deleted', 'waiting', 'left', 'failed']) {
+    const named = replyForge(threadOf('R1-1'));
+    assert.equal(answerThreads(replyStep(repliesState(closedEntry('R1-1')), named.forge, { deletes: { [key]: [{ finding: 'R1-1', kind: 'review_comment', id: 1001 }] } })), null, key);
+  }
+  const others = repliesState(closedEntry('R1-1', { state: 'open' }), closedEntry('R1-2', { thread: { reviewId: 900 } }), closedEntry('R1-3', { thread: { fallbackId: 77 } }));
+  assert.equal(answerThreads(replyStep(others, replyForge().forge)), null, 'an open finding, a review body`s, and a fallback comment`s have no thread to answer');
+});
+
+test('replies: replies false, inline off, and a failed thread read or viewer read post nothing and leave the ids unanswered', () => {
+  for (const publish of [{ inline: true, replies: false }, { inline: false, replies: true }]) {
+    const posts = replyForge(threadOf('R1-1'));
+    assert.equal(answerThreads(replyStep(repliesState(closedEntry('R1-1')), posts.forge, { publish })), null, JSON.stringify(publish));
+    assert.deepEqual(posts.calls, []);
+  }
+  const unread = replyForge(threadOf('R1-1'), { failRead: true });
+  assert.deepEqual(answerThreads(replyStep(repliesState(closedEntry('R1-1')), unread.forge)).unanswered, ['R1-1']);
+  const partial = replyForge({ 1001: { complete: false, comments: [rootOf('R1-1')] } });
+  assert.deepEqual(answerThreads(replyStep(repliesState(closedEntry('R1-1')), partial.forge)).unanswered, ['R1-1'], 'a thread read only in part is answered later');
+  const anonymous = replyForge(threadOf('R1-1'));
+  anonymous.forge.viewer = () => { throw new Error('down'); };
+  const result = answerThreads(replyStep(repliesState(closedEntry('R1-1')), anonymous.forge));
+  assert.deepEqual([result.unanswered, replies(anonymous.calls)], [['R1-1'], []]);
+  assert.deepEqual(result.reasons, { 'R1-1': 'the forge\'s current user could not be read' }, 'each unanswered id has its reason, as the result promises');
+  assert.equal(result.error, 'the forge\'s current user could not be read');
+});
+
+test('replies: after a repack, the finding no pass repeats closes as not reported again and its thread is answered', () => {
+  const state = { ...emptyState(7, 'o/r'), idCounter: 1, floored: true, rounds: [{ head: FROM, at: '2026-11-12T00:00:00.000Z' }], passes: {}, planNote: { head: TO, passes: Object.fromEntries(['slice:a', 'slice:b'].map((pass) => [pass, { stage: 'local', reviewer: 'code-reviewer', security: false }])) } };
+  const finding = { title: 'the slice finding', file: 'src/a.js', line: 2, severity: 'medium', likelihood: 'likely', affects: 'users', state: 'open' };
+  recordFindings(state, 'slice:a', { head: FROM, reviewer: 'code-reviewer', files: ['src/a.js'], list: [finding] }, { mint: true, kept: true });
+  const id = Object.keys(state.index)[0];
+  state.index[id].thread = { reviewId: 900, commentId: 1001 };
+  // The fix repacks the slices: slice:b covers the file now, and its result on the new head leaves the finding out.
+  const plan = [{ id: 'slice:b', reviewer: 'code-reviewer', stage: 'local', files: ['src/a.js', 'src/b.js'] }];
+  state.passes['slice:b'] = { head: TO, reviewer: 'code-reviewer', files: ['src/a.js', 'src/b.js'], list: [] };
+  recordFindings(state, null, null, { plan, complete: new Set([plan[0].stage]), head: TO, range: (seen, to) => ({ from: seen, to }) });
+  assert.equal(state.index[id].state, 'not_reported');
+  const threads = { 1001: { comments: [rootOf(id, { id: 1001 })] } };
+  const posts = replyForge(threads);
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual(result.replied, [id]);
+  assert.match(replies(posts.calls)[0][2], /^Not reported again in \[aaaaaaa\.\.\.bbbbbbb\]/mu);
+});
+
+test('fillThreads: an inline comment whose review was not read back gets its comment id from the marked posts; a review body`s finding keeps the review`s alone', () => {
+  const state = repliesState(closedEntry('R1-1', { thread: { reviewId: 900 } }), closedEntry('R1-2', { thread: { reviewId: 900 } }), closedEntry('R1-3', { thread: { reviewId: 901 } }));
+  const items = [
+    { kind: 'review', id: 900, login: VIEWER, member: true, markers: ['R1-1', 'R1-2'], starts: true },
+    { kind: 'review_comment', id: 1001, login: VIEWER, member: true, markers: ['R1-1'], starts: true, review: 900 },
+    { kind: 'review_comment', id: 1003, login: VIEWER, member: true, markers: ['R1-3'], starts: true, review: 900 },
+    { kind: 'review_comment', id: 1004, login: 'x', member: false, markers: ['R1-3'], starts: true, review: 901 },
+  ];
+  assert.deepEqual(fillThreads(state, items), ['R1-1']);
+  assert.deepEqual(['R1-1', 'R1-2', 'R1-3'].map((id) => state.index[id].thread), [{ reviewId: 900, commentId: 1001 }, { reviewId: 900 }, { reviewId: 901 }], 'a comment of another review, and one no member wrote, map nothing');
+  assert.deepEqual(fillThreads(state, null), []);
+  // readMarked keeps each review comment's review.
+  const read = readMarked({ reviews: () => [], reviewComments: () => [{ id: 5, body: ownBody('R1-1'), pull_request_review_id: 900, author_association: 'OWNER', user: { login: VIEWER } }] }, 'o/r', 7, []);
+  assert.equal(read.items[0].review, 900);
+});
+
+// ---- Fix pass 1: the delete reaches the engine's reply; a hand-resolved thread; a reply with no id ----
+
+const replyBody = (id, line = 'Fixed in aaaaaaa...bbbbbbb.') => [markerLine(id), attributionLine(id), line].join('\n');
+
+test('the delete reaches the engine`s reply: a closed finding marked security after its reply loses the reply, then its root, each checked first', () => {
+  const answered = () => securityState([{ id: 'R1-1', severity: 'high', state: 'fixed', thread: { reviewId: 900, commentId: 61, replied: true, replyId: 62, resolved: true } }]);
+  const comments = { 61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 }, 62: { kind: 'review_comment', body: replyBody('R1-1'), pr: 7 } };
+  const state = answered();
+  const { forge, calls } = deleteForge({ comments });
+  const out = sweep(forge, state);
+  assert.deepEqual(out.deleted.map((each) => each.id), [62, 61], 'the reply first, then the root');
+  assert.deepEqual(calls.filter(([name]) => name !== 'visibility' && name !== 'viewer'), [['read review_comment', 62], ['delete review_comment', 62], ['read review_comment', 61], ['delete review_comment', 61]], 'each read at the point of action before its delete');
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, replied: true, resolved: true }, 'both ids leave the thread; the marks stay, so no reply is posted again');
+  // Under "full" the reply holds no text of the finding, so it is spared, as a textless root is.
+  const full = answered();
+  const spared = deleteForge({ comments: { ...comments, 61: { kind: 'review_comment', body: [markerLine('R1-1'), attributionLine('R1-1'), '> what is wrong'].join('\n'), pr: 7 } } });
+  const kept = sweep(spared.forge, full, { publicSecurity: 'full' });
+  assert.deepEqual([kept.textless.map((each) => each.id), kept.deleted.map((each) => each.id)], [[62], [61]], 'the reply is spared, the root holding text goes');
+  assert.equal(full.index['R1-1'].thread.replyId, 62);
+  // A private repository keeps both.
+  const quiet = deleteForge({ comments, visibility: 'PRIVATE' });
+  assert.equal(sweep(quiet.forge, answered()), null);
+  assert.ok(!quiet.calls.some(([name]) => name.startsWith('delete') || name.startsWith('read')));
+  // A reply another member's login wrote waits for that machine; one with another id is left.
+  const other = deleteForge({ comments: { ...comments, 62: { kind: 'review_comment', body: replyBody('R1-1'), pr: 7, login: 'pat' } } });
+  const waiting = sweep(other.forge, answered());
+  assert.deepEqual([waiting.waiting.map((each) => [each.id, each.login]), waiting.deleted.map((each) => each.id)], [[[62, 'pat']], [61]]);
+});
+
+test('the delete reaches a marked reply of the current user that no record maps, as when a stale write lost its mark; another member`s waits', () => {
+  const state = securityState([{ id: 'R1-1', severity: 'high', state: 'fixed', thread: { reviewId: 900, commentId: 61 } }]);
+  const reply = (id, login = VIEWER) => ({ kind: 'review_comment', id, login, member: true, markers: ['R1-1'], starts: false, review: null });
+  const items = [{ kind: 'review_comment', id: 61, login: VIEWER, member: true, markers: ['R1-1'], starts: true, review: 900 }, reply(62), reply(63, 'pat')];
+  const comments = { 61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 }, 62: { kind: 'review_comment', body: replyBody('R1-1'), pr: 7 } };
+  const { forge } = deleteForge({ comments });
+  const out = sweep(forge, state, { items, mode: 'posted' });
+  assert.deepEqual(out.deleted.map((each) => each.id).sort(), [61, 62]);
+  assert.deepEqual(out.waiting, [{ finding: 'R1-1', kind: 'review_comment', id: 63, login: 'pat' }]);
+});
+
+test('replies: a thread someone resolved by hand gets its reply, the resolved mark from the read, and no resolve call', () => {
+  const state = repliesState(closedEntry('R1-1'));
+  const posts = replyForge({ 1001: { resolved: true, comments: [rootOf('R1-1')] } });
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([result.replied, result.resolved, result.unanswered, result.open], [['R1-1'], [], [], []], 'not listed as resolved by this step, nor unanswered');
+  assert.ok(!posts.calls.some(([name]) => name === 'resolve'), 'no resolve call');
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001, resolved: true });
+  // One a person resolved after replying in it: the reply still posts, and the read's resolved state is kept.
+  const other = repliesState(closedEntry('R1-1'));
+  const answered = replyForge({ 1001: { resolved: true, comments: [rootOf('R1-1'), { id: 1400, body: 'done', user: { login: 'someone' }, author_association: 'NONE' }] } });
+  const out = answerThreads(replyStep(other, answered.forge));
+  assert.deepEqual([out.replied, out.resolved, out.open, out.unanswered], [['R1-1'], [], [], []]);
+  assert.equal(other.index['R1-1'].thread.resolved, true);
+  assert.ok(!answered.calls.some(([name]) => name === 'resolve'));
+});
+
+test('replies: a reply the forge answers with no id is not marked; the next step finds it on the thread with its id and posts none', () => {
+  const state = repliesState(closedEntry('R1-1'));
+  const posts = replyForge(threadOf('R1-1'));
+  const post = posts.forge.replyToReviewComment;
+  posts.forge.replyToReviewComment = (...args) => {
+    post(...args);
+    return {};
+  };
+  const first = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([first.replied, first.unanswered], [[], ['R1-1']]);
+  assert.equal(state.index['R1-1'].thread.replied, undefined);
+  assert.ok(!posts.calls.some(([name]) => name === 'resolve'));
+  const next = replyForge(posts.threads);
+  const second = answerThreads(replyStep(state, next.forge));
+  assert.deepEqual([replies(next.calls), second.resolved, second.unanswered], [[], ['R1-1'], []]);
+  assert.deepEqual(state.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001, resolved: true });
+});
+
+test('replies: a thread the lookup misses while the step`s read still holds its root is unanswered with a reason; a root that read no longer holds is left', () => {
+  const root = { kind: 'review_comment', id: 1001, login: VIEWER, member: true, markers: ['R1-1'], starts: true, review: 900 };
+  const missed = replyForge({});
+  const result = answerThreads(replyStep(repliesState(closedEntry('R1-1')), missed.forge, { items: [root] }));
+  assert.deepEqual([result.unanswered, result.left], [['R1-1'], []]);
+  assert.match(result.reasons['R1-1'], /no thread was found/u);
+  const unread = answerThreads({ ...replyStep(repliesState(closedEntry('R1-1')), replyForge({}).forge), marked: { error: 'down' } });
+  assert.deepEqual([unread.unanswered, unread.left], [['R1-1'], []], 'with no read of the review comments, the step cannot tell it is gone, and tries again');
+  const gone = answerThreads(replyStep(repliesState(closedEntry('R1-1')), replyForge({}).forge, { items: [] }));
+  assert.deepEqual([gone.unanswered, gone.left, gone.reasons], [[], ['R1-1'], undefined], 'a root the read no longer holds is gone');
+  const failing = replyForge(threadOf('R1-1'), { failResolve: true });
+  assert.deepEqual(answerThreads(replyStep(repliesState(closedEntry('R1-1')), failing.forge)).reasons, { 'R1-1': 'the resolve failed' }, 'every unanswered id has its reason');
 });

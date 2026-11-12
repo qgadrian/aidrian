@@ -1355,6 +1355,16 @@ test('each flow runs product feedback after its draft opens, and status and its 
   assert.match(skill('autopilot/SKILL.md'), /each open product choice of the pull request's product feedback, with its command, and that this machine opted out/u);
 });
 
+test('pr-review-loop runs the step once more for unanswered engine replies, and none for a thread another machine posted', () => {
+  // The step answers the engine's own threads (lib/review/inline.mjs answerThreads); the loop only reads its lists.
+  const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
+  assert.match(loop, /^\| `received` with `replies\.unanswered` \| run it once more; report what is left \|$/mu);
+  assert.match(loop, /^\| `replies\.waiting` \| run nothing for it; report each thread as waiting on its `login`'s machine \|$/mu);
+  const plan = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/references/review-plan.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(plan, /Never answer or resolve an engine thread yourself/u);
+  assert.match(plan, /`replies\.waiting` \(`\{ finding, login \}`\): .*Run no extra step for it/u);
+});
+
 test('pr-review-loop skips the product feedback comment the gh user wrote, by the marker post writes', () => {
   const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   const collect = loop.slice(loop.indexOf('## 2. Collect'), loop.indexOf('## 3. Triage'));

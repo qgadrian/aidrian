@@ -35,9 +35,9 @@ Act on `status`, then run it again, until it stops:
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
 | `running`, `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
 | `received`, `none_needed` | copy `residuals` to the body's Accepted residuals; step 2 for comments people or the bot left, then step 7 |
-| `extension_check` | run `dispatch[0]`, the judge, briefed with `extension`; record its verdict with its `record` |
-| `extension_ask` | ask the Human `question` with AskUserQuestion and `options`; record the answer with `record` |
-| `blocked_quota` | ask `question` with AskUserQuestion and `options`; run the pick's `run` |
+| `received` with `replies.unanswered` | run it once more; report what is left |
+| `replies.waiting` | run nothing for it; report each thread as waiting on its `login`'s machine |
+| `extension_check`, `extension_ask`, `blocked_quota` | run the judge, or ask the Human `question`, as `references/review-plan.md` says |
 | `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit` | stop: report it and ask the Human |
 
 With `--await-codex`, run `aidrian pr review <n> --with-bot`: the bot reviews each head alongside local passes and CI, awaited last.

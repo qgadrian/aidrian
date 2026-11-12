@@ -35,7 +35,7 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
 import { residualRows } from './publish.mjs';
-import { answerThreads, engineLists, postInline } from './inline.mjs';
+import { answerThreads, engineLists, mergeDeletes, postInline } from './inline.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
@@ -195,6 +195,10 @@ function finish(s, status, extra) {
   answerRequests(s);
   noteFindings(s, extra);
   const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+  // A security mark this step set itself, after its first sweep (an exec pass's findings, the plan note, the ids given
+  // late, each through the twin rule), is deleted for in this same step, before anything posts or the record is written:
+  // the same sweep, over the step's final record, skipping every comment the first one dealt with.
+  if (typeof s.sweep === 'function') s.deletes = mergeDeletes(s.deletes, s.sweep(state, onPr ? 'posted' : 'local', s.deletes));
   // A step that hands findings back as open posts its new blocking ones as one review on the head (review.publish.inline),
   // and notes where each went in the finding index before the record is written.
   if (s.onPr && Array.isArray(extra.open)) {

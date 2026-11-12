@@ -16,7 +16,7 @@ import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, rou
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
-import { answerThreads, deleteOwn, fillThreads, raiseFloor, readMarked } from './inline.mjs';
+import { answerThreads, deleteOwn, fillThreads, handledKeys, raiseFloor, readMarked } from './inline.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
 import { closingRange, postContext } from './dispatch.mjs';
 import * as quota from './quota.mjs';
@@ -130,7 +130,12 @@ export async function prepareStep(s) {
   // before either stop below, whatever review.publish.inline, the local file, and review.record say, under either value
   // of the team's publicSecurity, which the local file cannot change: "full" spares only a post that holds no text.
   const publicSecurity = committed.review?.publish?.publicSecurity ?? 'counts';
-  const sweep = (record, mode) => deleteOwn({ forge, repo, n, state: record, items: marked?.items ?? null, mode, publicSecurity });
+  // The repository's visibility, read once a step for both sweeps; a read that failed is tried again.
+  let visibility;
+  const readVisibility = () => (visibility ??= forge.visibility(repo));
+  const sweep = (record, mode, before = null) => deleteOwn({ forge, repo, n, state: record, items: marked?.items ?? null, mode, publicSecurity, done: handledKeys(before), readVisibility });
+  // The same sweep runs again when the step finishes (run.mjs finish), for a mark the step itself set after this one.
+  s.sweep = sweep;
   const summary = summaryToEdit(comments, () => forge.viewer());
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) {

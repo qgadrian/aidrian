@@ -161,13 +161,15 @@ function unmap(state, kind, id) {
 
 // Deletes the engine's own inline comment, its reply in that thread, or its fallback comment of each security-marked id
 // of `state` (G4, H1, J2, K2), on a repository that does not read as PRIVATE, under either publicSecurity value,
-// whatever review.publish.inline, the local file, and review.record say: a delete removes and never posts. Under "counts" every such comment goes, since even
-// one with its text withheld shows the finding's place. Under "full" a place may show, so a comment whose section of
+// whatever review.publish.inline, the local file, and review.record say: a delete removes and never posts. Under
+// "counts" every such comment goes, since even one with its text withheld shows the finding's place. Under "full" a place may show, so a comment whose section of
 // that finding holds no reviewer text, as postInline posts a security finding there, is spared and listed as
 // `textless`; one posted with its text before the mark goes. `mode` is "posted" (the record is on the pull request),
 // "local" (review.record "local": the comments the record maps alone), or "held" (a held record: this machine's own
 // record alone, and no change to it, since no record is written there). `items` is readMarked's, null when it failed or
-// was not made.
+// was not made. `done` holds the comments, as `<kind>:<id>`, an earlier sweep of the same step settled whichever ids
+// are security (handledKeys): none of them is read or listed again. `readVisibility` reads the repository's visibility, by default
+// through the forge; a step passes one that keeps its first answer, so its second sweep reads it no second time.
 // Candidates: each comment the record maps to such an id, the reply first, then the root, then the fallback comment, less
 // one a whole read (`items`) no longer holds, which is gone and gets no call; and where the record is posted, each review
 // comment, a thread's root or a reply in it, or conversation comment the forge's current user wrote whose leading markers
@@ -180,7 +182,7 @@ function unmap(state, kind, id) {
 // leave `items` too, so the rest of the step reads neither: no fresh id for its markers, and no list names it.
 // Returns null when nothing was a candidate, else { deleted, waiting, left, failed, gone, textless, unmapped_unread }, each
 // list of { finding, kind, id } (`login` on a waiting one).
-export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity = 'counts' }) {
+export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity = 'counts', done = null, readVisibility = () => forge.visibility(repo) }) {
   if (!isObject(state)) return null;
   const secure = securityIds(state);
   if (!secure.size) return null;
@@ -198,7 +200,7 @@ export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity =
   for (const entry of entries(state)) {
     if (!idsOf(entry).some((id) => secure.has(id)) || !isObject(entry.thread)) continue;
     for (const [kind, id] of [[KINDS.reviewComment, entry.thread.replyId], [KINDS.reviewComment, entry.thread.commentId], [KINDS.comment, entry.thread.fallbackId]]) {
-      if (!Number.isSafeInteger(id)) continue;
+      if (!Number.isSafeInteger(id) || done?.has(`${kind}:${id}`)) continue;
       if (whole && !present.has(`${kind}:${id}`)) {
         out.gone.push({ finding: entry.id, kind, id });
         drop(kind, id);
@@ -210,13 +212,13 @@ export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity =
   }
   const mapped = mappedPosts(state);
   const unmapped = mode === 'posted' && whole ? memberMarked(items).filter((item) => item.kind !== KINDS.review
-    && !mapped.has(`${item.kind}:${item.id}`) && item.markers.some((id) => secure.has(id))) : [];
+    && !mapped.has(`${item.kind}:${item.id}`) && !done?.has(`${item.kind}:${item.id}`) && item.markers.some((id) => secure.has(id))) : [];
   if (mode === 'posted' && !whole) out.unmapped_unread = true;
   if (!candidates.length && !unmapped.length) return out.gone.length || out.unmapped_unread ? out : null;
 
   let visibility = null;
   try {
-    visibility = forge.visibility(repo);
+    visibility = readVisibility();
   } catch {}
   if (visibility === 'PRIVATE') return out.gone.length || out.unmapped_unread ? out : null;
   let viewer = null;
@@ -260,6 +262,35 @@ export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity =
     if (!held) unmap(state, kind, id);
   }
   return out;
+}
+
+// The lists a delete result holds, each of { finding, kind, id }.
+const DELETE_LISTS = ['deleted', 'waiting', 'left', 'failed', 'gone', 'textless'];
+
+// The lists whose comments a sweep settled whichever ids are security: deleted, gone, one whose delete failed (the next
+// step tries again), and another member's. A comment spared as `textless`, or `left`, was judged against the ids that
+// were security then: a mark the step sets later may name another finding it holds, so a later sweep reads it again.
+const SETTLED_LISTS = ['deleted', 'gone', 'failed', 'waiting'];
+
+// The comments a delete result settled, as `<kind>:<id>`: what a later sweep of the same step passes as `done`.
+export const handledKeys = (out) => new Set(SETTLED_LISTS.flatMap((key) => (Array.isArray(out?.[key]) ? out[key] : [])).map((each) => `${each.kind}:${each.id}`));
+
+// Two delete results of one step as one, `b` the later: each list joined, and `unmapped_unread` when either says so.
+// Null when both are. A comment the later sweep lists counts as it says there, so one textless or left in the first
+// and deleted in the second is listed as deleted alone; and a list names a comment once for each finding.
+export function mergeDeletes(a, b) {
+  if (!a || !b) return a ?? b ?? null;
+  const key = (each) => `${each.kind}:${each.id}`;
+  const later = new Set(DELETE_LISTS.flatMap((name) => (b[name] ?? []).map(key)));
+  const deleted = new Set([...(a.deleted ?? []), ...(b.deleted ?? [])].map(key));
+  const out = Object.fromEntries(DELETE_LISTS.map((name) => {
+    const seen = new Set();
+    const joined = [...(a[name] ?? []).filter((each) => !later.has(key(each))), ...(b[name] ?? [])]
+      .filter((each) => name === 'deleted' || !deleted.has(key(each)))
+      .filter((each) => !seen.has(`${key(each)}:${each.finding}`) && seen.add(`${key(each)}:${each.finding}`));
+    return [name, joined];
+  }));
+  return a.unmapped_unread || b.unmapped_unread ? { ...out, unmapped_unread: true } : out;
 }
 
 // A line that is exactly the attribution line of some finding id: the only line that ends a finding's section.

@@ -324,8 +324,10 @@ function checkout(t, salt = '') {
 }
 
 // A record that holds every key the allowlist names and keys it leaves out, with S in every string a reviewer, a judge,
-// the Human, or the author supplied, and T in a verdict's flow and invariant and in an attest's pass and reviewer.
-function sentinelRecord(head) {
+// the Human, or the author supplied, and T in a verdict's flow and invariant and in an attest's pass and reviewer. With
+// `index`, it also holds the finding index the later slices write (indexEntries), and an extra round's drifting evidence
+// that names its security finding.
+function sentinelRecord(head, { index = false } = {}) {
   const finding = (id, over = {}) => ({ id, mint: `0000000${id.at(-1)}`, title: `${S} title`, body: `${S} body`, evidence: `${S} evidence`, file: 'src/a.js', line: 3, severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open', disposition: 'fix_now', extra_key: S, ...over });
   const pass = 'engine:codex-local';
   return {
@@ -359,35 +361,83 @@ function sentinelRecord(head) {
     extensions: [{
       source: 'plan', round: 2, head, at: ISO, status: 'granted', by: 'human', reasons: [`${S} extension`], red_flags: [`looping: ${S}`],
       judge: { verdict: 'extend', reason: `${S} judge`, head, at: ISO }, human: { answer: 'approve', by: `${S} human`, session: `${S} session`, at: ISO },
-      signals: { converging: true, looping: true, drifting: null, bloating: null, unknown: [], evidence: { looping: [{ round: 2, earlier_round: 1, id: 'R1-1', file: 'src/a.js', line: 3, title: `${S} title`, match: 'place' }] } },
+      signals: { converging: true, looping: true, drifting: null, bloating: null, unknown: [], evidence: { looping: [{ round: 2, earlier_round: 1, id: 'R1-1', file: 'src/a.js', line: 3, title: `${S} title`, match: 'place' }], ...(index ? { drifting: [{ round: 2, earlier_round: 1, id: 'R1-5', file: 'src/b.js', line: 11, match: 'id' }] } : {}) } },
     }],
+    ...(index ? { idCounter: 9, index: indexEntries(head) } : {}),
+  };
+}
+
+// The finding index as S1b, S3, and S4 write it, with S and T in every key they add: an open entry (R1-1, the control,
+// which keeps its place), an accepted one, a fixed one, a high security finding closed and replied to (R1-4) and its
+// medium twin, open, one line on (R1-5), and an entry under a key named S. Each has its own title and alias, so the twin
+// rule ties only the pair it should. Every thread key is there, beside one the allowlist does not name.
+function indexEntries(head) {
+  const pass = 'engine:codex-local';
+  const thread = (base) => ({ reviewId: base, commentId: base + 1, fallbackId: base + 2, replyId: base + 3, replied: true, resolved: true, note: S, [T]: 1 });
+  const entry = (id, title, over = {}) => {
+    const n = Number(id.split('-')[1]);
+    return {
+      id, mint: `0000000${n}`, title: `${S} ${title}`, file: 'src/a.js', line: 3, severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open',
+      disposition: 'fix_now', pass, stage: 'independent', reviewer: `${S} reviewer`, seen: head, placed: head, aliases: [`R2-${n}`, `${S} alias`, T],
+      thread: thread(100 * n), extra_key: S, ...over,
+    };
+  };
+  return {
+    'R1-1': entry('R1-1', 'title'),
+    'R1-2': entry('R1-2', 'title', { state: 'accepted', disposition: 'acceptable_as_is', accepted_by: 'late-round', severity: 'low', line: 20 }),
+    'R1-6': entry('R1-6', 'a closed one', { state: 'fixed', closed_in: { from: head, to: head }, line: 36 }),
+    'R1-4': entry('R1-4', 'the key leaks', { severity: 'high', file: 'src/b.js', line: 10, state: 'fixed', closed_in: { from: head, to: head } }),
+    'R1-5': entry('R1-5', 'another wording entirely', { file: 'src/b.js', line: 11 }),
+    [S]: entry('R1-7', 'under a key of its own', { line: 38 }),
   };
 }
 const plan = (head) => ({ head, depth: 'single', reasons: ['rule 1: single'], engine: { name: 'codex-local', reason: 'auto' }, flows: [{ id: 'booking', signed: false, humanSigned: false, signoff: 'reviewer' }] });
 // Every way a write ends in withRecord: the step's fresh summary, and every other writer's edit of the earlier body.
-function writes(state, head, post) {
-  const earlier = summaryBody(sentinelRecord(head), plan(head), 'fix_required', { reading: PRIVATE_READING, checker: { allows: () => true } });
+function writes(state, head, post, options = {}) {
+  const earlier = summaryBody(sentinelRecord(head, options), plan(head), 'fix_required', { reading: PRIVATE_READING, checker: { allows: () => true }, publish: post.publish });
   const comments = [{ id: 1, body: earlier, author_association: 'MEMBER' }];
   assert.equal(publishState(state, { comments: () => comments, post: () => assert.fail('the comment is edited'), edit: (id, body) => (comments[id - 1].body = body) }, 'x', post), null);
   return [['the step`s summary', summaryBody(state, plan(head), 'fix_required', post)], ['an edit of an earlier body that held the text', comments[0].body], ['a new comment', summaryBody(state, null, 'x', post)]];
 }
 
+// The posted copy's checks, over the record with no index and with every key the five slices write, the findings
+// table off and on under both publicSecurity values.
+const SENTINEL_CASES = [
+  ['no index', {}, undefined],
+  ...['counts', 'full'].map((publicSecurity) => [`the finding index, findings table on, publicSecurity ${publicSecurity}`, { index: true }, { summary: 'findings', publicSecurity }]),
+];
+
 test('the posted copy: on any reading but PRIVATE from inside the team, no free text, no unlisted key, and no name the plan does not define', (t) => {
   const { root, head } = checkout(t);
-  for (const [label, reading] of NOT_PRIVATE) {
-    const state = sentinelRecord(head);
-    const post = reading === undefined ? {} : { reading, checker: checker(), root, names: [] };
-    for (const [how, body] of writes(state, head, post)) {
-      const record = stateFromComment(body, 7);
-      const visible = body.split('\n').filter((line) => !line.startsWith('<!-- aidrian-review-state')).join('\n');
-      for (const [name, value] of [['S', S], ['T', T]]) {
-        assert.ok(!visible.includes(value), `${label}, ${how}: ${name} in the visible body`);
-        assert.ok(!JSON.stringify(record).includes(value), `${label}, ${how}: ${name} in the decoded record`);
+  for (const [variant, options, publish] of SENTINEL_CASES) {
+    for (const [label, reading] of NOT_PRIVATE) {
+      const state = sentinelRecord(head, options);
+      const base = publish ? { publish, compareUrl: () => `https://github.com/o/r/compare/${head}...${head}` } : {};
+      const post = reading === undefined ? base : { ...base, reading, checker: checker(), root, names: [] };
+      for (const [how, body] of writes(state, head, post, options)) {
+        const at = `${variant}, ${label}, ${how}`;
+        const record = stateFromComment(body, 7);
+        const visible = body.split('\n').filter((line) => !line.startsWith('<!-- aidrian-review-state')).join('\n');
+        for (const [name, value] of [['S', S], ['T', T]]) {
+          assert.ok(!visible.includes(value), `${at}: ${name} in the visible body`);
+          assert.ok(!JSON.stringify(record).includes(value), `${at}: ${name} in the decoded record`);
+        }
+        assert.ok(!/unknown_key|extra_key|"note"/u.test(JSON.stringify(record)), `${at}: a key the allowlist does not name`);
+        assert.equal(record.revision, 5, `${at}: the engine keys are there`);
+        assert.match(visible, /round_cap on `[0-9a-f]{7}`: waive by code-reviewer \(an audit entry/u, `${at}: the waiver line keeps kind, head, verdict, and judge`);
+        assert.match(visible, /- round 2 on `[0-9a-f]{7}`: granted by the Human \(an audit entry, not proof\) \(over red flags: looping\)/u, `${at}: the extra rounds line`);
+        if (!options.index) continue;
+        // The well-formed values of the keys the later slices added are posted, and nothing else of them.
+        assert.deepEqual(record.index['R1-1'].thread, { reviewId: 100, commentId: 101, fallbackId: 102, replyId: 103, replied: true, resolved: true }, `${at}: the thread keeps its ids and marks alone`);
+        assert.deepEqual(record.index['R1-1'].aliases, ['R2-1'], `${at}: an alias that is a finding id alone`);
+        assert.equal(record.index['R1-5'].security, true, `${at}: the twin of a security finding posts its mark`);
+        assert.equal(record.index['R1-6'].title, undefined, `${at}: a closed entry posts no title`);
+        if (how !== 'a new comment') assert.ok(visible.includes('**Findings:**'), `${at}: the findings table is on`);
+        if (publish.publicSecurity === 'counts') {
+          assert.ok(!JSON.stringify(record).includes('src/b.js') && !visible.includes('src/b.js'), `${at}: a security finding and its twin post no place, in the index, the table, or the drifting evidence`);
+          if (reading?.visibility === 'PUBLIC') assert.equal(record.index['R1-1'].file, 'src/a.js', `${at}: the control keeps its place`);
+        }
       }
-      assert.ok(!/unknown_key|extra_key/u.test(JSON.stringify(record)), `${label}, ${how}: a key the allowlist does not name`);
-      assert.equal(record.revision, 5, `${label}, ${how}: the engine keys are there`);
-      assert.match(visible, /round_cap on `[0-9a-f]{7}`: waive by code-reviewer \(an audit entry/u, `${label}, ${how}: the waiver line keeps kind, head, verdict, and judge`);
-      assert.match(visible, /- round 2 on `[0-9a-f]{7}`: granted by the Human \(an audit entry, not proof\) \(over red flags: looping\)/u, `${label}, ${how}: the extra rounds line`);
     }
   }
 });
@@ -420,6 +470,17 @@ test('the posted copy: names by value, from the plan note, the config, and the e
 
 test('the posted copy on a private repository from inside the team: the text is there, less every string a check withholds', (t) => {
   const { root, head } = checkout(t);
+  // With the finding index: T in a thread key, an alias, and the index is withheld; the well-formed values stay.
+  for (const publicSecurity of ['counts', 'full']) {
+    const post = { reading: PRIVATE_READING, checker: checker(), root, names: [], publish: { summary: 'findings', publicSecurity } };
+    for (const [how, body] of writes(sentinelRecord(head, { index: true }), head, post, { index: true })) {
+      const record = stateFromComment(body, 7);
+      assert.ok(!JSON.stringify(record).includes(T) && !body.includes(T), `${publicSecurity}, ${how}: T withheld`);
+      assert.ok(JSON.stringify(record).includes(S), `${publicSecurity}, ${how}: the free text is posted on a private repository`);
+      assert.deepEqual(record.index['R1-1'].aliases.filter((each) => !each.includes(S)), ['R2-1'], `${publicSecurity}, ${how}: the alias that is an id stays`);
+      assert.equal(record.index['R1-1'].thread.replyId, 103, `${publicSecurity}, ${how}: the thread ids stay`);
+    }
+  }
   const state = sentinelRecord(head);
   const local = `${homedir()}/notes/secret.txt`;
   const token = 'ghp_abcdefghijklmnopqrstuvwxyz0123';
@@ -677,6 +738,7 @@ test('the posted copy with the finding index: no title in the index or in a refu
     for (const [how, body] of writes(state, head, post)) {
       const record = stateFromComment(body, 7);
       assert.ok(!JSON.stringify(record).includes(S), `${label}, ${how}: S in the decoded record`);
+      assert.ok(!JSON.stringify(record).includes(T), `${label}, ${how}: T in the decoded record`);
       assert.ok(record.index[refused.id], `${label}, ${how}: the entry is posted by its id`);
       assert.ok(!('reviewer' in record.index[refused.id]), `${label}, ${how}: the recording reviewer stays local`);
     }

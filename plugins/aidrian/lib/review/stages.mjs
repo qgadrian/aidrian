@@ -16,7 +16,7 @@ import { HARNESS_FLOW } from './plan.mjs';
 import * as quota from './quota.mjs';
 import { captureKeys } from './visual.mjs';
 import { inBaseWorktree } from './base-worktree.mjs';
-import { captureAndAttach, dispatchFor, passInput } from './dispatch.mjs';
+import { captureAndAttach, closingRange, dispatchFor, listedFor, passInput, planPasses } from './dispatch.mjs';
 import { refusedAtHead } from './in-force.mjs';
 
 export const MAX_ATTEMPTS = 3;
@@ -169,6 +169,8 @@ export async function runStages(s) {
         }
         // Codex reads the checkout at the head; a project's own reviewer runs as the base has it, and reads the head
         // through git (its input names both commits).
+        // What each pass's input lists, kept for its write: the only ids a finding it returns may take.
+        const listed = new Map(execs.map((pass) => [pass.id, listedFor(s, pass)]));
         const run = (tree) => Promise.all(execs.map((pass) => {
           const reviewer = map[pass.reviewer];
           const started = Date.now();
@@ -198,7 +200,7 @@ export async function runStages(s) {
             head, reviewer: pass.reviewer, seconds, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
-          }, { mint: state.floored === true, securityPass: state.planNote?.passes?.[pass.id]?.security === true, paths: s.paths.at(head) });
+          }, { mint: state.floored === true, securityPass: state.planNote?.passes?.[pass.id]?.security === true, paths: s.paths.at(head), listed: listed.get(pass.id), plan: planPasses(plan), stage: stage.name, reviewer: pass.reviewer, range: closingRange(root, s.base) });
           recorded = true;
         }
         const outOfQuota = outcomes.find(([, outcome]) => outcome.status === 'quota');
@@ -246,12 +248,17 @@ export async function runStages(s) {
       if (agents.length) {
         recorded = true;
         if (visualEntries.length && agents.some(isVisual) && s.manifest?.status !== 'captured') await captureAndAttach(s);
-        // What each dispatched pass covers, so its attest records the same files, and its stage and whether the head's
-        // plan requires the security reviewer for it, which its attest's findings take (findings.mjs recordFindings).
-        state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, stage: stage.name, security: state.planNote?.passes?.[pass.id]?.security === true }])) };
-        return finish('dispatch', { stage: stage.name, dispatch: agents.map((pass) => dispatchFor(s, pass, stage)) });
+        // What each dispatched pass covers, so its attest records the same files, its stage and whether the head's plan
+        // requires the security reviewer for it, which its attest's findings take, the delta base its input named, and
+        // the ids it listed, the only ids a finding it returns may take (findings.mjs recordFindings).
+        const dispatch = agents.map((pass) => dispatchFor(s, pass, stage));
+        state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass, i) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, stage: stage.name, security: state.planNote?.passes?.[pass.id]?.security === true, base: dispatch[i].base, listed: listedFor(s, pass) }])) };
+        return finish('dispatch', { stage: stage.name, dispatch });
       }
     }
+    // Every pass of this stage has its result: what the stages whose every pass has one left out closes as not reported
+    // again, through the one writer of finding ids (findings.mjs recordFindings).
+    recordFindings(state, null, null, { plan: planPasses(plan), head, complete: new Set(plan.stages.filter((each) => each.passes.every((pass) => resultFor(pass))).map((each) => each.name)), range: closingRange(root, s.base) });
     if (runOnly) continue;
     const open = stage.passes.map((pass) => [pass, resultFor(pass)]).filter(([, result]) => result?.open > 0);
     const unsigned = plan.flows.filter((flow) => stage.passes.some((pass) => (pass.flows ?? []).includes(flow.id))).map((flow) => [flow, flowStatus(flow)]).filter(([, status]) => !status.signed);

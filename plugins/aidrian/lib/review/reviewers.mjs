@@ -19,7 +19,7 @@ import { flagged } from './findings.mjs';
 import { offeredCarried, settledBrief, settledEntries, splitRuled } from './settled.mjs';
 
 // The schema Codex is held to strictly, with --output-schema. A project's exec reviewer prints the same shape, and
-// cleanOutput lets it leave out `already_ruled`, `security`, and `body`, and keeps no other key.
+// cleanOutput lets it leave out `id`, `already_ruled`, `security`, and `body`, and keeps no other key.
 export const FINDINGS_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
@@ -33,8 +33,11 @@ export const FINDINGS_SCHEMA = Object.freeze({
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['file', 'line', 'title', 'body', 'severity', 'already_ruled', 'security'],
+        required: ['id', 'file', 'line', 'title', 'body', 'severity', 'already_ruled', 'security'],
         properties: {
+          // Empty for a new finding, else the `id` of the priorFindings entry it reports again: the engine checks it
+          // (findings.mjs recordFindings), so a reworded repeat keeps its id.
+          id: { type: 'string' },
           file: { type: 'string' },
           line: { type: 'integer' },
           title: { type: 'string' },
@@ -153,7 +156,11 @@ export function cleanOutput(raw) {
       return [];
     }
     // A `security` value that is not a boolean counts as true: the flag only ever withholds more.
-    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity, ...(flagged(finding.security) ? { security: true } : {}) };
+    // A returned `id` is kept apart, as `returned_id`, for recordFindings to check: it never becomes the finding's id
+    // unchecked. An empty one is a new finding's, and any value but a string is read as no id, noted.
+    if (finding.id !== undefined && typeof finding.id !== 'string') dropped.push(`findings[${i}].id is not a string: read as no id`);
+    const returned = typeof finding.id === 'string' && finding.id !== '' ? { returned_id: finding.id } : {};
+    const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity, ...(flagged(finding.security) ? { security: true } : {}), ...returned };
     if (typeof finding.already_ruled === 'string') return [{ ...kept, already_ruled: finding.already_ruled }];
     // A bad `already_ruled` never loses the finding: it is read as a new one.
     if (finding.already_ruled !== undefined) dropped.push(`findings[${i}].already_ruled is not a string: kept as a new finding`);
@@ -168,6 +175,10 @@ export function cleanOutput(raw) {
   const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
   return { findings, verdicts, contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes), dropped, valid: true };
 }
+
+// How a reviewer names a finding it reports again: by the id of its priorFindings entry, so the review keeps one id for
+// one problem, however the reviewer words it the second time.
+export const ID_BRIEF = 'A `priorFindings` entry with an `id` is a finding this review already raised. When you report the same problem again, reworded or not, set the finding\'s `id` to that entry\'s `id`, verbatim. Set `id` to an empty string on every other finding.';
 
 // What a flow verdict means, whatever the wording of the invariant's question: a reviewer must not map yes or no to a
 // verdict, because a question phrased so that yes is the breach would invert holds and violated.
@@ -200,6 +211,7 @@ export function reviewPrompt(input, prefix = '') {
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
     'Set `security` to true on a finding that is a security problem, such as a leak, an injection, or a broken access check, and to false on every other finding.',
+    ID_BRIEF,
     settledBrief(settledEntries(input)),
     input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
     input.flows.length ? `For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers' verdicts are listed: challenge every "holds" you cannot confirm yourself. Where an invariant has a \`source\`, the section of the project doc it cites, judge against that source: \`text\` is only the question. ${VERDICT_MEANING}` : '',

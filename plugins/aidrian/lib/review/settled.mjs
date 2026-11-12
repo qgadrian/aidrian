@@ -67,6 +67,11 @@ export function settledEntries(input) {
 // A recorded finding without the engine's own keys, as a pass input carries it: its id, mint mark, the id it repeats,
 // and its marks stay on the record, and no reviewer is shown a mark it could copy.
 export const inputCopy = ({ id: _id, mint: _mint, ruled_id: _ruled, aliases: _aliases, security: _security, ...finding }) => finding;
+// A finding as the pass's input shows it, with its id first only when `listed`, the ids the finding index lists to the
+// pass (dispatch.mjs listedFor), holds it: exactly the ids a finding it returns may take (findings.mjs recordFindings),
+// so the reviewer is never shown an id the check would refuse. Any other finding is context, with no id. Nothing else
+// of the engine's keys.
+export const idCopy = (finding, listed = new Set()) => ({ ...(isFindingId(finding?.id) && listed.has(finding.id) ? { id: finding.id } : {}), ...inputCopy(finding) });
 
 // One recorded finding as an exec pass reads it for context (contextFindings). An accepted one also loses the words that
 // say so, `accepted_by` and a disposition that can be accepted; a fix_now stays, since the finding still has to be fixed.
@@ -82,9 +87,12 @@ function contextCopy({ state, already_ruled: _ruled, carried: _carried, residual
 // Recorded findings as an exec pass reads them for context: copies with nothing on them that settledEntries or
 // offeredCarried reads as settled, or that reads as an acceptance in the prompt, so a repeat is waived only by what
 // recordSettled, with its record-wide checks, offers. A `state` of fixed or open stays: it settles nothing, and tells the
-// reviewer where the finding stands.
-export function contextFindings(findings) {
-  return findings.filter(isObject).map((finding) => contextCopy(inputCopy(finding)));
+// reviewer where the finding stands. One whose id `listed` holds keeps it (idCopy), which the reviewer returns on a repeat.
+export function contextFindings(findings, listed = new Set()) {
+  return findings.filter(isObject).map((finding) => {
+    const { id, ...copy } = idCopy(finding, listed);
+    return { ...(id ? { id } : {}), ...contextCopy(copy) };
+  });
 }
 
 // The prompt's rule for settled findings. It names the input's fields, never their texts: those stay in the JSON input,

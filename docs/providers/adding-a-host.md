@@ -167,6 +167,11 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url, { host })`, which says whether a URL on the pull request's host is one of its comments, reviews, or review comments, found by its id.
 - Commits: `commit`, `checkRuns`, `compare`, `deployments` of one commit and `deploymentStatuses` of one deployment,
   and `uploadImages` for a pull request's captures.
+- Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
+  summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
+  identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,
+  so a GitHub Enterprise repository links to its own host. It returns null for anything else, and for a read that
+  fails: the table then shows the two short SHAs as text.
 
 `repoIdentity(value)` is no method: it reads a remote URL or a `-R` value to `{ host, path }` before any forge is chosen,
 so it lives in `lib/forges/identity.mjs`, and an adapter neither implements nor carries it.

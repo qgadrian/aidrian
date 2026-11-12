@@ -35,19 +35,24 @@ only after its answer, so the pull request stays a draft until the bot is clean.
   and have it open the files. `status` other than `captured` (no base URL, no Playwright) means review from code,
   except that entries with `ingested: true` (images taken outside the tool, with a `source` and no facts) are opened
   and may be cited as `capture:<key>` too.
-- `record`: the command that records the pass. `--findings` is what the agent found, `--fixed` what was fixed in a
-  pushed commit, `--accepted` what was dispositioned another way (step 3). Pipe the agent's final JSON to `record`
-  as it is, with `--verdicts -` in place of the file, and never retype a verdict; `--verdicts FILE` still reads a file.
-  When `record` asks for `--findings-file` instead, the agent writes each finding with its axes and state, and the
-  disposition table decides what stays open (`aidrian pr disposition --vocab` lists the words):
+- `record`: the command that records the pass, `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who>
+  --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json`, with `--verdicts <file.json>` when the pass judges flows. The step names that file
+  under the state folder, outside every checkout, so the findings' text is never committed: write it there. Pipe the agent's final
+  JSON to `record` as it is, with `--verdicts -` in place of the file, and never retype a verdict; `--verdicts FILE`
+  still reads a file. The agent writes each finding to the findings file with its axes and state, and the disposition
+  table decides what stays open, not the agent's count (`aidrian pr disposition --vocab` lists the words):
 
   ```json
-  [{ "title": "Label clipped at 360px", "file": "src/app/x.tsx", "line": 4, "severity": "medium", "likelihood": "routine", "affects": "users", "state": "open" }]
+  [{ "id": "", "title": "Label clipped at 360px", "file": "src/app/x.tsx", "line": 4, "severity": "medium", "likelihood": "routine", "affects": "users", "cost": "trivial", "state": "open" }]
   ```
 
   `state` is `open`, `fixed` (in a pushed commit), or `accepted`. A fix_now finding cannot be accepted, and one
-  without likelihood and affects stays open until it has them. Add `"security": true` to a security problem; the engine
-  then keeps its text and place off a pull request that is not private. Write no `id`: the engine gives each one.
+  without likelihood and affects stays open until it has them; give `cost` too, since a trivial fix is fix_now. Add `"security": true` to a security problem; the engine
+  then keeps its text and place off a pull request that is not private. A finding that reports a `priorFindings`
+  entry again, reworded or not, takes that entry's `id`; every other finding has an empty `id` or none, and the engine
+  gives it one. Only a `priorFindings` entry listed to the pass carries an `id`; any other `id` is read as none and named in the
+  pass's `dropped` notes.
+  The older `--findings <n> --fixed <n>` form is still accepted, for a pass an older release dispatched.
 
 A split review's passes carry `role`: a `slice` reviews only its `files` and also writes `contracts` and
 `cross_notes` (lists of strings) in its final JSON, as `{ "verdicts": [...], "contracts": [...], "cross_notes": [...] }`; the `cross` pass reads `slices` and reports only what

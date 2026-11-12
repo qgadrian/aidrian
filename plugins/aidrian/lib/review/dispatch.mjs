@@ -2,15 +2,20 @@
 // the visual capture that runs before a visual reviewer is dispatched. Each takes the step context `s` of
 // lib/review/run.mjs.
 
+import { createHash } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+
 import { isLogin } from '../forges/index.mjs';
 import { showPrefix } from '../git.mjs';
 import { refusalContext } from '../pr-product-feedback.mjs';
 import { fromOutside } from '../pr-resolve.mjs';
 import { stateDir } from '../project.mjs';
+import { resolvePublish } from '../config-local.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
-import { blocks } from './findings.mjs';
-import { belowRootBrief, flowBaseBrief, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
-import { contextFindings, inputCopy, recordSettled, residualTexts } from './settled.mjs';
+import { blocks, isFindingId, listedTo, recordedFindings } from './findings.mjs';
+import { belowRootBrief, flowBaseBrief, ID_BRIEF, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
+import { contextFindings, idCopy, recordSettled, residualTexts } from './settled.mjs';
 import { patternsOf, textChecker } from './publish.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
@@ -94,7 +99,9 @@ export const namesOf = (configs) => [...new Set(configs.flatMap((config) => Obje
 // request, a text checker in the always-on check's context (pr-product-feedback.mjs refusalContext: null when a
 // knowledge index or a product-access doc cannot be read, so every string is withheld) with the public-text patterns of
 // every config given and this checkout's private words, the checkout root, the reviewer names of the first config, the
-// base branch's committed one, and the forge's login check. Every write of the record builds it here, so all five read the repository the same way.
+// base branch's committed one, the forge's login check, `review.publish` as the first config sets it and the local file
+// lowers it (config-local.mjs resolvePublish), and the forge's compare link for two commits of `repo`, null when the
+// forge builds none (R9). Every write of the record builds it here, so all five read the repository the same way.
 export function postContext({ forge, repo, n, project, configs = [], env = process.env, reading = undefined }) {
   let context = null;
   try {
@@ -107,7 +114,56 @@ export function postContext({ forge, repo, n, project, configs = [], env = proce
     // Names come from the base branch's committed config alone, `configs[0]`: a checkout's edit cannot define one.
     names: namesOf(configs.slice(0, 1)),
     isLogin,
+    publish: resolvePublish(configs[0]?.review?.publish, project?.localReview?.publish),
+    compareUrl: (from, to) => {
+      try {
+        return typeof forge?.compareUrl === 'function' ? forge.compareUrl(repo, from, to) ?? null : null;
+      } catch {
+        return null;
+      }
+    },
   };
+}
+
+// The head's plan as the finding index lists entries to it (findings.mjs listing): each pass with its reviewer, stage,
+// and files, null for every file.
+export const planPasses = (plan) => (Array.isArray(plan?.stages) ? plan.stages : []).flatMap((stage) => stage.passes.map((pass) => ({ id: pass.id, reviewer: pass.reviewer, stage: stage.name, files: Array.isArray(pass.files) ? [...pass.files] : null })));
+
+// The ids of the open index entries listed to `pass` on the step's head: what the pass's input shows it with their ids,
+// and the only ids a finding it returns may take (findings.mjs recordFindings).
+export const listedFor = (s, pass) => (s.plan ? listedTo(s.state, planPasses(s.plan), pass.id) : []);
+
+// The range a finding that closes on head `to` gets (A4): from the head that last held it open (`seen`) when that is an
+// ancestor of `to`, else from `base`, the merge base the reviewer's delta reads from; null without two full SHAs.
+export function closingRange(root, base) {
+  const full = (sha) => typeof sha === 'string' && /^[0-9a-f]{40}$/u.test(sha);
+  return (seen, to) => {
+    if (!full(to)) return null;
+    if (full(seen) && seen !== to && isAncestor(root, seen, to)) return { from: seen, to };
+    return full(base) ? { from: base, to } : null;
+  };
+}
+
+// The listed entries as the pass's input shows them: each with its id, its title, place, and axes from its index
+// entry, which every record of the finding refreshes, so a reworded repeat's wording wins, and the body of the listing
+// on the newest head that holds the finding.
+function listedFindings(s, pass) {
+  const ids = new Set(listedFor(s, pass));
+  if (!ids.size) return [];
+  const index = s.state.index ?? {};
+  const newest = new Map();
+  const results = Object.values(s.state.passes ?? {}).filter((result) => result && Array.isArray(result.list));
+  for (const result of results) {
+    for (const finding of result.list) {
+      if (!ids.has(finding?.id) || typeof finding.body !== 'string') continue;
+      const known = newest.get(finding.id);
+      if (!known || (known.head !== result.head && isAncestor(s.root, known.head, result.head))) newest.set(finding.id, { head: result.head, body: finding.body });
+    }
+  }
+  return [...ids].map((id) => {
+    const { state: _state, pass: _pass, stage: _stage, reviewer: _reviewer, seen: _seen, closed_in: _closed, adopted: _adopted, ...entry } = index[id];
+    return { ...entry, ...(newest.has(id) ? { body: newest.get(id).body } : {}), id, state: 'open' };
+  });
 }
 
 // The accepted residuals an exec pass reads: the items of the pull request body's section, or none when the pull request
@@ -150,12 +206,22 @@ export function passInput(s, pass, stage) {
   } : {};
   const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
   const residuals = passResiduals(s, pass);
-  const earlier = [...(prior?.list ?? []), ...keptFindings(state, pass)];
+  // The pass's own last list, then the open entries listed to it that the list does not hold (a cut that moved them
+  // here, or halves), then a fallback's kept findings: each once by id.
+  const seen = new Set();
+  const listed = new Set(listedFor(s, pass));
+  const earlier = [...(prior?.list ?? []), ...listedFindings(s, pass), ...keptFindings(state, pass)].filter((finding) => {
+    if (!isFindingId(finding?.id)) return true;
+    if (seen.has(finding.id)) return false;
+    seen.add(finding.id);
+    return true;
+  });
   return {
     ...split,
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
     pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows,
-    priorFindings: residuals ? [...contextFindings(earlier), ...recordSettled(state, prior, residuals)] : earlier.map(inputCopy),
+    // Only the ids listed to this pass show: the only ones a finding it returns may take.
+    priorFindings: residuals ? [...contextFindings(earlier, listed), ...recordSettled(state, prior, residuals)] : earlier.map((finding) => idCopy(finding, listed)),
     ...(residuals ? { acceptedResiduals: residuals } : {}),
     ...(scope ? { remerge: head } : {}),
     // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
@@ -175,10 +241,25 @@ function keptFindings(state, pass) {
   });
 }
 
+// Where an agent pass writes its findings file: under the state folder's `tmp/`, outside every checkout, so the full
+// text of its findings is never staged with a commit. The folder is made here. The name is the pass id with every
+// character but a letter, digit, `.`, `_`, or `-` as `-`, so it cannot leave the folder, then the first 8 hex digits
+// of the raw id's SHA-256, so two ids that read alike, such as `flow:a-b:c` and `flow:a:b-c`, never share a file.
+export function findingsFile(project, n, passId) {
+  const dir = path.join(stateDir(project), 'tmp', `review-${n}`);
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {}
+  const id = String(passId);
+  const tag = createHash('sha256').update(id).digest('hex').slice(0, 8);
+  return path.join(dir, `${id.replace(/[^\w.-]/gu, '-')}-${tag}.findings.json`);
+}
+
 // One agent pass's entry in a `dispatch` result: who runs it, on what, and the command that records it.
 export function dispatchFor(s, pass, stage) {
   const { root, n, head, map, isVisual } = s;
   const input = passInput(s, pass, stage);
+  const file = findingsFile(s.project, n, pass.id);
   const prefix = showPrefix(root);
   const briefs = [
     prefix ? belowRootBrief(prefix) : null,
@@ -189,6 +270,8 @@ export function dispatchFor(s, pass, stage) {
     input.remerge ? remergeBrief(input) : null,
     input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
     pass.fallback ? `${quota.owner(pass.fallback.replaces)} is out of quota, and the Human chose this pass as the second look in its place: review the whole change through your own lens. It is recorded as a fallback, not as an independent review.` : null,
+    FINDINGS_FILE_BRIEF,
+    input.priorFindings.some((finding) => isFindingId(finding?.id)) ? ID_BRIEF : null,
   ].filter(Boolean);
   return {
     pass: pass.id,
@@ -196,9 +279,12 @@ export function dispatchFor(s, pass, stage) {
     ...(pass.fallback ? { fallback: { replaces: pass.fallback.replaces, reason: pass.fallback.reason } } : {}),
     ...(briefs.length ? { brief: briefs.join(' ') } : {}),
     ...input,
-    // A visual reviewer reports its findings one by one, so the disposition table decides what blocks.
-    record: isVisual(pass)
-      ? `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file <findings.json>${input.flows.length ? ' --verdicts <file.json>' : ''}`
-      : `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings <n> --fixed <n> [--accepted <n>]${input.flows.length ? ' --verdicts <file.json>' : ''}`,
+    // Every agent pass reports its findings one by one, so the disposition table decides what blocks, and each finding
+    // keeps its id and outcome in the finding index. The counts form stays accepted by attest, for a record an older
+    // release dispatched.
+    record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file ${file}${input.flows.length ? ' --verdicts <file.json>' : ''}`,
   };
 }
+
+// How an agent writes the findings file its record command reads.
+export const FINDINGS_FILE_BRIEF = 'Write every finding to the findings file `record` names, under the state folder and outside the checkout, one object each: `title`, `file`, `line`, `body`, `severity`, `likelihood`, `affects`, `cost`, and `state` (`open`, `fixed`, or `accepted`), and `security` true for a security problem; `aidrian pr disposition --vocab` lists the words. The disposition table, not your count, decides what blocks.';

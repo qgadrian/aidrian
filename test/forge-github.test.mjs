@@ -19,7 +19,7 @@ const FACADE = [
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
-  'commit', 'checkRuns', 'compare', 'deployments', 'deploymentStatuses', 'uploadImages',
+  'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -521,4 +521,27 @@ test('the ready checks hold`s edit times: one GraphQL call, naming a host only w
   const query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
   const tail = ['-f', `query=${query}`, '-F', 'o=acme', '-F', 'r=notes', '-F', 'n=12'];
   assert.deepEqual(args(), [['api', 'graphql', ...tail], ['api', 'graphql', '--hostname', 'ghe.example.com', ...tail]]);
+});
+
+test('compareUrl: a link from two full-hex SHAs on the forge`s own address of the repository, read once, and none from anything else', () => {
+  const [a, b] = ['a'.repeat(40), '0123456789abcdef0123456789abcdef01234567'];
+  const home = (url) => recorded((args) => (args.includes('repos/o/r') ? JSON.stringify({ html_url: url }) : '{}'));
+  const { forge, calls } = home('https://github.com/o/r');
+  assert.equal(forge.compareUrl('o/r', a, b), `https://github.com/o/r/compare/${a}...${b}`);
+  assert.equal(forge.compareUrl('O/R', b, a), `https://github.com/o/r/compare/${b}...${a}`, 'GitHub`s own spelling of the repository');
+  assert.equal(calls.length, 1, 'the repository is read once');
+  assert.deepEqual(calls[0].args.slice(0, 2), ['api', 'repos/o/r']);
+  const enterprise = home('https://ghe.example.com/o/r');
+  assert.equal(enterprise.forge.compareUrl('o/r', a, b), `https://ghe.example.com/o/r/compare/${a}...${b}`, 'a GitHub Enterprise repository links to its own host');
+  for (const url of ['http://github.com/o/r', 'https://github.com/o/other', 'https://github.com/o/r?x=1', 'https://github.com:8443/o/r', 'javascript:alert(1)', '']) {
+    assert.equal(home(url).forge.compareUrl('o/r', a, b), null, `the forge answered ${url}`);
+  }
+  const failing = recorded(() => { throw new Error('gh: Not Found (HTTP 404)'); });
+  assert.equal(failing.forge.compareUrl('o/r', a, b), null, 'a read that fails gives no link');
+  const none = home('https://github.com/o/r');
+  for (const [repo, from, to] of [
+    ['o/r', a.slice(0, 7), b], ['o/r', a, b.slice(0, 39)], ['o/r', a.toUpperCase(), b], ['o/r', `${a}x`, b], ['o/r', null, b], ['o/r', a, 'HEAD'],
+    ['o/r/x', a, b], ['o', a, b], ['-o/r', a, b], ['o/..', a, b], ['o/r?x=1', a, b], ['o/r#7', a, b], [null, a, b],
+  ]) assert.equal(none.forge.compareUrl(repo, from, to), null, `${repo} ${from} ${to}`);
+  assert.equal(none.calls.length, 0, 'no call for SHAs or a name that fail');
 });

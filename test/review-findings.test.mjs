@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { blocks, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
+import { blocks, listedTo, listing, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
@@ -230,6 +230,7 @@ test('runExec: a settled finding answered as already_ruled is not re-raised; a f
     { title: 'B low', file: 'a.js', line: 11, severity: 'low', already_ruled: 'B', from: 'residual' },
   ], 'a prior finding settles only its own file at its severity or lower, and same-title entries in different files each settle theirs; a residual settles a low finding by text');
   assert.deepEqual(done.dropped, [
+    'findings[7].id is not a string: read as no id',
     'findings[9].already_ruled is not a string: kept as a new finding',
     'finding "A elsewhere" names a settled finding in another file ("A"): kept as a new finding',
     'finding "B again" names an accepted residual, which settles only a low finding ("B"): kept as a new finding',
@@ -326,11 +327,13 @@ test('recordFindings: an id, a mint mark, or a ruled id a reviewer printed is ne
   const printed = recordFindings(state, 'q', { head: 'h', list: [exec({ title: 'Mine', id: kept.id }), exec({ title: 'Copied', id: kept.id, mint: 'deadbeef', ruled_id: 'R9-9' })] }, { mint: true, paths: places() });
   assert.deepEqual(printed.list.map((each) => each.id), ['R1-2', 'R1-3']);
   assert.ok(printed.list.every((each) => each.mint !== 'deadbeef' && each.ruled_id === undefined));
-  // The paths an exec reviewer and a findings file reach the record through keep no such key.
+  // The paths an exec reviewer and a findings file reach the record through keep no such key: a returned id arrives as
+  // `returned_id`, which only recordFindings's check can turn into the finding's id, and a mint mark never arrives.
   const [clean] = cleanOutput({ findings: [{ ...exec(), id: 'R1-1', mint: '00000000', already_ruled: '' }] }).findings;
-  assert.deepEqual(Object.keys(clean).sort(), ['already_ruled', 'body', 'file', 'line', 'severity', 'title']);
+  assert.deepEqual(Object.keys(clean).sort(), ['already_ruled', 'body', 'file', 'line', 'returned_id', 'severity', 'title']);
   const [filed] = parseFindings(JSON.stringify([finding({ id: 'R1-1', mint: '00000000' })])).list;
   assert.ok(!('id' in filed) && !('mint' in filed));
+  assert.equal(filed.returned_id, 'R1-1');
 });
 
 test('recordFindings: a ruling names the finding it repeats by id, never by taking its id', () => {
@@ -446,4 +449,136 @@ test('recordFindings: a marked finding that lives only in the result a write rep
   state.rounds.push({ head: 'b'.repeat(40) });
   const next = recordFindings(state, pass, { head: 'h2', list: [exec({ title: 'Amount read from request body', line: 11, severity: 'medium' })] }, { mint: true, paths: places() });
   assert.equal(next.list[0].security, true, 'the earlier high report, replaced by this write, ties its twin at the same place');
+});
+
+
+// ---- The finding index (findings.mjs recordFindings, S1b) ----
+
+const H1 = '1'.repeat(40);
+const H2 = '2'.repeat(40);
+// A range that reads every head as an ancestor of the next, as a fix in a push on top of it.
+const onTop = (seen, to) => ({ from: seen ?? 'f'.repeat(40), to });
+const CODEX = (id = 'engine:codex-local', files = null) => ({ id, reviewer: 'codex-local', stage: 'independent', files });
+
+test('a returned id counts only when it is exactly R<digits>-<digits>, its pass`s input listed it, and it is still open; any other value is no id, named in dropped by the finding`s own id', () => {
+  const state = recordWith();
+  const first = recordFindings(state, 'engine:codex-local', { head: H1, list: [exec({ title: 'Null check missing' }), exec({ title: 'Second', line: 9 })] }, { mint: true, paths: places(), plan: [CODEX()], stage: 'independent', range: onTop });
+  const [a, b] = first.list.map((each) => each.id);
+  assert.deepEqual(listedTo(state, [CODEX()], 'engine:codex-local'), [a, b], 'both open entries are listed to their pass');
+  const SECRET = 'SENTINEL title';
+  const refused = [' ' + a, `${a}x`, a.toLowerCase(), 7, { id: a }, 'R9-99', b];
+  const again = recordFindings(state, 'engine:codex-local', {
+    head: H2,
+    list: [exec({ title: 'Reworded entirely', line: 5, returned_id: a }), ...refused.map((value, i) => exec({ title: `${SECRET} ${i}`, line: 10 + i, returned_id: value }))],
+  }, { mint: true, paths: places(), listed: [a], plan: [CODEX()], stage: 'independent', range: onTop });
+  assert.equal(again.list[0].id, a, 'a reworded repeat that returns its listed, open id keeps it');
+  assert.equal(again.list[0].mint, first.list[0].mint);
+  assert.ok(again.list.slice(1).every((each) => ![a, b].includes(each.id)), 'no other value gives an id: an unlisted one, a malformed one, one a finding already took');
+  assert.equal(again.dropped.length, refused.length);
+  for (const [i, note] of again.dropped.entries()) {
+    assert.equal(note, `${again.list[i + 1].id}: its returned id is not an open finding its input listed, so it was read as no id`);
+    assert.ok(!note.includes(SECRET) && !note.includes('R9-99'), 'the note names the finding by its own id, never by the value or its title');
+  }
+  assert.ok(again.list.every((each) => !('returned_id' in each)), 'a returned id is never stored');
+  // B is listed to the pass and left out: closed once the stage has its results, then final.
+  recordFindings(state, null, null, { plan: [CODEX()], head: H2, complete: new Set(['independent']), range: onTop });
+  assert.deepEqual([state.index[b].state, state.index[b].closed_in], ['not_reported', { from: H1, to: H2 }]);
+  const late = recordFindings(state, 'engine:codex-local', { head: H2, list: [exec({ title: 'Second', line: 9, returned_id: b })] }, { mint: true, paths: places(), listed: [b], plan: [CODEX()], range: onTop });
+  assert.notEqual(late.list[0].id, b, 'a closed id is final: its repeat, by id or by title and file, is a new finding');
+  assert.equal(late.dropped.length, 1);
+});
+
+test('the exec schema requires an id, empty for a new finding, and cleanOutput takes it as optional from a project`s reviewer', () => {
+  const item = FINDINGS_SCHEMA.properties.findings.items;
+  assert.ok(item.required.includes('id'));
+  assert.deepEqual(item.properties.id, { type: 'string' });
+  const out = cleanOutput({ findings: [exec({ already_ruled: '' }), exec({ id: '', title: 'Empty' }), exec({ id: 'R1-2', title: 'Returned' }), exec({ id: 4, title: 'Number' })] });
+  assert.deepEqual(out.findings.map((each) => each.returned_id), [undefined, undefined, 'R1-2', undefined], 'no id and an empty one are a new finding`s');
+  assert.ok(!('returned_id' in out.findings[0]) && !('returned_id' in out.findings[1]));
+  assert.deepEqual(out.dropped, ['findings[3].id is not a string: read as no id']);
+  assert.match(reviewPrompt({ base: 'b', head: 'h', files: null, flows: [], priorFindings: [] }), /set the finding's `id` to that entry's `id`, verbatim\. Set `id` to an empty string on every other finding/u);
+});
+
+test('the index keeps each finding`s security mark, which no later record of that finding clears', () => {
+  const state = recordWith();
+  const [high] = recordFindings(state, 'p', { head: H1, list: [exec({ severity: 'high' })] }, { mint: true, paths: places(), plan: [CODEX('p')] }).list;
+  assert.equal(state.index[high.id].security, true);
+  recordFindings(state, 'p', { head: H2, list: [exec({ severity: 'low', returned_id: high.id })] }, { mint: true, paths: places(), listed: [high.id], plan: [CODEX('p')] });
+  assert.equal(state.passes.p.list[0].id, high.id);
+  assert.equal(state.index[high.id].severity, 'low');
+  assert.equal(state.index[high.id].security, true, 'the mark stays');
+});
+
+test('a finding at the place or under the title of a security finding whose id closed takes the mark, from the closed entry', () => {
+  const state = recordWith();
+  const [high] = recordFindings(state, 'p', { head: H1, list: [exec({ severity: 'high', title: 'Refund total unchecked', line: 10 })] }, { mint: true, paths: places(), plan: [CODEX('p')] }).list;
+  recordFindings(state, 'p', { head: H2, list: [] }, { mint: true, paths: places(), plan: [CODEX('p')] });
+  recordFindings(state, null, null, { plan: [CODEX('p')], head: H2, complete: new Set(['independent']), range: onTop });
+  assert.equal(state.index[high.id].state, 'not_reported');
+  // Nothing but the closed entry holds the high finding now.
+  state.rounds = [{ head: H1 }];
+  const later = recordFindings(state, 'q', { head: H2, list: [exec({ severity: 'medium', title: 'Other words', line: 12 }), exec({ severity: 'low', title: 'Refund total unchecked', file: 'src/b.js', line: 1 })] }, { mint: true, paths: places() });
+  assert.deepEqual(later.list.map((each) => each.security), [true, true], 'at its place, and under its title in another file');
+  assert.ok(later.list.every((each) => each.id !== high.id), 'each a new id');
+});
+
+test('an entry with no text here is never closed by omission, and a pass recorded in counts closes nothing', () => {
+  const state = recordWith();
+  const [one, two] = recordFindings(state, 'p', { head: H1, list: [exec(), exec({ title: 'Two', line: 8 })] }, { mint: true, paths: places(), plan: [CODEX('p')] }).list;
+  delete state.index[one.id].title;
+  state.passes.p = { head: H2, reviewer: 'codex-local', findings: 1, open: 1 };
+  recordFindings(state, null, null, { plan: [CODEX('p')], head: H2, complete: new Set(['independent']), range: onTop });
+  assert.deepEqual([state.index[one.id].state, state.index[two.id].state], ['open', 'open'], 'a counts result itemizes nothing, so it leaves nothing out');
+  state.passes.p = { head: H2, reviewer: 'codex-local', findings: 0, open: 0, list: [] };
+  recordFindings(state, null, null, { plan: [CODEX('p')], head: H2, complete: new Set(['independent']), range: onTop });
+  assert.deepEqual([state.index[one.id].state, state.index[two.id].state], ['open', 'not_reported'], 'the entry with no title stays open');
+  recordFindings(state, null, null, { plan: [CODEX('p')], head: H2, complete: new Set(), range: onTop });
+});
+
+test('listing: an entry stays with its pass while that pass holds its file, else goes to one pass of its reviewer and stage that does, else to none', () => {
+  const state = recordWith();
+  const old = 'slice:codex-local:aaaaaaaaaa';
+  recordFindings(state, old, { head: H1, reviewer: 'codex-local', list: [exec({ file: 'src/a.js' }), exec({ title: 'B side', file: 'src/b.js' })] }, { mint: true, paths: places(), plan: [CODEX(old, ['src/a.js', 'src/b.js'])], stage: 'independent' });
+  const [a, b] = state.passes[old].list.map((each) => each.id);
+  const halves = [CODEX(`${old}.a`, ['src/a.js']), CODEX(`${old}.b`, ['src/b.js']), { id: 'agent:code-reviewer', reviewer: 'code-reviewer', stage: 'local', files: null }];
+  assert.deepEqual([...listing(state, halves)], [[a, `${old}.a`], [b, `${old}.b`]]);
+  assert.deepEqual([...listing(state, [CODEX(old, ['src/a.js', 'src/b.js']), CODEX('slice:codex-local:bbbbbbbbbb', ['src/a.js'])])], [[a, old], [b, old]], 'its own pass first');
+  assert.deepEqual([...listing(state, [{ id: 'agent:code-reviewer', reviewer: 'code-reviewer', stage: 'local', files: null }])], [[a, null], [b, null]], 'another reviewer takes none');
+});
+
+// Two rounds of one split stage, as the step and attest record them: the slice reports `finding` each round, returning
+// its id from the second on, and the cross pass of the same reviewer and stage, which has no file list, reports nothing.
+function twoRounds(finding, paths) {
+  const plan = [
+    { id: 'slice:code-reviewer:aaaaaaaaaa', reviewer: 'code-reviewer', stage: 'local', files: ['src/a.js'] },
+    { id: 'cross:code-reviewer', reviewer: 'code-reviewer', stage: 'local', files: null },
+  ];
+  const [slice, cross] = plan.map((pass) => pass.id);
+  const state = { ...emptyState(7, 'o/r'), floored: true, rounds: [] };
+  const ids = [];
+  for (const head of ['1'.repeat(40), '2'.repeat(40), '3'.repeat(40)]) {
+    state.rounds.push({ head });
+    const returned = ids.length ? { returned_id: ids.at(-1) } : {};
+    for (const [pass, list] of [[slice, [{ ...finding, ...returned }]], [cross, []]]) {
+      recordFindings(state, pass, { head, reviewer: 'code-reviewer', list }, { mint: true, paths, plan, stage: 'local', reviewer: 'code-reviewer', listed: listedTo(state, plan, pass), range: (seen, to) => ({ from: seen ?? to, to }) });
+    }
+    recordFindings(state, null, null, { plan, head, complete: new Set(['local']), range: (seen, to) => ({ from: seen ?? to, to }) });
+    ids.push(state.passes[slice].list[0].id);
+  }
+  return { state, ids, slice };
+}
+const AGENT = { title: 'Deleted test leaves the flow unguarded', severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open', disposition: 'fix_now' };
+
+test('a finding with no file stays with the pass that recorded it beside a pass with no file list: its id stays open, a repeat that returns it keeps it, and nothing closes', () => {
+  const { state, ids, slice } = twoRounds({ ...AGENT, file: 'gone.test.js', line: 3 }, places({ 'src/a.js': 40 }));
+  assert.deepEqual(ids, [ids[0], ids[0], ids[0]], 'one id across the rounds');
+  assert.equal(state.index[ids[0]].file, undefined, 'its file was refused');
+  assert.deepEqual(Object.values(state.index).map((entry) => [entry.id, entry.state, entry.pass]), [[ids[0], 'open', slice]]);
+  assert.equal(state.passes[slice].dropped.some((note) => note.includes('returned id')), false, 'its returned id was listed to it');
+});
+
+test('a finding outside its slice`s files, beside a cross pass with no file list, stays with its slice while its result lists it, and nothing closes', () => {
+  const { state, ids, slice } = twoRounds({ ...AGENT, file: 'src/c.js', line: 3 }, places({ 'src/a.js': 40, 'src/c.js': 40 }));
+  assert.deepEqual(ids, [ids[0], ids[0], ids[0]]);
+  assert.deepEqual(Object.values(state.index).map((entry) => [entry.id, entry.state, entry.pass, entry.file]), [[ids[0], 'open', slice, 'src/c.js']]);
 });

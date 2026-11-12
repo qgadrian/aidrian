@@ -13,6 +13,7 @@ import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/repor
 import {
   askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
+import { listedTo, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { untextedBlocking } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, mismatch, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
@@ -919,4 +920,32 @@ test('revalidate reads a posted copy`s bare red flag names as the flags they nam
   const entry = revalidate({ state, source: 'plan', round: 2, head: 'c0ffee1234', history: looped });
   assert.deepEqual([entry.status, entry.human?.answer], ['granted', 'approve']);
   assert.match(askQuestion(7, 3, null, ['looping', 'bloating: added 90 lines']), /red flags \(looping, bloating\)/u);
+});
+
+test('signals: a finding reported again after its id closed, reworded in the same place or moved to another file under the same title, still loops', () => {
+  // The ids come from the one writer of finding ids: round 1 records the finding, round 2 leaves it out, so it closes
+  // as not reported again, and round 3's reports of it, by its id and by its title, are new findings with new ids.
+  const [h1, h2, h3] = ['1', '2', '3'].map((digit) => digit.repeat(40));
+  const plan = [{ id: 'engine:codex-local', reviewer: 'codex-local', stage: 'independent', files: null }];
+  const paths = { tracked: () => true, lines: () => 100 };
+  const state = { ...emptyState(7, 'o/r'), floored: true, rounds: [] };
+  const step = (head, list) => {
+    state.rounds.push({ head });
+    recordFindings(state, 'engine:codex-local', { head, reviewer: 'codex-local', list }, { mint: true, paths, plan, stage: 'independent', listed: listedTo(state, plan, 'engine:codex-local'), range: (seen, to) => ({ from: seen ?? to, to }) });
+    recordFindings(state, null, null, { plan, head, complete: new Set(['independent']), range: (seen, to) => ({ from: seen ?? to, to }) });
+    return state.passes['engine:codex-local'].list;
+  };
+  const [first] = step(h1, [{ ...finding('src/a.js', 10, 'Refund total is never checked'), severity: 'medium' }]);
+  step(h2, []);
+  assert.equal(state.index[first.id].state, 'not_reported');
+  const [reworded, moved] = step(h3, [
+    { ...finding('src/a.js', 11, 'Unvalidated sum on refund'), severity: 'medium', returned_id: first.id },
+    { ...finding('src/b.js', 99, 'Refund total is never checked'), severity: 'medium' },
+  ]);
+  assert.ok(![reworded.id, moved.id].includes(first.id), 'a closed id is final: each repeat is a new finding');
+  const rounds = [round(1, h1, [first]), round(2, h2, []), round(3, h3, [reworded, moved])];
+  const loops = signals({ rounds });
+  assert.equal(loops.looping, true);
+  assert.deepEqual(loops.evidence.looping.map((each) => [each.id, each.match, each.earlier_round]), [[reworded.id, 'place', 1], [moved.id, 'title', 1]]);
+  for (const reason of loops.reasons) assert.doesNotMatch(reason, /Refund|refund/u, 'the reason names the id, never the title');
 });

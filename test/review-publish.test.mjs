@@ -13,7 +13,7 @@ import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
 import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
-import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
+import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, refreshSummary, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
 
 const NO_TERMS = { hosts: [], accounts: [], variables: [] };
 // The always-on check's context with nothing named but this machine's home.
@@ -523,4 +523,23 @@ test('publicSecurity "full": a security finding`s residual row keeps its place, 
   }
   assert.deepEqual(residualRows([row], state, { reading: PRIVATE, checker, publish: { publicSecurity: 'full' } }).rows, [row], 'on a private repository the row is whole');
   assert.deepEqual(residualRows([{ ...row, file: TOKEN }], state, { reading: { visibility: 'PUBLIC', inside: true }, checker, publish: { publicSecurity: 'full' } }).rows, [{ pass: 'p', id: 'R1-1', severity: 'high', text: WITHHELD }], 'a file the checks withhold is left out, and its line goes with it');
+});
+
+test('a finding first recorded as accepted keeps its recording head: the table keeps its file and line, also on a later refresh with no diff paths', (t) => {
+  const { root, head } = tracked(t);
+  const state = { ...emptyState(7, 'o/r'), revision: 2, floored: true, rounds: [{ head }], planNote: { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] } };
+  const late = { title: 'A late nit', file: 'src/a.js', line: 5, severity: 'low', state: 'accepted', disposition: 'accepted_residual', accepted_by: 'late-round' };
+  const ruled = { title: 'A repeat', file: 'src/b.js', line: 7, severity: 'low', already_ruled: 'Settled one', from: 'prior' };
+  recordFindings(state, 'engine:codex-local', { head, reviewer: 'codex-local', findings: 2, open: 0, list: [late], ruled: [ruled] }, { mint: true, paths: gitPaths(root).at(head), stage: 'independent' });
+  const ids = [...state.passes['engine:codex-local'].list, ...state.passes['engine:codex-local'].ruled].map((each) => each.id);
+  for (const id of ids) assert.equal(state.index[id].seen, head, `${id}: its recording head`);
+  const post = (over = {}) => tablePost(root, { names: [], ...over });
+  const where = (body) => rowsOf(body).map((row) => row.split(' | ').slice(0, 2).join(' | '));
+  const first = summaryBody(state, null, 'x', post({ diffPaths: new Set() }));
+  assert.deepEqual(where(first), [`| ${ids[0]} | src/a.js:5`, `| ${ids[1]} | src/b.js:7`]);
+  // Later the pass moves to a head this checkout does not hold, and an edit refreshes the comment with no diff paths.
+  state.passes['engine:codex-local'] = { head: '9'.repeat(40), reviewer: 'codex-local', findings: 0, open: 0, list: [] };
+  state.revision += 1;
+  const later = refreshSummary(first, state, post());
+  assert.deepEqual(where(later), [`| ${ids[0]} | src/a.js:5`, `| ${ids[1]} | src/b.js:7`], 'still both');
 });

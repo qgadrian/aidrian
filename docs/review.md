@@ -1175,7 +1175,8 @@ id, the rest are stored without one, and the next step gives them theirs.
 
 **The finding index.** The record keeps one index of findings, keyed by id, beside the passes, for the life of the pull
 request: each finding's title, place, and axes, its outcome ([Findings one by one](#findings-one-by-one)), the pass,
-stage, and reviewer that recorded it, the head that last held it open, its security mark, which never clears, and,
+stage, and reviewer that recorded it, the head that last recorded it open or accepted (where its file and line
+were checked), its security mark, which never clears, and,
 once closed, `closed_in`. A record an earlier release wrote gets an entry for each id it holds on its first write. A
 pass's list still holds each of its findings in full; a re-recorded list and a pruned pass delete no entry.
 
@@ -1200,9 +1201,9 @@ pass's list still holds each of its findings in full; a re-recorded list and a p
 - *No reopening.* An id closed as `fixed` or `not_reported` is final: a finding reported after it, by id or by title and
   file, is a new finding with a new id. The looping signal still ties the two, by place or by title.
 - *Closing range.* A closed entry gets `closed_in: { from, to }`, two full SHAs: `to` is the head of the result that
-  closed it, and `from` the head that last held it open when that is an ancestor of `to`, else the merge base. A fix in
-  a quiet push gets that push alone, and a rebased head gets a range git can show. An entry closed as `fixed` or
-  `not_reported` posts no title on any repository.
+  closed it, and `from` the head that last recorded it open or accepted when that is an ancestor of `to`, else the
+  merge base. A fix in a quiet push gets that push alone, and a rebased head gets a range git can show. An entry closed
+  as `fixed` or `not_reported` posts no title on any repository.
 
 ### The posted copy
 

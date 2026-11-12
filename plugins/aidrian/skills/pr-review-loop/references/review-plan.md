@@ -41,7 +41,12 @@ only after its answer, so the pull request stays a draft until the bot is clean.
   and writes no file: it returns each finding, with its axes and state, in the `findings` array of its final JSON.
   This session writes that array, as it is, to the file `record` names, then pipes the agent's final JSON to `record`,
   with `--verdicts -` in place of the file, and never retypes a finding or a verdict; `--verdicts FILE` still reads a
-  file. The disposition table decides what stays open, not the agent's count (`aidrian pr disposition --vocab` lists
+  file.
+  Write the findings file with the file tool, or with `cat > <file> <<'EOF'` (quoted delimiter),
+  never `echo` or an unquoted heredoc, so the shell never expands reviewer text.
+  Pipe the final JSON the same way, from a file the file tool wrote or a heredoc with a quoted delimiter (`<<'EOF'`),
+  never `echo` or an unquoted heredoc.
+  The disposition table decides what stays open, not the agent's count (`aidrian pr disposition --vocab` lists
   the words):
 
   ```json

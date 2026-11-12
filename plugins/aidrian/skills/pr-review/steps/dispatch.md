@@ -87,3 +87,7 @@ The review turns the axes into a verdict, so a contrived finding becomes an acce
   `id` of the `priorFindings` entry it repeats. Write that array, as it is, to the file `record` names, then run `record`:
   `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json --verdicts -`, its final JSON
   on stdin. Use the path `record` names, under the state folder: never a file in the checkout. Never retype a verdict or its evidence.
+  Write the findings file with the file tool, or with `cat > <file> <<'EOF'` (quoted delimiter),
+  never `echo` or an unquoted heredoc, so the shell never expands reviewer text.
+  Pipe the final JSON the same way, from a file the file tool wrote or a heredoc with a quoted delimiter (`<<'EOF'`),
+  never `echo` or an unquoted heredoc.

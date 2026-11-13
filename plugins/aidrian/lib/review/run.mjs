@@ -50,7 +50,7 @@ import { runStages } from './stages.mjs';
 
 export { DEPENDENCY_DIRS, stderrTail } from './base-worktree.mjs';
 export { reviewInForce } from './in-force.mjs';
-export { recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState } from './record.mjs';
+export { recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteReading, remoteState } from './record.mjs';
 export { MAX_LINES } from './step.mjs';
 export { MAX_ATTEMPTS } from './stages.mjs';
 

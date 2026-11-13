@@ -510,8 +510,9 @@ async function reviewRecord(project, forge, base) {
       comments = forge.conversationComments(repo, n) ?? [];
     } catch {}
   }
-  const record = readRecord(project, Number(n), comments, repo);
-  if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held, record.why));
+  const { readReading } = await import('./review/dispatch.mjs');
+  const record = readRecord(project, Number(n), comments, repo, () => readReading(forge, repo, n));
+  if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held, record.why, record.finding));
   return { state: record.state, comments };
 }
 

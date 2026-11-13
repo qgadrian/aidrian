@@ -14,7 +14,6 @@ import {
   askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { listedTo, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
-import { untextedBlocking } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, mismatch, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 
@@ -898,18 +897,22 @@ test('await-review and extend on a public repository post the check at the cap w
   assert.match(readLocalState(bot.project, 42).extensions[0].reasons[0], /SENTINEL/u);
 });
 
-test('a machine with no record that runs await-review on a public copy marks an untexted finding adopted, so its next step stops', async (t) => {
+test('a machine with no record that runs await-review on a public copy holding a blocking finding it has no text for holds: it names the finding and writes nothing', async (t) => {
   const bot = botProject(t, {}, { visibility: 'PUBLIC' });
   assert.equal((await bot.run(converging)).out.status, 'extension_check');
   const mine = readLocalState(bot.project, 42);
   const head = 'f'.repeat(40);
   const theirs = { ...mine, revision: mine.revision + 3, planNote: { head, passes: { 'engine:codex-local': { stage: 'independent', reviewer: 'codex-local', security: false } }, pairs: [] }, passes: { 'engine:codex-local': { head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ id: 'R1-4', mint: 'abcdef02', severity: 'high', state: 'open', disposition: 'fix_now' }] } } };
   bot.issue[0].body = summaryBody(theirs, null, 'x', OPEN);
+  const body = bot.issue[0].body;
   bot.forget();
-  await bot.run(converging);
-  const written = readLocalState(bot.project, 42);
-  assert.equal(written.passes['engine:codex-local'].list[0].adopted, true);
-  assert.equal(untextedBlocking(written, written), 'R1-4', 'the step on this machine stops on it');
+  const errors = t.mock.method(console, 'error', () => {});
+  const awaited = await bot.run(converging);
+  errors.mock.restore();
+  assert.equal(awaited.code, 1);
+  assert.match(errors.mock.calls.at(-1).arguments[0], new RegExp(`the review record of #42 is at revision ${theirs.revision} on the machine that wrote it, and holds the open finding R1-4`, 'u'));
+  assert.equal(bot.issue[0].body, body, 'the comment is not edited');
+  assert.equal(readLocalState(bot.project, 42), null, 'and no record is built on it');
 });
 
 test('revalidate reads a posted copy`s bare red flag names as the flags they name: an approved grant survives identical signals', () => {

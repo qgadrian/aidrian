@@ -2043,3 +2043,16 @@ test('a zero post id fails only its own finding: it is never due, the posted cop
   assert.deepEqual(mergeIndex(ours, repliesState(closedEntry('R1-4', { thread: { reviewId: 0, commentId: 0, fallbackId: 0 } }))), []);
   assert.equal(ours.index['R1-4'].thread, undefined, 'the merge maps no zero id');
 });
+
+test('replies: a closing after another write`s accept and reopen, merged in, gets its own "Fixed in" reply, not the old "Accepted as"', () => {
+  // This write never read the other's accept and reopen: its entry closes as fixed with no reply mark.
+  const state = repliesState(closedEntry('R1-1'));
+  const other = repliesState(closedEntry('R1-1', { state: 'open', thread: { reviewId: 900, commentId: 1001, earlier: [2001] } }));
+  mergeIndex(state, other);
+  const threads = threadOf('R1-1', [{ id: 2001, body: replyBody('R1-1', 'Accepted as acceptable_as_is.'), user: { login: VIEWER }, author_association: 'OWNER' }]);
+  const posts = replyForge(threads, { firstId: 2002 });
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual(result.replied, ['R1-1']);
+  assert.deepEqual(replies(posts.calls).map(([, , body]) => body.split('\n').at(-1)), [`Fixed in [aaaaaaa...bbbbbbb](${COMPARE}).`]);
+  assert.equal(state.index['R1-1'].thread.replyId, 2002);
+});

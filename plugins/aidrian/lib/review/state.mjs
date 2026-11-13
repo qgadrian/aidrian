@@ -159,8 +159,9 @@ const POST_KEYS = Object.freeze({ reviewId: 'review', commentId: 'review_comment
 // an id is mapped to, which a later step would read as unposted and post again under a fresh id. For each id both hold
 // as one finding (no two different mint marks; with `strict`, the same mint mark on both): the security mark, which only
 // widens (findings.mjs tieTwins); a closed state (findings.mjs CLOSED_STATES, final), with its `closed_in`, over one that
-// is not, unless `closed` is false; and each post key another write mapped, where this one maps none, less one `removed`
-// names as `<kind>:<id>` (a comment this step deleted or found gone, delete.mjs removedPosts). An id only one copy holds
+// is not, unless `closed` is false; each post key another write mapped, where this one maps none, and the replies of
+// earlier closings it set aside (mergeEarlier), each less one `removed` names as `<kind>:<id>` (a comment this step
+// deleted or found gone, delete.mjs removedPosts). An id only one copy holds
 // is that copy's alone: nothing is added. Returns the ids it changed.
 // A copy that is not private is never built on (readRecord): from one, a step merges with `closed: false` and `strict`,
 // the marks and the forge's ids of its own findings alone, numbers and a flag that hold no finding text.
@@ -188,9 +189,23 @@ export function mergeIndex(state, other, removed = new Set(), { closed = true, s
       entry.thread = { ...(isObject(entry.thread) ? entry.thread : {}), [key]: value };
       kept = true;
     }
+    if (mergeEarlier(entry, their, removed)) kept = true;
     if (kept) changed.push(id);
   }
   return changed;
+}
+
+// Adds to `entry`'s thread the replies another write set aside as a closing before the finding opened again (`earlier`,
+// replies.mjs noteReopened), less one `removed` names and this write's own current reply: a step that never read that
+// reopen would otherwise take the old reply, such as "Accepted as", for its own closing and post no new one. Returns
+// whether it added any.
+function mergeEarlier(entry, their, removed) {
+  const theirs = isObject(their.thread) && Array.isArray(their.thread.earlier) ? their.thread.earlier : [];
+  const ours = isObject(entry.thread) && Array.isArray(entry.thread.earlier) ? entry.thread.earlier : [];
+  const added = theirs.filter((id) => isPostId(id) && !removed.has(`review_comment:${id}`) && !ours.includes(id) && entry.thread?.replyId !== id);
+  if (!added.length) return false;
+  entry.thread = { ...(isObject(entry.thread) ? entry.thread : {}), earlier: [...ours, ...new Set(added)] };
+  return true;
 }
 
 const file = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}-review.json`);

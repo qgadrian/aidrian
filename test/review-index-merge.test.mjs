@@ -72,3 +72,19 @@ test('mergeIndex from a copy that is not private: the marks and posts of this ma
   assert.deepEqual([ours.index['R1-1'].state, ours.index['R1-1'].security, ours.index['R1-1'].thread], ['open', true, { reviewId: 900, commentId: 61 }]);
   assert.equal(ours.index['R1-2'].thread, undefined, 'a finding with no mint mark on both is not known to be the same one');
 });
+
+test('mergeIndex: the replies another write set aside when the finding opened again join this write`s, less a removed one and its own reply', () => {
+  const ours = record(entry('R1-1', { thread: { reviewId: 900, commentId: 61, earlier: [70] } }), entry('R1-2', { thread: { commentId: 62, replyId: 80 } }));
+  const theirs = record(entry('R1-1', { thread: { reviewId: 900, commentId: 61, earlier: [70, 71, 72, 0] } }), entry('R1-2', { thread: { commentId: 62, earlier: [80] } }));
+  const removed = removedPosts({ deleted: [{ finding: 'R1-1', kind: 'review_comment', id: 72 }] });
+  assert.deepEqual(mergeIndex(ours, theirs, removed), ['R1-1']);
+  assert.deepEqual(ours.index['R1-1'].thread.earlier, [70, 71], 'the union, less a deleted reply and an id that names no post');
+  assert.deepEqual(ours.index['R1-2'].thread, { commentId: 62, replyId: 80 }, 'this write`s own current reply stays its own');
+  // From a copy that is not private, only for a finding both copies hold by its mint mark.
+  const unknown = record(entry('R1-1', { mint: undefined, thread: { commentId: 61 } }));
+  assert.deepEqual(mergeIndex(unknown, record(entry('R1-1', { mint: undefined, thread: { commentId: 61, earlier: [71] } })), new Set(), { closed: false, strict: true }), []);
+  assert.equal(unknown.index['R1-1'].thread.earlier, undefined);
+  const known = record(entry('R1-1', { thread: { commentId: 61 } }));
+  assert.deepEqual(mergeIndex(known, record(entry('R1-1', { thread: { commentId: 61, earlier: [71] } })), new Set(), { closed: false, strict: true }), ['R1-1']);
+  assert.deepEqual(known.index['R1-1'].thread.earlier, [71]);
+});

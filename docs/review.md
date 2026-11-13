@@ -1223,9 +1223,10 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   `review.publish.inline` on, from the pull request's posted record, read again just before the step posts. For an id
   both hold as one finding (no two different mint marks), the security mark, which only widens, is kept, a `fixed` or
   `not_reported` state, with its `closed_in`, wins over one that is not, and a post another write mapped (`reviewId`,
-  `commentId`, or `fallbackId`) is kept where this write maps none, unless this step deleted that comment or found it
-  gone. So two machines stepping at once never give one finding a second thread, never drop a security mark, and a
-  closed id never comes back as open. An id only one write holds stays that write's. A posted record that is not
+  `commentId`, or `fallbackId`) is kept where this write maps none, and so is each reply another write set aside in
+  `earlier` when the finding [opened again](#replies), each unless this step deleted that comment or found it gone. So
+  two machines stepping at once never give one finding a second thread, never drop a security mark, never take an
+  earlier closing's reply for a new one, and a closed id never comes back as open. An id only one write holds stays that write's. A posted record that is not
   private by the step's reading is never built on ([The posted copy](#the-posted-copy)): from it the step takes only
   what a restart takes, the security mark and the posts of a finding this machine recorded, by its id and mint mark,
   and never a closed state.

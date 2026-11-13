@@ -1271,7 +1271,10 @@ which the review step alone writes, are kept from the comment.
   - *Private.* The machine builds on the copy, and keeps what its own record holds: a finding's text, place, and
     security mark by its id and mint mark together, an index entry's fields, its recording reviewer included, from its
     own index entry, and a string outside a finding by its entry's head and time. A closed entry takes no finding's body
-    or evidence. A restarted record that reuses an id, or another machine that minted the same id, gets none of it. A
+    or evidence. A restarted record that reuses an id, or another machine that minted the same id, gets none of it.
+    A private copy still passes the text checks, and a slice's contracts and cross-slice notes post whole or not at
+    all: a pass whose holds or not_affected verdict lost its evidence, or a slice that lost its report, and that this
+    machine's own same-head result does not fill, is not counted as finished, so it runs again here. A
     finding it gets no text for is marked adopted, on this machine's record only, until this machine records a fresh
     report of it. Adopting a copy never clears a security mark, and every write stores the mark on each twin the record
     at hand ties. A review step whose record holds an open, blocking finding with no text stops as `incomplete` with

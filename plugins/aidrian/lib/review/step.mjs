@@ -326,9 +326,12 @@ export async function prepareStep(s) {
   // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
   // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
   const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
+  // A result built on from a private copy whose text checks withheld its verdicts' evidence or a slice's report
+  // (publish.mjs fillWithheld) is not finished here: the pass runs again, so its reviewer answers with what this machine
+  // reads. A copy that is not private is never built on (state.mjs readRecord).
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
-    if (!result || !sameFiles(pass, result)) return null;
+    if (!result || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;
     if (result.head === head) return result;
     const since = delta(result.head);
     return since && !touches(since, pass.files) && result.open === 0 ? result : null;

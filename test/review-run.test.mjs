@@ -2441,6 +2441,29 @@ test('a machine with no record restarts from a public copy, whose verdicts carry
 });
 
 
+test('a machine with no record builds on a private copy whose text checks withheld the verdicts` evidence: the passes run again, and then it finishes', async (t) => {
+  // The team's public-text pattern withholds the evidence from the copy of a private repository too.
+  const r = bookingRepo(t, { publicText: { patterns: ['src/booking/a\\.js:1'] } });
+  const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
+  let runs = 0;
+  const exec = async () => (runs += 1, { status: 'done', findings: [], verdicts, dropped: [] });
+  const attest = (step) => { for (const pass of step.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: step.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify(verdicts) }); };
+  const first = await r.step({ exec });
+  assert.equal(first.status, 'dispatch');
+  attest(first);
+  assert.equal((await r.step({ exec })).status, 'received');
+  const posted = stateFromComment(r.comments.at(-1).body, 7);
+  assert.ok(Object.values(posted.passes).some((result) => (result.verdicts ?? []).some((verdict) => verdict.verdict === 'holds' && verdict.evidence === undefined)), 'the private copy posts the verdict without its evidence');
+  const ran = runs;
+  // Another machine: no record of its own, only the private comment.
+  rmSync(recordFile(r.project, 7));
+  const again = await r.step({ exec });
+  assert.equal(again.status, 'dispatch', 'the agent pass is dispatched again, not left to an outside acceptance');
+  attest(again);
+  assert.equal((await r.step({ exec })).status, 'received');
+  assert.ok(runs > ran, 'and the exec pass whose evidence was withheld ran again');
+});
+
 test('a second machine on a public repository holds on another machine`s open, blocking finding: no reviewer runs, its merge guard refuses the head, and the comment stays', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
   r.forge.visibility = () => 'PUBLIC';

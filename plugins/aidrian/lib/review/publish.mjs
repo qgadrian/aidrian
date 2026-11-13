@@ -456,14 +456,19 @@ function privateCopy(value, checker, counter) {
   if (!isObject(value)) return value;
   const out = {};
   for (const [key, each] of Object.entries(value)) {
-    // `adopted` is this machine's own mark (fillWithheld): no copy posts it.
-    if (key === 'adopted') continue;
-    const kept = keyAllowed(key, checker) ? privateCopy(each, checker, counter) : undefined;
+    // `adopted`, `evidenceWithheld`, and `notesWithheld` are this machine's own marks (fillWithheld): no copy posts them.
+    if (MARKS.has(key)) continue;
+    let kept = keyAllowed(key, checker) ? privateCopy(each, checker, counter) : undefined;
+    // A slice's report to the cross pass is posted whole or not at all: one with a string withheld is left out, so
+    // the machine that builds on the copy knows it lacks it (fillWithheld) and runs the slice again.
+    if (REPORT_KEYS.has(key) && Array.isArray(each) && Array.isArray(kept) && kept.length < each.length) kept = undefined;
     if (kept === undefined) counter.n += 1;
     else out[key] = kept;
   }
   return judgeKept(value, out);
 }
+const MARKS = new Set(['adopted', 'evidenceWithheld', 'notesWithheld']);
+const REPORT_KEYS = new Set(['contracts', 'cross_notes']);
 
 // What marks a ruling as a judge's, not the Human's: the prefix of its `by` (lib/review/approvals.mjs JUDGE_PREFIX,
 // which test/review-publish.test.mjs holds equal). A copy that cannot post the judge's name posts the prefix alone, so
@@ -818,7 +823,9 @@ const matching = (list, entry, keys) => (Array.isArray(list) ? list : []).find((
 // the date it holds. A finding whose mint mark differs from this machine's finding of that id, or that has none, gets
 // nothing, so a restarted record that reuses an id, or another machine that minted the same id, gets nothing either. An
 // index entry fills from this machine's index entry alone, so it gets back its local `reviewer`, and a closed entry
-// never takes a finding's body or evidence. The security mark is set when either copy holds it. Returns `remote`.
+// never takes a finding's body or evidence. The security mark is set when either copy holds it. A pass the checks left
+// incomplete, a verdict's evidence or a slice's report, is marked (`evidenceWithheld`, `notesWithheld`) so the review
+// step runs it again. Returns `remote`.
 export function fillWithheld(remote, local) {
   if (!isObject(remote) || !isObject(local)) return remote;
   const mine = new Map();
@@ -849,9 +856,28 @@ export function fillWithheld(remote, local) {
   }
   for (const [id, result] of Object.entries(isObject(remote.passes) ? remote.passes : {})) {
     const theirs = local.passes?.[id];
-    if (!isObject(result) || !isObject(theirs) || !sameHead(result.head, theirs.head)) continue;
+    if (!isObject(result)) continue;
+    // A slice's report to the cross pass that the text checks left out of the copy (privateCopy), and that this
+    // machine's own same-head result does not hold, is marked: the review step does not count the slice as finished,
+    // so it runs again before the cross pass reads its report.
+    if (!isObject(theirs) || !sameHead(result.head, theirs.head)) {
+      if (id.startsWith('slice:') && !(Array.isArray(result.contracts) && Array.isArray(result.cross_notes))) result.notesWithheld = true;
+      continue;
+    }
+    // This machine's copy of the pass keeps its own mark: an earlier adoption that wrote it holds no report either.
+    if (theirs.notesWithheld === true) result.notesWithheld = true;
+    else delete result.notesWithheld;
     fillKeys(result, theirs, ['contracts', 'cross_notes', 'dropped', 'files']);
     for (const verdict of Array.isArray(result.verdicts) ? result.verdicts : []) fillKeys(verdict, matching(theirs.verdicts, verdict, ['flow', 'invariant', 'verdict']));
+  }
+  // A pass whose holds or not_affected verdict has no evidence once filled, as the text checks withheld it from the copy
+  // and this machine holds none of its own, is marked: the review step does not count it as finished, so its reviewer
+  // answers again here, with evidence this machine checks.
+  for (const result of Object.values(isObject(remote.passes) ? remote.passes : {})) {
+    if (!isObject(result)) continue;
+    const unproven = (Array.isArray(result.verdicts) ? result.verdicts : []).some((verdict) => isObject(verdict) && ['holds', 'not_affected'].includes(verdict.verdict) && (typeof verdict.evidence !== 'string' || verdict.evidence.trim() === ''));
+    if (unproven) result.evidenceWithheld = true;
+    else delete result.evidenceWithheld;
   }
   for (const [flow, signoff] of Object.entries(isObject(remote.signoffs) ? remote.signoffs : {})) {
     const theirs = local.signoffs?.[flow];

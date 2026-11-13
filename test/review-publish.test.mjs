@@ -388,15 +388,40 @@ test('a security finding accepted late, then repeated as already ruled, keeps it
   assert.deepEqual([out.rows[0].text, out.rows[0].title, out.rows[0].file, out.withheld], [WITHHELD, undefined, undefined, 1]);
 });
 
-test('a slice result built on from a private copy takes this machine`s own same-head report, and no mark of its own', () => {
+test('a private copy the text checks left incomplete: a slice`s report posts whole or not at all, and the machine that builds on it marks the pass to run again', () => {
+  const head = 'a'.repeat(40);
+  const slice = 'slice:code-reviewer:0123456789';
+  const whole = 'slice:code-reviewer:abcdef0123';
+  const flow = 'agent:code-reviewer:booking';
+  const checker = textChecker({ context: CONTEXT, words: [], patterns: ['secret\\.js'] });
+  const state = { ...emptyState(7, 'o/r'), revision: 4, passes: {
+    [flow]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, verdicts: [{ flow: 'booking', invariant: 'i', verdict: 'holds', evidence: 'src/secret.js:1' }, { flow: 'booking', invariant: 'j', verdict: 'violated', evidence: 'src/secret.js:2' }] },
+    [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, contracts: ['a()', 'secret.js exports b()'], cross_notes: ['n'] },
+    [whole]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, contracts: ['c()'], cross_notes: [] },
+  } };
+  const { copy } = postedCopy(state, { reading: PRIVATE, checker });
+  assert.deepEqual([copy.passes[slice].contracts, copy.passes[slice].cross_notes, copy.passes[flow].verdicts[0].evidence], [undefined, ['n'], undefined], 'a report with a string withheld is left out whole');
+  const adopted = structuredClone(copy);
+  fillWithheld(adopted, emptyState(7, 'o/r'));
+  assert.deepEqual([adopted.passes[slice].notesWithheld, adopted.passes[whole].notesWithheld, adopted.passes[flow].evidenceWithheld], [true, undefined, true]);
+  // This machine's own same-head result fills both: nothing to run again.
+  const filled = structuredClone(copy);
+  fillWithheld(filled, state);
+  assert.deepEqual([filled.passes[slice].notesWithheld, filled.passes[slice].contracts, filled.passes[flow].evidenceWithheld, filled.passes[flow].verdicts[0].evidence], [undefined, state.passes[slice].contracts, undefined, 'src/secret.js:1']);
+  // No copy posts the marks.
+  const again = postedCopy(adopted, { reading: PRIVATE, checker: { allows: () => true } }).copy;
+  assert.doesNotMatch(JSON.stringify(again), /Withheld/u);
+});
+
+test('a slice result built on from a private copy with no report is marked; this machine`s own same-head result fills it, with no mark', () => {
   const head = 'a'.repeat(40);
   const slice = 'slice:code-reviewer:0123456789';
   const remote = { ...emptyState(7, 'o/r'), revision: 9, passes: { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0 } } };
   fillWithheld(remote, emptyState(7, 'o/r'));
-  assert.deepEqual(Object.keys(remote.passes[slice]).sort(), ['findings', 'head', 'open', 'reviewer'], 'nothing added to a slice this machine never ran');
+  assert.equal(remote.passes[slice].notesWithheld, true, 'an attested agent slice from another machine, with no report on the copy');
   const again = { ...emptyState(7, 'o/r'), revision: 9, passes: { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0 } } };
   fillWithheld(again, { ...emptyState(7, 'o/r'), passes: { [slice]: { head, contracts: ['a()'], cross_notes: [] } } });
-  assert.deepEqual([again.passes[slice].contracts, again.passes[slice].cross_notes], [['a()'], []]);
+  assert.deepEqual([again.passes[slice].notesWithheld, again.passes[slice].contracts, again.passes[slice].cross_notes], [undefined, ['a()'], []]);
 });
 
 // ---- A second machine and a copy that is not private (#276) ----

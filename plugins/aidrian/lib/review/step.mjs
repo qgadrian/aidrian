@@ -17,6 +17,7 @@ import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord
 import { isObject } from '../fs.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
 import { deleteOwn, handledKeys } from './delete.mjs';
+import { mappedPosts } from './markers.mjs';
 import { fillThreads, raiseFloor, readMarked } from './inline.mjs';
 import { answerThreads } from './replies.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
@@ -141,7 +142,13 @@ export async function prepareStep(s) {
   const readVisibility = () => (visibility ??= forge.visibility(repo));
   const viewer = () => (login ??= forge.viewer());
   s.viewer = viewer;
-  const sweep = (record, mode, before = null) => deleteOwn({ forge, repo, n, state: record, items: marked?.items ?? null, mode, publicSecurity, done: handledKeys(before), readVisibility, viewer });
+  // The comments the record maps at the first sweep, when the marked posts were just read: a comment a merge maps later,
+  // posted by another write after that read, is read by its own id before the final sweep can call it gone.
+  let known = null;
+  const sweep = (record, mode, before = null) => {
+    known ??= new Set(mappedPosts(record).keys());
+    return deleteOwn({ forge, repo, n, state: record, items: marked?.items ?? null, mode, publicSecurity, done: handledKeys(before), known, readVisibility, viewer });
+  };
   // The same sweep runs again when the step finishes (run.mjs finish), for a mark the step itself set after this one.
   s.sweep = sweep;
   const summary = summaryToEdit(comments, viewer);

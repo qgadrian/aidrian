@@ -81,7 +81,9 @@ function mappedCandidates(state, secure, { done, full }) {
 // repository's visibility and `viewer` the forge's current user, by default through the forge; a step passes ones that
 // keep their first answer, so a second sweep, and the replies, read neither again.
 // Candidates: each comment the record maps to such an id, less one a whole read (`items`) no longer holds, which is gone
-// and gets no call; and where the record is posted, each review comment, a thread's root or a reply in it, or
+// and gets no call. `known` holds the comments, as `<kind>:<id>`, the record mapped when `items` was read (null: every
+// one it maps now): a comment mapped since, such as one another write posted and a merge brought in, is one that read
+// could not hold, so it is read by its own id like any other candidate before it can be called gone; and where the record is posted, each review comment, a thread's root or a reply in it, or
 // conversation comment the forge's current user wrote whose leading markers name such an id or alias, though no record
 // maps it, so a reply whose mark a stale write lost still goes. With no candidate, no forge call. Else the visibility
 // and the current user are read, and each candidate is read by its own id in its own kind, held to the pull request,
@@ -94,7 +96,7 @@ function mappedCandidates(state, secure, { done, full }) {
 // `items` too, so the rest of the step reads neither: no fresh id for its markers, and no list names it.
 // Returns null when nothing was a candidate, else { deleted, waiting, left, failed, gone, textless, unmapped_unread }, each
 // list of { finding, kind, id } (`login` on a waiting one).
-export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity = 'counts', done = null, readVisibility = () => forge.visibility(repo), viewer: readViewer = () => forge.viewer() }) {
+export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity = 'counts', done = null, known = null, readVisibility = () => forge.visibility(repo), viewer: readViewer = () => forge.viewer() }) {
   if (!isObject(state)) return null;
   const secure = securityIds(state);
   if (!secure.size) return null;
@@ -111,7 +113,7 @@ export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity =
   const candidates = [];
   for (const candidate of mappedCandidates(state, secure, { done, full: publicSecurity === 'full' })) {
     const { finding, kind, id } = candidate;
-    if (whole && !present.has(`${kind}:${id}`)) {
+    if (whole && !present.has(`${kind}:${id}`) && (!known || known.has(`${kind}:${id}`))) {
       out.gone.push({ finding, kind, id });
       forget(kind, id);
     } else candidates.push(candidate);

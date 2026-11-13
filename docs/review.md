@@ -1446,7 +1446,9 @@ Neither holds the finding's title or body, but a notification email the forge al
   (`comment_deletes.waiting`), and anything else is left and listed. When the forge's current user cannot be read, no
   comment is known to be another member's: each is left, and the next step reads it again. A comment the forge no
   longer finds on the pull request, such as one deleted by hand, is gone (`comment_deletes.gone`): the record maps it no
-  more, under `review.record: "local"` too, so no later step reads it. A comment spared under `"full"` is noted on its
+  more, under `review.record: "local"` too, so no later step reads it. A mapped comment the step's read of the marked
+  posts lacks is gone with no call, unless the record mapped it only after that read, as a [merge](#finding-ids) of
+  another write's post does: that one is read by its id first, and deleted or kept as any other. A comment spared under `"full"` is noted on its
   finding's `thread` (`textless`), so no later step reads it again for that finding while `"full"` holds; under
   `"counts"` it goes. The step reads the visibility and the current user once, for both sweeps and the replies.
   A review body cannot be deleted, so it keeps the text it held, and so does a notification email the forge already sent.

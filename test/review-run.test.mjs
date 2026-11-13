@@ -3081,6 +3081,36 @@ test('two writers: a record that lost the write that mapped a finding`s thread p
   assert.deepEqual(stateFromComment(summaryComment(r).body, 7).index['R1-1'].thread, { reviewId: 900, commentId: 1000 });
 });
 
+test('two writers: a comment another write posts after the step read the marked posts, merged in and marked security, is read and deleted, not called gone', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  await r.step({ exec: async () => found(mediumFinding) });
+  // The finding is recorded and unposted: its thread is gone from the pull request and from both copies.
+  posts.reviews.length = 0;
+  posts.reviewComments.length = 0;
+  const state = readLocalState(r.project, 7);
+  delete state.index['R1-1'].thread;
+  writeLocalState(r.project, state);
+  summaryComment(r).body = summaryBody(readLocalState(r.project, 7), null, 'x', OPEN);
+  r.forge.visibility = () => 'PUBLIC';
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('not the fix');
+  // While this step's reviewer runs, another machine posts the finding's thread and its record maps it; the reviewer
+  // here rates the finding high.
+  const second = await r.step({ exec: async () => {
+    const body = posts.reviewComments.length ? null : '<!-- aidrian-review-finding:R1-1 -->\naidrian review, finding R1-1\n> the app number is wrong';
+    if (body) posts.reviewComments.push({ id: 1001, body, path: 'src/app.js', line: 1, pull_request_review_id: 901, user: { login: 'me' }, author_association: 'MEMBER' });
+    const remote = readLocalState(r.project, 7);
+    remote.index['R1-1'].thread = { reviewId: 901, commentId: 1001 };
+    remote.revision += 3;
+    summaryComment(r).body = summaryBody(remote, null, 'x', OPEN);
+    return found({ ...mediumFinding, severity: 'high' });
+  } });
+  assert.deepEqual(second.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 1001 }], 'read by its own id and deleted');
+  assert.deepEqual(second.comment_deletes.gone, []);
+  assert.ok(!posts.reviewComments.some((each) => each.id === 1001), 'the other write`s comment is gone from the pull request');
+});
+
 test('the delete runs under publicSecurity "full" too: a comment posted with its text before the mark goes, and the step posts no text for it', async (t) => {
   const { r, posts } = await postedThenMarked(t, { version: 1, review: { publish: { inline: true, publicSecurity: 'full' } } });
   const result = await r.step({ exec: async () => found(mediumFinding) });

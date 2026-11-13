@@ -1221,6 +1221,27 @@ test('the delete: a failed delete is named and tried again; a deleted fallback c
   assert.deepEqual(postInline(inlineStep(r, posted, next.forge, { reading: PUBLIC }), openOf(posted)).in_body, ['R1-2'], 'and a later step posts it again');
 });
 
+test('the delete: a comment mapped after the marked posts were read is read by its own id and deleted, not listed as gone', () => {
+  const state = () => securityState([{ id: 'R1-1', severity: 'high', thread: { reviewId: 900, commentId: 61 } }]);
+  const comments = { 61: { kind: 'review_comment', body: ownBody('R1-1'), pr: 7 } };
+  const posted = (known, forge, record) => deleteOwn({ forge, repo: 'o/r', n: 7, state: record, items: [], mode: 'posted', publicSecurity: 'counts', known });
+  // Merged in since the read: the read could not hold it.
+  const merged = state();
+  const fresh = deleteForge({ comments });
+  const out = posted(new Set(), fresh.forge, merged);
+  assert.deepEqual([out.deleted, out.gone], [[{ finding: 'R1-1', kind: 'review_comment', id: 61 }], []]);
+  assert.deepEqual(fresh.calls, [['visibility'], ['viewer'], ['read review_comment', 61], ['delete review_comment', 61]]);
+  assert.deepEqual(merged.index['R1-1'].thread, { reviewId: 900 });
+  // Read and not found: gone after its read.
+  const missing = deleteForge();
+  assert.deepEqual(posted(new Set(), missing.forge, state()).gone, [{ finding: 'R1-1', kind: 'review_comment', id: 61 }]);
+  assert.ok(missing.calls.some(([name]) => name === 'read review_comment'));
+  // Mapped when the read was made, which no longer holds it: gone, with no call.
+  const read = deleteForge({ comments });
+  assert.deepEqual(posted(new Set(['review_comment:61']), read.forge, state()).gone, [{ finding: 'R1-1', kind: 'review_comment', id: 61 }]);
+  assert.deepEqual(read.calls, []);
+});
+
 test('the delete: no candidate makes no forge call, and a private repository keeps the comment', () => {
   const quiet = new Proxy({}, { get: (_, name) => () => assert.fail(`no forge call: ${String(name)}`) });
   assert.equal(sweep(quiet, securityState([{ id: 'R1-1', thread: { commentId: 61 } }])), null, 'no security finding');

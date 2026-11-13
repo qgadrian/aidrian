@@ -365,6 +365,8 @@ export const flagName = (reason) => {
 const FIXED_REASONS = new Set([ONLY_NON_BEHAVIOUR]);
 
 const isInt = (value) => Number.isSafeInteger(value) && value >= 0;
+// A forge's id of a post: a positive whole number. Zero names no post, and the forge refuses it as one.
+export const isPostId = (value) => Number.isSafeInteger(value) && value > 0;
 const isDate = (value) => typeof value === 'string' && DATE.test(value);
 const isSha = (value) => typeof value === 'string' && SHA.test(value);
 const isWord = (value) => typeof value === 'string' && WORD.test(value);
@@ -537,6 +539,7 @@ function allowlisted(state, post, counter) {
   }) : drop());
   const sha = check(isSha);
   const int = check(isInt);
+  const postId = check(isPostId);
   const date = check(isDate);
   const bool = check((value) => typeof value === 'boolean');
   const nullableBool = check((value) => value === null || typeof value === 'boolean');
@@ -586,7 +589,7 @@ function allowlisted(state, post, counter) {
       // (replies.mjs answerThreads): its id, whether it was posted, whether the thread is resolved and the engine resolved
       // it, and the ids of the replies of closings before it opened again; and the comments the delete spared as holding
       // no text (delete.mjs), by key or, for an earlier reply, by id.
-      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int, replyId: int, replied: bool, resolved: bool, earlier: list(int), textless: list((value) => (typeof value === 'number' ? int(value) : word(THREAD_COMMENT_KEYS)(value))), resolvedByEngine: bool }),
+      thread: (value) => object(value, { reviewId: postId, commentId: postId, fallbackId: postId, replyId: postId, replied: bool, resolved: bool, earlier: list(postId), textless: list((value) => (typeof value === 'number' ? postId(value) : word(THREAD_COMMENT_KEYS)(value))), resolvedByEngine: bool }),
     });
     const file = source.file;
     if (typeof file === 'string' && !hidePlace && path(head)(file)) {

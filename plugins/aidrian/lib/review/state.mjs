@@ -30,7 +30,7 @@ import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
 import { isClosed, isFindingId, isMint, recordedFindings, recordFindings } from './findings.mjs';
-import { escapeLines, fillWithheld, findingsTable, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, untextedBlocking, WITHHELD } from './publish.mjs';
+import { escapeLines, fillWithheld, findingsTable, flagName, isPostId, isPrivate, JUDGE_RULING, plainChecker, postedCopy, untextedBlocking, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
 import { splitPasses } from './split.mjs';
@@ -184,7 +184,7 @@ export function mergeIndex(state, other, removed = new Set(), { closed = true, s
     }
     for (const [key, kind] of Object.entries(POST_KEYS)) {
       const value = isObject(their.thread) ? their.thread[key] : undefined;
-      if (!Number.isSafeInteger(value) || removed.has(`${kind}:${value}`) || (isObject(entry.thread) && entry.thread[key] !== undefined)) continue;
+      if (!isPostId(value) || removed.has(`${kind}:${value}`) || (isObject(entry.thread) && entry.thread[key] !== undefined)) continue;
       entry.thread = { ...(isObject(entry.thread) ? entry.thread : {}), [key]: value };
       kept = true;
     }

@@ -17,7 +17,7 @@ import { attributionLine, engineLists, fillThreads, fitBody, leadingMarkers, mar
 import { deleteOwn, handledKeys, mergeDeletes } from '../plugins/aidrian/lib/review/delete.mjs';
 import { answerThreads, noteReopened as noteReopenedFor } from '../plugins/aidrian/lib/review/replies.mjs';
 import { MAX_BODY } from '../plugins/aidrian/lib/forges/index.mjs';
-import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, readLocalState, readRecord, refreshSummary, restartFrom, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, mergeIndex, readLocalState, readRecord, refreshSummary, restartFrom, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const NO_TERMS = { hosts: [], accounts: [], variables: [] };
 // The always-on check's context with nothing named but this machine's home.
@@ -1969,4 +1969,25 @@ test('the earlier replies of a reopened finding stay the engine`s: mapped in the
   assert.deepEqual([kept.textless.map((each) => each.id), kept.deleted.map((each) => each.id)], [[2001], [1001]]);
   assert.deepEqual(full.index['R1-1'].thread.textless, [2001]);
   assert.deepEqual(postedCopy(full, { reading: PUBLIC, names: [] }).copy.index['R1-1'].thread.textless, [2001], 'the posted copy keeps the mark');
+});
+
+// ---- A post id of zero (security re-check of #287) ----
+
+test('a zero post id fails only its own finding: it is never due, the posted copy and the merge drop it, and every other thread is answered', () => {
+  const state = repliesState(closedEntry('R1-1', { thread: { reviewId: 900, commentId: 0 } }), closedEntry('R1-2'), closedEntry('R1-3', { state: 'open', thread: { reviewId: 900, commentId: 0, resolved: true, resolvedByEngine: true } }));
+  const posts = replyForge(threadOf('R1-2'));
+  // As the adapter does: a root id that is no positive whole number fails the whole read.
+  const read = posts.forge.findingThreads;
+  posts.forge.findingThreads = (repo, n, options) => {
+    if ((options?.roots ?? []).some((id) => !(Number.isSafeInteger(id) && id > 0))) throw new Error('a comment id must be a positive whole number');
+    return read(repo, n, options);
+  };
+  const result = answerThreads(replyStep(state, posts.forge));
+  assert.deepEqual([result.replied, result.resolved, result.unanswered, result.reopened], [['R1-2'], ['R1-2'], [], []]);
+  assert.deepEqual(posts.calls.find(([name]) => name === 'findingThreads'), ['findingThreads', [1002]], 'the read names the positive roots alone');
+  const { copy } = postedCopy(state, { reading: PUBLIC, names: [] });
+  assert.deepEqual(copy.index['R1-1'].thread, { reviewId: 900 }, 'the posted copy keeps no zero id');
+  const ours = repliesState(closedEntry('R1-4', { thread: undefined }));
+  assert.deepEqual(mergeIndex(ours, repliesState(closedEntry('R1-4', { thread: { reviewId: 0, commentId: 0, fallbackId: 0 } }))), []);
+  assert.equal(ours.index['R1-4'].thread, undefined, 'the merge maps no zero id');
 });

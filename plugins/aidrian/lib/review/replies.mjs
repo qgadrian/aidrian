@@ -5,7 +5,7 @@
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { attributionLine, currentUser, entries, idsOf, KINDS, leadingMarkers, markerLine, sameLogin, withMarkers } from './markers.mjs';
-import { replyLines, securityIds } from './publish.mjs';
+import { isPostId, replyLines, securityIds } from './publish.mjs';
 
 // The states a finding's thread is answered in: closed as fixed or not reported again, or accepted. Only fixed and
 // not_reported are final: an accepted finding can open again (findings.mjs entryState).
@@ -14,7 +14,9 @@ const ANSWERED = new Set(['fixed', 'not_reported', 'accepted']);
 // to and did not, which holds what may be a security finding's text (G4).
 const UNDELETED = ['deleted', 'waiting', 'left', 'failed'];
 
-const hasRoot = (entry) => isObject(entry.thread) && Number.isSafeInteger(entry.thread.commentId);
+// A thread with a root comment the forge can name: a zero or malformed id is no post, so it is never due and never
+// reaches the one thread read a step makes, where it would fail every other finding's answer.
+const hasRoot = (entry) => isObject(entry.thread) && isPostId(entry.thread.commentId);
 // A closed finding whose thread still lacks its reply or its resolve.
 const closedDue = (entry) => ANSWERED.has(entry.state) && !(entry.thread.replied === true && entry.thread.resolved === true);
 // An open finding whose thread the engine resolved at an earlier closing. A thread a person resolved stays as they left it.

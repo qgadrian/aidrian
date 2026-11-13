@@ -1236,6 +1236,14 @@ test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolve
   const at = (body, m = 7, id = 1) => ({ id, user: BOT, created_at: T(m), body });
   assert.equal(isCleanReceipt(RECEIPT_BODY(head)), true);
   assert.equal(isCleanReceipt(QUOTA_BODY), false);
+  // Only the receipt's layout is clean: its marker first, the phrase leading the text after it, and the reviewed commit.
+  const quoting = `Codex Review: The UI says "didn't find any major issues" even when validation fails; fix this regression.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``;
+  assert.equal(isCleanReceipt(quoting), false, 'a finding that quotes the phrase');
+  assert.equal(isCleanReceipt(`<!-- codex-review-receipt:v1 -->\n\n${quoting}`), false, 'a receipt whose text names a finding');
+  assert.equal(isCleanReceipt("Codex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** `3871361bfb`"), false, 'no receipt marker');
+  assert.equal(isCleanReceipt("<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!"), false, 'no reviewed commit');
+  const quoted = latestBotSignal({ ...base, issueComments: [at(quoting)] });
+  assert.deepEqual([quoted.kind, quoted.clean], ['comment', undefined], 'the quoting comment stays a finding');
   assert.equal(cardState(STATE_CARD_BODY(head, false)).code_review.has_unresolved_findings, false);
   assert.equal(cardState('<!-- codex-review-state:v1 {not json} -->'), null);
   const receipt = latestBotSignal({ ...base, issueComments: [at(RECEIPT_BODY(head))] });

@@ -742,9 +742,11 @@ cap (`botRequest` on the record): later steps on that head only wait for the ans
 <n> --request` run by hand asks again. A round the bot was asked on is kept when a reviewer then fails. The bot's
 stage is still awaited and judged last: the step returns an earlier stage's findings first, and `received` only once
 the bot has answered, so a pull request is marked ready only on the bot's clean answer. A clean answer leaves the bot's
-pass with no open finding: a 👍, or, on a draft, the bot's comment that it found no major issues, or a comment for a
-commit whose code review the bot's status card records as completed with no unresolved findings. Any other answer
-holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
+pass with no open finding: a 👍, or, on a draft, the bot's receipt comment, matched on its layout (the
+`codex-review-receipt:v1` marker first, then text that opens with "Codex Review: Didn't find any major issues", and
+the reviewed commit), or a comment for a commit whose code review the bot's status card records as completed with no
+unresolved findings. A comment that only quotes the phrase is not a receipt. Any other answer holds at least one open
+finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for
 nothing. A flow's required checks are read for that commit too.

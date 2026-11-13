@@ -110,10 +110,19 @@ export const isQuotaNotice = (body) => typeof body === 'string' && QUOTA_NOTICE_
 export const REVIEW_SUMMARY_CARD_MARKER = '<!-- codex-pull-request-review-summary -->';
 export const isReviewSummaryCard = (body) => typeof body === 'string' && body.includes(REVIEW_SUMMARY_CARD_MARKER);
 
-// The bot's clean answer on a draft: a conversation comment ("Codex Review: Didn't find any major issues", with the
-// reviewed commit) in place of a 👍. Matched on its words, so a comment that names findings is never clean.
-export const CLEAN_RECEIPT_PATTERN = /didn['’]t find any major issues/iu;
-export const isCleanReceipt = (body) => typeof body === 'string' && !isQuotaNotice(body) && CLEAN_RECEIPT_PATTERN.test(body);
+// The bot's clean answer on a draft: a conversation comment in place of a 👍, matched on its layout, never on its words
+// anywhere: it opens with the receipt marker, the text after it opens with "Codex Review: Didn't find any major
+// issues", and it names the reviewed commit. A comment that only quotes the phrase, such as a finding about a screen
+// that shows it, is never clean.
+export const RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->';
+const CLEAN_RECEIPT_LEAD = /^Codex Review: Didn['’]t find any major issues\b/u;
+export const isCleanReceipt = (body) => {
+  if (typeof body !== 'string' || isQuotaNotice(body)) return false;
+  const text = body.trimStart();
+  if (!text.startsWith(RECEIPT_MARKER)) return false;
+  const rest = text.slice(RECEIPT_MARKER.length).trimStart();
+  return CLEAN_RECEIPT_LEAD.test(rest) && reviewedCommit(rest) !== null;
+};
 
 // The status card's machine state, `<!-- codex-review-state:v1 {...} -->`: its `code_review` names the commit the review
 // ran on, its status, and whether it left unresolved findings. Null when the card carries none or it does not parse.

@@ -2056,3 +2056,40 @@ test('replies: a closing after another write`s accept and reopen, merged in, get
   assert.deepEqual(replies(posts.calls).map(([, , body]) => body.split('\n').at(-1)), [`Fixed in [aaaaaaa...bbbbbbb](${COMPARE}).`]);
   assert.equal(state.index['R1-1'].thread.replyId, 2002);
 });
+
+test('replies: the engine`s resolve another write recorded survives the merge and the replies, so a reopen unresolves the thread', () => {
+  // Another step accepts the finding, replies, and resolves its thread while this step runs on a copy read before.
+  const accepted = { state: 'accepted', disposition: 'acceptable_as_is', closed_in: undefined };
+  const other = repliesState(closedEntry('R1-1', accepted));
+  const posts = replyForge(threadOf('R1-1'));
+  answerThreads(replyStep(other, posts.forge));
+  assert.deepEqual(other.index['R1-1'].thread, { reviewId: 900, commentId: 1001, replied: true, replyId: 2001, resolved: true, resolvedByEngine: true });
+  const reopens = (state) => {
+    state.index['R1-1'].state = 'open';
+    const reopen = replyForge(posts.threads);
+    const result = answerThreads(replyStep(state, reopen.forge));
+    posts.threads[1001].resolved = true;
+    return [result?.reopened, reopen.calls.filter(([name]) => name === 'unresolve')];
+  };
+  // Both callers: the posted copy merged before the replies (mergePosted, strict when not private), and this machine's
+  // record merged after them, at the write (settle).
+  for (const [name, options, before] of [['mergePosted, strict', { closed: false, strict: true }, true], ['mergePosted', {}, true], ['settle', {}, false]]) {
+    const stale = repliesState(closedEntry('R1-1', accepted));
+    if (before) assert.deepEqual(mergeIndex(stale, other, new Set(), options), ['R1-1'], `${name}: the resolve is carried`);
+    answerThreads(replyStep(stale, replyForge(posts.threads).forge));
+    if (!before) assert.deepEqual(mergeIndex(stale, other), ['R1-1'], `${name}: the resolve is carried`);
+    assert.equal(stale.index['R1-1'].thread.resolvedByEngine, true, `${name}: the replies keep the merged flag`);
+    assert.deepEqual(reopens(stale), [['R1-1'], [['unresolve', 1001]]], `${name}: the reopen unresolves the thread`);
+  }
+  // Under the strict rule, only for a finding both copies hold by its mint mark.
+  const unknown = repliesState(closedEntry('R1-1', { ...accepted, mint: undefined }));
+  mergeIndex(unknown, repliesState(closedEntry('R1-1', { ...accepted, mint: undefined, thread: other.index['R1-1'].thread })), new Set(), { closed: false, strict: true });
+  assert.equal(unknown.index['R1-1'].thread.resolvedByEngine, undefined);
+  // A resolve of a closing this write set aside, or of another root, is not carried.
+  const later = repliesState(closedEntry('R1-1', { state: 'open', thread: { reviewId: 900, commentId: 1001, earlier: [2001] } }));
+  assert.deepEqual(mergeIndex(later, other), []);
+  assert.deepEqual(later.index['R1-1'].thread, { reviewId: 900, commentId: 1001, earlier: [2001] });
+  const elsewhere = repliesState(closedEntry('R1-1', { ...accepted, thread: { reviewId: 900, commentId: 1009 } }));
+  assert.deepEqual(mergeIndex(elsewhere, other), []);
+  assert.equal(elsewhere.index['R1-1'].thread.resolved, undefined);
+});

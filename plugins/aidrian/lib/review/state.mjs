@@ -161,10 +161,11 @@ const POST_KEYS = Object.freeze({ reviewId: 'review', commentId: 'review_comment
 // widens (findings.mjs tieTwins); a closed state (findings.mjs CLOSED_STATES, final), with its `closed_in`, over one that
 // is not, unless `closed` is false; each post key another write mapped, where this one maps none, and the replies of
 // earlier closings it set aside (mergeEarlier), each less one `removed` names as `<kind>:<id>` (a comment this step
-// deleted or found gone, delete.mjs removedPosts). An id only one copy holds
+// deleted or found gone, delete.mjs removedPosts); and, on the same root thread, the engine's resolve of it
+// (mergeResolved), which the forge's thread cannot tell from a person's. An id only one copy holds
 // is that copy's alone: nothing is added. Returns the ids it changed.
 // A copy that is not private is never built on (readRecord): from one, a step merges with `closed: false` and `strict`,
-// the marks and the forge's ids of its own findings alone, numbers and a flag that hold no finding text.
+// the marks and the forge's ids of its own findings alone, numbers and flags that hold no finding text.
 export function mergeIndex(state, other, removed = new Set(), { closed = true, strict = false } = {}) {
   const ours = isObject(state?.index) ? state.index : null;
   const theirs = isObject(other?.index) ? other.index : {};
@@ -190,6 +191,7 @@ export function mergeIndex(state, other, removed = new Set(), { closed = true, s
       kept = true;
     }
     if (mergeEarlier(entry, their, removed)) kept = true;
+    if (mergeResolved(entry, their)) kept = true;
     if (kept) changed.push(id);
   }
   return changed;
@@ -205,6 +207,21 @@ function mergeEarlier(entry, their, removed) {
   const added = theirs.filter((id) => isPostId(id) && !removed.has(`review_comment:${id}`) && !ours.includes(id) && entry.thread?.replyId !== id);
   if (!added.length) return false;
   entry.thread = { ...(isObject(entry.thread) ? entry.thread : {}), earlier: [...ours, ...new Set(added)] };
+  return true;
+}
+
+// Adds to `entry`'s thread the engine's resolve another write recorded on the same root thread (`resolved` with
+// `resolvedByEngine`, replies.mjs resolve): the forge's thread shows that it is resolved, never who resolved it, so a
+// step that reads it there takes it for a person's resolve, and the finding's thread would stay resolved when it opens
+// again (replies.mjs reopenDue). A resolve of a closing this write set aside in `earlier`, a reply of the closing before
+// it opened again, is not carried: this write already opened that thread, or is about to. Returns whether it added it.
+function mergeResolved(entry, their) {
+  const thread = isObject(entry.thread) ? entry.thread : null;
+  const other = isObject(their.thread) ? their.thread : null;
+  if (!thread || !other || !isPostId(thread.commentId) || thread.commentId !== other.commentId) return false;
+  if (other.resolved !== true || other.resolvedByEngine !== true || thread.resolvedByEngine === true) return false;
+  if (Array.isArray(thread.earlier) && thread.earlier.includes(other.replyId)) return false;
+  Object.assign(thread, { resolved: true, resolvedByEngine: true });
   return true;
 }
 

@@ -1347,7 +1347,13 @@ blocking finding goes on only on that machine ([The posted copy](#the-posted-cop
 
 With `review.publish.inline: true`, a step that hands findings back as open (`fix_required`, or the cap in its place)
 posts one review on its head, always a plain comment that neither approves nor requests changes, and its result says
-what went where (`inline_review`). Inline publishing has not been run beside the review bot.
+what went where (`inline_review`).
+
+Beside the review bot (one live run, November 2026), the bot leaves the engine's threads alone: it does not reply in
+them, react to them, resolve them, or count them in its status card. So the engine's reply, resolve, and unresolve below
+run as they would without it. The bot does open its own thread for a problem the engine already posted, often on the
+same line, and `pr-review-loop` answers that thread as any bot comment while the engine answers its own. What GitHub
+shows after [the delete](#inline-reviews) has not been run on a public repository yet.
 
 - **What gets a thread.** Each blocking finding with no post yet that sits on an added line of the diff from the merge
   base to the head, read with renames as the forge shows them (an unchanged line of a moved file is no added line), at a

@@ -664,6 +664,24 @@ test('the review bot as the engine: a thumbs-up passes, a review with comments i
   assert.equal((await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'thumbs_up' } }) })).status, 'received');
 });
 
+test('the review bot`s clean comment on a draft records no open finding, and the step is received; another comment holds one', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const { latestBotSignal, DEFAULT_REVIEWER } = await import('../plugins/aidrian/lib/pr-await-review.mjs');
+  const answer = (body) => async ({ head }) => ({ status: 'received', head_sha: head, signal: latestBotSignal({
+    reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: '2026-11-12T12:00:00Z',
+    issueComments: [{ id: 1, user: { login: DEFAULT_REVIEWER }, created_at: '2026-11-12T12:30:19Z', body: body(head) }],
+  }) });
+  const named = await r.step({ codex: off, awaitBot: answer((head) => `Codex Review: one finding.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``) });
+  assert.deepEqual([named.status, named.open[0].open], ['fix_required', 1], 'a comment that is no clean receipt still holds a finding');
+  r.write('src/app.js', 'c\n');
+  r.commit();
+  const received = await r.step({ codex: off, awaitBot: answer((head) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``) });
+  assert.equal(received.status, 'received');
+  const bot = Object.values(readLocalState(r.project, 7).passes).find((result) => result.head === received.head && result.bot);
+  assert.deepEqual([bot.open, bot.findings, bot.bot.kind], [0, 0, 'comment']);
+});
+
 const holdsAll = (pass, evidence) => JSON.stringify(pass.flows.flatMap((flow) => flow.invariants.map((each) => ({ flow: flow.id, invariant: each.id, verdict: 'holds', evidence }))));
 
 test('an independent reviewer`s violated verdict blocks the flow even with no findings', async (t) => {

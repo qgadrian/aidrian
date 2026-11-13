@@ -45,6 +45,9 @@ export function draftsByPr(dir) {
 export function sweepDrafts(project, { forge = forgeFor(project.root), limit = MAX_SWEPT, dir = path.join(stateDir(project), 'tmp') } = {}) {
   const out = { removed: [], kept: [], failed: [] };
   let read = 0;
+  // A known limit, accepted: every cleanup reads from the lowest pull request number, so when more than `limit` pull
+  // requests with drafts stay open or unreadable, the ones past them are never read and their drafts stay. It needs over
+  // 50 open pull requests with drafts on one machine, which a cleanup's cost is not worth a rotating start for.
   for (const [pr, files] of draftsByPr(dir)) {
     if (read >= limit) {
       out.kept.push({ pr, reason: `past the ${limit} pull requests one cleanup reads` });

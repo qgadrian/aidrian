@@ -1354,8 +1354,14 @@ what went where (`inline_review`).
 Beside the review bot (one live run, November 2026), the bot leaves the engine's threads alone: it does not reply in
 them, react to them, resolve them, or count them in its status card. So the engine's reply, resolve, and unresolve below
 run as they would without it. The bot does open its own thread for a problem the engine already posted, often on the
-same line, and `pr-review-loop` answers that thread as any bot comment while the engine answers its own. What GitHub
-shows after [the delete](#inline-reviews) has not been run on a public repository yet.
+same line, and `pr-review-loop` answers that thread as any bot comment while the engine answers its own.
+
+On a public repository (one live run, November 2026), [the delete](#inline-reviews) removes the thread whole: the
+comment and its reply return not found, the thread is gone from the pull request's threads, and the empty review that
+held the reply is gone from its reviews and timeline, with no placeholder for the deleted comment. What stays is the
+finding's id, severity, and place: in the review body's line for it ("on the diff at `<path>:<line>`"), and in the
+summary comment's edit history, whose earlier versions show the finding's row from before it was a security finding.
+Neither holds the finding's title or body, but a notification email the forge already sent does.
 
 - **What gets a thread.** Each blocking finding with no post yet that sits on an added line of the diff from the merge
   base to the head, read with renames as the forge shows them (an unchanged line of a moved file is no added line), at a
@@ -1439,8 +1445,10 @@ shows after [the delete](#inline-reviews) has not been run on a public repositor
   longer finds on the pull request, such as one deleted by hand, is gone (`comment_deletes.gone`): the record maps it no
   more, under `review.record: "local"` too, so no later step reads it. A comment spared under `"full"` is noted on its
   finding's `thread` (`textless`), so no later step reads it again for that finding while `"full"` holds; under
-  `"counts"` it goes. The step reads the visibility and the current user once, for both sweeps and the replies. A review body cannot be deleted, so it keeps the
-  text it held, and so does a notification email the forge already sent. Under `review.record: "local"` the delete reads
+  `"counts"` it goes. The step reads the visibility and the current user once, for both sweeps and the replies.
+  A review body cannot be deleted, so it keeps the text it held, and so does a notification email the forge already sent.
+  The summary comment's edit history keeps the finding's earlier row too, with its id, severity, and place, and no forge
+  API removes an edit. Under `review.record: "local"` the delete reads
   this machine's record alone: a comment whose mark another machine set, or that no record maps, is deleted by hand.
 
 ### Replies

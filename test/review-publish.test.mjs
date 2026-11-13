@@ -413,6 +413,33 @@ test('a private copy the text checks left incomplete: a slice`s report posts who
   assert.doesNotMatch(JSON.stringify(again), /Withheld/u);
 });
 
+test('a private copy built on over this machine`s same-head slice: the marks come from the result as filled, never from a local mark alone', () => {
+  const head = 'a'.repeat(40);
+  const slice = 'slice:code-reviewer:0123456789';
+  const flow = 'agent:code-reviewer:booking';
+  const checker = textChecker({ context: CONTEXT, words: [], patterns: ['secret\\.js'] });
+  // The first machine's newer record: a check withholds a contract, so the copy posts no contracts, and the evidence.
+  const theirs = { ...emptyState(7, 'o/r'), revision: 9, passes: {
+    [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, contracts: ['secret.js exports a()'], cross_notes: [] },
+    [flow]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, verdicts: [{ flow: 'booking', invariant: 'i', verdict: 'holds', evidence: 'src/secret.js:1' }] },
+  } };
+  const { copy } = postedCopy(theirs, { reading: PRIVATE, checker });
+  assert.deepEqual([copy.passes[slice].contracts, copy.passes[slice].cross_notes], [undefined, []]);
+  const adopt = (passes) => fillWithheld(structuredClone(copy), { ...emptyState(7, 'o/r'), revision: 3, passes }).passes;
+  const marks = (passes) => [passes[slice].notesWithheld, passes[flow].evidenceWithheld];
+  // A same-head slice this machine attested with no report, and a flow pass whose verdict it recorded with no evidence.
+  const unreported = { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0 }, [flow]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, verdicts: [{ flow: 'booking', invariant: 'i', verdict: 'holds', evidence: '' }] } };
+  assert.deepEqual(marks(adopt(unreported)), [true, true], 'a same-head result with no report and no evidence');
+  // An older adopted record: neither the report nor the mark, as a release before the marks wrote it.
+  const older = { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, cross_notes: [] }, [flow]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, verdicts: [{ flow: 'booking', invariant: 'i', verdict: 'holds' }] } };
+  assert.deepEqual(marks(adopt(older)), [true, true], 'an older record with neither the report nor the mark');
+  // A marked same-head result whose report an earlier adoption cut short stays marked; a whole one fills and clears.
+  const cut = { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0, contracts: [], cross_notes: [], notesWithheld: true } };
+  assert.equal(adopt(cut)[slice].notesWithheld, true);
+  const filled = adopt(theirs.passes);
+  assert.deepEqual([...marks(filled), filled[slice].contracts], [undefined, undefined, ['secret.js exports a()']]);
+});
+
 test('a slice result built on from a private copy with no report is marked; this machine`s own same-head result fills it, with no mark', () => {
   const head = 'a'.repeat(40);
   const slice = 'slice:code-reviewer:0123456789';

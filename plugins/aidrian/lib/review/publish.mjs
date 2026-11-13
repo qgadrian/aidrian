@@ -857,24 +857,22 @@ export function fillWithheld(remote, local) {
   for (const [id, result] of Object.entries(isObject(remote.passes) ? remote.passes : {})) {
     const theirs = local.passes?.[id];
     if (!isObject(result)) continue;
-    // A slice's report to the cross pass that the text checks left out of the copy (privateCopy), and that this
-    // machine's own same-head result does not hold, is marked: the review step does not count the slice as finished,
-    // so it runs again before the cross pass reads its report.
-    if (!isObject(theirs) || !sameHead(result.head, theirs.head)) {
-      if (id.startsWith('slice:') && !(Array.isArray(result.contracts) && Array.isArray(result.cross_notes))) result.notesWithheld = true;
-      continue;
+    // A report the copy carries is whole (privateCopy posts it whole or not at all). One it lacks is filled from this
+    // machine's own same-head result, which counts as whole only while that result carries no mark of its own.
+    const posted = Array.isArray(result.contracts) && Array.isArray(result.cross_notes);
+    const same = isObject(theirs) && sameHead(result.head, theirs.head);
+    if (same) {
+      fillKeys(result, theirs, ['contracts', 'cross_notes', 'dropped', 'files']);
+      for (const verdict of Array.isArray(result.verdicts) ? result.verdicts : []) fillKeys(verdict, matching(theirs.verdicts, verdict, ['flow', 'invariant', 'verdict']));
     }
-    // This machine's copy of the pass keeps its own mark: an earlier adoption that wrote it holds no report either.
-    if (theirs.notesWithheld === true) result.notesWithheld = true;
+    // Both marks are read from the result as filled, never carried from either copy's marks alone, so the review step
+    // does not count the pass as finished and runs it again here. A slice whose report is still not whole is marked
+    // `notesWithheld`, so it runs again before the cross pass reads the report. A pass whose holds or not_affected
+    // verdict still has no evidence is marked `evidenceWithheld`, so its reviewer answers again with evidence this
+    // machine checks.
+    const whole = Array.isArray(result.contracts) && Array.isArray(result.cross_notes) && (posted || (same && theirs.notesWithheld !== true));
+    if (id.startsWith('slice:') && !whole) result.notesWithheld = true;
     else delete result.notesWithheld;
-    fillKeys(result, theirs, ['contracts', 'cross_notes', 'dropped', 'files']);
-    for (const verdict of Array.isArray(result.verdicts) ? result.verdicts : []) fillKeys(verdict, matching(theirs.verdicts, verdict, ['flow', 'invariant', 'verdict']));
-  }
-  // A pass whose holds or not_affected verdict has no evidence once filled, as the text checks withheld it from the copy
-  // and this machine holds none of its own, is marked: the review step does not count it as finished, so its reviewer
-  // answers again here, with evidence this machine checks.
-  for (const result of Object.values(isObject(remote.passes) ? remote.passes : {})) {
-    if (!isObject(result)) continue;
     const unproven = (Array.isArray(result.verdicts) ? result.verdicts : []).some((verdict) => isObject(verdict) && ['holds', 'not_affected'].includes(verdict.verdict) && (typeof verdict.evidence !== 'string' || verdict.evidence.trim() === ''));
     if (unproven) result.evidenceWithheld = true;
     else delete result.evidenceWithheld;

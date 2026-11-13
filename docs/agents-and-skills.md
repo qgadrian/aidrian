@@ -103,7 +103,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 
 | Review and quality | What it does |
 | --- | --- |
-| `pr-review` | Reviews a pull request with the right agents. |
+| `pr-review` | Reviews a pull request with the right agents. Posts no comment: the [summary comment](review.md#publishing) of `aidrian pr review` is the one to read. |
 | `pr-review-fix` | Fixes the findings of a `pr-review` round. |
 | `specialist-review` | One agent reviews the current branch's changes. |
 | `issue-verify-ac` | Checks one issue's acceptance criteria against the code. |

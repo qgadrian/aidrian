@@ -43,6 +43,7 @@ import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
 import { atCap } from './extension.mjs';
+import { settleCaptures } from './dispatch.mjs';
 import { answerPending, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { ghImage } from './visual.mjs';
@@ -51,7 +52,7 @@ import { runStages } from './stages.mjs';
 
 export { DEPENDENCY_DIRS, stderrTail } from './base-worktree.mjs';
 export { reviewInForce } from './in-force.mjs';
-export { recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState } from './record.mjs';
+export { recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteReading, remoteState } from './record.mjs';
 export { MAX_LINES } from './step.mjs';
 export { MAX_ATTEMPTS } from './stages.mjs';
 
@@ -258,6 +259,8 @@ function finish(s, status, extra) {
   }) };
   if (approvalPath) result.approvals = { on: approvalPath.on, ...(approvalPath.off ? { off: approvalPath.off } : {}), ...(approvals().error ? { error: approvals().error } : {}), closed: state.outside.approvals };
   settle(s, result);
+  // A visual pass with its result on a head whose capture failed: the captures comment stops asking to wait for it.
+  settleCaptures(s);
   if (onPr) {
     const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status, { ...s.post(), diffPaths: new Set((s.changes ?? []).map((change) => change.file)) });
     try {

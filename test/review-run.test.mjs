@@ -664,6 +664,24 @@ test('the review bot as the engine: a thumbs-up passes, a review with comments i
   assert.equal((await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'thumbs_up' } }) })).status, 'received');
 });
 
+test('the review bot`s clean comment on a draft records no open finding, and the step is received; another comment holds one', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const { latestBotSignal, DEFAULT_REVIEWER } = await import('../plugins/aidrian/lib/pr-await-review.mjs');
+  const answer = (body) => async ({ head }) => ({ status: 'received', head_sha: head, signal: latestBotSignal({
+    reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: '2026-11-12T12:00:00Z',
+    issueComments: [{ id: 1, user: { login: DEFAULT_REVIEWER }, created_at: '2026-11-12T12:30:19Z', body: body(head) }],
+  }) });
+  const named = await r.step({ codex: off, awaitBot: answer((head) => `Codex Review: one finding.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``) });
+  assert.deepEqual([named.status, named.open[0].open], ['fix_required', 1], 'a comment that is no clean receipt still holds a finding');
+  r.write('src/app.js', 'c\n');
+  r.commit();
+  const received = await r.step({ codex: off, awaitBot: answer((head) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``) });
+  assert.equal(received.status, 'received');
+  const bot = Object.values(readLocalState(r.project, 7).passes).find((result) => result.head === received.head && result.bot);
+  assert.deepEqual([bot.open, bot.findings, bot.bot.kind], [0, 0, 'comment']);
+});
+
 const holdsAll = (pass, evidence) => JSON.stringify(pass.flows.flatMap((flow) => flow.invariants.map((each) => ({ flow: flow.id, invariant: each.id, verdict: 'holds', evidence }))));
 
 test('an independent reviewer`s violated verdict blocks the flow even with no findings', async (t) => {
@@ -2028,7 +2046,8 @@ test('a reviewer citing an ingested capture closes an unverified invariant on th
   assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the ingested capture is the evidence that closes it');
   // The repository reads as public, so the posted line names no reason and no person; the record keeps both.
   assert.doesNotMatch(summaryOf(r), /Tester|e2e-runner/u, 'the public comment names no reason and no person');
-  assert.match(summaryBody(readLocalState(r.project, 7), null, 'x', OPEN), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable \\(no base URL: .*; ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
+  // The designer pass has its result on the head, so the tool's own reason gives way; the ingest note stays.
+  assert.match(summaryBody(readLocalState(r.project, 7), null, 'x', OPEN), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable; the visual passes reviewed this head without the capture \\(ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
 });
 
 // The late order: the images are ingested after the visual reviewer answered. The step dispatches no visual reviewer
@@ -2063,12 +2082,52 @@ test('an ingest after the visual reviewer answered counts once the pass is recor
   const [{ key }] = readManifest(r.project, 7, first.head).ingested;
   // The late ingest leaves its trace on the pull request: the captures comment is rewritten with it.
   assert.ok(capturesComment().includes(`| \`${key}\` | \`e2e-runner run 12\` | \`Tester\` |`), capturesComment());
+  // The designer already has its result on this head, so the rewrite keeps the line that it reviewed the head without the capture.
+  assert.match(capturesComment(), /unavailable; the visual passes reviewed this head without the capture\./u);
   record(`capture:${key}`, 'holds');
   const closed = await r.step({ exec: clean });
   assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the re-recorded citation of the ingest closes the invariant');
   assert.equal(line(), lineBefore, 'the summary line does not show a late ingest');
   assert.deepEqual(readLocalState(r.project, 7).captured, keysBefore, 'nor do the record`s captured keys: the ingest counts only on the machine that holds it');
   assert.doesNotMatch(lineBefore, /ingested/u);
+});
+
+test('a failed capture stops asking to wait in the summary and the captures comment once a visual pass has its result on that head', async (t) => {
+  const visual = { platform: 'web', targets: [{ files: ['src/ui/**'], routes: ['/look'] }], viewports: [360] };
+  const flows = { look: { files: ['src/ui/**'], require: ['agent:designer'], invariants: [{ id: 'matches-design', text: 'Does the screen still match the approved design?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, visual } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const first = await r.step({ exec: clean });
+  const [pass] = first.dispatch;
+  const line = () => summaryOf(r).split('\n').find((each) => each.startsWith('- visual capture of'));
+  const capturesComment = () => r.comments.find((c) => c.body.startsWith('<!-- aidrian-visual-captures -->')).body;
+  // No visual pass has a result yet: the failure and its reason stand.
+  assert.match(capturesComment(), /unavailable: no base URL/u);
+  assert.match(line(), /: unavailable \(no base URL/u);
+  assert.deepEqual(readLocalState(r.project, 7).visual.passes, [pass.pass]);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: JSON.stringify([{ flow: 'look', invariant: 'matches-design', verdict: 'holds', evidence: 'src/ui/a.js:1' }]) });
+  await r.step({ exec: clean });
+  assert.equal(line(), `- visual capture of \`${first.head.slice(0, 7)}\`: unavailable; the visual passes reviewed this head without the capture; attach **auto**, private repository`);
+  assert.match(capturesComment(), /^Attach: \*\*auto\*\*, private repository\. unavailable; the visual passes reviewed this head without the capture\.$/mu);
+  assert.doesNotMatch(capturesComment(), /no base URL/u);
+  // The next step leaves the comment as it is.
+  let edits = 0;
+  const edit = r.forge.editComment;
+  r.forge.editComment = (...args) => ((args[1] === r.comments.find((c) => c.body.startsWith('<!-- aidrian-visual-captures -->')).id && (edits += 1)), edit(...args));
+  await r.step({ exec: clean });
+  assert.equal(edits, 0);
+});
+
+test('summaryBody: a failed capture`s line keeps its reason until a visual pass it was taken for has a result on its head', () => {
+  const head = 'a'.repeat(40);
+  const state = (passes, visual = {}) => ({ ...emptyState(7, 'o/r'), passes, visual: { head, status: 'failed', mode: 'auto', visibility: 'PRIVATE', captured: 0, of: 2, passes: ['designer'], reason: 'visual-preview: preview of aaaaaaa is still deploying; wait for the deploy and run aidrian pr review again', ...visual } });
+  const line = (record) => summaryBody(record, null, 'x', OPEN).split('\n').find((each) => each.startsWith('- visual capture of'));
+  assert.match(line(state({})), /failed \(visual-preview: preview of aaaaaaa is still deploying; wait for the deploy/u, 'no pass result');
+  assert.match(line(state({ designer: { head: 'b'.repeat(40), reviewer: 'designer', findings: 0, open: 0 } })), /still deploying/u, 'a result on another head');
+  assert.match(line(state({ 'code-reviewer': { head, reviewer: 'code-reviewer', findings: 0, open: 0 } })), /still deploying/u, 'a result of a pass that is not visual');
+  assert.match(line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }, { passes: undefined })), /still deploying/u, 'a record from before visual.passes');
+  const reviewed = line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }));
+  assert.equal(reviewed, '- visual capture of `aaaaaaa`: failed; the visual passes reviewed this head without the capture; attach **auto**, private repository');
+  assert.match(line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }, { reason: 'still deploying; ingested, not captured: ingest-x-abcdef from `run 1` by `Tester`' })), /without the capture \(ingested, not captured: ingest-x-abcdef/u, 'the ingest note stays');
 });
 
 // What a line shows outside its code spans, by CommonMark's rule: a run of backticks opens a span that only a run of
@@ -2359,7 +2418,7 @@ test('a machine with no record that runs extend on a public copy holding an unte
   assert.match(stopped.reason, /the open finding R2-9/u);
 });
 
-test('a machine that adopts a public copy reruns a pass whose verdicts arrive without evidence, and then finishes', async (t) => {
+test('a machine with no record restarts from a public copy, whose verdicts carry no evidence: the passes run again, and then it finishes', async (t) => {
   const r = bookingRepo(t);
   r.forge.visibility = () => 'PUBLIC';
   const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
@@ -2381,6 +2440,49 @@ test('a machine that adopts a public copy reruns a pass whose verdicts arrive wi
   assert.ok(runs > ran, 'and the exec pass whose verdicts came without evidence ran again');
 });
 
+
+test('a second machine on a public repository holds on another machine`s open, blocking finding: no reviewer runs, its merge guard refuses the head, and the comment stays', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
+  assert.equal(first.status, 'fix_required');
+  const { id } = first.open[0].findings[0];
+  const body = r.comments[0].body;
+  const copy = stateFromComment(body, 7);
+  // Another machine: no record of its own, only the public comment.
+  rmSync(recordFile(r.project, 7));
+  let ran = 0;
+  const held = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  assert.deepEqual([held.status, held.retry_recommended, held.held, ran], ['incomplete', false, copy.revision, 0]);
+  assert.match(held.reason, new RegExp(`on the machine that wrote it, and holds the open finding ${id}, whose text is on the machine that recorded it`, 'u'));
+  const noted = readLocalState(r.project, 7);
+  assert.deepEqual([noted.outcome.status, noted.revision, Object.keys(noted.passes).length], ['incomplete', 0, 0], 'the stop is noted, and nothing of the copy is built on');
+  assert.equal(r.comments[0].body, body, 'the comment is not edited');
+  assert.equal(r.comments.length, 1);
+});
+
+test('a second machine that restarts from a public copy at the round cap opens no round past it', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, extraRounds: 'off' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  const second = await r.step({ exec: clean });
+  assert.deepEqual([second.status, second.round], ['received', 2]);
+  // Another machine, with no record of its own, on a new head.
+  rmSync(recordFile(r.project, 7));
+  r.write('src/app.js', 'export const app = 4;\n');
+  r.commit();
+  let ran = 0;
+  const capped = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  assert.deepEqual([capped.status, ran], ['round_limit', 0], 'the copy`s two rounds count: no third round');
+  assert.equal(readLocalState(r.project, 7).rounds.length, 2);
+  // With the copy gone too, the review starts over from round 1, as the Human chose.
+  rmSync(recordFile(r.project, 7));
+  r.comments.length = 0;
+  const fresh = await r.step({ exec: clean });
+  assert.deepEqual([fresh.status, fresh.round], ['received', 1]);
+});
 
 // ---- Findings one by one, with the finding index (S1b) ----
 

@@ -15,6 +15,7 @@ import { CONFIG_ERROR, commandConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
+import { sweepDrafts } from './review/drafts.mjs';
 import { usageLines } from './usage.mjs';
 
 const SLUG = /^[A-Za-z0-9_+][A-Za-z0-9._+-]*$/;
@@ -356,7 +357,9 @@ function readDecisions(raw) {
 // branch, needs both that decision and `force`. Another session may commit while this runs, so a row whose HEAD moved,
 // or whose tree gained changes or ignored files, is refused with its branch kept. Branches go with their worktree;
 // `git worktree prune` ends it. With `only`, the plan holds that one worktree, so nothing else is removed.
-export function executeCleanup({ minAgeSec = DAY_SEC, only = null, force = false, decisions = {} } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
+// Without `only`, it then removes the drafts of every merged or closed pull request from the state folder's `tmp/`
+// (review/drafts.mjs), reported in `drafts`; an open pull request's, or one whose state cannot be read, are kept.
+export function executeCleanup({ minAgeSec = DAY_SEC, only = null, force = false, decisions = {} } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now(), sweep = sweepDrafts } = {}) {
   const plan = planCleanup({ minAgeSec, only }, { cwd, heads, now });
   const { main } = checkoutRoots(cwd);
   const decided = new Map(Object.entries(decisions).map(([key, decision]) => [realPath(key), { key, decision }]));
@@ -384,6 +387,13 @@ export function executeCleanup({ minAgeSec = DAY_SEC, only = null, force = false
     else remove(row, row.dirty);
   }
   git(main, ['worktree', 'prune']);
+  if (only === null || only === undefined) {
+    try {
+      out.drafts = sweep(projectAt(cwd));
+    } catch (error) {
+      out.drafts = { removed: [], kept: [], failed: [{ pr: null, file: null, error: error.message }] };
+    }
+  }
   return out;
 }
 

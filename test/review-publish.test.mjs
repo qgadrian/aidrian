@@ -11,13 +11,13 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { postContext, readReading } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { isJudgeRuling, JUDGE_PREFIX } from '../plugins/aidrian/lib/review/approvals.mjs';
-import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, quotedLines, residualRows, tableCell, textChecker, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
+import { escapeLines, fillWithheld, findingsTable, gitPaths, isPrivate, JUDGE_RULING, MAX_ROWS, patternsOf, postedCopy, quotedLines, residualRows, tableCell, textChecker, untextedBlocking, WITHHELD } from '../plugins/aidrian/lib/review/publish.mjs';
 import { lateResiduals } from '../plugins/aidrian/lib/review/run.mjs';
 import { attributionLine, engineLists, fillThreads, fitBody, leadingMarkers, markerLine, MAX_LISTED, MAX_THREADS, postInline, raiseFloor, readMarked } from '../plugins/aidrian/lib/review/inline.mjs';
 import { deleteOwn, handledKeys, mergeDeletes } from '../plugins/aidrian/lib/review/delete.mjs';
 import { answerThreads } from '../plugins/aidrian/lib/review/replies.mjs';
 import { MAX_BODY } from '../plugins/aidrian/lib/forges/index.mjs';
-import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, refreshSummary, stateFromComment, summaryBody } from '../plugins/aidrian/lib/review/state.mjs';
+import { BODY_LIMIT, CHECK_HELD_LINE, emptyState, HELD_LINE, heldMessage, heldRevision, heldWhy, readLocalState, readRecord, refreshSummary, restartFrom, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const NO_TERMS = { hosts: [], accounts: [], variables: [] };
 // The always-on check's context with nothing named but this machine's home.
@@ -388,19 +388,180 @@ test('a security finding accepted late, then repeated as already ruled, keeps it
   assert.deepEqual([out.rows[0].text, out.rows[0].title, out.rows[0].file, out.withheld], [WITHHELD, undefined, undefined, 1]);
 });
 
-test('an adopted slice result keeps no report another machine left out: it is marked; this machine`s own same-head result fills it', () => {
+test('a slice result built on from a private copy takes this machine`s own same-head report, and no mark of its own', () => {
   const head = 'a'.repeat(40);
   const slice = 'slice:code-reviewer:0123456789';
   const remote = { ...emptyState(7, 'o/r'), revision: 9, passes: { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0 } } };
   fillWithheld(remote, emptyState(7, 'o/r'));
-  assert.equal(remote.passes[slice].notesWithheld, true, 'an attested agent slice from another machine');
+  assert.deepEqual(Object.keys(remote.passes[slice]).sort(), ['findings', 'head', 'open', 'reviewer'], 'nothing added to a slice this machine never ran');
   const again = { ...emptyState(7, 'o/r'), revision: 9, passes: { [slice]: { head, reviewer: 'code-reviewer', findings: 0, open: 0 } } };
   fillWithheld(again, { ...emptyState(7, 'o/r'), passes: { [slice]: { head, contracts: ['a()'], cross_notes: [] } } });
-  assert.deepEqual([again.passes[slice].notesWithheld, again.passes[slice].contracts], [undefined, ['a()']]);
-  const { copy } = postedCopy({ ...remote, revision: 9 }, { reading: PRIVATE, checker: { allows: () => true } });
-  assert.equal(copy.passes[slice].notesWithheld, undefined, 'no copy posts the mark');
+  assert.deepEqual([again.passes[slice].contracts, again.passes[slice].cross_notes], [['a()'], []]);
 });
 
+// ---- A second machine and a copy that is not private (#276) ----
+
+const AT = '2026-11-01T10:00:00.000Z';
+const HEAD = 'a'.repeat(40);
+const OLD_HEAD = 'b'.repeat(40);
+const ENGINE = 'engine:codex-local';
+const FLOW_PASS = 'agent:code-reviewer:booking';
+// A project with a state folder and no record yet: the second machine.
+function machine(t) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-machine-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  return projectAt(dir);
+}
+// The first machine's record: `rounds` rounds, the last on HEAD, its passes' findings, and the id counter they spent.
+function firstMachine({ rounds = 2, list = [], flowList = null, revision = 12 } = {}) {
+  const note = { head: HEAD, current: [ENGINE], passes: { [ENGINE]: { stage: 'independent', reviewer: 'codex-local', security: false }, [FLOW_PASS]: { stage: 'local', reviewer: 'code-reviewer', security: false } }, pairs: [] };
+  const passes = { [ENGINE]: { head: HEAD, reviewer: 'codex-local', files: null, findings: list.length, open: list.length, list } };
+  if (flowList) passes[FLOW_PASS] = { head: HEAD, reviewer: 'code-reviewer', files: ['src/booking/a.js'], findings: flowList.length, open: flowList.length, list: flowList };
+  const heads = Array.from({ length: rounds }, (_, i) => (i === rounds - 1 ? HEAD : `${String(i + 1)}`.repeat(40)));
+  return {
+    ...emptyState(7, 'o/r'), revision, idCounter: 9, planNote: note, passes,
+    rounds: heads.map((head, i) => ({ head, at: AT, open: 1, findings: [{ id: `R${i + 1}-1`, mint: '0000000f', severity: 'low', state: 'fixed', disposition: 'fix_now' }], ...(i === rounds - 1 ? { final: true } : {}) })),
+    outcome: { status: 'fix_required', head: HEAD, at: AT },
+  };
+}
+const posted = (state, reading = PUBLIC) => [{ id: 1, body: summaryBody(state, null, 'x', { reading, checker: { allows: () => true }, names: [] }), author_association: 'MEMBER' }];
+const blocking = (id, mint) => ({ id, mint, title: `${id} title`, body: `${id} body`, severity: 'high', state: 'open', disposition: 'fix_now' });
+const closed = (id, mint) => ({ id, mint, title: `${id} title`, severity: 'medium', state: 'fixed', disposition: 'fix_now' });
+
+test('a second machine with no record and a public copy restarts: the copy`s round count and id counter as floors, nothing else taken', (t) => {
+  const project = machine(t);
+  const theirs = firstMachine({ rounds: 3, list: [closed('R3-2', '00000002')] });
+  let reads = 0;
+  const record = readRecord(project, 7, posted(theirs), 'o/r', () => (reads += 1, PUBLIC));
+  assert.equal(reads, 1, 'the reading is read once, as the copy is the newer record');
+  const { state } = record;
+  assert.equal(record.held, undefined);
+  assert.deepEqual(state.passes, {}, 'no pass result of the copy: every pass runs again here');
+  assert.equal(state.index, undefined, 'no index entry of the copy');
+  assert.equal(state.outcome, null, 'no outcome of the copy, so the merge guard waits for this machine`s review');
+  assert.deepEqual(state.rounds, theirs.rounds.map((round) => ({ head: round.head, at: round.at, ...(round.final ? { final: true } : {}) })), 'each round by its head and time alone');
+  assert.equal(state.idCounter, 9, 'no id is minted twice');
+  assert.equal(state.revision, theirs.revision);
+  assert.doesNotMatch(JSON.stringify(state), /adopted/u, 'nothing is marked adopted, as nothing is');
+  writeLocalState(project, state);
+  assert.equal(readRecord(project, 7, posted(theirs), 'o/r', () => assert.fail('the local record is newer: no reading')).state.revision, theirs.revision + 1, 'its first write is the newer record');
+  // The same copy on a private reading is built on, exactly as with no reading.
+  const fresh = machine(t);
+  const built = readRecord(fresh, 7, posted(theirs, PRIVATE), 'o/r', PRIVATE).state;
+  assert.deepEqual(built, readRecord(fresh, 7, posted(theirs, PRIVATE), 'o/r').state);
+  assert.equal(built.passes[ENGINE].list[0].title, 'R3-2 title');
+});
+
+test('a second machine holds on a public copy with an open, blocking finding of its plan that it holds no text for, and names it', (t) => {
+  const project = machine(t);
+  const theirs = firstMachine({ list: [blocking('R2-1', '00000001')] });
+  const record = readRecord(project, 7, posted(theirs), 'o/r', PUBLIC);
+  assert.deepEqual([record.held, record.why, record.finding, record.state], [theirs.revision, 'findings', 'R2-1', undefined]);
+  assert.match(heldMessage(7, record.held, record.why, record.finding), /^the review record of #7 is at revision 12 on the machine that wrote it, and holds the open finding R2-1, whose text is on the machine that recorded it: continue the review on that machine/u);
+  // A failed read of the visibility is not private, and holds the same.
+  assert.equal(readRecord(project, 7, posted(theirs), 'o/r', { visibility: null, inside: false }).finding, 'R2-1');
+  // A blocking finding of a pass the copy's own plan no longer names, such as a flow pass whose files left the diff, holds nothing.
+  const obsolete = firstMachine({ list: [closed('R2-1', '00000001')], flowList: [blocking('R1-3', '00000003')] });
+  assert.equal(untextedBlocking(stateFromComment(posted(obsolete)[0].body, 7), null), 'R1-3', 'every stored pass, as the private stop reads it');
+  const restarted = readRecord(project, 7, posted(obsolete), 'o/r', PUBLIC);
+  assert.equal(restarted.held, undefined);
+  assert.deepEqual(restarted.state.passes, {});
+});
+
+test('a second machine with its own record on the same head keeps it on a public copy: its own text, the copy`s floors, and the copy`s security marks', (t) => {
+  const project = machine(t);
+  // This machine reviewed the head in round 2 and recorded R2-1, which the first machine later marked security.
+  const own = { ...emptyState(7, 'o/r'), idCounter: 4, planNote: firstMachine().planNote, rounds: firstMachine().rounds.map(({ head, at }) => ({ head, at })),
+    passes: { [ENGINE]: { head: HEAD, reviewer: 'codex-local', files: null, findings: 1, open: 1, list: [{ ...blocking('R2-1', '00000001'), file: 'src/a.js', line: 1 }] } } };
+  writeLocalState(project, own);
+  const mine = readLocalState(project, 7);
+  const theirs = firstMachine({ revision: mine.revision + 4, list: [{ ...blocking('R2-1', '00000001'), security: true }, closed('R2-5', '00000005')] });
+  const { state, held } = readRecord(project, 7, posted(theirs), 'o/r', PUBLIC);
+  assert.equal(held, undefined, 'its own blocking finding, held by id and mint mark, holds nothing');
+  assert.deepEqual(state.passes[ENGINE].list.map((each) => [each.id, each.title, each.file, each.security]), [['R2-1', 'R2-1 title', 'src/a.js', true]], 'its own finding, with the copy`s mark; none of the copy`s');
+  assert.equal(state.index['R2-1'].security, true, 'in the index too, so the delete of its comment reads it');
+  assert.equal(state.index['R2-5'], undefined);
+  assert.deepEqual([state.revision, state.idCounter, state.rounds.length], [theirs.revision, 9, 2]);
+  assert.equal(readLocalState(project, 7).revision, mine.revision, 'the read writes nothing');
+  // Another machine's finding of the same id and another mint mark is not its own.
+  const other = firstMachine({ revision: mine.revision + 5, list: [blocking('R2-1', '0000000e')] });
+  assert.equal(readRecord(project, 7, posted(other), 'o/r', PUBLIC).finding, 'R2-1');
+});
+
+test('a public copy with more rounds than this machine`s record raises its round count to the copy`s, and a record with more keeps its own', (t) => {
+  const project = machine(t);
+  const own = { ...emptyState(7, 'o/r'), rounds: [{ head: OLD_HEAD, at: AT, open: 2, findings: [{ ...blocking('R1-1', '00000001'), state: 'fixed' }] }] };
+  writeLocalState(project, own);
+  const theirs = firstMachine({ rounds: 4, revision: 30 });
+  theirs.rounds[1].quiet = [{ from: 'c'.repeat(40), at: AT }];
+  const { state } = readRecord(project, 7, posted(theirs), 'o/r', PUBLIC);
+  assert.equal(state.rounds.length, 4, 'the copy`s count: a restart cannot open more rounds than the cap the copy spent allows');
+  assert.equal(state.rounds[0].head, OLD_HEAD, 'its own first round, as it recorded it');
+  assert.equal(state.rounds[0].findings[0].title, 'R1-1 title');
+  assert.deepEqual(state.rounds.slice(1), theirs.rounds.slice(1).map((round) => ({ head: round.head, at: round.at, ...(round.final ? { final: true } : {}), ...(round.quiet ? { quiet: round.quiet } : {}) })));
+  const longer = { ...emptyState(7, 'o/r'), rounds: Array.from({ length: 5 }, () => ({ head: OLD_HEAD, at: AT })) };
+  assert.equal(restartFrom(longer, theirs).rounds.length, 5);
+});
+
+test('a private copy built on fills an index entry from this machine`s own entry: its reviewer back, and no body or evidence on a closed one', (t) => {
+  const project = machine(t);
+  const own = { ...emptyState(7, 'o/r'), planNote: firstMachine().planNote, passes: { [ENGINE]: { head: HEAD, reviewer: 'codex-local', files: null, findings: 1, open: 1, list: [{ ...blocking('R2-1', '00000001'), evidence: 'R2-1 evidence' }] } } };
+  writeLocalState(project, own);
+  const mine = readLocalState(project, 7);
+  assert.equal(mine.index['R2-1'].reviewer, 'codex-local');
+  // The first machine closed the finding as fixed; its private copy posts no reviewer and no title for the closed entry.
+  const theirs = structuredClone(mine);
+  theirs.revision += 3;
+  theirs.passes[ENGINE] = { head: HEAD, reviewer: 'codex-local', files: null, findings: 1, open: 0, list: [{ ...blocking('R2-1', '00000001'), state: 'fixed' }] };
+  theirs.index['R2-1'].state = 'fixed';
+  const { state } = readRecord(project, 7, posted(theirs, PRIVATE), 'o/r', PRIVATE);
+  const entry = state.index['R2-1'];
+  assert.deepEqual([entry.state, entry.reviewer, entry.title, entry.body, entry.evidence, entry.adopted], ['fixed', 'codex-local', 'R2-1 title', undefined, undefined, undefined]);
+});
+
+test('an index entry adopted from a copy is this machine`s own once it records a fresh report of it; a write of the adopted finding keeps the mark', () => {
+  const at = (state) => state.index['R1-1'];
+  const state = { ...emptyState(7, 'o/r'), rounds: [{ head: HEAD, at: AT }], passes: { p: { head: HEAD, list: [{ ...blocking('R1-1', '00000001'), title: undefined, adopted: true }] } }, index: { 'R1-1': { id: 'R1-1', mint: '00000001', severity: 'high', state: 'open', disposition: 'fix_now', pass: 'p', adopted: true } } };
+  recordFindings(state, 'p', { head: HEAD, list: [{ ...blocking('R1-1', '00000001'), adopted: true }] });
+  assert.equal(at(state).adopted, true, 'the adopted finding written again');
+  recordFindings(state, 'p', { head: HEAD, list: [blocking('R1-1', '00000001')] });
+  assert.equal(at(state).adopted, undefined, 'a fresh report: closeOmitted reads it again');
+  assert.equal(at(state).title, 'R1-1 title');
+});
+
+test('every command that reads the review record passes the forge`s reading, so a copy that is not private is never built on', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const lib = path.join(import.meta.dirname, '../plugins/aidrian/lib');
+  const target = path.join(lib, 'review/state.mjs');
+  const calls = [];
+  for (const file of readdirSync(lib, { recursive: true }).filter((each) => each.endsWith('.mjs'))) {
+    const text = readFileSync(path.join(lib, file), 'utf8');
+    // The names this file binds review/state.mjs's readRecord to, by a static or a dynamic import.
+    const names = [...text.matchAll(/\{([^}]*)\}\s*(?:from\s*|=\s*await\s+import\()\s*'([^']+)'/gu)]
+      .filter(([, , from]) => path.resolve(path.dirname(path.join(lib, file)), from) === target)
+      .flatMap(([, list]) => list.split(',').map((each) => each.trim()).filter((each) => /^readRecord\b/u.test(each)).map((each) => each.split(/\s+as\s+/u).at(-1)));
+    for (const name of new Set(names)) {
+      for (const match of text.matchAll(new RegExp(`\\b${name}\\(`, 'gu'))) {
+        // The call's arguments, to its closing parenthesis.
+        let depth = 0;
+        const args = [''];
+        for (let at = match.index + match[0].length; at < text.length; at += 1) {
+          const char = text[at];
+          if (char === ')' && depth === 0) break;
+          if ('([{'.includes(char)) depth += 1;
+          if (')]}'.includes(char)) depth -= 1;
+          if (char === ',' && depth === 0) args.push('');
+          else args[args.length - 1] += char;
+        }
+        calls.push({ file, args: args.map((each) => each.trim()).filter(Boolean) });
+      }
+    }
+  }
+  assert.ok(calls.length >= 6, JSON.stringify(calls));
+  for (const call of calls) assert.equal(call.args.length, 5, `${call.file}: readRecord(${call.args.join(', ')})`);
+});
 
 // ---- The findings table (review.publish.summary "findings") ----
 

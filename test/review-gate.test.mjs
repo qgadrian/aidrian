@@ -10,6 +10,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { awaitReview, runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { asksForReview, gateReview, lastSignoff, markerFor, OVERRIDE, readRecord, runSignoff, writeRecord } from '../plugins/aidrian/lib/review-gate.mjs';
+import { findingsTable, postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 import { emptyState, heldMessage, readLocalState, SUMMARY_MARKER, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check } from '../plugins/aidrian/lib/rules/github/review-request.mjs';
 
@@ -156,6 +157,39 @@ test('aidrian pr attest records the review and prints the marker; --check reads 
   assert.match(done.stdout, new RegExp(`<!-- aidrian-review: pr=7 repo=acme/notes head=${head} reviewer=code-reviewer findings=2 fixed=1 -->`));
   assert.equal(run('7', '--check').status, 0);
   assert.equal(readRecord(project, 7).head, head);
+});
+
+test('aidrian pr attest records a short --head as its full commit, so a moved finding keeps its line in the findings table and the posted index', (t) => {
+  const { dir, head: first, project } = repo(t, { ...GATE, review: { record: 'local' } });
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).trim();
+  const lines = (n) => Array.from({ length: n }, (_, i) => `line ${i}\n`).join('');
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, 'src/a.js'), lines(3));
+  git('add', '.');
+  git('commit', '-qm', 'short file');
+  const older = git('rev-parse', 'HEAD');
+  assert.notEqual(older, first);
+  const pass = 'agent:code-reviewer';
+  writeLocalState(project, { ...emptyState(7, 'acme/notes'), floored: true, dispatched: { [pass]: { stage: 'local', files: null } } });
+  const attest = (head, line) => {
+    const file = path.join(dir, 'findings.json');
+    writeFileSync(file, JSON.stringify([{ title: 'Null check missing', file: 'src/a.js', line, severity: 'medium', likelihood: 'plausible', affects: 'users', state: 'open' }]));
+    const result = spawnSync(process.execPath, [CLI, 'pr', 'attest', '7', '--pass', pass, '--head', head, '--reviewer', 'code-reviewer', '--findings-file', file, '--repo', 'Acme/Notes'], { cwd: dir, encoding: 'utf8', env: process.env });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  attest(older, 3);
+  writeFileSync(path.join(dir, 'src/a.js'), lines(10));
+  git('commit', '-qam', 'longer file');
+  const newer = git('rev-parse', 'HEAD');
+  attest(newer.slice(0, 7), 8);
+
+  const state = readLocalState(project, 7);
+  assert.equal(state.passes[pass].head, newer, 'the pass is recorded at the full commit');
+  const [entry] = Object.values(state.index);
+  assert.deepEqual([entry.line, entry.placed], [8, newer], 'the location is checked at the head that moved it');
+  assert.ok(findingsTable(state, { root: dir }).some((row) => row.includes(`src/a.js:8`)), 'the findings table shows the moved line');
+  const { copy } = postedCopy(state, { reading: { visibility: 'PUBLIC', inside: true }, checker: { allows: () => true }, root: dir, names: [], publish: { publicSecurity: 'full' } });
+  assert.deepEqual([copy.index[entry.id].file, copy.index[entry.id].line], ['src/a.js', 8], 'the posted index keeps the moved line');
 });
 
 test('no test reads a real pull request', () => {

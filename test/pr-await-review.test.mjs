@@ -1250,9 +1250,13 @@ test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolve
   assert.deepEqual([receipt.kind, receipt.clean, receipt.commit_id], ['comment', true, head.slice(0, 10)]);
   // A comment in other words, bound to its commit by the card's state.
   const other = `Codex Review: here is what changed.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``;
-  assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(other)] }).clean, true);
-  assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, true), 6, 2), at(other)] }).clean, undefined, 'unresolved findings on the card');
-  assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY('0123456789abcdef0123456789abcdef01234567', false), 6, 2), at(other)] }).clean, undefined, 'the card is for another commit');
+  // The card is edited in place: it vouches for the comment once its last update is no earlier than the comment.
+  const card = (unresolved, updated = 8, sha = head) => ({ ...at(STATE_CARD_BODY(sha, unresolved), 6, 2), updated_at: T(updated) });
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(false), at(other)] }).clean, true);
+  assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(other)] }).clean, undefined, 'a card last updated before the comment it would vouch for');
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(false, 4), at(other)] }).clean, undefined, 'a card last updated before the round`s trigger');
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(true), at(other)] }).clean, undefined, 'unresolved findings on the card');
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(false, 8, '0123456789abcdef0123456789abcdef01234567'), at(other)] }).clean, undefined, 'the card is for another commit');
   assert.equal(latestBotSignal({ ...base, issueComments: [at('Codex Review: two findings below.')] }).clean, undefined, 'a comment that names findings');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).kind, 'quota_exhausted');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).clean, undefined, 'the quota notice is never clean');

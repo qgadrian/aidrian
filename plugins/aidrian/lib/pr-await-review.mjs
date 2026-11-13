@@ -137,12 +137,16 @@ export const cardState = (body) => {
   }
 };
 
-// Whether the reviewer's newest status card says its code review of `commit` completed with no unresolved finding.
-const cardClean = (issueComments, reviewer, commit) => {
+// Whether the reviewer's newest status card says its code review of `commit` completed with no unresolved finding. The
+// card vouches for `comment` only when it was last updated at or after `since` and no earlier than that comment: a card
+// left from an earlier round, or one that has not caught up with the comment, says nothing of it.
+const cardClean = (issueComments, reviewer, commit, comment, since) => {
   if (!commit) return false;
   const card = issueComments
     .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
     .sort((a, b) => ms(b.updated_at ?? b.created_at) - ms(a.updated_at ?? a.created_at))[0];
+  const updated = ms(card?.updated_at ?? card?.created_at);
+  if (!Number.isFinite(updated) || (since && !(updated >= ms(since))) || !(updated >= ms(comment?.created_at))) return false;
   const review = cardState(card?.body)?.code_review;
   return review?.status === 'completed' && review.has_unresolved_findings === false && typeof review.commit_sha === 'string' && sameCommit(review.commit_sha, commit);
 };
@@ -281,7 +285,7 @@ export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComme
     const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
     const commit = reviewedCommit(comment.body);
     // `clean`: the comment is the clean receipt, or the status card says the review of its commit left nothing open.
-    const clean = kind === 'comment' && (isCleanReceipt(comment.body) || cardClean(issueComments, reviewer, commit));
+    const clean = kind === 'comment' && (isCleanReceipt(comment.body) || cardClean(issueComments, reviewer, commit, comment, since));
     return { kind, at: comment.created_at, review_id: null, commit_id: commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
   }
   return { kind: 'thumbs_up', at: reaction.created_at, review_id: null, commit_id: null, state: null, line_comments: 0 };

@@ -745,7 +745,8 @@ the bot has answered, so a pull request is marked ready only on the bot's clean 
 pass with no open finding: a 👍, or, on a draft, the bot's receipt comment, matched on its layout (the
 `codex-review-receipt:v1` marker first, then text that opens with "Codex Review: Didn't find any major issues", and
 the reviewed commit), or a comment for a commit whose code review the bot's status card records as completed with no
-unresolved findings. A comment that only quotes the phrase is not a receipt. Any other answer holds at least one open
+unresolved findings, where the card was last updated in this round, at or after the request, and no earlier than the
+comment. A comment that only quotes the phrase is not a receipt. Any other answer holds at least one open
 finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for

@@ -218,9 +218,13 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
   const accepted = flags.accepted === undefined ? 0 : /^\d+$/u.test(flags.accepted) ? Number(flags.accepted) : NaN;
   if (Number.isNaN(accepted)) throw new Error('--accepted must be a whole number');
   if (flags.pass === undefined && (flags.accepted !== undefined || flags.verdicts !== undefined)) throw new Error('--accepted and --verdicts need --pass');
-  if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) {
+  // A short --head is recorded as its full SHA: a finding's location check head (`placed`) is set from a full SHA only,
+  // so a short one would leave a moved finding checked at an older head, and dropped (#282).
+  const resolved = SHA.test(flags.head) ? runGit(['rev-parse', '--verify', '--quiet', `${flags.head}^{commit}`], project.root) : null;
+  if (resolved?.status !== 0 || !/^[0-9a-f]{40,64}$/u.test(resolved.stdout.trim())) {
     throw new Error(`--head ${flags.head} is not a commit in this repository`);
   }
+  flags.head = resolved.stdout.trim();
   const repo = prRepo(project, pr, flags.repo, forge);
   const held = await holdToNamedBase(project, config, repo, namedBase(project, pr, repo, forge));
   if (flags.pass !== undefined) {

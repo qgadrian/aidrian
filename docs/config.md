@@ -747,6 +747,7 @@ records its findings one by one; the counts form above stays accepted), is that 
 attest; so is an agent pass its flows merged into, `agent:<name>:<flows>`, when it read the whole diff. A pass over a
 flow's or a slice's files alone, the cross pass, and an engine pass do not count.
 
+`--head` takes a commit's full SHA or a short one, and `attest` records its full SHA.
 `attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, and prints a marker:
 `<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->`. A request that carries the marker for its own pull request
 and repository also passes, so a new session or machine need not review again.

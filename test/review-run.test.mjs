@@ -3093,7 +3093,7 @@ test('replies on: one whole step after a fix replies on the thread and resolves 
   assert.equal(to, second.head);
   assert.equal(reply.body, ['<!-- aidrian-review-finding:R1-1 -->', 'aidrian review, finding R1-1', `Not reported again in ${from.slice(0, 7)}...${to.slice(0, 7)}.`].join('\n'), 'no link where the forge builds none, and no reviewer text');
   assert.ok(posts.resolved.has(1000));
-  assert.deepEqual(local.index['R1-1'].thread, { reviewId: 900, commentId: 1000, replied: true, replyId: reply.id, resolved: true });
+  assert.deepEqual(local.index['R1-1'].thread, { reviewId: 900, commentId: 1000, replied: true, replyId: reply.id, resolved: true, resolvedByEngine: true });
   assert.deepEqual(stateFromComment(summaryComment(r).body, 7).index['R1-1'].thread, local.index['R1-1'].thread, 'the posted record holds the marks');
   assert.deepEqual(second.engine_comments.map((each) => each.id).sort(), [900, 1000, reply.id].sort(), 'the reply is the engine`s, mapped');
   assert.deepEqual(second.engine_comments_unmapped, []);
@@ -3193,7 +3193,7 @@ test('replies: a finding answered and then marked security loses the engine`s re
   const third = await r.step({ exec: clean });
   assert.deepEqual(third.comment_deletes.deleted.map((each) => each.id), [replyId, 1000], 'the reply first, then the root');
   assert.ok(!posts.reviewComments.some((each) => each.id === replyId || each.id === 1000), 'both are gone from the pull request');
-  assert.deepEqual(readLocalState(r.project, 7).index['R1-1'].thread, { reviewId: 900, replied: true, resolved: true });
+  assert.deepEqual(readLocalState(r.project, 7).index['R1-1'].thread, { reviewId: 900, replied: true, resolved: true, resolvedByEngine: true });
   assert.equal(third.replies, undefined, 'and nothing is posted again');
 });
 

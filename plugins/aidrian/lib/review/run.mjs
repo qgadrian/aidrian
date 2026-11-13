@@ -34,7 +34,7 @@ import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
-import { residualRows } from './publish.mjs';
+import { isPrivate, residualRows } from './publish.mjs';
 import { mergeDeletes, removedPosts } from './delete.mjs';
 import { engineLists, postInline } from './inline.mjs';
 import { answerThreads } from './replies.mjs';
@@ -196,11 +196,16 @@ export function lateResiduals(passes, resultFor) {
   });
 }
 
-// With inline posting on, what another machine's write of the posted record closed or mapped in the finding index while
-// this step ran, read again from the pull request just before this step posts (state.mjs mergeIndex): no finding gets a
-// second thread because a write that mapped its first was lost. A read that fails merges nothing.
+// With inline posting on, what another machine's write of the posted record closed, marked, or mapped in the finding
+// index while this step ran, read again from the pull request just before this step posts (state.mjs mergeIndex): no
+// finding gets a second thread because a write that mapped its first was lost. A copy that is not private by the step's
+// reading is never built on (readRecord): from it the merge takes only what a restart from it would, the security marks
+// of this machine's own findings, by id and mint mark, and the forge's ids of their posts, which hold no text; never a
+// closed state. A read that fails merges nothing.
 function mergePosted(s) {
-  if (!s.onPr || s.post().publish?.inline !== true) return;
+  if (!s.onPr) return;
+  const context = s.post();
+  if (context.publish?.inline !== true) return;
   let comments;
   try {
     comments = s.forge.conversationComments(s.repo, s.n);
@@ -208,7 +213,8 @@ function mergePosted(s) {
     return;
   }
   const posted = stateFromComment(summaryComment(comments)?.body, s.n);
-  if (posted) mergeIndex(s.state, posted, removedPosts(s.deletes));
+  const own = isPrivate(context.reading);
+  if (posted) mergeIndex(s.state, posted, removedPosts(s.deletes), { closed: own, strict: !own });
 }
 
 function finish(s, status, extra) {

@@ -66,6 +66,8 @@ export function mappedPosts(state) {
     const thread = isObject(entry.thread) ? entry.thread : {};
     add(KINDS.reviewComment, thread.commentId, entry);
     add(KINDS.reviewComment, thread.replyId, entry);
+    // The replies of closings before the finding opened again stay the engine's posts for it (replies.mjs noteReopened).
+    for (const id of Array.isArray(thread.earlier) ? thread.earlier : []) add(KINDS.reviewComment, id, entry);
     add(KINDS.comment, thread.fallbackId, entry);
     add(KINDS.review, thread.reviewId, entry);
   }

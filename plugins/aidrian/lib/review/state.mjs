@@ -153,23 +153,31 @@ export function mergePending(a, b) {
 // The keys of a finding's thread that map one of the engine's posts, each with the kind of post it names.
 const POST_KEYS = Object.freeze({ reviewId: 'review', commentId: 'review_comment', fallbackId: 'comment' });
 
-// Keeps in `state`'s finding index what another write of the record, `other`, closed or mapped to a post, as `pending` is
-// merged (mergePending): a step's write never drops what a write it did not read made, so two machines stepping at once,
-// or a stale copy, can neither bring a closed id back as open nor lose the post an id is mapped to, which a later step
-// would read as unposted and post again under a fresh id. For each id both hold, and as one finding (no two different
-// mint marks): a closed state (findings.mjs CLOSED_STATES, final), with its `closed_in`, wins over one that is not, and
-// each post key another write mapped, where this one maps none, is added, less one `removed` names as `<kind>:<id>` (a
-// comment this step deleted or found gone, delete.mjs removedPosts). An id only one copy holds is that copy's alone:
-// nothing is added. Returns the ids it changed.
-export function mergeIndex(state, other, removed = new Set()) {
+// Keeps in `state`'s finding index what another write of the record, `other`, closed, marked, or mapped to a post, as
+// `pending` is merged (mergePending): a step's write never drops what a write it did not read made, so two machines
+// stepping at once, or a stale copy, can neither bring a closed id back as open, drop a security mark, nor lose the post
+// an id is mapped to, which a later step would read as unposted and post again under a fresh id. For each id both hold
+// as one finding (no two different mint marks; with `strict`, the same mint mark on both): the security mark, which only
+// widens (findings.mjs tieTwins); a closed state (findings.mjs CLOSED_STATES, final), with its `closed_in`, over one that
+// is not, unless `closed` is false; and each post key another write mapped, where this one maps none, less one `removed`
+// names as `<kind>:<id>` (a comment this step deleted or found gone, delete.mjs removedPosts). An id only one copy holds
+// is that copy's alone: nothing is added. Returns the ids it changed.
+// A copy that is not private is never built on (readRecord): from one, a step merges with `closed: false` and `strict`,
+// the marks and the forge's ids of its own findings alone, numbers and a flag that hold no finding text.
+export function mergeIndex(state, other, removed = new Set(), { closed = true, strict = false } = {}) {
   const ours = isObject(state?.index) ? state.index : null;
   const theirs = isObject(other?.index) ? other.index : {};
   const changed = [];
   for (const [id, entry] of Object.entries(ours ?? {})) {
     const their = theirs[id];
-    if (!isObject(entry) || !isObject(their) || their.id !== entry.id || (isMint(entry.mint) && isMint(their.mint) && entry.mint !== their.mint)) continue;
+    if (!isObject(entry) || !isObject(their) || their.id !== entry.id) continue;
+    if (strict ? !(isMint(entry.mint) && entry.mint === their.mint) : isMint(entry.mint) && isMint(their.mint) && entry.mint !== their.mint) continue;
     let kept = false;
-    if (isClosed(their) && !isClosed(entry)) {
+    if (their.security === true && entry.security !== true) {
+      entry.security = true;
+      kept = true;
+    }
+    if (closed && isClosed(their) && !isClosed(entry)) {
       entry.state = their.state;
       if (isObject(their.closed_in)) entry.closed_in = { ...their.closed_in };
       kept = true;

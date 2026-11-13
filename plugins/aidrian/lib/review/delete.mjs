@@ -10,43 +10,58 @@ import { securityIds } from './publish.mjs';
 // The thread keys that name a comment, each with its kind.
 const COMMENT_KEYS = Object.freeze({ replyId: KINDS.reviewComment, commentId: KINDS.reviewComment, fallbackId: KINDS.comment });
 
-// Takes comment `id` of `kind` out of every entry's thread that maps it, a thread's root or the engine's reply in it, and
-// an emptied thread off its entry: a deleted fallback comment's other findings then read as unposted, and a later step
-// posts them again. A deleted reply keeps `replied`, so no step posts it again.
+// The comments a thread maps, the replies first, then the root, then the fallback comment: each { key, kind, id, mark },
+// `mark` what the thread's `textless` names it by. The replies of closings before the finding opened again (`earlier`)
+// stay the engine's posts for the finding, each marked by its own id.
+function threadComments(thread) {
+  const earlier = (Array.isArray(thread.earlier) ? thread.earlier : []).filter(Number.isSafeInteger);
+  return [
+    { key: 'replyId', kind: KINDS.reviewComment, id: thread.replyId, mark: 'replyId' },
+    ...earlier.map((id) => ({ key: 'earlier', kind: KINDS.reviewComment, id, mark: id })),
+    { key: 'commentId', kind: KINDS.reviewComment, id: thread.commentId, mark: 'commentId' },
+    { key: 'fallbackId', kind: KINDS.comment, id: thread.fallbackId, mark: 'fallbackId' },
+  ].filter((each) => Number.isSafeInteger(each.id));
+}
+
+// Takes comment `id` of `kind` out of every entry's thread that maps it, a thread's root, the engine's reply in it, or an
+// earlier closing's reply, and an emptied thread off its entry: a deleted fallback comment's other findings then read as
+// unposted, and a later step posts them again. A deleted reply keeps `replied`, so no step posts it again.
 function unmap(state, kind, id) {
-  const keys = Object.keys(COMMENT_KEYS).filter((key) => COMMENT_KEYS[key] === kind);
   for (const entry of entries(state)) {
-    if (!isObject(entry.thread)) continue;
-    for (const key of keys) {
-      if (entry.thread[key] !== id) continue;
-      delete entry.thread[key];
-      spare(entry.thread, key, false);
+    const thread = entry.thread;
+    if (!isObject(thread)) continue;
+    for (const each of threadComments(thread)) {
+      if (each.kind !== kind || each.id !== id) continue;
+      if (each.key === 'earlier') thread.earlier = thread.earlier.filter((other) => other !== id);
+      else delete thread[each.key];
+      spare(thread, each.mark, false);
     }
-    if (!Object.keys(entry.thread).length) delete entry.thread;
+    if (Array.isArray(thread.earlier) && !thread.earlier.length) delete thread.earlier;
+    if (!Object.keys(thread).length) delete entry.thread;
   }
 }
 
-// Sets or clears the mark that the comment a thread's `key` names was spared under publicSecurity "full" for holding
-// none of its finding's text (`textless`): a later step does not read it again while "full" holds.
-function spare(thread, key, on) {
-  const kept = new Set(Array.isArray(thread.textless) ? thread.textless.filter((each) => each in COMMENT_KEYS) : []);
-  if (on) kept.add(key);
-  else kept.delete(key);
-  if (kept.size) thread.textless = [...kept].sort();
+// Sets or clears the mark that the comment `mark` names, a thread key or an earlier reply's id, was spared under
+// publicSecurity "full" for holding none of its finding's text (`textless`): a later step does not read it again while
+// "full" holds.
+function spare(thread, mark, on) {
+  const kept = new Set(Array.isArray(thread.textless) ? thread.textless.filter((each) => each in COMMENT_KEYS || Number.isSafeInteger(each)) : []);
+  if (on) kept.add(mark);
+  else kept.delete(mark);
+  if (kept.size) thread.textless = [...kept].sort((a, b) => String(a).localeCompare(String(b)));
   else delete thread.textless;
 }
 
-// The comments the record maps to a security id of `state`, the reply first, then the root, then the fallback comment,
-// each { finding, ids, kind, id, key, entry }, less one `done` holds and, under "full", one already spared.
+// The comments the record maps to a security id of `state` (threadComments), each { finding, ids, kind, id, mark, entry },
+// less one `done` holds and, under "full", one already spared.
 function mappedCandidates(state, secure, { done, full }) {
   const out = [];
   for (const entry of entries(state)) {
     if (!idsOf(entry).some((id) => secure.has(id)) || !isObject(entry.thread)) continue;
     const spared = full && Array.isArray(entry.thread.textless) ? entry.thread.textless : [];
-    for (const [key, kind] of Object.entries(COMMENT_KEYS)) {
-      const id = entry.thread[key];
-      if (!Number.isSafeInteger(id) || done?.has(`${kind}:${id}`) || spared.includes(key)) continue;
-      out.push({ finding: entry.id, ids: idsOf(entry), kind, id, key, entry });
+    for (const { kind, id, mark } of threadComments(entry.thread)) {
+      if (done?.has(`${kind}:${id}`) || spared.includes(mark)) continue;
+      out.push({ finding: entry.id, ids: idsOf(entry), kind, id, mark, entry });
     }
   }
   return out;
@@ -152,7 +167,7 @@ function settle(candidate, { forge, repo, n, viewer, publicSecurity, held, out, 
   }
   if (publicSecurity === 'full' && !holdsText(comment.body, candidate.ids)) {
     out.textless.push({ finding, kind, id });
-    if (!held && candidate.entry && candidate.ids.every((each) => idsOf(candidate.entry).includes(each))) spare(candidate.entry.thread, candidate.key, true);
+    if (!held && candidate.entry && candidate.ids.every((each) => idsOf(candidate.entry).includes(each))) spare(candidate.entry.thread, candidate.mark, true);
     return;
   }
   try {

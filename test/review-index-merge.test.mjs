@@ -46,3 +46,29 @@ test('mergeIndex: two findings under one id, by their mint marks, and an id only
   assert.deepEqual(mergeIndex(ours, null), []);
   assert.deepEqual(mergeIndex(emptyState(7, 'o/r'), theirs), []);
 });
+
+test('mergeIndex: the other copy`s security mark survives on the same finding, and the summary`s row then withholds its title', async () => {
+  const { residualRows, textChecker } = await import('../plugins/aidrian/lib/review/publish.mjs');
+  const { homedir } = await import('node:os');
+  const checker = textChecker({ context: { home: homedir(), state: '', roots: [], terms: { hosts: [], accounts: [], variables: [] }, env: {} }, words: [] });
+  const post = { reading: { visibility: 'PUBLIC', inside: true }, checker };
+  const ours = { ...record(entry('R1-1', { title: 'a refund left unchecked', severity: 'low', pass: 'p' })), planNote: { passes: { p: { stage: 'local', reviewer: 'codex-local', security: false } } } };
+  const row = [{ pass: 'p', id: 'R1-1', title: 'a refund left unchecked', file: 'src/a.js', line: 2, severity: 'low' }];
+  assert.equal(residualRows(row, ours, post).rows[0].title, 'a refund left unchecked', 'a finding that is no security finding shows its title');
+  assert.deepEqual(mergeIndex(ours, record(entry('R1-1', { title: undefined, security: true }))), ['R1-1'], 'the mark alone counts as a change');
+  assert.equal(ours.index['R1-1'].security, true);
+  assert.deepEqual(residualRows(row, ours, post).rows.map((each) => [each.id, each.title ?? null, each.file ?? null]), [['R1-1', null, null]], 'named by id alone now');
+  assert.deepEqual(mergeIndex(ours, record(entry('R1-1', { security: false }))), [], 'the mark only widens');
+  assert.equal(ours.index['R1-1'].security, true);
+});
+
+test('mergeIndex from a copy that is not private: the marks and posts of this machine`s own findings, by mint mark, and never a closed state', () => {
+  const ours = record(entry('R1-1'), entry('R1-2', { mint: undefined }));
+  const theirs = record(
+    entry('R1-1', { state: 'fixed', closed_in: { from: FROM, to: TO }, security: true, thread: { reviewId: 900, commentId: 61 } }),
+    entry('R1-2', { mint: undefined, thread: { commentId: 62 } }),
+  );
+  assert.deepEqual(mergeIndex(ours, theirs, new Set(), { closed: false, strict: true }), ['R1-1']);
+  assert.deepEqual([ours.index['R1-1'].state, ours.index['R1-1'].security, ours.index['R1-1'].thread], ['open', true, { reviewId: 900, commentId: 61 }]);
+  assert.equal(ours.index['R1-2'].thread, undefined, 'a finding with no mint mark on both is not known to be the same one');
+});

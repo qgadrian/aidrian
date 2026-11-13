@@ -17,13 +17,13 @@ const UNDELETED = ['deleted', 'waiting', 'left', 'failed'];
 const hasRoot = (entry) => isObject(entry.thread) && Number.isSafeInteger(entry.thread.commentId);
 // A closed finding whose thread still lacks its reply or its resolve.
 const closedDue = (entry) => ANSWERED.has(entry.state) && !(entry.thread.replied === true && entry.thread.resolved === true);
-// An open finding whose thread an earlier closing resolved.
-const reopenDue = (entry) => entry.state === 'open' && entry.thread.resolved === true;
+// An open finding whose thread the engine resolved at an earlier closing. A thread a person resolved stays as they left it.
+const reopenDue = (entry) => entry.state === 'open' && entry.thread.resolved === true && entry.thread.resolvedByEngine === true;
 
 // Notes each finding that opened again after its thread was answered: the reply's id moves to the thread's `earlier`,
 // the replies of closings before, and `replied` clears, so its next closing gets a reply of its own and an earlier
-// reply is never taken for it. `resolved` stays until the forge answers that the thread is open (unresolve). A record
-// change alone: no forge call.
+// reply is never taken for it. `resolved` stays until the forge answers that the thread is open (unresolve), or for good
+// on a thread a person resolved, which the engine never opens again. A record change alone: no forge call.
 export function noteReopened(state) {
   for (const entry of entries(state)) {
     const thread = entry.thread;
@@ -34,12 +34,13 @@ export function noteReopened(state) {
   }
 }
 
-// The review threads of the pull request, read once a step through the forge: { at(rootId) }, the thread whose first
-// comment is that review comment, or null; or { error } when the read fails.
-export function readThreads(forge, repo, n) {
+// The review threads of the pull request, read once a step through the forge, up to the page that holds the last of
+// `roots`, the due findings' root comment ids: { at(rootId) }, the thread whose first comment is that review comment, or
+// null; or { error } when the read fails.
+export function readThreads(forge, repo, n, roots) {
   let threads;
   try {
-    threads = forge.findingThreads(repo, n);
+    threads = forge.findingThreads(repo, n, { roots });
   } catch {
     return { error: 'the pull request\'s review threads could not be read' };
   }
@@ -60,8 +61,9 @@ export function readThreads(forge, repo, n) {
 //   the thread is resolved, when nobody else has replied in it (R8). The entry's thread records `replied` and the
 //   reply's `replyId`, and `resolved`, each only once its own forge call succeeded (A5), and the reply joins the step's
 //   read of the marked posts. One a step could not answer is tried again by the next.
-// - A finding that opened again after its thread was answered (noteReopened) has its thread unresolved, and `resolved`
-//   clears once the forge answers that the thread is open; a failed unresolve is tried again by the next step.
+// - A finding that opened again after its thread was answered (noteReopened) has its thread unresolved when the engine
+//   resolved it (`resolvedByEngine`), and both marks clear once the forge answers that the thread is open; a failed
+//   unresolve is tried again by the next step. A thread a person resolved stays resolved, and gets the next reply alone.
 // - A security finding the reading does not show (the projection's securityIds) gets no call, nor one the delete named
 //   (G4).
 // - The pull request's threads are read once (readThreads). A call goes only to a thread whose root is the finding's
@@ -94,7 +96,7 @@ export function answerThreads(s) {
     reasons[id] = reason;
   };
   const viewer = currentUser(s.viewer ?? (() => forge.viewer()));
-  const threads = viewer ? readThreads(forge, repo, n) : { error: 'the forge\'s current user could not be read' };
+  const threads = viewer ? readThreads(forge, repo, n, due.map((entry) => entry.thread.commentId)) : { error: 'the forge\'s current user could not be read' };
   if (threads.error) {
     for (const entry of due) miss(entry.id, threads.error);
     return { ...out, reasons, error: threads.error };
@@ -182,6 +184,7 @@ function reply({ s, context, viewer, out, miss }, entry, read) {
 function resolve({ s, viewer, out, miss }, entry, read) {
   const { id, thread } = entry;
   if (thread.resolved === true) return;
+  // Resolved by a person: the engine never opens it again (unresolve).
   if (read.resolved === true) {
     thread.resolved = true;
     return;
@@ -209,12 +212,12 @@ function resolve({ s, viewer, out, miss }, entry, read) {
     miss(id, 'the forge did not answer that the thread is resolved');
     return;
   }
-  thread.resolved = true;
+  Object.assign(thread, { resolved: true, resolvedByEngine: true });
   out.resolved.push(id);
 }
 
-// Unresolves the thread of `entry`, a finding that opened again after an earlier closing resolved it. A thread someone
-// already opened again needs no call.
+// Unresolves the thread of `entry`, a finding that opened again after the engine resolved its thread at an earlier
+// closing. A thread someone already opened again needs no call.
 function unresolve({ s, out, miss }, entry, read) {
   const { id, thread } = entry;
   if (read.resolved === true) {
@@ -231,5 +234,6 @@ function unresolve({ s, out, miss }, entry, read) {
     }
   }
   delete thread.resolved;
+  delete thread.resolvedByEngine;
   out.reopened.push(id);
 }

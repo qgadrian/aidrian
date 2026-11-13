@@ -420,7 +420,7 @@ const FIXED_KEYS = new Set([
   'human', 'answer', 'session', 'unreviewed', 'title', 'body', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost',
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
   'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
-  'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved', 'earlier', 'textless',
+  'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved', 'earlier', 'textless', 'resolvedByEngine',
 ]);
 // The keys of a finding's thread that name a comment, as the delete's `textless` mark lists them.
 const THREAD_COMMENT_KEYS = new Set(['replyId', 'commentId', 'fallbackId']);
@@ -583,9 +583,10 @@ function allowlisted(state, post, counter) {
       seen: sha,
       placed: sha,
       // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone, the closing reply's marks
-      // (replies.mjs answerThreads): its id, whether it was posted and the thread resolved, and the ids of the replies of
-      // closings before it opened again; and the comments the delete spared as holding no text (delete.mjs), by key.
-      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int, replyId: int, replied: bool, resolved: bool, earlier: list(int), textless: list(word(THREAD_COMMENT_KEYS)) }),
+      // (replies.mjs answerThreads): its id, whether it was posted, whether the thread is resolved and the engine resolved
+      // it, and the ids of the replies of closings before it opened again; and the comments the delete spared as holding
+      // no text (delete.mjs), by key or, for an earlier reply, by id.
+      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int, replyId: int, replied: bool, resolved: bool, earlier: list(int), textless: list((value) => (typeof value === 'number' ? int(value) : word(THREAD_COMMENT_KEYS)(value))), resolvedByEngine: bool }),
     });
     const file = source.file;
     if (typeof file === 'string' && !hidePlace && path(head)(file)) {

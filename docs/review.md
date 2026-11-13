@@ -1218,10 +1218,14 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
 - *Two writers.* A step writes the record whole, with no lock, so each write keeps what a write it did not read made in
   the index, as it merges `pending`: before every write, from this machine's record on disk, and, with
   `review.publish.inline` on, from the pull request's posted record, read again just before the step posts. For an id
-  both hold as one finding (no two different mint marks), a `fixed` or `not_reported` state, with its `closed_in`, wins
-  over one that is not, and a post another write mapped (`reviewId`, `commentId`, or `fallbackId`) is kept where this
-  write maps none, unless this step deleted that comment or found it gone. So two machines stepping at once never give
-  one finding a second thread, and a closed id never comes back as open. An id only one write holds stays that write's.
+  both hold as one finding (no two different mint marks), the security mark, which only widens, is kept, a `fixed` or
+  `not_reported` state, with its `closed_in`, wins over one that is not, and a post another write mapped (`reviewId`,
+  `commentId`, or `fallbackId`) is kept where this write maps none, unless this step deleted that comment or found it
+  gone. So two machines stepping at once never give one finding a second thread, never drop a security mark, and a
+  closed id never comes back as open. An id only one write holds stays that write's. A posted record that is not
+  private by the step's reading is never built on ([The posted copy](#the-posted-copy)): from it the step takes only
+  what a restart takes, the security mark and the posts of a finding this machine recorded, by its id and mint mark,
+  and never a closed state.
 
 ### The posted copy
 
@@ -1440,8 +1444,8 @@ due: with nothing to answer, it has no `replies` field.
   is the closing range, built as the findings table builds it, else the two short SHAs as text. A reply holds no
   reviewer text; it passes the text checks and the escaping every post does, and when a check withholds the link, the
   reply shows the short SHAs, then the bare outcome.
-- **Whose thread.** Before replying, the step reads the pull request's review threads through the forge, every thread
-  once a step, and looks each finding's up by its root comment. It replies only where the thread's
+- **Whose thread.** Before replying, the step reads the pull request's review threads through the forge, once a step,
+  up to the page that holds the last due finding's root comment, and looks each finding's thread up by its root. It replies only where the thread's
   root is the forge's current user's comment that starts with that finding's marker. A root that names another id,
   that no member wrote, or that the step's read of the review comments no longer holds, gets nothing and is listed in
   `replies.left`, which is reported only: nothing acts on it. A thread the forge finds none for, though that read still
@@ -1453,16 +1457,21 @@ due: with nothing to answer, it has no `replies` field.
   keeps the thread open. A thread someone else replied in, the same login without the marker included, keeps the reply
   and stays open (`replies.open`), and counts as done.
 - **Once.** The finding's `thread` keeps `replied` with the reply's id (`replyId`), and `resolved`, each set only once
-  its own forge call succeeded, or for `resolved` once the thread read shows someone resolved it by hand;
+  its own forge call succeeded, with `resolvedByEngine` when the engine's resolve did it, or for `resolved` alone once
+  the thread read shows someone resolved it by hand;
   `engine_comments` lists the reply. A step answers only what lacks a mark. An earlier reply of the current user with
   the finding's marker, found when the thread is read, counts as the reply, so a mark a stale write lost never posts a
-  second one from this machine; a reply of a closing before the finding opened again never counts. GitHub wraps each reply in a review of its own, an empty `COMMENTED` one: it carries
-  no marker, so `engine_comments` and `engine_comments_unmapped` ignore it.
+  second one from this machine; a reply of a closing before the finding opened again never counts. GitHub wraps each
+  reply in a review of its own, an empty `COMMENTED` one: it carries no marker, so `engine_comments` and
+  `engine_comments_unmapped` ignore it.
 - **Opened again.** An accepted finding can open again. Its thread's reply then belongs to the closing before: its id
-  moves to the thread's `earlier`, and `replied` clears. The step unresolves a thread that closing resolved, through the
-  forge, under the same check of whose thread it is (`replies.reopened`), and `resolved` clears once the forge answers
-  that the thread is open. When the finding closes again, it gets one new reply with the new outcome, and the thread is
-  resolved again as above: one reply per closing.
+  moves to the thread's `earlier`, and `replied` clears. A reply in `earlier` stays the engine's post for the finding:
+  `engine_comments` lists it, and the [delete](#inline-reviews) reaches it. The step unresolves a thread only when the
+  engine resolved it (`resolvedByEngine`), through the forge, under the same check of whose thread it is
+  (`replies.reopened`), and both marks clear once the forge answers that the thread is open. A thread a person
+  resolved by hand stays as they left it: the engine never opens it again. When the finding closes again, it gets one
+  new reply with the new outcome, and a thread the engine opened is resolved again as above; a thread a person
+  resolved gets the reply alone. One reply per closing.
 - **Retries.** A reply, resolve, or unresolve that fails, a reply the forge answered with no id, threads that cannot be
   read, a thread the forge missed, or a reply the checks refuse, is named in `replies.unanswered`, with why in
   `replies.reasons`,

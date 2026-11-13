@@ -680,6 +680,20 @@ test('findingThreads: every review thread of the pull request, read page by page
   assert.equal(odd(5).forge.findingThreads('o/r', 7)[0].comments[0].id, 5, 'a number answer reads as the same id');
 });
 
+test('findingThreads with roots: one read that stops at the page where the last root it looks for is found', () => {
+  const pages = { first: threadsPage([['T1', false, 61]], 'c1'), c1: threadsPage([['T2', true, 62]], 'c2'), c2: threadsPage([['T3', false, 63]]) };
+  const answer = (call) => pages[call.find((arg) => arg.startsWith('after='))?.slice(6) ?? 'first'];
+  const found = recorded(answer);
+  assert.deepEqual(found.forge.findingThreads('o/r', 7, { roots: [62, 61] }).map((thread) => thread.comments[0].id), [61, 62]);
+  assert.equal(found.calls.length, 2, 'no page after the one that holds the last root');
+  const missing = recorded(answer);
+  assert.equal(missing.forge.findingThreads('o/r', 7, { roots: [99] }).length, 3, 'a root no thread starts at reads every page');
+  assert.equal(missing.calls.length, 3);
+  const all = recorded(answer);
+  assert.equal(all.forge.findingThreads('o/r', 7).length, 3, 'with no roots, every page');
+  assert.throws(() => recorded(answer).forge.findingThreads('o/r', 7, { roots: [61, 'x'] }), /must be a positive whole number/u);
+});
+
 test('unresolveThread: the thread found by its root comment`s id, then one unresolveReviewThread mutation; no node id reaches the caller', () => {
   const unresolved = '{"data":{"unresolveReviewThread":{"thread":{"isResolved":false}}}}';
   const { forge, calls } = recorded((call) => (call.some((arg) => arg.startsWith('query=mutation')) ? unresolved : threadsPage([['PRRT_kw1', true, 61]])));

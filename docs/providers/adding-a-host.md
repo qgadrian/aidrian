@@ -174,7 +174,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   shared code reads no status code and no forge message. `reviewComment(repo, n, id)`, one review comment by its id, held
   to pull request `n`, and `deleteReviewComment(repo, id)`: the delete of the engine's own comment for a security finding
   reads it first.
-- Replies: `findingThreads(repo, n)`, every review thread of the pull request, read once a step, each as
+- Replies: `findingThreads(repo, n, { roots })`, the review threads of the pull request, read once a step, up to the
+  page that holds the last of `roots`, the root comment ids the caller looks for (every page without them), each as
   `{ resolved, complete, comments }`, its comments in order in the shape the other comment reads give (`id`, `body`,
   `user.login`, `author_association`), the first its root, `complete` false when the forge gave only part of them;
   `replyToReviewComment(repo, n, commentId, body)`, one reply in the thread review comment `commentId` starts, answering

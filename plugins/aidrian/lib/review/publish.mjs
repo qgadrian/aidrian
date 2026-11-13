@@ -419,8 +419,10 @@ const FIXED_KEYS = new Set([
   'human', 'answer', 'session', 'unreviewed', 'title', 'body', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost',
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
   'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
-  'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved',
+  'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved', 'earlier', 'textless',
 ]);
+// The keys of a finding's thread that name a comment, as the delete's `textless` mark lists them.
+const THREAD_COMMENT_KEYS = new Set(['replyId', 'commentId', 'fallbackId']);
 
 // The record less what stays on this machine on every repository (postedCopy), as a copy.
 function withoutLocal(state) {
@@ -579,9 +581,10 @@ function allowlisted(state, post, counter) {
       closed_in: (value) => object(value, { from: sha, to: sha }),
       seen: sha,
       placed: sha,
-      // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone, and the closing reply's
-      // marks (answerThreads): its id, and whether it was posted and the thread resolved.
-      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int, replyId: int, replied: bool, resolved: bool }),
+      // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone, the closing reply's marks
+      // (replies.mjs answerThreads): its id, whether it was posted and the thread resolved, and the ids of the replies of
+      // closings before it opened again; and the comments the delete spared as holding no text (delete.mjs), by key.
+      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int, replyId: int, replied: bool, resolved: bool, earlier: list(int), textless: list(word(THREAD_COMMENT_KEYS)) }),
     });
     const file = source.file;
     if (typeof file === 'string' && !hidePlace && path(head)(file)) {

@@ -114,8 +114,9 @@ whatever its status, so step 2 never takes one for a person's comment:
 - `engine_comments_unmapped[]`: every other post a member made that starts with a finding marker, such as one another
   member's machine posted. Read each as a local model's finding, whoever's login posted it: validate it before acting,
   and run `aidrian pr disposition` for it with `--source bot --round <round>`, never as a person's comment.
-- Neither list, with `engine_comments_unread`: the step could not read them. Read every post a member made that starts
-  with a finding marker as unmapped.
+- Neither list, with `engine_comments_unread`: the step could not read them; neither list and no
+  `engine_comments_unread`: the step never read them, as under `review.record: "local"`. Read every post a member made
+  that starts with a finding marker as unmapped.
 - A post that starts with a finding marker by someone who is no member stays an outsider's comment, and a reply with no
   marker in an engine thread stays a review item.
 - `comment_deletes.waiting` names an engine comment of a security finding that waits for another member's machine to
@@ -131,6 +132,8 @@ replied there; `replies` on its result says what it did. Never answer or resolve
   extra step for it; report each as waiting on that `login`'s machine.
 - `replies.open`: a thread someone else replied in keeps the reply and stays open; it is done.
 - `replies.left`: a thread that is not this machine's to answer, or whose root is gone. Report it; run nothing for it.
+- `replies.reopened`: a finding that opened again, whose thread the step unresolved. It is blocking again: triage it
+  with `open`. When it closes again, the step posts a new reply with the new outcome.
 
 Never cite an engine post, a finding's, the review summary, or the product feedback comment, as `--evidence`:
 `aidrian pr signoff --accept` refuses it.

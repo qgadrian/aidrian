@@ -16,7 +16,9 @@ import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, rou
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
-import { answerThreads, deleteOwn, fillThreads, handledKeys, raiseFloor, readMarked } from './inline.mjs';
+import { deleteOwn, handledKeys } from './delete.mjs';
+import { fillThreads, raiseFloor, readMarked } from './inline.mjs';
+import { answerThreads } from './replies.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
 import { closingRange, postContext } from './dispatch.mjs';
 import * as quota from './quota.mjs';
@@ -38,6 +40,9 @@ const CHANGE_FIELDS = 'number,headRefOid,headRefName,baseRefName,url,title,body'
 
 // The files tracked at `commit`, none when git cannot list them.
 const trackedAt = (root, commit) => [...(trackedSet(root, commit) ?? [])];
+
+// Whether a pass result holds a finding stored with no id, as attest stores one on a record no step had floored.
+const holdsIdless = (result) => isObject(result) && ['list', 'ruled', 'carried'].some((key) => Array.isArray(result[key]) && result[key].some((finding) => isObject(finding) && !isFindingId(finding.id)));
 
 // Whether the change from `from` to `to` touches `files` (null: any reviewed file).
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
@@ -93,7 +98,6 @@ export async function prepareStep(s) {
   // commit past it is named rather than an older round re-served (lib/review/pushed.mjs).
   const at = headToReview(root, info.headRefOid, info.headRefName);
   const head = at.head;
-  if (at.unpushed) return { status: 'incomplete', pr: n, repo, head, local_head: at.unpushed, reason: `this checkout's HEAD ${at.unpushed.slice(0, 7)} is past ${head.slice(0, 7)}, the head of pull request #${n}: push, then run the step again`, retry_recommended: true };
   if (!resolve(root, head)) throw new Error(`the head ${head.slice(0, 7)} of pull request #${n} is not in this checkout: git fetch first`);
   // The round cap is the base branch's: an edit to the working copy's config, committed or not, cannot raise it. So is
   // what happens at it: github.extraRounds and its ceiling, github.maxExtraRounds. So are where the record is read from,
@@ -130,13 +134,17 @@ export async function prepareStep(s) {
   // before either stop below, whatever review.publish.inline, the local file, and review.record say, under either value
   // of the team's publicSecurity, which the local file cannot change: "full" spares only a post that holds no text.
   const publicSecurity = committed.review?.publish?.publicSecurity ?? 'counts';
-  // The repository's visibility, read once a step for both sweeps; a read that failed is tried again.
+  // The repository's visibility and the forge's current user, each read once a step, for both sweeps, the summary, the
+  // inline review, and the replies; a read that failed is tried again.
   let visibility;
+  let login;
   const readVisibility = () => (visibility ??= forge.visibility(repo));
-  const sweep = (record, mode, before = null) => deleteOwn({ forge, repo, n, state: record, items: marked?.items ?? null, mode, publicSecurity, done: handledKeys(before), readVisibility });
+  const viewer = () => (login ??= forge.viewer());
+  s.viewer = viewer;
+  const sweep = (record, mode, before = null) => deleteOwn({ forge, repo, n, state: record, items: marked?.items ?? null, mode, publicSecurity, done: handledKeys(before), readVisibility, viewer });
   // The same sweep runs again when the step finishes (run.mjs finish), for a mark the step itself set after this one.
   s.sweep = sweep;
-  const summary = summaryToEdit(comments, () => forge.viewer());
+  const summary = summaryToEdit(comments, viewer);
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) {
     // From this machine's own record alone, and no write: every write raises the revision the hold compares.
@@ -147,6 +155,9 @@ export async function prepareStep(s) {
   // the marked posts first, so the delete, the lists, and the replies read it as the engine's own.
   if (marked?.items) fillThreads(record.state, marked.items);
   s.deletes = sweep(record.state, onPr ? 'posted' : 'local');
+  // A local commit past the pull request's head stops the step, after the delete: a stop never keeps a comment the
+  // delete would remove.
+  if (at.unpushed) return { status: 'incomplete', pr: n, repo, head, local_head: at.unpushed, reason: `this checkout's HEAD ${at.unpushed.slice(0, 7)} is past ${head.slice(0, 7)}, the head of pull request #${n}: push, then run the step again`, retry_recommended: true };
   // A record built on another machine's posted copy can hold an open, blocking finding whose text stayed on that machine:
   // no reviewer here can judge a fix of it. The step stops before it adopts the record or runs a reviewer, and this
   // machine's own record notes the stop, so its merge guard keeps refusing the head. The review goes on on the machine
@@ -162,12 +173,9 @@ export async function prepareStep(s) {
   // record is posted, the floor is the highest id among the members' markers (R4); a read of them that failed before
   // the record's first id floors nothing, so neither this step nor attest mints one.
   const counted = Number.isSafeInteger(state.idCounter) && state.idCounter > 0;
-  if (marked?.items) raiseFloor(state, marked.items);
+  const highestMarker = marked?.items ? raiseFloor(state, marked.items) : 0;
   state.floored = !onPr || Boolean(marked?.items) || counted;
   if (!state.floored) s.unminted = `${marked.error}: no finding id is minted until they can be read`;
-  if (Number.isSafeInteger(state.idCounter) && state.idCounter >= MAX_COUNTER) {
-    return { status: 'incomplete', pr: n, repo, head, reason: `the finding id counter of #${n} is at its limit of ${MAX_COUNTER}, raised by a marker on the pull request: the Human decides how the review goes on`, retry_recommended: false };
-  }
   const paths = gitPaths(root);
   // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
   let posting = null;
@@ -203,7 +211,7 @@ export async function prepareStep(s) {
     mergeNote = `the merge from ${info.baseRefName} could not be read (${stderrTail(error.message, { chars: 200 })}): the whole change is reviewed`;
   }
   if (baseMerge?.clean) {
-    // A carried review answers the closed findings' threads as a finished step does (inline.mjs answerThreads), before
+    // A carried review answers the closed findings' threads as a finished step does (replies.mjs answerThreads), before
     // the record is written, so their marks are kept and posted.
     const replies = onPr ? answerThreads(s) : null;
     const carried = settle({
@@ -213,7 +221,7 @@ export async function prepareStep(s) {
       plan: { depth: 'none', reasons: [`a clean merge from ${info.baseRefName}: the review of ${reviewedHead.slice(0, 7)} carries to this head`], flows: [], stages: [] },
     });
     // Published as the review step publishes, so another machine's merge guard reads the same record.
-    const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, n, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, 'received', post()) : null;
+    const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, n, body), edit: (id, body) => forge.editComment(repo, id, body), viewer }, 'received', post()) : null;
     return summaryError ? { ...carried, summary_error: summaryError } : carried;
   }
   const scope = baseMerge ? baseMerge.scope : null;
@@ -334,7 +342,7 @@ export async function prepareStep(s) {
   state.planNote = planNote(plan, map, state.planNote, base);
   // A finding attest stored without an id, as on a record no step had floored, takes one now, from the same function.
   for (const [id, result] of Object.entries(state.passes)) {
-    if (!isObject(result) || !['list', 'ruled', 'carried'].some((key) => Array.isArray(result[key]) && result[key].some((finding) => isObject(finding) && !isFindingId(finding.id)))) continue;
+    if (!holdsIdless(result)) continue;
     recordFindings(state, id, result, { mint: state.floored === true, securityPass: state.planNote.passes[id]?.security === true || state.dispatched?.[id]?.security === true, kept: true, range: closingRange(root, base) });
   }
 
@@ -405,6 +413,13 @@ export async function prepareStep(s) {
   if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
   const { maxRounds, grantFloor } = roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) });
 
+  // At the id counter's limit, a step that may mint stops before any reviewer runs, rather than record a finding no id
+  // can name: one with a pass still to run on this head, or a finding stored with no id. One whose every pass has its
+  // result goes on, since it mints nothing.
+  if (Number.isSafeInteger(state.idCounter) && state.idCounter >= MAX_COUNTER && (passes.some((pass) => !resultFor(pass)) || Object.values(state.passes).some(holdsIdless))) {
+    const cause = highestMarker >= MAX_COUNTER ? 'raised by a marker on the pull request' : 'reached by the ids this review minted';
+    return settle({ status: 'incomplete', pr: n, repo, head, reason: `the finding id counter of #${n} is at its limit of ${MAX_COUNTER}, ${cause}: the Human decides how the review goes on`, retry_recommended: false });
+  }
   Object.assign(s, { changes, scope, plan, map, resultFor, sameFiles, quietSince, fallbacks, keptSignoffs, visual, visualEntries, manifest, isVisual, passes, removedTests, planHistory, extensionLog, maxRounds, grantFloor });
   Object.assign(s, evidenceOf(s));
   return null;

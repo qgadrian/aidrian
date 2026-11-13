@@ -35,13 +35,15 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
 import { residualRows } from './publish.mjs';
-import { answerThreads, engineLists, mergeDeletes, postInline } from './inline.mjs';
+import { mergeDeletes, removedPosts } from './delete.mjs';
+import { engineLists, postInline } from './inline.mjs';
+import { answerThreads } from './replies.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
 import { atCap } from './extension.mjs';
-import { answerPending, emptyState, mergePending, noteOutcome, prunePasses, readLocalState, summaryBody, writeSummary, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { ghImage } from './visual.mjs';
 import { prepareStep } from './step.mjs';
@@ -153,9 +155,12 @@ function quotaStop(s, pass, stage, reason, extra = {}) {
 // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
 // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
 // publishes the record to the pull request.
-function settle({ project, root, repo, n, state }, result) {
-  // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
-  state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+function settle({ project, root, repo, n, state, deletes }, result) {
+  // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it. So is
+  // what another write on this machine closed or mapped in the finding index.
+  const local = readLocalState(project, n);
+  state.pending = mergePending(local?.pending, state.pending);
+  mergeIndex(state, local, removedPosts(deletes));
   noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
   writeLocalState(project, state);
   return result;
@@ -190,8 +195,24 @@ export function lateResiduals(passes, resultFor) {
   });
 }
 
+// With inline posting on, what another machine's write of the posted record closed or mapped in the finding index while
+// this step ran, read again from the pull request just before this step posts (state.mjs mergeIndex): no finding gets a
+// second thread because a write that mapped its first was lost. A read that fails merges nothing.
+function mergePosted(s) {
+  if (!s.onPr || s.post().publish?.inline !== true) return;
+  let comments;
+  try {
+    comments = s.forge.conversationComments(s.repo, s.n);
+  } catch {
+    return;
+  }
+  const posted = stateFromComment(summaryComment(comments)?.body, s.n);
+  if (posted) mergeIndex(s.state, posted, removedPosts(s.deletes));
+}
+
 function finish(s, status, extra) {
   const { forge, repo, n, head, base, onPr, summary, state, plan, passes, resultFor, fallbacks, keptSignoffs, maxRounds, flowStatus, outsideClosed, approvalPath, approvals } = s;
+  mergePosted(s);
   answerRequests(s);
   noteFindings(s, extra);
   const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };

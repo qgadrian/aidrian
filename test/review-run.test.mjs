@@ -2712,10 +2712,8 @@ function inlineForge(r) {
     deleteComment: named('deleteComment', (_repo, id) => (r.comments.splice(r.comments.findIndex((each) => each.id === id), 1), null)),
     visibility: named('visibility', r.forge.visibility),
     // A thread is its root review comment and every comment that replies to it; a reply joins it with an id from 5000.
-    reviewThread: named('reviewThread', (_repo, _n, id) => {
-      const root = reviewComments.find((each) => each.id === id && !each.in_reply_to_id);
-      return root ? { resolved: resolved.has(id), complete: true, comments: [root, ...reviewComments.filter((each) => each.in_reply_to_id === id)] } : null;
-    }),
+    findingThreads: named('findingThreads', () => reviewComments.filter((each) => !each.in_reply_to_id)
+      .map((root) => ({ resolved: resolved.has(root.id), complete: true, comments: [root, ...reviewComments.filter((each) => each.in_reply_to_id === root.id)] }))),
     replyToReviewComment: named('replyToReviewComment', (_repo, _n, id, body) => {
       if (r.failReply) throw new Error('gh: Bad Gateway (HTTP 502)');
       const reply = { id: 5000 + reviewComments.length, body, in_reply_to_id: id, ...author };
@@ -2723,6 +2721,7 @@ function inlineForge(r) {
       return { id: reply.id };
     }),
     resolveThread: named('resolveThread', (_repo, _n, id) => (resolved.add(id), { resolved: true })),
+    unresolveThread: named('unresolveThread', (_repo, _n, id) => (resolved.delete(id), { resolved: false })),
   });
   return { calls, reviews, reviewComments, resolved };
 }
@@ -2734,7 +2733,7 @@ test('inline on: one whole step posts one review with the finding`s thread, reco
   const exec = async () => found(mediumFinding);
   const first = await r.step({ exec });
   assert.equal(first.status, 'fix_required');
-  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'postReview', 'postComment'], 'the step`s forge calls, in order');
+  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'conversationComments', 'postReview', 'postComment'], 'the step`s forge calls, in order: the posted record read again just before the post');
   assert.deepEqual([first.inline_review.posted, first.inline_review.threads, first.inline_review.review_id], [true, ['R1-1'], 900]);
   assert.deepEqual(posts.reviewComments.map((each) => [each.path, each.line]), [['src/app.js', 1]]);
   assert.ok(posts.reviewComments[0].body.startsWith('<!-- aidrian-review-finding:R1-1 -->\naidrian review, finding R1-1\n'));
@@ -2907,6 +2906,56 @@ test('inline: a member`s marker at the counter`s digit limit stops the step as i
   assert.match(stopped.reason, /the finding id counter of #7 is at its limit/u);
 });
 
+test('the counter at its limit through the review`s own ids stops a step that would mint, and says no marker raised it', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  assert.equal((await r.step({ exec: async () => found(mediumFinding) })).status, 'fix_required');
+  const state = readLocalState(r.project, 7);
+  state.idCounter = 999999;
+  writeLocalState(r.project, state);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  let ran = 0;
+  const stopped = await r.step({ exec: async () => (ran += 1, found(mediumFinding)) });
+  assert.deepEqual([stopped.status, stopped.retry_recommended, ran], ['incomplete', false, 0]);
+  assert.match(stopped.reason, /at its limit of 999999, reached by the ids this review minted/u);
+  assert.doesNotMatch(stopped.reason, /marker/u);
+  assert.equal(readLocalState(r.project, 7).outcome.status, 'incomplete', 'the stop is the head`s outcome, so the merge guard reads it');
+});
+
+test('the counter at its limit stops no step whose every pass has its result on the head: it mints nothing', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  assert.equal((await r.step({ exec: async () => found(mediumFinding) })).status, 'fix_required');
+  const state = readLocalState(r.project, 7);
+  state.idCounter = 999999;
+  writeLocalState(r.project, state);
+  const again = await r.step({ exec: () => assert.fail('no reviewer runs: the pass has its result on this head') });
+  assert.equal(again.status, 'fix_required', 'the step goes on to its result');
+  assert.deepEqual(again.open[0].findings.map((each) => each.id), ['R1-1']);
+});
+
+test('two writers: a record that lost the write that mapped a finding`s thread posts no second thread for it', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  const first = await r.step({ exec: async () => found(mediumFinding) });
+  assert.deepEqual(first.inline_review.threads, ['R1-1']);
+  // This machine's record is a write that never read the one that mapped R1-1's thread, at a higher revision, as when
+  // two machines step at once: the posted record still maps it.
+  const stale = readLocalState(r.project, 7);
+  delete stale.index['R1-1'].thread;
+  stale.revision += 5;
+  writeLocalState(r.project, stale);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('not the fix');
+  const second = await r.step({ exec: async () => found(mediumFinding) });
+  assert.equal(second.status, 'fix_required');
+  assert.equal(second.inline_review, undefined, 'no second thread, and no fresh id for it');
+  assert.deepEqual([posts.reviews.length, posts.reviewComments.length], [1, 1]);
+  const local = readLocalState(r.project, 7);
+  assert.deepEqual(local.index['R1-1'].thread, { reviewId: 900, commentId: 1000 }, 'the write keeps the mapping it merged back');
+  assert.deepEqual(Object.keys(local.index), ['R1-1']);
+  assert.deepEqual(stateFromComment(summaryComment(r).body, 7).index['R1-1'].thread, { reviewId: 900, commentId: 1000 });
+});
+
 test('the delete runs under publicSecurity "full" too: a comment posted with its text before the mark goes, and the step posts no text for it', async (t) => {
   const { r, posts } = await postedThenMarked(t, { version: 1, review: { publish: { inline: true, publicSecurity: 'full' } } });
   const result = await r.step({ exec: async () => found(mediumFinding) });
@@ -2933,8 +2982,8 @@ test('replies on: one whole step after a fix replies on the thread and resolves 
   const { r, posts, first } = await postedThenFixed(t);
   const second = await r.step({ exec: clean });
   assert.equal(second.status, 'received');
-  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'viewer', 'reviewThread', 'replyToReviewComment', 'resolveThread', 'editComment'], 'the step`s forge calls, in order');
-  assert.deepEqual(second.replies, { replied: ['R1-1'], resolved: ['R1-1'], open: [], waiting: [], left: [], unanswered: [] });
+  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'conversationComments', 'viewer', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'editComment'], 'the step`s forge calls, in order: one read of every thread');
+  assert.deepEqual(second.replies, { replied: ['R1-1'], resolved: ['R1-1'], reopened: [], open: [], waiting: [], left: [], unanswered: [] });
   const reply = posts.reviewComments.find((each) => each.in_reply_to_id === 1000);
   const local = readLocalState(r.project, 7);
   assert.equal(local.index['R1-1'].state, 'not_reported');
@@ -2951,7 +3000,7 @@ test('replies on: one whole step after a fix replies on the thread and resolves 
   posts.calls.length = 0;
   const third = await r.step({ exec: clean });
   assert.equal(third.replies, undefined);
-  assert.ok(!posts.calls.some((name) => ['viewer', 'reviewThread', 'replyToReviewComment', 'resolveThread'].includes(name)), 'a further step makes no call for the thread');
+  assert.ok(!posts.calls.some((name) => ['viewer', 'findingThreads', 'replyToReviewComment', 'resolveThread'].includes(name)), 'a further step makes no call for the thread');
   assert.equal(posts.reviewComments.filter((each) => each.in_reply_to_id === 1000).length, 1);
 });
 
@@ -3008,7 +3057,7 @@ test('replies: a finding whose comment the engine deleted gets no reply', async 
   assert.deepEqual(second.comment_deletes.deleted.map((each) => each.finding), ['R1-1']);
   assert.equal(readLocalState(r.project, 7).index['R1-1'].state, 'not_reported');
   assert.equal(second.replies, undefined);
-  assert.ok(!posts.calls.includes('replyToReviewComment') && !posts.calls.includes('reviewThread'));
+  assert.ok(!posts.calls.includes('replyToReviewComment') && !posts.calls.includes('findingThreads'));
 });
 
 test('replies: false, the local file`s inline false, and review.record "local" post no reply and resolve nothing', async (t) => {
@@ -3025,7 +3074,7 @@ test('replies: false, the local file`s inline false, and review.record "local" p
     const second = await r.step({ exec: clean });
     assert.equal(readLocalState(r.project, 7).index['R1-1'].state, 'not_reported', `the finding closed: ${second.status} ${second.reason ?? ''}`);
     assert.equal(second.replies, undefined);
-    assert.ok(!['viewer', 'reviewThread', 'replyToReviewComment', 'resolveThread'].some((name) => posts.calls.includes(name)), posts.calls.join(','));
+    assert.ok(!['viewer', 'findingThreads', 'replyToReviewComment', 'resolveThread'].some((name) => posts.calls.includes(name)), posts.calls.join(','));
   }
 });
 

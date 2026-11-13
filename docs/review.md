@@ -1205,6 +1205,13 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   closed it, and `from` the head that last recorded it open or accepted when that is an ancestor of `to`, else the
   merge base. A fix in a quiet push gets that push alone, and a rebased head gets a range git can show. An entry closed
   as `fixed` or `not_reported` posts no title on any repository.
+- *Two writers.* A step writes the record whole, with no lock, so each write keeps what a write it did not read made in
+  the index, as it merges `pending`: before every write, from this machine's record on disk, and, with
+  `review.publish.inline` on, from the pull request's posted record, read again just before the step posts. For an id
+  both hold as one finding (no two different mint marks), a `fixed` or `not_reported` state, with its `closed_in`, wins
+  over one that is not, and a post another write mapped (`reviewId`, `commentId`, or `fallbackId`) is kept where this
+  write maps none, unless this step deleted that comment or found it gone. So two machines stepping at once never give
+  one finding a second thread, and a closed id never comes back as open. An id only one write holds stays that write's.
 
 ### The posted copy
 
@@ -1315,7 +1322,10 @@ what went where (`inline_review`). Inline publishing has not been run beside the
   from a file and line that pass that check and a path the text checks pass. A finding posted once, in a thread, a
   review body, or a fallback comment, is never posted again, but for the other findings of a fallback comment the
   delete below removed: its index entry keeps `thread`, the forge's ids alone (`{ reviewId, commentId }`, or
-  `{ fallbackId }`), and the posted record still holds no finding text.
+  `{ fallbackId }`), and the posted record still holds no finding text. A finding that gets a thread is listed in the
+  review body too, by id and place ("on the diff at `<path>:<line>`"); `inline_review.threads` names those, and
+  `inline_review.in_body` only the findings whose post is the body itself. A step with nothing new to post returns no
+  `inline_review` field.
 - **Security findings.** On a repository that does not read as `PRIVATE`, a security finding and its twin are read by
   the same reading the posted record takes. Under `publicSecurity: "counts"` they get no thread and no line in a review
   body. Under `"full"` they get one, holding the id, the severity, the location, and `text withheld`, never the text.
@@ -1338,7 +1348,10 @@ what went where (`inline_review`). Inline publishing has not been run beside the
 - **The counter floor.** Every step whose record is posted reads the pull request's comments, reviews, and review
   comments once, and raises the id counter past the highest id among the markers of members of the repository, so an id
   a restarted record forgot is never minted again. A marker whose round has more than three digits or whose number has
-  more than six is ignored, and a step stops as `incomplete` rather than mint past those digits. The read fails closed:
+  more than six is ignored. At the counter's limit, a step that may mint, one with a pass still to run on its head or a
+  finding stored with no id, stops as `incomplete` before any reviewer runs, rather than mint past those digits; its
+  reason says whether a member's marker or the review's own ids raised the counter there. A step whose every pass has
+  its result on the head mints nothing and goes on. The read fails closed:
   when it fails or is read only in part before the record's first id, the step mints no id and says so (`ids_unminted`),
   and `aidrian pr attest` stores none; on a later step it posts no review. A finding with no post whose marker a member's
   post already carries takes a fresh id first; the fresh id keeps every engine key, the security mark among them, and
@@ -1349,8 +1362,10 @@ what went where (`inline_review`). Inline publishing has not been run beside the
 - **The engine's posts in the loop.** Every step whose record is posted, whatever its status and whatever `inline`
   says, lists each comment and review that a member wrote and that starts with a finding marker in the fixed layout:
   `engine_comments`, those the finding index maps to that marker's finding, and `engine_comments_unmapped`, the rest,
-  all of them when the step stops before it maps anything. A step that cannot read them returns neither list and says
-  why (`engine_comments_unread`). `pr-review-loop` skips the first list, and reads the second, or every marked post by a
+  all of them when the step stops before it maps anything. Each entry names the login that posted it, the forge's answer
+  to the post for one this step made. A step that cannot read them returns neither list and says why
+  (`engine_comments_unread`); a step that never read them, under `review.record: "local"` or one that failed before
+  the read, returns neither list and no `engine_comments_unread`. `pr-review-loop` skips the first list, and reads the second, or every marked post by a
   member when neither list came back, as a local model's finding, never as a person's comment, whoever's login posted it.
   A marked post by someone who is no member stays an outsider's, and a reply with no marker in an engine thread stays a
   review item. `aidrian pr signoff --accept` refuses as `--evidence` a post that starts with an engine marker: a
@@ -1363,8 +1378,8 @@ what went where (`inline_review`). Inline publishing has not been run beside the
   security finding there, stays (`comment_deletes.textless`). The other findings a deleted fallback comment listed read
   as unposted, and a later step posts them again. Each machine does so on its next step, whether it set the mark or
   reads it in the posted record, and whatever `inline`, the local file, and `review.record` say; it also runs before a
-  step stops for a held record, from this machine's record alone and with no write, and before a stop for a finding
-  with no text. A step that sets the mark itself, through what its own reviewers report, its plan, or the ids it gives
+  step stops for a held record, from this machine's record alone and with no write, before a stop for a finding with
+  no text, and before a stop for a local commit past the pull request's head. A step that sets the mark itself, through what its own reviewers report, its plan, or the ids it gives
   late, and goes on to its result, deletes in that same step: the delete runs again when the step finishes, before it
   posts anything or writes the record. It skips a comment it already deleted, failed to delete, or left to another
   member's machine; one it kept, such as one spared under `"full"` for holding none of a finding's text, is checked
@@ -1376,7 +1391,12 @@ what went where (`inline_review`). Inline publishing has not been run beside the
   under `"full"` a reply, which holds no finding text, stays. Before
   each delete it reads that comment by its id and deletes it only when it is on this pull request, this user wrote it,
   and it starts with that finding's marker; another member's comment waits for that member's machine
-  (`comment_deletes.waiting`), and anything else is left and listed. A review body cannot be deleted, so it keeps the
+  (`comment_deletes.waiting`), and anything else is left and listed. When the forge's current user cannot be read, no
+  comment is known to be another member's: each is left, and the next step reads it again. A comment the forge no
+  longer finds on the pull request, such as one deleted by hand, is gone (`comment_deletes.gone`): the record maps it no
+  more, under `review.record: "local"` too, so no later step reads it. A comment spared under `"full"` is noted on its
+  finding's `thread` (`textless`), so no later step reads it again for that finding while `"full"` holds; under
+  `"counts"` it goes. The step reads the visibility and the current user once, for both sweeps and the replies. A review body cannot be deleted, so it keeps the
   text it held, and so does a notification email the forge already sent. Under `review.record: "local"` the delete reads
   this machine's record alone: a comment whose mark another machine set, or that no record maps, is deleted by hand.
 
@@ -1394,7 +1414,8 @@ due: with nothing to answer, it has no `replies` field.
   is the closing range, built as the findings table builds it, else the two short SHAs as text. A reply holds no
   reviewer text; it passes the text checks and the escaping every post does, and when a check withholds the link, the
   reply shows the short SHAs, then the bare outcome.
-- **Whose thread.** Before replying, the step reads the thread through the forge. It replies only where the thread's
+- **Whose thread.** Before replying, the step reads the pull request's review threads through the forge, every thread
+  once a step, and looks each finding's up by its root comment. It replies only where the thread's
   root is the forge's current user's comment that starts with that finding's marker. A root that names another id,
   that no member wrote, or that the step's read of the review comments no longer holds, gets nothing and is listed in
   `replies.left`, which is reported only: nothing acts on it. A thread the forge finds none for, though that read still
@@ -1409,10 +1430,16 @@ due: with nothing to answer, it has no `replies` field.
   its own forge call succeeded, or for `resolved` once the thread read shows someone resolved it by hand;
   `engine_comments` lists the reply. A step answers only what lacks a mark. An earlier reply of the current user with
   the finding's marker, found when the thread is read, counts as the reply, so a mark a stale write lost never posts a
-  second one from this machine. GitHub wraps each reply in a review of its own, an empty `COMMENTED` one: it carries
+  second one from this machine; a reply of a closing before the finding opened again never counts. GitHub wraps each reply in a review of its own, an empty `COMMENTED` one: it carries
   no marker, so `engine_comments` and `engine_comments_unmapped` ignore it.
-- **Retries.** A reply or resolve that fails, a reply the forge answered with no id, a thread that cannot be read or
-  that the forge missed, or a reply the checks refuse, is named in `replies.unanswered`, with why in `replies.reasons`,
+- **Opened again.** An accepted finding can open again. Its thread's reply then belongs to the closing before: its id
+  moves to the thread's `earlier`, and `replied` clears. The step unresolves a thread that closing resolved, through the
+  forge, under the same check of whose thread it is (`replies.reopened`), and `resolved` clears once the forge answers
+  that the thread is open. When the finding closes again, it gets one new reply with the new outcome, and the thread is
+  resolved again as above: one reply per closing.
+- **Retries.** A reply, resolve, or unresolve that fails, a reply the forge answered with no id, threads that cannot be
+  read, a thread the forge missed, or a reply the checks refuse, is named in `replies.unanswered`, with why in
+  `replies.reasons`,
   and the next step tries it again; `pr-review-loop` runs the step once more on `received` with that list, and reports
   what is left.
 - **No reply** goes to a finding whose comment the [delete](#inline-reviews) removed or meant to, nor to a security
@@ -1420,7 +1447,3 @@ due: with nothing to answer, it has no `replies` field.
   body or a fallback comment has no thread, and its outcome shows in the summary table alone.
 - An inline comment whose review the engine could not read back is mapped by its marker on a later step, so it is
   answered too.
-- **A limit.** An accepted finding can open again. Its thread keeps the reply `Accepted as <disposition>.` and stays
-  resolved, and when it later closes as fixed or not reported again, no second reply is posted: the marks never clear.
-  The summary's findings table, the step's open findings, and the merge guard still show it open. Issue #287 tracks
-  the fix: a reply per outcome, and the thread reopened when the finding opens again.

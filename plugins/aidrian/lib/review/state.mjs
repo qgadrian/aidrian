@@ -28,7 +28,7 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
-import { recordFindings } from './findings.mjs';
+import { isClosed, isMint, recordFindings } from './findings.mjs';
 import { escapeLines, fillWithheld, findingsTable, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
@@ -125,6 +125,41 @@ export function mergePending(a, b) {
     out.set(key, merged);
   }
   return [...out.values()];
+}
+
+// The keys of a finding's thread that map one of the engine's posts, each with the kind of post it names.
+const POST_KEYS = Object.freeze({ reviewId: 'review', commentId: 'review_comment', fallbackId: 'comment' });
+
+// Keeps in `state`'s finding index what another write of the record, `other`, closed or mapped to a post, as `pending` is
+// merged (mergePending): a step's write never drops what a write it did not read made, so two machines stepping at once,
+// or a stale copy, can neither bring a closed id back as open nor lose the post an id is mapped to, which a later step
+// would read as unposted and post again under a fresh id. For each id both hold, and as one finding (no two different
+// mint marks): a closed state (findings.mjs CLOSED_STATES, final), with its `closed_in`, wins over one that is not, and
+// each post key another write mapped, where this one maps none, is added, less one `removed` names as `<kind>:<id>` (a
+// comment this step deleted or found gone, delete.mjs removedPosts). An id only one copy holds is that copy's alone:
+// nothing is added. Returns the ids it changed.
+export function mergeIndex(state, other, removed = new Set()) {
+  const ours = isObject(state?.index) ? state.index : null;
+  const theirs = isObject(other?.index) ? other.index : {};
+  const changed = [];
+  for (const [id, entry] of Object.entries(ours ?? {})) {
+    const their = theirs[id];
+    if (!isObject(entry) || !isObject(their) || their.id !== entry.id || (isMint(entry.mint) && isMint(their.mint) && entry.mint !== their.mint)) continue;
+    let kept = false;
+    if (isClosed(their) && !isClosed(entry)) {
+      entry.state = their.state;
+      if (isObject(their.closed_in)) entry.closed_in = { ...their.closed_in };
+      kept = true;
+    }
+    for (const [key, kind] of Object.entries(POST_KEYS)) {
+      const value = isObject(their.thread) ? their.thread[key] : undefined;
+      if (!Number.isSafeInteger(value) || removed.has(`${kind}:${value}`) || (isObject(entry.thread) && entry.thread[key] !== undefined)) continue;
+      entry.thread = { ...(isObject(entry.thread) ? entry.thread : {}), [key]: value };
+      kept = true;
+    }
+    if (kept) changed.push(id);
+  }
+  return changed;
 }
 
 const file = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}-review.json`);

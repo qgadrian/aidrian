@@ -168,21 +168,24 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url, { host, withBody })`, which says whether a URL on the pull request's host is one of its comments, reviews, or review comments, found by its id, and with `withBody` gives that item's text too, so the sign-off check refuses an engine post.
 - Inline review: `postReview(repo, n, { commitId, body, comments })`, one review of the head with its inline comments
   (`{ path, line, side, body }`), always a plain comment: the adapter sets the event, and takes none. It answers
-  `{ refused: false, id, comments }`, the review's id and its inline comments with their ids, or `{ refused: true }` when the
+  `{ refused: false, id, login, comments }`, the review's id, the login the forge answered it with (null with none), and
+  its inline comments with their ids, or `{ refused: true }` when the
   forge refuses the review, such as for a line outside the diff (GitHub: any 4xx answer), and throws any other failure:
   shared code reads no status code and no forge message. `reviewComment(repo, n, id)`, one review comment by its id, held
   to pull request `n`, and `deleteReviewComment(repo, id)`: the delete of the engine's own comment for a security finding
   reads it first.
-- Replies: `reviewThread(repo, n, commentId)`, the thread review comment `commentId` starts, as
+- Replies: `findingThreads(repo, n)`, every review thread of the pull request, read once a step, each as
   `{ resolved, complete, comments }`, its comments in order in the shape the other comment reads give (`id`, `body`,
-  `user.login`, `author_association`), `complete` false when the forge gave only part of them, or null when no thread of
-  the pull request starts there; `replyToReviewComment(repo, n, commentId, body)`, one reply in that thread, answering
-  the reply with its `id`; and `resolveThread(repo, n, commentId, { only })`, which resolves that thread, found by its
-  root comment's id, so shared code handles no forge-side thread id (GitHub: a GraphQL node id). With `only`, the ids
-  of the comments the caller allows there, it reads the thread again first and resolves nothing when that read holds
-  any other comment or is only part of the thread, answering `{ resolved: false, others: true }`. It answers
-  `{ resolved: true }` for a resolved thread and throws on any failure, so the step tries again. The engine replies once a finding with a
-  thread closes ([Publishing](../review.md#publishing)).
+  `user.login`, `author_association`), the first its root, `complete` false when the forge gave only part of them;
+  `replyToReviewComment(repo, n, commentId, body)`, one reply in the thread review comment `commentId` starts, answering
+  the reply with its `id`; `resolveThread(repo, n, commentId, { only })`, which resolves that thread, found by its
+  root comment's id, so shared code handles no forge-side thread id (GitHub: a GraphQL node id); and
+  `unresolveThread(repo, n, commentId)`, which opens it again, found the same way. With `only`, the ids
+  of the comments the caller allows there, `resolveThread` reads the thread again first and resolves nothing when that
+  read holds any other comment or is only part of the thread, answering `{ resolved: false, others: true }`. It answers
+  `{ resolved: true }` for a resolved thread, `unresolveThread` answers `{ resolved: false }` for an open one, and each
+  throws on any failure, so the step tries again. The engine replies once a finding with a thread closes, and opens the
+  thread again when the finding opens again ([Replies](../review.md#replies)).
   Every write route, and every read of one comment, is built from a safe positive integer alone, and
   text from a pull request reaches a write as a literal string: on GitHub, JSON on gh's stdin or a raw `-f` field, never
   `-F`, which reads a leading `@` as a file.

@@ -20,7 +20,7 @@ import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
+import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
 
 // The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
@@ -546,7 +546,7 @@ async function showIngest({ project, pr, repo, manifest, forge, visual }) {
     }
     const state = readLocalState(project, pr);
     const kept = state?.visual?.head === manifest.head ? state.visual : null;
-    forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null }));
+    forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null, reviewed: Boolean(kept) && visualReviewed(state) }));
     console.log(`updated the captures comment on ${where} with the ingest`);
   } catch (error) {
     console.error(`warning: the captures comment on ${where} was not updated (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); the ingest is recorded`);

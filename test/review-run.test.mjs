@@ -2046,7 +2046,8 @@ test('a reviewer citing an ingested capture closes an unverified invariant on th
   assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the ingested capture is the evidence that closes it');
   // The repository reads as public, so the posted line names no reason and no person; the record keeps both.
   assert.doesNotMatch(summaryOf(r), /Tester|e2e-runner/u, 'the public comment names no reason and no person');
-  assert.match(summaryBody(readLocalState(r.project, 7), null, 'x', OPEN), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable \\(no base URL: .*; ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
+  // The designer pass has its result on the head, so the tool's own reason gives way; the ingest note stays.
+  assert.match(summaryBody(readLocalState(r.project, 7), null, 'x', OPEN), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable; the visual passes reviewed this head without the capture \\(ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
 });
 
 // The late order: the images are ingested after the visual reviewer answered. The step dispatches no visual reviewer
@@ -2081,12 +2082,52 @@ test('an ingest after the visual reviewer answered counts once the pass is recor
   const [{ key }] = readManifest(r.project, 7, first.head).ingested;
   // The late ingest leaves its trace on the pull request: the captures comment is rewritten with it.
   assert.ok(capturesComment().includes(`| \`${key}\` | \`e2e-runner run 12\` | \`Tester\` |`), capturesComment());
+  // The designer already has its result on this head, so the rewrite keeps the line that it reviewed the head without the capture.
+  assert.match(capturesComment(), /unavailable; the visual passes reviewed this head without the capture\./u);
   record(`capture:${key}`, 'holds');
   const closed = await r.step({ exec: clean });
   assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the re-recorded citation of the ingest closes the invariant');
   assert.equal(line(), lineBefore, 'the summary line does not show a late ingest');
   assert.deepEqual(readLocalState(r.project, 7).captured, keysBefore, 'nor do the record`s captured keys: the ingest counts only on the machine that holds it');
   assert.doesNotMatch(lineBefore, /ingested/u);
+});
+
+test('a failed capture stops asking to wait in the summary and the captures comment once a visual pass has its result on that head', async (t) => {
+  const visual = { platform: 'web', targets: [{ files: ['src/ui/**'], routes: ['/look'] }], viewports: [360] };
+  const flows = { look: { files: ['src/ui/**'], require: ['agent:designer'], invariants: [{ id: 'matches-design', text: 'Does the screen still match the approved design?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, visual } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const first = await r.step({ exec: clean });
+  const [pass] = first.dispatch;
+  const line = () => summaryOf(r).split('\n').find((each) => each.startsWith('- visual capture of'));
+  const capturesComment = () => r.comments.find((c) => c.body.startsWith('<!-- aidrian-visual-captures -->')).body;
+  // No visual pass has a result yet: the failure and its reason stand.
+  assert.match(capturesComment(), /unavailable: no base URL/u);
+  assert.match(line(), /: unavailable \(no base URL/u);
+  assert.deepEqual(readLocalState(r.project, 7).visual.passes, [pass.pass]);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: JSON.stringify([{ flow: 'look', invariant: 'matches-design', verdict: 'holds', evidence: 'src/ui/a.js:1' }]) });
+  await r.step({ exec: clean });
+  assert.equal(line(), `- visual capture of \`${first.head.slice(0, 7)}\`: unavailable; the visual passes reviewed this head without the capture; attach **auto**, private repository`);
+  assert.match(capturesComment(), /^Attach: \*\*auto\*\*, private repository\. unavailable; the visual passes reviewed this head without the capture\.$/mu);
+  assert.doesNotMatch(capturesComment(), /no base URL/u);
+  // The next step leaves the comment as it is.
+  let edits = 0;
+  const edit = r.forge.editComment;
+  r.forge.editComment = (...args) => ((args[1] === r.comments.find((c) => c.body.startsWith('<!-- aidrian-visual-captures -->')).id && (edits += 1)), edit(...args));
+  await r.step({ exec: clean });
+  assert.equal(edits, 0);
+});
+
+test('summaryBody: a failed capture`s line keeps its reason until a visual pass it was taken for has a result on its head', () => {
+  const head = 'a'.repeat(40);
+  const state = (passes, visual = {}) => ({ ...emptyState(7, 'o/r'), passes, visual: { head, status: 'failed', mode: 'auto', visibility: 'PRIVATE', captured: 0, of: 2, passes: ['designer'], reason: 'visual-preview: preview of aaaaaaa is still deploying; wait for the deploy and run aidrian pr review again', ...visual } });
+  const line = (record) => summaryBody(record, null, 'x', OPEN).split('\n').find((each) => each.startsWith('- visual capture of'));
+  assert.match(line(state({})), /failed \(visual-preview: preview of aaaaaaa is still deploying; wait for the deploy/u, 'no pass result');
+  assert.match(line(state({ designer: { head: 'b'.repeat(40), reviewer: 'designer', findings: 0, open: 0 } })), /still deploying/u, 'a result on another head');
+  assert.match(line(state({ 'code-reviewer': { head, reviewer: 'code-reviewer', findings: 0, open: 0 } })), /still deploying/u, 'a result of a pass that is not visual');
+  assert.match(line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }, { passes: undefined })), /still deploying/u, 'a record from before visual.passes');
+  const reviewed = line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }));
+  assert.equal(reviewed, '- visual capture of `aaaaaaa`: failed; the visual passes reviewed this head without the capture; attach **auto**, private repository');
+  assert.match(line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }, { reason: 'still deploying; ingested, not captured: ingest-x-abcdef from `run 1` by `Tester`' })), /without the capture \(ingested, not captured: ingest-x-abcdef/u, 'the ingest note stays');
 });
 
 // What a line shows outside its code spans, by CommonMark's rule: a run of backticks opens a span that only a run of

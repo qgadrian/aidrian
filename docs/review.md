@@ -481,6 +481,11 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 - **Once per head**: the capture runs when a visual reviewer is dispatched, and its manifest (each image's key, file,
   hash, and facts) is kept in the state folder. Flow verdicts cite an image as `capture:<key>`; a key of another head
   is no evidence. Animations are off and motion is reduced, so an unchanged screen gives the same bytes.
+- **A failed capture**: a capture that is `failed` or `unavailable`, such as a preview still deploying, shows its reason
+  in the review summary's visual line and in the captures comment until a visual pass it was taken for has a result
+  on that head (`visual.passes` on the record). From then on both say the visual passes reviewed this head without the
+  capture, and drop the reason, which no longer asks for anything; an ingest note stays. The step that sees the result
+  edits the captures comment.
 - **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
   elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
   `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The

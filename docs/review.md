@@ -1225,11 +1225,9 @@ which the review step alone writes, are kept from the comment.
   or person's name. Without text, the waived-repeat lines show the count, the id, the file, and the severity; an Extra
   rounds line shows the status, who decided, and its red flags by name; a waiver line shows its kind, head, verdict,
   and judge; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
-  finding has no file or line there ([Reviewers](#reviewers)). A verdict posts no evidence: a machine that adopts the
-  copy does not count a pass whose holds or not_affected verdicts arrive without it, and runs that pass again, so its
-  reviewer answers with evidence that machine checks. A split slice another machine finished arrives without its
-  contracts and cross-slice notes, so it runs again before the cross-cutting pass reads them. A judge's ruling keeps `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads
-  as the Human's.
+  finding has no file or line there ([Reviewers](#reviewers)), and a verdict posts no evidence. A judge's ruling keeps
+  `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads as the Human's. This
+  copy is for display: no machine builds its record on it (A second machine, below).
 - **Text checks.** Every string that may be posted is checked first, on its text with whitespace runs collapsed and on
   a decoded copy, and a hit withholds it and never fails the step: token-shaped strings and local paths always (in the
   context the product feedback post uses, with the product-access terms and values), and the base branch's and the
@@ -1245,15 +1243,31 @@ which the review step alone writes, are kept from the comment.
 - **Escaping.** The final body is escaped before it posts, code spans included: a zero-width space after each `@`,
   `<!--` and `-->` escaped, and a line that starts with `/` neutralized. The engine's marker lines are added after it,
   and the 60,000-character budget measures the escaped body.
-- **A second machine.** A machine that builds on a higher-revision copy keeps what its own record holds: a finding's
-  text, place, and security mark by its id and mint mark together, and a string outside a finding by its entry's head
-  and time. A restarted record that reuses an id, or another machine that minted the same id, gets none of it. Adopting
-  a copy never clears a security mark, and every write stores the mark on each twin the record at hand ties. A review
-  step whose record holds an open, blocking finding with no text stops as `incomplete` with `retry_recommended: false`
-  before it runs a reviewer, and this machine's merge guard keeps refusing the head: the review goes on on the machine
-  that recorded the finding. If that machine is gone, the Human deletes the review summary comment and this machine's
-  record file, which the stop names, and the review restarts from round 1: a command that wrote the adopted record,
-  such as `aidrian pr extend`, keeps the finding in that file. No other command fails for a missing text.
+- **A second machine.** A machine whose own record is older than the copy, or that has none, reads the copy by the
+  repository's visibility, in the same reading a write posts by.
+  - *Private.* The machine builds on the copy, and keeps what its own record holds: a finding's text, place, and
+    security mark by its id and mint mark together, an index entry's fields, its recording reviewer included, from its
+    own index entry, and a string outside a finding by its entry's head and time. A closed entry takes no finding's body
+    or evidence. A restarted record that reuses an id, or another machine that minted the same id, gets none of it. A
+    finding it gets no text for is marked adopted, on this machine's record only, until this machine records a fresh
+    report of it. Adopting a copy never clears a security mark, and every write stores the mark on each twin the record
+    at hand ties. A review step whose record holds an open, blocking finding with no text stops as `incomplete` with
+    `retry_recommended: false` before it runs a reviewer, and this machine's merge guard keeps refusing the head: the
+    review goes on on the machine that recorded the finding. If that machine is gone, the Human deletes the review
+    summary comment and this machine's record file, which the stop names, and the review restarts from round 1: a
+    command that wrote the adopted record, such as `aidrian pr extend`, keeps the finding in that file. No other
+    command fails for a missing text.
+  - *Not private.* The machine never builds on the copy. When the copy holds an open, blocking finding of a pass its
+    own plan still names (`planNote.current`) that this machine's record does not hold by id and mint mark, the
+    machine holds, as for a held record: the review step returns `incomplete` with `retry_recommended: false`, notes
+    the stop on its own record so its merge guard keeps refusing the head, and every record command refuses, each
+    naming the finding and the machine that wrote the copy's revision. If that machine is gone, the Human deletes the
+    review summary comment, and the review restarts from this machine's record, or from round 1 with none. Otherwise
+    the machine restarts from its own record, or an empty one, with two floors from the copy: the round count, as the
+    copy's later rounds by head and time alone, so the round cap counts every round either machine spent, and the id
+    counter, so no id is minted twice. It takes the copy's revision, so its next write is the newer record, and the
+    security mark of each finding of its own the copy marks. Nothing else of the copy is taken: every pass with no
+    result of this machine's runs again.
 
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot

@@ -18,7 +18,7 @@ import { isObject } from '../fs.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
 import { answerThreads, deleteOwn, fillThreads, handledKeys, raiseFloor, readMarked } from './inline.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
-import { closingRange, postContext } from './dispatch.mjs';
+import { closingRange, postContext, readReading } from './dispatch.mjs';
 import * as quota from './quota.mjs';
 import { readManifest, visualMatrix, visualRoutes } from './visual.mjs';
 import { headToReview } from './pushed.mjs';
@@ -137,20 +137,29 @@ export async function prepareStep(s) {
   // The same sweep runs again when the step finishes (run.mjs finish), for a mark the step itself set after this one.
   s.sweep = sweep;
   const summary = summaryToEdit(comments, () => forge.viewer());
-  const record = readRecord(project, n, comments, repo);
+  // The forge's reading of the pull request, read once a step and only when a write or the record needs it: the record
+  // reads it when the comment's copy is the newer one, and the writes post by it (dispatch.mjs postContext).
+  let reading;
+  const readingOnce = () => (reading ??= readReading(forge, repo, n));
+  const record = readRecord(project, n, comments, repo, readingOnce);
   if (record.held !== undefined) {
-    // From this machine's own record alone, and no write: every write raises the revision the hold compares.
-    s.deletes = sweep(readLocalState(project, n), 'held');
-    return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held, record.why), held: record.held, retry_recommended: false };
+    // From this machine's own record alone, and no write: every write raises the revision the hold compares. A hold for
+    // another machine's finding notes the stop on this machine's record without raising it, so its merge guard keeps
+    // refusing the head.
+    s.deletes = sweep(record.own ?? readLocalState(project, n), 'held');
+    const reason = heldMessage(n, record.held, record.why, record.finding);
+    if (record.why === 'findings') noteLocalOutcome(project, n, repo, { status: 'incomplete', head, reason });
+    return { status: 'incomplete', pr: n, repo, head, reason, held: record.held, retry_recommended: false };
   }
   // An inline comment an earlier step could not read back holds its review's id alone: its comment id is filled in from
   // the marked posts first, so the delete, the lists, and the replies read it as the engine's own.
   if (marked?.items) fillThreads(record.state, marked.items);
   s.deletes = sweep(record.state, onPr ? 'posted' : 'local');
-  // A record built on another machine's posted copy can hold an open, blocking finding whose text stayed on that machine:
-  // no reviewer here can judge a fix of it. The step stops before it adopts the record or runs a reviewer, and this
-  // machine's own record notes the stop, so its merge guard keeps refusing the head. The review goes on on the machine
-  // that recorded the finding, or restarts as a held record does.
+  // A record built on another machine's private copy can hold an open, blocking finding whose text stayed on that
+  // machine, as a check withheld it: no reviewer here can judge a fix of it. The step stops before it adopts the record
+  // or runs a reviewer, and this machine's own record notes the stop, so its merge guard keeps refusing the head. The
+  // review goes on on the machine that recorded the finding, or restarts as a held record does. A copy that is not
+  // private is never built on: readRecord held above instead.
   const untexted = untextedBlocking(record.state, readLocalState(project, n));
   if (untexted) {
     const reason = `the review record of #${n} holds the open finding ${untexted}, whose text is on the machine that recorded it: continue the review on that machine. If that machine is gone, the Human deletes the review summary comment of #${n} and this machine's record file ${recordFile(project, n)}; the review then restarts from round 1`;
@@ -171,7 +180,7 @@ export async function prepareStep(s) {
   const paths = gitPaths(root);
   // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
   let posting = null;
-  const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, ...extra }));
+  const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, reading, ...extra }));
   Object.assign(s, { root, cleanEnv, info, repo, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
@@ -309,11 +318,9 @@ export async function prepareStep(s) {
   // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
   // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
   const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
-  // A result adopted from a copy that withheld its verdicts' evidence or a slice's report (publish.mjs fillWithheld) is
-  // not finished here: the pass runs again, so its reviewer answers with what this machine reads.
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
-    if (!result || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;
+    if (!result || !sameFiles(pass, result)) return null;
     if (result.head === head) return result;
     const since = delta(result.head);
     return since && !touches(since, pass.files) && result.open === 0 ? result : null;

@@ -291,8 +291,10 @@ function closeEntry(entry, outcome, to, range) {
 function enter(index, finding, group, at) {
   const before = isObject(index[finding.id]) ? index[finding.id] : null;
   if (isClosed(before)) return;
-  // The spread keeps `adopted: true`, not cleared by a fresh local report, so closeOmitted keeps skipping the entry: an accepted residual of the adoption path (#276).
   const entry = { ...(before ?? {}), id: finding.id };
+  // An entry adopted from another machine's copy (publish.mjs fillWithheld) is this machine's own once it records a
+  // fresh report of it, so closeOmitted reads it again; a write of the adopted finding itself keeps the mark.
+  if (finding.adopted !== true) delete entry.adopted;
   for (const key of ['mint', 'aliases']) if (finding[key] !== undefined) entry[key] = Array.isArray(finding[key]) ? [...finding[key]] : finding[key];
   for (const key of ENTRY_KEYS) {
     if (finding[key] !== undefined && finding[key] !== null) entry[key] = finding[key];

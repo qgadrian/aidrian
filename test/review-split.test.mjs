@@ -422,7 +422,7 @@ test('dedupe never throws on, and never merges, findings that have no title', ()
   assert.deepEqual(merged.map((each) => each.id), ['R1-1', 'R1-2', 'R1-3', 'R1-4']);
 });
 
-test('a machine that adopts a public copy reruns the finished slices whose report it lacks, before the cross pass', async (t) => {
+test('a machine with no record restarts from a public copy: every slice runs again with its report, then the cross pass', async (t) => {
   const r = repo(t);
   const seen = [];
   const exec = async (_reviewer, input) => {
@@ -431,18 +431,20 @@ test('a machine that adopts a public copy reruns the finished slices whose repor
     return { status: 'done', findings: [], verdicts: [], contracts: input.role === 'slice' ? [`${input.files[0].split('/')[1]}()`] : [], cross_notes: [], dropped: [] };
   };
   assert.equal((await r.step(exec)).status, 'running');
-  // Another machine adopts the public copy of this record, then writes it, as `aidrian pr extend` does.
+  // Another machine with no record reads the public copy of this record, then writes what it read, as `aidrian pr extend` does.
   const project = projectAt(r.dir);
-  const body = summaryBody(readLocalState(project, 3), null, 'running', { reading: { visibility: 'PUBLIC', inside: true }, root: r.dir, names: [] });
+  const before = readLocalState(project, 3);
+  const body = summaryBody(before, null, 'running', { reading: { visibility: 'PUBLIC', inside: true }, root: r.dir, names: [] });
   rmSync(recordFile(project, 3));
-  const adopted = readRecord(project, 3, [{ id: 1, body, author_association: 'MEMBER' }], 'o/r').state;
-  const marked = Object.entries(adopted.passes).filter(([, result]) => result.notesWithheld).map(([id]) => id);
-  assert.equal(marked.length, 2, 'both finished slices lost their report on the copy');
-  writeLocalState(project, adopted);
+  const restarted = readRecord(project, 3, [{ id: 1, body, author_association: 'MEMBER' }], 'o/r', { visibility: 'PUBLIC', inside: true }).state;
+  assert.deepEqual(restarted.passes, {}, 'no finished slice of the copy is taken without its report');
+  assert.equal(restarted.rounds.length, before.rounds.length, 'the round count is the copy`s');
+  writeLocalState(project, restarted);
   seen.length = 0;
   let result = await r.step(exec);
   while (result.status === 'running') result = await r.step(exec);
   assert.equal(result.status, 'received');
   assert.deepEqual(seen.slice(-1), ['cross']);
-  assert.equal(seen.filter((each) => each !== 'cross').length, 4, 'the two marked slices ran again with the two left');
+  assert.equal(seen.filter((each) => each !== 'cross').length, 4, 'every slice ran again');
+  assert.equal(readLocalState(project, 3).rounds.length, before.rounds.length, 'in the round the copy opened');
 });

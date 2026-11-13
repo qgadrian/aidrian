@@ -2359,7 +2359,7 @@ test('a machine with no record that runs extend on a public copy holding an unte
   assert.match(stopped.reason, /the open finding R2-9/u);
 });
 
-test('a machine that adopts a public copy reruns a pass whose verdicts arrive without evidence, and then finishes', async (t) => {
+test('a machine with no record restarts from a public copy, whose verdicts carry no evidence: the passes run again, and then it finishes', async (t) => {
   const r = bookingRepo(t);
   r.forge.visibility = () => 'PUBLIC';
   const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
@@ -2381,6 +2381,49 @@ test('a machine that adopts a public copy reruns a pass whose verdicts arrive wi
   assert.ok(runs > ran, 'and the exec pass whose verdicts came without evidence ran again');
 });
 
+
+test('a second machine on a public repository holds on another machine`s open, blocking finding: no reviewer runs, its merge guard refuses the head, and the comment stays', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
+  assert.equal(first.status, 'fix_required');
+  const { id } = first.open[0].findings[0];
+  const body = r.comments[0].body;
+  const copy = stateFromComment(body, 7);
+  // Another machine: no record of its own, only the public comment.
+  rmSync(recordFile(r.project, 7));
+  let ran = 0;
+  const held = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  assert.deepEqual([held.status, held.retry_recommended, held.held, ran], ['incomplete', false, copy.revision, 0]);
+  assert.match(held.reason, new RegExp(`on the machine that wrote it, and holds the open finding ${id}, whose text is on the machine that recorded it`, 'u'));
+  const noted = readLocalState(r.project, 7);
+  assert.deepEqual([noted.outcome.status, noted.revision, Object.keys(noted.passes).length], ['incomplete', 0, 0], 'the stop is noted, and nothing of the copy is built on');
+  assert.equal(r.comments[0].body, body, 'the comment is not edited');
+  assert.equal(r.comments.length, 1);
+});
+
+test('a second machine that restarts from a public copy at the round cap opens no round past it', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, extraRounds: 'off' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  const second = await r.step({ exec: clean });
+  assert.deepEqual([second.status, second.round], ['received', 2]);
+  // Another machine, with no record of its own, on a new head.
+  rmSync(recordFile(r.project, 7));
+  r.write('src/app.js', 'export const app = 4;\n');
+  r.commit();
+  let ran = 0;
+  const capped = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  assert.deepEqual([capped.status, ran], ['round_limit', 0], 'the copy`s two rounds count: no third round');
+  assert.equal(readLocalState(r.project, 7).rounds.length, 2);
+  // With the copy gone too, the review starts over from round 1, as the Human chose.
+  rmSync(recordFile(r.project, 7));
+  r.comments.length = 0;
+  const fresh = await r.step({ exec: clean });
+  assert.deepEqual([fresh.status, fresh.round], ['received', 1]);
+});
 
 // ---- Findings one by one, with the finding index (S1b) ----
 

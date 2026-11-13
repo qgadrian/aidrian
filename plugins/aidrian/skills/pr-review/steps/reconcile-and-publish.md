@@ -41,14 +41,20 @@ Then run `aidrian pr disposition --manifest <file>`: exit 1 lists each finding w
 Write the first of its `expected` values; an empty `expected`, or axes that are wrong, means asking the agent for its axes again.
 Run it again until it exits 0.
 
-## 5. Comment
+## 5. Report
 
-Skip this step with `--no-comment`. When the pull request's `author.login` is not the current `gh api user -q .login`,
-ask before posting; unattended, post nothing and put the body in the report. Otherwise one comment per pull request carries the latest round.
-Its first line is the marker `<!-- aidrian:pr-review -->`. Write the body to `<state>/tmp/pr-<n>-review.md`:
+This skill posts nothing on the pull request. The comment a reader looks at there is the summary comment that
+`aidrian pr review` writes and updates when config.json `review.record` is `"comment"`: each pass's counts, and, with
+`review.publish.summary` `"findings"`, each finding's id, location, severity, disposition, and outcome. It never posts
+finding text, so the summaries stay in the manifest and in this report. With `review.record` `"local"`, nothing is posted.
+
+When the manifest holds a `comment_id`, an earlier release of this skill posted that comment. Delete it once, so the pull
+request carries one summary: `gh api -X DELETE repos/{owner}/{repo}/issues/comments/<id>`. Then set `comment_id` to `null`.
+A failed delete leaves the comment: say so, and keep the id.
+
+Write the round's report for chat:
 
 ```md
-<!-- aidrian:pr-review -->
 ## Review, round <r>, head <head_sha, 7>
 
 **Verdict: <verdict line>**
@@ -75,17 +81,6 @@ Reviewed by <agents>. Regression check clean on <n> files. Not reviewed: <each l
   End it with `, <k> rule violations (low)` while that list has entries, so it never reads as "no findings" then.
   From round 2, start it with "<r> resolved, <o> still open, <n> new."
 
-Find the comment of an earlier round, then update it or post a new one:
-
-```bash
-gh api --paginate repos/{owner}/{repo}/issues/<n>/comments \
-  --jq '.[] | select(.body | startswith("<!-- aidrian:pr-review -->")) | .id'
-gh api -X PATCH repos/{owner}/{repo}/issues/comments/<id> -F body=@<file>      # when an id came back
-gh api repos/{owner}/{repo}/issues/<n>/comments -F body=@<file> --jq .id        # otherwise
-```
-
-Check the response. Store the id in the manifest's `comment_id`. A failed post means nothing was published: say so.
-
 ## 6. Close
 
 The review is `done` only when:
@@ -93,9 +88,10 @@ The review is `done` only when:
 - every agent of the plan returned, and each modified, renamed, or removed file it had has a finding or a clean line;
 - every gate ran: a `security-engineer` verdict on its files, and a `product-manager` `sign_off` for each critical flow;
 - every disputed finding was put to the user, or parked in an unattended run;
-- the manifest holds this round, and the comment was posted or `--no-comment` was given.
+- the manifest holds this round.
 
 Otherwise report `needs_input` while a dispute waits, or `blocked` with the step that failed and how to resume.
 
-Report in chat: the scope, the plan with the reason for each agent, the comment body, the manifest path,
-and the next step: the `pr-review-fix` skill fixes the `fix_now` findings, and running this skill again confirms them.
+Report in chat: the scope, the plan with the reason for each agent, the round's report, the manifest path,
+that the pull request's summary comment is the one to read there, and the next step:
+the `pr-review-fix` skill fixes the `fix_now` findings, and running this skill again confirms them.

@@ -10,7 +10,7 @@ The `pr-review` skill writes the rounds and the findings; the `pr-review-fix` sk
   "head_sha": "<the head the last round reviewed>",
   "base_sha": "<its merge base>",
   "round": 2,
-  "comment_id": 123456789,
+  "comment_id": null,
   "findings": [
     {
       "id": "F1",
@@ -38,7 +38,7 @@ The `pr-review` skill writes the rounds and the findings; the `pr-review-fix` sk
 | --- | --- |
 | `head_sha`, `base_sha` | The commits the last round reviewed. Written with that round's findings, never before. |
 | `round` | How many review rounds have run. |
-| `comment_id` | The pull request comment every round updates; `null` while nothing was posted. |
+| `comment_id` | The comment an earlier release of this skill posted, which the next round deletes; `null` otherwise. This skill posts none. |
 | `id` | `F<n>`, numbered on from the highest id in the file, never reused. |
 | `specialist` | The agent that raised the finding; two agents, comma-separated, when both raised it. |
 | `severity`, `likelihood`, `affects`, `cost` | The agent's axes, as it gave them. A missing `cost` means `bounded`. |

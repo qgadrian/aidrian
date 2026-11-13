@@ -7,8 +7,9 @@
 // every entry is visible in the pull request, overrides included: on a repository that is not private, by its engine
 // keys alone. The comment carries the posted copy of the record (lib/review/publish.mjs postedCopy), never the record
 // itself, and its visible lines are rendered from that copy: finding text, reasons, and names a check withholds stay on
-// the machine that recorded them. A machine that builds on another's posted copy fills them from its own record
-// (fillWithheld).
+// the machine that recorded them. A machine builds only on another's private copy, and fills them from its own record
+// (fillWithheld); a copy that is not private gives it the round count and the id counter to restart from, or a hold
+// (readRecord).
 //
 // The comment carries the record brotli-compressed under `aidrian-review-state-br:`; the older plain-base64 marker is
 // still read. A write by this release leaves one record; a write by an older one keeps the compressed marker and adds a
@@ -28,8 +29,8 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
-import { recordFindings } from './findings.mjs';
-import { escapeLines, fillWithheld, findingsTable, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
+import { isClosed, isFindingId, isMint, recordedFindings, recordFindings } from './findings.mjs';
+import { escapeLines, fillWithheld, findingsTable, flagName, isPostId, isPrivate, JUDGE_RULING, plainChecker, postedCopy, untextedBlocking, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
 import { splitPasses } from './split.mjs';
@@ -53,6 +54,28 @@ const MAX_REASONS = 25;
 // Free text as the visible summary shows it: one line, at most CLIP characters, and no HTML comment opened or closed,
 // so a reason cannot carry a record marker of its own into the comment.
 export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP).replaceAll('<!--', '&lt;!--').replaceAll('-->', '--&gt;');
+
+// The note a visual capture's reason ends with when images were ingested for its head (lib/review/visual.mjs).
+export const INGEST_NOTE = 'ingested, not captured: ';
+// What the summary and the captures comment say in place of a capture's failure once a visual pass has its result.
+export const REVIEWED_WITHOUT = 'the visual passes reviewed this head without the capture';
+
+// Whether the record's visual capture failed (failed or unavailable) and a visual pass it was taken for has a result on
+// its head: the failure's reason, such as a preview still deploying, then asks for nothing, so the summary and the
+// captures comment say the passes reviewed the head without it. A record from before `visual.passes` keeps the failure.
+export function visualReviewed(state) {
+  const visual = isObject(state?.visual) ? state.visual : null;
+  if (!visual || !['failed', 'unavailable'].includes(visual.status) || !Array.isArray(visual.passes)) return false;
+  const passes = isObject(state.passes) ? state.passes : {};
+  return visual.passes.some((id) => isObject(passes[id]) && typeof passes[id].head === 'string' && passes[id].head === visual.head);
+}
+
+// The ingest note of a capture's reason, without the tool's own reason before it, or null.
+export function ingestNote(reason) {
+  if (typeof reason !== 'string') return null;
+  const at = reason.startsWith(INGEST_NOTE) ? 0 : reason.indexOf(`; ${INGEST_NOTE}`);
+  return at === -1 ? null : reason.slice(at === 0 ? 0 : at + 2);
+}
 
 // Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
@@ -125,6 +148,81 @@ export function mergePending(a, b) {
     out.set(key, merged);
   }
   return [...out.values()];
+}
+
+// The keys of a finding's thread that map one of the engine's posts, each with the kind of post it names.
+const POST_KEYS = Object.freeze({ reviewId: 'review', commentId: 'review_comment', fallbackId: 'comment' });
+
+// Keeps in `state`'s finding index what another write of the record, `other`, closed, marked, or mapped to a post, as
+// `pending` is merged (mergePending): a step's write never drops what a write it did not read made, so two machines
+// stepping at once, or a stale copy, can neither bring a closed id back as open, drop a security mark, nor lose the post
+// an id is mapped to, which a later step would read as unposted and post again under a fresh id. For each id both hold
+// as one finding (no two different mint marks; with `strict`, the same mint mark on both): the security mark, which only
+// widens (findings.mjs tieTwins); a closed state (findings.mjs CLOSED_STATES, final), with its `closed_in`, over one that
+// is not, unless `closed` is false; each post key another write mapped, where this one maps none, and the replies of
+// earlier closings it set aside (mergeEarlier), each less one `removed` names as `<kind>:<id>` (a comment this step
+// deleted or found gone, delete.mjs removedPosts); and, on the same root thread, the engine's resolve of it
+// (mergeResolved), which the forge's thread cannot tell from a person's. An id only one copy holds
+// is that copy's alone: nothing is added. Returns the ids it changed.
+// A copy that is not private is never built on (readRecord): from one, a step merges with `closed: false` and `strict`,
+// the marks and the forge's ids of its own findings alone, numbers and flags that hold no finding text.
+export function mergeIndex(state, other, removed = new Set(), { closed = true, strict = false } = {}) {
+  const ours = isObject(state?.index) ? state.index : null;
+  const theirs = isObject(other?.index) ? other.index : {};
+  const changed = [];
+  for (const [id, entry] of Object.entries(ours ?? {})) {
+    const their = theirs[id];
+    if (!isObject(entry) || !isObject(their) || their.id !== entry.id) continue;
+    if (strict ? !(isMint(entry.mint) && entry.mint === their.mint) : isMint(entry.mint) && isMint(their.mint) && entry.mint !== their.mint) continue;
+    let kept = false;
+    if (their.security === true && entry.security !== true) {
+      entry.security = true;
+      kept = true;
+    }
+    if (closed && isClosed(their) && !isClosed(entry)) {
+      entry.state = their.state;
+      if (isObject(their.closed_in)) entry.closed_in = { ...their.closed_in };
+      kept = true;
+    }
+    for (const [key, kind] of Object.entries(POST_KEYS)) {
+      const value = isObject(their.thread) ? their.thread[key] : undefined;
+      if (!isPostId(value) || removed.has(`${kind}:${value}`) || (isObject(entry.thread) && entry.thread[key] !== undefined)) continue;
+      entry.thread = { ...(isObject(entry.thread) ? entry.thread : {}), [key]: value };
+      kept = true;
+    }
+    if (mergeEarlier(entry, their, removed)) kept = true;
+    if (mergeResolved(entry, their)) kept = true;
+    if (kept) changed.push(id);
+  }
+  return changed;
+}
+
+// Adds to `entry`'s thread the replies another write set aside as a closing before the finding opened again (`earlier`,
+// replies.mjs noteReopened), less one `removed` names and this write's own current reply: a step that never read that
+// reopen would otherwise take the old reply, such as "Accepted as", for its own closing and post no new one. Returns
+// whether it added any.
+function mergeEarlier(entry, their, removed) {
+  const theirs = isObject(their.thread) && Array.isArray(their.thread.earlier) ? their.thread.earlier : [];
+  const ours = isObject(entry.thread) && Array.isArray(entry.thread.earlier) ? entry.thread.earlier : [];
+  const added = theirs.filter((id) => isPostId(id) && !removed.has(`review_comment:${id}`) && !ours.includes(id) && entry.thread?.replyId !== id);
+  if (!added.length) return false;
+  entry.thread = { ...(isObject(entry.thread) ? entry.thread : {}), earlier: [...ours, ...new Set(added)] };
+  return true;
+}
+
+// Adds to `entry`'s thread the engine's resolve another write recorded on the same root thread (`resolved` with
+// `resolvedByEngine`, replies.mjs resolve): the forge's thread shows that it is resolved, never who resolved it, so a
+// step that reads it there takes it for a person's resolve, and the finding's thread would stay resolved when it opens
+// again (replies.mjs reopenDue). A resolve of a closing this write set aside in `earlier`, a reply of the closing before
+// it opened again, is not carried: this write already opened that thread, or is about to. Returns whether it added it.
+function mergeResolved(entry, their) {
+  const thread = isObject(entry.thread) ? entry.thread : null;
+  const other = isObject(their.thread) ? their.thread : null;
+  if (!thread || !other || !isPostId(thread.commentId) || thread.commentId !== other.commentId) return false;
+  if (other.resolved !== true || other.resolvedByEngine !== true || thread.resolvedByEngine === true) return false;
+  if (Array.isArray(thread.earlier) && thread.earlier.includes(other.replyId)) return false;
+  Object.assign(thread, { resolved: true, resolvedByEngine: true });
+  return true;
 }
 
 const file = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}-review.json`);
@@ -204,32 +302,76 @@ export function heldRevision(body) {
 export const heldWhy = (body) => (typeof body === 'string' && endLines(body)[1] === CHECK_HELD_LINE ? 'check' : 'size');
 
 // What a machine without the held record is told: the review step returns it as `incomplete`, and `aidrian pr extend`
-// and `aidrian pr await-review` fail with it. `why` is the hold's cause (heldWhy); a caller that does not know it gets
-// both.
+// and `aidrian pr await-review` fail with it. `why` is the hold's cause (heldWhy), or `findings` when the pull request's
+// copy, which is not private, holds `finding`, an open, blocking finding whose text this machine does not hold
+// (readRecord); a caller that does not know it gets both size and check.
 const HOLD_CAUSE = {
-  size: ['too large for the pull request\'s comment', 'or wait until its next write fits the comment again'],
-  check: ['because a text check could not run there', 'or wait until its checks run again'],
-  undefined: ['too large for the pull request\'s comment or because a text check could not run there', 'or wait until its next write posts the record again'],
+  size: () => ['too large for the pull request\'s comment', 'or wait until its next write fits the comment again'],
+  check: () => ['because a text check could not run there', 'or wait until its checks run again'],
+  findings: (finding) => [`and holds the open finding ${finding ?? 'with no id'}, whose text is on the machine that recorded it`, 'or wait until its review closes that finding'],
+  undefined: () => ['too large for the pull request\'s comment or because a text check could not run there', 'or wait until its next write posts the record again'],
 };
-export const heldMessage = (pr, revision, why) => {
-  const [cause, wait] = HOLD_CAUSE[why] ?? HOLD_CAUSE.undefined;
+export const heldMessage = (pr, revision, why, finding = null) => {
+  const [cause, wait] = (HOLD_CAUSE[why] ?? HOLD_CAUSE.undefined)(finding);
   return `the review record of #${pr} is at revision ${revision} on the machine that wrote it, ${cause}: continue the review on that machine, ${wait}. If that machine is gone, the Human deletes the review summary comment of #${pr}; the review then restarts from this machine's record, or from round 1 with none`;
 };
 
 // The record to build on: { state }, the newer of this machine's and the one the pull request's summary comment
 // carries (an empty one when neither exists), or { held: revision, why } when the comment holds a record this machine's
 // is older than, `why` its cause (heldWhy). `comments` are the pull request's comments as read; [] under `review.record: "local"`.
-export function readRecord(project, pr, comments, repo) {
+// `reading` is the forge's reading of the pull request (dispatch.mjs readReading), or a function that reads it, called
+// only when the comment's copy is the newer record. On a reading that is not private (publish.mjs isPrivate), that copy
+// is never built on: it gives this machine's record, or an empty one, its round count and its id counter as floors
+// (restartFrom), or, when it holds an open, blocking finding of its own plan that this machine holds no text for, a hold:
+// { held, why: 'findings', finding }, with `own`, this machine's record and the copy's security marks, for the delete.
+// A caller that read no reading, such as a test of the record alone, builds on the copy as on a private one.
+export function readRecord(project, pr, comments, repo, reading = undefined) {
   const body = summaryComment(comments)?.body;
   const local = readLocalState(project, pr);
   const remote = stateFromComment(body, pr);
   const held = remote ? null : heldRevision(body);
   if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };
   const chosen = newer(local, remote);
-  // The posted copy holds less than the record: what it withheld is filled from this machine's own record. A machine
-  // with none fills from an empty one, so every finding of the copy is marked adopted.
-  if (chosen && chosen === remote) fillWithheld(remote, local ?? emptyState(pr, repo));
-  return { state: chosen ?? emptyState(pr, repo) };
+  if (!chosen || chosen !== remote) return { state: chosen ?? emptyState(pr, repo) };
+  if (reading !== undefined && !isPrivate(typeof reading === 'function' ? reading() : reading)) {
+    const own = widenMarks(local ?? emptyState(pr, repo), remote);
+    const current = Array.isArray(remote.planNote?.current) ? remote.planNote.current : null;
+    const finding = untextedBlocking(remote, local, current);
+    if (finding) return { held: remote.revision ?? 0, why: 'findings', finding, own };
+    return { state: restartFrom(own, remote) };
+  }
+  // The private copy holds less than the record where a check withheld a string: that is filled from this machine's own
+  // record. A machine with none fills from an empty one, so every finding of the copy is marked adopted.
+  fillWithheld(remote, local ?? emptyState(pr, repo));
+  return { state: remote };
+}
+
+// `own`, this machine's record, with the security mark of every finding it holds by id and mint mark that `copy`
+// marks, as a copy: the mark only widens (findings.mjs tieTwins), and it is the one field a copy that is not private
+// gives a finding this machine recorded, so the delete of a security finding's comment still reads it.
+function widenMarks(own, copy) {
+  const out = JSON.parse(JSON.stringify(own));
+  const marked = new Set(recordedFindings(copy).filter((each) => each.security === true && isFindingId(each.id) && isMint(each.mint)).map((each) => `${each.id}:${each.mint}`));
+  for (const finding of recordedFindings(out)) if (marked.has(`${finding.id}:${finding.mint}`)) finding.security = true;
+  return out;
+}
+
+// The record a machine restarts from when the pull request's newer copy is not private: `own`, its own record, with the
+// copy's revision, so its next write is the newer record, and two floors. The round count: a copy with more rounds adds
+// its later rounds, each by its head and time alone (with its last-round flag and the quiet heads it moved from), so
+// the round cap counts every round any machine spent. The id counter: the copy's when higher, so no id is minted twice.
+// Nothing else of the copy is taken: every pass with no result of this machine's runs again.
+export function restartFrom(own, copy) {
+  const state = JSON.parse(JSON.stringify(own));
+  state.revision = Math.max(state.revision ?? 0, copy.revision ?? 0);
+  const theirs = Array.isArray(copy.rounds) ? copy.rounds.filter(isObject) : [];
+  if (theirs.length > state.rounds.length) {
+    state.rounds = [...state.rounds, ...theirs.slice(state.rounds.length).map((round) => ({
+      head: round.head, at: round.at, ...(round.final === true ? { final: true } : {}), ...(Array.isArray(round.quiet) ? { quiet: round.quiet.filter(isObject).map(({ from, at }) => ({ from, at })) } : {}),
+    }))];
+  }
+  if (Number.isSafeInteger(copy.idCounter) && copy.idCounter > (Number.isSafeInteger(state.idCounter) ? state.idCounter : 0)) state.idCounter = copy.idCounter;
+  return state;
 }
 
 // Notes `outcome` on this machine's record of `pr` without making it a newer record: its revision and write time stay,
@@ -287,7 +429,9 @@ function assemble({ header, planLines, flowLines, outsideHead }, state, post) {
   lines.push(...flowLines);
   if (isObject(copy.visual)) {
     const visual = copy.visual;
-    lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${clip(visual.reason)})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
+    const reviewed = visualReviewed(copy);
+    const reason = reviewed ? ingestNote(visual.reason) : visual.reason;
+    lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : `${reviewed ? `; ${REVIEWED_WITHOUT}` : ''}${reason ? ` (${clip(reason)})` : ''}`}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
   }
   lines.push(...outsideLines(copy, outsideHead, open));
   lines.push(...quotaLines(copy));

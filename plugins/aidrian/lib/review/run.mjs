@@ -34,14 +34,17 @@ import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
-import { residualRows } from './publish.mjs';
-import { answerThreads, engineLists, mergeDeletes, postInline } from './inline.mjs';
+import { isPrivate, residualRows } from './publish.mjs';
+import { mergeDeletes, removedPosts } from './delete.mjs';
+import { engineLists, postInline } from './inline.mjs';
+import { answerThreads } from './replies.mjs';
 import { loadTable } from '../finding-disposition.mjs';
 import { dedupe } from './split.mjs';
 import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
 import { atCap } from './extension.mjs';
-import { answerPending, emptyState, mergePending, noteOutcome, prunePasses, readLocalState, summaryBody, writeSummary, writeLocalState } from './state.mjs';
+import { settleCaptures } from './dispatch.mjs';
+import { answerPending, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { ghImage } from './visual.mjs';
 import { prepareStep } from './step.mjs';
@@ -49,7 +52,7 @@ import { runStages } from './stages.mjs';
 
 export { DEPENDENCY_DIRS, stderrTail } from './base-worktree.mjs';
 export { reviewInForce } from './in-force.mjs';
-export { recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState } from './record.mjs';
+export { recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteReading, remoteState } from './record.mjs';
 export { MAX_LINES } from './step.mjs';
 export { MAX_ATTEMPTS } from './stages.mjs';
 
@@ -153,9 +156,12 @@ function quotaStop(s, pass, stage, reason, extra = {}) {
 // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
 // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
 // publishes the record to the pull request.
-function settle({ project, root, repo, n, state }, result) {
-  // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
-  state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+function settle({ project, root, repo, n, state, deletes }, result) {
+  // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it. So is
+  // what another write on this machine closed or mapped in the finding index.
+  const local = readLocalState(project, n);
+  state.pending = mergePending(local?.pending, state.pending);
+  mergeIndex(state, local, removedPosts(deletes));
   noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
   writeLocalState(project, state);
   return result;
@@ -190,8 +196,30 @@ export function lateResiduals(passes, resultFor) {
   });
 }
 
+// With inline posting on, what another machine's write of the posted record closed, marked, or mapped in the finding
+// index while this step ran, read again from the pull request just before this step posts (state.mjs mergeIndex): no
+// finding gets a second thread because a write that mapped its first was lost. A copy that is not private by the step's
+// reading is never built on (readRecord): from it the merge takes only what a restart from it would, the security marks
+// of this machine's own findings, by id and mint mark, and the forge's ids of their posts, which hold no text; never a
+// closed state. A read that fails merges nothing.
+function mergePosted(s) {
+  if (!s.onPr) return;
+  const context = s.post();
+  if (context.publish?.inline !== true) return;
+  let comments;
+  try {
+    comments = s.forge.conversationComments(s.repo, s.n);
+  } catch {
+    return;
+  }
+  const posted = stateFromComment(summaryComment(comments)?.body, s.n);
+  const own = isPrivate(context.reading);
+  if (posted) mergeIndex(s.state, posted, removedPosts(s.deletes), { closed: own, strict: !own });
+}
+
 function finish(s, status, extra) {
   const { forge, repo, n, head, base, onPr, summary, state, plan, passes, resultFor, fallbacks, keptSignoffs, maxRounds, flowStatus, outsideClosed, approvalPath, approvals } = s;
+  mergePosted(s);
   answerRequests(s);
   noteFindings(s, extra);
   const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
@@ -237,6 +265,8 @@ function finish(s, status, extra) {
   }) };
   if (approvalPath) result.approvals = { on: approvalPath.on, ...(approvalPath.off ? { off: approvalPath.off } : {}), ...(approvals().error ? { error: approvals().error } : {}), closed: state.outside.approvals };
   settle(s, result);
+  // A visual pass with its result on a head whose capture failed: the captures comment stops asking to wait for it.
+  settleCaptures(s);
   if (onPr) {
     const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status, { ...s.post(), diffPaths: new Set((s.changes ?? []).map((change) => change.file)) });
     try {

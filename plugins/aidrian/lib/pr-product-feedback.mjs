@@ -595,6 +595,10 @@ function ownComment({ forge, pr, record: found, marker }) {
 }
 
 // `post`: refuses first, and writes nothing until it has decided. The record changes only after a post that worked.
+// The marker line the product feedback comment starts with, which names its pull request: lib/review-gate.mjs reads a post
+// that starts with it as the engine's, never as outside evidence (test/engine-markers.test.mjs ties the two).
+export const feedbackMarker = (pr) => `<!-- aidrian-product-feedback: pr=${pr.number} repo=${pr.repo} -->`;
+
 function post({ argv: [value], values, project, forge, remotes, env, access }) {
   if (!values['body-file']) throw new Error(USAGE);
   const pr = pullRequest(value, { forge, remotes });
@@ -605,7 +609,7 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   const body = readBody(values['body-file'], state);
   const kind = refusedKind(body, refusalContext(project, { state, env, access }));
   if (kind) throw new Error(`refused: the body holds ${kind}. Nothing was posted`);
-  const marker = `<!-- aidrian-product-feedback: pr=${pr.number} repo=${pr.repo} -->`;
+  const marker = feedbackMarker(pr);
   const comment = `${marker}\n${neutralized(body)}`;
   const target = ownComment({ forge, pr, record: found, marker });
   let written;

@@ -21,7 +21,7 @@ import { isFile, isObject, isWithin, resolvedPath } from '../fs.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
 import { pathPattern } from './plan.mjs';
-import { clip } from './state.mjs';
+import { clip, INGEST_NOTE, REVIEWED_WITHOUT } from './state.mjs';
 import { VISUAL_PER_RUN } from './config.mjs';
 
 export const VISUAL_MARKER = '<!-- aidrian-visual-captures -->';
@@ -35,7 +35,6 @@ const IMAGE_TYPES = Object.freeze([
   { type: 'webp', is: (bytes) => bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP' },
 ]);
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
-const INGEST_NOTE = 'ingested, not captured: ';
 // The most characters of an ingest's --source the manifest keeps, and of a source or a name in the summary's note.
 const MAX_ORIGIN = 300;
 const NOTE_PART = 80;
@@ -418,13 +417,15 @@ export const keepUploaded = (uploaded, more) => Object.fromEntries(Object.entrie
 
 // The captures comment: one per pull request, edited in place for each head. Ingested images get their own table,
 // with their source and no image: they are never uploaded, and their local path stays out of a posted comment.
-export function capturesBody(manifest, uploaded, { mode, visibility, error }) {
+// `reviewed` (state.mjs visualReviewed): a visual pass has its result on this head, so a failure's reason, which may
+// ask to wait for a deploy and run the review again, gives way to the line that the passes reviewed it without it.
+export function capturesBody(manifest, uploaded, { mode, visibility, error, reviewed = false }) {
   const lines = [VISUAL_MARKER, `### Visual capture: \`${manifest.head.slice(0, 7)}\``, ''];
   const ingested = ingestedOf(manifest);
   // The Attach line gives the tool's own status and only the count of ingests; their table names each source.
   const own = manifest.status === 'captured'
     ? `${manifest.entries.filter((entry) => entry.sha256).length} of ${manifest.entries.length} captured.`
-    : manifest.status === 'ingested' ? '' : ingested.length ? `${manifest.status}${toolReason(manifest.reason) ? `: ${toolReason(manifest.reason)}` : ''}.` : `${manifest.status}: ${manifest.reason}`;
+    : manifest.status === 'ingested' ? '' : reviewed ? `${manifest.status}; ${REVIEWED_WITHOUT}.` : ingested.length ? `${manifest.status}${toolReason(manifest.reason) ? `: ${toolReason(manifest.reason)}` : ''}.` : `${manifest.status}: ${manifest.reason}`;
   lines.push(`Attach: **${mode}**${visibility ? `, ${String(visibility).toLowerCase()} repository` : ''}. ${[own, ingested.length ? `${ingested.length} ingested, not captured.` : ''].filter(Boolean).join(' ')}`);
   if (error) lines.push('', `> ${error}`);
   const byRoute = new Map();

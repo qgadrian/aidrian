@@ -11,7 +11,8 @@
 // - Escaping (escapeLines): the final raw body of a post, with no line exempt; the engine's own marker lines are added
 //   after it, in their fixed layout.
 // - Which findings are security findings (securityReading), for the copy and the residual rows of a step's result.
-// - What a machine keeps of its own record when it builds on another machine's posted copy (fillWithheld).
+// - What a machine keeps of its own record when it builds on another machine's private copy (fillWithheld). A copy
+//   that is not private is never built on: lib/review/state.mjs readRecord restarts from this machine's record or holds.
 // - The findings table of review.publish.summary "findings" (findingsTable), every cell through one encoder (tableCell).
 //
 // docs/review.md#the-record describes the rules.
@@ -364,6 +365,8 @@ export const flagName = (reason) => {
 const FIXED_REASONS = new Set([ONLY_NON_BEHAVIOUR]);
 
 const isInt = (value) => Number.isSafeInteger(value) && value >= 0;
+// A forge's id of a post: a positive whole number. Zero names no post, and the forge refuses it as one.
+export const isPostId = (value) => Number.isSafeInteger(value) && value > 0;
 const isDate = (value) => typeof value === 'string' && DATE.test(value);
 const isSha = (value) => typeof value === 'string' && SHA.test(value);
 const isWord = (value) => typeof value === 'string' && WORD.test(value);
@@ -419,8 +422,10 @@ const FIXED_KEYS = new Set([
   'human', 'answer', 'session', 'unreviewed', 'title', 'body', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost',
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
   'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
-  'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved',
+  'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved', 'earlier', 'textless', 'resolvedByEngine',
 ]);
+// The keys of a finding's thread that name a comment, as the delete's `textless` mark lists them.
+const THREAD_COMMENT_KEYS = new Set(['replyId', 'commentId', 'fallbackId']);
 
 // The record less what stays on this machine on every repository (postedCopy), as a copy.
 function withoutLocal(state) {
@@ -452,13 +457,18 @@ function privateCopy(value, checker, counter) {
   const out = {};
   for (const [key, each] of Object.entries(value)) {
     // `adopted`, `evidenceWithheld`, and `notesWithheld` are this machine's own marks (fillWithheld): no copy posts them.
-    if (key === 'adopted' || key === 'evidenceWithheld' || key === 'notesWithheld') continue;
-    const kept = keyAllowed(key, checker) ? privateCopy(each, checker, counter) : undefined;
+    if (MARKS.has(key)) continue;
+    let kept = keyAllowed(key, checker) ? privateCopy(each, checker, counter) : undefined;
+    // A slice's report to the cross pass is posted whole or not at all: one with a string withheld is left out, so
+    // the machine that builds on the copy knows it lacks it (fillWithheld) and runs the slice again.
+    if (REPORT_KEYS.has(key) && Array.isArray(each) && Array.isArray(kept) && kept.length < each.length) kept = undefined;
     if (kept === undefined) counter.n += 1;
     else out[key] = kept;
   }
   return judgeKept(value, out);
 }
+const MARKS = new Set(['adopted', 'evidenceWithheld', 'notesWithheld']);
+const REPORT_KEYS = new Set(['contracts', 'cross_notes']);
 
 // What marks a ruling as a judge's, not the Human's: the prefix of its `by` (lib/review/approvals.mjs JUDGE_PREFIX,
 // which test/review-publish.test.mjs holds equal). A copy that cannot post the judge's name posts the prefix alone, so
@@ -534,6 +544,7 @@ function allowlisted(state, post, counter) {
   }) : drop());
   const sha = check(isSha);
   const int = check(isInt);
+  const postId = check(isPostId);
   const date = check(isDate);
   const bool = check((value) => typeof value === 'boolean');
   const nullableBool = check((value) => value === null || typeof value === 'boolean');
@@ -579,9 +590,11 @@ function allowlisted(state, post, counter) {
       closed_in: (value) => object(value, { from: sha, to: sha }),
       seen: sha,
       placed: sha,
-      // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone, and the closing reply's
-      // marks (answerThreads): its id, and whether it was posted and the thread resolved.
-      thread: (value) => object(value, { reviewId: int, commentId: int, fallbackId: int, replyId: int, replied: bool, resolved: bool }),
+      // Where the finding was posted (lib/review/inline.mjs): the forge's ids, numbers alone, the closing reply's marks
+      // (replies.mjs answerThreads): its id, whether it was posted, whether the thread is resolved and the engine resolved
+      // it, and the ids of the replies of closings before it opened again; and the comments the delete spared as holding
+      // no text (delete.mjs), by key or, for an earlier reply, by id.
+      thread: (value) => object(value, { reviewId: postId, commentId: postId, fallbackId: postId, replyId: postId, replied: bool, resolved: bool, earlier: list(postId), textless: list((value) => (typeof value === 'number' ? postId(value) : word(THREAD_COMMENT_KEYS)(value))), resolvedByEngine: bool }),
     });
     const file = source.file;
     if (typeof file === 'string' && !hidePlace && path(head)(file)) {
@@ -776,6 +789,7 @@ function allowlisted(state, post, counter) {
       visibility: check((each) => each === null || (typeof each === 'string' && /^[A-Z]{1,20}$/u.test(each))),
       captured: int,
       of: int,
+      passes: list(passId),
     }),
     quotaStops: list((stop) => object(stop, {
       head: sha,
@@ -803,12 +817,15 @@ const fillKeys = (target, source, only = null) => {
 };
 const matching = (list, entry, keys) => (Array.isArray(list) ? list : []).find((each) => isObject(each) && keys.every((key) => each[key] === entry[key])) ?? null;
 
-// `remote`, the higher-revision record a pull request's comment carried, with every field its projection withheld filled
-// from `local`, this machine's own record: a finding's title, body, evidence, reasons, file, line, and security mark by
-// its id and mint mark together (Q2-A2), and a string outside a finding by the entry's own key, with the head and the
-// date it holds. A finding whose mint mark differs from this machine's finding of that id, or that has none, gets
-// nothing, so a restarted record that reuses an id, or another machine that minted the same id, gets nothing either. The
-// security mark is set when either copy holds it. Returns `remote`.
+// `remote`, the higher-revision private copy a pull request's comment carried, with every field its checks withheld
+// filled from `local`, this machine's own record: a finding's title, body, evidence, reasons, file, line, and security
+// mark by its id and mint mark together (Q2-A2), and a string outside a finding by the entry's own key, with the head and
+// the date it holds. A finding whose mint mark differs from this machine's finding of that id, or that has none, gets
+// nothing, so a restarted record that reuses an id, or another machine that minted the same id, gets nothing either. An
+// index entry fills from this machine's index entry alone, so it gets back its local `reviewer`, and a closed entry
+// never takes a finding's body or evidence. The security mark is set when either copy holds it. A pass the checks left
+// incomplete, a verdict's evidence or a slice's report, is marked (`evidenceWithheld`, `notesWithheld`) so the review
+// step runs it again. Returns `remote`.
 export function fillWithheld(remote, local) {
   if (!isObject(remote) || !isObject(local)) return remote;
   const mine = new Map();
@@ -817,10 +834,17 @@ export function fillWithheld(remote, local) {
     const key = `${finding.id}:${finding.mint}`;
     if (!mine.has(key)) mine.set(key, finding);
   }
+  const ownEntry = (entry) => {
+    const own = isObject(local.index) && isFindingId(entry.id) ? local.index[entry.id] : null;
+    return isObject(own) && isMint(entry.mint) && own.mint === entry.mint ? own : null;
+  };
+  const entries = new Set(Object.values(isObject(remote.index) ? remote.index : {}));
+  const ownFinding = (finding) => (isFindingId(finding.id) && isMint(finding.mint) ? mine.get(`${finding.id}:${finding.mint}`) : null);
   for (const finding of recordedFindings(remote)) {
-    const own = isFindingId(finding.id) && isMint(finding.mint) ? mine.get(`${finding.id}:${finding.mint}`) : null;
+    const own = entries.has(finding) ? ownEntry(finding) : ownFinding(finding);
     // A finding this machine never recorded is marked adopted, on this machine's record only (no posted copy keeps the
-    // key: the allowlist names it nowhere, and privateCopy leaves it out), so the review step still knows it holds no text for it once a command has written the adopted record.
+    // key: privateCopy leaves it out), so the review step still knows it holds no text for it once a command has written
+    // the adopted record.
     if (!own) {
       finding.adopted = true;
       continue;
@@ -833,22 +857,22 @@ export function fillWithheld(remote, local) {
   for (const [id, result] of Object.entries(isObject(remote.passes) ? remote.passes : {})) {
     const theirs = local.passes?.[id];
     if (!isObject(result)) continue;
-    // A slice's report to the cross-cutting pass that another machine recorded, and a copy left out, is marked: the
-    // review step does not count the slice as finished, so it runs again before the cross pass reads its report.
-    if (!isObject(theirs) || !sameHead(result.head, theirs.head)) {
-      if (id.startsWith('slice:') && !(Array.isArray(result.contracts) && Array.isArray(result.cross_notes))) result.notesWithheld = true;
-      continue;
+    // A report the copy carries is whole (privateCopy posts it whole or not at all). One it lacks is filled from this
+    // machine's own same-head result, which counts as whole only while that result carries no mark of its own.
+    const posted = Array.isArray(result.contracts) && Array.isArray(result.cross_notes);
+    const same = isObject(theirs) && sameHead(result.head, theirs.head);
+    if (same) {
+      fillKeys(result, theirs, ['contracts', 'cross_notes', 'dropped', 'files']);
+      for (const verdict of Array.isArray(result.verdicts) ? result.verdicts : []) fillKeys(verdict, matching(theirs.verdicts, verdict, ['flow', 'invariant', 'verdict']));
     }
-    // This machine's copy of the pass keeps its own mark: an earlier adoption that wrote it holds no report either.
-    if (theirs.notesWithheld === true) result.notesWithheld = true;
+    // Both marks are read from the result as filled, never carried from either copy's marks alone, so the review step
+    // does not count the pass as finished and runs it again here. A slice whose report is still not whole is marked
+    // `notesWithheld`, so it runs again before the cross pass reads the report. A pass whose holds or not_affected
+    // verdict still has no evidence is marked `evidenceWithheld`, so its reviewer answers again with evidence this
+    // machine checks.
+    const whole = Array.isArray(result.contracts) && Array.isArray(result.cross_notes) && (posted || (same && theirs.notesWithheld !== true));
+    if (id.startsWith('slice:') && !whole) result.notesWithheld = true;
     else delete result.notesWithheld;
-    fillKeys(result, theirs, ['contracts', 'cross_notes', 'dropped', 'files']);
-    for (const verdict of Array.isArray(result.verdicts) ? result.verdicts : []) fillKeys(verdict, matching(theirs.verdicts, verdict, ['flow', 'invariant', 'verdict']));
-  }
-  // A pass whose holds or not_affected verdict arrived with no evidence, which a copy that is not private never posts,
-  // is marked for this machine: the review step does not count it as finished, so its reviewer answers again here.
-  for (const result of Object.values(isObject(remote.passes) ? remote.passes : {})) {
-    if (!isObject(result)) continue;
     const unproven = (Array.isArray(result.verdicts) ? result.verdicts : []).some((verdict) => isObject(verdict) && ['holds', 'not_affected'].includes(verdict.verdict) && (typeof verdict.evidence !== 'string' || verdict.evidence.trim() === ''));
     if (unproven) result.evidenceWithheld = true;
     else delete result.evidenceWithheld;
@@ -904,12 +928,16 @@ export function fillWithheld(remote, local) {
 // ---- A machine without the text ----
 
 // The id of the first open, blocking finding `state` holds with no text that is not this machine's own, as a record
-// built on another machine's posted copy can, or null: one marked adopted (fillWithheld), or one `local`, this
-// machine's record, does not hold by its id and mint mark. The review step stops on one: the review goes on on the
-// machine that recorded it.
-export function untextedBlocking(state, local = null) {
+// built on another machine's private copy, or another machine's copy that is not private, can, or null: one marked
+// adopted (fillWithheld), or one `local`, this machine's record, does not hold by its id and mint mark. With `only`, a
+// list of pass ids, a finding of any other pass is not read: a pass the copy's own plan no longer names, such as a flow
+// pass whose files left the diff, keeps its result but blocks nothing. The review goes on on the machine that recorded
+// the finding.
+export function untextedBlocking(state, local = null, only = null) {
   const mine = new Set(recordedFindings(local).filter((each) => !each.adopted && isFindingId(each.id) && isMint(each.mint)).map((each) => `${each.id}:${each.mint}`));
-  for (const result of Object.values(isObject(state?.passes) ? state.passes : {})) {
+  const applies = Array.isArray(only) ? new Set(only) : null;
+  for (const [id, result] of Object.entries(isObject(state?.passes) ? state.passes : {})) {
+    if (applies && !applies.has(id)) continue;
     for (const finding of Array.isArray(result?.list) ? result.list : []) {
       if (!isObject(finding) || !blocks(finding) || (typeof finding.title === 'string' && finding.title.trim())) continue;
       if (finding.adopted === true || !mine.has(`${finding.id}:${finding.mint}`)) return isFindingId(finding.id) ? finding.id : 'a finding with no id';

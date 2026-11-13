@@ -37,6 +37,7 @@ A thin adapter for `aidrian worktree cleanup`. Never remove a worktree or a bran
    A `removed` row with `branch_error` lost its worktree but kept its branch,
    because git found unmerged commits on it or a commit landed on it during the run.
    List those branches so they do not pile up.
+   Report `drafts` too: the pull requests whose drafts left the state folder, merged or closed, and any `failed` row verbatim.
 
 Execute sorts the worktrees again before it removes anything, so a row that changed since the plan is judged as it is now.
 A row whose HEAD moves, or whose clean tree gains changes or ignored files, while execute runs is refused, and its worktree and branch stay.

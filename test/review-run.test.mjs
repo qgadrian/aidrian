@@ -664,6 +664,24 @@ test('the review bot as the engine: a thumbs-up passes, a review with comments i
   assert.equal((await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'thumbs_up' } }) })).status, 'received');
 });
 
+test('the review bot`s clean comment on a draft records no open finding, and the step is received; another comment holds one', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const { latestBotSignal, DEFAULT_REVIEWER } = await import('../plugins/aidrian/lib/pr-await-review.mjs');
+  const answer = (body) => async ({ head }) => ({ status: 'received', head_sha: head, signal: latestBotSignal({
+    reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: '2026-11-12T12:00:00Z',
+    issueComments: [{ id: 1, user: { login: DEFAULT_REVIEWER }, created_at: '2026-11-12T12:30:19Z', body: body(head) }],
+  }) });
+  const named = await r.step({ codex: off, awaitBot: answer((head) => `Codex Review: one finding.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``) });
+  assert.deepEqual([named.status, named.open[0].open], ['fix_required', 1], 'a comment that is no clean receipt still holds a finding');
+  r.write('src/app.js', 'c\n');
+  r.commit();
+  const received = await r.step({ codex: off, awaitBot: answer((head) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``) });
+  assert.equal(received.status, 'received');
+  const bot = Object.values(readLocalState(r.project, 7).passes).find((result) => result.head === received.head && result.bot);
+  assert.deepEqual([bot.open, bot.findings, bot.bot.kind], [0, 0, 'comment']);
+});
+
 const holdsAll = (pass, evidence) => JSON.stringify(pass.flows.flatMap((flow) => flow.invariants.map((each) => ({ flow: flow.id, invariant: each.id, verdict: 'holds', evidence }))));
 
 test('an independent reviewer`s violated verdict blocks the flow even with no findings', async (t) => {
@@ -2028,7 +2046,8 @@ test('a reviewer citing an ingested capture closes an unverified invariant on th
   assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the ingested capture is the evidence that closes it');
   // The repository reads as public, so the posted line names no reason and no person; the record keeps both.
   assert.doesNotMatch(summaryOf(r), /Tester|e2e-runner/u, 'the public comment names no reason and no person');
-  assert.match(summaryBody(readLocalState(r.project, 7), null, 'x', OPEN), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable \\(no base URL: .*; ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
+  // The designer pass has its result on the head, so the tool's own reason gives way; the ingest note stays.
+  assert.match(summaryBody(readLocalState(r.project, 7), null, 'x', OPEN), new RegExp(`- visual capture of \`${head.slice(0, 7)}\`: unavailable; the visual passes reviewed this head without the capture \\(ingested, not captured: ${key} from \`e2e-runner run 12\` by \`Tester\`\\)`, 'u'));
 });
 
 // The late order: the images are ingested after the visual reviewer answered. The step dispatches no visual reviewer
@@ -2063,12 +2082,52 @@ test('an ingest after the visual reviewer answered counts once the pass is recor
   const [{ key }] = readManifest(r.project, 7, first.head).ingested;
   // The late ingest leaves its trace on the pull request: the captures comment is rewritten with it.
   assert.ok(capturesComment().includes(`| \`${key}\` | \`e2e-runner run 12\` | \`Tester\` |`), capturesComment());
+  // The designer already has its result on this head, so the rewrite keeps the line that it reviewed the head without the capture.
+  assert.match(capturesComment(), /unavailable; the visual passes reviewed this head without the capture\./u);
   record(`capture:${key}`, 'holds');
   const closed = await r.step({ exec: clean });
   assert.deepEqual([closed.status, closed.flows ?? []], ['received', []], 'the re-recorded citation of the ingest closes the invariant');
   assert.equal(line(), lineBefore, 'the summary line does not show a late ingest');
   assert.deepEqual(readLocalState(r.project, 7).captured, keysBefore, 'nor do the record`s captured keys: the ingest counts only on the machine that holds it');
   assert.doesNotMatch(lineBefore, /ingested/u);
+});
+
+test('a failed capture stops asking to wait in the summary and the captures comment once a visual pass has its result on that head', async (t) => {
+  const visual = { platform: 'web', targets: [{ files: ['src/ui/**'], routes: ['/look'] }], viewports: [360] };
+  const flows = { look: { files: ['src/ui/**'], require: ['agent:designer'], invariants: [{ id: 'matches-design', text: 'Does the screen still match the approved design?' }] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows, visual } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  const first = await r.step({ exec: clean });
+  const [pass] = first.dispatch;
+  const line = () => summaryOf(r).split('\n').find((each) => each.startsWith('- visual capture of'));
+  const capturesComment = () => r.comments.find((c) => c.body.startsWith('<!-- aidrian-visual-captures -->')).body;
+  // No visual pass has a result yet: the failure and its reason stand.
+  assert.match(capturesComment(), /unavailable: no base URL/u);
+  assert.match(line(), /: unavailable \(no base URL/u);
+  assert.deepEqual(readLocalState(r.project, 7).visual.passes, [pass.pass]);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: JSON.stringify([{ flow: 'look', invariant: 'matches-design', verdict: 'holds', evidence: 'src/ui/a.js:1' }]) });
+  await r.step({ exec: clean });
+  assert.equal(line(), `- visual capture of \`${first.head.slice(0, 7)}\`: unavailable; the visual passes reviewed this head without the capture; attach **auto**, private repository`);
+  assert.match(capturesComment(), /^Attach: \*\*auto\*\*, private repository\. unavailable; the visual passes reviewed this head without the capture\.$/mu);
+  assert.doesNotMatch(capturesComment(), /no base URL/u);
+  // The next step leaves the comment as it is.
+  let edits = 0;
+  const edit = r.forge.editComment;
+  r.forge.editComment = (...args) => ((args[1] === r.comments.find((c) => c.body.startsWith('<!-- aidrian-visual-captures -->')).id && (edits += 1)), edit(...args));
+  await r.step({ exec: clean });
+  assert.equal(edits, 0);
+});
+
+test('summaryBody: a failed capture`s line keeps its reason until a visual pass it was taken for has a result on its head', () => {
+  const head = 'a'.repeat(40);
+  const state = (passes, visual = {}) => ({ ...emptyState(7, 'o/r'), passes, visual: { head, status: 'failed', mode: 'auto', visibility: 'PRIVATE', captured: 0, of: 2, passes: ['designer'], reason: 'visual-preview: preview of aaaaaaa is still deploying; wait for the deploy and run aidrian pr review again', ...visual } });
+  const line = (record) => summaryBody(record, null, 'x', OPEN).split('\n').find((each) => each.startsWith('- visual capture of'));
+  assert.match(line(state({})), /failed \(visual-preview: preview of aaaaaaa is still deploying; wait for the deploy/u, 'no pass result');
+  assert.match(line(state({ designer: { head: 'b'.repeat(40), reviewer: 'designer', findings: 0, open: 0 } })), /still deploying/u, 'a result on another head');
+  assert.match(line(state({ 'code-reviewer': { head, reviewer: 'code-reviewer', findings: 0, open: 0 } })), /still deploying/u, 'a result of a pass that is not visual');
+  assert.match(line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }, { passes: undefined })), /still deploying/u, 'a record from before visual.passes');
+  const reviewed = line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }));
+  assert.equal(reviewed, '- visual capture of `aaaaaaa`: failed; the visual passes reviewed this head without the capture; attach **auto**, private repository');
+  assert.match(line(state({ designer: { head, reviewer: 'designer', findings: 0, open: 0 } }, { reason: 'still deploying; ingested, not captured: ingest-x-abcdef from `run 1` by `Tester`' })), /without the capture \(ingested, not captured: ingest-x-abcdef/u, 'the ingest note stays');
 });
 
 // What a line shows outside its code spans, by CommonMark's rule: a run of backticks opens a span that only a run of
@@ -2359,7 +2418,7 @@ test('a machine with no record that runs extend on a public copy holding an unte
   assert.match(stopped.reason, /the open finding R2-9/u);
 });
 
-test('a machine that adopts a public copy reruns a pass whose verdicts arrive without evidence, and then finishes', async (t) => {
+test('a machine with no record restarts from a public copy, whose verdicts carry no evidence: the passes run again, and then it finishes', async (t) => {
   const r = bookingRepo(t);
   r.forge.visibility = () => 'PUBLIC';
   const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
@@ -2381,6 +2440,72 @@ test('a machine that adopts a public copy reruns a pass whose verdicts arrive wi
   assert.ok(runs > ran, 'and the exec pass whose verdicts came without evidence ran again');
 });
 
+
+test('a machine with no record builds on a private copy whose text checks withheld the verdicts` evidence: the passes run again, and then it finishes', async (t) => {
+  // The team's public-text pattern withholds the evidence from the copy of a private repository too.
+  const r = bookingRepo(t, { publicText: { patterns: ['src/booking/a\\.js:1'] } });
+  const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
+  let runs = 0;
+  const exec = async () => (runs += 1, { status: 'done', findings: [], verdicts, dropped: [] });
+  const attest = (step) => { for (const pass of step.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: step.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify(verdicts) }); };
+  const first = await r.step({ exec });
+  assert.equal(first.status, 'dispatch');
+  attest(first);
+  assert.equal((await r.step({ exec })).status, 'received');
+  const posted = stateFromComment(r.comments.at(-1).body, 7);
+  assert.ok(Object.values(posted.passes).some((result) => (result.verdicts ?? []).some((verdict) => verdict.verdict === 'holds' && verdict.evidence === undefined)), 'the private copy posts the verdict without its evidence');
+  const ran = runs;
+  // Another machine: no record of its own, only the private comment.
+  rmSync(recordFile(r.project, 7));
+  const again = await r.step({ exec });
+  assert.equal(again.status, 'dispatch', 'the agent pass is dispatched again, not left to an outside acceptance');
+  attest(again);
+  assert.equal((await r.step({ exec })).status, 'received');
+  assert.ok(runs > ran, 'and the exec pass whose evidence was withheld ran again');
+});
+
+test('a second machine on a public repository holds on another machine`s open, blocking finding: no reviewer runs, its merge guard refuses the head, and the comment stays', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
+  assert.equal(first.status, 'fix_required');
+  const { id } = first.open[0].findings[0];
+  const body = r.comments[0].body;
+  const copy = stateFromComment(body, 7);
+  // Another machine: no record of its own, only the public comment.
+  rmSync(recordFile(r.project, 7));
+  let ran = 0;
+  const held = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  assert.deepEqual([held.status, held.retry_recommended, held.held, ran], ['incomplete', false, copy.revision, 0]);
+  assert.match(held.reason, new RegExp(`on the machine that wrote it, and holds the open finding ${id}, whose text is on the machine that recorded it`, 'u'));
+  const noted = readLocalState(r.project, 7);
+  assert.deepEqual([noted.outcome.status, noted.revision, Object.keys(noted.passes).length], ['incomplete', 0, 0], 'the stop is noted, and nothing of the copy is built on');
+  assert.equal(r.comments[0].body, body, 'the comment is not edited');
+  assert.equal(r.comments.length, 1);
+});
+
+test('a second machine that restarts from a public copy at the round cap opens no round past it', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, extraRounds: 'off' } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.forge.visibility = () => 'PUBLIC';
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  const second = await r.step({ exec: clean });
+  assert.deepEqual([second.status, second.round], ['received', 2]);
+  // Another machine, with no record of its own, on a new head.
+  rmSync(recordFile(r.project, 7));
+  r.write('src/app.js', 'export const app = 4;\n');
+  r.commit();
+  let ran = 0;
+  const capped = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
+  assert.deepEqual([capped.status, ran], ['round_limit', 0], 'the copy`s two rounds count: no third round');
+  assert.equal(readLocalState(r.project, 7).rounds.length, 2);
+  // With the copy gone too, the review starts over from round 1, as the Human chose.
+  rmSync(recordFile(r.project, 7));
+  r.comments.length = 0;
+  const fresh = await r.step({ exec: clean });
+  assert.deepEqual([fresh.status, fresh.round], ['received', 1]);
+});
 
 // ---- Findings one by one, with the finding index (S1b) ----
 
@@ -2712,10 +2837,8 @@ function inlineForge(r) {
     deleteComment: named('deleteComment', (_repo, id) => (r.comments.splice(r.comments.findIndex((each) => each.id === id), 1), null)),
     visibility: named('visibility', r.forge.visibility),
     // A thread is its root review comment and every comment that replies to it; a reply joins it with an id from 5000.
-    reviewThread: named('reviewThread', (_repo, _n, id) => {
-      const root = reviewComments.find((each) => each.id === id && !each.in_reply_to_id);
-      return root ? { resolved: resolved.has(id), complete: true, comments: [root, ...reviewComments.filter((each) => each.in_reply_to_id === id)] } : null;
-    }),
+    findingThreads: named('findingThreads', () => reviewComments.filter((each) => !each.in_reply_to_id)
+      .map((root) => ({ resolved: resolved.has(root.id), complete: true, comments: [root, ...reviewComments.filter((each) => each.in_reply_to_id === root.id)] }))),
     replyToReviewComment: named('replyToReviewComment', (_repo, _n, id, body) => {
       if (r.failReply) throw new Error('gh: Bad Gateway (HTTP 502)');
       const reply = { id: 5000 + reviewComments.length, body, in_reply_to_id: id, ...author };
@@ -2723,6 +2846,7 @@ function inlineForge(r) {
       return { id: reply.id };
     }),
     resolveThread: named('resolveThread', (_repo, _n, id) => (resolved.add(id), { resolved: true })),
+    unresolveThread: named('unresolveThread', (_repo, _n, id) => (resolved.delete(id), { resolved: false })),
   });
   return { calls, reviews, reviewComments, resolved };
 }
@@ -2734,7 +2858,7 @@ test('inline on: one whole step posts one review with the finding`s thread, reco
   const exec = async () => found(mediumFinding);
   const first = await r.step({ exec });
   assert.equal(first.status, 'fix_required');
-  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'postReview', 'postComment'], 'the step`s forge calls, in order');
+  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'conversationComments', 'postReview', 'postComment'], 'the step`s forge calls, in order: the posted record read again just before the post');
   assert.deepEqual([first.inline_review.posted, first.inline_review.threads, first.inline_review.review_id], [true, ['R1-1'], 900]);
   assert.deepEqual(posts.reviewComments.map((each) => [each.path, each.line]), [['src/app.js', 1]]);
   assert.ok(posts.reviewComments[0].body.startsWith('<!-- aidrian-review-finding:R1-1 -->\naidrian review, finding R1-1\n'));
@@ -2907,6 +3031,86 @@ test('inline: a member`s marker at the counter`s digit limit stops the step as i
   assert.match(stopped.reason, /the finding id counter of #7 is at its limit/u);
 });
 
+test('the counter at its limit through the review`s own ids stops a step that would mint, and says no marker raised it', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  assert.equal((await r.step({ exec: async () => found(mediumFinding) })).status, 'fix_required');
+  const state = readLocalState(r.project, 7);
+  state.idCounter = 999999;
+  writeLocalState(r.project, state);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  let ran = 0;
+  const stopped = await r.step({ exec: async () => (ran += 1, found(mediumFinding)) });
+  assert.deepEqual([stopped.status, stopped.retry_recommended, ran], ['incomplete', false, 0]);
+  assert.match(stopped.reason, /at its limit of 999999, reached by the ids this review minted/u);
+  assert.doesNotMatch(stopped.reason, /marker/u);
+  assert.equal(readLocalState(r.project, 7).outcome.status, 'incomplete', 'the stop is the head`s outcome, so the merge guard reads it');
+});
+
+test('the counter at its limit stops no step whose every pass has its result on the head: it mints nothing', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  assert.equal((await r.step({ exec: async () => found(mediumFinding) })).status, 'fix_required');
+  const state = readLocalState(r.project, 7);
+  state.idCounter = 999999;
+  writeLocalState(r.project, state);
+  const again = await r.step({ exec: () => assert.fail('no reviewer runs: the pass has its result on this head') });
+  assert.equal(again.status, 'fix_required', 'the step goes on to its result');
+  assert.deepEqual(again.open[0].findings.map((each) => each.id), ['R1-1']);
+});
+
+test('two writers: a record that lost the write that mapped a finding`s thread posts no second thread for it', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  const first = await r.step({ exec: async () => found(mediumFinding) });
+  assert.deepEqual(first.inline_review.threads, ['R1-1']);
+  // This machine's record is a write that never read the one that mapped R1-1's thread, at a higher revision, as when
+  // two machines step at once: the posted record still maps it.
+  const stale = readLocalState(r.project, 7);
+  delete stale.index['R1-1'].thread;
+  stale.revision += 5;
+  writeLocalState(r.project, stale);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('not the fix');
+  const second = await r.step({ exec: async () => found(mediumFinding) });
+  assert.equal(second.status, 'fix_required');
+  assert.equal(second.inline_review, undefined, 'no second thread, and no fresh id for it');
+  assert.deepEqual([posts.reviews.length, posts.reviewComments.length], [1, 1]);
+  const local = readLocalState(r.project, 7);
+  assert.deepEqual(local.index['R1-1'].thread, { reviewId: 900, commentId: 1000 }, 'the write keeps the mapping it merged back');
+  assert.deepEqual(Object.keys(local.index), ['R1-1']);
+  assert.deepEqual(stateFromComment(summaryComment(r).body, 7).index['R1-1'].thread, { reviewId: 900, commentId: 1000 });
+});
+
+test('two writers: a comment another write posts after the step read the marked posts, merged in and marked security, is read and deleted, not called gone', async (t) => {
+  const r = repo(t, { baseConfig: INLINE, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const posts = inlineForge(r);
+  await r.step({ exec: async () => found(mediumFinding) });
+  // The finding is recorded and unposted: its thread is gone from the pull request and from both copies.
+  posts.reviews.length = 0;
+  posts.reviewComments.length = 0;
+  const state = readLocalState(r.project, 7);
+  delete state.index['R1-1'].thread;
+  writeLocalState(r.project, state);
+  summaryComment(r).body = summaryBody(readLocalState(r.project, 7), null, 'x', OPEN);
+  r.forge.visibility = () => 'PUBLIC';
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('not the fix');
+  // While this step's reviewer runs, another machine posts the finding's thread and its record maps it; the reviewer
+  // here rates the finding high.
+  const second = await r.step({ exec: async () => {
+    const body = posts.reviewComments.length ? null : '<!-- aidrian-review-finding:R1-1 -->\naidrian review, finding R1-1\n> the app number is wrong';
+    if (body) posts.reviewComments.push({ id: 1001, body, path: 'src/app.js', line: 1, pull_request_review_id: 901, user: { login: 'me' }, author_association: 'MEMBER' });
+    const remote = readLocalState(r.project, 7);
+    remote.index['R1-1'].thread = { reviewId: 901, commentId: 1001 };
+    remote.revision += 3;
+    summaryComment(r).body = summaryBody(remote, null, 'x', OPEN);
+    return found({ ...mediumFinding, severity: 'high' });
+  } });
+  assert.deepEqual(second.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 1001 }], 'read by its own id and deleted');
+  assert.deepEqual(second.comment_deletes.gone, []);
+  assert.ok(!posts.reviewComments.some((each) => each.id === 1001), 'the other write`s comment is gone from the pull request');
+});
+
 test('the delete runs under publicSecurity "full" too: a comment posted with its text before the mark goes, and the step posts no text for it', async (t) => {
   const { r, posts } = await postedThenMarked(t, { version: 1, review: { publish: { inline: true, publicSecurity: 'full' } } });
   const result = await r.step({ exec: async () => found(mediumFinding) });
@@ -2933,8 +3137,8 @@ test('replies on: one whole step after a fix replies on the thread and resolves 
   const { r, posts, first } = await postedThenFixed(t);
   const second = await r.step({ exec: clean });
   assert.equal(second.status, 'received');
-  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'viewer', 'reviewThread', 'replyToReviewComment', 'resolveThread', 'editComment'], 'the step`s forge calls, in order');
-  assert.deepEqual(second.replies, { replied: ['R1-1'], resolved: ['R1-1'], open: [], waiting: [], left: [], unanswered: [] });
+  assert.deepEqual(posts.calls, ['conversationComments', 'reviews', 'reviewComments', 'visibility', 'conversationComments', 'viewer', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'editComment'], 'the step`s forge calls, in order: one read of every thread');
+  assert.deepEqual(second.replies, { replied: ['R1-1'], resolved: ['R1-1'], reopened: [], open: [], waiting: [], left: [], unanswered: [] });
   const reply = posts.reviewComments.find((each) => each.in_reply_to_id === 1000);
   const local = readLocalState(r.project, 7);
   assert.equal(local.index['R1-1'].state, 'not_reported');
@@ -2942,7 +3146,7 @@ test('replies on: one whole step after a fix replies on the thread and resolves 
   assert.equal(to, second.head);
   assert.equal(reply.body, ['<!-- aidrian-review-finding:R1-1 -->', 'aidrian review, finding R1-1', `Not reported again in ${from.slice(0, 7)}...${to.slice(0, 7)}.`].join('\n'), 'no link where the forge builds none, and no reviewer text');
   assert.ok(posts.resolved.has(1000));
-  assert.deepEqual(local.index['R1-1'].thread, { reviewId: 900, commentId: 1000, replied: true, replyId: reply.id, resolved: true });
+  assert.deepEqual(local.index['R1-1'].thread, { reviewId: 900, commentId: 1000, replied: true, replyId: reply.id, resolved: true, resolvedByEngine: true });
   assert.deepEqual(stateFromComment(summaryComment(r).body, 7).index['R1-1'].thread, local.index['R1-1'].thread, 'the posted record holds the marks');
   assert.deepEqual(second.engine_comments.map((each) => each.id).sort(), [900, 1000, reply.id].sort(), 'the reply is the engine`s, mapped');
   assert.deepEqual(second.engine_comments_unmapped, []);
@@ -2951,7 +3155,7 @@ test('replies on: one whole step after a fix replies on the thread and resolves 
   posts.calls.length = 0;
   const third = await r.step({ exec: clean });
   assert.equal(third.replies, undefined);
-  assert.ok(!posts.calls.some((name) => ['viewer', 'reviewThread', 'replyToReviewComment', 'resolveThread'].includes(name)), 'a further step makes no call for the thread');
+  assert.ok(!posts.calls.some((name) => ['viewer', 'findingThreads', 'replyToReviewComment', 'resolveThread'].includes(name)), 'a further step makes no call for the thread');
   assert.equal(posts.reviewComments.filter((each) => each.in_reply_to_id === 1000).length, 1);
 });
 
@@ -3008,7 +3212,7 @@ test('replies: a finding whose comment the engine deleted gets no reply', async 
   assert.deepEqual(second.comment_deletes.deleted.map((each) => each.finding), ['R1-1']);
   assert.equal(readLocalState(r.project, 7).index['R1-1'].state, 'not_reported');
   assert.equal(second.replies, undefined);
-  assert.ok(!posts.calls.includes('replyToReviewComment') && !posts.calls.includes('reviewThread'));
+  assert.ok(!posts.calls.includes('replyToReviewComment') && !posts.calls.includes('findingThreads'));
 });
 
 test('replies: false, the local file`s inline false, and review.record "local" post no reply and resolve nothing', async (t) => {
@@ -3025,7 +3229,7 @@ test('replies: false, the local file`s inline false, and review.record "local" p
     const second = await r.step({ exec: clean });
     assert.equal(readLocalState(r.project, 7).index['R1-1'].state, 'not_reported', `the finding closed: ${second.status} ${second.reason ?? ''}`);
     assert.equal(second.replies, undefined);
-    assert.ok(!['viewer', 'reviewThread', 'replyToReviewComment', 'resolveThread'].some((name) => posts.calls.includes(name)), posts.calls.join(','));
+    assert.ok(!['viewer', 'findingThreads', 'replyToReviewComment', 'resolveThread'].some((name) => posts.calls.includes(name)), posts.calls.join(','));
   }
 });
 
@@ -3042,7 +3246,7 @@ test('replies: a finding answered and then marked security loses the engine`s re
   const third = await r.step({ exec: clean });
   assert.deepEqual(third.comment_deletes.deleted.map((each) => each.id), [replyId, 1000], 'the reply first, then the root');
   assert.ok(!posts.reviewComments.some((each) => each.id === replyId || each.id === 1000), 'both are gone from the pull request');
-  assert.deepEqual(readLocalState(r.project, 7).index['R1-1'].thread, { reviewId: 900, replied: true, resolved: true });
+  assert.deepEqual(readLocalState(r.project, 7).index['R1-1'].thread, { reviewId: 900, replied: true, resolved: true, resolvedByEngine: true });
   assert.equal(third.replies, undefined, 'and nothing is posted again');
 });
 

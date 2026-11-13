@@ -9,6 +9,7 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 // A pull request on branch `feat`, pushed to a bare `origin`, whose forge reports `reported.head`: a test moves it to
 // play a forge that has, or has not yet, seen a push.
@@ -53,7 +54,7 @@ function pushedRepo(t) {
     const project = projectAt(dir);
     return reviewStep({ pr: '7' }, { project, config: { ...loadConfig(project).config, review: { ...loadConfig(project).config.review, record: 'local' } }, forge, codex: () => ({ ok: true }), exec });
   };
-  return { git, write, commit, reported, step };
+  return { git, write, commit, reported, step, forge, project: () => projectAt(dir) };
 }
 
 const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
@@ -85,6 +86,31 @@ test('a local commit past the pull request\'s head is named, not answered with t
   assert.deepEqual([result.status, result.head, result.local_head, result.retry_recommended], ['incomplete', r.reported.head, local, true]);
   assert.match(result.reason, /push, then run the step again/u);
   assert.equal(ran, 1, 'nothing ran on the older head');
+});
+
+test('a local commit past the pull request`s head still deletes the engine`s own comment for a security finding first', async (t) => {
+  const r = pushedRepo(t);
+  assert.equal((await r.step(async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }))).status, 'fix_required');
+  // The high finding's inline comment, as an earlier record posted it, on a repository that does not read as PRIVATE.
+  const state = readLocalState(r.project(), 7);
+  state.index['R1-1'].thread = { reviewId: 900, commentId: 61 };
+  writeLocalState(r.project(), state);
+  const calls = [];
+  const posted = { id: 61, body: '<!-- aidrian-review-finding:R1-1 -->\naidrian review, finding R1-1\ntext', user: { login: 'me' }, author_association: 'MEMBER', pull_request_review_id: 900 };
+  Object.assign(r.forge, {
+    visibility: () => 'PUBLIC',
+    viewer: () => 'me',
+    reviewComments: () => [posted],
+    reviewComment: (_repo, _n, id) => (calls.push(['read', id]), id === 61 ? posted : null),
+    deleteReviewComment: (_repo, id) => (calls.push(['delete', id]), null),
+  });
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('fix, not pushed');
+  const result = await r.step(() => assert.fail('nothing runs on the older head'));
+  assert.equal(result.status, 'incomplete');
+  assert.match(result.reason, /push, then run the step again/u);
+  assert.deepEqual(result.comment_deletes.deleted, [{ finding: 'R1-1', kind: 'review_comment', id: 61 }], 'the stop comes after the delete');
+  assert.deepEqual(calls, [['read', 61], ['delete', 61]]);
 });
 
 test('a checkout on another branch, stacked on the pull request, reviews the head the forge reports', async (t) => {

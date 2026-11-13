@@ -1542,3 +1542,21 @@ test('a plan closure criterion proven elsewhere is changed by the run, not asked
   }
   assert.match(read('skills/knowledge/references/handoff.md'), /`plan_change` \(any reviewer, on a finding about a slice's closure criterion\): `\{kind, existing_tests, break\}`/);
 });
+
+test('the pr-review skill posts no comment of its own, and names the engine`s summary comment as the one to read', () => {
+  // A pull request that ran both once showed two summaries of one review: the skill's comment and the engine's.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const files = ['skills/pr-review/SKILL.md', 'skills/pr-review/steps/reconcile-and-publish.md', 'skills/pr-review/steps/dispatch.md', 'skills/pr-review/references/manifest.md'];
+  for (const file of files) {
+    const text = read(file);
+    assert.doesNotMatch(text, /<!-- aidrian:pr-review -->/, `${file} carries no comment marker`);
+    assert.doesNotMatch(text, /issues\/<n>\/comments|-X PATCH|--no-comment/, `${file} posts or updates no comment`);
+  }
+  const skill = read('skills/pr-review/SKILL.md');
+  assert.match(skill, /^--- name: pr-review description: [^\n]*Posts no comment; the engine's summary comment shows the review\./);
+  assert.match(skill, /It posts no comment\. On the pull request, a reader looks at the summary comment `aidrian pr review` keeps there;/);
+  const step = read('skills/pr-review/steps/reconcile-and-publish.md');
+  assert.match(step, /This skill posts nothing on the pull request\. The comment a reader looks at there is the summary comment that `aidrian pr review` writes/);
+  assert.match(step, /When the manifest holds a `comment_id`, an earlier release of this skill posted that comment\. Delete it once/);
+  assert.match(readFileSync(path.resolve(PLUGIN, '../../docs/agents-and-skills.md'), 'utf8'), /\| `pr-review` \| [^\n]*Posts no comment/);
+});

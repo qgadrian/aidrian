@@ -34,6 +34,8 @@ import {
   runAwaitReview,
   latestTriggerHead,
   reviewedCommit,
+  isCleanReceipt,
+  cardState,
 } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { appendRow } from '../plugins/aidrian/lib/jsonl.mjs';
@@ -1221,4 +1223,41 @@ test('raising --max-rounds past the config cap needs the Human override, whateve
     console.error = error;
   }
   assert.match(errors.join('\n'), /goes past config\.json github\.maxReviewRounds \(3\)/);
+});
+
+// The bot's answers on a draft, as it posted them on a pull request: the clean receipt, and the status card whose
+// machine state says the code review of the head left nothing unresolved.
+const RECEIPT_BODY = (sha) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${sha.slice(0, 10)}\`\n\n<details> <summary>About Codex in GitHub</summary>\n</details>`;
+const STATE_CARD_BODY = (sha, unresolved) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${sha}","has_any_findings":true,"has_unresolved_findings":${unresolved},"status":"completed"},"security_review":{"commit_sha":null,"has_any_findings":null,"has_unresolved_findings":null,"status":null}} -->\n\n<details>\n<summary><strong>Codex Review Summary</strong>: Completed</summary>\n</details>`;
+
+test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolved on its commit, is a clean comment; other comments are not', () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const at = (body, m = 7, id = 1) => ({ id, user: BOT, created_at: T(m), body });
+  assert.equal(isCleanReceipt(RECEIPT_BODY(head)), true);
+  assert.equal(isCleanReceipt(QUOTA_BODY), false);
+  // Only the receipt's layout is clean: its marker first, the phrase leading the text after it, and the reviewed commit.
+  const quoting = `Codex Review: The UI says "didn't find any major issues" even when validation fails; fix this regression.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``;
+  assert.equal(isCleanReceipt(quoting), false, 'a finding that quotes the phrase');
+  assert.equal(isCleanReceipt(`<!-- codex-review-receipt:v1 -->\n\n${quoting}`), false, 'a receipt whose text names a finding');
+  assert.equal(isCleanReceipt("Codex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** `3871361bfb`"), false, 'no receipt marker');
+  assert.equal(isCleanReceipt("<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!"), false, 'no reviewed commit');
+  const quoted = latestBotSignal({ ...base, issueComments: [at(quoting)] });
+  assert.deepEqual([quoted.kind, quoted.clean], ['comment', undefined], 'the quoting comment stays a finding');
+  assert.equal(cardState(STATE_CARD_BODY(head, false)).code_review.has_unresolved_findings, false);
+  assert.equal(cardState('<!-- codex-review-state:v1 {not json} -->'), null);
+  const receipt = latestBotSignal({ ...base, issueComments: [at(RECEIPT_BODY(head))] });
+  assert.deepEqual([receipt.kind, receipt.clean, receipt.commit_id], ['comment', true, head.slice(0, 10)]);
+  // A comment in other words, bound to its commit by the card's state.
+  const other = `Codex Review: here is what changed.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\``;
+  // The card is edited in place: it vouches for the comment once its last update is no earlier than the comment.
+  const card = (unresolved, updated = 8, sha = head) => ({ ...at(STATE_CARD_BODY(sha, unresolved), 6, 2), updated_at: T(updated) });
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(false), at(other)] }).clean, true);
+  assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(other)] }).clean, undefined, 'a card last updated before the comment it would vouch for');
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(false, 4), at(other)] }).clean, undefined, 'a card last updated before the round`s trigger');
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(true), at(other)] }).clean, undefined, 'unresolved findings on the card');
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(false, 8, '0123456789abcdef0123456789abcdef01234567'), at(other)] }).clean, undefined, 'the card is for another commit');
+  assert.equal(latestBotSignal({ ...base, issueComments: [at('Codex Review: two findings below.')] }).clean, undefined, 'a comment that names findings');
+  assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).kind, 'quota_exhausted');
+  assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).clean, undefined, 'the quota notice is never clean');
 });

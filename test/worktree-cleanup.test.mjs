@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { sweepDrafts } from '../plugins/aidrian/lib/review/drafts.mjs';
+import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { executeCleanup, parseDuration, planCleanup } from '../plugins/aidrian/lib/worktree.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -368,4 +371,53 @@ test('parseDuration reads seconds and one unit; the command reads decisions on s
   }
   const bad = run(['--min-age', 'soon']);
   assert.deepEqual([bad.status, JSON.parse(bad.stdout).phase], [1, 'arguments']);
+});
+
+test('execute removes the state folder drafts of a merged or closed pull request, and keeps an open one`s or an unread one`s', (t) => {
+  const { repo, dirs, heads } = fixture(t);
+  const project = projectAt(repo);
+  const tmp = path.join(stateDir(project), 'tmp');
+  const draft = (name) => {
+    if (name.includes('.')) writeFileSync(path.join(tmp, name), 'full finding text\n');
+    else {
+      mkdirSync(path.join(tmp, name), { recursive: true });
+      writeFileSync(path.join(tmp, name, 'agent-code-reviewer-1a2b3c4d.findings.json'), '[]');
+    }
+  };
+  mkdirSync(tmp, { recursive: true });
+  const names = ['review-1', 'pr-1-review.md', 'review-2', 'product-feedback-2.md', 'product-feedback-2-items.json', 'review-3', 'pr-3-review.md', 'review-4', 'review-5', 'pr-body-feat-x.md', 'notes'];
+  for (const name of names) draft(name);
+  // Pull request 5's review record files it under another repository: its state is read there.
+  writeLocalState(project, emptyState(5, 'acme/other'));
+  const states = { 1: 'MERGED', 2: 'CLOSED', 3: 'OPEN', 5: 'MERGED' };
+  const asked = [];
+  const forge = { change: (ref, fields, options) => {
+    asked.push([ref, fields, options.repo ?? null]);
+    if (!states[ref]) throw new Error('gh: could not read');
+    return { state: states[ref] };
+  } };
+  const sweep = (each) => sweepDrafts(each, { forge });
+
+  const scoped = executeCleanup({ only: dirs.open }, { cwd: repo, heads, now: LATER, sweep });
+  assert.deepEqual([scoped.drafts, asked], [undefined, []], 'a cleanup of one worktree reads no pull request and removes no draft');
+
+  const result = executeCleanup({}, { cwd: repo, heads, now: LATER, sweep });
+  assert.deepEqual(result.drafts.removed, [
+    { pr: 1, state: 'merged', files: ['pr-1-review.md', 'review-1'] },
+    { pr: 2, state: 'closed', files: ['product-feedback-2-items.json', 'product-feedback-2.md', 'review-2'] },
+    { pr: 5, state: 'merged', files: ['review-5'] },
+  ]);
+  assert.deepEqual(result.drafts.kept, [{ pr: 3, reason: 'open' }, { pr: 4, reason: 'its state could not be read' }]);
+  assert.deepEqual(result.drafts.failed, []);
+  assert.deepEqual(asked.map(([ref, , repoName]) => [ref, repoName]), [['1', null], ['2', null], ['3', null], ['4', null], ['5', 'acme/other']]);
+  const left = ['review-3', 'pr-3-review.md', 'review-4', 'pr-body-feat-x.md', 'notes'];
+  assert.deepEqual(names.filter((name) => existsSync(path.join(tmp, name))).sort(), left.sort());
+
+  // At most `limit` pull requests are read in one sweep, the lowest numbers first; the rest wait for the next one.
+  for (const name of ['review-6', 'review-7']) draft(name);
+  Object.assign(states, { 6: 'MERGED', 7: 'MERGED' });
+  const capped = sweepDrafts(project, { forge, limit: 3 });
+  assert.deepEqual(capped.removed.map((row) => row.pr), [6]);
+  assert.deepEqual(capped.kept.at(-1), { pr: 7, reason: 'past the 3 pull requests one cleanup reads' });
+  assert.equal(existsSync(path.join(tmp, 'review-7')), true);
 });

@@ -110,6 +110,47 @@ export const isQuotaNotice = (body) => typeof body === 'string' && QUOTA_NOTICE_
 export const REVIEW_SUMMARY_CARD_MARKER = '<!-- codex-pull-request-review-summary -->';
 export const isReviewSummaryCard = (body) => typeof body === 'string' && body.includes(REVIEW_SUMMARY_CARD_MARKER);
 
+// The bot's clean answer on a draft: a conversation comment in place of a 👍, matched on its layout, never on its words
+// anywhere: it opens with the receipt marker, the text after it opens with "Codex Review: Didn't find any major
+// issues", and it names the reviewed commit. A comment that only quotes the phrase, such as a finding about a screen
+// that shows it, is never clean.
+export const RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->';
+const CLEAN_RECEIPT_LEAD = /^Codex Review: Didn['’]t find any major issues\b/u;
+export const isCleanReceipt = (body) => {
+  if (typeof body !== 'string' || isQuotaNotice(body)) return false;
+  const text = body.trimStart();
+  if (!text.startsWith(RECEIPT_MARKER)) return false;
+  const rest = text.slice(RECEIPT_MARKER.length).trimStart();
+  return CLEAN_RECEIPT_LEAD.test(rest) && reviewedCommit(rest) !== null;
+};
+
+// The status card's machine state, `<!-- codex-review-state:v1 {...} -->`: its `code_review` names the commit the review
+// ran on, its status, and whether it left unresolved findings. Null when the card carries none or it does not parse.
+const REVIEW_STATE_PATTERN = /<!--\s*codex-review-state:v1\s+(.*?)\s*-->/su;
+export const cardState = (body) => {
+  const json = typeof body === 'string' ? body.match(REVIEW_STATE_PATTERN)?.[1] : null;
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+};
+
+// Whether the reviewer's newest status card says its code review of `commit` completed with no unresolved finding. The
+// card vouches for `comment` only when it was last updated at or after `since` and no earlier than that comment: a card
+// left from an earlier round, or one that has not caught up with the comment, says nothing of it.
+const cardClean = (issueComments, reviewer, commit, comment, since) => {
+  if (!commit) return false;
+  const card = issueComments
+    .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
+    .sort((a, b) => ms(b.updated_at ?? b.created_at) - ms(a.updated_at ?? a.created_at))[0];
+  const updated = ms(card?.updated_at ?? card?.created_at);
+  if (!Number.isFinite(updated) || (since && !(updated >= ms(since))) || !(updated >= ms(comment?.created_at))) return false;
+  const review = cardState(card?.body)?.code_review;
+  return review?.status === 'completed' && review.has_unresolved_findings === false && typeof review.commit_sha === 'string' && sameCommit(review.commit_sha, commit);
+};
+
 // Process exit code for a terminal status.
 export const exitCodeFor = (status) => {
   if (status === 'timed_out') return 2;
@@ -242,7 +283,10 @@ export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComme
   }
   if (newest.kind === 'comment') {
     const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
-    return { kind, at: comment.created_at, review_id: null, commit_id: reviewedCommit(comment.body), state: null, line_comments: 0, comment_id: comment.id ?? null };
+    const commit = reviewedCommit(comment.body);
+    // `clean`: the comment is the clean receipt, or the status card says the review of its commit left nothing open.
+    const clean = kind === 'comment' && (isCleanReceipt(comment.body) || cardClean(issueComments, reviewer, commit, comment, since));
+    return { kind, at: comment.created_at, review_id: null, commit_id: commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
   }
   return { kind: 'thumbs_up', at: reaction.created_at, review_id: null, commit_id: null, state: null, line_comments: 0 };
 };
@@ -479,8 +523,9 @@ async function reviewRecord(project, forge, base) {
       comments = forge.conversationComments(repo, n) ?? [];
     } catch {}
   }
-  const record = readRecord(project, Number(n), comments, repo);
-  if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held, record.why));
+  const { readReading } = await import('./review/dispatch.mjs');
+  const record = readRecord(project, Number(n), comments, repo, () => readReading(forge, repo, n));
+  if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held, record.why, record.finding));
   return { state: record.state, comments };
 }
 

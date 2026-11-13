@@ -18,7 +18,8 @@ import { belowRootBrief, flowBaseBrief, ID_BRIEF, remergeBrief, VERDICT_MEANING 
 import { contextFindings, idCopy, recordSettled, residualTexts } from './settled.mjs';
 import { patternsOf, textChecker } from './publish.mjs';
 import * as quota from './quota.mjs';
-import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
+import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
+import { visualReviewed } from './state.mjs';
 import { inBaseWorktree, runHook } from './base-worktree.mjs';
 
 // Captures this head once, then attaches the images as the attach mode allows and writes the captures comment. The
@@ -58,7 +59,29 @@ export async function captureAndAttach(s) {
       uploadError = uploadError ?? `the captures comment was not written: ${error.message}`;
     }
   }
-  state.visual = { head, status: manifest.status, mode, visibility, captured: manifest.entries.filter((entry) => entry.sha256).length, of: manifest.entries.length, ...(manifest.reason ? { reason: manifest.reason } : {}), ...(uploadError ? { error: uploadError } : {}) };
+  // `passes`: the visual passes the capture was taken for, whose result on this head ends a failure's ask
+  // (state.mjs visualReviewed).
+  const visualPasses = (s.passes ?? []).filter((pass) => s.isVisual?.(pass)).map((pass) => pass.id);
+  state.visual = { head, status: manifest.status, mode, visibility, captured: manifest.entries.filter((entry) => entry.sha256).length, of: manifest.entries.length, passes: visualPasses, ...(manifest.reason ? { reason: manifest.reason } : {}), ...(uploadError ? { error: uploadError } : {}) };
+}
+
+// The captures comment of this head once a visual pass has its result on it (state.mjs visualReviewed): a failed
+// capture's reason, such as a preview still deploying, asked to wait and run the review again, which no longer holds, so
+// the comment is edited to say the passes reviewed the head without the capture. A comment that already says so, or
+// shows another head, is left alone; a failed edit is tried again by the next step.
+export function settleCaptures(s) {
+  const { project, forge, repo, n, head, comments, state, onPr } = s;
+  if (!onPr || state.visual?.head !== head || !visualReviewed(state)) return;
+  const known = (comments ?? []).find((comment) => typeof comment.body === 'string' && comment.body.startsWith(VISUAL_MARKER));
+  if (!known || known.body.split(/\r?\n/u)[1] !== `### Visual capture: \`${head.slice(0, 7)}\``) return;
+  const manifest = s.manifest ?? readManifest(project, n, head);
+  if (!manifest || manifest.head !== head) return;
+  const body = capturesBody(manifest, state.captures ?? {}, { mode: state.visual.mode, visibility: state.visual.visibility ?? null, error: state.visual.error ?? null, reviewed: true });
+  if (body === known.body) return;
+  try {
+    forge.editComment(repo, known.id, body);
+    known.body = body;
+  } catch {}
 }
 
 // Whether the step's pull request comes from inside the team, read once a step: the body's residuals are its author's

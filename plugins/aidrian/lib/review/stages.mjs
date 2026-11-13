@@ -110,9 +110,11 @@ export async function runStages(s) {
   const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
   const botWait = (extra) => wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: keepsRecordedCap(env, opts.maxRounds !== undefined), validHead: head, grantFloor, ...extra }, { gate });
   const headMoved = (bot) => finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
-  // The bot's answer for this head, recorded as its pass's result.
+  // The bot's answer for this head, recorded as its pass's result. A 👍, or the clean comment it answers a draft with
+  // (pr-await-review.mjs latestBotSignal `clean`), leaves nothing open; any other answer holds at least one finding.
   const recordBot = (pass, bot) => {
-    const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
+    const clean = bot.signal?.kind === 'thumbs_up' || (bot.signal?.kind === 'comment' && bot.signal.clean === true);
+    const open = clean ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
     state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
     recorded = true;
   };

@@ -110,6 +110,34 @@ export const isQuotaNotice = (body) => typeof body === 'string' && QUOTA_NOTICE_
 export const REVIEW_SUMMARY_CARD_MARKER = '<!-- codex-pull-request-review-summary -->';
 export const isReviewSummaryCard = (body) => typeof body === 'string' && body.includes(REVIEW_SUMMARY_CARD_MARKER);
 
+// The bot's clean answer on a draft: a conversation comment ("Codex Review: Didn't find any major issues", with the
+// reviewed commit) in place of a 👍. Matched on its words, so a comment that names findings is never clean.
+export const CLEAN_RECEIPT_PATTERN = /didn['’]t find any major issues/iu;
+export const isCleanReceipt = (body) => typeof body === 'string' && !isQuotaNotice(body) && CLEAN_RECEIPT_PATTERN.test(body);
+
+// The status card's machine state, `<!-- codex-review-state:v1 {...} -->`: its `code_review` names the commit the review
+// ran on, its status, and whether it left unresolved findings. Null when the card carries none or it does not parse.
+const REVIEW_STATE_PATTERN = /<!--\s*codex-review-state:v1\s+(.*?)\s*-->/su;
+export const cardState = (body) => {
+  const json = typeof body === 'string' ? body.match(REVIEW_STATE_PATTERN)?.[1] : null;
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+};
+
+// Whether the reviewer's newest status card says its code review of `commit` completed with no unresolved finding.
+const cardClean = (issueComments, reviewer, commit) => {
+  if (!commit) return false;
+  const card = issueComments
+    .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
+    .sort((a, b) => ms(b.updated_at ?? b.created_at) - ms(a.updated_at ?? a.created_at))[0];
+  const review = cardState(card?.body)?.code_review;
+  return review?.status === 'completed' && review.has_unresolved_findings === false && typeof review.commit_sha === 'string' && sameCommit(review.commit_sha, commit);
+};
+
 // Process exit code for a terminal status.
 export const exitCodeFor = (status) => {
   if (status === 'timed_out') return 2;
@@ -242,7 +270,10 @@ export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComme
   }
   if (newest.kind === 'comment') {
     const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
-    return { kind, at: comment.created_at, review_id: null, commit_id: reviewedCommit(comment.body), state: null, line_comments: 0, comment_id: comment.id ?? null };
+    const commit = reviewedCommit(comment.body);
+    // `clean`: the comment is the clean receipt, or the status card says the review of its commit left nothing open.
+    const clean = kind === 'comment' && (isCleanReceipt(comment.body) || cardClean(issueComments, reviewer, commit));
+    return { kind, at: comment.created_at, review_id: null, commit_id: commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
   }
   return { kind: 'thumbs_up', at: reaction.created_at, review_id: null, commit_id: null, state: null, line_comments: 0 };
 };

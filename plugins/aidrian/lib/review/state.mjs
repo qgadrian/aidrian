@@ -54,6 +54,28 @@ const MAX_REASONS = 25;
 // so a reason cannot carry a record marker of its own into the comment.
 export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP).replaceAll('<!--', '&lt;!--').replaceAll('-->', '--&gt;');
 
+// The note a visual capture's reason ends with when images were ingested for its head (lib/review/visual.mjs).
+export const INGEST_NOTE = 'ingested, not captured: ';
+// What the summary and the captures comment say in place of a capture's failure once a visual pass has its result.
+export const REVIEWED_WITHOUT = 'the visual passes reviewed this head without the capture';
+
+// Whether the record's visual capture failed (failed or unavailable) and a visual pass it was taken for has a result on
+// its head: the failure's reason, such as a preview still deploying, then asks for nothing, so the summary and the
+// captures comment say the passes reviewed the head without it. A record from before `visual.passes` keeps the failure.
+export function visualReviewed(state) {
+  const visual = isObject(state?.visual) ? state.visual : null;
+  if (!visual || !['failed', 'unavailable'].includes(visual.status) || !Array.isArray(visual.passes)) return false;
+  const passes = isObject(state.passes) ? state.passes : {};
+  return visual.passes.some((id) => isObject(passes[id]) && typeof passes[id].head === 'string' && passes[id].head === visual.head);
+}
+
+// The ingest note of a capture's reason, without the tool's own reason before it, or null.
+export function ingestNote(reason) {
+  if (typeof reason !== 'string') return null;
+  const at = reason.startsWith(INGEST_NOTE) ? 0 : reason.indexOf(`; ${INGEST_NOTE}`);
+  return at === -1 ? null : reason.slice(at === 0 ? 0 : at + 2);
+}
+
 // Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
 // A commit SHA as a command takes it: 7 to 40 hex.
@@ -287,7 +309,9 @@ function assemble({ header, planLines, flowLines, outsideHead }, state, post) {
   lines.push(...flowLines);
   if (isObject(copy.visual)) {
     const visual = copy.visual;
-    lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${clip(visual.reason)})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
+    const reviewed = visualReviewed(copy);
+    const reason = reviewed ? ingestNote(visual.reason) : visual.reason;
+    lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : `${reviewed ? `; ${REVIEWED_WITHOUT}` : ''}${reason ? ` (${clip(reason)})` : ''}`}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
   }
   lines.push(...outsideLines(copy, outsideHead, open));
   lines.push(...quotaLines(copy));

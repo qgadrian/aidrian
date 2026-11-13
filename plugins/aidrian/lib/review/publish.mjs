@@ -776,6 +776,7 @@ function allowlisted(state, post, counter) {
       visibility: check((each) => each === null || (typeof each === 'string' && /^[A-Z]{1,20}$/u.test(each))),
       captured: int,
       of: int,
+      passes: list(passId),
     }),
     quotaStops: list((stop) => object(stop, {
       head: sha,

@@ -1293,6 +1293,8 @@ shows of the findings ([config](config.md#keys)):
   comment for a security finding still runs.
 - `.aidrian.local.json` may set only `summary: "counts"` and `inline: false`, which post less. Any other key or value
   there, `publicSecurity: "full"` included, is a config error, and the team's value stays.
+- The `pr-review` skill posts no comment of its own, so this summary comment is the one a reader looks at on the pull
+  request. The skill's finding text stays in its manifest and its report in chat.
 
 **What counts as private.** The table reads the repository as private only on an exact `PRIVATE` reading of its
 visibility in that step, for a pull request from inside the team; `INTERNAL`, any other value, and a failed read are not

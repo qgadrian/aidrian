@@ -649,6 +649,8 @@ A project adds its own in `review.reviewers`:
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
+  `aidrian worktree cleanup execute` removes the `review-<PR>/` folder once the pull request is merged or closed
+  ([Local state](project-folder.md#local-state)).
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
 `security` (Codex's schema requires the key, a project's exec reviewer and `--findings-file` may leave it out, and any

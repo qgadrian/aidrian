@@ -1,13 +1,14 @@
 ---
 name: pr-review
-description: Review a GitHub pull request with the right agents, record verdicts in a JSON manifest, and post one comment.
+description: Review a GitHub pull request with the right agents and record verdicts in a JSON manifest. Posts no comment; the engine's summary comment shows the review.
 ---
 
 # pr-review
 
 Review a pull request with the smallest set of agents that covers it.
 Every finding gets a verdict from `aidrian pr disposition` and lands in a JSON manifest that the `pr-review-fix` skill reads.
-The result goes on the pull request as one comment, which later rounds update.
+It posts no comment. On the pull request, a reader looks at the summary comment `aidrian pr review` keeps there;
+the finding text stays in the manifest and the report in chat.
 This skill coordinates; the agents review. It never edits code.
 
 Before you start, follow the `knowledge` skill. Load your `security` docs for the paths that need a security pass,
@@ -16,12 +17,11 @@ and `product_sensitive` docs for the flows the project declares critical.
 ## Arguments
 
 ```text
-[<pull request number or URL>] [--full] [--no-comment]
+[<pull request number or URL>] [--full]
 ```
 
 - Without a number, use the current branch's pull request (`gh pr view --json number,url`). When there is none, stop and ask for one.
 - `--full`: use the larger review plan, even for a small change.
-- `--no-comment`: report in chat only, and post nothing.
 
 ## 1. Scope
 
@@ -87,11 +87,12 @@ The gates run in every plan, on top of the agents in step 4.
 
 - `steps/dispatch.md`: read it before the first dispatch. It holds the brief each agent gets and the regression check.
 - `steps/reconcile-and-publish.md`: read it when the first agent returns.
-  It merges the findings, computes the verdicts, writes the manifest, posts the comment, and closes the review.
+  It merges the findings, computes the verdicts, writes the manifest, reports the round, and closes the review.
 - `references/manifest.md`: read it before the first read or write of the manifest.
 
 ## Do not
 
 - Edit code, commit, or push. The `pr-review-fix` skill fixes findings.
+- Post a comment, review, or reply on the pull request: the engine's summary comment carries the review there.
 - Paste the whole diff into a brief, or let an agent read the working tree instead of the pinned head.
 - Settle a disagreement between two agents yourself, or close a security finding without `security-engineer`.

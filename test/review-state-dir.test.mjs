@@ -1456,11 +1456,13 @@ async function awaitAtCap(t, baseRecord, headRecord, { base = { ref: 'main' } } 
   const body = summaryBody({ ...emptyState(7, 'o/r'), revision: 9, overrides: ['FROM-COMMENT'] }, null, 'x', OPEN);
   r.comments.push({ id: 1, body, user: { login: 'someone' }, author_association: 'MEMBER', created_at: at });
   const reviews = [1, 2, 3].map((id) => ({ id, user: { login: DEFAULT_REVIEWER }, submitted_at: at, commit_id: r.git('rev-parse', 'main'), state: 'COMMENTED' }));
+  // A private repository, and a pull request from inside the team: the comment's copy is built on.
   const forge = {
     ...r.forge,
-    change: () => ({ number: 7 }),
+    visibility: () => 'PRIVATE',
+    change: () => ({ number: 7, isCrossRepository: false }),
     viewer: () => 'someone',
-    pull: () => ({ title: 't', body: 'b', base, head: { sha: r.head, ref: 'feat', repo: { full_name: 'o/r' } } }),
+    pull: () => ({ title: 't', body: 'b', author_association: 'MEMBER', base: base && { ...base, repo: { fork: false } }, head: { sha: r.head, ref: 'feat', repo: { full_name: 'o/r' } } }),
     commit: () => ({ commit: { committer: { date: at } } }),
     reviews: () => reviews,
     reviewComments: () => [],

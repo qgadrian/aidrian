@@ -40,12 +40,14 @@ const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
 // The review threads of one pull request, a page of 100 after the cursor `$after`, as `aidrian review bench` reads them.
 const THREADS_QUERY = 'query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}';
 // The review threads of one pull request with their comments, a page of 100 after the cursor `$after`, as the engine
-// reads the thread of one of its findings (reviewThread) and resolves it (resolveThread). A comment's REST id is its
-// `fullDatabaseId`, a 64-bit integer GitHub answers as a string (`databaseId` is deprecated: it does not hold 64 bits).
+// reads the threads of its findings (findingThreads), and resolves (resolveThread) or unresolves (unresolveThread) one.
+// A comment's REST id is its `fullDatabaseId`, a 64-bit integer GitHub answers as a string (`databaseId` is deprecated:
+// it does not hold 64 bits).
 const FINDING_THREADS_QUERY = 'query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id isResolved comments(first:100){totalCount nodes{fullDatabaseId body authorAssociation author{login}}}}}}}}';
 // The most pages of threads one read walks: 10,000 threads.
 const THREAD_PAGES = 100;
 const RESOLVE_MUTATION = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}';
+const UNRESOLVE_MUTATION = 'mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{isResolved}}}';
 // A comment's `fullDatabaseId` as the REST id the facade uses: a safe integer from digits alone, else null, so a value
 // of any other shape matches no comment and names none.
 const restId = (value) => {
@@ -164,29 +166,52 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
   const list = (route, { host } = {}) => rest(route, { paginate: true, host });
   // Each repository's web address as GitHub answers it (compareUrl), read once.
   const homes = new Map();
-  // The review thread of pull request `n` whose first comment is the review comment `commentId`, as GitHub's GraphQL
-  // node, or null when no thread starts there. Every page is read until it is found; a page that does not answer as
-  // one, and more pages than THREAD_PAGES, throw.
-  const threadAt = (repo, n, commentId) => {
+  // The review threads of pull request `n`, as GitHub's GraphQL nodes, read page by page: with `root`, the one whose first
+  // comment is the review comment `root`, as soon as it is found, or null when none starts there; without, every thread
+  // read, and with `roots`, the ids of root comments, no page past the one where the last of them is found.
+  // A page that does not answer as one, and more pages than THREAD_PAGES, throw.
+  const walkThreads = (repo, n, { root = null, roots = null } = {}) => {
     const number = idOf(n, 'a pull request number');
-    const root = idOf(commentId, 'a comment id');
+    const rootId = root === null ? null : idOf(root, 'a comment id');
+    const wanted = rootId === null && Array.isArray(roots) ? new Set(roots.map((each) => String(idOf(each, 'a comment id')))) : null;
     const [owner, name, ...extra] = String(repo).split('/');
     if (!owner || !name || extra.length) throw new Error('a repository is owner/name');
+    // fullDatabaseId is a BigInt GitHub answers as a string: compared as text, and a null one matches nothing.
+    const rootOf = (thread) => {
+      const full = thread?.comments?.nodes?.[0]?.fullDatabaseId;
+      return typeof full === 'string' || typeof full === 'number' ? String(full) : null;
+    };
+    const all = [];
     let after = null;
     for (let page = 0; page < THREAD_PAGES; page += 1) {
       const answer = json(['api', 'graphql', '-f', `query=${FINDING_THREADS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`, ...(after ? ['-f', `after=${after}`] : [])]);
       const threads = answer?.data?.repository?.pullRequest?.reviewThreads;
       if (!Array.isArray(threads?.nodes)) throw new Error('GitHub answered the review threads with no list');
-      // fullDatabaseId is a BigInt GitHub answers as a string: compared as text, and a null one matches nothing.
-      const found = threads.nodes.find((thread) => {
-        const full = thread?.comments?.nodes?.[0]?.fullDatabaseId;
-        return (typeof full === 'string' || typeof full === 'number') && String(full) === String(root);
-      });
-      if (found) return found;
-      if (threads.pageInfo?.hasNextPage !== true || typeof threads.pageInfo.endCursor !== 'string') return null;
+      if (rootId !== null) {
+        const found = threads.nodes.find((thread) => rootOf(thread) === String(rootId));
+        if (found) return found;
+      } else {
+        all.push(...threads.nodes);
+        for (const thread of threads.nodes) wanted?.delete(rootOf(thread));
+        if (wanted && !wanted.size) return all;
+      }
+      if (threads.pageInfo?.hasNextPage !== true || typeof threads.pageInfo.endCursor !== 'string') return rootId === null ? all : null;
       after = threads.pageInfo.endCursor;
     }
     throw new Error(`pull request #${number} has more than ${THREAD_PAGES * 100} review threads`);
+  };
+  // The thread that review comment `commentId` starts: a missing or malformed id throws, and never reads every thread.
+  const threadAt = (repo, n, commentId) => walkThreads(repo, n, { root: idOf(commentId, 'a comment id') });
+  // One thread node in the facade's shape: { resolved, complete, comments }, its comments in order, each { id, body,
+  // user: { login }, author_association } as the REST reads give a comment; `complete` false when the thread holds more
+  // than the 100 read.
+  const threadShape = (thread) => {
+    const nodes = Array.isArray(thread?.comments?.nodes) ? thread.comments.nodes : [];
+    return {
+      resolved: thread?.isResolved === true,
+      complete: Number.isSafeInteger(thread?.comments?.totalCount) && thread.comments.totalCount <= nodes.length,
+      comments: nodes.map((each) => ({ id: restId(each?.fullDatabaseId), body: typeof each?.body === 'string' ? each.body : '', user: { login: each?.author?.login ?? null }, author_association: each?.authorAssociation ?? null })),
+    };
   };
   return Object.freeze({
     id: 'github',
@@ -267,8 +292,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     deleteComment: (repo, id) => rest(`repos/${repo}/issues/comments/${idOf(id, 'a comment id')}`, { method: 'DELETE', empty: true }),
     // One review of pull request `n`, with its inline comments, as one request: the event is always COMMENT, so a review
     // the engine posts never approves or requests changes, and no option sets another. `comments` are
-    // { path, line, side, body }, `line` on the head `commitId`'s side of the diff. Returns { refused: false, id, comments },
-    // the review's id and its inline comments as GitHub lists them ({ id, body, path, line }, null when that read fails),
+    // { path, line, side, body }, `line` on the head `commitId`'s side of the diff. Returns { refused: false, id, login,
+    // comments }, the review's id, the login GitHub answered it with (null with none), and its inline comments as GitHub
+    // lists them ({ id, body, path, line }, null when that read fails),
     // or { refused: true } when GitHub answers with a 4xx status, such as a line outside the diff. Any other failure
     // throws as gh threw it.
     postReview: (repo, n, { commitId, body, comments = [] } = {}) => {
@@ -292,7 +318,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       try {
         posted = list(`repos/${repo}/pulls/${number}/reviews/${id}/comments`).map((each) => ({ id: each?.id, body: each?.body, path: each?.path, line: each?.line }));
       } catch {}
-      return { refused: false, id, comments: posted };
+      return { refused: false, id, login: typeof review?.user?.login === 'string' ? review.user.login : null, comments: posted };
     },
     // One review comment of pull request `n`, by its id, held to that pull request: one whose `pull_request_url` names any
     // other, or that GitHub does not find (HTTP 404), is null; any other failure throws.
@@ -308,20 +334,11 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       return namesItem(found?.pull_request_url, 'pulls', repo, number) ? found : null;
     },
     deleteReviewComment: (repo, id) => rest(`repos/${repo}/pulls/comments/${idOf(id, 'a comment id')}`, { method: 'DELETE', empty: true }),
-    // The review thread of pull request `n` that review comment `commentId` starts: { resolved, complete, comments }, its
-    // comments in order, the first one `commentId`, each { id, body, user: { login }, author_association } as the REST
-    // reads give a comment; `complete` false when the thread holds more than the 100 read. Null when no thread of the
-    // pull request starts at that comment. A failed read throws.
-    reviewThread: (repo, n, commentId) => {
-      const thread = threadAt(repo, n, commentId);
-      if (!thread) return null;
-      const nodes = Array.isArray(thread.comments?.nodes) ? thread.comments.nodes : [];
-      return {
-        resolved: thread.isResolved === true,
-        complete: Number.isSafeInteger(thread.comments?.totalCount) && thread.comments.totalCount <= nodes.length,
-        comments: nodes.map((each) => ({ id: restId(each?.fullDatabaseId), body: typeof each?.body === 'string' ? each.body : '', user: { login: each?.author?.login ?? null }, author_association: each?.authorAssociation ?? null })),
-      };
-    },
+    // The review threads of pull request `n`, each in the facade's shape (threadShape): { resolved, complete, comments },
+    // the first comment its root. A step reads them once and looks each finding's thread up by its root's id. With
+    // `roots`, the root comment ids the caller looks for, the read stops at the page where the last of them is found;
+    // without, it reads every page. A failed read throws.
+    findingThreads: (repo, n, { roots } = {}) => walkThreads(repo, n, { roots: Array.isArray(roots) ? roots : null }).map(threadShape),
     // A reply in the thread of review comment `commentId` of pull request `n`: one POST, its body a raw -f field, which
     // gh never reads as a file or a boolean. Returns the reply as GitHub answers it, with its `id`.
     replyToReviewComment: (repo, n, commentId, body) => rest(`repos/${repo}/pulls/${idOf(n, 'a pull request number')}/comments/${idOf(commentId, 'a comment id')}/replies`, { method: 'POST', fields: { body: String(body ?? '') } }),
@@ -346,6 +363,18 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const answer = json(['api', 'graphql', '-f', `query=${RESOLVE_MUTATION}`, '-f', `id=${thread.id}`]);
       if (answer?.data?.resolveReviewThread?.thread?.isResolved !== true) throw new Error('GitHub did not resolve the review thread');
       return { resolved: true };
+    },
+    // Unresolves the review thread of pull request `n` that review comment `commentId` starts, found by that comment's id
+    // as resolveThread finds it. Returns { resolved: false } for a thread open, by this call or before; throws when no
+    // thread starts there, when the call fails, or when GitHub does not answer that it is open.
+    unresolveThread: (repo, n, commentId) => {
+      const thread = threadAt(repo, n, commentId);
+      if (!thread) throw new Error('no review thread of the pull request starts at that comment');
+      if (thread.isResolved !== true) return { resolved: false };
+      if (typeof thread.id !== 'string' || !NODE_ID.test(thread.id)) throw new Error('GitHub answered the review thread with no id');
+      const answer = json(['api', 'graphql', '-f', `query=${UNRESOLVE_MUTATION}`, '-f', `id=${thread.id}`]);
+      if (answer?.data?.unresolveReviewThread?.thread?.isResolved !== false) throw new Error('GitHub did not unresolve the review thread');
+      return { resolved: false };
     },
     // The reactions on the pull request itself; `content`, such as `+1`, keeps that one kind, read as the reviews report
     // always has: its paging flags before the route.

@@ -32,7 +32,7 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { branchPolicies, refusingBranches } from '../pr-auto-merge.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
 import { holdToBase } from './in-force.mjs';
-import { postContext } from './dispatch.mjs';
+import { postContext, readReading } from './dispatch.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export const VERDICTS = Object.freeze(['waive', 'refuse']);
@@ -235,8 +235,8 @@ export async function runWaive(args, project, config, deps = {}) {
     } catch {}
   }
   const local = readLocalState(project, opts.pr, repo);
-  const record = readRecord(project, opts.pr, comments, repo);
-  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why));
+  const record = readRecord(project, opts.pr, comments, repo, () => readReading(forge, repo, opts.pr));
+  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why, record.finding));
   const { state } = record;
   state.pending = mergePending(local?.pending, state.pending);
   let current = null;

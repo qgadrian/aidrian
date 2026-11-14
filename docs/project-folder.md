@@ -148,12 +148,21 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 │                         and triage.json, the decision on each finding (personas.md#triage)
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
-├── tmp/                  pull request bodies and review comments that skills draft
+├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
+- `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
+  once the forge reads that pull request as merged or closed: `review-<n>/`, the findings files of `aidrian pr review`,
+  or `review-<n>-<owner>--<name>/` for a pull request of another remote's repository,
+  `pr-<n>-review.md`, and `product-feedback-<n>.md` with `product-feedback-<n>-items.json`.
+  It asks the repository a findings folder names, else the one the pull request's review record names, else the
+  checkout's own, and reads at most 50 pull
+  requests a run, the lowest numbers first. The drafts of an open pull request, or of one whose state the forge cannot
+  give, stay; so do drafts named for a branch, such as `pr-body-<branch>.md`, and scratch folders.
+  The result's `drafts` lists what was `removed`, `kept`, and `failed`.
   Under node's test runner (`NODE_TEST_CONTEXT` set), a state root in the user's home folder, outside the temporary
   folder, is refused with an error, so a test can never write into the developer's own state folder or lesson inbox.
 - `<project-id>` is the repository name and a short hash of its `origin` URL, such as `notes-1a2b3c4d`.
@@ -423,6 +432,7 @@ Empty stdin, other JSON, or a value other than `"delete"` or `"keep"` stops it w
 a path that is not a worktree's folder stops it with nothing removed. `--min-age 0` turns the age guard off, so a worktree made
 minutes ago lands in `auto` when its merged pull request's head is clean; the worktree the session runs in is still skipped.
 Execute still runs `git worktree prune`, which drops only the records of worktree folders already gone.
+Without `--only`, execute also removes the [state folder drafts](#local-state) of merged and closed pull requests.
 They live in `.worktrees/` at the repository root: editors show them beside the code,
 and Claude Code edits them without asking, because they are inside the folder the session opened.
 `"git": { "worktrees": { "dir": "<path>" } }` in config.json moves them; a relative path starts at the repository root,

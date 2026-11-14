@@ -24,7 +24,7 @@ import { givenRepo, repoFlag } from '../remotes.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
-import { postContext } from './dispatch.mjs';
+import { postContext, readReading } from './dispatch.mjs';
 // One reading of a red flag, a full reason or the bare name a posted copy keeps (publish.mjs flagName).
 import { flagName } from './publish.mjs';
 import { isFindingId, twinMatch } from './findings.mjs';
@@ -532,8 +532,8 @@ export async function runExtend(args, project, config, deps = {}) {
       comments = forge.conversationComments(repo, opts.pr);
     } catch {}
   }
-  const record = readRecord(project, opts.pr, comments, repo);
-  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why));
+  const record = readRecord(project, opts.pr, comments, repo, () => readReading(forge, repo, opts.pr));
+  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why, record.finding));
   const { state } = record;
   const env = deps.env ?? process.env;
   let entry;

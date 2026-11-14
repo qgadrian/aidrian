@@ -20,7 +20,7 @@ import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, repoSuffix, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
+import { heldMessage, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, repoSuffix, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
 
 // The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
@@ -237,16 +237,20 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
   const accepted = flags.accepted === undefined ? 0 : /^\d+$/u.test(flags.accepted) ? Number(flags.accepted) : NaN;
   if (Number.isNaN(accepted)) throw new Error('--accepted must be a whole number');
   if (flags.pass === undefined && (flags.accepted !== undefined || flags.verdicts !== undefined)) throw new Error('--accepted and --verdicts need --pass');
-  if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) {
+  // A short --head is recorded as its full SHA: a finding's location check head (`placed`) is set from a full SHA only,
+  // so a short one would leave a moved finding checked at an older head, and dropped (#282).
+  const resolved = SHA.test(flags.head) ? runGit(['rev-parse', '--verify', '--quiet', `${flags.head}^{commit}`], project.root) : null;
+  if (resolved?.status !== 0 || !/^[0-9a-f]{40,64}$/u.test(resolved.stdout.trim())) {
     throw new Error(`--head ${flags.head} is not a commit in this repository`);
   }
+  flags.head = resolved.stdout.trim();
   const repo = prRepo(project, pr, flags.repo, forge);
   const held = await holdToNamedBase(project, config, repo, namedBase(project, pr, repo, forge));
   if (flags.pass !== undefined) {
-    const { recordPass, remoteState } = await import('./review/run.mjs');
+    const { recordPass, remoteReading, remoteState } = await import('./review/run.mjs');
     const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts === '-' ? 0 : flags.verdicts, 'utf8');
     const findingsText = flags['findings-file'] === undefined ? null : readFileSync(flags['findings-file'], 'utf8');
-    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, held) });
+    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr) });
     console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);
     // A verdict with evidence the review cannot check leaves its invariant unverified: say so while the reviewer can still fix it.
     const { citationProblem } = await import('./review/flows.mjs');
@@ -377,7 +381,7 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
   if (flags.evidence && !flags.accept) throw new Error('--evidence goes with --accept');
   if (flags.accept && !(flags.flow && flags.evidence && flags.reason)) throw new Error('--accept needs --flow, --evidence, and --reason');
   if (!flags.accept && (flags.overrule || flags.reason) && !(flags.flow && flags.overrule && flags.reason)) throw new Error('--overrule needs --flow and --reason');
-  const { recordAccept, recordOverrule, recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');
+  const { recordAccept, recordOverrule, recordSignoff, recordStageSignoff, remoteReading, remoteState } = await import('./review/run.mjs');
   // A dry run says what the command would record; a real one says it recorded it.
   const done = (recorded, line) => {
     console.log(dryRun ? `ok: the command would record ${recorded}; --check recorded nothing` : line);
@@ -396,20 +400,21 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     const current = view?.headRefOid ?? null;
     if (typeof current !== 'string' || !SHA.test(current)) throw new Error(`could not read the head of ${repo}#${pr} from the forge: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha>`);
     const remote = remoteState(repo, pr, forge, await holdToNamedBase(project, config, repo, view.baseRefName));
-    const record = readReviewRecord(project, pr, remote ?? [], repo);
-    if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why));
+    const reading = remoteReading(repo, pr, forge);
+    const record = readReviewRecord(project, pr, remote ?? [], repo, reading);
+    if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why, record.finding));
     const other = otherRecordRepo(record.state, repo);
     if (other) throw new Error(otherRecordMessage(pr, other, repo, '--last signs off'));
     const { flow, head } = lastSignoff(record.state, { pr, repo, head: current });
     // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it
     // writes. A record written between the two reads is checked by those refusals, not by lastSignoff's: deciding and
     // writing on one read belongs with run.mjs, which #124 changes.
-    recordSignoff(project, { pr, repo, flow, head, by, remote, dryRun });
+    recordSignoff(project, { pr, repo, flow, head, by, remote, reading, dryRun });
     return done(`${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
   }
   const held = await holdToNamedBase(project, config, repo, namedBase(project, pr, repo, forge));
   if (flags.overrule) {
-    recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, held), dryRun });
+    recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr), dryRun });
     return done(`${by}'s ruling on invariant ${flags.overrule} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s ruling: invariant ${flags.overrule} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the reviewer evidence that it holds. Run \`aidrian pr review\` again.`);
   }
   if (flags.accept) {
@@ -431,14 +436,14 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
       if (engineMarked(found.body)) throw new Error(`--evidence ${url} is a post of the review engine itself (a finding, the review summary, or the product feedback), never outside evidence: cite a person's comment or review`);
       return found.kind;
     };
-    recordAccept(project, { pr, repo, flow: flags.flow, invariant: flags.accept, head: flags.head, by, reason: flags.reason, evidence: flags.evidence, checkEvidence, remote: remoteState(repo, pr, undefined, held), dryRun });
+    recordAccept(project, { pr, repo, flow: flags.flow, invariant: flags.accept, head: flags.head, by, reason: flags.reason, evidence: flags.evidence, checkEvidence, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr), dryRun });
     return done(`${by}'s acceptance of invariant ${flags.accept} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s acceptance: invariant ${flags.accept} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the outside evidence ${flags.evidence}. Run \`aidrian pr review\` again.`);
   }
   if (flags.stage) {
-    recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), dryRun });
+    recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr), dryRun });
     return done(`${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}, in place of the reviewer that ran out of quota. Run \`aidrian pr review\` again.`);
   }
-  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), dryRun });
+  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr), dryRun });
   return done(`${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
 }
 
@@ -563,7 +568,7 @@ async function showIngest({ project, pr, repo, manifest, forge, visual }) {
     }
     const state = readLocalState(project, pr, repo);
     const kept = state?.visual?.head === manifest.head ? state.visual : null;
-    forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null }));
+    forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null, reviewed: Boolean(kept) && visualReviewed(state) }));
     console.log(`updated the captures comment on ${where} with the ingest`);
   } catch (error) {
     console.error(`warning: the captures comment on ${where} was not updated (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); the ingest is recorded`);

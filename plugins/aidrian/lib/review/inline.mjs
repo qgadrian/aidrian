@@ -1,20 +1,14 @@
 // The engine's posts on a pull request's diff (review.publish.inline, docs/review.md#publishing), and what it reads of
 // them back:
 //
-// - Markers (leadingMarkers): every inline comment, review body, and fallback comment the engine posts starts with one
-//   `<!-- aidrian-review-finding:<id> -->` line per finding it holds, then the visible line `aidrian review, finding
-//   <id>` of the first: the fixed layout. Only that layout is read, so a marker line quoted in reviewer text, which the
-//   escaping breaks anyway, is never read as one.
 // - The marked comments (readMarked): the pull request's conversation comments, reviews, and review comments, read once
 //   a step whose record is posted. From them the step raises the id counter past every member's marker (raiseFloor),
 //   lists the engine's comments for pr-review-loop (engineLists), and finds a comment no record maps for the delete.
-// - The delete (deleteOwn): on a repository that does not read as PRIVATE, under either publicSecurity value, the engine's
-//   own inline or fallback comment for a security finding goes, each checked through the forge at the point of action.
 // - The inline review (postInline): one review a step, each new blocking finding on an added line of the diff as its
 //   own thread, the rest in its body, and one conversation comment in its place when the forge refuses it.
-// - The replies (answerThreads): once a finding with a thread closes, one reply on that thread with its outcome, and the
-//   thread resolved when it is the engine's alone.
 //
+// The markers every post starts with are in lib/review/markers.mjs, the delete of the engine's own comment for a
+// security finding in lib/review/delete.mjs, and the replies on a finding's thread in lib/review/replies.mjs.
 // Every forge call goes through the step's forge (lib/forges/index.mjs): no route, status code, or gh message here.
 
 import { isTrustedCommenter, MAX_BODY } from '../forges/index.mjs';
@@ -23,35 +17,14 @@ import { isObject } from '../fs.mjs';
 import { showPrefix } from '../git.mjs';
 import { diffLines } from './diff.mjs';
 import { blocks, FINDING_ID, freshId, isFindingId, severityOf } from './findings.mjs';
-import { capped, escapeLines, LINE_BREAK, plainFence, POST_CAP, quotedLines, replyLines, securityIds, TEXT_CAP, TITLE_CAP, WITHHELD } from './publish.mjs';
+import { attributionLine, entries, idsOf, KINDS, leadingMarkers, mappedPosts, memberMarked, withMarkers } from './markers.mjs';
+import { capped, LINE_BREAK, POST_CAP, securityIds, TEXT_CAP, TITLE_CAP, WITHHELD } from './publish.mjs';
 
-export const FINDING_MARKER = 'aidrian-review-finding';
+export { attributionLine, FINDING_MARKER, leadingMarkers, markerLine } from './markers.mjs';
 // The most inline comments one review holds; the rest are listed in its body and get their thread from a later review.
 export const MAX_THREADS = 25;
-const MARKER_LINE = /^<!-- aidrian-review-finding:(R\d{1,3}-\d{1,6}) -->$/u;
-
-// The marker line of finding `id`, and the visible line that names it after the marker lines.
-export const markerLine = (id) => `<!-- ${FINDING_MARKER}:${id} -->`;
-export const attributionLine = (id) => `aidrian review, finding ${id}`;
-
-// The finding ids a body's leading marker lines name, in the engine's fixed layout: from its first line, each line one
-// marker in the exact format, within the id's digit limits, then the attribution line of the first id. Any other body
-// names none.
-export function leadingMarkers(body) {
-  if (typeof body !== 'string') return [];
-  const lines = body.split('\n');
-  const ids = [];
-  for (const line of lines) {
-    const match = MARKER_LINE.exec(line);
-    if (!match) break;
-    ids.push(match[1]);
-  }
-  return ids.length && lines[ids.length] === attributionLine(ids[0]) ? ids : [];
-}
 
 // ---- The marked comments ----
-
-const KINDS = Object.freeze({ comment: 'comment', review: 'review', reviewComment: 'review_comment' });
 
 // Every conversation comment (`conversation`, as the step read them), review, and review comment of the pull request, as
 // { items }: each { kind, id, login, member, markers, starts }, `starts` false for a review comment that replies in a
@@ -80,9 +53,6 @@ export function readMarked(forge, repo, n, conversation) {
   return { items };
 }
 
-// The marked items of a member of the repository: the only ones the engine reads as its own posts.
-const memberMarked = (items) => (items ?? []).filter((item) => item.member && item.markers.length);
-
 // Raises `state`'s id counter past the highest id among the markers of members' posts (R4), so an id restarted or lost
 // with a record is never minted again. Returns the highest marker number, 0 with none.
 export function raiseFloor(state, items) {
@@ -90,27 +60,6 @@ export function raiseFloor(state, items) {
   const counter = Number.isSafeInteger(state.idCounter) && state.idCounter > 0 ? state.idCounter : 0;
   if (highest > counter) state.idCounter = highest;
   return highest;
-}
-
-// Every id a finding answers to: its own, then its aliases.
-const idsOf = (entry) => [entry?.id, ...(Array.isArray(entry?.aliases) ? entry.aliases : [])].filter(isFindingId);
-const entries = (state) => Object.values(isObject(state?.index) ? state.index : {}).filter((entry) => isObject(entry) && isFindingId(entry.id));
-// The posts the index maps, by `<kind>:<id>`, each with the finding ids posted there.
-function mappedPosts(state) {
-  const out = new Map();
-  const add = (kind, id, entry) => {
-    if (!Number.isSafeInteger(id)) return;
-    const key = `${kind}:${id}`;
-    out.set(key, new Set([...(out.get(key) ?? []), ...idsOf(entry)]));
-  };
-  for (const entry of entries(state)) {
-    const thread = isObject(entry.thread) ? entry.thread : {};
-    add(KINDS.reviewComment, thread.commentId, entry);
-    add(KINDS.reviewComment, thread.replyId, entry);
-    add(KINDS.comment, thread.fallbackId, entry);
-    add(KINDS.review, thread.reviewId, entry);
-  }
-  return out;
 }
 
 // The two lists of the engine's posts a step returns (R7, G3), from the marked items of members: `engine_comments`, each
@@ -141,173 +90,6 @@ export function fillThreads(state, items) {
     filled.push(entry.id);
   }
   return filled;
-}
-
-// ---- The delete ----
-
-const sameLogin = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
-
-// Takes comment `id` of `kind` out of every entry's thread that maps it, a thread's root or the engine's reply in it, and
-// an emptied thread off its entry: a deleted fallback comment's other findings then read as unposted, and a later step
-// posts them again. A deleted reply keeps `replied`, so no step posts it again.
-function unmap(state, kind, id) {
-  const keys = kind === KINDS.reviewComment ? ['commentId', 'replyId'] : ['fallbackId'];
-  for (const entry of entries(state)) {
-    if (!isObject(entry.thread)) continue;
-    for (const key of keys) if (entry.thread[key] === id) delete entry.thread[key];
-    if (!Object.keys(entry.thread).length) delete entry.thread;
-  }
-}
-
-// Deletes the engine's own inline comment, its reply in that thread, or its fallback comment of each security-marked id
-// of `state` (G4, H1, J2, K2), on a repository that does not read as PRIVATE, under either publicSecurity value,
-// whatever review.publish.inline, the local file, and review.record say: a delete removes and never posts. Under
-// "counts" every such comment goes, since even one with its text withheld shows the finding's place. Under "full" a place may show, so a comment whose section of
-// that finding holds no reviewer text, as postInline posts a security finding there, is spared and listed as
-// `textless`; one posted with its text before the mark goes. `mode` is "posted" (the record is on the pull request),
-// "local" (review.record "local": the comments the record maps alone), or "held" (a held record: this machine's own
-// record alone, and no change to it, since no record is written there). `items` is readMarked's, null when it failed or
-// was not made. `done` holds the comments, as `<kind>:<id>`, an earlier sweep of the same step settled whichever ids
-// are security (handledKeys): none of them is read or listed again. `readVisibility` reads the repository's visibility, by default
-// through the forge; a step passes one that keeps its first answer, so its second sweep reads it no second time.
-// Candidates: each comment the record maps to such an id, the reply first, then the root, then the fallback comment, less
-// one a whole read (`items`) no longer holds, which is gone and gets no call; and where the record is posted, each review
-// comment, a thread's root or a reply in it, or conversation comment the forge's current user wrote whose leading markers
-// name such an id or alias, though no record maps it, so a reply whose mark a stale write lost still goes. With no
-// candidate, no forge call. Else the visibility and the current user are read, and each candidate is read by its own id
-// in its own kind, held to the pull request, and deleted only when the current user wrote it and its body starts with
-// that id's marker in the fixed layout. One another member wrote is left and listed as waiting on that login's machine;
-// any other, and a read that fails, deletes nothing and is listed as left. A delete that works takes its id out of every
-// entry's thread (unmap); one that fails is listed, and the next step tries again. A deleted comment, and a gone one,
-// leave `items` too, so the rest of the step reads neither: no fresh id for its markers, and no list names it.
-// Returns null when nothing was a candidate, else { deleted, waiting, left, failed, gone, textless, unmapped_unread }, each
-// list of { finding, kind, id } (`login` on a waiting one).
-export function deleteOwn({ forge, repo, n, state, items, mode, publicSecurity = 'counts', done = null, readVisibility = () => forge.visibility(repo) }) {
-  if (!isObject(state)) return null;
-  const secure = securityIds(state);
-  if (!secure.size) return null;
-  const held = mode === 'held';
-  const whole = mode !== 'local' && Array.isArray(items);
-  const present = new Set((whole ? items : []).map((item) => `${item.kind}:${item.id}`));
-  const out = { deleted: [], waiting: [], left: [], failed: [], gone: [], textless: [] };
-  // Takes a deleted or gone comment out of the step's read of the marked posts.
-  const drop = (kind, id) => {
-    if (!Array.isArray(items)) return;
-    const at = items.findIndex((item) => item.kind === kind && item.id === id);
-    if (at !== -1) items.splice(at, 1);
-  };
-  const candidates = [];
-  for (const entry of entries(state)) {
-    if (!idsOf(entry).some((id) => secure.has(id)) || !isObject(entry.thread)) continue;
-    for (const [kind, id] of [[KINDS.reviewComment, entry.thread.replyId], [KINDS.reviewComment, entry.thread.commentId], [KINDS.comment, entry.thread.fallbackId]]) {
-      if (!Number.isSafeInteger(id) || done?.has(`${kind}:${id}`)) continue;
-      if (whole && !present.has(`${kind}:${id}`)) {
-        out.gone.push({ finding: entry.id, kind, id });
-        drop(kind, id);
-        if (!held) unmap(state, kind, id);
-        continue;
-      }
-      candidates.push({ finding: entry.id, ids: idsOf(entry), kind, id });
-    }
-  }
-  const mapped = mappedPosts(state);
-  const unmapped = mode === 'posted' && whole ? memberMarked(items).filter((item) => item.kind !== KINDS.review
-    && !mapped.has(`${item.kind}:${item.id}`) && !done?.has(`${item.kind}:${item.id}`) && item.markers.some((id) => secure.has(id))) : [];
-  if (mode === 'posted' && !whole) out.unmapped_unread = true;
-  if (!candidates.length && !unmapped.length) return out.gone.length || out.unmapped_unread ? out : null;
-
-  let visibility = null;
-  try {
-    visibility = readVisibility();
-  } catch {}
-  if (visibility === 'PRIVATE') return out.gone.length || out.unmapped_unread ? out : null;
-  let viewer = null;
-  try {
-    viewer = forge.viewer();
-  } catch {}
-  for (const item of unmapped) {
-    const finding = item.markers.find((id) => secure.has(id));
-    if (sameLogin(item.login, viewer)) candidates.push({ finding, ids: item.markers.filter((id) => secure.has(id)), kind: item.kind, id: item.id });
-    else out.waiting.push({ finding, kind: item.kind, id: item.id, login: item.login });
-  }
-  for (const candidate of candidates) {
-    const { finding, kind, id } = candidate;
-    let comment = null;
-    try {
-      comment = kind === KINDS.reviewComment ? forge.reviewComment(repo, n, id) : forge.comment(repo, id, { pr: n });
-    } catch {}
-    const marked = isObject(comment) && leadingMarkers(comment.body).some((each) => candidate.ids.includes(each));
-    if (!marked) {
-      out.left.push({ finding, kind, id });
-      continue;
-    }
-    if (!sameLogin(comment.user?.login, viewer)) {
-      if (isTrustedCommenter(comment)) out.waiting.push({ finding, kind, id, login: comment.user?.login ?? null });
-      else out.left.push({ finding, kind, id });
-      continue;
-    }
-    if (publicSecurity === 'full' && !holdsText(comment.body, candidate.ids)) {
-      out.textless.push({ finding, kind, id });
-      continue;
-    }
-    try {
-      if (kind === KINDS.reviewComment) forge.deleteReviewComment(repo, id);
-      else forge.deleteComment(repo, id);
-    } catch {
-      out.failed.push({ finding, kind, id });
-      continue;
-    }
-    out.deleted.push({ finding, kind, id });
-    drop(kind, id);
-    if (!held) unmap(state, kind, id);
-  }
-  return out;
-}
-
-// The lists a delete result holds, each of { finding, kind, id }.
-const DELETE_LISTS = ['deleted', 'waiting', 'left', 'failed', 'gone', 'textless'];
-
-// The lists whose comments a sweep settled whichever ids are security: deleted, gone, one whose delete failed (the next
-// step tries again), and another member's. A comment spared as `textless`, or `left`, was judged against the ids that
-// were security then: a mark the step sets later may name another finding it holds, so a later sweep reads it again.
-const SETTLED_LISTS = ['deleted', 'gone', 'failed', 'waiting'];
-
-// The comments a delete result settled, as `<kind>:<id>`: what a later sweep of the same step passes as `done`.
-export const handledKeys = (out) => new Set(SETTLED_LISTS.flatMap((key) => (Array.isArray(out?.[key]) ? out[key] : [])).map((each) => `${each.kind}:${each.id}`));
-
-// Two delete results of one step as one, `b` the later: each list joined, and `unmapped_unread` when either says so.
-// Null when both are. A comment the later sweep lists counts as it says there, so one textless or left in the first
-// and deleted in the second is listed as deleted alone; and a list names a comment once for each finding.
-export function mergeDeletes(a, b) {
-  if (!a || !b) return a ?? b ?? null;
-  const key = (each) => `${each.kind}:${each.id}`;
-  const later = new Set(DELETE_LISTS.flatMap((name) => (b[name] ?? []).map(key)));
-  const deleted = new Set([...(a.deleted ?? []), ...(b.deleted ?? [])].map(key));
-  const out = Object.fromEntries(DELETE_LISTS.map((name) => {
-    const seen = new Set();
-    const joined = [...(a[name] ?? []).filter((each) => !later.has(key(each))), ...(b[name] ?? [])]
-      .filter((each) => name === 'deleted' || !deleted.has(key(each)))
-      .filter((each) => !seen.has(`${key(each)}:${each.finding}`) && seen.add(`${key(each)}:${each.finding}`));
-    return [name, joined];
-  }));
-  return a.unmapped_unread || b.unmapped_unread ? { ...out, unmapped_unread: true } : out;
-}
-
-// A line that is exactly the attribution line of some finding id: the only line that ends a finding's section.
-const ATTRIBUTION = /^aidrian review, finding R\d{1,3}-\d{1,6}$/u;
-
-// Whether a post's section of any of `ids` holds reviewer text: a quoted line between that finding's attribution line and
-// the next line that is exactly an attribution line. A post with no such section for them counts as holding text, so it
-// is never spared by mistake. No engine line can forge a boundary: reviewer text is quoted, and a path that holds a line
-// break is never printed (postInline).
-function holdsText(body, ids) {
-  const lines = String(body ?? '').split('\n');
-  const starts = lines.flatMap((line, at) => (ids.some((id) => line === attributionLine(id)) ? [at] : []));
-  if (!starts.length) return true;
-  return starts.some((start) => {
-    const end = lines.findIndex((line, at) => at > start && ATTRIBUTION.test(line));
-    return lines.slice(start + 1, end === -1 ? lines.length : end).some((line) => line.startsWith('>'));
-  });
 }
 
 // ---- The inline review ----
@@ -356,13 +138,6 @@ function section({ id, severity, place, title, body, withheld }) {
   if (cut) lines.push({ text: `_${cut} more ${cut === 1 ? 'character' : 'characters'} not shown._` });
   return lines;
 }
-
-// The lines a post shows: every line escaped, no line exempt (R3), reviewer text quoted after it is escaped (G7), and
-// every fence opener of every line a plain fence unless its info string is a plain language name.
-const rendered = (lines) => lines.flatMap((line) => (line.quoted ? quotedLines(line.text) : escapeLines(String(line.text).split(LINE_BREAK)))).map(plainFence);
-
-// One post's body: the leading marker lines of `ids`, added after the escaping, then `lines` rendered.
-const withMarkers = (ids, lines) => [...ids.map(markerLine), ...rendered(lines)].join('\n');
 
 // The most ids one line of a post lists; the rest are counted. A list of leftover findings is bounded on its own, so it
 // never crowds every section out of a body: ids only (each at most R999-999999), no location, at most MAX_LISTED.
@@ -486,6 +261,8 @@ export function postInline(s, open) {
   }
   if (answer?.refused === true) return fallback(s, { result, sent, bodyIds, inBody, full });
   const reviewId = answer.id;
+  // The step's lists name the new posts with the login the forge answered the post with, as a later step reads it.
+  const login = typeof answer.login === 'string' ? answer.login : null;
   // When the read of the review's comments fails, an inline comment's entry keeps the review's id alone, and reads as
   // posted in the body: it is never posted twice. A later step maps its comment by its marker (fillThreads).
   const byMarker = new Map((Array.isArray(answer.comments) ? answer.comments : []).filter((each) => Number.isSafeInteger(each?.id))
@@ -493,10 +270,10 @@ export function postInline(s, open) {
   for (const { part } of sent) {
     const commentId = byMarker.get(part.id);
     part.entry.thread = { reviewId, ...(Number.isSafeInteger(commentId) ? { commentId } : {}) };
-    if (Number.isSafeInteger(commentId)) s.marked.items.push({ kind: KINDS.reviewComment, id: commentId, login: null, member: true, markers: [part.id], starts: true });
+    if (Number.isSafeInteger(commentId)) s.marked.items.push({ kind: KINDS.reviewComment, id: commentId, login, member: true, markers: [part.id], starts: true });
   }
   for (const id of bodyIds) state.index[id].thread = { reviewId };
-  s.marked.items.push({ kind: KINDS.review, id: reviewId, login: null, member: true, markers: review.ids, starts: true });
+  s.marked.items.push({ kind: KINDS.review, id: reviewId, login, member: true, markers: review.ids, starts: true });
   return { ...result, posted: true, review_id: reviewId, threads: sent.map((comment) => comment.part.id), in_body: bodyIds };
 }
 
@@ -516,166 +293,6 @@ function fallback(s, { result, sent, bodyIds, inBody, full }) {
   const fallbackId = answer?.id;
   if (!Number.isSafeInteger(fallbackId)) return { ...refused, unposted: comment.ids, error: 'the forge answered the fallback comment with no id' };
   for (const id of comment.ids) state.index[id].thread = { fallbackId };
-  s.marked.items.push({ kind: KINDS.comment, id: fallbackId, login: null, member: true, markers: comment.ids, starts: true });
+  s.marked.items.push({ kind: KINDS.comment, id: fallbackId, login: typeof answer?.user?.login === 'string' ? answer.user.login : null, member: true, markers: comment.ids, starts: true });
   return { ...refused, posted: true, fallback_comment: fallbackId, in_body: comment.ids };
-}
-
-// ---- The replies ----
-
-// The states a finding's thread is answered in: closed as fixed or not reported again, or accepted.
-// SHORTCUT: an accepted finding can open again (findings.mjs entryState); only fixed and not_reported are final. Its
-// thread keeps the reply `Accepted as <disposition>.` and stays resolved, and when it later closes as fixed or not
-// reported again, no second reply is posted: `replied` and `resolved` never clear. That is enough for now because the
-// summary's findings table, the step's open list, and the merge guard still show the finding open. The fix, a reply
-// per outcome and an unresolve when the finding opens again, changes the marks' shape and adds a forge write, so it
-// waits for its own plan revision (#287).
-const ANSWERED = new Set(['fixed', 'not_reported', 'accepted']);
-// The lists of a step's delete (deleteOwn) whose findings get no reply: a comment it deleted, or one it meant to and did
-// not, which holds what may be a security finding's text (G4).
-const UNDELETED = ['deleted', 'waiting', 'left', 'failed'];
-
-// Answers the thread of each closed finding (review.publish.replies, with inline on): one reply, the marker line and the
-// attribution line, then `Fixed in <compare link>.`, `Not reported again in <compare link>.`, or `Accepted as
-// <disposition>.` (publish.mjs replyLines), checked by the text checks and escaped as every post is (R3), and no
-// reviewer text. Then the thread is resolved, when nobody else has replied in it (R8). `s` is the step context, with
-// `deletes`, the step's deleteOwn result. Records on the entry's thread `replied` and the reply's `replyId`, and
-// `resolved`, each only once its own forge call succeeded (A5), and adds the reply to the step's read of the marked posts.
-// - A finding is answered while its thread holds a root comment id and lacks either mark, on every step, so one a
-//   step could not answer is tried again by the next. A security finding the reading does not show (the projection's
-//   securityIds) gets no reply, nor one the delete named (G4).
-// - Before a reply, its thread is read through the forge. A reply goes only to a thread whose root is that same comment,
-//   written by the forge's current user, whose leading markers name the finding's id. One another member wrote is not
-//   this machine's to answer (Q2-A5): it is listed in `waiting` with the root's login as the forge returned it, and the
-//   record keeps no login. Any other root, and a thread whose root the step's read of the review comments no longer
-//   holds, gets nothing and is listed in `left`, which nothing acts on. A thread the read finds none for, though that
-//   read still holds its root, was missed, and is unanswered. A reply the current user posted earlier with the
-//   finding's marker counts as the reply, so a mark a stale write lost never posts a second.
-// - A thread anyone else replied in, the current user without the marker included, stays open, and counts as done:
-//   listed in `open`. One already resolved counts as resolved.
-// Returns null when no finding is due, else { replied, resolved, open, waiting, left, unanswered }: the ids replied to and
-// resolved on this step, those left open, those waiting on another machine ({ finding, login }), those not this
-// machine's, and the ids still unanswered, which the next step tries again, with `reasons` by id (`error` says why when
-// none could be tried).
-export function answerThreads(s) {
-  const { forge, repo, n, state } = s;
-  const context = s.post();
-  if (context.publish?.inline !== true || context.publish?.replies !== true) return null;
-  const shown = context.reading?.visibility === 'PRIVATE' || context.publish?.publicSecurity === 'full';
-  const secure = shown ? new Set() : securityIds(state);
-  const undeleted = new Set(UNDELETED.flatMap((key) => (Array.isArray(s.deletes?.[key]) ? s.deletes[key] : [])).map((each) => each.finding));
-  const due = entries(state).filter((entry) => ANSWERED.has(entry.state) && isObject(entry.thread) && Number.isSafeInteger(entry.thread.commentId)
-    && !(entry.thread.replied === true && entry.thread.resolved === true) && !idsOf(entry).some((id) => secure.has(id) || undeleted.has(id)));
-  if (!due.length) return null;
-  const out = { replied: [], resolved: [], open: [], waiting: [], left: [], unanswered: [] };
-  // Why each unanswered id is: the step's result says so, by id.
-  const reasons = {};
-  const miss = (id, reason) => {
-    out.unanswered.push(id);
-    reasons[id] = reason;
-  };
-  // Whether the step's own read of the pull request's review comments still holds the comment `id`: a thread read that
-  // finds no thread there missed it, and is tried again. With no such read, the step cannot tell, and tries again too.
-  const held = (id) => !Array.isArray(s.marked?.items) || s.marked.items.some((item) => item.kind === KINDS.reviewComment && item.id === id);
-  let viewer = null;
-  try {
-    viewer = forge.viewer();
-  } catch {}
-  if (typeof viewer !== 'string' || viewer === '') {
-    const error = 'the forge\'s current user could not be read';
-    for (const entry of due) miss(entry.id, error);
-    return { ...out, reasons, error };
-  }
-  // A reply's check withholds nothing the record holds: the flag the summary reads stays as it was.
-  const failedBefore = context.checker.failed;
-  for (const entry of due) {
-    const { id, thread } = entry;
-    let read;
-    try {
-      read = forge.reviewThread(repo, n, thread.commentId);
-    } catch {
-      miss(id, 'the thread could not be read');
-      continue;
-    }
-    // A root the step's read of the review comments no longer holds is gone: nothing is left to answer. One it still
-    // holds is a thread the lookup missed.
-    if (read === null) {
-      if (held(thread.commentId)) miss(id, 'no thread was found at its comment, which the pull request still holds');
-      else out.left.push(id);
-      continue;
-    }
-    if (!isObject(read) || !Array.isArray(read.comments) || read.complete !== true) {
-      miss(id, 'the thread was read only in part');
-      continue;
-    }
-    const [root, ...rest] = read.comments;
-    if (!isObject(root) || root.id !== thread.commentId || !leadingMarkers(root.body).includes(id)) {
-      out.left.push(id);
-      continue;
-    }
-    if (!sameLogin(root.user?.login, viewer)) {
-      if (isTrustedCommenter(root)) out.waiting.push({ finding: id, login: typeof root.user?.login === 'string' ? root.user.login : null });
-      else out.left.push(id);
-      continue;
-    }
-    const ours = (comment) => isObject(comment) && sameLogin(comment.user?.login, viewer) && leadingMarkers(comment.body).includes(id);
-    if (thread.replied !== true) {
-      const earlier = rest.find((comment) => ours(comment) && Number.isSafeInteger(comment.id));
-      if (earlier) Object.assign(thread, { replied: true, replyId: earlier.id });
-      else {
-        const body = replyLines(entry, context.compareUrl).map((line) => ({ raw: [markerLine(id), attributionLine(id), line].join('\n'), line }))
-          .find((each) => context.checker.allows(each.raw));
-        if (!body) {
-          miss(id, 'the text checks withheld every form of the reply');
-          continue;
-        }
-        let answer;
-        try {
-          answer = forge.replyToReviewComment(repo, n, thread.commentId, withMarkers([id], [{ text: attributionLine(id) }, { text: body.line }]));
-        } catch {
-          miss(id, 'the reply failed');
-          continue;
-        }
-        // A reply the forge answered with no id is not marked: the next step finds it on the thread, with its id, as an
-        // earlier reply, so it is never left unmapped.
-        if (!Number.isSafeInteger(answer?.id)) {
-          miss(id, 'the forge answered the reply with no id');
-          continue;
-        }
-        Object.assign(thread, { replied: true, replyId: answer.id });
-        s.marked?.items?.push({ kind: KINDS.reviewComment, id: answer.id, login: viewer, member: true, markers: [id], starts: false, review: null });
-        out.replied.push(id);
-      }
-    }
-    if (thread.resolved === true) continue;
-    if (read.resolved === true) {
-      thread.resolved = true;
-      continue;
-    }
-    if (rest.some((comment) => !ours(comment))) {
-      out.open.push(id);
-      continue;
-    }
-    // The forge reads the thread again just before it resolves it, and resolves nothing when a comment other than the
-    // root and this user's marked replies landed since this step's read: that thread stays open, as one replied in (R8).
-    const only = [thread.commentId, ...rest.filter(ours).map((comment) => comment.id), thread.replyId].filter(Number.isSafeInteger);
-    let resolved;
-    try {
-      resolved = forge.resolveThread(repo, n, thread.commentId, { only: [...new Set(only)] });
-    } catch {
-      miss(id, 'the resolve failed');
-      continue;
-    }
-    if (resolved?.others === true) {
-      out.open.push(id);
-      continue;
-    }
-    if (resolved?.resolved !== true) {
-      miss(id, 'the forge did not answer that the thread is resolved');
-      continue;
-    }
-    thread.resolved = true;
-    out.resolved.push(id);
-  }
-  if ('failed' in context.checker) context.checker.failed = failedBefore;
-  return Object.keys(reasons).length ? { ...out, reasons } : out;
 }

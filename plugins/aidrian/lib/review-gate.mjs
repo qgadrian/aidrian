@@ -537,7 +537,7 @@ async function showIngest({ project, pr, repo, manifest, forge, visual }) {
       console.log(`the captures comment of ${sha} came from another machine's capture: this ingest counts only on this machine; ingest the same images on the machine that captured the head to show them on the pull request`);
       return;
     }
-    const state = readLocalState(project, pr);
+    const state = readLocalState(project, pr, repo);
     const kept = state?.visual?.head === manifest.head ? state.visual : null;
     forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null }));
     console.log(`updated the captures comment on ${where} with the ingest`);

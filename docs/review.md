@@ -327,9 +327,13 @@ In such a checkout every command the review step prints names the repository the
 and `settle` of each `next`, the `accept` of a deleted flow test, and the `then` of `extension_ask`, the rerun of
 `aidrian pr review` or `aidrian pr await-review --request`. So the session runs a printed command as it is once the
 Human answers; with one repository among the remotes, none of them carries `--repo`.
-This machine keeps one review record a pull request number, so such a checkout may hold another repository's record of
-the same number: a sign-off or attest on `--repo` refuses it, naming the repository it is for, as `--last` does, and the
-review step leaves it out and builds from the pull request's own record.
+This machine keeps one review record a repository and pull request number, in the state folder's `reviews/`:
+`pr-<N>-review.json` for origin's repository (and in a checkout with no origin), and `pr-<N>-review-<owner>--<name>.json`
+for any other, so one checkout reviews `a/b#12` and `c/d#12` apart. A repository with no file of its own yet reads the
+old name, which holds origin's record or one written before the key changed, and its next write moves its own record
+to its file. A record there that names another repository is refused by a sign-off or attest on `--repo`, naming the
+repository it is for, as `--last` does, and the review step leaves it out and builds from the pull request's own record.
+A reader that names no repository, such as a merge with no `-R`, reads the newest record of that number.
 
 #### Unattended rulings
 

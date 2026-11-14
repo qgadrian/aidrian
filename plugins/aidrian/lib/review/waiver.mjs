@@ -234,7 +234,7 @@ export async function runWaive(args, project, config, deps = {}) {
       comments = forge.conversationComments(repo, opts.pr);
     } catch {}
   }
-  const local = readLocalState(project, opts.pr);
+  const local = readLocalState(project, opts.pr, repo);
   const record = readRecord(project, opts.pr, comments, repo);
   if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why));
   const { state } = record;
@@ -252,7 +252,7 @@ export async function runWaive(args, project, config, deps = {}) {
   const entry = { head: current, kind, verdict: opts.verdict, reason: opts.reason, judge: sessionIdentity(env).agent ?? 'unknown', at: new Date().toISOString() };
   state.waivers = [...(Array.isArray(state.waivers) ? state.waivers : []), entry];
   // A request or a review step written since the read would be lost under this write: refused, and nothing written.
-  const again = readLocalState(project, opts.pr);
+  const again = readLocalState(project, opts.pr, repo);
   if ((again?.revision ?? null) !== (local?.revision ?? null)) throw new Error(`the review record of #${opts.pr} changed while the verdict was recorded: run again`);
   writeLocalState(project, state);
   const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `waiver ${opts.verdict}`, postContext({ forge, repo, n: opts.pr, project, configs: [committed, config], env: deps.env ?? process.env })) : null;

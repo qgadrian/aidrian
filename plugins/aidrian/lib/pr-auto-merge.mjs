@@ -458,7 +458,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
         }
       };
       const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree };
-      const problem = changesRequested(pr) ?? reviewProblem(scoped(readLocalState(project, pr.number), project, pr.repo), pr.head, unreviewed);
+      const problem = changesRequested(pr) ?? reviewProblem(scoped(readLocalState(project, pr.number, pr.repo), project, pr.repo), pr.head, unreviewed);
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
     }

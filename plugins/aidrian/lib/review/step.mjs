@@ -145,7 +145,7 @@ export async function prepareStep(s) {
   const record = readRecord(project, n, comments, repo, { ignoreOther: true });
   if (record.held !== undefined) {
     // From this machine's own record alone, and no write: every write raises the revision the hold compares.
-    s.deletes = sweep(readLocalState(project, n), 'held');
+    s.deletes = sweep(readLocalState(project, n, repo), 'held');
     return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held, record.why), held: record.held, retry_recommended: false };
   }
   // An inline comment an earlier step could not read back holds its review's id alone: its comment id is filled in from
@@ -156,7 +156,7 @@ export async function prepareStep(s) {
   // no reviewer here can judge a fix of it. The step stops before it adopts the record or runs a reviewer, and this
   // machine's own record notes the stop, so its merge guard keeps refusing the head. The review goes on on the machine
   // that recorded the finding, or restarts as a held record does.
-  const untexted = untextedBlocking(record.state, readLocalState(project, n));
+  const untexted = untextedBlocking(record.state, readLocalState(project, n, repo));
   if (untexted) {
     const reason = `the review record of #${n} holds the open finding ${untexted}, whose text is on the machine that recorded it: continue the review on that machine. If that machine is gone, the Human deletes the review summary comment of #${n} and this machine's record file ${recordFile(project, n)}; the review then restarts from round 1`;
     noteLocalOutcome(project, n, repo, { status: 'incomplete', head, reason });

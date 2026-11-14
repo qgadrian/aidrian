@@ -241,7 +241,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const held = (base) => heldReason({ project, pr, repo, base, deadline: startedAt + WAIVER_DEADLINE_MS, now });
   const before = pr === null ? null : held(null);
   if (before) return before;
-  let state = pr === null ? null : scoped(readLocalState(project, pr), project, repo);
+  let state = pr === null ? null : scoped(readLocalState(project, pr, repo), project, repo);
   if (pr !== null && !guards(state)) return null;
   let view = null;
   if (pr === null || head === null) {
@@ -254,7 +254,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
     if (denied) return denied;
     if (pr === null) {
       pr = view.number;
-      state = scoped(readLocalState(project, pr), project, repo);
+      state = scoped(readLocalState(project, pr, repo), project, repo);
       if (!guards(state)) return null;
     }
     head ??= view.headRefOid;

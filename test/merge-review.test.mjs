@@ -13,7 +13,7 @@ import { runAttest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
 import { recordPass, recordSignoff, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
-import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { waitingRoute } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
@@ -789,7 +789,9 @@ test('a review step leaves another repository`s gate review owed', async (t) => 
   recordPending(f.project, { pr: 9, repo: 'upstream/notes', kind: 'review', head: f.head, by: 't' });
   recordPending(f.project, { pr: 9, repo: 'acme/notes', kind: 'review', head: f.head, by: 't' });
   assert.equal((await f.step({ exec: clean })).status, 'received');
-  assert.deepEqual(readLocalState(f.project, 9).pending.map((entry) => [entry.repo, Boolean(entry.answered)]), [['upstream/notes', false], ['acme/notes', true]]);
+  // Each repository keeps its own record (#305): the upstream's entry stays owed in its own.
+  const owed = (repoOf) => readLocalState(f.project, 9, repoOf).pending.map((entry) => [entry.repo, Boolean(entry.answered)]);
+  assert.deepEqual([owed('upstream/notes'), owed('acme/notes')], [[['upstream/notes', false]], [['acme/notes', true]]]);
 });
 
 test('a gh api merge whose number, repository, or method the rule cannot read is refused', (t) => {
@@ -879,9 +881,11 @@ test('a long-form sign-off on one repository refuses this machine`s record of th
   const quiet = console.log;
   console.log = () => {};
   t.after(() => (console.log = quiet));
+  // A record of qg/voila#9 left under the old file name, origin's, before the record was keyed by repository (#305).
   const other = emptyState(9, 'qg/voila');
   noteOutcome(other, { status: 'human_required', head: r.commit }, () => false, 'qg/voila');
-  writeLocalState(r.project, other);
+  mkdirSync(path.dirname(recordFile(r.project, 9)), { recursive: true });
+  writeFileSync(recordFile(r.project, 9), JSON.stringify({ ...other, revision: 1 }));
   const forge = viewing(() => ({ url: 'https://github.com/acme/notes/pull/9', baseRefName: 'main' }));
   await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }),
     /the review record of #9 is for qg\/voila, not acme\/notes: this command records on the pull request that record names\. Give --repo qg\/voila/u);

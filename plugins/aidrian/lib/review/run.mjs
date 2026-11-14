@@ -70,7 +70,7 @@ export async function reviewStep(opts, deps = {}) {
     return await stepOnce(opts, deps, run);
   } catch (error) {
     if (run.pr !== null) {
-      const state = readLocalState(deps.project, run.pr) ?? emptyState(run.pr, run.repo);
+      const state = readLocalState(deps.project, run.pr, run.repo) ?? emptyState(run.pr, run.repo);
       writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }));
     }
     throw error;
@@ -156,7 +156,7 @@ function quotaStop(s, pass, stage, reason, extra = {}) {
 // publishes the record to the pull request.
 function settle({ project, root, repo, n, state }, result) {
   // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
-  state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+  state.pending = mergePending(readLocalState(project, n, repo)?.pending, state.pending);
   noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
   writeLocalState(project, state);
   return result;
@@ -167,7 +167,7 @@ function settle({ project, root, repo, n, state }, result) {
 function answerRequests({ project, root, repo, n, state, passes, map, resultFor }) {
   const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
   if (!answers.length) return;
-  state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+  state.pending = mergePending(readLocalState(project, n, repo)?.pending, state.pending);
   for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
 }
 

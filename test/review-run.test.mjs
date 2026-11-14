@@ -3217,9 +3217,11 @@ test('the review step on one repository ignores this machine`s record of the sam
   const control = repo(t, { change: (write) => write('src/app.js', 'b\n') });
   const fresh = await control.step({ exec: clean });
   const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  // Left under the old file name, origin's, before the record was keyed by repository (#305).
   const other = emptyState(7, 'qg/voila');
   other.rounds = [{ head: 'a'.repeat(40) }, { head: 'b'.repeat(40) }, { head: 'c'.repeat(40) }];
-  writeLocalState(r.project, other);
+  mkdirSync(path.dirname(recordFile(r.project, 7)), { recursive: true });
+  writeFileSync(recordFile(r.project, 7), JSON.stringify({ ...other, revision: 1 }));
   const step = await r.step({ exec: clean });
   assert.equal(step.repo, 'o/r');
   assert.equal(step.round, fresh.round, 'the rounds of qg/voila#7 do not count on o/r#7');

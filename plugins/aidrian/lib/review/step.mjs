@@ -15,6 +15,7 @@ import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
+import { repoFlag } from '../remotes.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
 import { deleteOwn, handledKeys } from './delete.mjs';
 import { mappedPosts } from './markers.mjs';
@@ -92,8 +93,11 @@ export async function prepareStep(s) {
   const { opts, project, config, env, forge, codex, run, settle } = s;
   const root = project.root;
   const cleanEnv = isolate({ ...env });
-  const info = forge.change(opts.pr, CHANGE_FIELDS);
+  // A given repository is read from, not the forge's default, which in a checkout with several remotes may be another.
+  const info = opts.repo ? forge.change(opts.pr, CHANGE_FIELDS, { repo: opts.repo }) : forge.change(opts.pr, CHANGE_FIELDS);
   const repo = opts.repo ?? forge.repo();
+  // ` --repo <repo>` on every command the step prints, when the remotes name several repositories (remotes.mjs repoFlag).
+  const repoArg = repoFlag(project, repo);
   const n = info.number;
   // Right after a push the forge may still report the commit it built on: this checkout's pushed head wins, and a local
   // commit past it is named rather than an older round re-served (lib/review/pushed.mjs).
@@ -156,12 +160,13 @@ export async function prepareStep(s) {
   // reads it when the comment's copy is the newer one, and the writes post by it (dispatch.mjs postContext).
   let reading;
   const readingOnce = () => (reading ??= readReading(forge, repo, n));
-  const record = readRecord(project, n, comments, repo, readingOnce);
+  // This machine's record of another repository with this number is left out: the step starts from the pull request's.
+  const record = readRecord(project, n, comments, repo, readingOnce, { ignoreOther: true });
   if (record.held !== undefined) {
     // From this machine's own record alone, and no write: every write raises the revision the hold compares. A hold for
     // another machine's finding notes the stop on this machine's record without raising it, so its merge guard keeps
     // refusing the head.
-    s.deletes = sweep(record.own ?? readLocalState(project, n), 'held');
+    s.deletes = sweep(record.own ?? readLocalState(project, n, repo), 'held');
     const reason = heldMessage(n, record.held, record.why, record.finding);
     if (record.why === 'findings') noteLocalOutcome(project, n, repo, { status: 'incomplete', head, reason });
     return { status: 'incomplete', pr: n, repo, head, reason, held: record.held, retry_recommended: false };
@@ -178,7 +183,7 @@ export async function prepareStep(s) {
   // or runs a reviewer, and this machine's own record notes the stop, so its merge guard keeps refusing the head. The
   // review goes on on the machine that recorded the finding, or restarts as a held record does. A copy that is not
   // private is never built on: readRecord held above instead.
-  const untexted = untextedBlocking(record.state, readLocalState(project, n));
+  const untexted = untextedBlocking(record.state, readLocalState(project, n, repo));
   if (untexted) {
     const reason = `the review record of #${n} holds the open finding ${untexted}, whose text is on the machine that recorded it: continue the review on that machine. If that machine is gone, the Human deletes the review summary comment of #${n} and this machine's record file ${recordFile(project, n)}; the review then restarts from round 1`;
     noteLocalOutcome(project, n, repo, { status: 'incomplete', head, reason });
@@ -196,7 +201,7 @@ export async function prepareStep(s) {
   // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
   let posting = null;
   const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, reading, ...extra }));
-  Object.assign(s, { root, cleanEnv, info, repo, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post });
+  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried
@@ -398,7 +403,7 @@ export async function prepareStep(s) {
   for (const [id, definition] of Object.entries(review.flows)) {
     const tests = (definition.tests ?? []).map(pathPattern);
     const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
-    if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
+    if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}${repoArg}` });
   }
   // The flows the Human may sign off on this head: one the project marks for the Human's sign-off, the built-in
   // harness-config, or one whose test the change deletes. `aidrian pr signoff` refuses any other, since its sign-off

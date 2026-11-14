@@ -612,7 +612,10 @@ test('every command that reads the review record passes the forge`s reading, so 
     }
   }
   assert.ok(calls.length >= 6, JSON.stringify(calls));
-  for (const call of calls) assert.equal(call.args.length, 5, `${call.file}: readRecord(${call.args.join(', ')})`);
+  // The fifth is the reading; a sixth may only be the step's option to leave out another repository's record (#305).
+  for (const call of calls) {
+    assert.ok(call.args.length === 5 || (call.args.length === 6 && /^\{\s*ignoreOther: true\s*\}$/u.test(call.args[5])), `${call.file}: readRecord(${call.args.join(', ')})`);
+  }
 });
 
 // ---- The findings table (review.publish.summary "findings") ----

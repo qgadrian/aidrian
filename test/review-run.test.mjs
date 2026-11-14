@@ -20,6 +20,7 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check as checkSignoff } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 
@@ -1362,7 +1363,7 @@ test('extra rounds "ask": a converging review at the cap dispatches the judge, t
   const ask = await r.step({ exec: clean });
   assert.equal(ask.status, 'extension_ask');
   assert.equal(EXIT.extension_ask, 11);
-  assert.equal(ask.question, 'Pull request #7 reached its review-round cap. Grant one extra review round, round 3?');
+  assert.equal(ask.question, 'Pull request o/r#7 reached its review-round cap. Grant one extra review round, round 3?', 'it names the repository, which the review-extend rule binds the answer to');
   assert.deepEqual(ask.options, ['Approve round 3', 'Deny']);
   assert.equal(ask.max_rounds, 2, 'asking grants nothing yet');
 
@@ -1420,7 +1421,7 @@ test('extra rounds "ask" on an unreviewed fix: the question names the fix, aidri
   const verdict = await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 was a valid high finding; the fix is one line', '--head', capped.head]);
   const ask = await r.step({ exec: clean });
   assert.equal(ask.status, 'extension_ask');
-  assert.equal(ask.question, `Pull request #7 reached its review-round cap, and its fix head ${capped.head.slice(0, 7)} is reviewed by no pass. Grant one extra review round, round 3, to review that fix?`);
+  assert.equal(ask.question, `Pull request o/r#7 reached its review-round cap, and its fix head ${capped.head.slice(0, 7)} is reviewed by no pass. Grant one extra review round, round 3, to review that fix?`);
   assert.ok(verdict.out.next.includes(`"${ask.question}"`), 'the verdict`s next step asks the same question');
   assert.doesNotMatch(r.comments[0].body, /is reviewed by no pass/u, 'a check waiting for the Human is no stop');
   await extend(t, r, ['--human', 'approve']);
@@ -1694,7 +1695,7 @@ test('out of quota with no flag: blocked_quota asks one question, and the next c
   const exec = async () => (ran += 1, outOfQuota());
   const first = await r.step({ exec });
   assert.deepEqual([first.status, first.pass, EXIT[first.status]], ['blocked_quota', 'engine:codex-local', 3]);
-  assert.match(first.question, /^Codex is out of quota, so the independent review of pull request #7 stopped on head [0-9a-f]{7}\..*never as an independent review\.$/u);
+  assert.match(first.question, /^Codex is out of quota, so the independent review of pull request o\/r#7 stopped on head [0-9a-f]{7}\..*never as an independent review\.$/u);
   assert.deepEqual(first.options.map((each) => each.label), ['Run a critic agent (Recommended)', 'The Human reviews it', 'Wait for Codex quota']);
   assert.deepEqual(first.options.map((each) => each.run), ['aidrian pr review 7 --quota-fallback agent:critic', 'aidrian pr review 7 --quota-fallback human', null]);
   assert.equal(first.quota_fallback, undefined);
@@ -3331,4 +3332,126 @@ test('the two sweeps of a step read the repository`s visibility once between the
   assert.ok(posts.reviewComments.some((each) => each.id === 1000));
   // One read for the step's post context, one shared by both sweeps.
   assert.equal(reads, 2, 'the second sweep reuses the first sweep`s read');
+});
+
+// #251: in a checkout whose remotes name more than one repository, the sign-off and round-raise rules count the Human's
+// answer only on a command that names its repository, so every command the step prints ends in `--repo`.
+// The state folder is keyed by the origin, so each test that needs no particular one gets its own.
+let remoteSeed = 0;
+const moreRemotes = (r, origin = `https://github.com/several-${process.pid}-${(remoteSeed += 1)}/r.git`) => {
+  r.git('remote', 'add', 'origin', origin);
+  r.git('remote', 'add', 'other', 'https://github.com/qg/voila.git');
+};
+
+test('with remotes of several repositories, the human_required sign-off names --repo, and runs on the Human`s answer as printed', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, headConfig: { version: 1 }, change: (write) => write('src/booking/book.js', 'x\n') });
+  moreRemotes(r, 'https://github.com/o/r.git');
+  const first = await r.step({ exec: clean });
+  for (const pass of first.dispatch) {
+    const ids = pass.flows.flatMap((flow) => flow.invariants.map((each) => [flow.id, each.id]));
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify(ids.map(([flow, invariant]) => ({ flow, invariant, verdict: 'holds', evidence: 'src/booking/book.js:1' }))) });
+  }
+  const human = await r.step({ exec: clean });
+  assert.deepEqual([human.status, human.command], ['human_required', [`aidrian pr signoff 7 --flow harness-config --head ${human.head} --repo o/r`]]);
+  const file = path.join(r.dir, '..', 't.jsonl');
+  writeFileSync(file, JSON.stringify({ type: 'user', toolUseResult: { answers: { [`Sign off o/r#7 at ${human.head.slice(0, 7)}: harness-config/signoff?`]: 'Approve' } } }));
+  assert.equal(checkSignoff(human.command[0], { cwd: r.dir, input: { transcript_path: file } }), null, 'the printed command runs on the answer');
+  assert.ok(checkSignoff(human.command[0].replace(' --repo o/r', ''), { cwd: r.dir, input: { transcript_path: file } }), 'control: without --repo it is denied');
+});
+
+test('with remotes of one repository, the printed commands carry no --repo', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, headConfig: { version: 1 }, change: (write) => write('src/booking/book.js', 'x\n') });
+  r.git('remote', 'add', 'origin', `https://github.com/single-${process.pid}/r.git`);
+  r.git('remote', 'add', 'origin-https', `https://github.com/single-${process.pid}/r`);
+  const first = await r.step({ exec: clean });
+  for (const pass of first.dispatch) {
+    const ids = pass.flows.flatMap((flow) => flow.invariants.map((each) => [flow.id, each.id]));
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify(ids.map(([flow, invariant]) => ({ flow, invariant, verdict: 'holds', evidence: 'src/booking/book.js:1' }))) });
+  }
+  assert.deepEqual((await r.step({ exec: clean })).command, [`aidrian pr signoff 7 --flow harness-config --head ${first.head}`]);
+});
+
+test('with remotes of several repositories, the overrule, accept, and settle commands name --repo', async (t) => {
+  const disputed = repo(t, { baseConfig: { version: 1, review: { flows: { booking: { files: ['src/booking/**'] } } } }, change: (write) => write('src/booking/a.js', '1\n') });
+  moreRemotes(disputed);
+  const first = await disputed.step({ exec: clean });
+  recordPass(disputed.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(first.dispatch[0], 'src/booking/a.js:1') });
+  const violated = async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'booking', invariant: 'unspecified', verdict: 'violated', evidence: 'src/booking/a.js:1' }], dropped: [] });
+  const [flow] = (await disputed.step({ exec: violated })).flows;
+  const overrule = `aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>" --repo o/r`;
+  assert.deepEqual([flow.overrule, flow.next[0].commands], [[overrule], [overrule]]);
+
+  const r = repo(t, { baseConfig: { version: 1, review: { flows: APPROVED_FLOWS, unattendedSignoff: { allow: true } } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  moreRemotes(r);
+  r.write('.aidrian.local.json', JSON.stringify({ unattendedSignoff: 'on' }));
+  const one = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'cannot_verify', evidence: 'no app runs' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+  ]) });
+  const [next] = (await r.step({ exec: clean })).flows[0].next;
+  assert.deepEqual(next.commands, [`${acceptCommand('look', 'matches-design', one.head)} --repo o/r`]);
+  assert.match(next.settle, / --judge <agent> --repo o\/r$/u);
+});
+
+test('with remotes of several repositories, the review step`s rerun at the cap names --repo', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2 }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  moreRemotes(r);
+  const one = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findings: 2, fixed: 0 });
+  await r.step({ exec: clean });
+  r.write('src/booking/a.js', '2\n');
+  r.commit();
+  const two = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: two.dispatch[0].pass, head: two.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
+  const capped = await r.step({ exec: clean });
+  assert.equal(capped.status, 'extension_check');
+  assert.ok(capped.dispatch[0].record.endsWith(' --repo o/r'), `the judge's record command names the repository (#302): ${capped.dispatch[0].record}`);
+  await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a real high-severity bug', '--head', capped.head]);
+  const ask = await r.step({ exec: clean });
+  assert.deepEqual([ask.status, ask.then, ask.record], ['extension_ask', 'aidrian pr review 7 --repo o/r', 'aidrian pr extend 7 --human approve|deny --repo o/r']);
+  assert.match(ask.question, /^Pull request o\/r#7 reached/u);
+});
+
+test('the review step on one repository ignores this machine`s record of the same number in another', async (t) => {
+  // #251 security review: one record file a pull request number, so another repository's record of #7 may be here.
+  const control = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const fresh = await control.step({ exec: clean });
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  // Left under the old file name, origin's, before the record was keyed by repository (#305).
+  const other = emptyState(7, 'qg/voila');
+  other.rounds = [{ head: 'a'.repeat(40) }, { head: 'b'.repeat(40) }, { head: 'c'.repeat(40) }];
+  mkdirSync(path.dirname(recordFile(r.project, 7)), { recursive: true });
+  writeFileSync(recordFile(r.project, 7), JSON.stringify({ ...other, revision: 1 }));
+  const step = await r.step({ exec: clean });
+  assert.equal(step.repo, 'o/r');
+  assert.equal(step.round, fresh.round, 'the rounds of qg/voila#7 do not count on o/r#7');
+  assert.equal(readLocalState(r.project, 7).repo, 'o/r', 'the step builds its own record');
+});
+
+// #303: a review reads its policy from the reviewed pull request's own base branch, the one of the remote that names its
+// repository, never origin's.
+test('a review step on another remote`s repository holds to that remote`s base branch config', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 3 } }, change: (write) => write('src/app.js', 'b\n') });
+  const owner = `base-${process.pid}`;
+  r.git('remote', 'add', 'origin', `https://github.com/${owner}/r.git`);
+  r.git('remote', 'add', 'upstream', 'https://github.com/up/r.git');
+  r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
+  // The upstream's main: the same history, with a base config of its own.
+  r.git('switch', '-q', '-c', 'upstream-main', 'main');
+  r.write('.aidrian/config.json', JSON.stringify({ version: 1, github: { maxReviewRounds: 7 } }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'upstream policy');
+  r.git('update-ref', 'refs/remotes/upstream/main', r.git('rev-parse', 'HEAD'));
+  r.git('switch', '-q', 'feat');
+  r.git('branch', '-q', '-D', 'upstream-main');
+  assert.equal((await r.step({ exec: clean }, { repo: 'up/r' })).max_rounds, 7, 'the upstream`s pull request takes the upstream`s cap');
+  assert.equal((await r.step({ exec: clean }, { repo: `${owner}/r` })).max_rounds, 3, 'origin`s takes origin`s');
+  r.git('update-ref', '-d', 'refs/remotes/upstream/main');
+  await assert.rejects(r.step({ exec: clean }, { repo: 'up/r' }), /the base branch main of up\/r is not fetched from upstream, the remote that names it: git fetch upstream main first/u, 'never origin`s or a local branch in its place');
 });

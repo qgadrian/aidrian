@@ -264,7 +264,9 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
   A body it cannot read is refused with the one cause the pull request body rule's reader names from one read (`bodyRead`).
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
-  asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
+  asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`. It gates a
+  request to any repository this checkout's remotes name, not origin's alone, against a review of that same repository,
+  as it does `aidrian pr await-review --request --repo <owner>/<name>` ([config.md](config.md#review-gate)).
 - Review sign-off: `aidrian pr signoff`, with `--overrule`, `--accept`, and `--last` too, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
@@ -274,29 +276,37 @@ What each rule matches:
   time, such as `` `printf …`--check ``, is no dry run. An `aidrian` whose subcommand the shell builds at run time,
   such as `aidrian "$@"`, is denied too. The rule's message stops the session; at `human_required` naming one flow,
   once `--last --check` exits 0, it hands the Human the short form, `aidrian pr signoff <PR> --last`, short enough to
-  type from a phone, which refuses any other stop.
+  type from a phone, which refuses any other stop. A long form runs on the Human's AskUserQuestion answer naming
+  `<owner>/<name>#<PR>` of the repository it acts on ([review.md](review.md#answering-in-the-session)): its `--repo`,
+  one of this checkout's remotes, else the one repository the remotes name; a checkout whose remotes name more than one
+  needs the `--repo`. The rule reads no forge to learn it.
 - Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
   The rule stops accidents and is no security boundary: a form it does not read, such as `xargs` or `npx`, runs.
 - Extra round approval: `aidrian pr extend <PR> --human approve`, also as `node …/cli.mjs` or `--human=approve`, while the
   pull request's check at the cap waits for the Human. It runs when the session transcript holds an AskUserQuestion
-  answer, given after the judge's verdict, to a question naming `#<PR>` and the round it grants, `round <N>`, whose chosen
-  option starts with "Approve". `--human deny` and `--verdict` run. With no check waiting for the Human in this
+  answer, given after the judge's verdict, to a question naming `<owner>/<name>#<PR>` of the repository the call acts on
+  (`#<PR>` alone in a checkout with no remote) and the round it grants, `round <N>`, whose chosen option starts with
+  "Approve". That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+  name; with several, a call without `--repo` is refused, and the record read is that repository's. `--human deny` and `--verdict` run. With no check waiting for the Human in this
   machine's review record, as when the record came from another machine, the approval is refused.
   Each call in a chain is judged against its own pull request, and the deny names every call it refuses. A deny says
-  why the transcript's answers miss: none after the verdict, none naming `#<PR>` or `round <N>`, or the label picked.
+  why the transcript's answers miss: none after the verdict, none naming `<owner>/<name>#<PR>` or `round <N>`, or the label picked.
   While the check waits for the judge, the deny names the judge's route: run the `dispatch` the review step prints and record
   its verdict with `aidrian pr extend <PR> --verdict`. After a judge's stop, nothing waits for an answer, so the deny names the
   route to one more round instead: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, on the Human's
   answer or on their typed `grant up to <N> review rounds on <owner>/<name>#<PR>` ([review.md](review.md#unattended-rulings)),
-  or in the Human's own shell in a checkout with several remotes, where neither can approve it.
+  naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository, as the review step's printed rerun does.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
 - Quota fallback choice: `aidrian pr review <PR> --quota-fallback agent:<name>` or `--quota-fallback human`, also as
-  `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record holds a quota stop and the
-  session transcript holds an AskUserQuestion answer, given after that stop, to a question naming `#<PR>` and the quota,
+  `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record of the repository the call
+  acts on holds a quota stop and the session transcript holds an AskUserQuestion answer, given after that stop, to a
+  question naming `<owner>/<name>#<PR>` of that repository (`#<PR>` alone in a checkout with no remote) and the quota,
   that picks that exact value: an option starting "Run a critic agent" authorizes `agent:critic` only; any other agent
   needs an answer that names it, "Run a <name> agent" or `agent:<name>`; and `human` needs "The Human reviews it".
+  That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes name;
+  where they name several, a call with no `--repo` is refused, and no other repository's record of the number counts.
   A value or a pull request the rule cannot read is refused.
 - Product feedback answer: on only where the state folder holds `product-feedback/`, save two cases that also reach a project
   without the feature, as [With the key off](config.md#with-the-key-off) says. One is a call whose folder or project it cannot
@@ -501,11 +511,13 @@ deadline the unattended waiver's paragraph below states. A merge whose head it t
 cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
 pull request number it cannot read, such as `gh pr merge "$PR"`, or a `gh api` merge path whose number or repository
 part is a variable; a method it cannot read, `-X "$M"`, counts as a merge.
-The record file is per number, so in a fork checkout it holds origin's #5 and the upstream's #5 alike. A merge whose
-target is named, as `-R`, a URL, a `gh api` path, or the MCP owner and repo, reads only that repository's part: the
-owed reviews for it, each an entry's own repository, else the record's, else origin's, and the outcome and rounds when
-the record is for it. A merge that names no repository, or one it cannot read, reads every entry, since gh's default
-may be the upstream.
+The review record is one file a repository and number ([review.md](review.md#answering-in-the-session)), and one of
+origin's written before then may still hold owed entries of the upstream's #5. A merge whose target is named, as `-R`,
+a URL, a `gh api` path, or the MCP owner and repo, reads that repository's record and only its part: the owed reviews
+for it, each an entry's own repository, else the record's, else origin's, and the outcome and rounds when the record is
+for it. A merge that names no repository, or one it cannot read, reads every entry of the record it finds, since gh's
+default may be the upstream; when this machine holds records of that number for more than one repository, it reads
+none of them in another's place and is refused, naming the `-R` to add.
 
 The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts

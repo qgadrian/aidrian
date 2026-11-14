@@ -32,6 +32,7 @@
 
 import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
+import { repoName } from '../remotes.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
 import { isPrivate, residualRows } from './publish.mjs';
@@ -72,7 +73,7 @@ export async function reviewStep(opts, deps = {}) {
     return await stepOnce(opts, deps, run);
   } catch (error) {
     if (run.pr !== null) {
-      const state = readLocalState(deps.project, run.pr) ?? emptyState(run.pr, run.repo);
+      const state = readLocalState(deps.project, run.pr, run.repo) ?? emptyState(run.pr, run.repo);
       writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }));
     }
     throw error;
@@ -131,11 +132,11 @@ function noteFindings({ state, head }, extra) {
 // The round cap: round_limit, unless the base branch's github.extraRounds lets the check at the cap run
 // (lib/review/extension.mjs), which may return extension_check or extension_ask instead.
 function capReached(s, extra) {
-  const { state, head, policy, n, info, planHistory, extensionLog } = s;
+  const { state, head, policy, n, repo, info, planHistory, extensionLog, repoArg = '' } = s;
   noteFindings(s, extra);
   const decision = atCap({
-    state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
-    command: `aidrian pr review ${n}`,
+    state, source: 'plan', round: state.rounds.length, head, policy, pr: n, repo, repoArg, goal: { title: info.title ?? null, body: info.body ?? null },
+    command: `aidrian pr review ${n}${repoArg}`,
     history: planHistory,
     lastReviewed: () => state.rounds.at(-1)?.head ?? null,
     log: extensionLog,
@@ -150,7 +151,7 @@ function quotaStop(s, pass, stage, reason, extra = {}) {
   const { opts, state, head, plan, passes, map, n } = s;
   const stop = quota.recordStop(state, { head, stage, pass, reason });
   const refused = quota.refusal(plan, stop, passes, map);
-  return finish(s, 'blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot })) });
+  return finish(s, 'blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot, repo: s.repo, repoArg: s.repoArg ?? '' })) });
 }
 
 // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
@@ -159,7 +160,7 @@ function quotaStop(s, pass, stage, reason, extra = {}) {
 function settle({ project, root, repo, n, state, deletes }, result) {
   // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it. So is
   // what another write on this machine closed or mapped in the finding index.
-  const local = readLocalState(project, n);
+  const local = readLocalState(project, n, repo);
   state.pending = mergePending(local?.pending, state.pending);
   mergeIndex(state, local, removedPosts(deletes));
   noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
@@ -172,7 +173,7 @@ function settle({ project, root, repo, n, state, deletes }, result) {
 function answerRequests({ project, root, repo, n, state, passes, map, resultFor }) {
   const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
   if (!answers.length) return;
-  state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+  state.pending = mergePending(readLocalState(project, n, repo)?.pending, state.pending);
   for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
 }
 
@@ -279,11 +280,12 @@ function finish(s, status, extra) {
   return result;
 }
 
-// The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S] [--quota-fallback agent:NAME|human]`:
-// prints the step's JSON, returns its exit code.
+// The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S] [--quota-fallback agent:NAME|human] [--repo OWNER/NAME]`:
+// prints the step's JSON, returns its exit code. `--repo` names the repository of PR, which then must be given, in place
+// of the forge's default: a checkout whose remotes name several repositories needs it for an approved raise.
 export async function runReview(args, config, project, deps = {}) {
   try {
-    const opts = { pr: null, maxRounds: undefined, timeoutSec: undefined, withBot: false, quotaFallback: null };
+    const opts = { pr: null, repo: null, maxRounds: undefined, timeoutSec: undefined, withBot: false, quotaFallback: null };
     for (let i = 0; i < args.length; i += 1) {
       const a = args[i];
       const value = () => {
@@ -295,12 +297,25 @@ export async function runReview(args, config, project, deps = {}) {
       else if (a === '--max-rounds') opts.maxRounds = Number(value());
       else if (a === '--timeout-sec') opts.timeoutSec = Number(value());
       else if (a === '--quota-fallback') opts.quotaFallback = quota.parseChoice(value());
+      else if (a === '--repo') {
+        const given = value();
+        opts.repo = repoName(given);
+        if (!opts.repo || given.startsWith('--')) throw new Error(`--repo ${given} is not OWNER/NAME`);
+      }
       else if (a.startsWith('--')) throw new Error(`unknown argument: ${a}`);
       else if (opts.pr === null) opts.pr = a.replace(/^#/u, '');
       else throw new Error(`unexpected argument: ${a}`);
     }
     if (opts.maxRounds !== undefined && !(Number.isInteger(opts.maxRounds) && opts.maxRounds >= 1)) throw new Error('--max-rounds must be an integer >= 1');
     if (opts.timeoutSec !== undefined && !(Number.isFinite(opts.timeoutSec) && opts.timeoutSec >= 0)) throw new Error('--timeout-sec must be >= 0');
+    if (opts.repo !== null && opts.pr === null) throw new Error('--repo needs the pull request number');
+    // With --repo, the pull request is a number of that repository: a URL of another one would be read from it while the
+    // rules and the record take --repo, so it is refused before any forge read.
+    if (opts.repo !== null && !/^\d+$/u.test(opts.pr)) {
+      const url = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/u.exec(opts.pr);
+      if (!url || repoName(url[1]) !== opts.repo) throw new Error(`--repo ${opts.repo} takes a pull request number, or a URL of a pull request of ${opts.repo}, not ${opts.pr}`);
+      opts.pr = url[2];
+    }
     const result = await reviewStep(opts, { project, config, ...deps });
     if (result.status === 'round_limit') {
       const { recordSignal, roundLimitSignal } = await import('../lesson-signals.mjs');

@@ -34,7 +34,7 @@ export const fallbackPassId = (stop, agent) => `fallback:${stop.stage}:${stop.re
 // The record's stops on `head` for `stage`, one per reviewer.
 export const stopsFor = (state, head, stage) => (state.quotaStops ?? []).filter((each) => each.stage === stage && each.head === head);
 
-export const signoffCommand = (pr, stop) => `aidrian pr signoff ${pr} --stage ${stop.stage} --head ${stop.head}`;
+export const signoffCommand = (pr, stop, repoArg = '') => `aidrian pr signoff ${pr} --stage ${stop.stage} --head ${stop.head}${repoArg}`;
 
 // The stop of `pass`'s reviewer in `stage` on `head`, put on the record in place of an earlier one for the same head,
 // stage, and reviewer: another reviewer's stop in the stage, and the choice made for it, stay. Every pass of that
@@ -56,12 +56,14 @@ export function refusal(plan, stop, passes, map) {
   return `the plan requires an independent model, and ${owner(stop.reviewer)} is out of quota: neither a same-model agent nor the Human's sign-off counts as one, so the review waits for the quota. A later push, or this step run again once the quota is back, runs it again`;
 }
 
-// The one question for the Human, with the options recommended first, and the command each option runs.
-export function question({ pr, stop, withBot = false }) {
+// The one question for the Human, with the options recommended first, and the command each option runs. `repo` names
+// the pull request's repository, `<owner>/<name>#<PR>`, which the review-fallback rule binds the answer to; `repoArg` is
+// the step's ` --repo <owner>/<name>` where the remotes name several repositories (remotes.mjs repoFlag).
+export function question({ pr, stop, withBot = false, repo = null, repoArg = '' }) {
   const who = owner(stop.reviewer);
-  const run = (choice) => `aidrian pr review ${pr}${withBot ? ' --with-bot' : ''} --quota-fallback ${choice}`;
+  const run = (choice) => `aidrian pr review ${pr}${withBot ? ' --with-bot' : ''} --quota-fallback ${choice}${repoArg}`;
   return {
-    question: `${who} is out of quota, so the ${stop.stage} review of pull request #${pr} stopped on head ${stop.head.slice(0, 7)}. How should the second look happen? Either fallback is recorded as a fallback, never as an independent review.`,
+    question: `${who} is out of quota, so the ${stop.stage} review of pull request ${repo ?? ''}#${pr} stopped on head ${stop.head.slice(0, 7)}. How should the second look happen? Either fallback is recorded as a fallback, never as an independent review.`,
     options: [
       { label: `${LABELS.agent} (Recommended)`, description: 'A read-only critic agent reviews the whole change now, faster for a bigger change. Recorded as a same-model fallback, not an independent review.', run: run(`agent:${DEFAULT_AGENT}`) },
       { label: LABELS.human, description: 'The Human reviews the change, then signs this stage off by answering in the session. Recorded as the Human\'s sign-off, not an independent review.', run: run(HUMAN) },

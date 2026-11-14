@@ -140,7 +140,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
-| `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, and runs at exactly that count; a higher cap an earlier bot request recorded in its comment carries over only to a run with the variable set and no `--max-rounds`. The Human sets it in their own shell, or an agent sets it inline on the exact raise the Human approved by an answer or a typed grant ([review.md](review.md#unattended-rulings)); a Bash rule refuses it on any other ground, and any bot request made outside `aidrian pr`. |
+| `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, as the remote naming its repository has it ([The record](review.md#the-record)), so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, and runs at exactly that count; a higher cap an earlier bot request recorded in its comment carries over only to a run with the variable set and no `--max-rounds`. The Human sets it in their own shell, or an agent sets it inline on the exact raise the Human approved by an answer or a typed grant ([review.md](review.md#unattended-rulings)); a Bash rule refuses it on any other ground, and any bot request made outside `aidrian pr`. |
 | `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: a read-only judge decides whether one more round is worth it, with any red flag of the round history (not converging, looping, drifting, bloating) as evidence, and the Human approves it. `"auto"`: the judge's word grants it, unless a red flag stands, when the Human approves it too. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
 | `github.maxExtraRounds` | The most extra rounds `extraRounds` may grant one pull request, 2 by default; a hard ceiling, read from the base branch. `0` grants none. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. [Auto-merge](#auto-merge) stays off until the default branch names one. |
@@ -748,7 +748,10 @@ attest; so is an agent pass its flows merged into, `agent:<name>:<flows>`, when 
 flow's or a slice's files alone, the cross pass, and an engine pass do not count.
 
 `--head` takes a commit's full SHA or a short one, and `attest` records its full SHA.
-`attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, and prints a marker:
+`attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, one file a
+repository and number, as the [review record](review.md#answering-in-the-session) is: `reviews/pr-<N>.json` for origin's
+repository, `reviews/pr-<N>-<owner>--<name>.json` for another remote's, so a review of one never counts for the other.
+It prints a marker:
 `<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->`. A request that carries the marker for its own pull request
 and repository also passes, so a new session or machine need not review again.
 `attest` files the review under the pull request's repository: `--repo`, else the one `gh pr view` names, gh's default
@@ -761,7 +764,9 @@ and repository also passes, so a new session or machine need not review again.
 - A hook on the GitHub MCP comment tools refuses the same body, on Claude Code on
   [those of a GitHub MCP server a plugin installs](providers/claude-code.md#a-github-mcp-server-from-a-plugin), and on Codex on
   [the GitHub connector's comment tools](providers/codex.md#github-through-the-app-connector).
-- A request to another repository passes. A request whose pull request number the rule cannot read is refused: name it.
+- A request to a repository any of this checkout's remotes names is gated, origin or not, and only a review of that
+  repository counts: one of `origin#5` is no review of `upstream#5`. A request to a repository no remote names passes.
+  A request whose pull request number the rule cannot read is refused: name it.
 - `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1`, set by a person in their own shell, lets the request run and records an override
   for the pull request.
 

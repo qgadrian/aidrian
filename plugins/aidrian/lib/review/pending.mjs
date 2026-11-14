@@ -18,7 +18,7 @@ const KINDS = ['request', 'review'];
 // Records one entry owed on `pr` of `repo`. Returns the entry.
 export function recordPending(project, { pr, repo, kind, head, by }) {
   const entry = { id: entryId(), kind, head, at: new Date().toISOString(), by, ...(repoName(repo) ? { repo: repoName(repo) } : {}) };
-  const state = readLocalState(project, pr) ?? emptyState(pr, repoName(repo));
+  const state = readLocalState(project, pr, repoName(repo)) ?? emptyState(pr, repoName(repo));
   state.pending = [...state.pending, entry];
   writeLocalState(project, state);
   return entry;
@@ -27,7 +27,7 @@ export function recordPending(project, { pr, repo, kind, head, by }) {
 // Marks the requests on `pr` of `repo` (null: any) not yet sent as sent, for `head`. Returns how many it marked. A sent
 // request stays owed until the bot answers it.
 export function markRequestsSent(project, pr, head, repo = null) {
-  const state = readLocalState(project, pr);
+  const state = readLocalState(project, pr, repoName(repo));
   const open = (state?.pending ?? []).filter((each) => each.kind === 'request' && !each.sent && !each.answered && ofRepo(state, each, repoName(repo)));
   if (!open.length) return 0;
   const at = new Date().toISOString();
@@ -40,7 +40,7 @@ export function markRequestsSent(project, pr, head, repo = null) {
 // ancestry in this checkout: the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1
 // when it marked any.
 export function answerOwed(project, pr, kind, { head, by, repo = null, isAncestor: ancestor = (a, b) => isAncestor(project.root, a, b) }) {
-  const state = readLocalState(project, pr);
+  const state = readLocalState(project, pr, repoName(repo));
   if (!state || !answerPending(state, kind, { head, by, repo: repoName(repo), isAncestor: ancestor })) return 0;
   writeLocalState(project, state);
   return 1;

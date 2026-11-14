@@ -68,22 +68,53 @@ test('an approved raise aimed elsewhere, or in a checkout with several remotes, 
 });
 
 
-test('in a checkout with several remotes, the first deny says no answer counts and names the Human`s own shell', (t) => {
+test('in a checkout with several remotes, the first deny names the `--repo` route and the Human`s own shell', (t) => {
   // 2026-11-10: an approved answer naming <owner>/<name>#<PR> and --max-rounds <N> was refused three times, each with the
   // same message, which sent the session back to the question it had already asked. Two remotes were the cause.
   const context = setup(t, [{ 'Raise the cap on o/r#12 to --max-rounds 4?': 'Approve --max-rounds 4 (Recommended)' }]);
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
   for (const command of ['AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4', 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 env -C "$W" aidrian pr review 12 --with-bot --max-rounds 10']) {
     const miss = missOf(command, context);
-    assert.match(miss, /This checkout has several remotes/u, command);
+    assert.match(miss, /This checkout's remotes name more than one repository \(o\/r, up\/r\)/u, command);
+    assert.match(miss, /only on a raise that ends in `--repo <owner>\/<name>`, the one the question or grant names/u, command);
+    assert.match(miss, new RegExp(`\`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 ${command.includes('--with-bot') ? '--with-bot ' : ''}--max-rounds <N> --repo <owner>/<name>\``, 'u'), 'the raise to run, for this pull request');
     assert.match(miss, /in their own shell/u, command);
-    assert.match(miss, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 (?:--with-bot )?--max-rounds <N>`/u, 'the command to hand over, for this pull request');
-    assert.doesNotMatch(miss, /AskUserQuestion/u, 'asking again cannot help here');
+    assert.match(miss, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 (?:--with-bot )?--max-rounds <N>` to run in their own shell/u, 'the command to hand over, for this pull request');
     assert.equal(miss.includes('--with-bot'), command.includes('--with-bot'), 'the handover keeps the bot stage the command asked for');
-    assert.doesNotMatch(miss, new RegExp(ASK_ROUTE.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'), 'nor does the lead offer the ask');
+    assert.match(miss, /^ Stop at round_limit.*`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>\/<name>`/su, 'the ask route, with the `--repo` the raise ends in');
   }
   const bot = missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 5', context);
   assert.match(bot, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds <N>`/u, 'the bot`s own count, not the plan`s');
+});
+
+test('in a checkout with several remotes, an answer counts on the raise whose `--repo` it names, and only there', (t) => {
+  // The checkout of #251: two remotes of one repository, a third remote of it, and a remote of another repository.
+  const context = setup(t, [{ 'Raise the cap on o/r#12 to --max-rounds 4?': 'Approve' }]);
+  for (const [name, url] of [['origin-https', 'https://github.com/o/r'], ['mirror', 'git@github.com:o/r.git'], ['other', 'https://github.com/qg/voila.git']]) {
+    execFileSync('git', ['remote', 'add', name, url], { cwd: context.cwd });
+  }
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo o/r', context), null, 'the repository the answer names');
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo O/R', context), null, 'in any letter case, as the forge reads it');
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 4 --repo o/r', context), null, 'the bot`s raise');
+  assert.match(missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4', context), /remotes name more than one repository \(o\/r, qg\/voila\)/u, 'no --repo: the forge default may be either');
+  assert.match(missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo qg/voila', context), /No answered question names `qg\/voila#12`/u, 'the other remote`s repository, which the answer does not name');
+  for (const aimed of ['--repo x/y', '--repo https://github.com/o/r', '--repo github.com/o/r', '--repo o/r.git']) {
+    assert.match(missOf(`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 ${aimed}`, context), /`--repo` must name, written out as `<owner>\/<name>`, one of the repositories this checkout's remotes name \(o\/r, qg\/voila\)/u, aimed);
+  }
+  for (const shape of ['--repo o/r --repo o/r', '--repo "$R"', '--repo']) missOf(`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 ${shape}`, context);
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --repo o/r --max-rounds 4', context), null, 'right after the pull request, as the review step prints its rerun');
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --repo o/r --request --max-rounds 4', context), null, 'the bot`s rerun as printed');
+  missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --repo o/r --max-rounds 4 --repo o/r', context);
+  missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds --repo o/r 4', context);
+  for (const aimed of ['cd /other && AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo o/r', 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 env -C /other aidrian pr review 12 --max-rounds 4 --repo o/r', 'GH_REPO=qg/voila AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo o/r']) {
+    missOf(aimed, context);
+  }
+});
+
+test('in a checkout with one remote, a `--repo` must name it', (t) => {
+  const context = setup(t, [{ 'Raise the cap on o/r#12 to --max-rounds 4?': 'Approve' }, { 'Raise the cap on fork/r#12 to --max-rounds 4?': 'Approve' }]);
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo o/r', context), null);
+  assert.match(missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo fork/r', context), /one of the repositories this checkout's remotes name \(o\/r\)/u, 'an answer naming a repository that is no remote');
 });
 
 test('every deny of the round override names what the transcript or the command missed', (t) => {
@@ -272,13 +303,15 @@ test('an approval a later answer replaced is called replaced', (t) => {
   assert.doesNotMatch(missOf(raises(12, 4)[0], setup(t, [{ [question]: 'Deny' }])), /replaced/u);
 });
 
-test('in a checkout with several remotes a typed grant authorizes nothing', (t) => {
+test('in a checkout with several remotes a typed grant authorizes only the raise ending in its `--repo`', (t) => {
   const context = setup(t, [], [typed(GRANT)]);
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
   const miss = missOf(raises(12, 4)[0], context);
-  assert.match(miss, /This checkout has several remotes, so no answer or typed grant can name the one repository/u);
+  assert.match(miss, /This checkout's remotes name more than one repository \(o\/r, up\/r\), so an answer or a typed grant lets an agent set AIDRIAN_ALLOW_EXTRA_ROUNDS only on a raise that ends in `--repo <owner>\/<name>`/u);
   assert.match(miss, /in their own shell/u);
-  assert.doesNotMatch(miss, /AskUserQuestion|grant up to/u);
+  assert.match(miss, /Or the Human types, as a message of its own, `grant up to <N> review rounds on <owner>\/<name>#<PR>`/u, 'the typed route stays offered');
+  assert.equal(check(`${raises(12, 4)[0]} --repo o/r`, context), null, 'the grant names o/r#12');
+  missOf(`${raises(12, 4)[0]} --repo up/r`, context);
 });
 
 test('every route to a raise names the typed grant beside the answer', () => {
@@ -288,7 +321,10 @@ test('every route to a raise names the typed grant beside the answer', () => {
   assert.ok(awaitReview.roundCapProblem(5, 3, {}).includes(`or on the Human's typed \`${form}\``));
   const stopped = { source: 'plan', round: 4, status: 'stopped', by: 'judge' };
   assert.match(noAskReason(12, { last: stopped, next: 5 }), /or the Human types `grant up to <N> review rounds on <owner>\/<name>#12` as a message of its own/u);
-  assert.doesNotMatch(noAskReason(12, { last: stopped, next: 5, shared: false }), /grant up to/u, 'several remotes: no typed route');
+  const several = noAskReason(12, { last: stopped, next: 5, several: true });
+  assert.match(several, /or the Human types `grant up to <N> review rounds on <owner>\/<name>#12` as a message of its own/u, 'several remotes: the typed route too');
+  assert.match(several, /run exactly `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 5 --repo <owner>\/<name>`/u, 'several remotes: the raise ends in --repo');
+  assert.doesNotMatch(noAskReason(12, { last: stopped, next: 5 }), /--repo/u, 'one remote: no --repo');
 });
 
 test('a typed grant counts only on a host whose transcript the rule reads, never on an unknown one', (t) => {
@@ -331,4 +367,22 @@ test('a checkout whose only remote is not origin names that, and offers no ask',
   execFileSync('git', ['remote', 'rename', 'origin', 'upstream'], { cwd: context.cwd });
   const miss = missOf(raises(12, 4)[0], context);
   assert.match(miss, /^ This checkout has no origin, so no answer or typed grant can name its repository: the Human runs the command in their own shell\.$/u);
+});
+
+test('the waiting route comes from the record of the repository the raise acts on, never another`s of that number', (t) => {
+  const context = setup(t, []);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
+  const project = projectAt(context.cwd);
+  const upstream = emptyState(77, 'up/r');
+  upstream.extensions = [{ source: 'plan', round: 4, head: 'd', status: 'judging' }];
+  writeLocalState(project, upstream);
+  try {
+    const own = missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 77 --max-rounds 5 --repo up/r', context);
+    assert.match(own, /The check at round 4 on pull request #77 waits for the judge: run again the review command that reached the cap, `aidrian pr review 77 --repo up\/r`/u, 'the upstream`s own check, its rerun naming the repository');
+    assert.match(own, /`aidrian pr extend 77 --verdict extend\|stop --reason "<evidence>" --head <sha> --repo up\/r`/u);
+    assert.doesNotMatch(missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 77 --max-rounds 5 --repo o/r', context), /waits for the judge/u, 'origin`s #77 has no check of its own');
+    assert.doesNotMatch(missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 77 --max-rounds 5', context), /waits for the judge/u, 'no --repo with several repositories: no record is read');
+  } finally {
+    writeLocalState(project, emptyState(77, 'up/r'));
+  }
 });

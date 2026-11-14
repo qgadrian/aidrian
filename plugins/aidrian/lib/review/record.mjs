@@ -9,16 +9,19 @@ import { parseVerdicts } from './flows.mjs';
 import { closingRange, readReading } from './dispatch.mjs';
 import { gitPaths } from './publish.mjs';
 import * as quota from './quota.mjs';
-import { heldMessage, readRecord, sameCommit, writeLocalState } from './state.mjs';
+import { heldMessage, otherRecordMessage, otherRecordRepo, readRecord, sameCommit, writeLocalState } from './state.mjs';
 
 // The record to change, as readRecord gives it: the newer of this machine's and the one in the pull request's
 // comments (`remote`, as remoteState read them), so a write never builds on a stale copy. A held comment newer than
 // this machine's record is refused, never started over. `reading` is the forge's reading of the pull request, or a
 // function that reads it (remoteReading): on one that is not private, a newer copy gives a restart or a hold, never a
 // record to build on.
+// A record of another repository with this number is refused (state.mjs otherRecordRepo): no entry lands on it.
 function current(project, pr, repo, remote, reading) {
   const record = readRecord(project, pr, remote ?? [], repo, reading);
   if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why, record.finding));
+  const other = otherRecordRepo(record.state, repo);
+  if (other) throw new Error(otherRecordMessage(pr, other, repo, 'this command records on'));
   return record.state;
 }
 

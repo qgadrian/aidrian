@@ -11,16 +11,16 @@
 // --request` itself (lib/pr-await-review.mjs), the Bash rule for gh (lib/rules/github/review-request.mjs), and the hook
 // on the GitHub MCP comment tools (scripts/hook-mcp-github.mjs).
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
-import { originRepo, remoteRepos, repoName } from './remotes.mjs';
+import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
+import { heldMessage, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, repoSuffix, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
 
 // The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
@@ -60,14 +60,16 @@ export function prNumber(value) {
   return match ? Number(match[1]) : null;
 }
 
-const recordFile = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}.json`);
+// The attest record of pull request `pr` of `repo` is one file a repository and number, named as the review record is
+// (state.mjs repoSuffix): `pr-<N>.json` for origin's repository, for none, and in a checkout with no origin;
+// `pr-<N>-<owner>--<name>.json` for any other.
+const plainRecordFile = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}.json`);
+const recordFile = (project, pr, repo = null) => path.join(recordsFolder(stateDir(project)), `pr-${pr}${repoSuffix(project, repo)}.json`);
 
-// The record for a pull request, or null when there is none or it is not a well-formed one for it: corrupt local state
-// never passes the gate. A review names its head and reviewer; an override is marked as one.
-export function readRecord(project, pr) {
+function readRecordFile(file, pr) {
   let record;
   try {
-    record = JSON.parse(readFileSync(recordFile(project, pr), 'utf8'));
+    record = JSON.parse(readFileSync(file, 'utf8'));
   } catch {
     return null;
   }
@@ -75,6 +77,15 @@ export function readRecord(project, pr) {
   const review = typeof record.head === 'string' && SHA.test(record.head) && typeof record.reviewer === 'string' && record.reviewer !== '';
   const override = record.reviewer === 'override' && record.head === null;
   return review || override ? record : null;
+}
+
+// The record for a pull request of `repo` (origin's with none), or null when there is none or it is not a well-formed
+// one for it: corrupt local state never passes the gate. A review names its head and reviewer; an override is marked as
+// one. A repository with no file of its own yet reads the old name, written before the key changed, which gateReview
+// counts only when it names that repository.
+export function readRecord(project, pr, repo = null) {
+  const own = recordFile(project, pr, repo);
+  return readRecordFile(own, pr) ?? (own === plainRecordFile(project, pr) ? null : readRecordFile(plainRecordFile(project, pr), pr));
 }
 
 // A pass of one agent, as the review plan names it (lib/review/plan.mjs): `agent:<name>`, or `agent:<name>:<flow>+<flow>`
@@ -86,10 +97,15 @@ const AGENT_PASS = /^agent:[\w-]+(?::\S+)?$/u;
 // The review the gate counts for pull request `pr`, or null: the plain record `aidrian pr attest` writes, else an agent
 // pass over the whole diff in the review step's record (AGENT_PASS with no files), as { pr, repo, head, reviewer, findings, fixed }. The pass
 // is the reviewer's word, as the plain record is, and like it names a commit attest checked when it recorded it.
-export function gateReview(project, pr) {
-  const record = readRecord(project, pr);
-  if (record) return record;
-  const state = readLocalState(project, pr);
+// With `repo`, only a record of that repository counts (one naming none counts for any): a review of origin#5 is no
+// review of upstream#5.
+export function gateReview(project, pr, repo = null) {
+  const target = repoName(repo);
+  const ofRepo = (named) => target === null || repoName(named ?? null) === null || repoName(named) === target;
+  const record = readRecord(project, pr, target);
+  if (record && ofRepo(record.repo)) return record;
+  const state = readLocalState(project, pr, target ?? undefined);
+  if (!ofRepo(state?.repo)) return null;
   for (const [id, pass] of Object.entries(state?.passes ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
     if (!AGENT_PASS.test(id) || pass?.files !== null || typeof pass?.head !== 'string' || !SHA.test(pass.head)) continue;
     if (typeof pass.reviewer !== 'string' || pass.reviewer === '' || !Number.isInteger(pass.findings)) continue;
@@ -99,30 +115,37 @@ export function gateReview(project, pr) {
   return null;
 }
 
+// Writes `record` to its repository's file, and removes one of that repository left under the old name.
 export function writeRecord(project, record) {
-  const file = recordFile(project, record.pr);
+  const file = recordFile(project, record.pr, record.repo ?? null);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify({ ...record, recordedAt: new Date().toISOString() }, null, 2)}\n`);
+  const plain = plainRecordFile(project, record.pr);
+  if (file !== plain && repoName(readRecordFile(plain, record.pr)?.repo ?? null) === repoName(record.repo ?? null)) rmSync(plain, { force: true });
 }
 
 // The deny reason for the requests in one tool call, each { pr, repo, markers }, or null. `pr` null is a request whose
-// pull request could not be read; `repo` null is this repository. A request to another repository passes. The override
-// records itself for the pull request, so a person who waived the review once is not asked again.
-export function judgeRequests(requests, { project, config, env = process.env, origin = originRepo(project) }) {
+// pull request could not be read; `repo` null is this repository. Every request to a repository of this checkout's
+// remotes is gated, origin or not, against a review of that repository (#304): `aidrian pr await-review --request
+// --repo <owner>/<name>`, which the bot cap prints where the remotes name several, acts on such a one. A request to a
+// repository no remote names passes. The override records itself for the pull request, so a person who waived the
+// review once is not asked again.
+export function judgeRequests(requests, { project, config, env = process.env, origin = originRepo(project), remotes = remoteRepos(project) }) {
   const gate = config.github.reviewGate;
   if (!gate.enabled || requests.length === 0) return null;
-  const ours = requests.filter((request) => request.repo === null || origin === null || repoName(request.repo) === origin);
+  const targetOf = (request) => repoName(request.repo) ?? origin;
+  const ours = requests.filter((request) => request.repo === null || origin === null || remotes.includes(repoName(request.repo)) || repoName(request.repo) === origin);
   if (env[OVERRIDE] === '1') {
-    for (const { pr } of ours) {
-      if (pr !== null && !gateReview(project, pr)) writeRecord(project, { pr, repo: origin, head: null, reviewer: 'override', findings: 0, fixed: 0, note: OVERRIDE });
+    for (const request of ours) {
+      if (request.pr !== null && !gateReview(project, request.pr, targetOf(request))) writeRecord(project, { pr: request.pr, repo: targetOf(request), head: null, reviewer: 'override', findings: 0, fixed: 0, note: OVERRIDE });
     }
     return null;
   }
   const attested = (request) => {
-    const target = repoName(request.repo) ?? origin;
+    const target = targetOf(request);
     return (request.markers ?? []).some((marker) => marker.pr === request.pr && target !== null && marker.repo === target);
   };
-  const missing = ours.find((request) => request.pr === null || (!attested(request) && !gateReview(project, request.pr)));
+  const missing = ours.find((request) => request.pr === null || (!attested(request) && !gateReview(project, request.pr, targetOf(request))));
   return missing ? denyReason(missing.pr, gate.checklist) : null;
 }
 
@@ -147,11 +170,7 @@ export function denyReason(pr, checklist) {
 // default repository, which in a fork checkout is the upstream, else origin, so it works offline. `forge` reads the pull
 // request; it is the test seam.
 export function prRepo(project, pr, given, forge = forgeFor(project.root)) {
-  if (given !== undefined && given !== null) {
-    const name = repoName(given);
-    if (!name) throw new Error(`--repo ${given} is not OWNER/NAME`);
-    return name;
-  }
+  if (given !== undefined && given !== null) return givenRepo(given);
   let url = null;
   try {
     url = forge.change(pr, 'url')?.url ?? null;
@@ -199,7 +218,7 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
     } else throw new Error(`unknown argument: ${flag}`);
   }
   if (flags.check) {
-    const found = gateReview(project, pr) !== null;
+    const found = gateReview(project, pr, flags.repo ?? null) !== null;
     console.log(`${found ? 'recorded' : 'not recorded'}: pull request #${pr}`);
     return found ? 0 : 3;
   }
@@ -254,10 +273,11 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
 }
 
 // The marker of the recorded review for `pr` in `repo` (null for this repository), for the one request await-review
-// posts; null when there is no real review on record, or `repo` is another repository.
-export function attestation(project, pr, repo = null, origin = originRepo(project)) {
-  if (repo !== null && (origin === null || repoName(repo) !== origin)) return null;
-  const record = gateReview(project, pr);
+// posts; null when there is no real review of that repository on record, or `repo` is no remote's.
+export function attestation(project, pr, repo = null, origin = originRepo(project), remotes = remoteRepos(project)) {
+  const target = repoName(repo) ?? origin;
+  if (repo !== null && (target === null || (target !== origin && !remotes.includes(target)))) return null;
+  const record = gateReview(project, pr, target);
   return record?.head && record?.repo ? markerFor(record) : null;
 }
 
@@ -383,7 +403,8 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     const reading = remoteReading(repo, pr, forge);
     const record = readReviewRecord(project, pr, remote ?? [], repo, reading);
     if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why, record.finding));
-    if (record.state.repo && repoName(record.state.repo) !== repo) throw new Error(`the review record of #${pr} is for ${repoName(record.state.repo) ?? record.state.repo}, not ${repo}: --last signs off the pull request that record names. Give --repo ${repoName(record.state.repo) ?? record.state.repo}, or the long form`);
+    const other = otherRecordRepo(record.state, repo);
+    if (other) throw new Error(otherRecordMessage(pr, other, repo, '--last signs off'));
     const { flow, head } = lastSignoff(record.state, { pr, repo, head: current });
     // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it
     // writes. A record written between the two reads is checked by those refusals, not by lastSignoff's: deciding and
@@ -545,7 +566,7 @@ async function showIngest({ project, pr, repo, manifest, forge, visual }) {
       console.log(`the captures comment of ${sha} came from another machine's capture: this ingest counts only on this machine; ingest the same images on the machine that captured the head to show them on the pull request`);
       return;
     }
-    const state = readLocalState(project, pr);
+    const state = readLocalState(project, pr, repo);
     const kept = state?.visual?.head === manifest.head ? state.visual : null;
     forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null, reviewed: Boolean(kept) && visualReviewed(state) }));
     console.log(`updated the captures comment on ${where} with the ingest`);

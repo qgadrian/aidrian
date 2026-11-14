@@ -45,6 +45,7 @@ import { DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
+import { repoFlag } from './remotes.mjs';
 import { holdToBase } from './review/in-force.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
@@ -558,9 +559,9 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
   const extension = await import('./review/extension.mjs');
   const n = Number(base.n);
   const decision = extension.atCap({
-    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n,
+    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n, repo: base.repo, repoArg: repoFlag(project, base.repo),
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
-    command: `aidrian pr await-review ${n} --request`,
+    command: `aidrian pr await-review ${n} --request${repoFlag(project, base.repo)}`,
     history: botHistory(extension, { project, config, forge, base, reviewer: result.reviewer, head: result.head_sha }),
     // The head of the bot's last review: one read of its reviews, no git. A read that fails says nothing: the cap
     // stands, and no head is named unreviewed.

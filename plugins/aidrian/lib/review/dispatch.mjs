@@ -20,6 +20,7 @@ import { patternsOf, textChecker } from './publish.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
 import { visualReviewed } from './state.mjs';
+import { repoSuffix } from './state.mjs';
 import { inBaseWorktree, runHook } from './base-worktree.mjs';
 
 // Captures this head once, then attaches the images as the attach mode allows and writes the captures comment. The
@@ -274,8 +275,10 @@ export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}
 // the whole raw id's SHA-256, so two ids that read alike, such as `flow:a-b:c` and `flow:a:b-c`, or two that share a
 // long prefix, never share a file. Every character left is ASCII, so the name stays far under 255 bytes.
 export const FILE_PREFIX = 100;
-export function findingsFile(project, n, passId) {
-  const dir = path.join(stateDir(project), 'tmp', `review-${n}`);
+// The folder is one a repository and number (state.mjs repoSuffix): `review-<N>` for origin's, `review-<N>-<owner>--<name>`
+// for another remote's, so two repositories' pull requests of one number never share a pass's findings file.
+export function findingsFile(project, n, passId, repo = null) {
+  const dir = path.join(stateDir(project), 'tmp', `review-${n}${repoSuffix(project, repo)}`);
   try {
     mkdirSync(dir, { recursive: true });
   } catch {}
@@ -288,7 +291,7 @@ export function findingsFile(project, n, passId) {
 export function dispatchFor(s, pass, stage) {
   const { root, n, head, map, isVisual } = s;
   const input = passInput(s, pass, stage);
-  const file = findingsFile(s.project, n, pass.id);
+  const file = findingsFile(s.project, n, pass.id, s.repo);
   const prefix = showPrefix(root);
   const briefs = [
     prefix ? belowRootBrief(prefix) : null,

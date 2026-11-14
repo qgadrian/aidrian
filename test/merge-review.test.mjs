@@ -13,7 +13,7 @@ import { runAttest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
 import { recordPass, recordSignoff, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
-import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { waitingRoute } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
@@ -789,7 +789,9 @@ test('a review step leaves another repository`s gate review owed', async (t) => 
   recordPending(f.project, { pr: 9, repo: 'upstream/notes', kind: 'review', head: f.head, by: 't' });
   recordPending(f.project, { pr: 9, repo: 'acme/notes', kind: 'review', head: f.head, by: 't' });
   assert.equal((await f.step({ exec: clean })).status, 'received');
-  assert.deepEqual(readLocalState(f.project, 9).pending.map((entry) => [entry.repo, Boolean(entry.answered)]), [['upstream/notes', false], ['acme/notes', true]]);
+  // Each repository keeps its own record (#305): the upstream's entry stays owed in its own.
+  const owed = (repoOf) => readLocalState(f.project, 9, repoOf).pending.map((entry) => [entry.repo, Boolean(entry.answered)]);
+  assert.deepEqual([owed('upstream/notes'), owed('acme/notes')], [[['upstream/notes', false]], [['acme/notes', true]]]);
 });
 
 test('a gh api merge whose number, repository, or method the rule cannot read is refused', (t) => {
@@ -870,4 +872,46 @@ test('an outcome is the record`s repository`s: another repository`s step neither
   });
   assert.equal(r.run('gh pr merge 6 -R acme/notes'), null);
   assert.match(r.run('gh api -X PUT repos/upstream/notes/pulls/6/merge') ?? '', /no result on record/u);
+});
+
+// #251 security review: this machine keeps one record a pull request number, so in a checkout whose remotes name
+// several repositories it may hold another repository's record of the same number.
+test('a long-form sign-off on one repository refuses this machine`s record of the same number in another', async (t) => {
+  const r = repo(t, { review: { record: 'local' } });
+  const quiet = console.log;
+  console.log = () => {};
+  t.after(() => (console.log = quiet));
+  // A record of qg/voila#9 left under the old file name, origin's, before the record was keyed by repository (#305).
+  const other = emptyState(9, 'qg/voila');
+  noteOutcome(other, { status: 'human_required', head: r.commit }, () => false, 'qg/voila');
+  mkdirSync(path.dirname(recordFile(r.project, 9)), { recursive: true });
+  writeFileSync(recordFile(r.project, 9), JSON.stringify({ ...other, revision: 1 }));
+  const forge = viewing(() => ({ url: 'https://github.com/acme/notes/pull/9', baseRefName: 'main' }));
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }),
+    /the review record of #9 is for qg\/voila, not acme\/notes: this command records on the pull request that record names\. Give --repo qg\/voila/u);
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--overrule', 'x', '--reason', 'r', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }), /is for qg\/voila, not acme\/notes/u);
+});
+
+test('a sign-off with `--repo=<value>` beside `--repo` is refused by the command, which the hook leaves to it', async (t) => {
+  // The review-signoff rule reads `--repo=qg/voila` as an unknown flag, not a second --repo; the command must refuse it.
+  const r = repo(t, { review: { record: 'local' } });
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes', '--repo=qg/voila'], r.project, loadConfig(r.project).config, { forge: viewing(() => { throw new Error('no forge read'); }) }),
+    /unknown argument: --repo=qg\/voila/u);
+});
+
+// #305 audit: with records of one number for several repositories, a merge that names none is not checked against
+// whichever was written last: the guard asks for the repository.
+test('a merge naming no repository, of a number recorded for several repositories, is refused until it names one', (t) => {
+  const r = repo(t);
+  r.git('remote', 'add', 'upstream', 'https://github.com/Up/Notes.git');
+  r.record(5, (state) => outcome(state, 'running'));
+  const upstream = emptyState(5, 'up/notes');
+  outcome(upstream, 'received');
+  writeLocalState(r.project, upstream);
+  const denied = r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '';
+  assert.match(denied, /with no repository named, and this machine holds review records of #5 for several repositories \(acme\/notes, up\/notes\)/u, 'the newest record, the upstream`s finished one, does not clear origin`s running review');
+  assert.match(denied, /`gh pr merge 5 -R <owner>\/<name> --match-head-commit <sha>`/u);
+  assert.match(r.run(`gh pr merge 5 -R acme/notes --match-head-commit ${HEAD}`) ?? '', /is `running`/u, 'named: origin`s own record');
+  assert.equal(r.run(`gh pr merge 5 -R up/notes --match-head-commit ${HEAD}`), null, 'named: the upstream`s own record');
+  assert.equal(r.run(`gh pr merge 6 --match-head-commit ${HEAD}`), null, 'a number with no record is not ambiguous');
 });

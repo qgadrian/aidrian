@@ -115,3 +115,27 @@ test('the review-fallback rule reads the call inside a shell string, eval, or a 
   g.write(g.answer(asked.question, agent));
   assert.equal(g.run('bash -c "aidrian pr review 12 --quota-fallback agent:critic"'), null, 'the Human`s pick, wrapped');
 });
+
+// A checkout whose remotes name several repositories: the rule reads the record of the repository the call acts on, and
+// binds the answer to it, never another repository's record or answer of the same number.
+test('the review-fallback rule reads only the record of the repository the call acts on', (t) => {
+  const g = guarded(t, { stopped: false });
+  for (const [name, url] of [['origin', 'https://github.com/o/r.git'], ['upstream', 'https://github.com/up/r.git']]) {
+    execFileSync('git', ['remote', 'add', name, url], { cwd: g.dir });
+  }
+  const upstream = emptyState(12, 'up/r');
+  upstream.quotaStops = [STOP];
+  writeLocalState(projectAt(g.dir), upstream);
+  const upAsked = question({ pr: 12, stop: STOP, repo: 'up/r', repoArg: ' --repo up/r' });
+  assert.match(upAsked.question, /review of pull request up\/r#12 stopped/u);
+  assert.equal(upAsked.options[0].run, 'aidrian pr review 12 --quota-fallback agent:critic --repo up/r', 'the printed run names the repository');
+  g.write(g.answer(upAsked.question, agent));
+  assert.equal(g.run(upAsked.options[0].run), null, 'the upstream`s stop, chosen for the upstream');
+  assert.match(g.run('aidrian pr review 12 --quota-fallback agent:critic --repo o/r') ?? '', /holds no such choice/u, 'origin`s #12 has no stop of its own: the upstream`s does not count');
+  assert.match(g.run('aidrian pr review 12 --quota-fallback agent:critic') ?? '', /remotes name more than one repository \(o\/r, up\/r\), so the call must name the one it acts on/u, 'no --repo: no record is read');
+  assert.match(g.run('aidrian pr review 12 --quota-fallback agent:critic --repo x/y') ?? '', /must name, written out as `<owner>\/<name>`, one of the repositories/u);
+  const origin = emptyState(12, 'o/r');
+  origin.quotaStops = [STOP];
+  writeLocalState(projectAt(g.dir), origin);
+  assert.ok(g.run('aidrian pr review 12 --quota-fallback agent:critic --repo o/r'), 'an answer naming up/r#12 does not choose for o/r#12');
+});

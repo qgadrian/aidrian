@@ -308,11 +308,32 @@ request, and an acceptance with no reason. Like every sign-off, it is an audit e
 
 #### Answering in the session
 
-A long-form sign-off, `--accept`, or `--overrule` runs from the session once the Human answered it with AskUserQuestion:
-the question names `<owner>/<name>#<PR>` of this checkout's origin, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
+A long-form sign-off, `--accept`, `--overrule`, or `--stage` runs from the session once the Human answered it with AskUserQuestion:
+the question names `<owner>/<name>#<PR>` of the repository the command acts on, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
 `stage:<name>/signoff`, and the chosen option starts with "Approve". The latest answer naming it decides, and a push asks
-again. The command is one plain `aidrian pr` call with no shell variables, repeated flags, `cd`, `env -C`, or chain, in a checkout with one remote repository. `--last` stays in the Human's
-shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
+again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
+Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
+`--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
+
+The repository the answer must name is the one the command acts on, read with the first step of the command's own
+resolver, the one that needs no forge (`givenRepo`, which `prRepo` runs first): its `--repo OWNER/NAME`, which then must be one of this checkout's remotes, written out as
+`<owner>/<name>` with no host, URL, `.git`, or a `.` or `..` owner or name; with no `--repo`, the one repository this checkout's remotes name, however
+many remotes name it. In a checkout whose remotes name more than one repository, such as an origin and a remote of a
+fork or of an unrelated repository, the command needs `--repo`: without one it acts on the forge's default, which the
+hook cannot read without a forge call and which may be any of them, so no answer counts and the deny says to add it.
+A `--repo` no remote names, or one the answer does not name, approves nothing.
+In such a checkout every command the review step prints names the repository the review ran on, with
+`--repo <owner>/<name>` at its end: the `human_required` sign-offs in `command`, a flow's `overrule`, the `commands`
+and `settle` of each `next`, the `accept` of a deleted flow test, and the `then` of `extension_ask`, the rerun of
+`aidrian pr review` or `aidrian pr await-review --request`. So the session runs a printed command as it is once the
+Human answers; with one repository among the remotes, none of them carries `--repo`.
+This machine keeps one review record a repository and pull request number, in the state folder's `reviews/`:
+`pr-<N>-review.json` for origin's repository (and in a checkout with no origin), and `pr-<N>-review-<owner>--<name>.json`
+for any other, so one checkout reviews `a/b#12` and `c/d#12` apart. A repository with no file of its own yet reads the
+old name, which holds origin's record or one written before the key changed, and its next write moves its own record
+to its file. A record there that names another repository is refused by a sign-off or attest on `--repo`, naming the
+repository it is for, as `--last` does, and the review step leaves it out and builds from the pull request's own record.
+A reader that names no repository, such as a merge with no `-R`, reads the newest record of that number.
 
 #### Unattended rulings
 
@@ -335,9 +356,15 @@ Raising the round cap works the same way. On an answer naming `<owner>/<name>#<P
 runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly as written. That run reviews to exactly its
 `--max-rounds`, plus the extra rounds still valid: a higher cap an earlier bot request recorded in its comment counts only
 for a run under the Human's own override that gives no `--max-rounds`. The `review-rounds` rule refuses the
-variable in any other form, and in a checkout with several remotes, where no answer can name the one repository the command
-acts on; there the Human runs it in their own shell, as the refusal writes it, with the command's own subcommand and
-`--with-bot` or `--request`, since each counts its own rounds.
+variable in any other form. The repository the answer or typed grant names is the one the command acts on, as for a
+[sign-off](#answering-in-the-session): in a checkout whose remotes name more than one repository, the raise names
+`--repo <owner>/<name>`, one of those remotes, once, right after `<PR>` as the printed rerun has it or at the end, as `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>/<name>`;
+both `aidrian pr review` and `aidrian pr await-review` take it, and read the pull request from that repository rather
+than the forge's default. With `--repo`, `aidrian pr review` takes a pull request number, or a URL of a pull request of
+that same repository, and refuses any other before it reads the forge. Without it there, the refusal names that route and reads no record, so another repository's check at the cap of the
+same number names no waiting route; and the Human may still run the raise in
+their own shell, as the refusal writes it, with the command's own subcommand and `--with-bot` or `--request`, since each
+counts its own rounds.
 
 The Human may also grant rounds by typing, at the prompt, as a whole message in any letter case,
 `grant up to <N> review rounds on <owner>/<name>#<PR>`. It names the repository and the pull request, never "this pull
@@ -652,7 +679,8 @@ A project adds its own in `review.reviewers`:
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
   JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
-  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder of its
+  own for another remote's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
   `aidrian worktree cleanup execute` removes the `review-<PR>/` folder once the pull request is merged or closed
   ([Local state](project-folder.md#local-state)).
@@ -969,15 +997,21 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 [dispatch log](dispatch-log.md#review_extension-when-a-check-at-the-round-cap-decides), which `aidrian report reviews` counts.
 
 **Trust.** The `review-extend` rule ([hooks.md](hooks.md#bash-rules)) lets an agent's `--human approve` run only when
-the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request (`#<PR>`) and the
-round it grants (`round <N>`), given after the judge's verdict, with the option that starts with "Approve". Claude Code
+the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request with its
+repository (`<owner>/<name>#<PR>`, as the question the review step prints does; `#<PR>` alone in a checkout with no
+remote) and the round it grants (`round <N>`), given after the judge's verdict, with the option that starts with
+"Approve". The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+name; a checkout whose remotes name more than one needs `--repo`, which the review step prints on the extend commands
+there. `aidrian pr extend` itself acts on that one repository: `--repo`, else the one the forge names for the pull
+request, as the review step does, else origin; it reads the head, the record, and the summary comment there, so in a
+fork checkout an approval never lands on the fork's pull request of the same number. Claude Code
 writes that answer to the transcript, a file in the agent's own account, so an agent with a shell could forge one there:
 a residual the rule accepts. A host without such a transcript, such as Codex, leaves the approval to the Human,
 who runs the command in their own shell. `--human deny` always runs. While the check waits for the judge, the deny of an
 approval names the judge's route: run the review step again with the options it ran with, such as `--with-bot` and
 `--max-rounds`, run the `dispatch` it prints, record its verdict, and run the step once more. After a
 judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
-`--max-rounds`, on the Human's answer or typed grant, or in the Human's own shell in a checkout with several remotes.
+`--max-rounds`, on the Human's answer or typed grant, naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
 signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
@@ -999,8 +1033,12 @@ masked. The command and its files are the base branch's, like the rest of the re
 ## The record
 
 The review config of the pull request is read from its head commit, so a step run from another branch plans the
-same review. Where the record lives is the base branch's, as this checkout has it (its tracking ref `origin/<base>`, or with
-no such ref its own branch `<base>`, by full ref names): `aidrian pr review`, `attest`, `signoff`, `settle`, `extend`,
+same review. Where the record lives is the base branch's, as this checkout has it, by full ref names: its tracking ref
+`origin/<base>`, or with no such ref its own branch `<base>`; and for a pull request of a repository only another remote
+names, such as a fork's parent reviewed with `--repo` or as the forge's default, that remote's `<remote>/<base>` alone, so
+the round cap, the extra-round policy, and the flows that need a sign-off are the reviewed repository's own. When that ref
+is not fetched the command refuses, naming the `git fetch` to run, rather than read origin's policy in its place:
+`aidrian pr review`, `attest`, `signoff`, `settle`, `extend`,
 `waive`, `ingest`, and `await-review --request` read `review.record` as that branch commits it. Each of them, and `request`,
 which writes only this machine's record, holds the working copy to that branch first. These read the record with no such hold,
 and that is their limit: `attest --check`, the review gate's read of it, and `await-review` without `--request`.

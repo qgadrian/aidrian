@@ -156,8 +156,10 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>/`, the findings files of `aidrian pr review`,
+  or `review-<n>-<owner>--<name>/` for a pull request of another remote's repository,
   `pr-<n>-review.md`, and `product-feedback-<n>.md` with `product-feedback-<n>-items.json`.
-  It asks the repository the pull request's review record names, else the checkout's own, and reads at most 50 pull
+  It asks the repository a findings folder names, else the one the pull request's review record names, else the
+  checkout's own, and reads at most 50 pull
   requests a run, the lowest numbers first. The drafts of an open pull request, or of one whose state the forge cannot
   give, stay; so do drafts named for a branch, such as `pr-body-<branch>.md`, and scratch folders.
   The result's `drafts` lists what was `removed`, `kept`, and `failed`.

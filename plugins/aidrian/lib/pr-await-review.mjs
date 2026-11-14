@@ -514,7 +514,7 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
   const extension = await import('./review/extension.mjs');
   const n = Number(base.n);
   const decision = extension.atCap({
-    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n,
+    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n, repo: base.repo, repoArg: repoFlag(project, base.repo),
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
     command: `aidrian pr await-review ${n} --request${repoFlag(project, base.repo)}`,
     history: botHistory(extension, { project, config, forge, base, reviewer: result.reviewer, head: result.head_sha }),

@@ -284,11 +284,13 @@ What each rule matches:
   The rule stops accidents and is no security boundary: a form it does not read, such as `xargs` or `npx`, runs.
 - Extra round approval: `aidrian pr extend <PR> --human approve`, also as `node …/cli.mjs` or `--human=approve`, while the
   pull request's check at the cap waits for the Human. It runs when the session transcript holds an AskUserQuestion
-  answer, given after the judge's verdict, to a question naming `#<PR>` and the round it grants, `round <N>`, whose chosen
-  option starts with "Approve". `--human deny` and `--verdict` run. With no check waiting for the Human in this
+  answer, given after the judge's verdict, to a question naming `<owner>/<name>#<PR>` of the repository the call acts on
+  (`#<PR>` alone in a checkout with no remote) and the round it grants, `round <N>`, whose chosen option starts with
+  "Approve". That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+  name; with several, a call without `--repo` is refused, and the record read is that repository's. `--human deny` and `--verdict` run. With no check waiting for the Human in this
   machine's review record, as when the record came from another machine, the approval is refused.
   Each call in a chain is judged against its own pull request, and the deny names every call it refuses. A deny says
-  why the transcript's answers miss: none after the verdict, none naming `#<PR>` or `round <N>`, or the label picked.
+  why the transcript's answers miss: none after the verdict, none naming `<owner>/<name>#<PR>` or `round <N>`, or the label picked.
   While the check waits for the judge, the deny names the judge's route: run the `dispatch` the review step prints and record
   its verdict with `aidrian pr extend <PR> --verdict`. After a judge's stop, nothing waits for an answer, so the deny names the
   route to one more round instead: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, on the Human's

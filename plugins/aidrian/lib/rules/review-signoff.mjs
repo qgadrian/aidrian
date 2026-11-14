@@ -86,6 +86,21 @@ export function approvalTarget(project, command, cwd, allowed = '') {
   return repo ? { repo } : { repo: null, miss: 'origin' };
 }
 
+// The repository one `aidrian pr` call acts on, from its own words `words` and this checkout's remotes, for a rule that
+// judges each call of a chain apart (review-extend.mjs): { repo } or { repo: null, miss, remotes }. Its `--repo`, which must
+// be written out and one of the remotes (`repo` miss); else the one repository the remotes name; else, when they name
+// several, `remotes`, since the call acts on the forge's default; and `none` for a checkout with no remote at all.
+export function callRepo(project, words) {
+  const given = repoWord(words);
+  const remotes = [...new Set(remoteRepos(project))];
+  if (given === undefined) {
+    if (remotes.length > 1) return { repo: null, miss: 'remotes', remotes };
+    return remotes.length ? { repo: remotes[0] } : { repo: null, miss: 'none', remotes };
+  }
+  const repo = writtenOut(given) ? givenRepo(given) : null;
+  return repo && remotes.includes(repo) ? { repo } : { repo: null, miss: 'repo', remotes };
+}
+
 // Whether this checkout's remotes name more than one repository, so an approved command ends in `--repo`.
 export const severalRemotes = (project) => new Set(remoteRepos(project)).size > 1;
 

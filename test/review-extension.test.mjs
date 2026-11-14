@@ -193,8 +193,9 @@ test('the summary: a fix head a plan round reviewed since is not listed as unrev
 });
 
 test('aidrian pr extend: its arguments are checked before anything is recorded', () => {
-  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null });
-  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny' });
+  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null, repo: null });
+  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny', repo: null });
+  assert.equal(parseExtend(['12', '--human', 'deny', '--repo', 'Up/Notes']).repo, 'up/notes');
   for (const [args, error] of [
     [[], /needs a pull request number/u],
     [['12'], /exactly one of --verdict or --human/u],
@@ -331,7 +332,8 @@ test('the review-extend rule: in a checkout with several remotes, the override a
   assert.match(one, /put the choice to the Human with an AskUserQuestion that names <owner>\/<name>#12/u, 'one remote: an answer can approve it');
   assert.match(one, /run exactly `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4`/u);
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: g.dir });
-  const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
+  assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /remotes name more than one repository \(o\/r, up\/r\), so the call must name the one it acts on: `aidrian pr extend 12 --human approve --repo <owner>\/<name>`/u, 'no --repo: which record is unknown (#302)');
+  const denied = g.run('aidrian pr extend 12 --human approve --repo o/r') ?? '';
   assert.match(denied, /put the choice to the Human with an AskUserQuestion that names <owner>\/<name>#12/u, 'several remotes: an answer still can');
   assert.match(denied, /run exactly `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo <owner>\/<name>` \(with `--with-bot` before `--max-rounds` when the step runs the bot\)/u);
   assert.match(denied, /where <owner>\/<name> is the repository the answer or grant names, one of this checkout's remotes/u);
@@ -480,7 +482,7 @@ test('await-review --request at the cap: converging bot rounds get the judge, an
   recordVerdict(state, { verdict: 'extend', reason: 'f.js:3 is a valid high finding' });
   writeLocalState(project, state);
   const ask = await run(converging);
-  assert.deepEqual([ask.code, ask.out.status, ask.out.question], [11, 'extension_ask', 'Pull request #42 reached its review-round cap, and its fix head zzz is reviewed by no pass. Grant one extra review round, round 4, to review that fix?']);
+  assert.deepEqual([ask.code, ask.out.status, ask.out.question], [11, 'extension_ask', 'Pull request acme/notes#42 reached its review-round cap, and its fix head zzz is reviewed by no pass. Grant one extra review round, round 4, to review that fix?']);
 
   const asked = readLocalState(project, 42);
   recordHuman(asked, { answer: 'approve', by: 'Tester', current: 'zzz' });
@@ -975,4 +977,60 @@ test('await-review at the cap, with one repository`s remotes: the rerun names no
   recordVerdict(state, { verdict: 'extend', reason: 'f.js:3 is a valid high finding' });
   writeLocalState(project, state);
   assert.equal((await run(converging)).out.then, 'aidrian pr await-review 42 --request');
+});
+
+// #302: the approval binds to one repository, the one the Human's answer names, and its record is that repository's.
+test('the review-extend rule binds the answer to the repository the call acts on', (t) => {
+  const g = guarded(t);
+  for (const [name, url] of [['origin', 'https://github.com/me/notes.git'], ['upstream', 'https://github.com/up/notes.git']]) {
+    execFileSync('git', ['remote', 'add', name, url], { cwd: g.dir });
+  }
+  const state = emptyState(12, 'up/notes');
+  state.extensions = [{ source: 'plan', round: 2, head: 'abc', status: 'asking', judge: { verdict: 'extend', reason: 'r', at: '2026-11-01T10:00:00.000Z' } }];
+  writeLocalState(g.project, state);
+  const question = (repo) => `Pull request ${repo}#12 reached its review-round cap. Grant one extra review round, round 3?`;
+  g.write(g.answer(question('up/notes'), 'Approve round 3'));
+  assert.equal(g.run('aidrian pr extend 12 --human approve --repo up/notes'), null, 'the repository the answer names');
+  assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /must name the one it acts on/u, 'no --repo with several repositories');
+  assert.match(g.run('aidrian pr extend 12 --human approve --repo x/y') ?? '', /must name, written out as `<owner>\/<name>`, one of the repositories/u);
+  g.write(g.answer(question('me/notes'), 'Approve round 3'));
+  assert.match(g.run('aidrian pr extend 12 --human approve --repo up/notes') ?? '', /no question answered since the judge's verdict names up\/notes#12/u, 'an answer about the fork`s pull request of that number');
+  g.write(g.answer('Pull request #12 reached its review-round cap. Grant one extra review round, round 3?', 'Approve round 3'));
+  assert.ok(g.run('aidrian pr extend 12 --human approve --repo up/notes'), 'a question with no repository approves nothing once the checkout has one');
+});
+
+test('aidrian pr extend in a fork checkout records and posts only on the repository the forge names, not origin`s', async (t) => {
+  // origin is the fork, me/notes; the forge's default, which the review step acted on, is the parent, up/notes.
+  const g = guarded(t);
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: g.dir });
+  git('switch', '-q', '-c', 'main');
+  git('add', '.aidrian');
+  git('commit', '-qm', 'base');
+  for (const [name, url] of [['origin', 'https://github.com/me/notes.git'], ['upstream', 'https://github.com/up/notes.git']]) {
+    execFileSync('git', ['remote', 'add', name, url], { cwd: g.dir });
+  }
+  const fork = emptyState(12, 'me/notes');
+  writeLocalState(g.project, fork);
+  const parent = emptyState(12, 'up/notes');
+  parent.extensions = [{ source: 'plan', round: 2, head: 'a'.repeat(40), status: 'asking', judge: { verdict: 'extend', reason: 'r', at: '2026-11-01T10:00:00.000Z' } }];
+  writeLocalState(g.project, parent);
+  const posted = [];
+  const reads = [];
+  const forge = {
+    change: (ref, fields, options = {}) => (reads.push(options.repo ?? null), { number: 12, url: 'https://github.com/up/notes/pull/12', headRefOid: 'a'.repeat(40), baseRefName: 'main', isCrossRepository: false }),
+    conversationComments: () => [],
+    postComment: (repo, n, body) => (posted.push(repo), { id: 1, body }),
+    editComment: (repo) => (posted.push(repo), {}),
+    viewer: () => 'someone',
+    visibility: () => 'PRIVATE',
+    pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }),
+  };
+  const log = t.mock.method(console, 'log', () => {});
+  const code = await runExtend(['12', '--human', 'approve'], g.project, loadConfig(g.project).config, { forge, env: {} });
+  log.mock.restore();
+  assert.equal(code, 0);
+  assert.equal(readLocalState(g.project, 12, 'up/notes').extensions[0].status, 'granted', 'the parent`s record holds the grant');
+  assert.equal(readLocalState(g.project, 12, 'me/notes').extensions, undefined, 'the fork`s record of #12 is untouched');
+  assert.ok(posted.every((repo) => repo === 'up/notes'), `posted only on the parent: ${posted.join(', ')}`);
+  assert.ok(reads.slice(1).every((repo) => repo === 'up/notes'), 'the head is read from the parent');
 });

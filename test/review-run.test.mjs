@@ -1345,7 +1345,7 @@ test('extra rounds "ask": a converging review at the cap dispatches the judge, t
   const ask = await r.step({ exec: clean });
   assert.equal(ask.status, 'extension_ask');
   assert.equal(EXIT.extension_ask, 11);
-  assert.equal(ask.question, 'Pull request #7 reached its review-round cap. Grant one extra review round, round 3?');
+  assert.equal(ask.question, 'Pull request o/r#7 reached its review-round cap. Grant one extra review round, round 3?', 'it names the repository, which the review-extend rule binds the answer to');
   assert.deepEqual(ask.options, ['Approve round 3', 'Deny']);
   assert.equal(ask.max_rounds, 2, 'asking grants nothing yet');
 
@@ -1403,7 +1403,7 @@ test('extra rounds "ask" on an unreviewed fix: the question names the fix, aidri
   const verdict = await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 was a valid high finding; the fix is one line', '--head', capped.head]);
   const ask = await r.step({ exec: clean });
   assert.equal(ask.status, 'extension_ask');
-  assert.equal(ask.question, `Pull request #7 reached its review-round cap, and its fix head ${capped.head.slice(0, 7)} is reviewed by no pass. Grant one extra review round, round 3, to review that fix?`);
+  assert.equal(ask.question, `Pull request o/r#7 reached its review-round cap, and its fix head ${capped.head.slice(0, 7)} is reviewed by no pass. Grant one extra review round, round 3, to review that fix?`);
   assert.ok(verdict.out.next.includes(`"${ask.question}"`), 'the verdict`s next step asks the same question');
   assert.doesNotMatch(r.comments[0].body, /is reviewed by no pass/u, 'a check waiting for the Human is no stop');
   await extend(t, r, ['--human', 'approve']);
@@ -3207,9 +3207,11 @@ test('with remotes of several repositories, the review step`s rerun at the cap n
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: two.dispatch[0].pass, head: two.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
   const capped = await r.step({ exec: clean });
   assert.equal(capped.status, 'extension_check');
+  assert.ok(capped.dispatch[0].record.endsWith(' --repo o/r'), `the judge's record command names the repository (#302): ${capped.dispatch[0].record}`);
   await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a real high-severity bug', '--head', capped.head]);
   const ask = await r.step({ exec: clean });
-  assert.deepEqual([ask.status, ask.then], ['extension_ask', 'aidrian pr review 7 --repo o/r']);
+  assert.deepEqual([ask.status, ask.then, ask.record], ['extension_ask', 'aidrian pr review 7 --repo o/r', 'aidrian pr extend 7 --human approve|deny --repo o/r']);
+  assert.match(ask.question, /^Pull request o\/r#7 reached/u);
 });
 
 test('the review step on one repository ignores this machine`s record of the same number in another', async (t) => {

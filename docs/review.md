@@ -982,8 +982,14 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 [dispatch log](dispatch-log.md#review_extension-when-a-check-at-the-round-cap-decides), which `aidrian report reviews` counts.
 
 **Trust.** The `review-extend` rule ([hooks.md](hooks.md#bash-rules)) lets an agent's `--human approve` run only when
-the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request (`#<PR>`) and the
-round it grants (`round <N>`), given after the judge's verdict, with the option that starts with "Approve". Claude Code
+the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request with its
+repository (`<owner>/<name>#<PR>`, as the question the review step prints does; `#<PR>` alone in a checkout with no
+remote) and the round it grants (`round <N>`), given after the judge's verdict, with the option that starts with
+"Approve". The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+name; a checkout whose remotes name more than one needs `--repo`, which the review step prints on the extend commands
+there. `aidrian pr extend` itself acts on that one repository: `--repo`, else the one the forge names for the pull
+request, as the review step does, else origin; it reads the head, the record, and the summary comment there, so in a
+fork checkout an approval never lands on the fork's pull request of the same number. Claude Code
 writes that answer to the transcript, a file in the agent's own account, so an agent with a shell could forge one there:
 a residual the rule accepts. A host without such a transcript, such as Codex, leaves the approval to the Human,
 who runs the command in their own shell. `--human deny` always runs. While the check waits for the judge, the deny of an

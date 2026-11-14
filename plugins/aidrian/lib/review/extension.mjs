@@ -20,6 +20,7 @@ import { appendEvent, stamp } from '../dispatch-log.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { runGit } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
+import { givenRepo, repoFlag } from '../remotes.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
@@ -258,11 +259,13 @@ export function botRounds(reviews, reviewComments, reviewer) {
 // round: an answer to it would approve that round too. `unreviewed` is the entry's { head }, when no round reviewed it.
 // `flags`, the red flags' reasons, are named so the Human approves past them knowingly: by name only, so the question
 // names no round but the one it grants.
-export const askQuestion = (pr, round, unreviewed = null, flags = []) => {
+// `repo` names the pull request's repository, `<owner>/<name>#<PR>`, which the review-extend rule binds the answer to.
+export const askQuestion = (pr, round, unreviewed = null, flags = [], repo = null) => {
   const warn = flags?.length ? ` The round history raised red flags (${[...new Set(flags.map(flagName))].join(', ')}), and the judge still recommends one more round.` : '';
+  const named = `${repo ?? ''}#${pr}`;
   return unreviewed?.head
-    ? `Pull request #${pr} reached its review-round cap, and its fix head ${String(unreviewed.head).slice(0, 7)} is reviewed by no pass.${warn} Grant one extra review round, round ${round}, to review that fix?`
-    : `Pull request #${pr} reached its review-round cap.${warn} Grant one extra review round, round ${round}?`;
+    ? `Pull request ${named} reached its review-round cap, and its fix head ${String(unreviewed.head).slice(0, 7)} is reviewed by no pass.${warn} Grant one extra review round, round ${round}, to review that fix?`
+    : `Pull request ${named} reached its review-round cap.${warn} Grant one extra review round, round ${round}?`;
 };
 export const askOptions = (round) => [`Approve round ${round}`, 'Deny'];
 
@@ -347,7 +350,7 @@ export function revalidate({ state, source, round, head, history, log = () => {}
 // returns the head of the last round without git work: the record's rounds, or the bot's last review; a stop that reads
 // no signals, the ceiling or one made on an earlier head, asks it whether the head now is one no round reviewed.
 // `log(row)` gets each new decision.
-export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
+export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
   if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' } };
   let cached = null;
   const history = () => (cached ??= readHistory());
@@ -409,7 +412,7 @@ export function atCap({ state, source, round, head, policy, history: readHistory
         pass: JUDGE_PASS,
         agent: JUDGE_AGENT,
         brief: JUDGE_BRIEF,
-        record: `aidrian pr extend ${pr} --verdict extend|stop --reason "<evidence>" --head ${head}`,
+        record: `aidrian pr extend ${pr} --verdict extend|stop --reason "<evidence>" --head ${head}${repoArg}`,
       }],
     };
   }
@@ -417,9 +420,9 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     return {
       status: 'extension_ask',
       extension: summary,
-      question: askQuestion(pr, round + 1, entry.unreviewed, entry.red_flags),
+      question: askQuestion(pr, round + 1, entry.unreviewed, entry.red_flags, repo),
       options: askOptions(round + 1),
-      record: `aidrian pr extend ${pr} --human approve|deny`,
+      record: `aidrian pr extend ${pr} --human approve|deny${repoArg}`,
       then: command,
     };
   }
@@ -476,7 +479,7 @@ export function parseExtend(args) {
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--verdict', '--reason', '--head', '--human'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--verdict', '--reason', '--head', '--human', '--repo'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
@@ -490,32 +493,35 @@ export function parseExtend(args) {
     if (flags.head !== undefined) throw new Error('--head goes with --verdict');
   }
   if (flags.head !== undefined && !SHA.test(flags.head)) throw new Error('--head must be a commit SHA');
-  return { pr: Number(match[1]), verdict: flags.verdict ?? null, reason: flags.reason?.trim() ?? null, head: flags.head ?? null, human: flags.human ?? null };
+  return { pr: Number(match[1]), verdict: flags.verdict ?? null, reason: flags.reason?.trim() ?? null, head: flags.head ?? null, human: flags.human ?? null, repo: flags.repo === undefined ? null : givenRepo(flags.repo) };
 }
 
 // What to run after a recorded decision.
-function nextStep(entry, pr) {
-  const again = entry.source === 'bot' ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
+function nextStep(entry, pr, repo, repoArg = '') {
+  const again = entry.source === 'bot' ? `aidrian pr await-review ${pr} --request${repoArg}` : `aidrian pr review ${pr}${repoArg}`;
   if (entry.status === 'granted') return `round ${entry.round + 1} is granted: run ${again}`;
-  if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1, entry.unreviewed, entry.red_flags)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny`;
+  if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1, entry.unreviewed, entry.red_flags, repo)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny${repoArg}`;
   return 'the cap stands: report round_limit and the findings left open';
 }
 
 // The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless the
 // base branch's `review.record` is "local", the pull request's summary comment, so another machine continues from it.
-// `deps.forge` replaces the forge (change, conversationComments, postComment, editComment, viewer) and `deps.repo` the origin,
-// in tests.
+// The pull request's repository is the one the review step acts on, and the Human's answer names: `--repo`, else the
+// forge's (review-gate.mjs prRepo), else origin. Its head, its record, and its summary comment are all that one
+// repository's, so in a fork checkout an approval never lands on the fork's pull request of the same number.
+// `deps.forge` replaces the forge (change, conversationComments, postComment, editComment, viewer) and `deps.repo` the
+// resolved repository, in tests.
 export async function runExtend(args, project, config, deps = {}) {
   const opts = parseExtend(args);
-  const { originRepo } = await import('../review-gate.mjs');
+  const { prRepo } = await import('../review-gate.mjs');
   const forge = deps.forge ?? forgeFor(undefined);
-  const repo = deps.repo ?? originRepo(project);
+  const repo = deps.repo ?? prRepo(project, opts.pr, opts.repo, forge);
   // The pull request now: a decision is for the head its signals were read on, and the record is read only from the
   // state.dir its base branch commits. A forge that cannot answer, or names no base, leaves no base to hold to, so the
   // decision stays on this machine: nothing publishes.
   let view = null;
   try {
-    view = forge.change(String(opts.pr), 'number,headRefOid,baseRefName,url,title,body');
+    view = forge.change(String(opts.pr), 'number,headRefOid,baseRefName,url,title,body', { repo });
   } catch {}
   const held = view?.baseRefName ? holdToBase(project, config, { repo, base: view.baseRefName }) : null;
   const current = view?.headRefOid ?? null;
@@ -542,7 +548,7 @@ export async function runExtend(args, project, config, deps = {}) {
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr: opts.pr, repo });
   } catch {}
-  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension: { source: entry.source, round: entry.round, head: entry.head, status: entry.status, by: entry.by, reasons: entry.reasons }, next: nextStep(entry, opts.pr), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
+  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension: { source: entry.source, round: entry.round, head: entry.head, status: entry.status, by: entry.by, reasons: entry.reasons }, next: nextStep(entry, opts.pr, repo, repoFlag(project, repo)), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
 }
 

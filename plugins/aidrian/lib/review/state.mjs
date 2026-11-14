@@ -132,16 +132,11 @@ export function mergePending(a, b) {
 // repository, for a repository no record names, and in a checkout with no origin, as before; `pr-<N>-review-<owner>--<name>.json` for any other, which
 // a checkout whose remotes name several repositories reviews too. GitHub owners hold no `--`, so the name is one
 // repository's. The origin's file keeps its old name, so a record written before the key changed is still origin's.
-const origins = new Map();
-const originOf = (project) => {
-  if (!origins.has(project.root)) origins.set(project.root, originRepo(project));
-  return origins.get(project.root);
-};
 const folder = (project) => recordsFolder(stateDir(project));
 const plainFile = (project, pr) => path.join(folder(project), `pr-${pr}-review.json`);
 function file(project, pr, repo = null) {
   const name = repoName(repo);
-  const origin = originOf(project);
+  const origin = originRepo(project);
   if (name === null || origin === null || name === origin) return plainFile(project, pr);
   return path.join(folder(project), `pr-${pr}-review-${name.replace('/', '--')}.json`);
 }

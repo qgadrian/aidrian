@@ -9,7 +9,8 @@
 // refused too: the review step writes that record before it prints `extension_ask`, so only a record from another
 // machine lacks it, and that approval is the Human's to run. While the check waits for the judge, that deny names the
 // judge's route. After a judge's stop nothing waits for an answer, so it names the route to one more round instead:
-// AIDRIAN_ALLOW_EXTRA_ROUNDS=1 with --max-rounds, on the Human's answer or typed grant, or in their shell with several remotes.
+// AIDRIAN_ALLOW_EXTRA_ROUNDS=1 with --max-rounds, on the Human's answer or typed grant, ending in `--repo <owner>/<name>`
+// when this checkout's remotes name several repositories.
 // Every deny says why the transcript's answers miss, and a chain of calls is judged call by call, wherever each runs
 // (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell. A shell fed text the rule
 // cannot read as commands, such as a pipe into `bash`, is refused when that text names an approval.
@@ -21,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { findProject } from '../project.mjs';
 import { readLocalState } from '../review/state.mjs';
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
-import { oneRemote } from './review-signoff.mjs';
+import { NOTIFY_CLAUSE, severalRemotes } from './review-signoff.mjs';
 
 const LEAD = 'Blocked: `aidrian pr extend --human approve` records the Human\'s approval of an extra review round';
 
@@ -56,20 +57,18 @@ export function waitingRoute(pr, last) {
 
 // The deny when no ask waits for the Human in this machine's record of pull request `pr`: the judge stopped, granted,
 // is still to rule, or never ran, so no answer can be recorded, and `aidrian pr extend` itself would fail. A check
-// waiting for the judge names the judge's route. Otherwise more rounds are the Human's to raise, with the override:
-// on an answer the review-rounds rule reads, or in their own shell when this checkout has several remotes (`shared`
-// false), where no answer can name the one repository. `last` is the record's latest check, `next` the --max-rounds
-// that allows one more round.
-export const noAskReason = (pr, { last = null, next = null, bot = false, shared = true } = {}) => {
+// waiting for the judge names the judge's route. Otherwise more rounds are the Human's to raise, with the override, on
+// an answer or a typed grant the review-rounds rule reads; when this checkout's remotes name several repositories
+// (`several`), the raise ends in `--repo <owner>/<name>`, the one the answer names (review-signoff.mjs approvalTarget).
+// `last` is the record's latest check, `next` the --max-rounds that allows one more round.
+export const noAskReason = (pr, { last = null, next = null, bot = false, several = false } = {}) => {
   const rerun = bot ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
   const withBot = bot ? '' : ' (with `--with-bot` before `--max-rounds` when the step runs the bot)';
-  const raise = `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${rerun} --max-rounds ${next ?? '<N>'}`;
-  const override = shared
-    ? `To allow one more round, put the choice to the Human with an AskUserQuestion that names <owner>/<name>#${pr} and --max-rounds ${next ?? '<N>'}, with a recommended option that starts with "Approve"; ` +
-      `or the Human types \`grant up to <N> review rounds on <owner>/<name>#${pr}\` as a message of its own; ` +
-      `on that answer or grant run exactly \`${raise}\`${withBot}. An agent sets that variable on no other ground. Otherwise report the cap and the findings left open.`
-    : `This checkout has several remotes, so no answer lets an agent set AIDRIAN_ALLOW_EXTRA_ROUNDS here: to allow one more round, the Human runs \`${raise}\`${withBot} in their own shell ` +
-      '(`!` in the prompt, or another terminal). Report the cap, the findings left open, and that command.';
+  const raise = `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${rerun} --max-rounds ${next ?? '<N>'}${several ? ' --repo <owner>/<name>' : ''}`;
+  const repo = several ? ', where <owner>/<name> is the repository the answer or grant names, one of this checkout\'s remotes, since they name more than one' : '';
+  const override = `To allow one more round, put the choice to the Human with an AskUserQuestion that names <owner>/<name>#${pr} and --max-rounds ${next ?? '<N>'}, with a recommended option that starts with "Approve" (${NOTIFY_CLAUSE}); ` +
+    `or the Human types \`grant up to <N> review rounds on <owner>/<name>#${pr}\` as a message of its own; ` +
+    `on that answer or grant run exactly \`${raise}\`${withBot}, as one plain command from the pull request's checkout${repo}. An agent sets that variable on no other ground. Otherwise report the cap and the findings left open.`;
   if (!last) {
     return `${LEAD}, and this machine's review record holds no extension check for pull request #${pr}. When another ` +
       'machine asked, the Human runs the approval in their own shell (`!` in the prompt). ' + override;
@@ -215,7 +214,7 @@ function judge(call, project, input) {
     state = readLocalState(project, call.pr);
   } catch {}
   const pending = (state?.extensions ?? []).filter((entry) => entry.status === 'asking').at(-1);
-  if (!pending) return noAskReason(call.pr, { ...nextCap(state), shared: oneRemote(project) });
+  if (!pending) return noAskReason(call.pr, { ...nextCap(state), several: severalRemotes(project) });
   const round = pending.round + 1;
   const since = pending.judge?.at ?? pending.decided_at ?? null;
   const why = mismatch(transcriptAnswers(readTranscript(input?.transcript_path)), { pr: call.pr, round, since });

@@ -182,3 +182,65 @@ test('an approved command aimed elsewhere, or a checkout with several remotes, g
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd });
   assert.equal(check(command, { cwd, input }), REASON, 'the forge default may be the parent');
 });
+
+// #251: the checkout had remotes origin, origin-https, and a third of one repository, and a fourth of another.
+function severalRemotes(t) {
+  const cwd = project(t);
+  for (const [name, url] of [['origin-https', 'https://github.com/o/r'], ['team', 'git@github.com:o/r.git'], ['other', 'https://github.com/qg/voila.git']]) {
+    execFileSync('git', ['remote', 'add', name, url], { cwd });
+  }
+  return cwd;
+}
+
+test('in a checkout with several remotes, an answer counts on the sign-off whose --repo it names', (t) => {
+  const cwd = severalRemotes(t);
+  const accept = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
+  const input = transcript(t, [{ 'Accept the fit check on o/r#9 at abc1234? (ui/fit)': 'Approve (Recommended)' }]);
+  assert.equal(check(`${accept} --repo o/r`, { cwd, input }), null, 'the repository the answer names, one of the remotes');
+  assert.equal(check(`aidrian pr signoff 9 --repo O/R --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`, { cwd, input }), null, 'anywhere among the flags, in any letter case');
+  assert.equal(check(accept, { cwd, input }), REASON, 'no --repo: the forge default may be either repository');
+  assert.equal(check(`${accept} --repo qg/voila`, { cwd, input }), REASON, 'the other remote`s repository, which the answer does not name');
+  const other = transcript(t, [{ 'Accept the fit check on qg/voila#9 at abc1234? (ui/fit)': 'Approve' }]);
+  assert.equal(check(`${accept} --repo o/r`, { cwd, input: other }), REASON, 'an answer naming the other repository approves nothing on this one');
+  for (const [why, command] of [
+    ['a repository no remote names', `${accept} --repo x/y`],
+    ['a repeated --repo', `${accept} --repo o/r --repo o/r`],
+    ['a --repo the shell builds', `${accept} --repo "$R"`],
+    ['a --repo with a host', `${accept} --repo github.com/o/r`],
+    ['a --repo as a URL', `${accept} --repo https://github.com/o/r`],
+    ['a --repo with .git', `${accept} --repo o/r.git`],
+    ['a --repo with no value', `${accept} --repo`],
+    ['a chain', `${accept} --repo o/r; true`],
+    ['a cd', `cd /other && ${accept} --repo o/r`],
+    ['env -C', `env -C /other ${accept} --repo o/r`],
+    ['an environment prefix', `GH_REPO=qg/voila ${accept} --repo o/r`],
+    ['the short form', 'aidrian pr signoff 9 --last --repo o/r'],
+  ]) assert.equal(check(command, { cwd, input }), REASON, why);
+  const xy = transcript(t, [{ 'Accept the fit check on x/y#9 at abc1234? (ui/fit)': 'Approve' }]);
+  assert.equal(check(`${accept} --repo x/y`, { cwd, input: xy }), REASON, 'an answer naming a repository no remote names approves nothing');
+});
+
+test('in a checkout with several remotes, the overrule, the flow, and the stage sign-off take --repo alike', (t) => {
+  const cwd = severalRemotes(t);
+  const overrule = `aidrian pr signoff 9 --flow ui --overrule fit --reason ok --head ${HEAD} --repo o/r`;
+  assert.equal(check(overrule, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: ui/fit?': 'Approve' }]) }), null);
+  assert.equal(check(`aidrian pr signoff 9 --flow ui --head ${HEAD} --repo o/r`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: ui/signoff?': 'Approve' }]) }), null);
+  const stage = transcript(t, [{ 'o/r#9 at abc1234: stage:independent/signoff?': 'Approve' }]);
+  assert.equal(check(`aidrian pr signoff 9 --stage independent --head ${HEAD} --repo o/r`, { cwd, input: stage }), null);
+  assert.equal(check(`aidrian pr signoff 9 --stage independent --head ${HEAD}`, { cwd, input: stage }), REASON);
+  assert.equal(check(`aidrian pr signoff 9 --stage independent --head ${HEAD} --repo o/r`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: stage:independent/signoff?': 'Deny' }]) }), REASON, 'only an Approve answer counts');
+});
+
+test('in a checkout with one remote, a --repo must name it', (t) => {
+  const cwd = project(t);
+  const accept = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
+  assert.equal(check(`${accept} --repo o/r`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: ui/fit?': 'Approve' }]) }), null);
+  assert.equal(check(`${accept} --repo fork/r`, { cwd, input: transcript(t, [{ 'fork/r#9 at abc1234: ui/fit?': 'Approve' }]) }), REASON, 'a repository that is no remote');
+});
+
+test('the deny names the --repo route for several remotes, a plain command from the checkout, and the notification', () => {
+  assert.doesNotMatch(REASON, /has no such route/u, 'several remotes have a route now');
+  assert.match(REASON, /In a checkout whose remotes name more than one repository, end the command with `--repo <owner>\/<name>`, the repository the question names/u);
+  assert.match(REASON, /one plain command run from the checkout of that pull request, with no shell variables, `cd`, `env -C`, or chain/u);
+  assert.match(REASON, /Before asking, when the host offers a tool that sends the Human a push notification, send one saying a decision waits\./u);
+});

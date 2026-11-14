@@ -11,6 +11,15 @@ export function repoName(value) {
   return parts.length >= 2 ? parts.slice(-2).join('/') : null;
 }
 
+// The repository a `--repo` value names, as `owner/name`: the first step of every command's resolution of its pull
+// request's repository (lib/review-gate.mjs prRepo), and all of it a hook reads, since a hook reads no forge. A value
+// that is not OWNER/NAME throws.
+export function givenRepo(given) {
+  const name = repoName(given);
+  if (!name) throw new Error(`--repo ${given} is not OWNER/NAME`);
+  return name;
+}
+
 // This repository's `owner/name`, from its origin, or null.
 export function originRepo(project) {
   const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root);

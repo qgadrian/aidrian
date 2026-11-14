@@ -86,7 +86,8 @@ export async function prepareStep(s) {
   const { opts, project, config, env, forge, codex, run, settle } = s;
   const root = project.root;
   const cleanEnv = isolate({ ...env });
-  const info = forge.change(opts.pr, CHANGE_FIELDS);
+  // A given repository is read from, not the forge's default, which in a checkout with several remotes may be another.
+  const info = opts.repo ? forge.change(opts.pr, CHANGE_FIELDS, { repo: opts.repo }) : forge.change(opts.pr, CHANGE_FIELDS);
   const repo = opts.repo ?? forge.repo();
   const n = info.number;
   // Right after a push the forge may still report the commit it built on: this checkout's pushed head wins, and a local

@@ -32,6 +32,7 @@
 
 import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
+import { repoName } from '../remotes.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
 import { residualRows } from './publish.mjs';
@@ -249,11 +250,12 @@ function finish(s, status, extra) {
   return result;
 }
 
-// The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S] [--quota-fallback agent:NAME|human]`:
-// prints the step's JSON, returns its exit code.
+// The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S] [--quota-fallback agent:NAME|human] [--repo OWNER/NAME]`:
+// prints the step's JSON, returns its exit code. `--repo` names the repository of PR, which then must be given, in place
+// of the forge's default: a checkout whose remotes name several repositories needs it for an approved raise.
 export async function runReview(args, config, project, deps = {}) {
   try {
-    const opts = { pr: null, maxRounds: undefined, timeoutSec: undefined, withBot: false, quotaFallback: null };
+    const opts = { pr: null, repo: null, maxRounds: undefined, timeoutSec: undefined, withBot: false, quotaFallback: null };
     for (let i = 0; i < args.length; i += 1) {
       const a = args[i];
       const value = () => {
@@ -265,12 +267,18 @@ export async function runReview(args, config, project, deps = {}) {
       else if (a === '--max-rounds') opts.maxRounds = Number(value());
       else if (a === '--timeout-sec') opts.timeoutSec = Number(value());
       else if (a === '--quota-fallback') opts.quotaFallback = quota.parseChoice(value());
+      else if (a === '--repo') {
+        const given = value();
+        opts.repo = repoName(given);
+        if (!opts.repo || given.startsWith('--')) throw new Error(`--repo ${given} is not OWNER/NAME`);
+      }
       else if (a.startsWith('--')) throw new Error(`unknown argument: ${a}`);
       else if (opts.pr === null) opts.pr = a.replace(/^#/u, '');
       else throw new Error(`unexpected argument: ${a}`);
     }
     if (opts.maxRounds !== undefined && !(Number.isInteger(opts.maxRounds) && opts.maxRounds >= 1)) throw new Error('--max-rounds must be an integer >= 1');
     if (opts.timeoutSec !== undefined && !(Number.isFinite(opts.timeoutSec) && opts.timeoutSec >= 0)) throw new Error('--timeout-sec must be >= 0');
+    if (opts.repo !== null && opts.pr === null) throw new Error('--repo needs the pull request number');
     const result = await reviewStep(opts, { project, config, ...deps });
     if (result.status === 'round_limit') {
       const { recordSignal, roundLimitSignal } = await import('../lesson-signals.mjs');

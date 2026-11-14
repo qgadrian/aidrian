@@ -18,7 +18,7 @@ import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
-import { originRepo, remoteRepos, repoName } from './remotes.mjs';
+import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
 import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
@@ -147,11 +147,7 @@ export function denyReason(pr, checklist) {
 // default repository, which in a fork checkout is the upstream, else origin, so it works offline. `forge` reads the pull
 // request; it is the test seam.
 export function prRepo(project, pr, given, forge = forgeFor(project.root)) {
-  if (given !== undefined && given !== null) {
-    const name = repoName(given);
-    if (!name) throw new Error(`--repo ${given} is not OWNER/NAME`);
-    return name;
-  }
+  if (given !== undefined && given !== null) return givenRepo(given);
   let url = null;
   try {
     url = forge.change(pr, 'url')?.url ?? null;

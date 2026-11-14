@@ -274,7 +274,10 @@ What each rule matches:
   time, such as `` `printf …`--check ``, is no dry run. An `aidrian` whose subcommand the shell builds at run time,
   such as `aidrian "$@"`, is denied too. The rule's message stops the session; at `human_required` naming one flow,
   once `--last --check` exits 0, it hands the Human the short form, `aidrian pr signoff <PR> --last`, short enough to
-  type from a phone, which refuses any other stop.
+  type from a phone, which refuses any other stop. A long form runs on the Human's AskUserQuestion answer naming
+  `<owner>/<name>#<PR>` of the repository it acts on ([review.md](review.md#answering-in-the-session)): its `--repo`,
+  one of this checkout's remotes, else the one repository the remotes name; a checkout whose remotes name more than one
+  needs the `--repo`. The rule reads no forge to learn it.
 - Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
@@ -290,7 +293,7 @@ What each rule matches:
   its verdict with `aidrian pr extend <PR> --verdict`. After a judge's stop, nothing waits for an answer, so the deny names the
   route to one more round instead: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, on the Human's
   answer or on their typed `grant up to <N> review rounds on <owner>/<name>#<PR>` ([review.md](review.md#unattended-rulings)),
-  or in the Human's own shell in a checkout with several remotes, where neither can approve it.
+  ending in `--repo <owner>/<name>` in a checkout whose remotes name more than one repository.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
 - Quota fallback choice: `aidrian pr review <PR> --quota-fallback agent:<name>` or `--quota-fallback human`, also as
   `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record holds a quota stop and the

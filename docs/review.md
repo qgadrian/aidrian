@@ -308,11 +308,20 @@ request, and an acceptance with no reason. Like every sign-off, it is an audit e
 
 #### Answering in the session
 
-A long-form sign-off, `--accept`, or `--overrule` runs from the session once the Human answered it with AskUserQuestion:
-the question names `<owner>/<name>#<PR>` of this checkout's origin, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
+A long-form sign-off, `--accept`, `--overrule`, or `--stage` runs from the session once the Human answered it with AskUserQuestion:
+the question names `<owner>/<name>#<PR>` of the repository the command acts on, the short head, and `<flow>/<invariant>`, `<flow>/*` for every `--accept` of that flow, `<flow>/signoff`, or
 `stage:<name>/signoff`, and the chosen option starts with "Approve". The latest answer naming it decides, and a push asks
-again. The command is one plain `aidrian pr` call with no shell variables, repeated flags, `cd`, `env -C`, or chain, in a checkout with one remote repository. `--last` stays in the Human's
-shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
+again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.
+Before it asks, a session on a host that offers a tool to send the Human a push notification sends one, so a Human away from the session, such as on a phone, sees that a decision waits.
+`--last` stays in the Human's shell, since the long form does the same, as does every sign-off on a host whose transcript the rule cannot read (verified on Claude Code; not on Codex).
+
+The repository the answer must name is the one the command acts on, read with the first step of the command's own
+resolver, the one that needs no forge (`givenRepo`, which `prRepo` runs first): its `--repo OWNER/NAME`, which then must be one of this checkout's remotes, written out as
+`<owner>/<name>` with no host, URL, or `.git`; with no `--repo`, the one repository this checkout's remotes name, however
+many remotes name it. In a checkout whose remotes name more than one repository, such as an origin and a remote of a
+fork or of an unrelated repository, the command needs `--repo`: without one it acts on the forge's default, which the
+hook cannot read without a forge call and which may be any of them, so no answer counts and the deny says to add it.
+A `--repo` no remote names, or one the answer does not name, approves nothing.
 
 #### Unattended rulings
 
@@ -335,9 +344,13 @@ Raising the round cap works the same way. On an answer naming `<owner>/<name>#<P
 runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly as written. That run reviews to exactly its
 `--max-rounds`, plus the extra rounds still valid: a higher cap an earlier bot request recorded in its comment counts only
 for a run under the Human's own override that gives no `--max-rounds`. The `review-rounds` rule refuses the
-variable in any other form, and in a checkout with several remotes, where no answer can name the one repository the command
-acts on; there the Human runs it in their own shell, as the refusal writes it, with the command's own subcommand and
-`--with-bot` or `--request`, since each counts its own rounds.
+variable in any other form. The repository the answer or typed grant names is the one the command acts on, as for a
+[sign-off](#answering-in-the-session): in a checkout whose remotes name more than one repository, the raise ends in
+`--repo <owner>/<name>`, one of those remotes, as `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>/<name>`;
+both `aidrian pr review` and `aidrian pr await-review` take it, and read the pull request from that repository rather
+than the forge's default. Without it there, the refusal names that route, and the Human may still run the raise in
+their own shell, as the refusal writes it, with the command's own subcommand and `--with-bot` or `--request`, since each
+counts its own rounds.
 
 The Human may also grant rounds by typing, at the prompt, as a whole message in any letter case,
 `grant up to <N> review rounds on <owner>/<name>#<PR>`. It names the repository and the pull request, never "this pull
@@ -964,7 +977,7 @@ who runs the command in their own shell. `--human deny` always runs. While the c
 approval names the judge's route: run the review step again with the options it ran with, such as `--with-bot` and
 `--max-rounds`, run the `dispatch` it prints, record its verdict, and run the step once more. After a
 judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
-`--max-rounds`, on the Human's answer or typed grant, or in the Human's own shell in a checkout with several remotes.
+`--max-rounds`, on the Human's answer or typed grant, ending in `--repo <owner>/<name>` in a checkout whose remotes name more than one repository.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
 signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one

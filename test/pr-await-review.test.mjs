@@ -1139,6 +1139,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
     'usage: aidrian pr review [PR] [--with-bot] [--max-rounds N] [--quota-fallback agent:NAME|human]',
+    '               [--repo OWNER/NAME]',
     '       aidrian pr signoff PR (--flow ID [--overrule INVARIANT --reason TEXT] | --stage NAME) --head',
     '               SHA [--repo OWNER/NAME] [--check]',
     '       aidrian pr signoff PR --flow ID --accept INVARIANT --evidence URL --reason TEXT --head SHA',
@@ -1150,7 +1151,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
     '       aidrian pr waive PR --verdict waive|refuse --reason TEXT [--head SHA]',
-    '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',
+    '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA] [--repo OWNER/NAME]',
     '       aidrian pr request PR [--kind request|review] [--head SHA] [--repo OWNER/NAME]',
     '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
     '               [--repo OWNER/NAME]',

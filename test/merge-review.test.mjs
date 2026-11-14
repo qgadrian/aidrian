@@ -854,8 +854,10 @@ test('the record is scoped to the merge`s repository: origin#5 and upstream#5 sh
   // Fork safety: the upstream's merge stays guarded, and so does a merge that names no repository, whose gh default may be the upstream.
   assert.match(r.run(`gh pr merge 5 -R upstream/notes --match-head-commit ${HEAD}`) ?? '', /never sent/u);
   assert.match(checkMcp({ owner: 'Upstream', repo: 'Notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: {}, viewPr: r.viewer() }) ?? '', /never sent/u);
-  assert.match(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /never sent/u, 'no repository named');
-  assert.match(r.run('gh pr merge 5 -R "$REPO"') ?? '', /never sent/u, 'a repository the rule cannot read');
+  // Each repository's record is its own file now (#305): with no repository named, the guard cannot tell which of the two
+  // #5 records it checks, and refuses, naming the -R to add.
+  assert.match(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /no repository named, and this machine holds review records of #5 for several repositories/u, 'no repository named');
+  assert.match(r.run('gh pr merge 5 -R "$REPO"') ?? '', /no repository named, and this machine holds review records of #5 for several repositories/u, 'a repository the rule cannot read');
 });
 
 test('an outcome is the record`s repository`s: another repository`s step neither blocks nor clears a merge', (t) => {
@@ -876,7 +878,7 @@ test('an outcome is the record`s repository`s: another repository`s step neither
 
 // #251 security review: this machine keeps one record a pull request number, so in a checkout whose remotes name
 // several repositories it may hold another repository's record of the same number.
-test('a long-form sign-off on one repository refuses this machine`s record of the same number in another', async (t) => {
+test('a long-form sign-off on one repository never reads this machine`s record of the same number in another', async (t) => {
   const r = repo(t, { review: { record: 'local' } });
   const quiet = console.log;
   console.log = () => {};
@@ -887,9 +889,10 @@ test('a long-form sign-off on one repository refuses this machine`s record of th
   mkdirSync(path.dirname(recordFile(r.project, 9)), { recursive: true });
   writeFileSync(recordFile(r.project, 9), JSON.stringify({ ...other, revision: 1 }));
   const forge = viewing(() => ({ url: 'https://github.com/acme/notes/pull/9', baseRefName: 'main' }));
-  await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }),
-    /the review record of #9 is for qg\/voila, not acme\/notes: this command records on the pull request that record names\. Give --repo qg\/voila/u);
-  await assert.rejects(runSignoff(['9', '--flow', 'f', '--overrule', 'x', '--reason', 'r', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }), /is for qg\/voila, not acme\/notes/u);
+  // Only acme/notes's own record is read, and it has none: qg/voila's is neither signed on nor written over.
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }), /no review of acme\/notes#9 ran/u);
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--overrule', 'x', '--reason', 'r', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }), /no review of acme\/notes#9 ran/u);
+  assert.equal(readLocalState(r.project, 9, 'qg/voila').outcome.status, 'human_required', 'qg/voila#9 is as it was');
 });
 
 test('a sign-off with `--repo=<value>` beside `--repo` is refused by the command, which the hook leaves to it', async (t) => {

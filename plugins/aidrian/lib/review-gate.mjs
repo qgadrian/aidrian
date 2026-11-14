@@ -20,7 +20,7 @@ import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, repoSuffix, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
+import { heldMessage, legacyFor, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, repoKey, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
 
 // The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
@@ -61,10 +61,11 @@ export function prNumber(value) {
 }
 
 // The attest record of pull request `pr` of `repo` is one file a repository and number, named as the review record is
-// (state.mjs repoSuffix): `pr-<N>.json` for origin's repository, for none, and in a checkout with no origin;
-// `pr-<N>-<owner>--<name>.json` for any other.
+// (state.mjs repoKey), whichever remote is origin: `pr-<N>-<owner>--<name>.json`. `pr-<N>.json` is the old name, for a
+// record written before the key and for one that names no repository.
 const plainRecordFile = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}.json`);
-const recordFile = (project, pr, repo = null) => path.join(recordsFolder(stateDir(project)), `pr-${pr}${repoSuffix(project, repo)}.json`);
+const recordFile = (project, pr, repo = null) => path.join(recordsFolder(stateDir(project)), `pr-${pr}${repoKey(repo)}.json`);
+
 
 function readRecordFile(file, pr) {
   let record;
@@ -79,13 +80,17 @@ function readRecordFile(file, pr) {
   return review || override ? record : null;
 }
 
-// The record for a pull request of `repo` (origin's with none), or null when there is none or it is not a well-formed
-// one for it: corrupt local state never passes the gate. A review names its head and reviewer; an override is marked as
-// one. A repository with no file of its own yet reads the old name, written before the key changed, which gateReview
-// counts only when it names that repository.
-export function readRecord(project, pr, repo = null) {
-  const own = recordFile(project, pr, repo);
-  return readRecordFile(own, pr) ?? (own === plainRecordFile(project, pr) ? null : readRecordFile(plainRecordFile(project, pr), pr));
+// The record for a pull request of `repo`, or null when there is none or it is not a well-formed one for it: corrupt
+// local state never passes the gate. A review names its head and reviewer; an override is marked as one. It is that
+// repository's own, never another's: its file, else an old-name record that names it, or names none when `repo` is
+// origin's (state.mjs legacyFor). No `repo` is this repository, origin's; with no origin either, the old-name record.
+export function readRecord(project, pr, given = null) {
+  const old = () => readRecordFile(plainRecordFile(project, pr), pr);
+  const repo = repoName(given) ?? originRepo(project);
+  if (repo === null) return old();
+  const own = readRecordFile(recordFile(project, pr, repo), pr);
+  if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repoName(repo) ? own : null;
+  return legacyFor(project, old(), repo);
 }
 
 // A pass of one agent, as the review plan names it (lib/review/plan.mjs): `agent:<name>`, or `agent:<name>:<flow>+<flow>`
@@ -116,12 +121,16 @@ export function gateReview(project, pr, repo = null) {
 }
 
 // Writes `record` to its repository's file, and removes one of that repository left under the old name.
+// Writes `record` to its repository's file, never over another repository's, and moves an old-name record of its own
+// repository there: as the review record does (state.mjs writeAt).
 export function writeRecord(project, record) {
   const file = recordFile(project, record.pr, record.repo ?? null);
+  const plain = plainRecordFile(project, record.pr);
+  const old = readRecordFile(plain, record.pr);
+  if (file === plain && old && repoName(old.repo ?? null) !== null) throw new Error(`the review of #${record.pr} on record under its old name is ${repoName(old.repo)}'s, and a record that names no repository does not replace it`);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify({ ...record, recordedAt: new Date().toISOString() }, null, 2)}\n`);
-  const plain = plainRecordFile(project, record.pr);
-  if (file !== plain && repoName(readRecordFile(plain, record.pr)?.repo ?? null) === repoName(record.repo ?? null)) rmSync(plain, { force: true });
+  if (file !== plain && legacyFor(project, old, record.repo ?? null)) rmSync(plain, { force: true });
 }
 
 // The deny reason for the requests in one tool call, each { pr, repo, markers }, or null. `pr` null is a request whose
@@ -404,7 +413,7 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     const record = readReviewRecord(project, pr, remote ?? [], repo, reading);
     if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why, record.finding));
     const other = otherRecordRepo(record.state, repo);
-    if (other) throw new Error(otherRecordMessage(pr, other, repo, '--last signs off'));
+    if (other) throw new Error(otherRecordMessage(pr, other, repo, '--last reads'));
     const { flow, head } = lastSignoff(record.state, { pr, repo, head: current });
     // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it
     // writes. A record written between the two reads is checked by those refusals, not by lastSignoff's: deciding and

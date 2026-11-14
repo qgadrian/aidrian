@@ -328,12 +328,17 @@ and `settle` of each `next`, the `accept` of a deleted flow test, and the `then`
 `aidrian pr review` or `aidrian pr await-review --request`. So the session runs a printed command as it is once the
 Human answers; with one repository among the remotes, none of them carries `--repo`.
 This machine keeps one review record a repository and pull request number, in the state folder's `reviews/`:
-`pr-<N>-review.json` for origin's repository (and in a checkout with no origin), and `pr-<N>-review-<owner>--<name>.json`
-for any other, so one checkout reviews `a/b#12` and `c/d#12` apart. A repository with no file of its own yet reads the
-old name, which holds origin's record or one written before the key changed, and its next write moves its own record
-to its file. A record there that names another repository is refused by a sign-off or attest on `--repo`, naming the
-repository it is for, as `--last` does, and the review step leaves it out and builds from the pull request's own record.
-A reader that names no repository, such as a merge with no `-R`, reads the newest record of that number.
+`pr-<N>-review-<owner>--<name>.json`, keyed by the repository's own `<owner>/<name>` whichever remote is origin, so one
+checkout reviews `a/b#12` and `c/d#12` apart, and a record never changes file when the remotes change, as when
+`gh repo fork` renames origin to upstream. The attest record (`pr-<N>-<owner>--<name>.json`) and a dispatch's findings
+folder (`tmp/review-<N>-<owner>--<name>/`) are keyed the same way. Every reader gets its own repository's record or
+none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, the quota-fallback rule, a sign-off, an
+attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
+or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
+repository it names, and moved to that repository's file by its next write; one that names no repository is read for
+origin alone. No write lands on a record of another repository: a write that names no repository refuses one there.
+A reader that names no repository, such as a merge with no `-R`, reads the newest record of that number; the merge guard
+refuses such a merge when this machine holds records of that number for more than one repository.
 
 #### Unattended rulings
 
@@ -679,8 +684,8 @@ A project adds its own in `review.reviewers`:
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
   JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
-  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder of its
-  own for another remote's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
+  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
   `aidrian worktree cleanup execute` removes the `review-<PR>/` folder once the pull request is merged or closed
   ([Local state](project-folder.md#local-state)).

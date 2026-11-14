@@ -49,7 +49,7 @@ import { forgeFor } from '../../forges/index.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
-import { FINISHED, owed, readLocalState, recordRepos, sameCommit } from '../../review/state.mjs';
+import { emptyState, FINISHED, owed, owedElsewhere, readLocalState, recordRepos, sameCommit } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { guardWaiver, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
@@ -217,6 +217,15 @@ export const UNREAD_REASON =
 // outcome and rounds when the record is. An entry's repository is its own `repo`, else the record's, else origin's;
 // one still unknown counts for every repository. Every spelling compares as `owner/name`, lower-cased. The record file is
 // per number, so a fork checkout holds upstream#5 and origin#5 in one record: each merge reads only its own entries.
+// `readLocalState` gives a merge of `repo` that repository's own record alone; the entries another repository's record
+// holds for it (state.mjs owedElsewhere), as one written before the record was keyed by repository does, are added.
+export const recordFor = (project, pr, repo) => {
+  const own = readLocalState(project, pr, repo);
+  const extra = repo === null ? [] : owedElsewhere(project, pr, repo);
+  if (!extra.length) return own;
+  return { ...(own ?? { ...emptyState(pr, repoName(repo)) }), pending: [...(own?.pending ?? []), ...extra] };
+};
+
 export function scoped(state, project, repo) {
   const target = repo === null ? null : repoName(repo);
   if (!state || target === null) return state;
@@ -256,7 +265,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   if (before) return before;
   const unnamed = ambiguousRecords(project, pr, repo);
   if (unnamed) return unnamed;
-  let state = pr === null ? null : scoped(readLocalState(project, pr, repo), project, repo);
+  let state = pr === null ? null : scoped(recordFor(project, pr, repo), project, repo);
   if (pr !== null && !guards(state)) return null;
   let view = null;
   if (pr === null || head === null) {
@@ -271,7 +280,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
       pr = view.number;
       const later = ambiguousRecords(project, pr, repo);
       if (later) return later;
-      state = scoped(readLocalState(project, pr, repo), project, repo);
+      state = scoped(recordFor(project, pr, repo), project, repo);
       if (!guards(state)) return null;
     }
     head ??= view.headRefOid;

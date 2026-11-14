@@ -40,14 +40,16 @@ test('one checkout keeps a separate record for each repository`s pull request of
   assert.deepEqual([readLocalState(project, 12, origin).pending.length, readLocalState(project, 12, 'c/d').pending.length], [0, 1], 'an owed entry lands in its repository`s record');
 });
 
-test('a record under the old file name is still read for origin, and another repository`s is read once and moved', (t) => {
+test('a record under the old file name is read for the repository it names, and moved on that repository`s write', (t) => {
   const { project, origin } = setup(t);
   const plain = recordFile(project, 12);
   mkdirSync(path.dirname(plain), { recursive: true });
   writeFileSync(plain, JSON.stringify({ ...withRounds(12, origin, 3), revision: 4 }));
-  assert.equal(plain, recordFile(project, 12, origin), 'origin keeps the old name');
-  assert.equal(readLocalState(project, 12, origin).rounds.length, 3);
+  assert.notEqual(plain, recordFile(project, 12, origin), 'origin`s record is keyed too');
+  assert.equal(readLocalState(project, 12, origin).rounds.length, 3, 'its old-name record is still origin`s');
+  assert.equal(readLocalState(project, 12, 'c/d'), null, 'and never another repository`s');
   writeFileSync(plain, JSON.stringify({ ...withRounds(12, 'c/d', 2), revision: 4 }));
+  assert.equal(readLocalState(project, 12, origin), null, 'an old-name record of c/d is never origin`s');
   const moved = readLocalState(project, 12, 'c/d');
   assert.equal(moved.rounds.length, 2, 'read under the old name');
   writeLocalState(project, moved);
@@ -60,8 +62,8 @@ test('a dispatch`s findings files of one number are kept apart by repository', a
   const { findingsFile } = await import('../plugins/aidrian/lib/review/dispatch.mjs');
   const { project, origin } = setup(t);
   const own = findingsFile(project, 12, 'agent:code-reviewer', origin);
-  assert.equal(own, findingsFile(project, 12, 'agent:code-reviewer'), 'origin`s keeps the old folder');
-  assert.match(path.basename(path.dirname(own)), /^review-12$/u);
+  assert.equal(path.basename(path.dirname(own)), `review-12-${origin.replace('/', '--')}`, 'origin`s is keyed too, whichever remote is origin');
+  assert.match(path.basename(path.dirname(findingsFile(project, 12, 'agent:code-reviewer'))), /^review-12$/u, 'none: the old folder');
   const other = findingsFile(project, 12, 'agent:code-reviewer', 'c/d');
   assert.notEqual(other, own, 'another repository`s pass of the same id gets its own file');
   assert.match(path.basename(path.dirname(other)), /^review-12-c--d$/u);

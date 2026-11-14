@@ -156,7 +156,7 @@ test('a head and a base with the same state.dir run the step as before', async (
   const r = repo(t, { baseConfig: TEAM, headConfig: TEAM });
   assert.equal((await r.step()).status, 'received');
   assert.equal(r.comments.length, 1);
-  assert.ok(existsSync(path.join(r.root, 'state/reviews/pr-7-review.json')));
+  assert.ok(existsSync(path.join(r.root, 'state/reviews/pr-7-review-o--r.json')));
 });
 
 test('each record command refuses the same checkout when the forge names the base', async (t) => {
@@ -568,7 +568,7 @@ test('a project with state.dir unset and its default folder outside every checko
   assert.equal(baseProblem(r.project, { repo: 'o/r', base: 'main', git: () => ({}) }), null);
   await r.step();
   assert.equal(r.comments.length, 1, 'the step ran and published');
-  assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review.json')), 'the record is in the default folder');
+  assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review-o--r.json')), 'the record is in the default folder');
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
   const { stderr } = spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env });
   assert.doesNotMatch(stderr, /state folder|records go in|review record/u);
@@ -941,7 +941,7 @@ test('a folder the records go in that holds no checkout stays allowed, and so do
     const { r, state } = make(t);
     tracking(r);
     writeLocalState(r.project, emptyState(7, 'o/r'));
-    assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review.json')), `${name}: the folder these tests name is the one the record goes in`);
+    assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review-o--r.json')), `${name}: the folder these tests name is the one the record goes in`);
     r.git('worktree', 'add', '-q', '--detach', path.join(state, 'trees', 'one'), 'main');
     r.git('worktree', 'add', '-q', '--detach', path.join(state, 'trees', 'reviews'), 'main');
     r.git('worktree', 'add', '-q', '--detach', path.join(state, 'reviews', 'pr-7'), 'main');

@@ -227,26 +227,24 @@ function mergeResolved(entry, their) {
 }
 
 
-// This machine's review record of a pull request is one file a repository and number: `pr-<N>-review.json` for origin's
-// repository, for a repository no record names, and in a checkout with no origin, as before; `pr-<N>-review-<owner>--<name>.json` for any other, which
-// a checkout whose remotes name several repositories reviews too. GitHub owners hold no `--`, so the name is one
-// repository's. The origin's file keeps its old name, so a record written before the key changed is still origin's.
+// This machine's review record of a pull request is one file a repository and number, `pr-<N>-review-<owner>--<name>.json`,
+// whichever remote is origin: a record never changes file when the remotes change, as when `gh repo fork` renames
+// origin to upstream. GitHub owners hold no `--`, so the name is one repository's. `pr-<N>-review.json` is the old name,
+// for a record written before the key, and for a record that names no repository.
 const folder = (project) => recordsFolder(stateDir(project));
 const plainFile = (project, pr) => path.join(folder(project), `pr-${pr}-review.json`);
-// What a per-pull-request file's name adds for repository `repo`: '' for origin's, for no repository, and in a checkout
-// with no origin, so those keep the old name; `-<owner>--<name>` for any other. Every file this machine keeps of one
-// pull request by its number takes it: the review record, the attest record (review-gate.mjs), and the findings
-// files of a dispatch (dispatch.mjs).
-export function repoSuffix(project, repo) {
-  const name = repoName(repo);
-  const origin = name === null ? null : originRepo(project);
-  return name === null || origin === null || name === origin ? '' : `-${name.replace('/', '--')}`;
-}
+// What a per-pull-request name adds for repository `repo`: `-<owner>--<name>`, or '' for none. Every file this machine
+// keeps of one pull request takes it: the review record, the attest record (review-gate.mjs), and the findings folder of
+// a dispatch (dispatch.mjs).
+export const repoKey = (repo) => {
+  const name = repoName(repo ?? null);
+  return name === null ? '' : `-${name.replace('/', '--')}`;
+};
 function file(project, pr, repo = null) {
-  const suffix = repoSuffix(project, repo);
-  return suffix === '' ? plainFile(project, pr) : path.join(folder(project), `pr-${pr}-review${suffix}.json`);
+  const key = repoKey(repo);
+  return key === '' ? plainFile(project, pr) : path.join(folder(project), `pr-${pr}-review${key}.json`);
 }
-// The file that holds this machine's review record of `pr` of `repo` (origin's when it names none).
+// The file that holds this machine's review record of `pr` of `repo` (the old name when it names none).
 export const recordFile = file;
 
 function wellFormed(state, pr) {
@@ -262,6 +260,15 @@ function readFile(target, pr) {
   }
 }
 
+// The old-name record `old`, for a reader of repository `repo`, or null: one that names `repo`, or one that names none
+// when `repo` is origin's.
+export function legacyFor(project, old, repo) {
+  if (!old) return null;
+  const named = repoName(old.repo ?? null);
+  if (named !== null) return named === repoName(repo) ? old : null;
+  return repoName(repo) === originRepo(project) ? old : null;
+}
+
 // Every record this machine holds of number `pr`, whatever its repository.
 function recordsOf(project, pr) {
   let names = [];
@@ -275,15 +282,26 @@ function recordsOf(project, pr) {
 // none counts as ''.
 export const recordRepos = (project, pr) => [...new Set(recordsOf(project, pr).map((state) => repoName(state.repo ?? null) ?? ''))];
 
-// This machine's review record of pull request `pr` of `repo`, or null. A repository other than origin's reads its own
-// file; until it has one, it reads the old name, as every reader did before the key changed, whatever repository that
-// record names: a record written before then, or origin's own, which may hold that repository's owed entries. The
-// callers tell such a record apart by its `repo` (otherRecordRepo, merge-review.mjs scoped), and the next write of the
-// repository's own record moves it to its file. With no `repo` (a reader that cannot tell it, such as a merge with no
-// `-R`), the newest record of that number, whatever its repository, as the one file of a number held before.
+// The entries owed on pull request `pr` of `repo` that another repository's record of that number holds: a record
+// written before the key held every repository's owed entries, each naming its own. The entries alone, never the record:
+// they are `repo`'s, and the merge guard keeps refusing on them.
+export function owedElsewhere(project, pr, repo) {
+  const target = repoName(repo);
+  if (target === null) return [];
+  return recordsOf(project, pr)
+    .filter((state) => repoName(state.repo ?? null) !== target)
+    .flatMap((state) => (state.pending ?? []).filter((entry) => repoName(entry.repo ?? null) === target));
+}
+
+// This machine's review record of pull request `pr` of `repo`, or null: that repository's own, never another's. Its file;
+// else a record under the old name that names it, or names none when `repo` is origin's (legacyFor). With no `repo` (a
+// reader that cannot tell it, such as a merge with no `-R`, which merge-review.mjs refuses when the number has records
+// of several repositories), the newest record of that number.
 export function readLocalState(project, pr, repo) {
   if (repo === undefined || repo === null || repoName(repo) === null) return recordsOf(project, pr).reduce((a, b) => newer(a, b), null);
-  return readFile(file(project, pr, repo), pr) ?? readFile(plainFile(project, pr), pr);
+  const own = readFile(file(project, pr, repo), pr);
+  if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repoName(repo) ? own : null;
+  return legacyFor(project, readFile(plainFile(project, pr), pr), repo);
 }
 
 // Every write raises the record's revision, so the newer of two records is the one written last. Before it, the one
@@ -296,13 +314,20 @@ export function writeLocalState(project, state) {
   writeAt(project, state);
 }
 
-// Writes `state` to its repository's file, and removes a record of that repository left under the old name.
+// Writes `state` to its repository's file, never over a record of another repository. A record under the old name moves
+// to its repository's file on that repository's next write, which removes it there (legacyFor served it to that
+// repository alone); one that names none goes once origin's own is written. A write that names no repository goes to the
+// old name only when no other repository's record is there.
 function writeAt(project, state) {
   const target = file(project, state.pr, state.repo);
+  const plain = plainFile(project, state.pr);
+  const old = readFile(plain, state.pr);
+  if (target === plain && old && repoName(old.repo ?? null) !== null) {
+    throw new Error(`the review record of #${state.pr} under its old name is ${repoName(old.repo)}'s, and a record that names no repository does not replace it`);
+  }
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
-  const plain = plainFile(project, state.pr);
-  if (target !== plain && repoName(readFile(plain, state.pr)?.repo) === repoName(state.repo)) rmSync(plain, { force: true });
+  if (target !== plain && legacyFor(project, old, state.repo)) rmSync(plain, { force: true });
 }
 
 // An id that tells two owed entries apart, even two made in the same millisecond.
@@ -379,7 +404,8 @@ export function otherRecordRepo(state, repo) {
 // The refusal of a command on `repo` whose record of #`pr` names `recorded`, another repository: `what` says what the
 // command signs off. `aidrian pr signoff --last` and the long form share it.
 export const otherRecordMessage = (pr, recorded, repo, what) =>
-  `the review record of #${pr} is for ${recorded}, not ${repo}: ${what} the pull request that record names. Give --repo ${recorded}, or the long form`;
+  `the review record of #${pr} is for ${recorded}, not ${repo}: ${what} a record of ${repo} alone, and this machine holds none. ` +
+  `Run \`aidrian pr review ${pr} --repo ${repo}\` so ${repo} has its own`;
 
 // The record to build on: { state }, the newer of this machine's and the one the pull request's summary comment
 // carries (an empty one when neither exists), or { held: revision, why } when the comment holds a record this machine's

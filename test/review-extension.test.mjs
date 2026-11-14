@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,7 +14,7 @@ import {
   askQuestion, atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { listedTo, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
-import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, mismatch, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 
 // A summary written on a private repository, from inside the team, whose checks pass every string: these tests read
@@ -1038,4 +1038,52 @@ test('aidrian pr extend in a fork checkout records and posts only on the reposit
   assert.equal(readLocalState(g.project, 12, 'me/notes').extensions, undefined, 'the fork`s record of #12 is untouched');
   assert.ok(posted.every((repo) => repo === 'up/notes'), `posted only on the parent: ${posted.join(', ')}`);
   assert.ok(reads.slice(1).every((repo) => repo === 'up/notes'), 'the head is read from the parent');
+});
+
+// The security re-review of #251: a repository with no record of its own was given origin's, under the old file name.
+test('the review-extend rule never takes another repository`s ask as the call`s', (t) => {
+  const g = guarded(t, { asking: false });
+  for (const [name, url] of [['origin', 'https://github.com/me/notes.git'], ['upstream', 'https://github.com/up/notes.git']]) {
+    execFileSync('git', ['remote', 'add', name, url], { cwd: g.dir });
+  }
+  const fork = { ...emptyState(12, 'me/notes'), revision: 2 };
+  fork.extensions = [{ source: 'plan', round: 2, head: 'abc', status: 'asking', judge: { verdict: 'extend', reason: 'r', at: '2026-11-01T10:00:00.000Z' } }];
+  writeFileSync(recordFile(g.project, 12), JSON.stringify(fork));
+  g.write(g.answer('Pull request up/notes#12 reached its review-round cap. Grant one extra review round, round 3?', 'Approve round 3'));
+  assert.match(g.run('aidrian pr extend 12 --human approve --repo up/notes') ?? '', /holds no extension check for pull request #12/u, 'the fork`s ask is not the upstream`s');
+});
+
+test('aidrian pr extend on one repository never records on another`s record of that number', async (t) => {
+  const g = guarded(t, { asking: false });
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: g.dir });
+  git('switch', '-q', '-c', 'main');
+  git('add', '.aidrian');
+  git('commit', '-qm', 'base');
+  for (const [name, url] of [['origin', 'https://github.com/me/notes.git'], ['upstream', 'https://github.com/up/notes.git']]) git('remote', 'add', name, url);
+  git('update-ref', 'refs/remotes/upstream/main', 'main');
+  const fork = { ...emptyState(12, 'me/notes'), revision: 2 };
+  fork.extensions = [{ source: 'plan', round: 2, head: 'a'.repeat(40), status: 'asking', judge: { verdict: 'extend', reason: 'r', at: '2026-11-01T10:00:00.000Z' } }];
+  writeFileSync(recordFile(g.project, 12), JSON.stringify(fork));
+  const before = readFileSync(recordFile(g.project, 12), 'utf8');
+  const forge = {
+    change: () => ({ number: 12, url: 'https://github.com/up/notes/pull/12', headRefOid: 'a'.repeat(40), baseRefName: 'main', isCrossRepository: false }),
+    conversationComments: () => [], postComment: () => ({}), editComment: () => ({}), viewer: () => 'someone', visibility: () => 'PRIVATE',
+    pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }),
+  };
+  t.mock.method(console, 'log', () => {});
+  await assert.rejects(runExtend(['12', '--human', 'approve', '--repo', 'up/notes'], g.project, loadConfig(g.project).config, { forge, env: {} }), /no extension waits for the Human/u);
+  assert.equal(readFileSync(recordFile(g.project, 12), 'utf8'), before, 'the fork`s record is untouched');
+  assert.equal(readLocalState(g.project, 12, 'up/notes'), null, 'and the upstream got no copy of it');
+});
+
+test('await-review at the cap never decides on another repository`s record of that number', async (t) => {
+  // botProject's forge acts on acme/notes; another repository's #42, under the old file name, holds an ask at round 3.
+  const { project, run } = botProject(t);
+  const other = { ...emptyState(42, 'other/x'), revision: 2 };
+  other.extensions = [{ source: 'bot', round: 3, head: 'zzz', status: 'asking', judge: { verdict: 'extend', reason: 'r', at: '2026-08-23T07:00:00.000Z' } }];
+  mkdirSync(path.dirname(recordFile(project, 42)), { recursive: true });
+  writeFileSync(recordFile(project, 42), JSON.stringify(other));
+  const capped = await run(converging);
+  assert.equal(capped.out.status, 'extension_check', 'acme/notes#42 gets its own check, not other/x`s ask');
+  assert.equal(JSON.parse(readFileSync(recordFile(project, 42), 'utf8')).repo, 'other/x', 'other/x`s record is left as it was');
 });

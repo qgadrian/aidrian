@@ -66,8 +66,8 @@ import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { heldWaiver } from './review/settled.mjs';
-import { owed, readLocalState } from './review/state.mjs';
-import { scoped } from './rules/github/merge-review.mjs';
+import { owed } from './review/state.mjs';
+import { recordFor, scoped } from './rules/github/merge-review.mjs';
 
 export const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
@@ -458,7 +458,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
         }
       };
       const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree };
-      const problem = changesRequested(pr) ?? reviewProblem(scoped(readLocalState(project, pr.number, pr.repo), project, pr.repo), pr.head, unreviewed);
+      const problem = changesRequested(pr) ?? reviewProblem(scoped(recordFor(project, pr.number, pr.repo), project, pr.repo), pr.head, unreviewed);
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
     }

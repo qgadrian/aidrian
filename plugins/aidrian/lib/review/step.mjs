@@ -185,7 +185,7 @@ export async function prepareStep(s) {
   // private is never built on: readRecord held above instead.
   const untexted = untextedBlocking(record.state, readLocalState(project, n, repo));
   if (untexted) {
-    const reason = `the review record of #${n} holds the open finding ${untexted}, whose text is on the machine that recorded it: continue the review on that machine. If that machine is gone, the Human deletes the review summary comment of #${n} and this machine's record file ${recordFile(project, n)}; the review then restarts from round 1`;
+    const reason = `the review record of #${n} holds the open finding ${untexted}, whose text is on the machine that recorded it: continue the review on that machine. If that machine is gone, the Human deletes the review summary comment of #${n} and this machine's record file ${recordFile(project, n, repo)}; the review then restarts from round 1`;
     noteLocalOutcome(project, n, repo, { status: 'incomplete', head, reason });
     return { status: 'incomplete', pr: n, repo, head, reason, retry_recommended: false };
   }

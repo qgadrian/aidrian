@@ -12,7 +12,7 @@ import path from 'node:path';
 
 import { forgeFor } from '../forges/index.mjs';
 import { stateDir } from '../project.mjs';
-import { readLocalState } from './state.mjs';
+import { recordRepos } from './state.mjs';
 
 // A draft's name, with its pull request's number in the one group that matched.
 // A findings folder of another remote's repository names it, `<owner>--<name>`: GitHub owners hold no `--`.
@@ -47,7 +47,8 @@ export function draftsByPr(dir) {
 }
 
 // Removes the drafts of every pull request in `tmp/` that the forge reads as merged or closed, at most MAX_SWEPT of
-// them. The repository asked is the one the pull request's review record names, else the checkout's own. Returns
+// them. The repository asked is the one a findings folder names, else every one this machine holds a review record of
+// that number for, else the checkout's own. Returns
 // { removed: [{ pr, state, files }], kept: [{ pr, reason }], failed: [{ pr, file, error }] }: kept is an open pull
 // request, one whose state could not be read, or one past the limit.
 export function sweepDrafts(project, { forge = forgeFor(project.root), limit = MAX_SWEPT, dir = path.join(stateDir(project), 'tmp') } = {}) {
@@ -63,15 +64,23 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
       continue;
     }
     read += 1;
-    const repo = named ?? readLocalState(project, pr)?.repo;
-    let state = null;
-    try {
-      state = forge.change(String(pr), 'state', typeof repo === 'string' && repo ? { repo } : {})?.state ?? null;
-    } catch {}
-    if (!ENDED.has(state)) {
-      out.kept.push({ pr, ...tag, reason: state === 'OPEN' ? 'open' : 'its state could not be read' });
+    // A draft keyed by its repository asks that one. A draft that names none may be any repository's pull request of
+    // that number: it goes only once every repository this machine holds a review record of that number for reads as
+    // merged or closed, and with no record, the checkout's own.
+    const repos = named ? [named] : recordRepos(project, pr).filter(Boolean);
+    const states = (repos.length ? repos : [null]).map((repo) => {
+      try {
+        return forge.change(String(pr), 'state', repo ? { repo } : {})?.state ?? null;
+      } catch {
+        return null;
+      }
+    });
+    const open = states.find((state) => !ENDED.has(state));
+    if (open !== undefined) {
+      out.kept.push({ pr, ...tag, reason: open === 'OPEN' ? 'open' : 'its state could not be read' });
       continue;
     }
+    const state = states.at(-1);
     const gone = [];
     for (const file of files) {
       try {

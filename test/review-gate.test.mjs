@@ -358,7 +358,7 @@ test('aidrian pr signoff --last signs off the one flow the last review left wait
   execFileSync('git', ['config', 'user.name', 'Tester'], { cwd: dir });
   const h7 = head.slice(0, 7);
   const stale = 'f'.repeat(40);
-  const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review.json');
+  const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review-acme--notes.json');
   const seed = (fields = {}) => {
     // The stop --last serves, unless a case seeds another outcome.
     writeLocalState(project, { ...emptyState(7, 'acme/notes'), outcome: { status: 'human_required', head, at: 'x' }, ...fields });
@@ -486,7 +486,8 @@ test('aidrian pr signoff --last signs off the one flow the last review left wait
   seed({ signoffable: { head, flows: ['pay'] } });
   await refuses(['--last', '--repo', 'stranger/repo'], /--last signs off a pull request of this checkout's repositories only \(acme\/notes\), not stranger\/repo/u);
   execFileSync('git', ['remote', 'add', 'upstream', 'git@github.com:Other/X.git'], { cwd: dir });
-  await refuses(['--last', '--repo', 'other/x'], /the review record of #7 is for acme\/notes, not other\/x/u);
+  // other/x is a remote now, and holds no record of #7 of its own: acme/notes's record is never read for it (#305).
+  await refuses(['--last', '--repo', 'other/x'], /no review of other\/x#7 ran/u);
   assert.deepEqual(await signoff('--last', '--check', '--repo', 'Acme/Notes'), { code: 0, lines: [ok('pay')] });
 });
 
@@ -495,7 +496,7 @@ test('aidrian pr signoff --last refuses a review record held on another machine'
   execFileSync('git', ['config', 'user.name', 'Tester'], { cwd: dir });
   writeLocalState(project, { ...emptyState(7, 'acme/notes'), signoffable: { head, flows: ['pay'] }, outcome: { status: 'human_required', head, at: 'x' } });
   execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: dir });
-  const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review.json');
+  const recordFile = path.join(stateDir(project), 'reviews', 'pr-7-review-acme--notes.json');
   const before = readFileSync(recordFile, 'utf8');
   const forge = {
     change: () => ({ url: 'https://github.com/acme/notes/pull/7', headRefOid: head, baseRefName: 'main' }),
@@ -545,7 +546,7 @@ test('await-review --request --repo of another remote`s repository is gated, and
 });
 
 // The attest record, as the review record (#305), is one file a repository and number.
-test('attest records of one number in two repositories stay apart, and an old-name one is read once and moved', (t) => {
+test('attest records of one number in two repositories stay apart, and an old-name one is its own repository`s, moved on its write', (t) => {
   const { dir, project } = repo(t);
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/Up/Notes.git'], { cwd: dir });
   writeRecord(project, { pr: 5, repo: 'acme/notes', head: 'abcdef1', reviewer: 'origin-reviewer', findings: 0, fixed: 0, note: null });
@@ -555,7 +556,7 @@ test('attest records of one number in two repositories stay apart, and an old-na
   assert.equal(gateReview(project, 5, 'acme/notes').reviewer, 'origin-reviewer');
   assert.equal(gateReview(project, 5, 'up/notes').reviewer, 'upstream-reviewer');
   const reviews = path.join(stateDir(project), 'reviews');
-  assert.ok(existsSync(path.join(reviews, 'pr-5.json')) && existsSync(path.join(reviews, 'pr-5-up--notes.json')), 'origin keeps the old name');
+  assert.ok(existsSync(path.join(reviews, 'pr-5-acme--notes.json')) && existsSync(path.join(reviews, 'pr-5-up--notes.json')), 'each repository`s own file, origin`s too');
   // An upstream record written under the old name before the key changed: read for the upstream, moved on its next write.
   writeFileSync(path.join(reviews, 'pr-6.json'), JSON.stringify({ pr: 6, repo: 'up/notes', head: 'abcdef1', reviewer: 'old', findings: 0, fixed: 0 }));
   assert.equal(gateReview(project, 6, 'up/notes').reviewer, 'old');

@@ -749,8 +749,9 @@ flow's or a slice's files alone, the cross pass, and an engine pass do not count
 
 `--head` takes a commit's full SHA or a short one, and `attest` records its full SHA.
 `attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, one file a
-repository and number, as the [review record](review.md#answering-in-the-session) is: `reviews/pr-<N>.json` for origin's
-repository, `reviews/pr-<N>-<owner>--<name>.json` for another remote's, so a review of one never counts for the other.
+repository and number, as the [review record](review.md#answering-in-the-session) is: `reviews/pr-<N>-<owner>--<name>.json`,
+whichever remote is origin, so a review of one repository's pull request never counts for another's. A record under the
+old name `reviews/pr-<N>.json` counts for the repository it names, or for origin when it names none.
 It prints a marker:
 `<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->`. A request that carries the marker for its own pull request
 and repository also passes, so a new session or machine need not review again.

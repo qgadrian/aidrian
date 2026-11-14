@@ -1605,7 +1605,7 @@ test('extra rounds: a grant whose round has not opened goes back to the judge wh
 test('extra rounds: aidrian pr extend writes the summary comment, so another machine continues from it', async (t) => {
   const { r, capped } = await toTheCap(t, {});
   assert.equal(capped.status, 'extension_check');
-  const local = path.join(stateDir(r.project), 'reviews', 'pr-7-review.json');
+  const local = path.join(stateDir(r.project), 'reviews', 'pr-7-review-o--r.json');
   rmSync(local);
   await extend(t, r, ['--verdict', 'extend', '--reason', 'valid', '--head', capped.head]);
   assert.equal(r.comments.length, 1, 'the one summary comment, edited in place');
@@ -2190,7 +2190,7 @@ test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --acc
   const lines = [];
   t.mock.method(console, 'log', (line) => lines.push(line));
   const signoff = (...args) => runSignoff(['7', ...args, '--head', first.head, '--repo', 'o/r', '--check'], projectAt(r.dir), loadConfig(projectAt(r.dir)).config, { forge });
-  const before = readFileSync(path.join(stateDir(r.project), 'reviews', 'pr-7-review.json'), 'utf8');
+  const before = readFileSync(path.join(stateDir(r.project), 'reviews', 'pr-7-review-o--r.json'), 'utf8');
   assert.equal(await signoff('--flow', 'pay'), 0);
   assert.equal(await signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', evidence, '--reason', 'the designer approved it'), 0);
   await assert.rejects(signoff('--flow', 'look'), /flow look takes no Human sign-off/u);
@@ -2219,7 +2219,7 @@ test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --acc
     `ok: the command would record Tester's sign-off of flow pay on ${first.head.slice(0, 7)}`,
     `ok: the command would record Tester's acceptance of invariant matches-design of flow look on ${first.head.slice(0, 7)}`,
   ]);
-  assert.equal(readFileSync(path.join(stateDir(r.project), 'reviews', 'pr-7-review.json'), 'utf8'), before, 'the record is as it was');
+  assert.equal(readFileSync(path.join(stateDir(r.project), 'reviews', 'pr-7-review-o--r.json'), 'utf8'), before, 'the record is as it was');
 });
 
 test('fix_required names the next step of every open invariant: the fix, the approval line, the acceptance, and the capture`s status', async (t) => {
@@ -2394,7 +2394,7 @@ test('the stop on an adopted finding with no text names the record file; deletin
   r.comments.length = 0;
   const stopped = await r.step({ exec: clean });
   assert.equal(stopped.status, 'incomplete', 'the comment is gone, and this machine`s record still holds the finding');
-  const file = recordFile(r.project, 7);
+  const file = recordFile(r.project, 7, 'o/r');
   assert.ok(stopped.reason.includes(file), stopped.reason);
   rmSync(file);
   const fresh = await r.step({ exec: clean });
@@ -2411,7 +2411,7 @@ test('a machine with no record that runs extend on a public copy holding an unte
   r.comments.length = 0;
   r.comments.push({ id: 1, body: summaryBody(theirs, null, 'x', { reading: { visibility: 'PUBLIC', inside: true }, root: r.dir, names: [] }), author_association: 'MEMBER' });
   assert.equal(stateFromComment(r.comments[0].body, 7).passes['engine:codex-local'].list[0].title, undefined, 'the copy holds no text');
-  rmSync(recordFile(r.project, 7));
+  rmSync(recordFile(r.project, 7, 'o/r'));
   assert.equal((await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a valid finding', '--head', capped.head])).code, 0);
   assert.equal(readLocalState(r.project, 7).passes['engine:codex-local'].list[0].adopted, true, 'extend wrote the finding as adopted');
   const stopped = await r.step({ exec: clean });
@@ -2433,7 +2433,7 @@ test('a machine with no record restarts from a public copy, whose verdicts carry
   assert.doesNotMatch(JSON.stringify(stateFromComment(r.comments.at(-1).body, 7).passes), /src\/booking\/a\.js:1/u, 'the public copy posts no evidence');
   const ran = runs;
   // Another machine: no record of its own, only the public comment.
-  rmSync(recordFile(r.project, 7));
+  rmSync(recordFile(r.project, 7, 'o/r'));
   const again = await r.step({ exec });
   assert.equal(again.status, 'dispatch', 'the agent pass is dispatched again, not left as fix_required');
   attest(again);
@@ -2457,7 +2457,7 @@ test('a machine with no record builds on a private copy whose text checks withhe
   assert.ok(Object.values(posted.passes).some((result) => (result.verdicts ?? []).some((verdict) => verdict.verdict === 'holds' && verdict.evidence === undefined)), 'the private copy posts the verdict without its evidence');
   const ran = runs;
   // Another machine: no record of its own, only the private comment.
-  rmSync(recordFile(r.project, 7));
+  rmSync(recordFile(r.project, 7, 'o/r'));
   const again = await r.step({ exec });
   assert.equal(again.status, 'dispatch', 'the agent pass is dispatched again, not left to an outside acceptance');
   attest(again);
@@ -2474,7 +2474,7 @@ test('a second machine on a public repository holds on another machine`s open, b
   const body = r.comments[0].body;
   const copy = stateFromComment(body, 7);
   // Another machine: no record of its own, only the public comment.
-  rmSync(recordFile(r.project, 7));
+  rmSync(recordFile(r.project, 7, 'o/r'));
   let ran = 0;
   const held = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [], verdicts: [], dropped: [] }) });
   assert.deepEqual([held.status, held.retry_recommended, held.held, ran], ['incomplete', false, copy.revision, 0]);
@@ -2494,7 +2494,7 @@ test('a second machine that restarts from a public copy at the round cap opens n
   const second = await r.step({ exec: clean });
   assert.deepEqual([second.status, second.round], ['received', 2]);
   // Another machine, with no record of its own, on a new head.
-  rmSync(recordFile(r.project, 7));
+  rmSync(recordFile(r.project, 7, 'o/r'));
   r.write('src/app.js', 'export const app = 4;\n');
   r.commit();
   let ran = 0;
@@ -2502,7 +2502,7 @@ test('a second machine that restarts from a public copy at the round cap opens n
   assert.deepEqual([capped.status, ran], ['round_limit', 0], 'the copy`s two rounds count: no third round');
   assert.equal(readLocalState(r.project, 7).rounds.length, 2);
   // With the copy gone too, the review starts over from round 1, as the Human chose.
-  rmSync(recordFile(r.project, 7));
+  rmSync(recordFile(r.project, 7, 'o/r'));
   r.comments.length = 0;
   const fresh = await r.step({ exec: clean });
   assert.deepEqual([fresh.status, fresh.round], ['received', 1]);
@@ -2515,7 +2515,7 @@ test('every agent pass records with --findings-file: an accepted finding whose d
   const one = await r.step({ exec: clean });
   const [pass] = one.dispatch;
   const tag = createHash('sha256').update(pass.pass).digest('hex').slice(0, 8);
-  const file = path.join(stateDir(r.project), 'tmp', 'review-7', `${pass.pass.replace(/[^\w.-]/gu, '-')}-${tag}.findings.json`);
+  const file = path.join(stateDir(r.project), 'tmp', 'review-7-o--r', `${pass.pass.replace(/[^\w.-]/gu, '-')}-${tag}.findings.json`);
   assert.ok(pass.record.startsWith(`aidrian pr attest 7 --pass ${pass.pass} --head ${one.head} --reviewer code-reviewer --findings-file '${file}'`), pass.record);
   assert.ok(path.relative(r.dir, file).startsWith('..'), 'the findings file is outside the checkout, under the state folder');
   const table = loadTable();
@@ -2682,8 +2682,8 @@ test('a record an earlier release wrote gets an index entry for each id it holds
   const s1a = { ...emptyState(7, 'o/r'), revision: 3, floored: true, idCounter: 3,
     rounds: [{ head, at: '2026-11-11T00:00:00.000Z', findings: [{ id: 'R1-3', mint: '33333333', title: 'Only in a round', file: 'src/booking/a.js', line: 1, severity: 'low', pass: 'gone' }] }],
     passes: { 'engine:codex-local': { head, reviewer: 'codex-local', findings: 2, open: 1, list: [{ id: 'R1-1', mint: '11111111', title: 'Open one', file: 'src/booking/a.js', line: 2, severity: 'medium' }, { id: 'R1-2', mint: '22222222', title: 'Fixed one', severity: 'low', state: 'fixed', disposition: 'drop_unless_cited' }] } } };
-  mkdirSync(path.dirname(recordFile(r.project, 7)), { recursive: true });
-  writeFileSync(recordFile(r.project, 7), JSON.stringify(s1a));
+  mkdirSync(path.dirname(recordFile(r.project, 7, 'o/r')), { recursive: true });
+  writeFileSync(recordFile(r.project, 7, 'o/r'), JSON.stringify(s1a));
   assert.equal(readLocalState(r.project, 7).index, undefined);
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'agent:other', head, reviewer: 'code-reviewer', findings: 0, fixed: 0 });
   const { index } = readLocalState(r.project, 7);
@@ -2701,7 +2701,7 @@ test('a review step that stops on an open, blocking finding with no text closes 
   const { r, capped } = await toTheCap(t, {});
   const local = readLocalState(r.project, 7);
   local.index = { 'R1-5': { id: 'R1-5', mint: '55555555', title: 'Left out', file: 'src/booking/a.js', severity: 'medium', state: 'open', pass: 'engine:codex-local', stage: 'independent', reviewer: 'codex-local', seen: capped.head } };
-  writeFileSync(recordFile(r.project, 7), JSON.stringify(local));
+  writeFileSync(recordFile(r.project, 7, 'o/r'), JSON.stringify(local));
   const other = { ...local, revision: local.revision + 5, passes: { ...local.passes, 'engine:codex-local': { head: capped.head, reviewer: 'codex-local', findings: 1, open: 1, list: [{ id: 'R2-9', mint: 'abcdef01', severity: 'high', state: 'open', disposition: 'fix_now' }] } } };
   r.comments.length = 0;
   r.comments.push({ id: 1, body: summaryBody(other, null, 'x', OPEN), author_association: 'MEMBER' });
@@ -2775,7 +2775,7 @@ test('the record command passes the findings file as one shell argument, from a 
   const one = await r.step({ exec: clean });
   assert.equal(one.status, 'dispatch');
   const [pass] = one.dispatch;
-  const file = findingsFile(r.project, 7, pass.pass);
+  const file = findingsFile(r.project, 7, pass.pass, 'o/r');
   assert.ok(file.includes("st ate's"), file);
   // A POSIX shell reads the command back into its words; the verdicts placeholder is left out, since `<` redirects.
   const words = spawnSync('sh', ['-c', `set -- ${pass.record.replace(' --verdicts <file.json>', '')}; for word in "$@"; do printf '%s\\n' "$word"; done`], { encoding: 'utf8' });
@@ -3454,4 +3454,25 @@ test('a review step on another remote`s repository holds to that remote`s base b
   assert.equal((await r.step({ exec: clean }, { repo: `${owner}/r` })).max_rounds, 3, 'origin`s takes origin`s');
   r.git('update-ref', '-d', 'refs/remotes/upstream/main');
   await assert.rejects(r.step({ exec: clean }, { repo: 'up/r' }), /the base branch main of up\/r is not fetched from upstream, the remote that names it: git fetch upstream main first/u, 'never origin`s or a local branch in its place');
+});
+
+test('a step that errs on one repository notes the error on its own record, never on another`s of that number', async (t) => {
+  // run.mjs's error note: the security re-review of #251 found it written over origin's record for another repository.
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const owner = `err-${process.pid}`;
+  r.git('remote', 'add', 'origin', `https://github.com/${owner}/r.git`);
+  r.git('remote', 'add', 'upstream', 'https://github.com/up/r.git');
+  r.git('update-ref', 'refs/remotes/upstream/main', r.git('rev-parse', 'main'));
+  // origin's record of #7, under the old file name, with a finished review.
+  const origin = { ...emptyState(7, `${owner}/r`), rounds: [{ head: 'a'.repeat(40) }, { head: 'b'.repeat(40) }], outcome: { status: 'received', head: 'b'.repeat(40), at: 'x' }, revision: 2 };
+  origin.pending = [{ id: 'origin-owed', kind: 'review', head: 'b'.repeat(40), at: '2026-11-01T10:00:00.000Z', by: 'H' }];
+  mkdirSync(path.dirname(recordFile(r.project, 7)), { recursive: true });
+  writeFileSync(recordFile(r.project, 7), JSON.stringify(origin));
+  const before = readFileSync(recordFile(r.project, 7), 'utf8');
+  await assert.rejects(r.step({ exec: async () => { throw new Error('the reviewer crashed'); } }, { repo: 'up/r' }), /the reviewer crashed/u);
+  const upstream = readLocalState(r.project, 7, 'up/r');
+  assert.equal(upstream.outcome.status, 'error', 'the error is noted on up/r#7');
+  assert.ok(upstream.rounds.length <= 1, 'with none of origin`s rounds');
+  assert.deepEqual(upstream.pending.map((entry) => entry.id), [], 'and none of the entries origin owes: the step`s writes merged in no other record`s');
+  assert.equal(readFileSync(recordFile(r.project, 7), 'utf8'), before, 'origin`s record is untouched');
 });

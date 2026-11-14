@@ -148,7 +148,7 @@ function quotaStop(s, pass, stage, reason, extra = {}) {
   const { opts, state, head, plan, passes, map, n } = s;
   const stop = quota.recordStop(state, { head, stage, pass, reason });
   const refused = quota.refusal(plan, stop, passes, map);
-  return finish(s, 'blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot })) });
+  return finish(s, 'blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot, repo: s.repo, repoArg: s.repoArg ?? '' })) });
 }
 
 // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome

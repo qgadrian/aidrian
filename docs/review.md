@@ -361,7 +361,8 @@ variable in any other form. The repository the answer or typed grant names is th
 `--repo <owner>/<name>`, one of those remotes, once, right after `<PR>` as the printed rerun has it or at the end, as `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>/<name>`;
 both `aidrian pr review` and `aidrian pr await-review` take it, and read the pull request from that repository rather
 than the forge's default. With `--repo`, `aidrian pr review` takes a pull request number, or a URL of a pull request of
-that same repository, and refuses any other before it reads the forge. Without it there, the refusal names that route, and the Human may still run the raise in
+that same repository, and refuses any other before it reads the forge. Without it there, the refusal names that route and reads no record, so another repository's check at the cap of the
+same number names no waiting route; and the Human may still run the raise in
 their own shell, as the refusal writes it, with the command's own subcommand and `--with-bot` or `--request`, since each
 counts its own rounds.
 

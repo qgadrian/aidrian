@@ -368,3 +368,21 @@ test('a checkout whose only remote is not origin names that, and offers no ask',
   const miss = missOf(raises(12, 4)[0], context);
   assert.match(miss, /^ This checkout has no origin, so no answer or typed grant can name its repository: the Human runs the command in their own shell\.$/u);
 });
+
+test('the waiting route comes from the record of the repository the raise acts on, never another`s of that number', (t) => {
+  const context = setup(t, []);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
+  const project = projectAt(context.cwd);
+  const upstream = emptyState(77, 'up/r');
+  upstream.extensions = [{ source: 'plan', round: 4, head: 'd', status: 'judging' }];
+  writeLocalState(project, upstream);
+  try {
+    const own = missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 77 --max-rounds 5 --repo up/r', context);
+    assert.match(own, /The check at round 4 on pull request #77 waits for the judge: run again the review command that reached the cap, `aidrian pr review 77 --repo up\/r`/u, 'the upstream`s own check, its rerun naming the repository');
+    assert.match(own, /`aidrian pr extend 77 --verdict extend\|stop --reason "<evidence>" --head <sha> --repo up\/r`/u);
+    assert.doesNotMatch(missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 77 --max-rounds 5 --repo o/r', context), /waits for the judge/u, 'origin`s #77 has no check of its own');
+    assert.doesNotMatch(missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 77 --max-rounds 5', context), /waits for the judge/u, 'no --repo with several repositories: no record is read');
+  } finally {
+    writeLocalState(project, emptyState(77, 'up/r'));
+  }
+});

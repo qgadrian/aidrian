@@ -1677,7 +1677,7 @@ test('out of quota with no flag: blocked_quota asks one question, and the next c
   const exec = async () => (ran += 1, outOfQuota());
   const first = await r.step({ exec });
   assert.deepEqual([first.status, first.pass, EXIT[first.status]], ['blocked_quota', 'engine:codex-local', 3]);
-  assert.match(first.question, /^Codex is out of quota, so the independent review of pull request #7 stopped on head [0-9a-f]{7}\..*never as an independent review\.$/u);
+  assert.match(first.question, /^Codex is out of quota, so the independent review of pull request o\/r#7 stopped on head [0-9a-f]{7}\..*never as an independent review\.$/u);
   assert.deepEqual(first.options.map((each) => each.label), ['Run a critic agent (Recommended)', 'The Human reviews it', 'Wait for Codex quota']);
   assert.deepEqual(first.options.map((each) => each.run), ['aidrian pr review 7 --quota-fallback agent:critic', 'aidrian pr review 7 --quota-fallback human', null]);
   assert.equal(first.quota_fallback, undefined);

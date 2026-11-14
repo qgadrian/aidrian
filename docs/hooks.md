@@ -300,10 +300,13 @@ What each rule matches:
   naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository, as the review step's printed rerun does.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
 - Quota fallback choice: `aidrian pr review <PR> --quota-fallback agent:<name>` or `--quota-fallback human`, also as
-  `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record holds a quota stop and the
-  session transcript holds an AskUserQuestion answer, given after that stop, to a question naming `#<PR>` and the quota,
+  `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record of the repository the call
+  acts on holds a quota stop and the session transcript holds an AskUserQuestion answer, given after that stop, to a
+  question naming `<owner>/<name>#<PR>` of that repository (`#<PR>` alone in a checkout with no remote) and the quota,
   that picks that exact value: an option starting "Run a critic agent" authorizes `agent:critic` only; any other agent
   needs an answer that names it, "Run a <name> agent" or `agent:<name>`; and `human` needs "The Human reviews it".
+  That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes name;
+  where they name several, a call with no `--repo` is refused, and no other repository's record of the number counts.
   A value or a pull request the rule cannot read is refused.
 - Product feedback answer: on only where the state folder holds `product-feedback/`, save two cases that also reach a project
   without the feature, as [With the key off](config.md#with-the-key-off) says. One is a call whose folder or project it cannot

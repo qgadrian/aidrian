@@ -45,7 +45,7 @@ import { findProject } from '../../project.mjs';
 import { aidrianArgs, assignsVariable, commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
 import { readLocalState } from '../../review/state.mjs';
 import { transcriptAnswers, transcriptTyped, waitingRoute } from '../review-extend.mjs';
-import { approvalTarget, namesChange, NOTIFY, severalRemotes } from '../review-signoff.mjs';
+import { approvalTarget, callRepo, namesChange, NOTIFY, severalRemotes } from '../review-signoff.mjs';
 import { repoName } from '../../remotes.mjs';
 import { readRequests } from './review-request.mjs';
 
@@ -239,12 +239,18 @@ function sessionSaid(env, input) {
   return { answers: transcriptAnswers(text), typed: typedRead ? transcriptTyped(text) : [], typedRead, unread: null };
 }
 
-// The route a check waiting at the cap of the raise's pull request offers, from this machine's review record, or null.
+// The route a check waiting at the cap of the raise's pull request offers, from this machine's review record of the
+// repository the raise acts on (review-signoff.mjs callRepo), or null. Where that repository cannot be named, a raise with
+// no `--repo` in a checkout whose remotes name several, or one no remote names, no record is read: another repository's
+// check of the same number names no route here.
 function pendingRoute(project, invocation) {
   const pr = raisedPr(invocation);
   if (!pr) return null;
   try {
-    return waitingRoute(pr, readLocalState(project, Number(pr))?.extensions?.at(-1));
+    const target = callRepo(project, aidrianArgs(invocation));
+    if (target.miss === 'remotes' || target.miss === 'repo') return null;
+    const repoArg = target.repo && severalRemotes(project) ? ` --repo ${target.repo}` : '';
+    return waitingRoute(pr, readLocalState(project, Number(pr), target.repo ?? undefined)?.extensions?.at(-1), repoArg);
   } catch {
     return null;
   }

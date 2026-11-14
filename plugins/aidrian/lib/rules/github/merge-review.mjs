@@ -49,7 +49,7 @@ import { forgeFor } from '../../forges/index.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
-import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
+import { emptyState, FINISHED, owed, owedElsewhere, readLocalState, recordRepos, sameCommit } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { guardWaiver, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
@@ -187,6 +187,19 @@ const readTranscript = (file) => {
 // Whether the record holds anything the guard reads: an entry still owed, or a review the step ran or is running.
 const guards = (state) => Boolean(state) && (owed(state).length > 0 || state.outcome != null || state.rounds.length > 0);
 
+// The deny for a merge that names no repository while this machine holds records of its number for several (#305):
+// the guard cannot tell which pull request gh merges, so it reads none of them in its place.
+const ambiguous = (pr, repos) =>
+  `Blocked: this merges pull request #${pr} with no repository named, and this machine holds review records of #${pr} for ` +
+  `several repositories (${repos.join(', ')}), so the merge guard cannot tell which one it checks. Name it: ` +
+  `\`gh pr merge ${pr} -R <owner>/<name> --match-head-commit <sha>\`.`;
+// A merge with no repository named, of a number this machine holds records of for more than one repository.
+const ambiguousRecords = (project, pr, repo) => {
+  if (repo !== null || pr === null) return null;
+  const repos = recordRepos(project, pr).filter(Boolean).sort();
+  return repos.length > 1 ? ambiguous(pr, repos) : null;
+};
+
 export const unresolved = (pr, how) =>
   `Blocked: this merges ${pr === null ? 'a pull request' : `pull request #${pr}`}, and the merge guard could not read ` +
   `${pr === null ? 'which one, or its head commit,' : 'its head commit'} in time to check its review. ${how}`;
@@ -204,6 +217,15 @@ export const UNREAD_REASON =
 // outcome and rounds when the record is. An entry's repository is its own `repo`, else the record's, else origin's;
 // one still unknown counts for every repository. Every spelling compares as `owner/name`, lower-cased. The record file is
 // per number, so a fork checkout holds upstream#5 and origin#5 in one record: each merge reads only its own entries.
+// `readLocalState` gives a merge of `repo` that repository's own record alone; the entries another repository's record
+// holds for it (state.mjs owedElsewhere), as one written before the record was keyed by repository does, are added.
+export const recordFor = (project, pr, repo) => {
+  const own = readLocalState(project, pr, repo);
+  const extra = repo === null ? [] : owedElsewhere(project, pr, repo);
+  if (!extra.length) return own;
+  return { ...(own ?? { ...emptyState(pr, repoName(repo)) }), pending: [...(own?.pending ?? []), ...extra] };
+};
+
 export function scoped(state, project, repo) {
   const target = repo === null ? null : repoName(repo);
   if (!state || target === null) return state;
@@ -241,7 +263,9 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const held = (base) => heldReason({ project, pr, repo, base, deadline: startedAt + WAIVER_DEADLINE_MS, now });
   const before = pr === null ? null : held(null);
   if (before) return before;
-  let state = pr === null ? null : scoped(readLocalState(project, pr), project, repo);
+  const unnamed = ambiguousRecords(project, pr, repo);
+  if (unnamed) return unnamed;
+  let state = pr === null ? null : scoped(recordFor(project, pr, repo), project, repo);
   if (pr !== null && !guards(state)) return null;
   let view = null;
   if (pr === null || head === null) {
@@ -254,7 +278,9 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
     if (denied) return denied;
     if (pr === null) {
       pr = view.number;
-      state = scoped(readLocalState(project, pr), project, repo);
+      const later = ambiguousRecords(project, pr, repo);
+      if (later) return later;
+      state = scoped(recordFor(project, pr, repo), project, repo);
       if (!guards(state)) return null;
     }
     head ??= view.headRefOid;

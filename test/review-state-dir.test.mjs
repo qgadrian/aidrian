@@ -156,7 +156,7 @@ test('a head and a base with the same state.dir run the step as before', async (
   const r = repo(t, { baseConfig: TEAM, headConfig: TEAM });
   assert.equal((await r.step()).status, 'received');
   assert.equal(r.comments.length, 1);
-  assert.ok(existsSync(path.join(r.root, 'state/reviews/pr-7-review.json')));
+  assert.ok(existsSync(path.join(r.root, 'state/reviews/pr-7-review-o--r.json')));
 });
 
 test('each record command refuses the same checkout when the forge names the base', async (t) => {
@@ -568,7 +568,7 @@ test('a project with state.dir unset and its default folder outside every checko
   assert.equal(baseProblem(r.project, { repo: 'o/r', base: 'main', git: () => ({}) }), null);
   await r.step();
   assert.equal(r.comments.length, 1, 'the step ran and published');
-  assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review.json')), 'the record is in the default folder');
+  assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review-o--r.json')), 'the record is in the default folder');
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused }), null);
   const { stderr } = spawnSync(CLI, ['check'], { cwd: r.dir, encoding: 'utf8', env: process.env });
   assert.doesNotMatch(stderr, /state folder|records go in|review record/u);
@@ -941,7 +941,7 @@ test('a folder the records go in that holds no checkout stays allowed, and so do
     const { r, state } = make(t);
     tracking(r);
     writeLocalState(r.project, emptyState(7, 'o/r'));
-    assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review.json')), `${name}: the folder these tests name is the one the record goes in`);
+    assert.ok(existsSync(path.join(state, 'reviews', 'pr-7-review-o--r.json')), `${name}: the folder these tests name is the one the record goes in`);
     r.git('worktree', 'add', '-q', '--detach', path.join(state, 'trees', 'one'), 'main');
     r.git('worktree', 'add', '-q', '--detach', path.join(state, 'trees', 'reviews'), 'main');
     r.git('worktree', 'add', '-q', '--detach', path.join(state, 'reviews', 'pr-7'), 'main');
@@ -1075,8 +1075,10 @@ for (const [name, base, first] of [['a named base', 'main', 'refs/remotes/origin
       return options;
     };
     assert.equal(baseProblem(r.project, { repo: 'o/r', base, git }), null);
-    assert.equal(timeouts.length, 2, 'each read asks for its own options');
-    assert.ok(timeouts[1] === null || timeouts[1] <= timeouts[0] - 300, `the second read took ${timeouts[1]} ms after the first took ${timeouts[0]} ms and 300 ms passed`);
+    // A named base first reads which remote names the repository (#303), then the refs.
+    const refs = base === null ? timeouts : timeouts.slice(1);
+    assert.equal(timeouts.length, base === null ? 2 : 3, 'each read asks for its own options');
+    assert.ok(refs[1] === null || refs[1] <= refs[0] - 300, `the second ref read took ${refs[1]} ms after the first took ${refs[0]} ms and 300 ms passed`);
   });
 }
 

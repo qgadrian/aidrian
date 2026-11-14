@@ -9,16 +9,19 @@ import { parseVerdicts } from './flows.mjs';
 import { closingRange, readReading } from './dispatch.mjs';
 import { gitPaths } from './publish.mjs';
 import * as quota from './quota.mjs';
-import { heldMessage, readRecord, sameCommit, writeLocalState } from './state.mjs';
+import { heldMessage, otherRecordMessage, otherRecordRepo, readRecord, sameCommit, writeLocalState } from './state.mjs';
 
 // The record to change, as readRecord gives it: the newer of this machine's and the one in the pull request's
 // comments (`remote`, as remoteState read them), so a write never builds on a stale copy. A held comment newer than
 // this machine's record is refused, never started over. `reading` is the forge's reading of the pull request, or a
 // function that reads it (remoteReading): on one that is not private, a newer copy gives a restart or a hold, never a
 // record to build on.
+// A record of another repository with this number is refused (state.mjs otherRecordRepo): no entry lands on it.
 function current(project, pr, repo, remote, reading) {
   const record = readRecord(project, pr, remote ?? [], repo, reading);
   if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why, record.finding));
+  const other = otherRecordRepo(record.state, repo);
+  if (other) throw new Error(otherRecordMessage(pr, other, repo, 'this command records on'));
   return record.state;
 }
 
@@ -71,7 +74,7 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
     mint, securityPass: note?.security === true, paths: gitPaths(project.root).at(head), listed: Array.isArray(note?.listed) ? note.listed : null,
     plan: notedPlan(state), stage: note?.stage ?? null, range: closingRange(project.root, base),
   });
-  writeLocalState(project, state);
+  writeLocalState(project, state, { repo });
   return recorded;
 }
 
@@ -87,7 +90,7 @@ export function recordSignoff(project, { pr, repo, flow, head, by, remote = null
     throw new Error(`flow ${flow} takes no Human sign-off on ${head.slice(0, 7)} of ${repo}#${pr}: ${which} signed off there. A sign-off never clears a violated invariant: fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
   }
   state.signoffs[flow] = { head, by, at: new Date().toISOString() };
-  if (!dryRun) writeLocalState(project, state);
+  if (!dryRun) writeLocalState(project, state, { repo });
   return state.signoffs[flow];
 }
 
@@ -105,7 +108,7 @@ export function recordOverrule(project, { pr, repo, flow, invariant, head, by, r
   const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), at: new Date().toISOString() };
   state.overrulings = [...(state.overrulings ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];
   state.overrides = [...state.overrides, `${by} overruled the violated verdict on ${flow}/${invariant} at ${head.slice(0, 7)}: ${entry.reason}`];
-  if (!dryRun) writeLocalState(project, state);
+  if (!dryRun) writeLocalState(project, state, { repo });
   return entry;
 }
 
@@ -127,7 +130,7 @@ export function recordAccept(project, { pr, repo, flow, invariant, head, by, rea
   const kind = checkEvidence(evidence);
   const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), evidence, kind, at: new Date().toISOString() };
   state.acceptances = [...(state.acceptances ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];
-  if (!dryRun) writeLocalState(project, state);
+  if (!dryRun) writeLocalState(project, state, { repo });
   return entry;
 }
 
@@ -141,6 +144,6 @@ export function recordStageSignoff(project, { pr, repo, stage, head, by, remote 
   if (!stops.length) throw new Error(`no Human review of the ${stage} stage is waiting on ${head.slice(0, 7)} of #${pr}: --stage signs off only a stage the Human chose to review after its reviewer ran out of quota`);
   const signoff = { by, at: new Date().toISOString() };
   for (const stop of stops) stop.signoff = signoff;
-  if (!dryRun) writeLocalState(project, state);
+  if (!dryRun) writeLocalState(project, state, { repo });
   return signoff;
 }

@@ -436,7 +436,7 @@ test('a machine that builds on a private copy runs again a finished slice whose 
   const project = projectAt(r.dir);
   const PRIVATE_READING = { visibility: 'PRIVATE', inside: true };
   const body = summaryBody(readLocalState(project, 3), null, 'running', { reading: PRIVATE_READING, checker: { allows: (text) => !String(text).includes('b()') }, root: r.dir, names: [] });
-  rmSync(recordFile(project, 3));
+  rmSync(recordFile(project, 3, 'o/r'));
   const adopted = readRecord(project, 3, [{ id: 1, body, author_association: 'MEMBER' }], 'o/r', PRIVATE_READING).state;
   const finished = Object.entries(adopted.passes).filter(([id]) => id.startsWith('slice:'));
   assert.equal(finished.length, 2, 'two slices finished on the first machine');
@@ -463,7 +463,7 @@ test('a machine with no record restarts from a public copy: every slice runs aga
   const project = projectAt(r.dir);
   const before = readLocalState(project, 3);
   const body = summaryBody(before, null, 'running', { reading: { visibility: 'PUBLIC', inside: true }, root: r.dir, names: [] });
-  rmSync(recordFile(project, 3));
+  rmSync(recordFile(project, 3, 'o/r'));
   const restarted = readRecord(project, 3, [{ id: 1, body, author_association: 'MEMBER' }], 'o/r', { visibility: 'PUBLIC', inside: true }).state;
   assert.deepEqual(restarted.passes, {}, 'no finished slice of the copy is taken without its report');
   assert.equal(restarted.rounds.length, before.rounds.length, 'the round count is the copy`s');

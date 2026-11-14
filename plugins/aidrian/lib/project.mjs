@@ -522,6 +522,23 @@ export function projectId(project, read = defaultRead) {
   return repositoryId(repository, below);
 }
 
+// The default state folders this project would have under each of its remotes' URLs, other than its own, so review state
+// survives a change of remotes: `git remote rename origin upstream` and a new origin, as `gh repo fork` does, or a change
+// of origin's URL, move the default folder, which is keyed by origin's URL. Empty when config.json sets `state.dir`, which
+// no remote changes, or when git cannot answer. A folder found here is one this machine kept for a clone whose origin
+// was that remote, so its records are read only for the repository each names (lib/review/state.mjs).
+export function remoteStateDirs(project, { config = loadConfig(project).config, env = process.env, read = defaultRead } = {}) {
+  if (config.state.dir) return [];
+  const own = stateDir(project, { config, env, read });
+  const urls = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root, read());
+  if (urls.status !== 0) return [];
+  const prefix = runGit(['rev-parse', '--show-prefix'], project.root, read());
+  const below = prefix.status === 0 ? prefix.stdout.replace(/\/?\n$/u, '') : '';
+  const dirs = urls.stdout.split('\n').map((line) => line.slice(line.indexOf(' ') + 1).trim()).filter(Boolean)
+    .map((url) => path.join(stateRoot(env), 'projects', repositoryId(normalizeRemote(url), below)));
+  return [...new Set(dirs)].filter((dir) => dir !== own);
+}
+
 // The id of the project at `below` (empty at the root) in the repository `repository`, a normalized remote or a path.
 function repositoryId(repository, below = '') {
   const key = below ? `${repository}\0${below}` : repository;

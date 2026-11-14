@@ -421,3 +421,21 @@ test('execute removes the state folder drafts of a merged or closed pull request
   assert.deepEqual(capped.kept.at(-1), { pr: 7, reason: 'past the 3 pull requests one cleanup reads' });
   assert.equal(existsSync(path.join(tmp, 'review-7')), true);
 });
+
+test('a findings folder of another remote`s repository is swept by that repository`s pull request state', (t) => {
+  // #305: such a folder is `review-<n>-<owner>--<name>`, a different pull request from origin's `review-<n>`.
+  const { repo } = fixture(t);
+  const project = projectAt(repo);
+  const tmp = path.join(stateDir(project), 'tmp');
+  for (const name of ['review-8', 'review-8-up--notes']) {
+    mkdirSync(path.join(tmp, name), { recursive: true });
+    writeFileSync(path.join(tmp, name, 'agent-code-reviewer-1a2b3c4d.findings.json'), '[]');
+  }
+  const asked = [];
+  const forge = { change: (ref, fields, options) => (asked.push([ref, options.repo ?? null]), { state: options.repo === 'up/notes' ? 'MERGED' : 'OPEN' }) };
+  const swept = sweepDrafts(project, { forge });
+  assert.deepEqual(swept.removed, [{ pr: 8, repo: 'up/notes', state: 'merged', files: ['review-8-up--notes'] }], 'the upstream`s merged pull request');
+  assert.deepEqual(swept.kept, [{ pr: 8, reason: 'open' }], 'origin`s #8 is still open');
+  assert.deepEqual(asked, [['8', null], ['8', 'up/notes']]);
+  assert.equal(existsSync(path.join(tmp, 'review-8')), true);
+});

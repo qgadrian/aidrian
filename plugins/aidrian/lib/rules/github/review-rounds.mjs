@@ -7,9 +7,10 @@
 //     only `aidrian pr await-review --request` and `aidrian pr review` post one, and they count rounds against
 //     `github.maxReviewRounds` first. A direct comment would skip that count, which is how one pull request once took
 //     twenty bot reviews.
-// The one exception to the first: inline on a literal `aidrian pr review <PR> [--with-bot] --max-rounds <M>` or `aidrian pr
-// await-review <PR> --request --max-rounds <M>`, with `<repo>` this checkout's origin, when this session's transcript holds
-// either of the Human's words:
+// The one exception to the first: inline on a literal `aidrian pr review <PR> [--with-bot] --max-rounds <M> [--repo <repo>]`
+// or `aidrian pr await-review <PR> --request --max-rounds <M> [--repo <repo>]`, with `<repo>` the repository the command
+// acts on (review-signoff.mjs approvalTarget): its `--repo`, which must be one of this checkout's remotes, else the one
+// repository its remotes name. When this session's transcript holds either of the Human's words:
 //   - an answer to an AskUserQuestion naming `<repo>#<PR>` and `--max-rounds <M>`, whose chosen option starts with
 //     "Approve" (checked first);
 //   - a prompt the Human typed (review-extend.mjs transcriptTyped: a prompt sent as sdk, as by a script or the desktop
@@ -26,7 +27,8 @@
 //     rule holds for both.
 // Both rest on the transcript, a file in the agent's own account: an agent with a shell could forge either an answer or
 // a typed grant there, a residual accepted for both routes.
-// A checkout with several remotes gets no such exception (review-signoff.mjs approvalTarget).
+// In a checkout whose remotes name several repositories, only a raise that ends in `--repo <repo>` gets it: without one,
+// the command acts on the forge's default, which a hook does not read.
 // Every refusal of the override names one route and the nearest miss, so the first deny leads somewhere: while a check at
 // the cap waits for the judge or the Human, its route (review-extend.mjs waitingRoute), which needs no variable; else the
 // ask, where an answer or a typed grant can approve it. The miss names, in this order, the checkout, the command's form,
@@ -43,23 +45,28 @@ import { findProject } from '../../project.mjs';
 import { aidrianArgs, assignsVariable, commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
 import { readLocalState } from '../../review/state.mjs';
 import { transcriptAnswers, transcriptTyped, waitingRoute } from '../review-extend.mjs';
-import { approvalTarget, namesChange, oneRemote } from '../review-signoff.mjs';
+import { approvalTarget, callRepo, namesChange, NOTIFY, severalRemotes } from '../review-signoff.mjs';
+import { repoName } from '../../remotes.mjs';
 import { readRequests } from './review-request.mjs';
 
 // The deny's first sentence, which every refusal of the override starts with; the dispatch log records it.
 export const OVERRIDE_REASON =
   `Blocked: ${ROUNDS_OVERRIDE} lets review rounds go past config.json github.maxReviewRounds, and only the Human sets it, on their word.`;
 
-// The ask route, named only where an answer or a typed grant can approve the raise: no check waits at the cap, one
-// remote that is origin, and a transcript the rule reads. ASK_ANSWER is its answer half, for a host whose typed prompts
-// the rule does not read.
-const ASK_ANSWER =
-  'Stop at round_limit, report the findings that keep coming back, and ask the Human with AskUserQuestion ' +
-  'whether to continue, naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, with a recommended option that starts with "Approve". On that ' +
-  `answer run exactly \`${ROUNDS_OVERRIDE}=1 aidrian pr review <PR> --max-rounds <N>\`, or the same on \`aidrian pr await-review <PR> --request\`.`;
-export const ASK_ROUTE = `${ASK_ANSWER} ` +
-  `Or the Human types, as a message of its own, \`${TYPED_GRANT_FORM}\`, which approves that command for every \`--max-rounds\` up to <N>. ` +
-  `A later typed \`${TYPED_GRANT_FORM.replace('<N>', '0')}\` withdraws a raise, and a later, lower count bounds an earlier answer.`;
+// The ask route, named only where an answer or a typed grant can approve the raise: no check waits at the cap, a
+// checkout with an origin, and a transcript the rule reads. `typed` adds the typed grant, for a host whose typed prompts
+// the rule reads; `several`, for a checkout whose remotes name several repositories, the `--repo` the raise then ends in.
+export function askRoute({ typed = true, several = false } = {}) {
+  const repo = several ? ' --repo <owner>/<name>' : '';
+  const answer = 'Stop at round_limit, report the findings that keep coming back, and ask the Human with AskUserQuestion ' +
+    'whether to continue, naming `<owner>/<name>#<PR>` and `--max-rounds <N>`, with a recommended option that starts with "Approve". ' +
+    `${NOTIFY} On that answer run exactly \`${ROUNDS_OVERRIDE}=1 aidrian pr review <PR> --max-rounds <N>${repo}\`, ` +
+    `or the same on \`aidrian pr await-review <PR> --request\`${several ? ', from the pull request\'s checkout, where `<owner>/<name>` is the repository the question names, one of this checkout\'s remotes' : ''}.`;
+  if (!typed) return answer;
+  return `${answer} Or the Human types, as a message of its own, \`${TYPED_GRANT_FORM}\`, which approves that command for every \`--max-rounds\` up to <N>. ` +
+    `A later typed \`${TYPED_GRANT_FORM.replace('<N>', '0')}\` withdraws a raise, and a later, lower count bounds an earlier answer.`;
+}
+export const ASK_ROUTE = askRoute();
 
 export const REQUEST_REASON =
   'Blocked: request a bot review with `aidrian pr await-review --request` (or `aidrian pr review --with-bot`), which counts ' +
@@ -71,7 +78,13 @@ export const botNamed = (reviewer) => typeof reviewer === 'string' && reviewer !
 export const setsOverride = (invocation) => assignsVariable(invocation, ROUNDS_OVERRIDE);
 
 // The two forms an answer can approve, as written after the variable; `--with-bot` is the review step that also runs the bot.
-const RAISE_FORMS = { review: /^(?:--with-bot )?--max-rounds (\d+)$/u, 'await-review': /^--request --max-rounds (\d+)$/u };
+// Either may name `--repo <owner>/<name>`, the repository it acts on, which a checkout whose remotes name several needs:
+// right after the pull request, as the review step prints its rerun, or last. One `--repo` only (approvalTarget).
+const REPO = '(?:--repo (\\S+) )?';
+const RAISE_FORMS = {
+  review: new RegExp(`^${REPO}(?:--with-bot )?--max-rounds (\\d+)(?: --repo (\\S+))?$`, 'u'),
+  'await-review': new RegExp(`^${REPO}--request --max-rounds (\\d+)(?: --repo (\\S+))?$`, 'u'),
+};
 
 // The pull request number of an `aidrian pr review|await-review <PR>` invocation, or null.
 function raisedPr(invocation) {
@@ -105,15 +118,22 @@ export function raiseMiss(invocation, said, target) {
   const texts = words && !words.some((word) => word.dynamic) ? words.map((word) => word.text) : [];
   const [verb, sub, pr] = texts;
   if (target.miss === 'remotes') {
-    return `This checkout has several remotes, so no answer or typed grant can name the one repository the command acts on, and neither lets an agent set ${ROUNDS_OVERRIDE} here. ` +
-      `Hand the Human \`${ROUNDS_OVERRIDE}=1 ${handoverOf(words)} --max-rounds <N>\` to run in their own shell (\`!\` in the prompt, or another terminal).`;
+    return `This checkout's remotes name more than one repository (${target.remotes.join(', ')}), so an answer or a typed grant lets an agent set ${ROUNDS_OVERRIDE} ` +
+      `only on a raise that ends in \`--repo <owner>/<name>\`, the one the question or grant names: \`${ROUNDS_OVERRIDE}=1 ${handoverOf(words)} --max-rounds <N> --repo <owner>/<name>\`, as one plain command. ` +
+      `Or hand the Human \`${ROUNDS_OVERRIDE}=1 ${handoverOf(words)} --max-rounds <N>\` to run in their own shell (\`!\` in the prompt, or another terminal).`;
   }
-  const max = verb === 'pr' && Object.hasOwn(RAISE_FORMS, sub) && /^\d+$/u.test(pr ?? '') ? RAISE_FORMS[sub].exec(texts.slice(3).join(' '))?.[1] : undefined;
+  const form = verb === 'pr' && Object.hasOwn(RAISE_FORMS, sub) && /^\d+$/u.test(pr ?? '') ? RAISE_FORMS[sub].exec(texts.slice(3).join(' ')) : null;
+  const max = form?.[2];
+  const formRepo = form?.[1] ?? form?.[3];
   if (!max) {
     return `An answer or a typed grant approves only \`${ROUNDS_OVERRIDE}=1 aidrian pr review <PR> --max-rounds <N>\`, with \`--with-bot\` before \`--max-rounds\` when the step runs the bot, ` +
-      `or \`${ROUNDS_OVERRIDE}=1 aidrian pr await-review <PR> --request --max-rounds <N>\`, every word written out, with no variable or other flag.`;
+      `or \`${ROUNDS_OVERRIDE}=1 aidrian pr await-review <PR> --request --max-rounds <N>\`, either with one \`--repo <owner>/<name>\` right after \`<PR>\` or last when it names its repository, every word written out, with no variable or other flag.`;
   }
   if (target.miss === 'plain') return 'An approved raise runs only as one plain command, with no `cd`, `env -C`, chain, or other prefix: run it from the pull request\'s checkout.';
+  if (target.miss === 'repo' || (formRepo !== undefined && repoName(formRepo) !== target.repo)) {
+    return `The raise's \`--repo\` must name, written out as \`<owner>/<name>\`, one of the repositories this checkout's remotes name (${(target.remotes ?? []).join(', ') || 'none'}): ` +
+      'an answer or a typed grant counts only on the repository the command acts on.';
+  }
   if (target.miss === 'origin') return 'This checkout has no origin, so no answer or typed grant can name its repository: the Human runs the command in their own shell.';
   if (said.unread) return `${UNREAD[said.unread]}, so no answer or typed grant counts here: ${shellOf(`${handoverOf(words)} --max-rounds ${max}`)}`;
   const named = `${target.repo}#${pr}`;
@@ -219,12 +239,18 @@ function sessionSaid(env, input) {
   return { answers: transcriptAnswers(text), typed: typedRead ? transcriptTyped(text) : [], typedRead, unread: null };
 }
 
-// The route a check waiting at the cap of the raise's pull request offers, from this machine's review record, or null.
+// The route a check waiting at the cap of the raise's pull request offers, from this machine's review record of the
+// repository the raise acts on (review-signoff.mjs callRepo), or null. Where that repository cannot be named, a raise with
+// no `--repo` in a checkout whose remotes name several, or one no remote names, no record is read: another repository's
+// check of the same number names no route here.
 function pendingRoute(project, invocation) {
   const pr = raisedPr(invocation);
   if (!pr) return null;
   try {
-    return waitingRoute(pr, readLocalState(project, Number(pr))?.extensions?.at(-1));
+    const target = callRepo(project, aidrianArgs(invocation));
+    if (target.miss === 'remotes' || target.miss === 'repo') return null;
+    const repoArg = target.repo && severalRemotes(project) ? ` --repo ${target.repo}` : '';
+    return waitingRoute(pr, readLocalState(project, Number(pr), target.repo ?? undefined)?.extensions?.at(-1), repoArg);
   } catch {
     return null;
   }
@@ -245,8 +271,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, input =
         said ??= sessionSaid(env, input);
         const target = approvalTarget(project, command, cwd, `${ROUNDS_OVERRIDE}=1\\s+`);
         const miss = raiseMiss(invocation, said, target);
-        const asks = said.unread === null && target.miss !== 'origin' && oneRemote(project);
-        const ask = said.typedRead ? ASK_ROUTE : ASK_ANSWER;
+        const asks = said.unread === null && target.miss !== 'origin';
+        const ask = askRoute({ typed: said.typedRead, several: severalRemotes(project) });
         const route = pendingRoute(project, invocation) ?? (asks ? ask : null);
         if (miss) return [OVERRIDE_REASON, route, miss].filter(Boolean).join(' ');
       }

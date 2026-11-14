@@ -2,10 +2,14 @@
 // `aidrian pr review <PR> --quota-fallback agent:<name>|human` replaces the reviewer that stopped on quota for the current
 // head (lib/review/quota.mjs): a same-model agent pass, or the Human's own review. Either weakens the review, so the rule
 // lets it run only when this session's transcript holds the Human's answer to the question `blocked_quota` printed: an
-// AskUserQuestion answer, given after the stop, to a question naming the pull request (`#<PR>`) and the quota, whose
+// AskUserQuestion answer, given after the stop, to a question naming the pull request with the repository the call acts
+// on (`<owner>/<name>#<PR>`; `#<PR>` alone in a checkout with no remote) and the quota, whose
 // chosen option is the one the flag runs, for the exact value: "Run a critic agent" for `agent:critic` only, "Run a
 // <name> agent" (or an answer that names `agent:<name>`) for any other agent, and "The Human reviews it" for human.
-// The stop must be in this machine's review record, which the review step writes before it prints `blocked_quota`.
+// The stop must be in this machine's review record of that repository, which the review step writes before it prints
+// `blocked_quota`. The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the
+// remotes name (review-signoff.mjs callRepo); a checkout whose remotes name several needs the `--repo`, and no other
+// repository's record of the same number counts.
 // The Human may also run the command in their own shell (`!` in a Claude Code prompt, or another terminal), which no
 // hook reads. Without a transcript the host writes in this shape (Codex), the choice is the Human's to run.
 // The call is read wherever it runs (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a
@@ -16,6 +20,7 @@ import { AGENT, agentLabel, HUMAN, LABELS } from '../review/quota.mjs';
 import { readLocalState } from '../review/state.mjs';
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
+import { callRepo, namesChange } from './review-signoff.mjs';
 
 export const reason = (pr, why = null) =>
   'Blocked: `aidrian pr review --quota-fallback` replaces a reviewer that ran out of quota with a same-model agent or the ' +
@@ -35,17 +40,19 @@ function fallbackCall(words) {
       choice = words[i + 1] && !words[i + 1].dynamic ? words[i + 1].text : null;
       i += 1;
     } else if (text.startsWith('--quota-fallback=')) choice = dynamic ? null : text.slice('--quota-fallback='.length);
-    else if (['--max-rounds', '--timeout-sec'].includes(text)) i += 1;
+    else if (['--max-rounds', '--timeout-sec', '--repo'].includes(text)) i += 1;
     else if (pr === undefined && !text.startsWith('-')) pr = !dynamic && /^#?\d+$/u.test(text) ? Number(text.replace('#', '')) : null;
   }
-  return choice === undefined ? null : { choice, pr: pr ?? null };
+  return choice === undefined ? null : { choice, pr: pr ?? null, words };
 }
 
 // Whether `answers` hold the Human's pick of exactly `choice` for pull request `pr`'s quota stop, given at or after
 // `since`. An agent's answer names that agent: its label, or the value `agent:<name>` itself, so the critic's answer
 // never authorizes another agent.
-export function chosen(answers, { pr, choice, since = null }) {
-  const names = new RegExp(`#${pr}(?!\\d)`, 'u');
+// With `repo`, the question names `<repo>#<PR>`; with none, in a checkout with no remote, `#<PR>`.
+export function chosen(answers, { pr, choice, since = null, repo = null }) {
+  const plain = new RegExp(`#${pr}(?!\\d)`, 'u');
+  const names = { test: (question) => (repo ? namesChange(question, repo, pr) : plain.test(question)) };
   const agent = AGENT.exec(choice ?? '')?.[1];
   if (choice !== HUMAN && !agent) return false;
   const label = (agent ? agentLabel(agent) : LABELS.human).toLowerCase();
@@ -68,13 +75,16 @@ export function check(command, { cwd = process.cwd(), input = {} } = {}) {
     const call = fallbackCall(aidrianArgs(invocation));
     if (!call) continue;
     if (call.pr === null || call.choice === null) return reason(call.pr);
+    const target = callRepo(project, call.words);
+    if (target.miss === 'remotes') return reason(call.pr, `this checkout's remotes name more than one repository (${target.remotes.join(', ')}), so the call must name the one it acts on with \`--repo <owner>/<name>\`, the repository the question names`);
+    if (target.miss === 'repo') return reason(call.pr, `its \`--repo\` must name, written out as \`<owner>/<name>\`, one of the repositories this checkout's remotes name (${target.remotes.join(', ') || 'none'})`);
     let state = null;
     try {
-      state = readLocalState(project, call.pr);
+      state = readLocalState(project, call.pr, target.repo ?? undefined);
     } catch {}
     const stop = (state?.quotaStops ?? []).at(-1);
     if (!stop) return reason(call.pr);
-    if (!chosen(transcriptAnswers(readTranscript(input?.transcript_path)), { pr: call.pr, choice: call.choice, since: stop.at })) return reason(call.pr);
+    if (!chosen(transcriptAnswers(readTranscript(input?.transcript_path)), { pr: call.pr, choice: call.choice, since: stop.at, repo: target.repo })) return reason(call.pr);
   }
   return null;
 }

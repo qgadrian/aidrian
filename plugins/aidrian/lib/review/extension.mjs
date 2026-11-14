@@ -542,7 +542,7 @@ export async function runExtend(args, project, config, deps = {}) {
     const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
     entry = recordHuman(state, { answer: opts.human, by, session: sessionIdentity(env).session, current });
   }
-  writeLocalState(project, state);
+  writeLocalState(project, state, { repo });
   const unposted = held === null ? 'the forge named no base branch, so nothing was posted' : null;
   const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `extension ${entry.status}`, postContext({ forge, repo, n: opts.pr, project, configs: [held.committed, config], env })) : unposted;
   try {

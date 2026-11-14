@@ -535,7 +535,7 @@ async function reviewRecord(project, forge, base) {
 async function saveRecord(record, { project, config = null, forge, base, status }) {
   const { publishState, writeLocalState } = await import('./review/state.mjs');
   const { postContext } = await import('./review/dispatch.mjs');
-  writeLocalState(project, record.state);
+  writeLocalState(project, record.state, { repo: base.repo });
   if (!publishes(base)) return base.baseTip === null ? 'the forge named no base branch, so nothing was posted' : null;
   return publishState(record.state, {
     comments: () => record.comments,

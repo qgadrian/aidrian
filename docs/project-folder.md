@@ -171,6 +171,11 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   A repository with no `origin` uses its folder name and a hash of the main checkout's path.
   A project in a subfolder of the repository adds that subfolder's path to the hash, so two projects in one repository
   get two state folders; a project at the repository root keeps the id above.
+  Because the id follows `origin`'s URL, renaming `origin` (as `gh repo fork` does) or pointing it at another repository
+  moves the default folder. The review and attest records are then still read from the folder each other remote's URL
+  would key, under the same per-repository rules ([review.md](review.md#answering-in-the-session)), and their next write
+  lands in the new folder. A record in a folder whose URL is no longer any remote's is not found; the plans, lessons, and
+  other state of the old folder stay there.
 - `"state": { "dir": "<path>" }` in config.json moves the folder; [config.md](config.md) lists the key.
   A relative path starts at the repository root. When it stays inside the repository, `aidrian check` warns about the folder,
   the review-record commands and the merge guard refuse it ([review.md](review.md#the-record)),

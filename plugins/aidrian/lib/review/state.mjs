@@ -28,7 +28,7 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
-import { recordsFolder, stateDir } from '../project.mjs';
+import { recordsFolder, remoteStateDirs, stateDir } from '../project.mjs';
 import { originRepo, repoName } from '../remotes.mjs';
 import { isClosed, isFindingId, isMint, recordedFindings, recordFindings } from './findings.mjs';
 import { escapeLines, fillWithheld, findingsTable, flagName, isPostId, isPrivate, JUDGE_RULING, plainChecker, postedCopy, untextedBlocking, WITHHELD } from './publish.mjs';
@@ -135,7 +135,8 @@ export function noteOutcome(state, { status, head, reason, carried_from, carried
 }
 
 // The reviews still owed on `state`: its pending entries not answered, a request sent included.
-export const owed = (state) => pendingOf(state).filter((entry) => !entry.answered);
+// An entry another repository's record moved to its own (adoptOwed) is owed there, not here.
+export const owed = (state) => pendingOf(state).filter((entry) => !entry.answered && !entry.moved);
 
 // One list from two copies of `pending`, such as the one on disk and one a long step read before: every entry of
 // either, and of an entry in both, each mark either holds.
@@ -269,13 +270,44 @@ export function legacyFor(project, old, repo) {
   return repoName(repo) === originRepo(project) ? old : null;
 }
 
-// Every record this machine holds of number `pr`, whatever its repository.
-function recordsOf(project, pr) {
+// The folders of this project's review records: its state folder's, then those of the default state folders its other
+// remotes' URLs name (project.mjs remoteStateDirs), where its records sat before a change of remotes moved the folder.
+// A failure to list the others leaves its own.
+export function recordFolders(project) {
+  let others = [];
+  try {
+    others = remoteStateDirs(project).map(recordsFolder);
+  } catch {}
+  return [folder(project), ...others];
+}
+
+// Every record file of number `pr` in `dir`: { file, state }.
+function filesIn(dir, pr) {
   let names = [];
   try {
-    names = readdirSync(folder(project)).filter((name) => name === `pr-${pr}-review.json` || (name.startsWith(`pr-${pr}-review-`) && name.endsWith('.json')));
+    names = readdirSync(dir).filter((name) => name === `pr-${pr}-review.json` || (name.startsWith(`pr-${pr}-review-`) && name.endsWith('.json')));
   } catch {}
-  return names.map((name) => readFile(path.join(folder(project), name), pr)).filter(Boolean);
+  return names.map((name) => ({ file: path.join(dir, name), state: readFile(path.join(dir, name), pr) })).filter((each) => each.state);
+}
+
+// Every record file of number `pr` in this project's own folder.
+const recordFiles = (project, pr) => filesIn(folder(project), pr);
+
+// Every record this machine holds of number `pr`, whatever its repository, in every folder of this project's records
+// (recordFolders), the first found of each repository: one in a folder a change of remotes left behind counts, so a
+// merge guard never reads it as absent.
+function recordsOf(project, pr) {
+  const seen = new Set();
+  const out = [];
+  for (const dir of recordFolders(project)) {
+    for (const { state } of filesIn(dir, pr)) {
+      const key = repoName(state.repo ?? null) ?? '';
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(state);
+    }
+  }
+  return out;
 }
 
 // The repositories this machine holds a review record of number `pr` for, as `owner/name`, once each; a record naming
@@ -290,28 +322,66 @@ export function owedElsewhere(project, pr, repo) {
   if (target === null) return [];
   return recordsOf(project, pr)
     .filter((state) => repoName(state.repo ?? null) !== target)
-    .flatMap((state) => (state.pending ?? []).filter((entry) => repoName(entry.repo ?? null) === target));
+    .flatMap((state) => (state.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target));
 }
 
 // This machine's review record of pull request `pr` of `repo`, or null: that repository's own, never another's. Its file;
 // else a record under the old name that names it, or names none when `repo` is origin's (legacyFor). With no `repo` (a
 // reader that cannot tell it, such as a merge with no `-R`, which merge-review.mjs refuses when the number has records
 // of several repositories), the newest record of that number.
+// A record found nowhere in this project's state folder is looked for in the folders a change of remotes left behind
+// (recordFolders), under the same rules; the next write puts it in this project's own folder.
 export function readLocalState(project, pr, repo) {
   if (repo === undefined || repo === null || repoName(repo) === null) return recordsOf(project, pr).reduce((a, b) => newer(a, b), null);
-  const own = readFile(file(project, pr, repo), pr);
-  if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repoName(repo) ? own : null;
-  return legacyFor(project, readFile(plainFile(project, pr), pr), repo);
+  const key = repoKey(repo);
+  for (const dir of recordFolders(project)) {
+    const own = readFile(path.join(dir, `pr-${pr}-review${key}.json`), pr);
+    if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repoName(repo) ? own : null;
+    const old = legacyFor(project, readFile(path.join(dir, `pr-${pr}-review.json`), pr), repo);
+    if (old) return old;
+  }
+  return null;
 }
 
 // Every write raises the record's revision, so the newer of two records is the one written last. Before it, the one
 // writer of finding ids keeps the finding index, giving an entry to each id that has none, and every twin of a security
 // finding the record holds takes the mark (findings.mjs recordFindings), so the copy it posts carries both.
-export function writeLocalState(project, state) {
+// With `repo`, the repository of the command that writes, a state that names another is refused, and one that names none
+// takes `repo`: a command writes its own repository's record alone.
+export function writeLocalState(project, state, { repo = null } = {}) {
+  ownedBy(state, repo);
   recordFindings(state, null, null);
   state.revision = (state.revision ?? 0) + 1;
   state.updatedAt = new Date().toISOString();
   writeAt(project, state);
+}
+
+// Holds `state` to the repository `repo` of the command that writes it (writeLocalState).
+function ownedBy(state, repo) {
+  const want = repoName(repo ?? null);
+  if (want === null) return;
+  const named = repoName(state.repo ?? null);
+  if (named === null) state.repo = want;
+  else if (named !== want) throw new Error(`the review record of #${state.pr} this command built is ${named}'s, not ${want}'s: it records nothing`);
+}
+
+// Moves into `state` the entries owed on its repository that another repository's record of that number holds, as one
+// written before the key does, and marks each there as `moved` to it, so it is counted once, in its own record, where
+// its answer lands. Returns nothing; a record it cannot read or write keeps its entries, which the merge guard still counts.
+function adoptOwed(project, state) {
+  const target = repoName(state.repo ?? null);
+  if (target === null) return;
+  for (const { file: other, state: record } of recordFiles(project, state.pr)) {
+    if (repoName(record.repo ?? null) === target) continue;
+    const ours = (record.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target);
+    if (!ours.length) continue;
+    const ids = new Set(pendingOf(state).map((entry) => entry.id).filter(Boolean));
+    state.pending = [...pendingOf(state), ...ours.filter((entry) => !entry.id || !ids.has(entry.id)).map(({ moved: _moved, ...entry }) => entry)];
+    try {
+      for (const entry of ours) entry.moved = target;
+      writeFileSync(other, `${JSON.stringify(record, null, 2)}\n`);
+    } catch {}
+  }
 }
 
 // Writes `state` to its repository's file, never over a record of another repository. A record under the old name moves
@@ -319,6 +389,7 @@ export function writeLocalState(project, state) {
 // repository alone); one that names none goes once origin's own is written. A write that names no repository goes to the
 // old name only when no other repository's record is there.
 function writeAt(project, state) {
+  adoptOwed(project, state);
   const target = file(project, state.pr, state.repo);
   const plain = plainFile(project, state.pr);
   const old = readFile(plain, state.pr);
@@ -421,7 +492,7 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   const body = summaryComment(comments)?.body;
   const read = readLocalState(project, pr, repo);
   const local = ignoreOther && otherRecordRepo(read, repo) ? null : read;
-  const remote = stateFromComment(body, pr);
+  const remote = ownCopy(stateFromComment(body, pr), repo);
   const held = remote ? null : heldRevision(body);
   if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };
   const chosen = newer(local, remote);
@@ -437,6 +508,16 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   // record. A machine with none fills from an empty one, so every finding of the copy is marked adopted.
   fillWithheld(remote, local ?? emptyState(pr, repo));
   return { state: remote };
+}
+
+// The pull request's comment copy `copy` as `repo`'s record, or null. The comment is that pull request's own, so a copy
+// that names no repository is `repo`'s, and takes its name; one that names another repository, as a release before the
+// key could post, is no record of `repo`'s: never built on, never written to the other's file.
+function ownCopy(copy, repo) {
+  if (!copy) return null;
+  const named = repoName(copy.repo ?? null);
+  if (named === null) return repoName(repo) === null ? copy : { ...copy, repo: repoName(repo) };
+  return repoName(repo) === null || named === repoName(repo) ? copy : null;
 }
 
 // `own`, this machine's record, with the security mark of every finding it holds by id and mint mark that `copy`

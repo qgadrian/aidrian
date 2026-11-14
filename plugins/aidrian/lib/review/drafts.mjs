@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import { forgeFor } from '../forges/index.mjs';
 import { stateDir } from '../project.mjs';
+import { remoteRepos } from '../remotes.mjs';
 import { recordRepos } from './state.mjs';
 
 // A draft's name, with its pull request's number in the one group that matched.
@@ -48,7 +49,7 @@ export function draftsByPr(dir) {
 
 // Removes the drafts of every pull request in `tmp/` that the forge reads as merged or closed, at most MAX_SWEPT of
 // them. The repository asked is the one a findings folder names, else every one this machine holds a review record of
-// that number for, else the checkout's own. Returns
+// that number for, else every one the remotes name when they name several, else the checkout's own. Returns
 // { removed: [{ pr, state, files }], kept: [{ pr, reason }], failed: [{ pr, file, error }] }: kept is an open pull
 // request, one whose state could not be read, or one past the limit.
 export function sweepDrafts(project, { forge = forgeFor(project.root), limit = MAX_SWEPT, dir = path.join(stateDir(project), 'tmp') } = {}) {
@@ -66,8 +67,10 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
     read += 1;
     // A draft keyed by its repository asks that one. A draft that names none may be any repository's pull request of
     // that number: it goes only once every repository this machine holds a review record of that number for reads as
-    // merged or closed, and with no record, the checkout's own.
-    const repos = named ? [named] : recordRepos(project, pr).filter(Boolean);
+    // merged or closed; with no record, every repository the remotes name when they name several, else the checkout's own.
+    const recorded = named ? [named] : recordRepos(project, pr).filter(Boolean);
+    const remotes = recorded.length ? [] : [...new Set(remoteRepos(project))];
+    const repos = recorded.length ? recorded : remotes.length > 1 ? remotes : [];
     const states = (repos.length ? repos : [null]).map((repo) => {
       try {
         return forge.change(String(pr), 'state', repo ? { repo } : {})?.state ?? null;

@@ -339,6 +339,15 @@ repository it names, and moved to that repository's file by its next write; one 
 origin alone. No write lands on a record of another repository: a write that names no repository refuses one there.
 A reader that names no repository, such as a merge with no `-R`, reads the newest record of that number; the merge guard
 refuses such a merge when this machine holds records of that number for more than one repository.
+A pull request's summary comment is that pull request's own, so a copy there whose record names no repository is taken
+as the repository's, and one that names another repository is ignored, never built on or written. Each writer, the
+review step, a bot request, `aidrian pr extend`, `aidrian pr waive`, a sign-off, an attest, and a recorded request,
+refuses to write a record that names another repository than its own. An entry owed on one repository that a record of
+another holds, as one written before the key may, is moved into the owed repository's own record on its next write and
+marked moved in the other, so its answer lands where the merge guard reads it.
+The default state folder follows `origin`'s URL ([project-folder.md](project-folder.md#local-state)): after a change of
+remotes, a record is also looked for in the folder each other remote's URL keys, and found there while that remote
+exists.
 
 #### Unattended rulings
 

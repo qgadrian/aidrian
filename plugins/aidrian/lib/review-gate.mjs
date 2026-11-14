@@ -20,7 +20,7 @@ import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, legacyFor, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, repoKey, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
+import { heldMessage, legacyFor, otherRecordMessage, otherRecordRepo, readLocalState, recordFolders, readRecord as readReviewRecord, repoKey, sameCommit, SUMMARY_MARKER, visualReviewed } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
 
 // The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
@@ -84,13 +84,18 @@ function readRecordFile(file, pr) {
 // local state never passes the gate. A review names its head and reviewer; an override is marked as one. It is that
 // repository's own, never another's: its file, else an old-name record that names it, or names none when `repo` is
 // origin's (state.mjs legacyFor). No `repo` is this repository, origin's; with no origin either, the old-name record.
+// A record found nowhere in this project's state folder is looked for in the folders a change of remotes left behind
+// (state.mjs recordFolders), under the same rules.
 export function readRecord(project, pr, given = null) {
-  const old = () => readRecordFile(plainRecordFile(project, pr), pr);
   const repo = repoName(given) ?? originRepo(project);
-  if (repo === null) return old();
-  const own = readRecordFile(recordFile(project, pr, repo), pr);
-  if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repoName(repo) ? own : null;
-  return legacyFor(project, old(), repo);
+  if (repo === null) return readRecordFile(plainRecordFile(project, pr), pr);
+  for (const dir of recordFolders(project)) {
+    const own = readRecordFile(path.join(dir, `pr-${pr}${repoKey(repo)}.json`), pr);
+    if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repo ? own : null;
+    const old = legacyFor(project, readRecordFile(path.join(dir, `pr-${pr}.json`), pr), repo);
+    if (old) return old;
+  }
+  return null;
 }
 
 // A pass of one agent, as the review plan names it (lib/review/plan.mjs): `agent:<name>`, or `agent:<name>:<flow>+<flow>`

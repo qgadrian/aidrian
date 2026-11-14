@@ -74,7 +74,7 @@ export async function reviewStep(opts, deps = {}) {
   } catch (error) {
     if (run.pr !== null) {
       const state = readLocalState(deps.project, run.pr, run.repo) ?? emptyState(run.pr, run.repo);
-      writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }));
+      writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }), { repo: run.repo });
     }
     throw error;
   }
@@ -164,7 +164,7 @@ function settle({ project, root, repo, n, state, deletes }, result) {
   state.pending = mergePending(local?.pending, state.pending);
   mergeIndex(state, local, removedPosts(deletes));
   noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
-  writeLocalState(project, state);
+  writeLocalState(project, state, { repo });
   return result;
 }
 

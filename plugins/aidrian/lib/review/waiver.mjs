@@ -254,7 +254,7 @@ export async function runWaive(args, project, config, deps = {}) {
   // A request or a review step written since the read would be lost under this write: refused, and nothing written.
   const again = readLocalState(project, opts.pr, repo);
   if ((again?.revision ?? null) !== (local?.revision ?? null)) throw new Error(`the review record of #${opts.pr} changed while the verdict was recorded: run again`);
-  writeLocalState(project, state);
+  writeLocalState(project, state, { repo });
   const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `waiver ${opts.verdict}`, postContext({ forge, repo, n: opts.pr, project, configs: [committed, config], env: deps.env ?? process.env })) : null;
   console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: nextStep(entry, opts.pr, project.paths.local), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;

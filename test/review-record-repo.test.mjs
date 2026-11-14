@@ -12,7 +12,10 @@ import test from 'node:test';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { gateReview, readRecord, writeRecord } from '../plugins/aidrian/lib/review-gate.mjs';
 import { sweepDrafts } from '../plugins/aidrian/lib/review/drafts.mjs';
-import { emptyState, noteLocalOutcome, otherRecordMessage, readLocalState, recordFile, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { brotliCompressSync } from 'node:zlib';
+
+import { answerOwed } from '../plugins/aidrian/lib/review/pending.mjs';
+import { emptyState, noteLocalOutcome, noteOutcome, otherRecordMessage, readLocalState, readRecord as readStepRecord, recordFile, SUMMARY_MARKER, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check as mergeRule } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { check as fallbackRule } from '../plugins/aidrian/lib/rules/review-fallback.mjs';
 import { question } from '../plugins/aidrian/lib/review/quota.mjs';
@@ -138,4 +141,88 @@ test('the other-repository refusal never suggests switching to the other reposit
   const message = otherRecordMessage(9, 'qg/voila', 'acme/notes', 'this command records on');
   assert.doesNotMatch(message, /--repo qg\/voila/u);
   assert.match(message, /`aidrian pr review 9 --repo acme\/notes`/u);
+});
+
+// The third security review of #251: probes p5 to p8.
+const unique = (tag) => `${tag}${process.pid}x${Date.now().toString(36)}`;
+
+// A checkout whose config sets no state.dir, so its state folder is the default one, keyed by origin's URL.
+function defaultFolder(t, remotes) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-record-folder-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  for (const [name, url] of remotes) git('remote', 'add', name, url);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const transcript = path.join(dir, 'transcript.jsonl');
+  writeFileSync(transcript, '');
+  return { dir, git, transcript, project: () => projectAt(dir) };
+}
+
+test('p5: a pull request`s comment copy that names another repository is never built on or written as its record', (t) => {
+  const own = `${unique('own')}/b`;
+  const c = checkout(t, [['origin', `https://github.com/${own}.git`], ['up', 'https://github.com/c5/d.git']]);
+  const finished = 'd'.repeat(40);
+  writeLocalState(c.project, { ...emptyState(12, own), rounds: [{ head: finished }], outcome: { status: 'received', head: finished, at: 'x' } });
+  const ownBefore = readFileSync(recordFile(c.project, 12, own), 'utf8');
+  // c5/d#12's summary comment carries a copy naming the origin's repository, with a grant by the Human.
+  const copy = { ...emptyState(12, own), revision: 9, updatedAt: '2026-11-01T00:00:00Z', extensions: [{ source: 'bot', round: 3, head: 'a'.repeat(40), status: 'granted', by: 'human', human: { answer: 'approve' } }] };
+  const body = `${SUMMARY_MARKER}\nsummary\n<!-- aidrian-review-state-br:${brotliCompressSync(Buffer.from(JSON.stringify(copy))).toString('base64')} -->`;
+  const comments = [{ id: 1, body, author_association: 'OWNER', user: { login: 'm' } }];
+  const reading = () => ({ visibility: 'PRIVATE', inside: true });
+  const read = readStepRecord(c.project, 12, comments, 'c5/d', reading, { ignoreOther: true });
+  assert.deepEqual([read.state.repo, read.state.extensions ?? []], ['c5/d', []], 'the copy is not c5/d`s: a fresh record');
+  const step = readStepRecord(c.project, 12, comments, 'c5/d', reading);
+  assert.equal(step.state.repo, 'c5/d', 'await-review and extend read alike');
+  const stamped = { ...copy, repo: undefined };
+  const noName = `${SUMMARY_MARKER}\nsummary\n<!-- aidrian-review-state-br:${brotliCompressSync(Buffer.from(JSON.stringify(stamped))).toString('base64')} -->`;
+  assert.equal(readStepRecord(c.project, 12, [{ id: 1, body: noName, author_association: 'OWNER', user: { login: 'm' } }], 'c5/d', reading).state.repo, 'c5/d', 'a copy naming none is the pull request`s own, and takes its name');
+  const head = 'c'.repeat(40);
+  writeLocalState(c.project, noteOutcome(read.state, { status: 'fix_required', head, at: 'x' }, () => false, 'c5/d'), { repo: 'c5/d' });
+  assert.equal(readFileSync(recordFile(c.project, 12, own), 'utf8'), ownBefore, 'the origin`s record is untouched');
+  assert.match(merge(c, `gh pr merge 12 -R c5/d --match-head-commit ${head}`) ?? '', /fix_required/u, 'c5/d#12 stays refused');
+  assert.throws(() => writeLocalState(c.project, { ...emptyState(12, own) }, { repo: 'c5/d' }), /is .*'s, not c5\/d's: it records nothing/u, 'a writer refuses a state of another repository');
+});
+
+test('p6: an entry owed on one repository in another`s old record moves to its own on its write, and its answer counts', (t) => {
+  const own = `${unique('own')}/b`;
+  const c = checkout(t, [['origin', `https://github.com/${own}.git`], ['up', 'https://github.com/c6/d.git']]);
+  const head = 'c'.repeat(40);
+  legacy(c.project, 12, own, (state) => (state.pending = [{ id: 'x1', kind: 'review', head, at: '2026-10-01T00:00:00Z', by: 'H', repo: 'c6/d' }]));
+  writeLocalState(c.project, noteOutcome({ ...emptyState(12, 'c6/d'), rounds: [{ head }] }, { status: 'received', head }, () => false, 'c6/d'));
+  assert.equal(answerOwed(c.project, 12, 'review', { head, by: 'attest', repo: 'c6/d', isAncestor: () => false }), 1, 'the attest answers it in c6/d`s own record');
+  assert.equal(merge(c, `gh pr merge 12 -R c6/d --match-head-commit ${head}`), null, 'so the merge at the reviewed head runs');
+  assert.equal(JSON.parse(readFileSync(recordFile(c.project, 12), 'utf8')).pending[0].moved, 'c6/d', 'the old record marks it moved');
+});
+
+test('p7: with no record of the number, a draft naming no repository waits for every remote`s repository', (t) => {
+  const own = `${unique('own')}/b`;
+  const c = checkout(t, [['origin', `https://github.com/${own}.git`], ['up', 'https://github.com/c7/d.git']]);
+  const tmp = path.join(c.dir, 'drafts');
+  mkdirSync(path.join(tmp, 'review-12'), { recursive: true });
+  writeFileSync(path.join(tmp, 'pr-12-review.md'), 'x');
+  const states = { [own]: 'OPEN', 'c7/d': 'MERGED', default: 'MERGED' };
+  const forge = { change: (_ref, _fields, options = {}) => ({ state: states[options.repo ?? 'default'] }) };
+  const swept = sweepDrafts(c.project, { forge, dir: tmp });
+  assert.deepEqual([swept.removed, swept.kept], [[], [{ pr: 12, reason: 'open' }]], 'the origin`s #12 is still open, though the forge`s default merged');
+  states[own] = 'CLOSED';
+  assert.deepEqual(sweepDrafts(c.project, { forge, dir: tmp }).removed.map((row) => row.files), [['pr-12-review.md', 'review-12']]);
+});
+
+test('p8: a review record survives origin renamed to upstream and a new origin, so the merge stays refused', (t) => {
+  const org = `${unique('org')}/x`;
+  const c = defaultFolder(t, [['origin', `https://github.com/${org}.git`]]);
+  const head = 'c'.repeat(40);
+  writeLocalState(c.project(), noteOutcome({ ...emptyState(12, org), rounds: [{ head }] }, { status: 'fix_required', head, at: 'x' }, () => false, org));
+  const merging = () => mergeRule(`gh pr merge 12 -R ${org} --match-head-commit ${head}`, { cwd: c.dir, env: {}, input: { transcript_path: c.transcript }, viewPr: () => null });
+  assert.match(merging() ?? '', /fix_required/u, 'before the fork');
+  const before = stateDir(c.project());
+  c.git('remote', 'rename', 'origin', 'upstream');
+  c.git('remote', 'add', 'origin', `https://github.com/${unique('me')}/x.git`);
+  assert.notEqual(stateDir(c.project()), before, 'the default state folder moved with origin');
+  assert.match(merging() ?? '', /fix_required/u, 'the record in the folder the old origin keyed is still found');
+  assert.equal(readLocalState(c.project(), 12, org).outcome.status, 'fix_required');
+  writeLocalState(c.project(), { ...readLocalState(c.project(), 12, org) });
+  assert.ok(existsSync(recordFile(c.project(), 12, org)), 'its next write lands in the new folder');
 });

@@ -20,7 +20,7 @@ export function recordPending(project, { pr, repo, kind, head, by }) {
   const entry = { id: entryId(), kind, head, at: new Date().toISOString(), by, ...(repoName(repo) ? { repo: repoName(repo) } : {}) };
   const state = readLocalState(project, pr, repoName(repo)) ?? emptyState(pr, repoName(repo));
   state.pending = [...state.pending, entry];
-  writeLocalState(project, state);
+  writeLocalState(project, state, { repo: repoName(repo) });
   return entry;
 }
 
@@ -32,7 +32,7 @@ export function markRequestsSent(project, pr, head, repo = null) {
   if (!open.length) return 0;
   const at = new Date().toISOString();
   for (const entry of open) entry.sent = { at, head };
-  writeLocalState(project, state);
+  writeLocalState(project, state, { repo: repoName(repo) });
   return open.length;
 }
 
@@ -42,7 +42,7 @@ export function markRequestsSent(project, pr, head, repo = null) {
 export function answerOwed(project, pr, kind, { head, by, repo = null, isAncestor: ancestor = (a, b) => isAncestor(project.root, a, b) }) {
   const state = readLocalState(project, pr, repoName(repo));
   if (!state || !answerPending(state, kind, { head, by, repo: repoName(repo), isAncestor: ancestor })) return 0;
-  writeLocalState(project, state);
+  writeLocalState(project, state, { repo: repoName(repo) });
   return 1;
 }
 

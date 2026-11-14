@@ -134,11 +134,18 @@ export function mergePending(a, b) {
 // repository's. The origin's file keeps its old name, so a record written before the key changed is still origin's.
 const folder = (project) => recordsFolder(stateDir(project));
 const plainFile = (project, pr) => path.join(folder(project), `pr-${pr}-review.json`);
-function file(project, pr, repo = null) {
+// What a per-pull-request file's name adds for repository `repo`: '' for origin's, for no repository, and in a checkout
+// with no origin, so those keep the old name; `-<owner>--<name>` for any other. Every file this machine keeps of one
+// pull request by its number takes it: the review record, the attest record (review-gate.mjs), and the findings
+// files of a dispatch (dispatch.mjs).
+export function repoSuffix(project, repo) {
   const name = repoName(repo);
-  const origin = originRepo(project);
-  if (name === null || origin === null || name === origin) return plainFile(project, pr);
-  return path.join(folder(project), `pr-${pr}-review-${name.replace('/', '--')}.json`);
+  const origin = name === null ? null : originRepo(project);
+  return name === null || origin === null || name === origin ? '' : `-${name.replace('/', '--')}`;
+}
+function file(project, pr, repo = null) {
+  const suffix = repoSuffix(project, repo);
+  return suffix === '' ? plainFile(project, pr) : path.join(folder(project), `pr-${pr}-review${suffix}.json`);
 }
 // The file that holds this machine's review record of `pr` of `repo` (origin's when it names none).
 export const recordFile = file;

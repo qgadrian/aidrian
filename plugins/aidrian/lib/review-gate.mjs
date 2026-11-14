@@ -11,7 +11,7 @@
 // --request` itself (lib/pr-await-review.mjs), the Bash rule for gh (lib/rules/github/review-request.mjs), and the hook
 // on the GitHub MCP comment tools (scripts/hook-mcp-github.mjs).
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
@@ -20,7 +20,7 @@ import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
+import { heldMessage, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, repoSuffix, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
 
 // The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
@@ -60,14 +60,16 @@ export function prNumber(value) {
   return match ? Number(match[1]) : null;
 }
 
-const recordFile = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}.json`);
+// The attest record of pull request `pr` of `repo` is one file a repository and number, named as the review record is
+// (state.mjs repoSuffix): `pr-<N>.json` for origin's repository, for none, and in a checkout with no origin;
+// `pr-<N>-<owner>--<name>.json` for any other.
+const plainRecordFile = (project, pr) => path.join(recordsFolder(stateDir(project)), `pr-${pr}.json`);
+const recordFile = (project, pr, repo = null) => path.join(recordsFolder(stateDir(project)), `pr-${pr}${repoSuffix(project, repo)}.json`);
 
-// The record for a pull request, or null when there is none or it is not a well-formed one for it: corrupt local state
-// never passes the gate. A review names its head and reviewer; an override is marked as one.
-export function readRecord(project, pr) {
+function readRecordFile(file, pr) {
   let record;
   try {
-    record = JSON.parse(readFileSync(recordFile(project, pr), 'utf8'));
+    record = JSON.parse(readFileSync(file, 'utf8'));
   } catch {
     return null;
   }
@@ -75,6 +77,15 @@ export function readRecord(project, pr) {
   const review = typeof record.head === 'string' && SHA.test(record.head) && typeof record.reviewer === 'string' && record.reviewer !== '';
   const override = record.reviewer === 'override' && record.head === null;
   return review || override ? record : null;
+}
+
+// The record for a pull request of `repo` (origin's with none), or null when there is none or it is not a well-formed
+// one for it: corrupt local state never passes the gate. A review names its head and reviewer; an override is marked as
+// one. A repository with no file of its own yet reads the old name, written before the key changed, which gateReview
+// counts only when it names that repository.
+export function readRecord(project, pr, repo = null) {
+  const own = recordFile(project, pr, repo);
+  return readRecordFile(own, pr) ?? (own === plainRecordFile(project, pr) ? null : readRecordFile(plainRecordFile(project, pr), pr));
 }
 
 // A pass of one agent, as the review plan names it (lib/review/plan.mjs): `agent:<name>`, or `agent:<name>:<flow>+<flow>`
@@ -91,7 +102,7 @@ const AGENT_PASS = /^agent:[\w-]+(?::\S+)?$/u;
 export function gateReview(project, pr, repo = null) {
   const target = repoName(repo);
   const ofRepo = (named) => target === null || repoName(named ?? null) === null || repoName(named) === target;
-  const record = readRecord(project, pr);
+  const record = readRecord(project, pr, target);
   if (record && ofRepo(record.repo)) return record;
   const state = readLocalState(project, pr, target ?? undefined);
   if (!ofRepo(state?.repo)) return null;
@@ -104,10 +115,13 @@ export function gateReview(project, pr, repo = null) {
   return null;
 }
 
+// Writes `record` to its repository's file, and removes one of that repository left under the old name.
 export function writeRecord(project, record) {
-  const file = recordFile(project, record.pr);
+  const file = recordFile(project, record.pr, record.repo ?? null);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify({ ...record, recordedAt: new Date().toISOString() }, null, 2)}\n`);
+  const plain = plainRecordFile(project, record.pr);
+  if (file !== plain && repoName(readRecordFile(plain, record.pr)?.repo ?? null) === repoName(record.repo ?? null)) rmSync(plain, { force: true });
 }
 
 // The deny reason for the requests in one tool call, each { pr, repo, markers }, or null. `pr` null is a request whose

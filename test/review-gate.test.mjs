@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -508,4 +508,25 @@ test('await-review --request --repo of another remote`s repository is gated, and
   assert.equal(judgeRequests([{ pr: 6, repo: 'up/notes', markers: [] }], { project, config, env: {} }), null);
   assert.ok(attestation(project, 6, 'up/notes'), 'the request it posts carries the upstream review`s marker');
   assert.equal(attestation(project, 6, 'stranger/repo'), null);
+});
+
+// The attest record, as the review record (#305), is one file a repository and number.
+test('attest records of one number in two repositories stay apart, and an old-name one is read once and moved', (t) => {
+  const { dir, project } = repo(t);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/Up/Notes.git'], { cwd: dir });
+  writeRecord(project, { pr: 5, repo: 'acme/notes', head: 'abcdef1', reviewer: 'origin-reviewer', findings: 0, fixed: 0, note: null });
+  writeRecord(project, { pr: 5, repo: 'up/notes', head: 'abcdef1', reviewer: 'upstream-reviewer', findings: 0, fixed: 0, note: null });
+  assert.equal(readRecord(project, 5, 'acme/notes').reviewer, 'origin-reviewer', 'origin`s keeps its own');
+  assert.equal(readRecord(project, 5, 'up/notes').reviewer, 'upstream-reviewer');
+  assert.equal(gateReview(project, 5, 'acme/notes').reviewer, 'origin-reviewer');
+  assert.equal(gateReview(project, 5, 'up/notes').reviewer, 'upstream-reviewer');
+  const reviews = path.join(stateDir(project), 'reviews');
+  assert.ok(existsSync(path.join(reviews, 'pr-5.json')) && existsSync(path.join(reviews, 'pr-5-up--notes.json')), 'origin keeps the old name');
+  // An upstream record written under the old name before the key changed: read for the upstream, moved on its next write.
+  writeFileSync(path.join(reviews, 'pr-6.json'), JSON.stringify({ pr: 6, repo: 'up/notes', head: 'abcdef1', reviewer: 'old', findings: 0, fixed: 0 }));
+  assert.equal(gateReview(project, 6, 'up/notes').reviewer, 'old');
+  assert.equal(gateReview(project, 6, 'acme/notes'), null, 'it is no review of origin`s #6');
+  writeRecord(project, { pr: 6, repo: 'up/notes', head: 'abcdef1', reviewer: 'new', findings: 0, fixed: 0, note: null });
+  assert.equal(existsSync(path.join(reviews, 'pr-6.json')), false);
+  assert.equal(readRecord(project, 6, 'up/notes').reviewer, 'new');
 });

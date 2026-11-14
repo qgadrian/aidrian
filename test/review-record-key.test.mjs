@@ -55,3 +55,14 @@ test('a record under the old file name is still read for origin, and another rep
   assert.equal(existsSync(plain), false, 'and leaves no copy under the old name');
   assert.equal(readLocalState(project, 12, 'c/d').revision, 5);
 });
+
+test('a dispatch`s findings files of one number are kept apart by repository', async (t) => {
+  const { findingsFile } = await import('../plugins/aidrian/lib/review/dispatch.mjs');
+  const { project, origin } = setup(t);
+  const own = findingsFile(project, 12, 'agent:code-reviewer', origin);
+  assert.equal(own, findingsFile(project, 12, 'agent:code-reviewer'), 'origin`s keeps the old folder');
+  assert.match(path.basename(path.dirname(own)), /^review-12$/u);
+  const other = findingsFile(project, 12, 'agent:code-reviewer', 'c/d');
+  assert.notEqual(other, own, 'another repository`s pass of the same id gets its own file');
+  assert.match(path.basename(path.dirname(other)), /^review-12-c--d$/u);
+});

@@ -674,7 +674,8 @@ A project adds its own in `review.reviewers`:
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
   JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
-  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder of its
+  own for another remote's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set

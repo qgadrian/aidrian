@@ -3211,3 +3211,17 @@ test('with remotes of several repositories, the review step`s rerun at the cap n
   const ask = await r.step({ exec: clean });
   assert.deepEqual([ask.status, ask.then], ['extension_ask', 'aidrian pr review 7 --repo o/r']);
 });
+
+test('the review step on one repository ignores this machine`s record of the same number in another', async (t) => {
+  // #251 security review: one record file a pull request number, so another repository's record of #7 may be here.
+  const control = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const fresh = await control.step({ exec: clean });
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const other = emptyState(7, 'qg/voila');
+  other.rounds = [{ head: 'a'.repeat(40) }, { head: 'b'.repeat(40) }, { head: 'c'.repeat(40) }];
+  writeLocalState(r.project, other);
+  const step = await r.step({ exec: clean });
+  assert.equal(step.repo, 'o/r');
+  assert.equal(step.round, fresh.round, 'the rounds of qg/voila#7 do not count on o/r#7');
+  assert.equal(readLocalState(r.project, 7).repo, 'o/r', 'the step builds its own record');
+});

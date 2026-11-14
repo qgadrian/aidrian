@@ -9,14 +9,17 @@ import { parseVerdicts } from './flows.mjs';
 import { closingRange } from './dispatch.mjs';
 import { gitPaths } from './publish.mjs';
 import * as quota from './quota.mjs';
-import { heldMessage, readRecord, sameCommit, writeLocalState } from './state.mjs';
+import { heldMessage, otherRecordMessage, otherRecordRepo, readRecord, sameCommit, writeLocalState } from './state.mjs';
 
 // The record to change, as readRecord gives it: the newer of this machine's and the one in the pull request's
 // comments (`remote`, as remoteState read them), so a write never builds on a stale copy. A held comment newer than
 // this machine's record is refused, never started over.
+// A record of another repository with this number is refused (state.mjs otherRecordRepo): no entry lands on it.
 function current(project, pr, repo, remote) {
   const record = readRecord(project, pr, remote ?? [], repo);
   if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why));
+  const other = otherRecordRepo(record.state, repo);
+  if (other) throw new Error(otherRecordMessage(pr, other, repo, 'this command records on'));
   return record.state;
 }
 

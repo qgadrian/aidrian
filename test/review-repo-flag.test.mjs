@@ -60,3 +60,15 @@ test('pr review refuses a --repo that is not OWNER/NAME, or one with no pull req
   }
   assert.deepEqual(g.calls, [], 'no forge read on a usage error');
 });
+
+test('pr review --repo refuses a pull request URL of another repository before any forge read', async (t) => {
+  // #251 security review: the step would read the URL's pull request while the rules and the record take --repo.
+  const g = setup(t);
+  const { code, errors } = await g.run(['https://github.com/a/b/pull/12', '--repo', 'c/d']);
+  assert.equal(code, 1);
+  assert.match(errors.join('\n'), /--repo c\/d takes a pull request number, or a URL of a pull request of c\/d/u);
+  assert.deepEqual(g.calls, [], 'no forge read');
+  const same = setup(t);
+  await same.run(['https://github.com/C/D/pull/12', '--repo', 'c/d']);
+  assert.deepEqual([same.calls[0][1], same.calls[0][3]], ['12', { repo: 'c/d' }], 'a URL of that repository is its number');
+});

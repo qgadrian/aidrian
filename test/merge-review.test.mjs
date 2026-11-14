@@ -871,3 +871,26 @@ test('an outcome is the record`s repository`s: another repository`s step neither
   assert.equal(r.run('gh pr merge 6 -R acme/notes'), null);
   assert.match(r.run('gh api -X PUT repos/upstream/notes/pulls/6/merge') ?? '', /no result on record/u);
 });
+
+// #251 security review: this machine keeps one record a pull request number, so in a checkout whose remotes name
+// several repositories it may hold another repository's record of the same number.
+test('a long-form sign-off on one repository refuses this machine`s record of the same number in another', async (t) => {
+  const r = repo(t, { review: { record: 'local' } });
+  const quiet = console.log;
+  console.log = () => {};
+  t.after(() => (console.log = quiet));
+  const other = emptyState(9, 'qg/voila');
+  noteOutcome(other, { status: 'human_required', head: r.commit }, () => false, 'qg/voila');
+  writeLocalState(r.project, other);
+  const forge = viewing(() => ({ url: 'https://github.com/acme/notes/pull/9', baseRefName: 'main' }));
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }),
+    /the review record of #9 is for qg\/voila, not acme\/notes: this command records on the pull request that record names\. Give --repo qg\/voila/u);
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--overrule', 'x', '--reason', 'r', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }), /is for qg\/voila, not acme\/notes/u);
+});
+
+test('a sign-off with `--repo=<value>` beside `--repo` is refused by the command, which the hook leaves to it', async (t) => {
+  // The review-signoff rule reads `--repo=qg/voila` as an unknown flag, not a second --repo; the command must refuse it.
+  const r = repo(t, { review: { record: 'local' } });
+  await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes', '--repo=qg/voila'], r.project, loadConfig(r.project).config, { forge: viewing(() => { throw new Error('no forge read'); }) }),
+    /unknown argument: --repo=qg\/voila/u);
+});

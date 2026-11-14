@@ -20,7 +20,7 @@ import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
 import { HUMAN } from './review/quota.mjs';
-import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
+import { heldMessage, otherRecordMessage, otherRecordRepo, readLocalState, readRecord as readReviewRecord, sameCommit, SUMMARY_MARKER } from './review/state.mjs';
 import { FINDING_MARKER } from './review/inline.mjs';
 
 // The markers that start a post the engine itself makes: a finding's (lib/review/inline.mjs), the review summary's, and
@@ -374,7 +374,8 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     const remote = remoteState(repo, pr, forge, await holdToNamedBase(project, config, repo, view.baseRefName));
     const record = readReviewRecord(project, pr, remote ?? [], repo);
     if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why));
-    if (record.state.repo && repoName(record.state.repo) !== repo) throw new Error(`the review record of #${pr} is for ${repoName(record.state.repo) ?? record.state.repo}, not ${repo}: --last signs off the pull request that record names. Give --repo ${repoName(record.state.repo) ?? record.state.repo}, or the long form`);
+    const other = otherRecordRepo(record.state, repo);
+    if (other) throw new Error(otherRecordMessage(pr, other, repo, '--last signs off'));
     const { flow, head } = lastSignoff(record.state, { pr, repo, head: current });
     // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it
     // writes. A record written between the two reads is checked by those refusals, not by lastSignoff's: deciding and

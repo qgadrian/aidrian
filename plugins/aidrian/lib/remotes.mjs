@@ -4,11 +4,13 @@
 import { runGit } from './git.mjs';
 import { normalizeRemote } from './project.mjs';
 
-// `owner/name`, lower-cased, from any spelling gh takes: `[HOST/]OWNER/REPO`, a URL, a `.git` suffix; or null.
+// `owner/name`, lower-cased, from any spelling gh takes: `[HOST/]OWNER/REPO`, a URL, a `.git` suffix; or null. A `.`
+// or `..` owner or name is no repository: `../x` would otherwise match a remote at a path such as `/tmp/a/../x`.
 export function repoName(value) {
   if (typeof value !== 'string') return null;
   const parts = normalizeRemote(value.replace(/\/(?:pull|issues)\/.*$/u, '')).toLowerCase().split('/').filter(Boolean);
-  return parts.length >= 2 ? parts.slice(-2).join('/') : null;
+  const name = parts.slice(-2);
+  return name.length === 2 && !name.some((part) => part === '.' || part === '..') ? name.join('/') : null;
 }
 
 // The repository a `--repo` value names, as `owner/name`: the first step of every command's resolution of its pull

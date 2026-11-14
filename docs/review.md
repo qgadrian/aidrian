@@ -317,7 +317,7 @@ Before it asks, a session on a host that offers a tool to send the Human a push 
 
 The repository the answer must name is the one the command acts on, read with the first step of the command's own
 resolver, the one that needs no forge (`givenRepo`, which `prRepo` runs first): its `--repo OWNER/NAME`, which then must be one of this checkout's remotes, written out as
-`<owner>/<name>` with no host, URL, or `.git`; with no `--repo`, the one repository this checkout's remotes name, however
+`<owner>/<name>` with no host, URL, `.git`, or a `.` or `..` owner or name; with no `--repo`, the one repository this checkout's remotes name, however
 many remotes name it. In a checkout whose remotes name more than one repository, such as an origin and a remote of a
 fork or of an unrelated repository, the command needs `--repo`: without one it acts on the forge's default, which the
 hook cannot read without a forge call and which may be any of them, so no answer counts and the deny says to add it.
@@ -327,6 +327,9 @@ In such a checkout every command the review step prints names the repository the
 and `settle` of each `next`, the `accept` of a deleted flow test, and the `then` of `extension_ask`, the rerun of
 `aidrian pr review` or `aidrian pr await-review --request`. So the session runs a printed command as it is once the
 Human answers; with one repository among the remotes, none of them carries `--repo`.
+This machine keeps one review record a pull request number, so such a checkout may hold another repository's record of
+the same number: a sign-off or attest on `--repo` refuses it, naming the repository it is for, as `--last` does, and the
+review step leaves it out and builds from the pull request's own record.
 
 #### Unattended rulings
 
@@ -353,7 +356,8 @@ variable in any other form. The repository the answer or typed grant names is th
 [sign-off](#answering-in-the-session): in a checkout whose remotes name more than one repository, the raise names
 `--repo <owner>/<name>`, one of those remotes, once, right after `<PR>` as the printed rerun has it or at the end, as `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>/<name>`;
 both `aidrian pr review` and `aidrian pr await-review` take it, and read the pull request from that repository rather
-than the forge's default. Without it there, the refusal names that route, and the Human may still run the raise in
+than the forge's default. With `--repo`, `aidrian pr review` takes a pull request number, or a URL of a pull request of
+that same repository, and refuses any other before it reads the forge. Without it there, the refusal names that route, and the Human may still run the raise in
 their own shell, as the refusal writes it, with the command's own subcommand and `--with-bot` or `--request`, since each
 counts its own rounds.
 

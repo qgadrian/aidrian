@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { repoName } from '../plugins/aidrian/lib/remotes.mjs';
 import { check, REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 
 function project(t) {
@@ -243,4 +244,17 @@ test('the deny names the --repo route for several remotes, a plain command from 
   assert.match(REASON, /In a checkout whose remotes name more than one repository, end the command with `--repo <owner>\/<name>`, the repository the question names/u);
   assert.match(REASON, /one plain command run from the checkout of that pull request, with no shell variables, `cd`, `env -C`, or chain/u);
   assert.match(REASON, /Before asking, when the host offers a tool that sends the Human a push notification, send one saying a decision waits\./u);
+});
+
+test('a --repo of `.` or `..` segments names no repository, even beside a remote at such a path', (t) => {
+  // #251 security review: `../x` once matched a remote at `/tmp/a/../x`, which reads as the same two segments.
+  const cwd = project(t);
+  execFileSync('git', ['remote', 'remove', 'origin'], { cwd });
+  execFileSync('git', ['remote', 'add', 'origin', '/tmp/a/../x'], { cwd });
+  const command = `aidrian pr signoff 9 --flow ui --head ${HEAD} --repo ../x`;
+  assert.equal(check(command, { cwd, input: transcript(t, [{ '../x#9 at abc1234: ui/signoff?': 'Approve' }]) }), REASON);
+  for (const repo of ['./x', 'o/..', 'o/.']) {
+    assert.equal(check(`aidrian pr signoff 9 --flow ui --head ${HEAD} --repo ${repo}`, { cwd, input: transcript(t, [{ [`${repo}#9 at abc1234: ui/signoff?`]: 'Approve' }]) }), REASON, repo);
+  }
+  assert.deepEqual(['../x', '/tmp/a/../x', 'o/.', './x'].map(repoName), [null, null, null, null]);
 });

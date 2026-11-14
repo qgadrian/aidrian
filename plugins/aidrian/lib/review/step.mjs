@@ -141,7 +141,8 @@ export async function prepareStep(s) {
   // The same sweep runs again when the step finishes (run.mjs finish), for a mark the step itself set after this one.
   s.sweep = sweep;
   const summary = summaryToEdit(comments, () => forge.viewer());
-  const record = readRecord(project, n, comments, repo);
+  // This machine's record of another repository with this number is left out: the step starts from the pull request's.
+  const record = readRecord(project, n, comments, repo, { ignoreOther: true });
   if (record.held !== undefined) {
     // From this machine's own record alone, and no write: every write raises the revision the hold compares.
     s.deletes = sweep(readLocalState(project, n), 'held');

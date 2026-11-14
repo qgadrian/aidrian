@@ -49,7 +49,8 @@ export const approvalRepo = (project, command, cwd, allowed = '') => approvalTar
 
 // `--repo` as every command reads it alike, written out: `<owner>/<name>` alone, with no host, URL, or `.git`, which
 // givenRepo would drop and a command that passes the value to the forge as it is would not.
-const OWNER_NAME = /^[\w.-]+\/[\w.-]+$/u;
+// A `.` or `..` owner or name is a path, never a repository.
+const OWNER_NAME = /^(?!\.{1,2}\/)[\w.-]+\/(?!\.{1,2}$)[\w.-]+$/u;
 const writtenOut = (given) => typeof given === 'string' && OWNER_NAME.test(given) && repoName(given) === given.toLowerCase();
 
 // The `--repo` value of `words`: undefined with none, the text of the one given, or null for one the rule cannot

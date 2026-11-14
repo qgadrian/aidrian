@@ -28,6 +28,7 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, stateDir } from '../project.mjs';
+import { repoName } from '../remotes.mjs';
 import { recordFindings } from './findings.mjs';
 import { escapeLines, fillWithheld, findingsTable, flagName, isPrivate, JUDGE_RULING, plainChecker, postedCopy, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
@@ -216,12 +217,28 @@ export const heldMessage = (pr, revision, why) => {
   return `the review record of #${pr} is at revision ${revision} on the machine that wrote it, ${cause}: continue the review on that machine, ${wait}. If that machine is gone, the Human deletes the review summary comment of #${pr}; the review then restarts from this machine's record, or from round 1 with none`;
 };
 
+// The repository record `state` names, as `owner/name`, when it is not `repo`, else null. This machine keeps one record
+// a pull request number, so a checkout whose remotes name several repositories may hold another repository's record
+// of the same number: a command on `repo` never builds on it.
+export function otherRecordRepo(state, repo) {
+  if (typeof state?.repo !== 'string' || state.repo === '' || typeof repo !== 'string' || repo === '') return null;
+  const recorded = repoName(state.repo) ?? state.repo;
+  return recorded === (repoName(repo) ?? repo) ? null : recorded;
+}
+
+// The refusal of a command on `repo` whose record of #`pr` names `recorded`, another repository: `what` says what the
+// command signs off. `aidrian pr signoff --last` and the long form share it.
+export const otherRecordMessage = (pr, recorded, repo, what) =>
+  `the review record of #${pr} is for ${recorded}, not ${repo}: ${what} the pull request that record names. Give --repo ${recorded}, or the long form`;
+
 // The record to build on: { state }, the newer of this machine's and the one the pull request's summary comment
 // carries (an empty one when neither exists), or { held: revision, why } when the comment holds a record this machine's
 // is older than, `why` its cause (heldWhy). `comments` are the pull request's comments as read; [] under `review.record: "local"`.
-export function readRecord(project, pr, comments, repo) {
+// With `ignoreOther`, this machine's record is left out when it names another repository than `repo` (otherRecordRepo).
+export function readRecord(project, pr, comments, repo, { ignoreOther = false } = {}) {
   const body = summaryComment(comments)?.body;
-  const local = readLocalState(project, pr);
+  const read = readLocalState(project, pr);
+  const local = ignoreOther && otherRecordRepo(read, repo) ? null : read;
   const remote = stateFromComment(body, pr);
   const held = remote ? null : heldRevision(body);
   if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };

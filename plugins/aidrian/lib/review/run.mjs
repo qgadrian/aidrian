@@ -279,6 +279,13 @@ export async function runReview(args, config, project, deps = {}) {
     if (opts.maxRounds !== undefined && !(Number.isInteger(opts.maxRounds) && opts.maxRounds >= 1)) throw new Error('--max-rounds must be an integer >= 1');
     if (opts.timeoutSec !== undefined && !(Number.isFinite(opts.timeoutSec) && opts.timeoutSec >= 0)) throw new Error('--timeout-sec must be >= 0');
     if (opts.repo !== null && opts.pr === null) throw new Error('--repo needs the pull request number');
+    // With --repo, the pull request is a number of that repository: a URL of another one would be read from it while the
+    // rules and the record take --repo, so it is refused before any forge read.
+    if (opts.repo !== null && !/^\d+$/u.test(opts.pr)) {
+      const url = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/u.exec(opts.pr);
+      if (!url || repoName(url[1]) !== opts.repo) throw new Error(`--repo ${opts.repo} takes a pull request number, or a URL of a pull request of ${opts.repo}, not ${opts.pr}`);
+      opts.pr = url[2];
+    }
     const result = await reviewStep(opts, { project, config, ...deps });
     if (result.status === 'round_limit') {
       const { recordSignal, roundLimitSignal } = await import('../lesson-signals.mjs');

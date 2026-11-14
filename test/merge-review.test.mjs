@@ -898,3 +898,20 @@ test('a sign-off with `--repo=<value>` beside `--repo` is refused by the command
   await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes', '--repo=qg/voila'], r.project, loadConfig(r.project).config, { forge: viewing(() => { throw new Error('no forge read'); }) }),
     /unknown argument: --repo=qg\/voila/u);
 });
+
+// #305 audit: with records of one number for several repositories, a merge that names none is not checked against
+// whichever was written last: the guard asks for the repository.
+test('a merge naming no repository, of a number recorded for several repositories, is refused until it names one', (t) => {
+  const r = repo(t);
+  r.git('remote', 'add', 'upstream', 'https://github.com/Up/Notes.git');
+  r.record(5, (state) => outcome(state, 'running'));
+  const upstream = emptyState(5, 'up/notes');
+  outcome(upstream, 'received');
+  writeLocalState(r.project, upstream);
+  const denied = r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '';
+  assert.match(denied, /with no repository named, and this machine holds review records of #5 for several repositories \(acme\/notes, up\/notes\)/u, 'the newest record, the upstream`s finished one, does not clear origin`s running review');
+  assert.match(denied, /`gh pr merge 5 -R <owner>\/<name> --match-head-commit <sha>`/u);
+  assert.match(r.run(`gh pr merge 5 -R acme/notes --match-head-commit ${HEAD}`) ?? '', /is `running`/u, 'named: origin`s own record');
+  assert.equal(r.run(`gh pr merge 5 -R up/notes --match-head-commit ${HEAD}`), null, 'named: the upstream`s own record');
+  assert.equal(r.run(`gh pr merge 6 --match-head-commit ${HEAD}`), null, 'a number with no record is not ambiguous');
+});

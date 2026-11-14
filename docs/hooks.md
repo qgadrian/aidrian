@@ -511,11 +511,13 @@ deadline the unattended waiver's paragraph below states. A merge whose head it t
 cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
 pull request number it cannot read, such as `gh pr merge "$PR"`, or a `gh api` merge path whose number or repository
 part is a variable; a method it cannot read, `-X "$M"`, counts as a merge.
-The record file is per number, so in a fork checkout it holds origin's #5 and the upstream's #5 alike. A merge whose
-target is named, as `-R`, a URL, a `gh api` path, or the MCP owner and repo, reads only that repository's part: the
-owed reviews for it, each an entry's own repository, else the record's, else origin's, and the outcome and rounds when
-the record is for it. A merge that names no repository, or one it cannot read, reads every entry, since gh's default
-may be the upstream.
+The review record is one file a repository and number ([review.md](review.md#answering-in-the-session)), and one of
+origin's written before then may still hold owed entries of the upstream's #5. A merge whose target is named, as `-R`,
+a URL, a `gh api` path, or the MCP owner and repo, reads that repository's record and only its part: the owed reviews
+for it, each an entry's own repository, else the record's, else origin's, and the outcome and rounds when the record is
+for it. A merge that names no repository, or one it cannot read, reads every entry of the record it finds, since gh's
+default may be the upstream; when this machine holds records of that number for more than one repository, it reads
+none of them in another's place and is refused, naming the `-R` to add.
 
 The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts

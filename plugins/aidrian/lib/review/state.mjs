@@ -172,6 +172,10 @@ function recordsOf(project, pr) {
   return names.map((name) => readFile(path.join(folder(project), name), pr)).filter(Boolean);
 }
 
+// The repositories this machine holds a review record of number `pr` for, as `owner/name`, once each; a record naming
+// none counts as ''.
+export const recordRepos = (project, pr) => [...new Set(recordsOf(project, pr).map((state) => repoName(state.repo ?? null) ?? ''))];
+
 // This machine's review record of pull request `pr` of `repo`, or null. A repository other than origin's reads its own
 // file; until it has one, it reads the old name, as every reader did before the key changed, whatever repository that
 // record names: a record written before then, or origin's own, which may hold that repository's owed entries. The

@@ -86,10 +86,15 @@ const AGENT_PASS = /^agent:[\w-]+(?::\S+)?$/u;
 // The review the gate counts for pull request `pr`, or null: the plain record `aidrian pr attest` writes, else an agent
 // pass over the whole diff in the review step's record (AGENT_PASS with no files), as { pr, repo, head, reviewer, findings, fixed }. The pass
 // is the reviewer's word, as the plain record is, and like it names a commit attest checked when it recorded it.
-export function gateReview(project, pr) {
+// With `repo`, only a record of that repository counts (one naming none counts for any): a review of origin#5 is no
+// review of upstream#5.
+export function gateReview(project, pr, repo = null) {
+  const target = repoName(repo);
+  const ofRepo = (named) => target === null || repoName(named ?? null) === null || repoName(named) === target;
   const record = readRecord(project, pr);
-  if (record) return record;
-  const state = readLocalState(project, pr);
+  if (record && ofRepo(record.repo)) return record;
+  const state = readLocalState(project, pr, target ?? undefined);
+  if (!ofRepo(state?.repo)) return null;
   for (const [id, pass] of Object.entries(state?.passes ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
     if (!AGENT_PASS.test(id) || pass?.files !== null || typeof pass?.head !== 'string' || !SHA.test(pass.head)) continue;
     if (typeof pass.reviewer !== 'string' || pass.reviewer === '' || !Number.isInteger(pass.findings)) continue;
@@ -106,23 +111,27 @@ export function writeRecord(project, record) {
 }
 
 // The deny reason for the requests in one tool call, each { pr, repo, markers }, or null. `pr` null is a request whose
-// pull request could not be read; `repo` null is this repository. A request to another repository passes. The override
-// records itself for the pull request, so a person who waived the review once is not asked again.
-export function judgeRequests(requests, { project, config, env = process.env, origin = originRepo(project) }) {
+// pull request could not be read; `repo` null is this repository. Every request to a repository of this checkout's
+// remotes is gated, origin or not, against a review of that repository (#304): `aidrian pr await-review --request
+// --repo <owner>/<name>`, which the bot cap prints where the remotes name several, acts on such a one. A request to a
+// repository no remote names passes. The override records itself for the pull request, so a person who waived the
+// review once is not asked again.
+export function judgeRequests(requests, { project, config, env = process.env, origin = originRepo(project), remotes = remoteRepos(project) }) {
   const gate = config.github.reviewGate;
   if (!gate.enabled || requests.length === 0) return null;
-  const ours = requests.filter((request) => request.repo === null || origin === null || repoName(request.repo) === origin);
+  const targetOf = (request) => repoName(request.repo) ?? origin;
+  const ours = requests.filter((request) => request.repo === null || origin === null || remotes.includes(repoName(request.repo)) || repoName(request.repo) === origin);
   if (env[OVERRIDE] === '1') {
-    for (const { pr } of ours) {
-      if (pr !== null && !gateReview(project, pr)) writeRecord(project, { pr, repo: origin, head: null, reviewer: 'override', findings: 0, fixed: 0, note: OVERRIDE });
+    for (const request of ours) {
+      if (request.pr !== null && !gateReview(project, request.pr, targetOf(request))) writeRecord(project, { pr: request.pr, repo: targetOf(request), head: null, reviewer: 'override', findings: 0, fixed: 0, note: OVERRIDE });
     }
     return null;
   }
   const attested = (request) => {
-    const target = repoName(request.repo) ?? origin;
+    const target = targetOf(request);
     return (request.markers ?? []).some((marker) => marker.pr === request.pr && target !== null && marker.repo === target);
   };
-  const missing = ours.find((request) => request.pr === null || (!attested(request) && !gateReview(project, request.pr)));
+  const missing = ours.find((request) => request.pr === null || (!attested(request) && !gateReview(project, request.pr, targetOf(request))));
   return missing ? denyReason(missing.pr, gate.checklist) : null;
 }
 
@@ -195,7 +204,7 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
     } else throw new Error(`unknown argument: ${flag}`);
   }
   if (flags.check) {
-    const found = gateReview(project, pr) !== null;
+    const found = gateReview(project, pr, flags.repo ?? null) !== null;
     console.log(`${found ? 'recorded' : 'not recorded'}: pull request #${pr}`);
     return found ? 0 : 3;
   }
@@ -246,10 +255,11 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
 }
 
 // The marker of the recorded review for `pr` in `repo` (null for this repository), for the one request await-review
-// posts; null when there is no real review on record, or `repo` is another repository.
-export function attestation(project, pr, repo = null, origin = originRepo(project)) {
-  if (repo !== null && (origin === null || repoName(repo) !== origin)) return null;
-  const record = gateReview(project, pr);
+// posts; null when there is no real review of that repository on record, or `repo` is no remote's.
+export function attestation(project, pr, repo = null, origin = originRepo(project), remotes = remoteRepos(project)) {
+  const target = repoName(repo) ?? origin;
+  if (repo !== null && (target === null || (target !== origin && !remotes.includes(target)))) return null;
+  const record = gateReview(project, pr, target);
   return record?.head && record?.repo ? markerFor(record) : null;
 }
 

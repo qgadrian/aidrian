@@ -264,7 +264,9 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
   A body it cannot read is refused with the one cause the pull request body rule's reader names from one read (`bodyRead`).
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
-  asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
+  asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`. It gates a
+  request to any repository this checkout's remotes name, not origin's alone, against a review of that same repository,
+  as it does `aidrian pr await-review --request --repo <owner>/<name>` ([config.md](config.md#review-gate)).
 - Review sign-off: `aidrian pr signoff`, with `--overrule`, `--accept`, and `--last` too, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.

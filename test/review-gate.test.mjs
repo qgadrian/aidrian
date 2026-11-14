@@ -482,3 +482,30 @@ test('lastSignoff compares heads as commits, and a sign-off on another head leav
   assert.deepEqual(lastSignoff({ signoffable: { head, flows: ['pay'] }, signoffs: { pay: { head: '1234567890', by: 'T', at: 'x' } }, outcome }, where), { flow: 'pay', head });
   assert.throws(() => lastSignoff({ signoffable: { head, flows: ['pay'] }, signoffs: { pay: { head: head.slice(0, 7), by: 'T', at: 'x' } }, outcome }, where), /no flow of acme\/notes#7 waits/u);
 });
+
+// #304: the gate applies to the repository a request acts on, whatever remote names it, not to origin alone.
+test('a review request to another remote`s repository is gated against a review of that repository', (t) => {
+  const { dir, project, run } = repo(t);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/Up/Notes.git'], { cwd: dir });
+  const request = 'gh pr comment 5 -R up/notes -b "@codex review"';
+  assert.match(run(request) ?? '', /pull request #5, and no review/u, 'the upstream is one of this checkout`s remotes');
+  assert.match(run('gh api repos/Up/Notes/issues/5/comments -f body="@codex review"') ?? '', /pull request #5, and no review/u);
+  reviewed(project, 5);
+  assert.match(run(request) ?? '', /pull request #5, and no review/u, 'a review of acme/notes#5 is no review of up/notes#5');
+  assert.equal(run('gh pr comment 5 -b "@codex review"'), null, 'origin`s own review counts for origin');
+  writeRecord(project, { pr: 5, repo: 'up/notes', head: 'abcdef1', reviewer: 'code-reviewer', findings: 0, fixed: 0, note: null });
+  assert.equal(run(request), null, 'the upstream`s review counts for the upstream');
+  assert.equal(run('gh pr comment 5 -R stranger/repo -b "@codex review"'), null, 'a repository no remote names still passes');
+});
+
+test('await-review --request --repo of another remote`s repository is gated, and carries that repository`s marker', async (t) => {
+  const { dir, project } = repo(t);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/Up/Notes.git'], { cwd: dir });
+  const { judgeRequests, attestation } = await import('../plugins/aidrian/lib/review-gate.mjs');
+  const { config } = loadConfig(project);
+  assert.match(judgeRequests([{ pr: 6, repo: 'up/notes', markers: [] }], { project, config, env: {} }) ?? '', /pull request #6, and no review/u);
+  writeRecord(project, { pr: 6, repo: 'up/notes', head: 'abcdef1', reviewer: 'code-reviewer', findings: 0, fixed: 0, note: null });
+  assert.equal(judgeRequests([{ pr: 6, repo: 'up/notes', markers: [] }], { project, config, env: {} }), null);
+  assert.ok(attestation(project, 6, 'up/notes'), 'the request it posts carries the upstream review`s marker');
+  assert.equal(attestation(project, 6, 'stranger/repo'), null);
+});

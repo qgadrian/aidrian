@@ -3229,3 +3229,25 @@ test('the review step on one repository ignores this machine`s record of the sam
   assert.equal(step.round, fresh.round, 'the rounds of qg/voila#7 do not count on o/r#7');
   assert.equal(readLocalState(r.project, 7).repo, 'o/r', 'the step builds its own record');
 });
+
+// #303: a review reads its policy from the reviewed pull request's own base branch, the one of the remote that names its
+// repository, never origin's.
+test('a review step on another remote`s repository holds to that remote`s base branch config', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 3 } }, change: (write) => write('src/app.js', 'b\n') });
+  const owner = `base-${process.pid}`;
+  r.git('remote', 'add', 'origin', `https://github.com/${owner}/r.git`);
+  r.git('remote', 'add', 'upstream', 'https://github.com/up/r.git');
+  r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'main'));
+  // The upstream's main: the same history, with a base config of its own.
+  r.git('switch', '-q', '-c', 'upstream-main', 'main');
+  r.write('.aidrian/config.json', JSON.stringify({ version: 1, github: { maxReviewRounds: 7 } }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'upstream policy');
+  r.git('update-ref', 'refs/remotes/upstream/main', r.git('rev-parse', 'HEAD'));
+  r.git('switch', '-q', 'feat');
+  r.git('branch', '-q', '-D', 'upstream-main');
+  assert.equal((await r.step({ exec: clean }, { repo: 'up/r' })).max_rounds, 7, 'the upstream`s pull request takes the upstream`s cap');
+  assert.equal((await r.step({ exec: clean }, { repo: `${owner}/r` })).max_rounds, 3, 'origin`s takes origin`s');
+  r.git('update-ref', '-d', 'refs/remotes/upstream/main');
+  await assert.rejects(r.step({ exec: clean }, { repo: 'up/r' }), /the base branch main of up\/r is not fetched from upstream, the remote that names it: git fetch upstream main first/u, 'never origin`s or a local branch in its place');
+});

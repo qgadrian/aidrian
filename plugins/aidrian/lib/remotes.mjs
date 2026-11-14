@@ -34,6 +34,19 @@ export function originRepo(project) {
   return status === 0 ? repoName(stdout) : null;
 }
 
+// The names of this checkout's remotes whose URL names repository `repo`, in git's order, or [] when none does or git
+// cannot answer. A remote name may hold dots: `remote.<name>.url` is split at its last `.url`.
+export function remotesNaming(project, repo, options) {
+  const target = repoName(repo);
+  if (target === null) return [];
+  const { status, stdout } = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root, options);
+  if (status !== 0) return [];
+  return stdout.split('\n').flatMap((line) => {
+    const match = /^remote\.(.+)\.url (.*)$/u.exec(line);
+    return match && repoName(match[2]) === target ? [match[1]] : [];
+  });
+}
+
 // The `owner/name` of every remote of this checkout, so a fork's parent counts with its origin. Empty when it has none.
 export function remoteRepos(project, options) {
   const { status, stdout } = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root, options);

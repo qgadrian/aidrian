@@ -1018,8 +1018,12 @@ masked. The command and its files are the base branch's, like the rest of the re
 ## The record
 
 The review config of the pull request is read from its head commit, so a step run from another branch plans the
-same review. Where the record lives is the base branch's, as this checkout has it (its tracking ref `origin/<base>`, or with
-no such ref its own branch `<base>`, by full ref names): `aidrian pr review`, `attest`, `signoff`, `settle`, `extend`,
+same review. Where the record lives is the base branch's, as this checkout has it, by full ref names: its tracking ref
+`origin/<base>`, or with no such ref its own branch `<base>`; and for a pull request of a repository only another remote
+names, such as a fork's parent reviewed with `--repo` or as the forge's default, that remote's `<remote>/<base>` alone, so
+the round cap, the extra-round policy, and the flows that need a sign-off are the reviewed repository's own. When that ref
+is not fetched the command refuses, naming the `git fetch` to run, rather than read origin's policy in its place:
+`aidrian pr review`, `attest`, `signoff`, `settle`, `extend`,
 `waive`, `ingest`, and `await-review --request` read `review.record` as that branch commits it. Each of them, and `request`,
 which writes only this machine's record, holds the working copy to that branch first. These read the record with no such hold,
 and that is their limit: `attest --check`, the review gate's read of it, and `await-review` without `--request`.

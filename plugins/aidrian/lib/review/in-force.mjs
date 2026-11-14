@@ -10,6 +10,7 @@ import path from 'node:path';
 import { committedConfig, firstTip, loadConfig, originDefaultTip, stateDirProblem } from '../config.mjs';
 import { isDirectory, isFile, isWithin, resolvedPath } from '../fs.mjs';
 import { checkoutRoots, runGit } from '../git.mjs';
+import { remotesNaming } from '../remotes.mjs';
 import { committedConfigFile, DEFAULT_CONFIG, recordsFolder, stateDir } from '../project.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { changedFiles, fileAt } from './diff.mjs';
@@ -17,9 +18,17 @@ import { flowsInForce } from './plan.mjs';
 import { touchedCitations } from './cited.mjs';
 import { codexAvailable, reviewerMap } from './reviewers.mjs';
 
-// The base branch's tip in this checkout, by full ref names, so the answer does not depend on other refs: its tracking
-// ref, or with no such ref its own branch. Null and throws as firstTip does. `git` gives each read's options.
-const baseTipOf = (root, base, git) => firstTip(root, [`refs/remotes/origin/${base}`, `refs/heads/${base}`], git);
+// The base branch's tip in this checkout, by full ref names, so the answer does not depend on other refs. For the
+// reviewed repository `repo` (#303): when no remote names it, or origin does, origin's tracking ref, or with no such ref
+// its own branch, as before; when only other remotes name it, such as a fork's parent, that remote's tracking ref alone,
+// so its pull request is held to its own base branch's policy, never origin's or a local branch's. Null when no ref
+// resolves, and throws as firstTip does. `git` gives each read's options.
+function baseRefs(project, repo, base, git) {
+  const named = remotesNaming(project, repo, git());
+  if (!named.length || named.includes('origin')) return { refs: [`refs/remotes/origin/${base}`, `refs/heads/${base}`], remotes: [] };
+  return { refs: named.map((remote) => `refs/remotes/${remote}/${base}`), remotes: named };
+}
+const baseTipOf = (project, repo, base, git) => firstTip(project.root, baseRefs(project, repo, base, git).refs, git);
 
 // Each git read with its own default options, for a command with no deadline.
 const defaultGit = () => undefined;
@@ -170,8 +179,12 @@ function againstBase(project, working, baseTip, where, git) {
 // whether Codex can run here, read only for a difference under a base that pins `auto`. Throws on a base no ref here
 // resolves, and on a read that fails.
 export function holdToBase(project, config, { repo, base, codex = codexAvailable }) {
-  const baseTip = baseTipOf(project.root, base, defaultGit);
-  if (!baseTip) throw new Error(`the base branch ${base} is not in this checkout: git fetch first`);
+  const baseTip = baseTipOf(project, repo, base, defaultGit);
+  if (!baseTip) {
+    const { remotes } = baseRefs(project, repo, base, defaultGit);
+    if (remotes.length) throw new Error(`the base branch ${base} of ${repo} is not fetched from ${remotes.join(' or ')}, the remote that names it: git fetch ${remotes[0]} ${base} first`);
+    throw new Error(`the base branch ${base} is not in this checkout: git fetch first`);
+  }
   const { committed, problem, differs } = againstBase(project, config ?? loadConfig(project).config, baseTip, `${repo} ${base}`, defaultGit);
   if (!problem) return { committed, baseTip };
   if (!differs) throw new Error(problem);
@@ -205,7 +218,7 @@ export const boundedReads = (deadline, now = Date.now) => () => {
 // when it cannot read.
 export function baseProblem(project, { repo, base = null, git }) {
   try {
-    const baseTip = base ? baseTipOf(project.root, base, git) : originDefaultTip(project.root, git);
+    const baseTip = base ? baseTipOf(project, repo, base, git) : originDefaultTip(project.root, git);
     const where = base ? `${repo} ${base}` : `${repo}'s default branch`;
     const working = loadConfig(project).config;
     const { problem, unread } = baseTip ? againstBase(project, working, baseTip, where, git) : insideCheckout(project, working, git);

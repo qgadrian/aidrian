@@ -1075,8 +1075,10 @@ for (const [name, base, first] of [['a named base', 'main', 'refs/remotes/origin
       return options;
     };
     assert.equal(baseProblem(r.project, { repo: 'o/r', base, git }), null);
-    assert.equal(timeouts.length, 2, 'each read asks for its own options');
-    assert.ok(timeouts[1] === null || timeouts[1] <= timeouts[0] - 300, `the second read took ${timeouts[1]} ms after the first took ${timeouts[0]} ms and 300 ms passed`);
+    // A named base first reads which remote names the repository (#303), then the refs.
+    const refs = base === null ? timeouts : timeouts.slice(1);
+    assert.equal(timeouts.length, base === null ? 2 : 3, 'each read asks for its own options');
+    assert.ok(refs[1] === null || refs[1] <= refs[0] - 300, `the second ref read took ${refs[1]} ms after the first took ${refs[0]} ms and 300 ms passed`);
   });
 }
 

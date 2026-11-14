@@ -1009,6 +1009,8 @@ test('aidrian pr extend in a fork checkout records and posts only on the reposit
   for (const [name, url] of [['origin', 'https://github.com/me/notes.git'], ['upstream', 'https://github.com/up/notes.git']]) {
     execFileSync('git', ['remote', 'add', name, url], { cwd: g.dir });
   }
+  // The parent's base branch, fetched: its policy is the one the approval is held to (#303).
+  git('update-ref', 'refs/remotes/upstream/main', 'main');
   const fork = emptyState(12, 'me/notes');
   writeLocalState(g.project, fork);
   const parent = emptyState(12, 'up/notes');

@@ -263,11 +263,13 @@ function readFile(target, pr) {
 
 // The old-name record `old`, for a reader of repository `repo`, or null: one that names `repo`, or one that names none
 // when `repo` is origin's.
-export function legacyFor(project, old, repo) {
+// `own` false is a record from a folder another remote's URL keys (recordFolders): one there that names no repository is
+// nobody's here, since that folder's origin was another repository, and is never served.
+export function legacyFor(project, old, repo, { own = true } = {}) {
   if (!old) return null;
   const named = repoName(old.repo ?? null);
   if (named !== null) return named === repoName(repo) ? old : null;
-  return repoName(repo) === originRepo(project) ? old : null;
+  return own && repoName(repo) === originRepo(project) ? old : null;
 }
 
 // The folders of this project's review records: its state folder's, then those of the default state folders its other
@@ -290,18 +292,17 @@ function filesIn(dir, pr) {
   return names.map((name) => ({ file: path.join(dir, name), state: readFile(path.join(dir, name), pr) })).filter((each) => each.state);
 }
 
-// Every record file of number `pr` in this project's own folder.
-const recordFiles = (project, pr) => filesIn(folder(project), pr);
-
 // Every record this machine holds of number `pr`, whatever its repository, in every folder of this project's records
 // (recordFolders), the first found of each repository: one in a folder a change of remotes left behind counts, so a
 // merge guard never reads it as absent.
+// A record naming no repository counts only from this project's own folder (legacyFor).
 function recordsOf(project, pr) {
   const seen = new Set();
   const out = [];
-  for (const dir of recordFolders(project)) {
+  for (const [at, dir] of recordFolders(project).entries()) {
     for (const { state } of filesIn(dir, pr)) {
       const key = repoName(state.repo ?? null) ?? '';
+      if (at > 0 && key === '') continue;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(state);
@@ -317,12 +318,15 @@ export const recordRepos = (project, pr) => [...new Set(recordsOf(project, pr).m
 // The entries owed on pull request `pr` of `repo` that another repository's record of that number holds: a record
 // written before the key held every repository's owed entries, each naming its own. The entries alone, never the record:
 // they are `repo`'s, and the merge guard keeps refusing on them.
+// An entry the owed repository's own record already holds, by id, is counted there alone, as when the other record could
+// not be marked `moved` (adoptOwed) or a stale write of it dropped the mark.
 export function owedElsewhere(project, pr, repo) {
   const target = repoName(repo);
   if (target === null) return [];
+  const held = new Set(pendingOf(readLocalState(project, pr, target)).map((entry) => entry.id).filter(Boolean));
   return recordsOf(project, pr)
     .filter((state) => repoName(state.repo ?? null) !== target)
-    .flatMap((state) => (state.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target));
+    .flatMap((state) => (state.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target && !(entry.id && held.has(entry.id))));
 }
 
 // This machine's review record of pull request `pr` of `repo`, or null: that repository's own, never another's. Its file;
@@ -334,10 +338,10 @@ export function owedElsewhere(project, pr, repo) {
 export function readLocalState(project, pr, repo) {
   if (repo === undefined || repo === null || repoName(repo) === null) return recordsOf(project, pr).reduce((a, b) => newer(a, b), null);
   const key = repoKey(repo);
-  for (const dir of recordFolders(project)) {
+  for (const [at, dir] of recordFolders(project).entries()) {
     const own = readFile(path.join(dir, `pr-${pr}-review${key}.json`), pr);
     if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repoName(repo) ? own : null;
-    const old = legacyFor(project, readFile(path.join(dir, `pr-${pr}-review.json`), pr), repo);
+    const old = legacyFor(project, readFile(path.join(dir, `pr-${pr}-review.json`), pr), repo, { own: at === 0 });
     if (old) return old;
   }
   return null;
@@ -365,18 +369,31 @@ function ownedBy(state, repo) {
   else if (named !== want) throw new Error(`the review record of #${state.pr} this command built is ${named}'s, not ${want}'s: it records nothing`);
 }
 
-// Moves into `state` the entries owed on its repository that another repository's record of that number holds, as one
-// written before the key does, and marks each there as `moved` to it, so it is counted once, in its own record, where
-// its answer lands. Returns nothing; a record it cannot read or write keeps its entries, which the merge guard still counts.
+// Takes into `state` the entries owed on its repository that another repository's record of that number holds, in any
+// folder of this project's records (recordFolders), as one written before the key does. Returns the marks to make once
+// `state` is written (markMoved): each such entry, there, `moved` to its repository. The order keeps a failed write from
+// losing an entry: until its own record holds it, the other still owes it unmarked.
 function adoptOwed(project, state) {
   const target = repoName(state.repo ?? null);
-  if (target === null) return;
-  for (const { file: other, state: record } of recordFiles(project, state.pr)) {
-    if (repoName(record.repo ?? null) === target) continue;
-    const ours = (record.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target);
-    if (!ours.length) continue;
-    const ids = new Set(pendingOf(state).map((entry) => entry.id).filter(Boolean));
-    state.pending = [...pendingOf(state), ...ours.filter((entry) => !entry.id || !ids.has(entry.id)).map(({ moved: _moved, ...entry }) => entry)];
+  if (target === null) return [];
+  const marks = [];
+  for (const dir of recordFolders(project)) {
+    for (const { file: other, state: record } of filesIn(dir, state.pr)) {
+      if (repoName(record.repo ?? null) === target) continue;
+      const ours = (record.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target);
+      if (!ours.length) continue;
+      const ids = new Set(pendingOf(state).map((entry) => entry.id).filter(Boolean));
+      state.pending = [...pendingOf(state), ...ours.filter((entry) => !entry.id || !ids.has(entry.id)).map(({ moved: _moved, ...entry }) => entry)];
+      marks.push({ other, record, ours, target });
+    }
+  }
+  return marks;
+}
+
+// Marks the entries adoptOwed took as `moved` in the records that held them, where it can write; one it cannot keeps its
+// entries, which owedElsewhere skips once the owed repository's own record holds them by id.
+function markMoved(marks) {
+  for (const { other, record, ours, target } of marks) {
     try {
       for (const entry of ours) entry.moved = target;
       writeFileSync(other, `${JSON.stringify(record, null, 2)}\n`);
@@ -389,7 +406,7 @@ function adoptOwed(project, state) {
 // repository alone); one that names none goes once origin's own is written. A write that names no repository goes to the
 // old name only when no other repository's record is there.
 function writeAt(project, state) {
-  adoptOwed(project, state);
+  const marks = adoptOwed(project, state);
   const target = file(project, state.pr, state.repo);
   const plain = plainFile(project, state.pr);
   const old = readFile(plain, state.pr);
@@ -398,6 +415,7 @@ function writeAt(project, state) {
   }
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
+  markMoved(marks);
   if (target !== plain && legacyFor(project, old, state.repo)) rmSync(plain, { force: true });
 }
 

@@ -89,10 +89,10 @@ function readRecordFile(file, pr) {
 export function readRecord(project, pr, given = null) {
   const repo = repoName(given) ?? originRepo(project);
   if (repo === null) return readRecordFile(plainRecordFile(project, pr), pr);
-  for (const dir of recordFolders(project)) {
+  for (const [at, dir] of recordFolders(project).entries()) {
     const own = readRecordFile(path.join(dir, `pr-${pr}${repoKey(repo)}.json`), pr);
     if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repo ? own : null;
-    const old = legacyFor(project, readRecordFile(path.join(dir, `pr-${pr}.json`), pr), repo);
+    const old = legacyFor(project, readRecordFile(path.join(dir, `pr-${pr}.json`), pr), repo, { own: at === 0 });
     if (old) return old;
   }
   return null;

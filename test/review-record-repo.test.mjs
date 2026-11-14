@@ -4,7 +4,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -225,4 +225,50 @@ test('p8: a review record survives origin renamed to upstream and a new origin, 
   assert.equal(readLocalState(c.project(), 12, org).outcome.status, 'fix_required');
   writeLocalState(c.project(), { ...readLocalState(c.project(), 12, org) });
   assert.ok(existsSync(recordFile(c.project(), 12, org)), 'its next write lands in the new folder');
+});
+
+// The fourth security review of #251: probes p9 and p10.
+test('p9: a record naming no repository in a folder another remote keys is nobody`s here', (t) => {
+  const e = `${unique('e')}/f`;
+  const other = defaultFolder(t, [['origin', `https://github.com/${e}.git`]]);
+  const grant = [{ source: 'bot', round: 3, head: 'a'.repeat(40), status: 'granted', by: 'human', human: { answer: 'approve' } }];
+  const folder = path.dirname(recordFile(other.project(), 12, e));
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, 'pr-12-review.json'), JSON.stringify({ ...emptyState(12, null), revision: 4, extensions: grant }));
+  const own = `${unique('own')}/b`;
+  const me = defaultFolder(t, [['origin', `https://github.com/${own}.git`]]);
+  me.git('remote', 'add', 'x', `https://github.com/${e}.git`);
+  assert.equal(readLocalState(me.project(), 12, own), null, 'origin`s read through the added remote gets no record, and no grant');
+  assert.equal(merge({ ...me, project: me.project() }, `gh pr merge 12 --match-head-commit ${HEAD}`), null, 'nor does the merge guard count it');
+});
+
+test('p9: an entry the owed repository`s own record holds is counted there alone, when the other record cannot be marked', (t) => {
+  // adoptOwed marks a moved entry where it can write; where it cannot, owedElsewhere skips the entry by id.
+  const two = `${unique('two')}/b`;
+  const c = checkout(t, [['origin', `https://github.com/${two}.git`], ['up', 'https://github.com/c10/d.git']]);
+  const e1 = { id: 'e1', kind: 'review', head: HEAD, at: '2026-10-01T00:00:00Z', by: 'H', repo: 'c10/d' };
+  writeLocalState(c.project, { ...emptyState(12, two), pending: [e1] }, { repo: two });
+  const held = recordFile(c.project, 12, two);
+  chmodSync(held, 0o444);
+  t.after(() => {
+    try {
+      chmodSync(held, 0o644);
+    } catch {}
+  });
+  writeLocalState(c.project, noteOutcome({ ...emptyState(12, 'c10/d'), rounds: [{ head: HEAD }] }, { status: 'received', head: HEAD }, () => false, 'c10/d'), { repo: 'c10/d' });
+  assert.equal(JSON.parse(readFileSync(held, 'utf8')).pending[0].moved, undefined, 'the other record could not be marked');
+  assert.equal(readLocalState(c.project, 12, 'c10/d').pending[0].id, 'e1', 'c10/d`s own record took the entry first');
+  assert.equal(answerOwed(c.project, 12, 'review', { head: HEAD, by: 'attest', repo: 'c10/d', isAncestor: () => false }), 1);
+  assert.equal(merge(c, `gh pr merge 12 -R c10/d --match-head-commit ${HEAD}`), null, 'answered in c10/d`s own record, it is not counted again from the other');
+});
+
+test('p10: an entry owed on a repository, left in the folder an origin rename moved away from, is answered by its attest', (t) => {
+  const org = `${unique('org')}/x`;
+  const c = defaultFolder(t, [['origin', `https://github.com/${org}.git`], ['c', 'https://github.com/c11/d.git']]);
+  legacy(c.project(), 12, org, (state) => (state.pending = [{ id: 'e1', kind: 'review', head: HEAD, at: '2026-10-01T00:00:00Z', by: 'H', repo: 'c11/d' }]));
+  c.git('remote', 'rename', 'origin', 'upstream');
+  c.git('remote', 'add', 'origin', `https://github.com/${unique('me')}/x.git`);
+  writeLocalState(c.project(), noteOutcome({ ...emptyState(12, 'c11/d'), rounds: [{ head: HEAD }] }, { status: 'received', head: HEAD }, () => false, 'c11/d'), { repo: 'c11/d' });
+  assert.equal(answerOwed(c.project(), 12, 'review', { head: HEAD, by: 'attest', repo: 'c11/d', isAncestor: () => false }), 1, 'the entry moved into c11/d`s own record');
+  assert.equal(merge({ ...c, project: c.project() }, `gh pr merge 12 -R c11/d --match-head-commit ${HEAD}`), null, 'so the merge at the reviewed head runs');
 });

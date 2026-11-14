@@ -78,8 +78,13 @@ export const botNamed = (reviewer) => typeof reviewer === 'string' && reviewer !
 export const setsOverride = (invocation) => assignsVariable(invocation, ROUNDS_OVERRIDE);
 
 // The two forms an answer can approve, as written after the variable; `--with-bot` is the review step that also runs the bot.
-// Either may end in `--repo <owner>/<name>`, the repository it acts on, which a checkout whose remotes name several needs.
-const RAISE_FORMS = { review: /^(?:--with-bot )?--max-rounds (\d+)(?: --repo (\S+))?$/u, 'await-review': /^--request --max-rounds (\d+)(?: --repo (\S+))?$/u };
+// Either may name `--repo <owner>/<name>`, the repository it acts on, which a checkout whose remotes name several needs:
+// right after the pull request, as the review step prints its rerun, or last. One `--repo` only (approvalTarget).
+const REPO = '(?:--repo (\\S+) )?';
+const RAISE_FORMS = {
+  review: new RegExp(`^${REPO}(?:--with-bot )?--max-rounds (\\d+)(?: --repo (\\S+))?$`, 'u'),
+  'await-review': new RegExp(`^${REPO}--request --max-rounds (\\d+)(?: --repo (\\S+))?$`, 'u'),
+};
 
 // The pull request number of an `aidrian pr review|await-review <PR>` invocation, or null.
 function raisedPr(invocation) {
@@ -118,13 +123,14 @@ export function raiseMiss(invocation, said, target) {
       `Or hand the Human \`${ROUNDS_OVERRIDE}=1 ${handoverOf(words)} --max-rounds <N>\` to run in their own shell (\`!\` in the prompt, or another terminal).`;
   }
   const form = verb === 'pr' && Object.hasOwn(RAISE_FORMS, sub) && /^\d+$/u.test(pr ?? '') ? RAISE_FORMS[sub].exec(texts.slice(3).join(' ')) : null;
-  const max = form?.[1];
+  const max = form?.[2];
+  const formRepo = form?.[1] ?? form?.[3];
   if (!max) {
     return `An answer or a typed grant approves only \`${ROUNDS_OVERRIDE}=1 aidrian pr review <PR> --max-rounds <N>\`, with \`--with-bot\` before \`--max-rounds\` when the step runs the bot, ` +
-      `or \`${ROUNDS_OVERRIDE}=1 aidrian pr await-review <PR> --request --max-rounds <N>\`, either ending in \`--repo <owner>/<name>\` when it names its repository, every word written out, with no variable or other flag.`;
+      `or \`${ROUNDS_OVERRIDE}=1 aidrian pr await-review <PR> --request --max-rounds <N>\`, either with one \`--repo <owner>/<name>\` right after \`<PR>\` or last when it names its repository, every word written out, with no variable or other flag.`;
   }
   if (target.miss === 'plain') return 'An approved raise runs only as one plain command, with no `cd`, `env -C`, chain, or other prefix: run it from the pull request\'s checkout.';
-  if (target.miss === 'repo' || (form[2] !== undefined && repoName(form[2]) !== target.repo)) {
+  if (target.miss === 'repo' || (formRepo !== undefined && repoName(formRepo) !== target.repo)) {
     return `The raise's \`--repo\` must name, written out as \`<owner>/<name>\`, one of the repositories this checkout's remotes name (${(target.remotes ?? []).join(', ') || 'none'}): ` +
       'an answer or a typed grant counts only on the repository the command acts on.';
   }

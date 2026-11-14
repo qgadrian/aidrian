@@ -34,7 +34,7 @@ export const fallbackPassId = (stop, agent) => `fallback:${stop.stage}:${stop.re
 // The record's stops on `head` for `stage`, one per reviewer.
 export const stopsFor = (state, head, stage) => (state.quotaStops ?? []).filter((each) => each.stage === stage && each.head === head);
 
-export const signoffCommand = (pr, stop) => `aidrian pr signoff ${pr} --stage ${stop.stage} --head ${stop.head}`;
+export const signoffCommand = (pr, stop, repoArg = '') => `aidrian pr signoff ${pr} --stage ${stop.stage} --head ${stop.head}${repoArg}`;
 
 // The stop of `pass`'s reviewer in `stage` on `head`, put on the record in place of an earlier one for the same head,
 // stage, and reviewer: another reviewer's stop in the stage, and the choice made for it, stay. Every pass of that

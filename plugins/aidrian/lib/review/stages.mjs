@@ -47,7 +47,7 @@ function countFailures(state, head, failures) {
 
 // Runs the stages of the step that lib/review/step.mjs planned into `s`, and returns the step's result.
 export async function runStages(s) {
-  const { opts, config, env, forge, exec, awaitBot, root, cleanEnv, repo, n, head, baseTip, review, state, plan, map, resultFor, quietSince, dispositionTable, fallbacks, keptSignoffs, visualEntries, isVisual, passes, removedTests, maxRounds, grantFloor, flowStatus, finish, capReached, quotaStop } = s;
+  const { opts, config, env, forge, exec, awaitBot, root, cleanEnv, repo, repoArg, n, head, baseTip, review, state, plan, map, resultFor, quietSince, dispositionTable, fallbacks, keptSignoffs, visualEntries, isVisual, passes, removedTests, maxRounds, grantFloor, flowStatus, finish, capReached, quotaStop } = s;
 
   // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, whose
   // answer is awaited after every earlier pass.
@@ -279,7 +279,7 @@ export async function runStages(s) {
     }
     // A stage the Human chose to review in place of an out-of-quota reviewer waits for their sign-off before the next.
     const unsignedStage = fallbacks.find((stop) => stop.stage === stage.name && stop.choice === quota.HUMAN && !stop.signoff);
-    if (unsignedStage) return finish('human_required', { stage: stage.name, flows: [], command: [quota.signoffCommand(n, unsignedStage)] });
+    if (unsignedStage) return finish('human_required', { stage: stage.name, flows: [], command: [quota.signoffCommand(n, unsignedStage, repoArg)] });
   }
   // Evidence beyond the reviewers: no flow test deleted without the Human's word, and the required checks of the
   // flows the change touches passed on this head.
@@ -296,13 +296,13 @@ export async function runStages(s) {
     }
   }
   const human = plan.flows.filter((flow) => flow.signoff === 'human' && !keptSignoffs.has(flow.id));
-  if (human.length) return finish('human_required', { flows: human.map((flow) => flow.id), command: human.map((flow) => `aidrian pr signoff ${n} --flow ${flow.id} --head ${head}`) });
+  if (human.length) return finish('human_required', { flows: human.map((flow) => flow.id), command: human.map((flow) => `aidrian pr signoff ${n} --flow ${flow.id} --head ${head}${repoArg}`) });
   return finish('received', {});
 }
 
 // The Human's way out of a dispute on this head.
-function overruleCommand({ n, head }, flow, id) {
-  return `aidrian pr signoff ${n} --flow ${flow.id} --overrule ${id} --head ${head} --reason "<why>"`;
+function overruleCommand({ n, head, repoArg = '' }, flow, id) {
+  return `aidrian pr signoff ${n} --flow ${flow.id} --overrule ${id} --head ${head} --reason "<why>"${repoArg}`;
 }
 
 // What closes each open invariant of a flow on this head, so no session has to invent a command: a violated one is
@@ -312,10 +312,10 @@ function overruleCommand({ n, head }, flow, id) {
 // `commands` holds only `aidrian pr signoff` commands, for the Human's shell once `--check` passes; `notes` holds
 // the rest: the fix to make, the approval to ask for, the capture's status.
 function nextSteps(s, flow, status) {
-  const { n, head, passes, visualEntries, manifest, isVisual, approvalPath, rejectedVerdicts, settle } = s;
+  const { n, head, repoArg = '', passes, visualEntries, manifest, isVisual, approvalPath, rejectedVerdicts, settle } = s;
   const judged = settle?.on && flow.id !== HARNESS_FLOW;
   const violated = status.open.map((id) => (status.disputed.includes(id)
-    ? { invariant: id, state: 'disputed', commands: [overruleCommand(s, flow, id)], notes: [], ...(judged ? { settle: `aidrian pr settle ${n} --flow ${flow.id} --overrule ${id} --head ${head} --judge <agent> --reason "<why>"` } : {}) }
+    ? { invariant: id, state: 'disputed', commands: [overruleCommand(s, flow, id)], notes: [], ...(judged ? { settle: `aidrian pr settle ${n} --flow ${flow.id} --overrule ${id} --head ${head} --judge <agent> --reason "<why>"${repoArg}` } : {}) }
     : { invariant: id, state: 'violated', commands: [], notes: ['fix the code'] }));
   const visualFlow = visualEntries.length > 0 && passes.some((pass) => isVisual(pass) && (pass.flows ?? []).includes(flow.id));
   const capture = visualFlow && captureKeys(manifest).size === 0
@@ -326,8 +326,8 @@ function nextSteps(s, flow, status) {
     return {
       invariant: id,
       state: 'unverified',
-      commands: [`aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}`],
-      ...(judged ? { settle: `aidrian pr settle ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head} --judge <agent>` } : {}),
+      commands: [`aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}${repoArg}`],
+      ...(judged ? { settle: `aidrian pr settle ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head} --judge <agent>${repoArg}` } : {}),
       notes: [
         ...(rejectedVerdicts?.(flow.id, id) ?? []).map((each) => `${each.reviewer} answered ${each.verdict}, but its evidence does not count (${each.problem}): dispatch that reviewer again to cite path:line, test:<name>, or capture:<key>, which closes this with no sign-off`),
         ...(approvers.length && approvalPath?.on ? [`ask for an approving review of ${head} by ${approvers.join(' or ')}, whose body holds the line: ${approveLine(flow.id, id)}`] : []),

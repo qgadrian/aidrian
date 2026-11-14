@@ -20,6 +20,12 @@ export function givenRepo(given) {
   return name;
 }
 
+// ` --repo <repo>` for a command the review step prints about pull request repository `repo`, when this checkout's
+// remotes name more than one repository, else ''. There the sign-off and round-raise rules count the Human's answer only
+// on a command that names its repository (lib/rules/review-signoff.mjs approvalTarget), so the printed command runs as
+// it is on the Human's answer, and acts on the repository the review ran on rather than the forge's default.
+export const repoFlag = (project, repo) => (typeof repo === 'string' && repo !== '' && new Set(remoteRepos(project)).size > 1 ? ` --repo ${repo}` : '');
+
 // This repository's `owner/name`, from its origin, or null.
 export function originRepo(project) {
   const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root);

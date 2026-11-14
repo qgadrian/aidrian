@@ -952,3 +952,27 @@ test('signals: a finding reported again after its id closed, reworded in the sam
   assert.deepEqual(loops.evidence.looping.map((each) => [each.id, each.match, each.earlier_round]), [[reworded.id, 'place', 1], [moved.id, 'title', 1]]);
   for (const reason of loops.reasons) assert.doesNotMatch(reason, /Refund|refund/u, 'the reason names the id, never the title');
 });
+
+test('await-review at the cap, with remotes of several repositories: the rerun the ask names ends in --repo', async (t) => {
+  // #251: the review-rounds rule counts the Human's answer there only on a raise that names its repository.
+  const { project, run } = botProject(t);
+  for (const [name, url] of [['origin', 'https://github.com/acme/notes.git'], ['other', 'https://github.com/qg/voila.git']]) {
+    execFileSync('git', ['remote', 'add', name, url], { cwd: project.root });
+  }
+  await run(converging);
+  const state = readLocalState(project, 42);
+  recordVerdict(state, { verdict: 'extend', reason: 'f.js:3 is a valid high finding' });
+  writeLocalState(project, state);
+  const ask = await run(converging);
+  assert.deepEqual([ask.out.status, ask.out.then], ['extension_ask', 'aidrian pr await-review 42 --request --repo acme/notes']);
+});
+
+test('await-review at the cap, with one repository`s remotes: the rerun names no --repo', async (t) => {
+  const { project, run } = botProject(t);
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/notes.git'], { cwd: project.root });
+  await run(converging);
+  const state = readLocalState(project, 42);
+  recordVerdict(state, { verdict: 'extend', reason: 'f.js:3 is a valid high finding' });
+  writeLocalState(project, state);
+  assert.equal((await run(converging)).out.then, 'aidrian pr await-review 42 --request');
+});

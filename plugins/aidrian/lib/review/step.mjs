@@ -15,6 +15,7 @@ import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
+import { repoFlag } from '../remotes.mjs';
 import { isFindingId, MAX_COUNTER, recordFindings } from './findings.mjs';
 import { answerThreads, deleteOwn, fillThreads, handledKeys, raiseFloor, readMarked } from './inline.mjs';
 import { gitPaths, trackedSet, untextedBlocking } from './publish.mjs';
@@ -89,6 +90,8 @@ export async function prepareStep(s) {
   // A given repository is read from, not the forge's default, which in a checkout with several remotes may be another.
   const info = opts.repo ? forge.change(opts.pr, CHANGE_FIELDS, { repo: opts.repo }) : forge.change(opts.pr, CHANGE_FIELDS);
   const repo = opts.repo ?? forge.repo();
+  // ` --repo <repo>` on every command the step prints, when the remotes name several repositories (remotes.mjs repoFlag).
+  const repoArg = repoFlag(project, repo);
   const n = info.number;
   // Right after a push the forge may still report the commit it built on: this checkout's pushed head wins, and a local
   // commit past it is named rather than an older round re-served (lib/review/pushed.mjs).
@@ -173,7 +176,7 @@ export async function prepareStep(s) {
   // The post context of this step's writes (lib/review/publish.mjs): read once, when the first write needs it.
   let posting = null;
   const post = (extra = {}) => (posting ??= postContext({ forge, repo, n, project, configs: [committed, config], env, ...extra }));
-  Object.assign(s, { root, cleanEnv, info, repo, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post });
+  Object.assign(s, { root, cleanEnv, info, repo, repoArg, n, head, baseTip, base, policy, review, onPr, comments, summary, state, paths, post });
 
   // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried
@@ -374,7 +377,7 @@ export async function prepareStep(s) {
   for (const [id, definition] of Object.entries(review.flows)) {
     const tests = (definition.tests ?? []).map(pathPattern);
     const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
-    if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
+    if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}${repoArg}` });
   }
   // The flows the Human may sign off on this head: one the project marks for the Human's sign-off, the built-in
   // harness-config, or one whose test the change deletes. `aidrian pr signoff` refuses any other, since its sign-off

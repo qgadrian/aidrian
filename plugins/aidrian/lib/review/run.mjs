@@ -129,11 +129,11 @@ function noteFindings({ state, head }, extra) {
 // The round cap: round_limit, unless the base branch's github.extraRounds lets the check at the cap run
 // (lib/review/extension.mjs), which may return extension_check or extension_ask instead.
 function capReached(s, extra) {
-  const { state, head, policy, n, info, planHistory, extensionLog } = s;
+  const { state, head, policy, n, info, planHistory, extensionLog, repoArg = '' } = s;
   noteFindings(s, extra);
   const decision = atCap({
     state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
-    command: `aidrian pr review ${n}`,
+    command: `aidrian pr review ${n}${repoArg}`,
     history: planHistory,
     lastReviewed: () => state.rounds.at(-1)?.head ?? null,
     log: extensionLog,

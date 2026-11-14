@@ -322,6 +322,11 @@ many remotes name it. In a checkout whose remotes name more than one repository,
 fork or of an unrelated repository, the command needs `--repo`: without one it acts on the forge's default, which the
 hook cannot read without a forge call and which may be any of them, so no answer counts and the deny says to add it.
 A `--repo` no remote names, or one the answer does not name, approves nothing.
+In such a checkout every command the review step prints names the repository the review ran on, with
+`--repo <owner>/<name>` at its end: the `human_required` sign-offs in `command`, a flow's `overrule`, the `commands`
+and `settle` of each `next`, the `accept` of a deleted flow test, and the `then` of `extension_ask`, the rerun of
+`aidrian pr review` or `aidrian pr await-review --request`. So the session runs a printed command as it is once the
+Human answers; with one repository among the remotes, none of them carries `--repo`.
 
 #### Unattended rulings
 
@@ -345,8 +350,8 @@ runs the bot, or the same on `aidrian pr await-review <PR> --request`, exactly a
 `--max-rounds`, plus the extra rounds still valid: a higher cap an earlier bot request recorded in its comment counts only
 for a run under the Human's own override that gives no `--max-rounds`. The `review-rounds` rule refuses the
 variable in any other form. The repository the answer or typed grant names is the one the command acts on, as for a
-[sign-off](#answering-in-the-session): in a checkout whose remotes name more than one repository, the raise ends in
-`--repo <owner>/<name>`, one of those remotes, as `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>/<name>`;
+[sign-off](#answering-in-the-session): in a checkout whose remotes name more than one repository, the raise names
+`--repo <owner>/<name>`, one of those remotes, once, right after `<PR>` as the printed rerun has it or at the end, as `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N> --repo <owner>/<name>`;
 both `aidrian pr review` and `aidrian pr await-review` take it, and read the pull request from that repository rather
 than the forge's default. Without it there, the refusal names that route, and the Human may still run the raise in
 their own shell, as the refusal writes it, with the command's own subcommand and `--with-bot` or `--request`, since each
@@ -977,7 +982,7 @@ who runs the command in their own shell. `--human deny` always runs. While the c
 approval names the judge's route: run the review step again with the options it ran with, such as `--with-bot` and
 `--max-rounds`, run the `dispatch` it prints, record its verdict, and run the step once more. After a
 judge's stop, nothing waits for an answer, so the deny names the route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and
-`--max-rounds`, on the Human's answer or typed grant, ending in `--repo <owner>/<name>` in a checkout whose remotes name more than one repository.
+`--max-rounds`, on the Human's answer or typed grant, naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository.
 The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
 signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one

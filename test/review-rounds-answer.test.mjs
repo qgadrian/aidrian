@@ -102,7 +102,10 @@ test('in a checkout with several remotes, an answer counts on the raise whose `-
     assert.match(missOf(`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 ${aimed}`, context), /`--repo` must name, written out as `<owner>\/<name>`, one of the repositories this checkout's remotes name \(o\/r, qg\/voila\)/u, aimed);
   }
   for (const shape of ['--repo o/r --repo o/r', '--repo "$R"', '--repo']) missOf(`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 ${shape}`, context);
-  missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --repo o/r --max-rounds 4', context);
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --repo o/r --max-rounds 4', context), null, 'right after the pull request, as the review step prints its rerun');
+  assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --repo o/r --request --max-rounds 4', context), null, 'the bot`s rerun as printed');
+  missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --repo o/r --max-rounds 4 --repo o/r', context);
+  missOf('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds --repo o/r 4', context);
   for (const aimed of ['cd /other && AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo o/r', 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 env -C /other aidrian pr review 12 --max-rounds 4 --repo o/r', 'GH_REPO=qg/voila AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4 --repo o/r']) {
     missOf(aimed, context);
   }

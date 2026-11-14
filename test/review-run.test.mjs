@@ -20,6 +20,7 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check as checkSignoff } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 
@@ -3127,4 +3128,86 @@ test('the two sweeps of a step read the repository`s visibility once between the
   assert.ok(posts.reviewComments.some((each) => each.id === 1000));
   // One read for the step's post context, one shared by both sweeps.
   assert.equal(reads, 2, 'the second sweep reuses the first sweep`s read');
+});
+
+// #251: in a checkout whose remotes name more than one repository, the sign-off and round-raise rules count the Human's
+// answer only on a command that names its repository, so every command the step prints ends in `--repo`.
+// The state folder is keyed by the origin, so each test that needs no particular one gets its own.
+let remoteSeed = 0;
+const moreRemotes = (r, origin = `https://github.com/several-${process.pid}-${(remoteSeed += 1)}/r.git`) => {
+  r.git('remote', 'add', 'origin', origin);
+  r.git('remote', 'add', 'other', 'https://github.com/qg/voila.git');
+};
+
+test('with remotes of several repositories, the human_required sign-off names --repo, and runs on the Human`s answer as printed', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, headConfig: { version: 1 }, change: (write) => write('src/booking/book.js', 'x\n') });
+  moreRemotes(r, 'https://github.com/o/r.git');
+  const first = await r.step({ exec: clean });
+  for (const pass of first.dispatch) {
+    const ids = pass.flows.flatMap((flow) => flow.invariants.map((each) => [flow.id, each.id]));
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify(ids.map(([flow, invariant]) => ({ flow, invariant, verdict: 'holds', evidence: 'src/booking/book.js:1' }))) });
+  }
+  const human = await r.step({ exec: clean });
+  assert.deepEqual([human.status, human.command], ['human_required', [`aidrian pr signoff 7 --flow harness-config --head ${human.head} --repo o/r`]]);
+  const file = path.join(r.dir, '..', 't.jsonl');
+  writeFileSync(file, JSON.stringify({ type: 'user', toolUseResult: { answers: { [`Sign off o/r#7 at ${human.head.slice(0, 7)}: harness-config/signoff?`]: 'Approve' } } }));
+  assert.equal(checkSignoff(human.command[0], { cwd: r.dir, input: { transcript_path: file } }), null, 'the printed command runs on the answer');
+  assert.ok(checkSignoff(human.command[0].replace(' --repo o/r', ''), { cwd: r.dir, input: { transcript_path: file } }), 'control: without --repo it is denied');
+});
+
+test('with remotes of one repository, the printed commands carry no --repo', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, headConfig: { version: 1 }, change: (write) => write('src/booking/book.js', 'x\n') });
+  r.git('remote', 'add', 'origin', `https://github.com/single-${process.pid}/r.git`);
+  r.git('remote', 'add', 'origin-https', `https://github.com/single-${process.pid}/r`);
+  const first = await r.step({ exec: clean });
+  for (const pass of first.dispatch) {
+    const ids = pass.flows.flatMap((flow) => flow.invariants.map((each) => [flow.id, each.id]));
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify(ids.map(([flow, invariant]) => ({ flow, invariant, verdict: 'holds', evidence: 'src/booking/book.js:1' }))) });
+  }
+  assert.deepEqual((await r.step({ exec: clean })).command, [`aidrian pr signoff 7 --flow harness-config --head ${first.head}`]);
+});
+
+test('with remotes of several repositories, the overrule, accept, and settle commands name --repo', async (t) => {
+  const disputed = repo(t, { baseConfig: { version: 1, review: { flows: { booking: { files: ['src/booking/**'] } } } }, change: (write) => write('src/booking/a.js', '1\n') });
+  moreRemotes(disputed);
+  const first = await disputed.step({ exec: clean });
+  recordPass(disputed.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(first.dispatch[0], 'src/booking/a.js:1') });
+  const violated = async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'booking', invariant: 'unspecified', verdict: 'violated', evidence: 'src/booking/a.js:1' }], dropped: [] });
+  const [flow] = (await disputed.step({ exec: violated })).flows;
+  const overrule = `aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>" --repo o/r`;
+  assert.deepEqual([flow.overrule, flow.next[0].commands], [[overrule], [overrule]]);
+
+  const r = repo(t, { baseConfig: { version: 1, review: { flows: APPROVED_FLOWS, unattendedSignoff: { allow: true } } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
+  moreRemotes(r);
+  r.write('.aidrian.local.json', JSON.stringify({ unattendedSignoff: 'on' }));
+  const one = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([
+    { flow: 'look', invariant: 'matches-design', verdict: 'cannot_verify', evidence: 'no app runs' },
+    { flow: 'look', invariant: 'keeps-copy', verdict: 'holds', evidence: 'src/ui/a.js:1' },
+  ]) });
+  const [next] = (await r.step({ exec: clean })).flows[0].next;
+  assert.deepEqual(next.commands, [`${acceptCommand('look', 'matches-design', one.head)} --repo o/r`]);
+  assert.match(next.settle, / --judge <agent> --repo o\/r$/u);
+});
+
+test('with remotes of several repositories, the review step`s rerun at the cap names --repo', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2 }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  moreRemotes(r);
+  const one = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findings: 2, fixed: 0 });
+  await r.step({ exec: clean });
+  r.write('src/booking/a.js', '2\n');
+  r.commit();
+  const two = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: two.dispatch[0].pass, head: two.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
+  const capped = await r.step({ exec: clean });
+  assert.equal(capped.status, 'extension_check');
+  await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a real high-severity bug', '--head', capped.head]);
+  const ask = await r.step({ exec: clean });
+  assert.deepEqual([ask.status, ask.then], ['extension_ask', 'aidrian pr review 7 --repo o/r']);
 });

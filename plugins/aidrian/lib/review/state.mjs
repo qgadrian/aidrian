@@ -371,20 +371,22 @@ function ownedBy(state, repo) {
 
 // Takes into `state` the entries owed on its repository that another repository's record of that number holds, in any
 // folder of this project's records (recordFolders), as one written before the key does. Returns the marks to make once
-// `state` is written (markMoved): each such entry, there, `moved` to its repository. The order keeps a failed write from
-// losing an entry: until its own record holds it, the other still owes it unmarked.
+// `state` is written (markMoved): each such entry, there, `moved` to its repository, in this project's own folder alone.
+// A folder another remote's URL keys belongs to another checkout, where that repository may have no record to count the
+// entry in, so its records are never written: their entries stay unmarked, and owedElsewhere skips them here by id. The
+// order keeps a failed write from losing an entry: until its own record holds it, the other still owes it unmarked.
 function adoptOwed(project, state) {
   const target = repoName(state.repo ?? null);
   if (target === null) return [];
   const marks = [];
-  for (const dir of recordFolders(project)) {
+  for (const [at, dir] of recordFolders(project).entries()) {
     for (const { file: other, state: record } of filesIn(dir, state.pr)) {
       if (repoName(record.repo ?? null) === target) continue;
       const ours = (record.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target);
       if (!ours.length) continue;
       const ids = new Set(pendingOf(state).map((entry) => entry.id).filter(Boolean));
       state.pending = [...pendingOf(state), ...ours.filter((entry) => !entry.id || !ids.has(entry.id)).map(({ moved: _moved, ...entry }) => entry)];
-      marks.push({ other, record, ours, target });
+      if (at === 0) marks.push({ other, record, ours, target });
     }
   }
   return marks;

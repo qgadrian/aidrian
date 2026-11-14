@@ -272,3 +272,24 @@ test('p10: an entry owed on a repository, left in the folder an origin rename mo
   assert.equal(answerOwed(c.project(), 12, 'review', { head: HEAD, by: 'attest', repo: 'c11/d', isAncestor: () => false }), 1, 'the entry moved into c11/d`s own record');
   assert.equal(merge({ ...c, project: c.project() }, `gh pr merge 12 -R c11/d --match-head-commit ${HEAD}`), null, 'so the merge at the reviewed head runs');
 });
+
+// The confirming review of #251: probe p11.
+test('p11: a write never marks entries in another checkout`s folder, so that checkout keeps refusing the merge', (t) => {
+  const own = `${unique('own')}/b`;
+  const cd = `${unique('c')}/d`;
+  // Checkout B: origin cd, no remote for own; its pre-key record of #12 owes a request on own.
+  const b = defaultFolder(t, [['origin', `https://github.com/${cd}.git`]]);
+  const head = HEAD;
+  const bFile = path.join(path.dirname(recordFile(b.project(), 12, cd)), 'pr-12-review.json');
+  mkdirSync(path.dirname(bFile), { recursive: true });
+  writeFileSync(bFile, JSON.stringify({ ...emptyState(12, cd), revision: 5, outcome: { status: 'received', head: 'e'.repeat(40), at: 'x' }, rounds: [{ head: 'e'.repeat(40) }], pending: [{ id: 'e1', kind: 'request', head, at: '2026-10-01T00:00:00Z', by: 'H', repo: own }] }));
+  const before = readFileSync(bFile, 'utf8');
+  const bMerge = () => mergeRule(`gh pr merge 12 -R ${own} --match-head-commit ${head}`, { cwd: b.dir, env: {}, input: { transcript_path: b.transcript }, viewPr: () => null });
+  assert.match(bMerge() ?? '', /never sent|no answer/u, 'B refuses before');
+  // Checkout A: origin own, and a remote for cd, so A reads B's folder too.
+  const a = defaultFolder(t, [['origin', `https://github.com/${own}.git`], ['c', `https://github.com/${cd}.git`]]);
+  writeLocalState(a.project(), emptyState(12, own), { repo: own });
+  assert.equal(readFileSync(bFile, 'utf8'), before, 'B`s record is byte-identical');
+  assert.match(bMerge() ?? '', /never sent|no answer/u, 'B still refuses the merge');
+  assert.equal(readLocalState(a.project(), 12, own).pending[0].id, 'e1', 'A`s own record holds the entry');
+});

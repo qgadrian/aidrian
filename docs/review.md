@@ -344,9 +344,10 @@ as the repository's, and one that names another repository is ignored, never bui
 review step, a bot request, `aidrian pr extend`, `aidrian pr waive`, a sign-off, an attest, and a recorded request,
 refuses to write a record that names another repository than its own. An entry owed on one repository that a record of
 another holds, as one written before the key may, is moved into the owed repository's own record on its next write and
-marked moved in the other, in any folder below, once the owed repository's own record is written; where the other
-cannot be marked, the entry counts in the owed repository's own record alone, matched by id, so its answer lands where
-the merge guard reads it.
+marked moved in the other once the owed repository's own record is written. Only a record in this project's own
+state folder is marked: one in a folder another remote's URL keys belongs to another checkout, which may have no record
+of that repository to count the entry in, so it is never written. Where the other is not marked, the entry counts here
+in the owed repository's own record alone, matched by id, so its answer lands where the merge guard reads it.
 The default state folder follows `origin`'s URL ([project-folder.md](project-folder.md#local-state)): after a change of
 remotes, a record is also looked for in the folder each other remote's URL keys, and found there while that remote
 exists. A record there must name the repository read: one that names none was another repository's origin's, and is

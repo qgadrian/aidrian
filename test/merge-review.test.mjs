@@ -888,6 +888,9 @@ test('a long-form sign-off on one repository never reads this machine`s record o
   noteOutcome(other, { status: 'human_required', head: r.commit }, () => false, 'qg/voila');
   mkdirSync(path.dirname(recordFile(r.project, 9)), { recursive: true });
   writeFileSync(recordFile(r.project, 9), JSON.stringify({ ...other, revision: 1 }));
+  // The base branch the sign-off holds to, as origin's tracking ref: the fixture's own branch is git's default, which is
+  // not `main` everywhere.
+  r.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
   const forge = viewing(() => ({ url: 'https://github.com/acme/notes/pull/9', baseRefName: 'main' }));
   // Only acme/notes's own record is read, and it has none: qg/voila's is neither signed on nor written over.
   await assert.rejects(runSignoff(['9', '--flow', 'f', '--head', r.commit, '--repo', 'acme/notes'], r.project, loadConfig(r.project).config, { forge }), /no review of acme\/notes#9 ran/u);

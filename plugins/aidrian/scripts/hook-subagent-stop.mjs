@@ -4,7 +4,8 @@
 // for that agent type (lib/lesson-signals.mjs). A handoff file its brief asked it to write and it did not (unwrittenHandoffs)
 // is the record its dispatcher reads, since a handback can reach another session or none: the hook writes the agent's
 // final report there (deliverHandoffs), and sends it back for the file only when it has no report to write, or while a
-// background task of its own still runs.
+// background task of its own still runs. It writes only on a stop it lets end: a stop sent back, as for another missing
+// file, has a report the agent will correct, and the corrected one is what the file must hold.
 // The background check: no background shell or agent it started may still run (runningChildren). A subagent that ends its
 // turn goes idle: a shell task's end notice wakes it, but a subagent task's handback to an idle agent is refused, and the
 // work it waits on stalls until something else wakes it. So it is told to wait in the foreground, and sent back again at
@@ -58,11 +59,19 @@ await runHook((input) => {
   if (!project) return;
   const { config } = loadConfig(project);
   const children = runningChildren(input);
-  const delivery = deliverHandoffs(input, checkDelivery(input, project), { running: children.length > 0 });
+  const checked = checkDelivery(input, project);
+  const running = children.length > 0;
+  // The send-back is decided on the delivery as it would be once the handoff files are written, and they are written
+  // only when the stop ends.
+  let delivery = deliverHandoffs(input, checked, { running, write: false });
   const made = children.length ? childSendBacks(input) : 0;
   if (!children.length) forgetChildSendBacks(input);
   const forChildren = childrenSendBack(input, children, made);
-  const forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
+  let forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
+  if (!forChildren && !forDelivery) {
+    delivery = deliverHandoffs(input, checked, { running });
+    forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
+  }
   if (config.telemetry.enabled) {
     appendEvent(project, config, stopRow(input, project, { delivery, children, sentBack: forChildren || forDelivery, docReads: config.telemetry.docReads }));
   }

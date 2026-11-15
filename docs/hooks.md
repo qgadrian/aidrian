@@ -967,7 +967,9 @@ written as that object; any other report as `{ "written_by": "stop-hook", "repor
 in the meantime, such as one its dispatcher wrote, is kept. So a brief that names the file for an agent with no file tool
 or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
 The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write,
-or while a background task of its own still runs, since that stop is no end of its work. The file is the record its dispatcher reads:
+or while a background task of its own still runs, since that stop is no end of its work. It writes the file only on a
+stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
+the corrected one. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
 a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief
 says to read, is not asked of it. A forked subagent's first prompt is its parent's, so the check finds nothing there.

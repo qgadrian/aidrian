@@ -16,10 +16,22 @@ const later = (a, b) => String(b?.at ?? '') > String(a?.at ?? '');
 const keyOf = (entry, keys) => JSON.stringify(keys.map((key) => entry[key] ?? null));
 const sameHead = (a, b) => typeof a === 'string' && typeof b === 'string' && a !== '' && (a.startsWith(b) || b.startsWith(a));
 
-// Whether `a` and `b` are copies of one review: the same first round, by its head and time.
+// Whether `a` and `b` are copies of one review: the same first round, by its head and time. A quiet push moves a round
+// to the new head and time and keeps where it was in its `quiet` list (stages.mjs runStages), so a copy written before
+// that push holds an earlier identity of the same round: they match when either copy's first identity, its first
+// `quiet` entry or else its head and time, is one the other's round held, in its `quiet` list or now.
 export function sameReview(a, b) {
-  const [ours, theirs] = [a?.rounds?.[0], b?.rounds?.[0]];
-  return isObject(ours) && isObject(theirs) && sameHead(ours.head, theirs.head) && ours.at === theirs.at;
+  const [ours, theirs] = [identities(a?.rounds?.[0]), identities(b?.rounds?.[0])];
+  if (!ours.length || !theirs.length) return false;
+  const held = (one, all) => all.some((each) => sameHead(each.head, one.head) && each.at === one.at);
+  return held(ours[0], theirs) || held(theirs[0], ours);
+}
+
+// The identities a round held, oldest first: each it moved from on a quiet push, then its head and time now.
+function identities(round) {
+  if (!isObject(round)) return [];
+  const moved = Array.isArray(round.quiet) ? round.quiet.filter(isObject).map((each) => ({ head: each.from, at: each.at })) : [];
+  return [...moved, { head: round.head, at: round.at }];
 }
 
 // The Human's entries of `other` that `base` lacks, added to `base`. A flow's sign-off and an overrule or acceptance of one
@@ -33,6 +45,9 @@ export function keepHuman(base, other) {
   keepLatest(base, other, 'overrulings', ['flow', 'invariant', 'head']);
   keepLatest(base, other, 'acceptances', ['flow', 'invariant', 'head']);
   keepEach(base, other, 'waivers', ['head', 'kind', 'at']);
+  // Accepted limit: an extension both copies hold keeps `base`'s decision fields, so one the other copy approved may be
+  // asked again. Only two copies a mixed set of plugin versions let grow apart are merged, which is rare, and a second
+  // ask costs the Human one answer, never a grant they did not give.
   keepEach(base, other, 'extensions', ['source', 'round', 'head', 'at']);
   const overrides = Array.isArray(other.overrides) ? other.overrides.filter((line) => typeof line === 'string') : [];
   if (overrides.length) base.overrides = [...new Set([...(Array.isArray(base.overrides) ? base.overrides : []), ...overrides])];
@@ -54,6 +69,8 @@ export function keepWork(base, other) {
   }
   const rounds = Array.isArray(other.rounds) ? other.rounds : [];
   if (Array.isArray(base.rounds) && rounds.length > base.rounds.length) base.rounds = [...base.rounds, ...rounds.slice(base.rounds.length)];
+  // Accepted limit: a finding each copy minted under the same id is not told apart; the higher counter only stops a
+  // third. Two copies stepping apart from mixed plugin versions are rare, and each finding is still re-reviewed on its head.
   if (Number.isSafeInteger(other.idCounter) && other.idCounter > (Number.isSafeInteger(base.idCounter) ? base.idCounter : 0)) base.idCounter = other.idCounter;
   base.revision = Math.max(base.revision ?? 0, other.revision ?? 0);
   if (String(other.updatedAt ?? '') > String(base.updatedAt ?? '')) base.updatedAt = other.updatedAt;
@@ -86,8 +103,7 @@ function keepStops(base, other) {
     for (const each of replaced) ours.splice(ours.indexOf(each), 1);
     ours.push({ ...stop, ...(isObject(stop.signoff) ? { signoff: { ...stop.signoff } } : {}) });
   }
-  base.quotaStops = ours.map((stop, i) => [stop, i]).sort(([a, i], [b, j]) => String(a.at ?? '').localeCompare(String(b.at ?? '')) || i - j)
-    .map(([stop]) => stop).slice(-STOPS_KEPT);
+  base.quotaStops = inTimeOrder(ours).slice(-STOPS_KEPT);
 }
 
 const chosen = (stop) => typeof stop?.choice === 'string' && stop.choice !== '';
@@ -104,7 +120,8 @@ function takeChoice(stop, theirs) {
   if (!isObject(stop.signoff) || later(stop.signoff, theirs.signoff)) stop.signoff = { ...theirs.signoff };
 }
 
-// `base[key]` with each entry of `other[key]` whose `keys` it does not hold, and, where both hold one, the later.
+// `base[key]` with each entry of `other[key]` whose `keys` it does not hold, and, where both hold one, the later; in time
+// order (inTimeOrder).
 function keepLatest(base, other, key, keys) {
   const theirs = list(other, key);
   if (!theirs.length) return;
@@ -113,13 +130,19 @@ function keepLatest(base, other, key, keys) {
     const at = keyOf(entry, keys);
     if (!out.has(at) || later(out.get(at), entry)) out.set(at, { ...entry });
   }
-  base[key] = [...out.values()];
+  base[key] = inTimeOrder([...out.values()]);
 }
 
-// `base[key]` with each entry of `other[key]` whose `keys` it does not hold.
+// `base[key]` with each entry of `other[key]` whose `keys` it does not hold, in time order (inTimeOrder).
 function keepEach(base, other, key, keys) {
   const theirs = list(other, key);
   if (!theirs.length) return;
   const held = new Set(list(base, key).map((entry) => keyOf(entry, keys)));
-  base[key] = [...(Array.isArray(base[key]) ? base[key] : []), ...theirs.filter((entry) => !held.has(keyOf(entry, keys))).map((entry) => ({ ...entry }))];
+  base[key] = inTimeOrder([...(Array.isArray(base[key]) ? base[key] : []), ...theirs.filter((entry) => !held.has(keyOf(entry, keys))).map((entry) => ({ ...entry }))]);
 }
+
+// `entries` by their `at`, ties in the order given. Readers take the last entry as the latest word, as a refuse after a
+// waive withdraws it (waiver.mjs waiverFor) and the last extension is the one waiting (extension.mjs waiting), so an
+// older entry the other copy adds goes before a newer one `base` holds, never after it.
+const inTimeOrder = (entries) => entries.map((entry, i) => [entry, i])
+  .sort(([a, i], [b, j]) => String(a?.at ?? '').localeCompare(String(b?.at ?? '')) || i - j).map(([entry]) => entry);

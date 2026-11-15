@@ -365,6 +365,9 @@ function absorb(base, other) {
   keepHuman(base, other);
   keepWork(base, other);
   base.pending = mergePending(base.pending, other.pending);
+  // Accepted limit: mergeIndex adds no index entry `base` lacks, so a finding of a pass or round only `other` holds, closed
+  // there, may read as open again until its pass re-runs. Only two copies a mixed set of plugin versions let grow apart
+  // are merged, which is rare, and an open finding only asks for one more look, never lets a merge through.
   mergeIndex(base, other);
   return base;
 }

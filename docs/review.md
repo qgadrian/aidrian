@@ -337,9 +337,11 @@ attest, the review step's notes of a held finding or an error, and the merge gua
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
 repository it names, and moved to that repository's file by its next write; one that names no repository is read for
 origin alone. When both files of one pull request exist, as when a session on an older plugin keeps writing the old name
-while a newer one writes the repository's file, and both are copies of one review (the same first round), the record is
+while a newer one writes the repository's file, and both are copies of one review (the same first round, which a quiet push moves to a new head without making it
+another review), the record is
 their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, extensions, and stage sign-offs), each pass and round it lacks,
-its owed entries, and the higher id counter. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
+its owed entries, and the higher id counter. Each merged list ends in time order, so an older waive the other copy holds
+lands before a newer refuse, and the refuse still stands. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
 only the other holds is added, the later choice of a stop both hold wins with its own sign-off, and a stop the newer one
 recorded again on that head, or let go as older than the latest ten, stays gone. The next write keeps that merge, past the old file's revision, before it removes
 the old file. A newer copy of the same review on the pull request, built by a writer that never read this machine's record,

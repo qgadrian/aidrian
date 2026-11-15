@@ -285,6 +285,27 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   ]);
 });
 
+// A stop sent back for another missing file has a report the agent will correct: the hook writes the handoff only on the
+// stop it lets end, so the file holds the corrected report, not the one sent back.
+test('the stop hook writes the handoff from the report of the stop it lets end, not one it sent back', (t) => {
+  const { base, dir, state, log, hook } = project(t);
+  const file = path.join(state(), 'dispatch', 'docs-S1-product-manager.json');
+  const transcript = path.join(base, 'agent-p6.jsonl');
+  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }));
+  const stop = (message, active) => hook('hook-subagent-stop.mjs', {
+    cwd: dir, agent_id: 'p6', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: active,
+  });
+  const sent = stop('Wrote docs/missing-result.md. No findings.', false);
+  assert.equal(sent.status, 2);
+  assert.match(sent.stderr, /^Your report names `docs\/missing-result\.md`, which does not exist\./u);
+  assert.doesNotMatch(sent.stderr, /Your brief asks you to write your machine handoff/u, 'the hook writes the handoff once the stop ends');
+  assert.throws(() => readFileSync(file), /ENOENT/u, 'nothing is written from a report sent back');
+  const corrected = 'No findings. The result doc was never needed.';
+  assert.equal(stop(corrected, true).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { written_by: 'stop-hook', report: corrected });
+  assert.deepEqual(log().map((row) => [row.handoffs_written, row.sent_back]), [[0, true], [1, false]]);
+});
+
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {
   const message = 'Wrote .../review/b-verdicts-r34-cr.json, …/dispatch/x-harness-mechanic.json, and ../docs/real.md.';
   assert.deepEqual(claimedPaths(message), ['../docs/real.md']);

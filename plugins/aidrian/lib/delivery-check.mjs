@@ -7,8 +7,8 @@
 // The check also reads the subagent's brief: a handoff file the brief asks this agent to write, an absolute
 // `<state>/dispatch/*.json` path whose name holds the agent's own, must exist when it stops. A handback can reach another
 // session than the one that dispatched it, or none once that one has ended, so the file is the record its dispatcher reads.
-// When the agent stops without it, and with none of its own background tasks running, the stop hook writes its final
-// report there (deliverHandoffs): a brief can name the file for an agent with no file tool or shell, or make it optional,
+// When the agent stops without it, with none of its own background tasks running, and is not sent back for another reason,
+// the stop hook writes its final report there (deliverHandoffs): a brief can name the file for an agent with no file tool or shell, or make it optional,
 // and the report is the handoff either way. The agent is sent back for it only when it has no report to write.
 // docs/hooks.md#delivery-check.
 
@@ -70,14 +70,18 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 // `delivery` once the agent's final report is written to each handoff file it owes (`unwritten`), with `written`, the
 // files the hook wrote, and those files out of `unwritten` and `missing`. A stop with a background task of the agent's
 // own still `running` is no end of its work, so nothing is written then; nor with no report (finalReport).
-export function deliverHandoffs(input, delivery, { running = false } = {}) {
+// With `write: false`, nothing is written: the result is the delivery as it would be once every owed file is, with
+// `written` empty, so the stop hook decides on a send-back before it writes. A report the agent is sent back to correct
+// is not its last, and a file written from it would stand, since a later stop skips a handoff file that exists.
+export function deliverHandoffs(input, delivery, { running = false, write = true } = {}) {
   const owed = delivery.unwritten ?? [];
   const report = owed.length && !running ? finalReport(input) : null;
   if (report === null) return { ...delivery, written: [] };
-  const written = writeHandoffs(owed, report);
+  const written = write ? writeHandoffs(owed, report) : [];
+  const covered = write ? written : owed;
   const cwd = typeof input.cwd === 'string' ? input.cwd : null;
-  const isWritten = (claim) => written.some((file) => (cwd && file === resolveClaim(cwd, claim)) || file.endsWith(`${path.sep}${path.normalize(claim)}`));
-  return { ...delivery, missing: delivery.missing.filter((claim) => !isWritten(claim)), unwritten: owed.filter((file) => !written.includes(file)), written };
+  const isCovered = (claim) => covered.some((file) => (cwd && file === resolveClaim(cwd, claim)) || file.endsWith(`${path.sep}${path.normalize(claim)}`));
+  return { ...delivery, missing: delivery.missing.filter((claim) => !isCovered(claim)), unwritten: owed.filter((file) => !covered.includes(file)), written };
 }
 
 // The subagent's final report: the message of its last handback call (transcript.mjs lastHandback), else its last

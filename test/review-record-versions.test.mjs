@@ -15,7 +15,8 @@ import { pluginVersion } from '../plugins/aidrian/lib/config-version.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { readRecord as readAttest, writeRecord as writeAttest } from '../plugins/aidrian/lib/review-gate.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
-import { keepHuman } from '../plugins/aidrian/lib/review/record-merge.mjs';
+import { keepHuman, sameReview } from '../plugins/aidrian/lib/review/record-merge.mjs';
+import { waiverFor } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { emptyState, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const OPEN = { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } };
@@ -137,6 +138,50 @@ test('a quota stop the newer record replaced or let go stays gone, and the later
   // One choice in both, and the sign-off on one of them.
   const unsigned = { ...SIGNED, signoff: null };
   assert.deepEqual(keepHuman({ rounds, quotaStops: [unsigned] }, { rounds, quotaStops: [SIGNED] }).quotaStops, [SIGNED]);
+});
+
+// The review stopped at its round cap on the second head; the Human waived the cap, then refused it.
+const CAPPED = { head: H2, status: 'round_limit', at: '2026-11-14T18:30:00.000Z' };
+const WAIVE = { head: H2, kind: 'round_cap', verdict: 'waive', reason: 'small', judge: 'x', at: '2026-11-14T18:35:00.000Z' };
+const REFUSE = { ...WAIVE, verdict: 'refuse', reason: 'not yet', at: '2026-11-14T18:40:00.000Z' };
+
+test('a refused waiver stays refused when the other copy holds only the older waive', (t) => {
+  const { project, repo, own, plain, put } = setup(t);
+  // The older version's file holds the waive; the newer one's file, written after, the refuse that withdrew it.
+  put(plain, record(repo, { revision: 5, updatedAt: '2026-11-14T18:36:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED, waivers: [WAIVE] }));
+  put(own, record(repo, { revision: 8, updatedAt: '2026-11-14T18:41:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED, waivers: [REFUSE] }));
+  const merged = readLocalState(project, 12, repo);
+  assert.deepEqual(merged.waivers, [WAIVE, REFUSE], 'in time order, the refuse last');
+  assert.equal(waiverFor(merged, H2, 'round_cap'), null, 'so no waiver stands for a merge');
+  writeLocalState(project, merged);
+  assert.equal(waiverFor(onDisk(own), H2, 'round_cap'), null, 'nor once the merge is written');
+
+  // A newer copy on the pull request holds the refuse; this machine's record only the older waive.
+  put(own, record(repo, { revision: 5, updatedAt: '2026-11-14T18:36:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED, waivers: [WAIVE] }));
+  const posted = record(repo, { revision: 21, updatedAt: '2026-11-14T18:41:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED, waivers: [REFUSE] });
+  const { state } = readRecord(project, 12, [{ id: 1, body: summaryBody(posted, null, 'x', OPEN), author_association: 'MEMBER' }], repo);
+  assert.equal(state.revision, 21, 'the newer copy is built on');
+  assert.deepEqual(state.waivers.map((each) => each.verdict), ['waive', 'refuse']);
+  assert.equal(waiverFor(state, H2, 'round_cap'), null);
+});
+
+test('a copy written before a quiet push of the first round is the same review, and keeps the Human`s sign-off', (t) => {
+  const { project, repo, own, plain, put } = setup(t);
+  const first = { head: H1, at: '2026-11-14T18:00:00.000Z' };
+  // A quiet push moved the first round to the second head and kept where it was in its `quiet` list.
+  const moved = { head: H2, at: '2026-11-14T18:20:00.000Z', quiet: [{ from: H1, at: first.at }] };
+  put(plain, record(repo, { revision: 5, updatedAt: '2026-11-14T18:10:00.000Z', rounds: [{ ...first }], signoffs: { payments: SIGNOFF } }));
+  put(own, record(repo, { revision: 8, updatedAt: '2026-11-14T18:21:00.000Z', rounds: [moved] }));
+  const merged = readLocalState(project, 12, repo);
+  assert.deepEqual(merged.signoffs, { payments: SIGNOFF }, 'the sign-off of the copy before the push is kept');
+  assert.deepEqual(merged.rounds, [moved], 'on the moved round');
+  // Either way round, and through two quiet pushes, of which each copy saw a different number.
+  const twice = { head: '3'.repeat(40), at: '2026-11-14T18:30:00.000Z', quiet: [{ from: H1, at: first.at }, { from: H2, at: moved.at }] };
+  assert.ok(sameReview({ rounds: [moved] }, { rounds: [first] }));
+  assert.ok(sameReview({ rounds: [twice] }, { rounds: [moved] }));
+  assert.ok(sameReview({ rounds: [moved] }, { rounds: [twice] }));
+  // A review that started over on the pushed head, at another time, is still another review.
+  assert.equal(sameReview({ rounds: [moved] }, { rounds: [{ head: H2, at: '2026-11-15T00:00:00.000Z' }] }), false);
 });
 
 test('each write stamps its plugin version, warns when an older one writes over a newer one`s record, and never posts it', (t) => {

@@ -594,7 +594,9 @@ test('a machine that builds on a higher-revision posted copy keeps every field t
   restarted.waivers[0].at = '2026-11-12T10:00:00.000Z';
   const other = summaryBody(restarted, null, 'x', { reading: { visibility: 'PUBLIC', inside: true }, checker: checker(), root, names: [] });
   const taken = readRecord(project, 7, [{ id: 1, body: other, author_association: 'MEMBER' }], 'o/r').state;
-  assert.deepEqual([taken.passes['engine:codex-local'].list[0].title, taken.passes['engine:codex-local'].list[0].file, taken.waivers[0].reason], [undefined, 'src/a.js', undefined], 'none of this machine`s text, for a finding and for a waiver`s reason');
+  // The posted copy's own waiver, by its time: merged entries are kept in time order, so this machine's earlier one is first.
+  const theirs = taken.waivers.find((each) => each.at === restarted.waivers[0].at);
+  assert.deepEqual([taken.passes['engine:codex-local'].list[0].title, taken.passes['engine:codex-local'].list[0].file, theirs.reason], [undefined, 'src/a.js', undefined], 'none of this machine`s text, for a finding and for a waiver`s reason');
   assert.equal(untextedBlocking(taken), 'R1-1', 'an open, blocking finding with no text');
 });
 

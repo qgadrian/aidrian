@@ -275,6 +275,26 @@ test('aidrian lint budget --pin pins the docs over budget under "warn", and unde
   assert.deepEqual(budgets().baseline, { 'kb/b.md': 35 }, 'a shrunk doc is pinned lower, and one within budget is dropped');
   assert.equal(run(['budget'], dir).status, 1, 'the unpinned doc still fails');
   assert.deepEqual([run(['skills', '--pin'], dir).status, run(['skills', '--pin'], dir).stderr], [1, '--pin works only with aidrian lint budget\n']);
+
+  // A developer's local source is never pinned into the team's config.json, whatever its size.
+  writeFileSync(file, JSON.stringify({ version: 1, knowledge: { budgets: { taggedDocBytes: 20 } } }));
+  const source = tempDir(t);
+  mkdirSync(path.join(source, 'knowledge'));
+  mkdirSync(path.join(source, 'notes'));
+  writeFileSync(path.join(source, 'notes/mine.md'), 'm'.repeat(50));
+  writeFileSync(path.join(source, 'knowledge/notes.json'), JSON.stringify({ dir: 'notes', description: 'Mine.', docs: { 'mine.md': { summary: 'Mine.', tags: ['testing'] } } }));
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ sources: [source] }));
+  assert.equal(run(['budget', '--pin'], dir).status, 0);
+  assert.deepEqual(budgets().baseline, { 'kb/b.md': 35, 'kb/c.md': 25 }, 'only the team docs are pinned');
+  assert.doesNotMatch(readFileSync(file, 'utf8'), /mine\.md/u);
+
+  // An index that does not load would drop its bucket's pins, so --pin writes nothing.
+  const before = readFileSync(file, 'utf8');
+  writeFileSync(path.join(dir, '.aidrian/knowledge/kb.json'), '{ not json');
+  const broken = run(['budget', '--pin'], dir);
+  assert.equal(broken.status, 1);
+  assert.match(broken.stderr, /^budget: --pin changes nothing while the knowledge indexes have errors:\n/u);
+  assert.equal(readFileSync(file, 'utf8'), before);
 });
 
 test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad cite are errors; no invariants is a warning', (t) => {

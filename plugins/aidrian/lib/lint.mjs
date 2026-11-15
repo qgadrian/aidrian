@@ -75,8 +75,8 @@ export const commands = {
       }
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
-      const { buckets } = loadKnowledge(project);
-      if (values.pin) return pinBudget(project, config.knowledge.budgets, checkBudgets(project.root, buckets, config.knowledge.budgets).pins);
+      const { buckets, errors } = loadKnowledge(project);
+      if (values.pin) return pinBudget(project, config.knowledge.budgets, buckets, errors);
       const at = (rel) => path.join(project.root, rel);
       const runs = {
         skills: () => lintSkills(dirs.length ? dirs : projectFolders('skills').map(at), config.skills),
@@ -101,7 +101,15 @@ export const commands = {
 // Rewrites knowledge.budgets.baseline in the team's config.json to the docs over budget now, at their sizes, and removes
 // the key when no doc is over. Under "warn" it pins every such doc, to adopt "fail"; under "fail" it only lowers and drops
 // pins, so a run never lets a new doc off: pinning one then is a hand edit to config.json the Human sees in review.
-function pinBudget(project, { enforce, baseline }, current) {
+// It refuses while an index has an error, since a bucket it could not read would lose its pins, and it pins only the
+// team's buckets: a local source is one developer's, at a path no one else has.
+function pinBudget(project, budgets, buckets, errors) {
+  if (errors.length) {
+    console.error(`budget: --pin changes nothing while the knowledge indexes have errors:\n${errors.join('\n')}`);
+    return 1;
+  }
+  const { enforce, baseline } = budgets;
+  const current = checkBudgets(project.root, buckets.filter((bucket) => bucket.source === null), budgets).pins;
   const pins = enforce === 'fail'
     ? Object.fromEntries(Object.entries(current).filter(([doc]) => Object.hasOwn(baseline, doc)).map(([doc, bytes]) => [doc, Math.min(bytes, baseline[doc])]))
     : current;
@@ -112,12 +120,12 @@ function pinBudget(project, { enforce, baseline }, current) {
     console.error(`budget: cannot read ${project.paths.config}: run aidrian check`);
     return 1;
   }
-  const budgets = isObject(config.knowledge?.budgets) ? { ...config.knowledge.budgets } : {};
-  const before = JSON.stringify(budgets.baseline ?? {});
-  if (Object.keys(pins).length) budgets.baseline = pins;
-  else delete budgets.baseline;
-  config.knowledge = { ...(isObject(config.knowledge) ? config.knowledge : {}), budgets };
-  if (!Object.keys(budgets).length) delete config.knowledge.budgets;
+  const written = isObject(config.knowledge?.budgets) ? { ...config.knowledge.budgets } : {};
+  const before = JSON.stringify(written.baseline ?? {});
+  if (Object.keys(pins).length) written.baseline = pins;
+  else delete written.baseline;
+  config.knowledge = { ...(isObject(config.knowledge) ? config.knowledge : {}), budgets: written };
+  if (!Object.keys(written).length) delete config.knowledge.budgets;
   if (!Object.keys(config.knowledge).length) delete config.knowledge;
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
   const count = Object.keys(pins).length;

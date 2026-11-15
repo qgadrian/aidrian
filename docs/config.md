@@ -1066,6 +1066,8 @@ A pinned doc stays a warning while it is at or under its pin, and fails once it 
 A pin above its doc's size, or on a doc within budget or no longer indexed, is a warning to lower or drop it.
 Under `"fail"`, `aidrian lint budget --pin` only lowers and drops pins. It never adds a pin or raises one, and it exits 1
 naming each doc it left over budget. Pinning a new doc is then a hand edit to `config.json`, a decision a reviewer sees in the diff.
+`--pin` pins only the team's docs, never those of a `.aidrian.local.json` source, and it writes nothing while a knowledge
+index has an error, since a bucket it cannot read would lose its pins.
 
 The key `docs.alwaysBudgetBytes` moved here as `alwaysBytes`; a `config.json` that still sets it gets an error naming the new key.
 [knowledge.md](knowledge.md#shaping-buckets) says how to shape buckets that stay within the budgets.

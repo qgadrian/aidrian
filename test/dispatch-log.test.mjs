@@ -192,7 +192,7 @@ test('the delivery check finds a claimed path under the state folder, the plugin
   assert.match(sent.stderr, /^Your report names `plans\/never-written\.md`, `tmp\/never-written\.md`, which does not exist\./u);
 });
 
-test('the delivery check sends a subagent back once for a handoff file its brief asked for and it did not write', (t) => {
+test('the delivery check sends a subagent back once for a handoff file its brief asked for, when it has no report to write there', (t) => {
   const { base, dir, state, log, hook } = project(t);
   const dispatch = path.join(state(), 'dispatch');
   const own = path.join(dispatch, 'feat-12-S1-code-reviewer.json');
@@ -205,7 +205,7 @@ test('the delivery check sends a subagent back once for a handoff file its brief
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `A later message naming ${path.join(dispatch, 'x-code-reviewer.json')}` }] } }),
   ].join('\n'));
   const stop = (active, agentType = 'aidrian:code-reviewer') => hook('hook-subagent-stop.mjs', {
-    cwd: dir, agent_id: 'a6', agent_type: agentType, agent_transcript_path: transcript, last_assistant_message: 'Done: no findings.', stop_hook_active: active,
+    cwd: dir, agent_id: 'a6', agent_type: agentType, agent_transcript_path: transcript, last_assistant_message: '', stop_hook_active: active,
   });
   const sent = stop(false);
   assert.equal(sent.status, 2);
@@ -220,6 +220,90 @@ test('the delivery check sends a subagent back once for a handoff file its brief
   assert.deepEqual(log().map((row) => [row.agent_type, row.delivered, row.sent_back]), [
     ['aidrian:code-reviewer', 'missing', true], ['aidrian:code-reviewer', 'missing', false], ['aidrian:critic', 'chat', false], ['aidrian:code-reviewer', 'chat', false],
   ]);
+});
+
+// A brief named a handoff file for an agent with no file tool or shell, or made it optional, and the agent returned its
+// handoff as its report: the hook writes that report to the file, and never sends the agent back for it.
+test('the stop hook writes a subagent\'s final report to the handoff file its brief asked for, instead of sending it back', (t) => {
+  const { base, dir, state, log, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  const transcriptFor = (id, file, lines = []) => {
+    const transcript = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(transcript, [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Try to also write it to ${file}; if you cannot, the final message is enough.` } }),
+      ...lines.map((line) => JSON.stringify(line)),
+    ].join('\n'));
+    return transcript;
+  };
+  const stop = (id, transcript, message, extra = {}) => hook('hook-subagent-stop.mjs', {
+    cwd: dir, agent_id: id, agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: false, ...extra,
+  });
+  const read = (file) => JSON.parse(readFileSync(file, 'utf8'));
+
+  // A machine handoff as the last message, in a fenced block, and presented as the handoff: written as the object it is.
+  const json = path.join(dispatch, 'docs-S1-product-manager.json');
+  const handoff = { status: 'done', role: 'product-manager', decision: 'One rewrite drops a rule.' };
+  const fenced = stop('p1', transcriptFor('p1', json), `\`\`\`json\n${JSON.stringify(handoff)}\n\`\`\``);
+  assert.deepEqual([fenced.status, fenced.stderr], [0, '']);
+  assert.deepEqual(read(json), handoff);
+
+  // A report in prose, with a delivery line naming the file it never wrote: written as text, and not sent back for either.
+  const prose = path.join(dispatch, 'docs-S2-product-manager.json');
+  const said = stop('p2', transcriptFor('p2', prose), `Verdict: not verified.\nHandoff: ${prose}`);
+  assert.deepEqual([said.status, said.stderr], [0, '']);
+  assert.deepEqual(read(prose), { written_by: 'stop-hook', report: `Verdict: not verified.\nHandoff: ${prose}` });
+
+  // The report delivered through the handback tool, whose run ends with no text after it: the handback's message.
+  const handedBack = path.join(dispatch, 'docs-S3-product-manager.json');
+  const handback = transcriptFor('p3', handedBack, [
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Reading the docs first.' }] } },
+    { type: 'assistant', message: { id: 'm2', content: [{ type: 'tool_use', id: 't1', name: 'SubagentHandback', input: { message: '{"status":"done","role":"product-manager"}' } }] } },
+  ]);
+  assert.equal(stop('p3', handback, 'Reading the docs first.').status, 0);
+  assert.deepEqual(read(handedBack), { status: 'done', role: 'product-manager' });
+
+  // A file that appeared before the hook wrote, as one its dispatcher wrote, is kept as it is.
+  const kept = path.join(dispatch, 'docs-S4-product-manager.json');
+  writeFileSync(kept, '{"by":"dispatcher"}');
+  assert.equal(stop('p4', transcriptFor('p4', kept), 'Done.').status, 0);
+  assert.deepEqual(read(kept), { by: 'dispatcher' });
+
+  // While a background task of its own still runs, the stop is no end of its work: nothing is written, and the
+  // background check and the handoff send it back.
+  const waiting = path.join(dispatch, 'docs-S5-product-manager.json');
+  const busy = transcriptFor('p5', waiting, [
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } },
+  ]);
+  const held = stop('p5', busy, 'Waiting for the helper-scout result.', { background_tasks: [{ id: 'achild001', type: 'local_agent', status: 'running' }] });
+  assert.equal(held.status, 2);
+  assert.match(held.stderr, /Your brief asks you to write your machine handoff to/u);
+  assert.throws(() => readFileSync(waiting), /ENOENT/u);
+
+  assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written, row.sent_back]), [
+    ['p1', 1, false], ['p2', 1, false], ['p3', 1, false], ['p4', 0, false], ['p5', 0, true],
+  ]);
+});
+
+// A stop sent back for another missing file has a report the agent will correct: the hook writes the handoff only on the
+// stop it lets end, so the file holds the corrected report, not the one sent back.
+test('the stop hook writes the handoff from the report of the stop it lets end, not one it sent back', (t) => {
+  const { base, dir, state, log, hook } = project(t);
+  const file = path.join(state(), 'dispatch', 'docs-S1-product-manager.json');
+  const transcript = path.join(base, 'agent-p6.jsonl');
+  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }));
+  const stop = (message, active) => hook('hook-subagent-stop.mjs', {
+    cwd: dir, agent_id: 'p6', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: active,
+  });
+  const sent = stop('Wrote docs/missing-result.md. No findings.', false);
+  assert.equal(sent.status, 2);
+  assert.match(sent.stderr, /^Your report names `docs\/missing-result\.md`, which does not exist\./u);
+  assert.doesNotMatch(sent.stderr, /Your brief asks you to write your machine handoff/u, 'the hook writes the handoff once the stop ends');
+  assert.throws(() => readFileSync(file), /ENOENT/u, 'nothing is written from a report sent back');
+  const corrected = 'No findings. The result doc was never needed.';
+  assert.equal(stop(corrected, true).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { written_by: 'stop-hook', report: corrected });
+  assert.deepEqual(log().map((row) => [row.handoffs_written, row.sent_back]), [[0, true], [1, false]]);
 });
 
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {

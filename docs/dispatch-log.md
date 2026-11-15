@@ -39,6 +39,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written ([delivery check](hooks.md#delivery-check)), `chat` for none. |
 | `paths` | Those paths, at most 20. |
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
+| `handoffs_written` | How many handoff files its brief asked for the hook wrote from its final report, as the [delivery check](hooks.md#delivery-check) does when the agent did not write one. A row written before the field has none. |
 | `sent_back` | `true` when the hook sent the subagent back at this stop, `false` when it let it end. A row written before the field has none. |
 
 `cache_write` is `cache_write_5m` plus `cache_write_1h`: the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price.

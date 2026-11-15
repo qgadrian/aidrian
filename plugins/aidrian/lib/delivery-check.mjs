@@ -7,15 +7,18 @@
 // The check also reads the subagent's brief: a handoff file the brief asks this agent to write, an absolute
 // `<state>/dispatch/*.json` path whose name holds the agent's own, must exist when it stops. A handback can reach another
 // session than the one that dispatched it, or none once that one has ended, so the file is the record its dispatcher reads.
+// When the agent stops without it, with none of its own background tasks running, and is not sent back for another reason,
+// the stop hook writes its final report there (deliverHandoffs): a brief can name the file for an agent with no file tool or shell, or make it optional,
+// and the report is the handoff either way. The agent is sent back for it only when it has no report to write.
 // docs/hooks.md#delivery-check.
 
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { checkoutRoots, runGit } from './git.mjs';
 import { stateDir } from './project.mjs';
-import { firstPrompt, readText, filesTouched } from './transcript.mjs';
+import { firstPrompt, readText, filesTouched, lastHandback } from './transcript.mjs';
 
 const CLAIMED_PATHS = 20;
 // A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template, and not after
@@ -64,6 +67,62 @@ export function unwrittenHandoffs(input, project) {
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
+// `delivery` once the agent's final report is written to each handoff file it owes (`unwritten`), with `written`, the
+// files the hook wrote, and those files out of `unwritten` and `missing`. A stop with a background task of the agent's
+// own still `running` is no end of its work, so nothing is written then; nor with no report (finalReport).
+// With `write: false`, nothing is written: the result is the delivery as it would be once every owed file is, with
+// `written` empty, so the stop hook decides on a send-back before it writes. A report the agent is sent back to correct
+// is not its last, and a file written from it would stand, since a later stop skips a handoff file that exists.
+export function deliverHandoffs(input, delivery, { running = false, write = true } = {}) {
+  const owed = delivery.unwritten ?? [];
+  const report = owed.length && !running ? finalReport(input) : null;
+  if (report === null) return { ...delivery, written: [] };
+  const written = write ? writeHandoffs(owed, report) : [];
+  const covered = write ? written : owed;
+  const cwd = typeof input.cwd === 'string' ? input.cwd : null;
+  const isCovered = (claim) => covered.some((file) => (cwd && file === resolveClaim(cwd, claim)) || file.endsWith(`${path.sep}${path.normalize(claim)}`));
+  return { ...delivery, missing: delivery.missing.filter((claim) => !isCovered(claim)), unwritten: owed.filter((file) => !covered.includes(file)), written };
+}
+
+// The subagent's final report: the message of its last handback call (transcript.mjs lastHandback), else its last
+// message; null when neither holds text.
+export function finalReport(input) {
+  const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
+  const handback = transcript ? lastHandback(transcript) : null;
+  const report = handback ?? input.last_assistant_message;
+  return typeof report === 'string' && report.trim() !== '' ? report : null;
+}
+
+// Writes `report` to each of `files` that still does not exist, and returns those written. A file that appeared since
+// the check, as one its dispatcher wrote, is kept as it is; one that cannot be written is left owed.
+export function writeHandoffs(files, report) {
+  const body = `${JSON.stringify(handoffRecord(report), null, 2)}\n`;
+  return files.filter((file) => {
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, body, { flag: 'wx' });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// What a handoff file holds for `report`: the JSON object it is, alone or as its one fenced block, else the report as
+// text, `{ "written_by": "stop-hook", "report": "<text>" }`, so a reader can tell the hook wrote it.
+const FENCED = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u;
+export function handoffRecord(report) {
+  const text = report.trim();
+  const json = FENCED.exec(text)?.[1] ?? text;
+  try {
+    const value = JSON.parse(json);
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) return value;
+  } catch {
+    // Not JSON: written as text.
+  }
+  return { written_by: 'stop-hook', report: text };
+}
+
 // The .md and .json paths a message presents as delivered, once each, at most CLAIMED_PATHS. A path on any other line
 // is a mention, such as "docs/old.md does not exist", and is never checked; nor is a path shortened with `...` or `…`.
 export function claimedPaths(message) {
@@ -76,12 +135,11 @@ export function claimedPaths(message) {
 // The claimed paths that exist nowhere: not absolute or from `cwd`, not from its checkout or the main checkout, and not
 // from any of the other `roots` or the end of a `touched` file, each read only once a claim needs it.
 export function missingPaths(claims, cwd, { roots = () => [], touched = () => [] } = {}) {
-  const resolve = (base, claim) => (claim.startsWith('~/') ? path.join(homedir(), claim.slice(2)) : path.resolve(base, claim));
   let checkouts;
   let others;
   let files;
   return claims.filter((claim) => {
-    if (existsSync(resolve(cwd, claim))) return false;
+    if (existsSync(resolveClaim(cwd, claim))) return false;
     if (path.isAbsolute(claim) || claim.startsWith('~/')) return true;
     checkouts ??= checkoutRoots(cwd);
     if (checkouts && [checkouts.current, checkouts.main].some((root) => existsSync(path.join(root, claim)))) return false;
@@ -92,6 +150,9 @@ export function missingPaths(claims, cwd, { roots = () => [], touched = () => []
     return !files.some((file) => file.endsWith(tail) && existsSync(file));
   });
 }
+
+// A claimed path as a file: `~/` from the home folder, any other relative path from `base`.
+const resolveClaim = (base, claim) => (claim.startsWith('~/') ? path.join(homedir(), claim.slice(2)) : path.resolve(base, claim));
 
 // The other roots a relative claim may be read from: the project, its state folder, every worktree of its repository,
 // this plugin, its skills folder, and each skill's folder.

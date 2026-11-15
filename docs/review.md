@@ -336,7 +336,19 @@ none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, the q
 attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
 repository it names, and moved to that repository's file by its next write; one that names no repository is read for
-origin alone. No write lands on a record of another repository: a write that names no repository refuses one there.
+origin alone. When both files of one pull request exist, as when a session on an older plugin keeps writing the old name
+while a newer one writes the repository's file, and both are copies of one review (the same first round, which a quiet push moves to a new head without making it
+another review), the record is
+their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, extensions, and stage sign-offs), each pass and round it lacks,
+its owed entries, and the higher id counter. Each merged list ends in time order, so an older waive the other copy holds
+lands before a newer refuse, and the refuse still stands. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
+only the other holds is added, the later choice of a stop both hold wins with its own sign-off, and a stop the newer one
+recorded again on that head, or let go as older than the latest ten, stays gone. The next write keeps that merge, past the old file's revision, before it removes
+the old file. A newer copy of the same review on the pull request, built by a writer that never read this machine's record,
+such as that older session, keeps every Human entry this machine holds and the copy lacks, since nothing takes one back.
+A review that started over, on another first round, keeps none of the earlier review's entries.
+Each write stamps the plugin's version on the record as `pluginVersion`, which is never posted, and warns on stderr when
+the record it replaces was written by a newer version: run one plugin version in every session on a pull request. No write lands on a record of another repository: a write that names no repository refuses one there.
 A reader that names no repository, such as a merge with no `-R`, reads the newest record of that number; the merge guard
 refuses such a merge when this machine holds records of that number for more than one repository.
 A pull request's summary comment is that pull request's own, so a copy there whose record names no repository is taken

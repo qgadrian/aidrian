@@ -126,6 +126,7 @@ export function stopRow(input, project, {
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
     running: children.length,
+    handoffs_written: (delivery.written ?? []).length,
     sent_back: sentBack,
   };
 }

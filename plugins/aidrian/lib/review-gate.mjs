@@ -85,15 +85,17 @@ function readRecordFile(file, pr) {
 // repository's own, never another's: its file, else an old-name record that names it, or names none when `repo` is
 // origin's (state.mjs legacyFor). No `repo` is this repository, origin's; with no origin either, the old-name record.
 // A record found nowhere in this project's state folder is looked for in the folders a change of remotes left behind
-// (state.mjs recordFolders), under the same rules.
+// (state.mjs recordFolders), under the same rules. When the repository's own file and an old-name record for it both
+// sit in one folder, as when a session on an older plugin attested under the old name, the one recorded later counts.
 export function readRecord(project, pr, given = null) {
   const repo = repoName(given) ?? originRepo(project);
   if (repo === null) return readRecordFile(plainRecordFile(project, pr), pr);
   for (const [at, dir] of recordFolders(project).entries()) {
     const own = readRecordFile(path.join(dir, `pr-${pr}${repoKey(repo)}.json`), pr);
-    if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repo ? own : null;
     const old = legacyFor(project, readRecordFile(path.join(dir, `pr-${pr}.json`), pr), repo, { own: at === 0 });
-    if (old) return old;
+    if (own && repoName(own.repo ?? null) !== null && repoName(own.repo) !== repo) return null;
+    if (own && old) return String(old.recordedAt ?? '') > String(own.recordedAt ?? '') ? old : own;
+    if (own || old) return own ?? old;
   }
   return null;
 }
@@ -125,7 +127,6 @@ export function gateReview(project, pr, repo = null) {
   return null;
 }
 
-// Writes `record` to its repository's file, and removes one of that repository left under the old name.
 // Writes `record` to its repository's file, never over another repository's, and moves an old-name record of its own
 // repository there: as the review record does (state.mjs writeAt).
 export function writeRecord(project, record) {

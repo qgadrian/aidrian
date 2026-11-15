@@ -374,6 +374,24 @@ export function firstPrompt(text) {
   return null;
 }
 
+// The message of the transcript's last handback call when no assistant text follows it, else null: the report a subagent
+// delivered through the host's handback tool, which ends its run, so its last message may hold no text of the report.
+// Claude Code names the tool SubagentHandback; a host whose transcript this module does not read has none.
+const HANDBACK_TOOL = 'SubagentHandback';
+export function lastHandback(text) {
+  let message = null;
+  for (const line of text.split('\n')) {
+    const entry = parseLine(line);
+    const content = entry?.type === 'assistant' ? entry.message?.content : null;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block?.type === 'tool_use' && block.name === HANDBACK_TOOL && typeof block.input?.message === 'string') message = block.input.message;
+      else if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '') message = null;
+    }
+  }
+  return message;
+}
+
 export function readText(file) {
   try {
     return readFileSync(file, 'utf8');

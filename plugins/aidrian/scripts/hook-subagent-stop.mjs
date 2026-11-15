@@ -1,8 +1,11 @@
 // SubagentStop hook (Claude Code): one `stop` row in the dispatch log, then two checks that can send the subagent back.
 // The delivery check: every .md or .json path the subagent's last message names must exist; when one does not, it is sent
 // back once, on the first stop of its turn, to write it or correct its report, and the send-back is recorded as a lesson
-// for that agent type (lib/lesson-signals.mjs). So is a handoff file its brief asked it to write and it did not
-// (unwrittenHandoffs): the file is the record its dispatcher reads, since a handback can reach another session or none.
+// for that agent type (lib/lesson-signals.mjs). A handoff file its brief asked it to write and it did not (unwrittenHandoffs)
+// is the record its dispatcher reads, since a handback can reach another session or none: the hook writes the agent's
+// final report there (deliverHandoffs), and sends it back for the file only when it has no report to write, or while a
+// background task of its own still runs. It writes only on a stop it lets end: a stop sent back, as for another missing
+// file, has a report the agent will correct, and the corrected one is what the file must hold.
 // The background check: no background shell or agent it started may still run (runningChildren). A subagent that ends its
 // turn goes idle: a shell task's end notice wakes it, but a subagent task's handback to an idle agent is refused, and the
 // work it waits on stalls until something else wakes it. So it is told to wait in the foreground, and sent back again at
@@ -17,6 +20,7 @@ import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendB
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
 import { checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered } from '../lib/dispatch-rows.mjs';
+import { deliverHandoffs } from '../lib/delivery-check.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
 import { findProject } from '../lib/project.mjs';
@@ -40,7 +44,7 @@ const handoffReason = (files) =>
   `Your brief asks you to write your machine handoff to ${files.map((file) => `\`${file}\``).join(', ')}, which does not exist. ` +
   'Write the handoff JSON there now, then end your turn with a short summary. The file is the record your dispatcher reads: ' +
   'a handback can reach another session than the one that dispatched you, or none once it has ended. ' +
-  'An agent with neither a file tool nor a shell returns the handoff as its last message and says so; ' +
+  'An agent with neither a file tool nor a shell ends its turn with the handoff as its last message, and this hook writes it there; ' +
   'if the path belongs to another agent, say so.';
 
 // Whether the background check sends the subagent back on this stop, given `made` send-backs so far: the count is stored
@@ -54,12 +58,20 @@ await runHook((input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
-  const delivery = checkDelivery(input, project);
   const children = runningChildren(input);
+  const checked = checkDelivery(input, project);
+  const running = children.length > 0;
+  // The send-back is decided on the delivery as it would be once the handoff files are written, and they are written
+  // only when the stop ends.
+  let delivery = deliverHandoffs(input, checked, { running, write: false });
   const made = children.length ? childSendBacks(input) : 0;
   if (!children.length) forgetChildSendBacks(input);
   const forChildren = childrenSendBack(input, children, made);
-  const forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
+  let forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
+  if (!forChildren && !forDelivery) {
+    delivery = deliverHandoffs(input, checked, { running });
+    forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
+  }
   if (config.telemetry.enabled) {
     appendEvent(project, config, stopRow(input, project, { delivery, children, sentBack: forChildren || forDelivery, docReads: config.telemetry.docReads }));
   }

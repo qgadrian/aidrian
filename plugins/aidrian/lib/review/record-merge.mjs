@@ -9,6 +9,7 @@
 // empty record, dropped the earlier review's entries on purpose, as an override line is filled only into its own review.
 
 import { isObject } from '../fs.mjs';
+import { STOPS_KEPT } from './quota.mjs';
 
 const list = (state, key) => (Array.isArray(state?.[key]) ? state[key].filter(isObject) : []);
 const later = (a, b) => String(b?.at ?? '') > String(a?.at ?? '');
@@ -35,12 +36,7 @@ export function keepHuman(base, other) {
   keepEach(base, other, 'extensions', ['source', 'round', 'head', 'at']);
   const overrides = Array.isArray(other.overrides) ? other.overrides.filter((line) => typeof line === 'string') : [];
   if (overrides.length) base.overrides = [...new Set([...(Array.isArray(base.overrides) ? base.overrides : []), ...overrides])];
-  // A stage sign-off sits on the quota stops it answers: one of `other`'s goes onto the same stop of `base` that has none.
-  const stops = new Map(list(other, 'quotaStops').map((stop) => [keyOf(stop, ['head', 'stage', 'reviewer', 'at']), stop]));
-  for (const stop of list(base, 'quotaStops')) {
-    const theirs = stops.get(keyOf(stop, ['head', 'stage', 'reviewer', 'at']));
-    if (isObject(theirs?.signoff) && !isObject(stop.signoff)) stop.signoff = { ...theirs.signoff };
-  }
+  keepStops(base, other);
   return base;
 }
 
@@ -62,6 +58,50 @@ export function keepWork(base, other) {
   base.revision = Math.max(base.revision ?? 0, other.revision ?? 0);
   if (String(other.updatedAt ?? '') > String(base.updatedAt ?? '')) base.updatedAt = other.updatedAt;
   return base;
+}
+
+// The Human's choice of what replaces a reviewer out of quota, and the stage sign-off that answers it, from `other`'s
+// quota stops onto `base`'s. A stop is one per head, stage, and reviewer (quota.mjs recordStop), and the choice, its time,
+// and the sign-off travel together: the review step clears the sign-off when the Human changes the choice
+// (step.mjs), and a stage counts as signed only on a stop whose choice is the Human's (record.mjs recordStageSignoff).
+// - The same stop, by its time, in both: the later choice, by `chosen_at`, with its own sign-off; where both hold one
+//   choice, the later sign-off.
+// - A stop only `other` holds, with a choice or a sign-off: added, unless `base` holds a later stop for that head, stage,
+//   and reviewer, which a stop recorded again replaced on purpose, its choice with it. A push leaves a stop on its
+//   own head, where nothing reads it for the new head, so a stop of an earlier head is kept, not revived for a later one.
+// - At most the latest STOPS_KEPT, by time, as recordStop keeps: a stop `base` let go for being old stays gone.
+function keepStops(base, other) {
+  const theirs = list(other, 'quotaStops').filter((stop) => chosen(stop) || isObject(stop.signoff));
+  if (!theirs.length) return;
+  const ours = list(base, 'quotaStops');
+  const slot = (a, b) => sameHead(a.head, b.head) && a.stage === b.stage && a.reviewer === b.reviewer;
+  for (const stop of theirs) {
+    const same = ours.find((each) => slot(each, stop) && each.at === stop.at);
+    if (same) {
+      takeChoice(same, stop);
+      continue;
+    }
+    if (ours.some((each) => slot(each, stop) && String(each.at ?? '') > String(stop.at ?? ''))) continue;
+    const replaced = ours.filter((each) => slot(each, stop));
+    for (const each of replaced) ours.splice(ours.indexOf(each), 1);
+    ours.push({ ...stop, ...(isObject(stop.signoff) ? { signoff: { ...stop.signoff } } : {}) });
+  }
+  base.quotaStops = ours.map((stop, i) => [stop, i]).sort(([a, i], [b, j]) => String(a.at ?? '').localeCompare(String(b.at ?? '')) || i - j)
+    .map(([stop]) => stop).slice(-STOPS_KEPT);
+}
+
+const chosen = (stop) => typeof stop?.choice === 'string' && stop.choice !== '';
+
+// `stop`'s choice, its time, and its sign-off, from `theirs` where it chose later or `stop` chose nothing; where both
+// made one choice at one time, `theirs`'s sign-off where it is the later or `stop` has none.
+function takeChoice(stop, theirs) {
+  const [ourAt, theirAt] = [String(stop.chosen_at ?? ''), String(theirs.chosen_at ?? '')];
+  if (chosen(theirs) && (!chosen(stop) || theirAt > ourAt)) {
+    Object.assign(stop, { choice: theirs.choice, chosen_at: theirs.chosen_at ?? null, signoff: isObject(theirs.signoff) ? { ...theirs.signoff } : null });
+    return;
+  }
+  if (stop.choice !== theirs.choice || ourAt !== theirAt || !isObject(theirs.signoff)) return;
+  if (!isObject(stop.signoff) || later(stop.signoff, theirs.signoff)) stop.signoff = { ...theirs.signoff };
 }
 
 // `base[key]` with each entry of `other[key]` whose `keys` it does not hold, and, where both hold one, the later.

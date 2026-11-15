@@ -15,6 +15,7 @@ import { pluginVersion } from '../plugins/aidrian/lib/config-version.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { readRecord as readAttest, writeRecord as writeAttest } from '../plugins/aidrian/lib/review-gate.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
+import { keepHuman } from '../plugins/aidrian/lib/review/record-merge.mjs';
 import { emptyState, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
 const OPEN = { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } };
@@ -92,6 +93,50 @@ test('a newer copy on the pull request that never read the Human`s sign-off does
   const restarted = record(repo, { revision: 40, rounds: [{ head: H2, at: '2026-11-15T00:00:00.000Z' }] });
   const fresh = readRecord(project, 12, [{ id: 1, body: summaryBody(restarted, null, 'x', OPEN), author_association: 'MEMBER' }], repo).state;
   assert.deepEqual([fresh.signoffs, fresh.acceptances ?? []], [{}, []]);
+});
+
+// A reviewer out of quota on the second head, the Human's choice to review the stage instead, and the Human's sign-off.
+const STOP = { head: H2, stage: 'deep', reviewer: 'codex-local', passes: ['engine:codex-local'], reason: 'quota', at: '2026-11-14T18:40:00.000Z', choice: null };
+const SIGNED = { ...STOP, choice: 'human', chosen_at: '2026-11-14T18:41:00.000Z', signoff: { by: 'The Human', at: '2026-11-14T18:45:00.000Z' } };
+
+test('a stage sign-off keeps the Human`s choice of its quota stop when the newer record holds the stop without it', (t) => {
+  const { project, repo, own, plain, put } = setup(t);
+  // The older version's file: the Human chose to review the stage and signed it off.
+  put(plain, record(repo, { revision: 5, updatedAt: '2026-11-14T18:45:00.000Z', rounds: [{ head: H1 }, { head: H2 }], quotaStops: [SIGNED] }));
+  // The newer version's file, written after: the same stop, as recorded before the Human chose.
+  put(own, record(repo, { revision: 8, updatedAt: '2026-11-14T18:46:00.000Z', rounds: [{ head: H1 }, { head: H2 }], quotaStops: [STOP] }));
+  const merged = readLocalState(project, 12, repo);
+  assert.deepEqual(merged.quotaStops, [SIGNED], 'the stop carries the Human`s choice with the sign-off, so the stage counts as signed');
+});
+
+test('a newer copy on the pull request that lacks a signed quota stop keeps it', (t) => {
+  const { project, repo, own, put } = setup(t);
+  put(own, record(repo, { revision: 5, updatedAt: '2026-11-14T18:45:00.000Z', rounds: [{ head: H1 }, { head: H2 }], quotaStops: [SIGNED] }));
+  const posted = record(repo, { revision: 21, updatedAt: '2026-11-14T18:51:13.000Z', rounds: [{ head: H1 }, { head: H2 }] });
+  const comments = [{ id: 1, body: summaryBody(posted, null, 'x', OPEN), author_association: 'MEMBER' }];
+  const { state } = readRecord(project, 12, comments, repo);
+  assert.equal(state.revision, 21, 'the newer copy is built on');
+  assert.deepEqual(state.quotaStops, [SIGNED], 'with the signed stop it never read, its choice included');
+});
+
+test('a quota stop the newer record replaced or let go stays gone, and the later of two choices holds', () => {
+  const rounds = [{ head: H1 }, { head: H2 }];
+  // The reviewer stopped again on that head after the Human chose: the stop recorded again replaced it, its choice with it.
+  const again = { ...STOP, at: '2026-11-14T19:00:00.000Z' };
+  assert.deepEqual(keepHuman({ rounds, quotaStops: [again] }, { rounds, quotaStops: [SIGNED] }).quotaStops, [again]);
+  // The newer record keeps the latest ten stops, each later than the signed one: the old stop is not brought back.
+  const ten = Array.from({ length: 10 }, (_, i) => ({ ...STOP, head: String(i).repeat(40), at: `2026-11-14T19:0${i}:00.000Z` }));
+  assert.deepEqual(keepHuman({ rounds, quotaStops: ten.map((stop) => ({ ...stop })) }, { rounds, quotaStops: [SIGNED] }).quotaStops, ten);
+  // A stop of an earlier head only the other holds is kept, before the newer record's later stop.
+  const earlier = { ...SIGNED, head: H1, at: '2026-11-14T18:00:00.000Z' };
+  assert.deepEqual(keepHuman({ rounds, quotaStops: [{ ...STOP }] }, { rounds, quotaStops: [earlier] }).quotaStops, [earlier, STOP]);
+  // Both chose: the later choice holds with its own sign-off, here none yet.
+  const changed = { ...STOP, choice: 'agent:critic', chosen_at: '2026-11-14T18:50:00.000Z', signoff: null };
+  assert.deepEqual(keepHuman({ rounds, quotaStops: [{ ...SIGNED }] }, { rounds, quotaStops: [changed] }).quotaStops, [changed]);
+  assert.deepEqual(keepHuman({ rounds, quotaStops: [{ ...changed }] }, { rounds, quotaStops: [SIGNED] }).quotaStops, [changed]);
+  // One choice in both, and the sign-off on one of them.
+  const unsigned = { ...SIGNED, signoff: null };
+  assert.deepEqual(keepHuman({ rounds, quotaStops: [unsigned] }, { rounds, quotaStops: [SIGNED] }).quotaStops, [SIGNED]);
 });
 
 test('each write stamps its plugin version, warns when an older one writes over a newer one`s record, and never posts it', (t) => {

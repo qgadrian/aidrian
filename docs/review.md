@@ -339,7 +339,9 @@ repository it names, and moved to that repository's file by its next write; one 
 origin alone. When both files of one pull request exist, as when a session on an older plugin keeps writing the old name
 while a newer one writes the repository's file, and both are copies of one review (the same first round), the record is
 their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, extensions, and stage sign-offs), each pass and round it lacks,
-its owed entries, and the higher id counter. The next write keeps that merge, past the old file's revision, before it removes
+its owed entries, and the higher id counter. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
+only the other holds is added, the later choice of a stop both hold wins with its own sign-off, and a stop the newer one
+recorded again on that head, or let go as older than the latest ten, stays gone. The next write keeps that merge, past the old file's revision, before it removes
 the old file. A newer copy of the same review on the pull request, built by a writer that never read this machine's record,
 such as that older session, keeps every Human entry this machine holds and the copy lacks, since nothing takes one back.
 A review that started over, on another first round, keeps none of the earlier review's entries.

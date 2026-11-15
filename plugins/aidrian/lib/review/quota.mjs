@@ -17,8 +17,8 @@ export const DEFAULT_AGENT = 'critic';
 // agent, so the answer authorizes that agent only.
 export const agentLabel = (name) => `Run a ${name} agent`;
 export const LABELS = Object.freeze({ agent: agentLabel(DEFAULT_AGENT), human: 'The Human reviews it', wait: 'Wait for quota' });
-// The most stops the record keeps.
-const KEEP = 10;
+// The most stops the record keeps, the latest; record-merge.mjs keeps the same number when two records merge.
+export const STOPS_KEPT = 10;
 
 // `--quota-fallback`'s value, checked: `human` or `agent:<name>`.
 export function parseChoice(value) {
@@ -45,7 +45,7 @@ export function recordStop(state, { head, stage, pass, reason }) {
     reason: String(reason ?? '').replace(/\s+/gu, ' ').slice(0, 300), at: new Date().toISOString(), choice: null,
   };
   const same = (each) => each.head === head && each.stage === stop.stage && each.reviewer === stop.reviewer;
-  state.quotaStops = [...(state.quotaStops ?? []).filter((each) => !same(each)), stop].slice(-KEEP);
+  state.quotaStops = [...(state.quotaStops ?? []).filter((each) => !same(each)), stop].slice(-STOPS_KEPT);
   return stop;
 }
 

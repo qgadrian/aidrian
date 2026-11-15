@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { commandConfig, committedConfig, committedDecisions, committedQuorumProduct, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates, resolveAutoMerge } from '../plugins/aidrian/lib/config.mjs';
+import { CONTINUE_ROUTES, SCHEMA } from '../plugins/aidrian/lib/config-schema.mjs';
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { loadVocab } from '../plugins/aidrian/lib/decisions.mjs';
 import { committedConfigFile, findProject } from '../plugins/aidrian/lib/project.mjs';
@@ -412,9 +413,22 @@ test('github.titleIssuePrefix: off by default, so pull request titles are plain 
 
 test('the handoff settings load as a group, and a project sets any of them', (t) => {
   const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000 } } }));
-  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000 } }]);
+  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'none', maxChain: 3 } }]);
+  const chain = loadConfig(project(t, { version: 1, session: { handoff: { continue: 'clear', maxChain: 5 } } }));
+  assert.deepEqual([chain.errors, chain.config.session.handoff], [[], { ...DEFAULTS.session.handoff, continue: 'clear', maxChain: 5 }]);
   const some = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'off' } } }));
   assert.deepEqual([some.errors, some.config.session.handoff], [[], { ...DEFAULTS.session.handoff, mode: 'off' }]);
+});
+
+test('the handoff continue route is none by default, a chain is 3 handoffs, and the schema takes every route', () => {
+  assert.deepEqual(DEFAULTS.session.handoff, { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3 });
+  assert.deepEqual(CONTINUE_ROUTES, ['none', 'clear', 'compact', 'background']);
+  assert.deepEqual(SCHEMA.session.handoff, { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positive' });
+});
+
+test('a string session.handoff, the old shape, loads with the new continue defaults', (t) => {
+  const { config } = loadConfig(project(t, { version: 1, session: { handoff: 'auto' } }));
+  assert.deepEqual(config.session.handoff, { mode: 'auto', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3 });
 });
 
 test('a string session.handoff, the old shape, keeps its mode and is reported', (t) => {
@@ -652,6 +666,10 @@ const errorCases = [
   ['a cost ratio below 1', { version: 1, session: { handoff: { costRatio: 0.5 } } }, /"session\.handoff\.costRatio" must be a number of 1\.1 or more$/],
   ['a cost ratio as a string', { version: 1, session: { handoff: { costRatio: '2' } } }, /"session\.handoff\.costRatio" must be a number of 1\.1 or more$/],
   ['a fractional token ceiling', { version: 1, session: { handoff: { maxTokens: 1.5 } } }, /"session\.handoff\.maxTokens" must be a whole number, 0 or more$/],
+  ['a handoff continue route outside its list', { version: 1, session: { handoff: { continue: 'fork' } } }, /"session\.handoff\.continue" must be "none", "clear", "compact", or "background"$/],
+  ['a handoff continue route that is no string', { version: 1, session: { handoff: { continue: true } } }, /"session\.handoff\.continue" must be "none", "clear", "compact", or "background"$/],
+  ['a handoff chain of 0', { version: 1, session: { handoff: { maxChain: 0 } } }, /"session\.handoff\.maxChain" must be a whole number above 0$/],
+  ['a fractional handoff chain', { version: 1, session: { handoff: { maxChain: 2.5 } } }, /"session\.handoff\.maxChain" must be a whole number above 0$/],
   ['review record outside its list', { version: 1, review: { record: 'pr' } }, /"review\.record" must be "comment" or "local"$/],
   ['review engine that is not a name', { version: 1, review: { engine: 'two words' } }, /"review\.engine" must be "auto", "codex-local", "pr-bot", "self", or a reviewer of review\.reviewers$/],
   ['lesson signals switch that is not a boolean', { version: 1, lessons: { auto: 'off' } }, /"lessons\.auto" must be true or false$/],

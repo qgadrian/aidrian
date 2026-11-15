@@ -76,5 +76,15 @@ export default {
     ],
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
+    // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
+    // the claude process, names the session before and after it.
+    handoffContinue: {
+      routes: ['clear'],
+      steps: { clear: 'type /clear, then any message' },
+      // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference
+      // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
+      keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),
+      hookHostPid: (pid = process.ppid) => (Number.isInteger(pid) && pid > 1 ? pid : null),
+    },
   },
 };

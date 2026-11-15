@@ -104,7 +104,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 
 ```json
 "session": {
-  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0 }
+  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3 }
 }
 ```
 
@@ -113,6 +113,8 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | `session.handoff.mode` | `"ask"`, `"auto"`, or `"off"`: what the reminder and the plan offer do. |
 | `session.handoff.costRatio` | The cost ratio of the first firing, a number of 1.1 or more; the reminder comes back once the ratio doubles since its last firing, never below `costRatio`. |
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
+| `session.handoff.continue` | How the session goes on after its handoff: `"none"`, the default, `"clear"`, `"compact"`, or `"background"`. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
+| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from
 `aidrian check` and every `aidrian` command:

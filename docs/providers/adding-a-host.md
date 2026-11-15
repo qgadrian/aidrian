@@ -66,6 +66,7 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `capabilities.transcripts` | Whether `lib/transcript.mjs` reads its transcripts: cost rows, the names reminder, and the session-length reminder need it. `true` also opts the host into the `review-rounds` rule's reading of the Human's answers and typed grants of review rounds; `false` makes that rule hand the raise to the Human's own shell |
 | `capabilities.prFooterSettings` | The settings files that say whether it asks for a generated-by footer, when it does |
 | `capabilities.trackerGuard` | `verified` (`live`, `source`, or `none`), `evidence`, `unguardedRoutes`, and, when its hooks wait on a person, `hookTrust`, `trustStep`, and `offStep` |
+| `capabilities.handoffContinue` | The routes of `session.handoff.continue` it can do, as `routes`, never `none`; `[]` or no field means none, and `continueRoutes(host)` in `lib/hosts/index.mjs` reads it. Each listed route has `steps[route]`, what it takes from the Human, as a phrase. A host that lists `clear` declares `keepsArmed(prompt)`, whether a prompt is its own clear or compact command, and `hookHostPid()`, the id of the host process a hook runs under, the same before and after a clear, or null. |
 
 `unguardedRoutes` is how a host says what cannot be held: `[{ name, reason }]`, one per way a tracker write reaches no hook.
 While `tracker.enabled` is true, `aidrian check` warns of each, of a `hookTrust` that answers `untrusted` or `off`,

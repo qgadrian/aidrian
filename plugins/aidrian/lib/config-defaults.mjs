@@ -62,8 +62,9 @@ export const DEFAULTS = deepFreeze({
   knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576, untaggedDocBytes: null, enforce: 'warn', baseline: {} }, defaults: { codeStyle: true } },
   skills: { descriptionChars: 160, listingBytes: 9216 },
   // The session-length reminder (lib/session-length.mjs, docs/handoff.md): it fires once a call costs `costRatio` times
-  // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off.
-  session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0 } },
+  // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off. `continue` is how the
+  // session goes on after its handoff, and `maxChain` how many handoffs in a row it may continue before a person looks.
+  session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3 } },
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: Object.fromEntries(Object.keys(MODEL_CHOICES).map((key) => [key, { agents: {} }])),
   names: { human: 'the Human', ai: null },

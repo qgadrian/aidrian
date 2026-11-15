@@ -20,6 +20,10 @@ const sameHead = (a, b) => typeof a === 'string' && typeof b === 'string' && a !
 // to the new head and time and keeps where it was in its `quiet` list (stages.mjs runStages), so a copy written before
 // that push holds an earlier identity of the same round: they match when either copy's first identity, its first
 // `quiet` entry or else its head and time, is one the other's round held, in its `quiet` list or now.
+// Accepted limit: a record with no round yet, such as a quota stop before the first reviewer returned, with the Human's
+// fallback choice and stage sign-off, has no identity, so two copies of it that grew apart are not merged. Only a mixed
+// set of plugin versions lets them, which is rare, and it fails closed: the Human is asked again, and no choice they did
+// not make is kept.
 export function sameReview(a, b) {
   const [ours, theirs] = [identities(a?.rounds?.[0]), identities(b?.rounds?.[0])];
   if (!ours.length || !theirs.length) return false;

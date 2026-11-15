@@ -430,6 +430,8 @@ const THREAD_COMMENT_KEYS = new Set(['replyId', 'commentId', 'fallbackId']);
 // The record less what stays on this machine on every repository (postedCopy), as a copy.
 function withoutLocal(state) {
   const view = JSON.parse(JSON.stringify(state));
+  // The plugin version that wrote the record is this machine's (state.mjs writeAt), never posted.
+  delete view.pluginVersion;
   for (const entry of Object.values(isObject(view?.index) ? view.index : {})) {
     if (!isObject(entry)) continue;
     delete entry.reviewer;

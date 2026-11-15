@@ -26,11 +26,13 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
+import { older, pluginVersion } from '../config-version.mjs';
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { recordsFolder, remoteStateDirs, stateDir } from '../project.mjs';
 import { originRepo, repoName } from '../remotes.mjs';
 import { isClosed, isFindingId, isMint, recordedFindings, recordFindings } from './findings.mjs';
+import { keepHuman, keepWork, sameReview } from './record-merge.mjs';
 import { escapeLines, fillWithheld, findingsTable, flagName, isPostId, isPrivate, JUDGE_RULING, plainChecker, postedCopy, untextedBlocking, WITHHELD } from './publish.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { ruledLines } from './settled.mjs';
@@ -335,16 +337,36 @@ export function owedElsewhere(project, pr, repo) {
 // of several repositories), the newest record of that number.
 // A record found nowhere in this project's state folder is looked for in the folders a change of remotes left behind
 // (recordFolders), under the same rules; the next write puts it in this project's own folder.
+// When the repository's own file and an old-name record for it both sit in one folder, as when a session on an older
+// plugin kept writing the old name, the record is their merge (mergeRecords), so neither's Human entries are lost.
 export function readLocalState(project, pr, repo) {
   if (repo === undefined || repo === null || repoName(repo) === null) return recordsOf(project, pr).reduce((a, b) => newer(a, b), null);
   const key = repoKey(repo);
   for (const [at, dir] of recordFolders(project).entries()) {
     const own = readFile(path.join(dir, `pr-${pr}-review${key}.json`), pr);
-    if (own) return repoName(own.repo ?? null) === null || repoName(own.repo) === repoName(repo) ? own : null;
     const old = legacyFor(project, readFile(path.join(dir, `pr-${pr}-review.json`), pr), repo, { own: at === 0 });
-    if (old) return old;
+    if (own && repoName(own.repo ?? null) !== null && repoName(own.repo) !== repoName(repo)) return null;
+    if (own && old) return mergeRecords(own, old);
+    if (own || old) return own ?? old;
   }
   return null;
+}
+
+// Two records of one pull request and repository that grew apart on this machine, as one: the newer of them, with every
+// Human entry and every pass, round, owed entry, and finding mark of the other when both are copies of one review
+// (record-merge.mjs, mergePending, mergeIndex). Neither argument is kept apart: the newer one is the result.
+export function mergeRecords(a, b) {
+  const base = newer(a, b);
+  return absorb(base, base === a ? b : a);
+}
+
+// `base` with what `other`, another copy of its record, holds and it lacks (mergeRecords).
+function absorb(base, other) {
+  keepHuman(base, other);
+  keepWork(base, other);
+  base.pending = mergePending(base.pending, other.pending);
+  mergeIndex(base, other);
+  return base;
 }
 
 // Every write raises the record's revision, so the newer of two records is the one written last. Before it, the one
@@ -405,8 +427,11 @@ function markMoved(marks) {
 
 // Writes `state` to its repository's file, never over a record of another repository. A record under the old name moves
 // to its repository's file on that repository's next write, which removes it there (legacyFor served it to that
-// repository alone); one that names none goes once origin's own is written. A write that names no repository goes to the
+// repository alone), once `state` holds its merge (mergeRecords): a session on an older plugin may have written it since
+// `state` was read. One that names none goes once origin's own is written. A write that names no repository goes to the
 // old name only when no other repository's record is there.
+// Each write stamps the plugin's version on the record (`pluginVersion`, never posted), and warns on stderr when the
+// record on disk was written by a newer one: two versions on one pull request read and write different files.
 function writeAt(project, state) {
   const marks = adoptOwed(project, state);
   const target = file(project, state.pr, state.repo);
@@ -415,10 +440,34 @@ function writeAt(project, state) {
   if (target === plain && old && repoName(old.repo ?? null) !== null) {
     throw new Error(`the review record of #${state.pr} under its old name is ${repoName(old.repo)}'s, and a record that names no repository does not replace it`);
   }
+  const legacy = target !== plain && legacyFor(project, old, state.repo);
+  if (legacy && sameReview(state, legacy)) {
+    // Past the old record's revision, so the merge is the newer record even where `state` was built on an older one.
+    const revision = Math.max(state.revision ?? 0, (legacy.revision ?? 0) + 1);
+    absorb(state, legacy).revision = revision;
+  }
+  stampVersion(state, [readFile(target, state.pr), old]);
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
   markMoved(marks);
-  if (target !== plain && legacyFor(project, old, state.repo)) rmSync(plain, { force: true });
+  if (legacy) rmSync(plain, { force: true });
+}
+
+// Stamps this plugin's version on `state`, after a warning when one of `onDisk`, the records it replaces, names a newer one.
+function stampVersion(state, onDisk) {
+  let ours;
+  try {
+    ours = pluginVersion();
+  } catch {
+    return;
+  }
+  const newest = onDisk.map((record) => record?.pluginVersion).filter((each) => typeof each === 'string' && /^\d+\.\d+\.\d+$/u.test(each))
+    .reduce((a, b) => (a === null || older(a, b) ? b : a), null);
+  if (newest !== null && older(ours, newest)) {
+    process.stderr.write(`warning: aidrian ${ours} is writing the review record of #${state.pr}, which aidrian ${newest} wrote last. ` +
+      'Run one plugin version in every session on this pull request: an older one can miss what a newer one recorded.\n');
+  }
+  state.pluginVersion = ours;
 }
 
 // An id that tells two owed entries apart, even two made in the same millisecond.
@@ -527,6 +576,10 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   // The private copy holds less than the record where a check withheld a string: that is filled from this machine's own
   // record. A machine with none fills from an empty one, so every finding of the copy is marked adopted.
   fillWithheld(remote, local ?? emptyState(pr, repo));
+  // A Human entry this machine holds and the newer copy of the same review lacks was never read by the copy's writer,
+  // since nothing takes one back: it is kept (record-merge.mjs keepHuman), as when a session on an older plugin posted
+  // from its old-name file.
+  if (local) keepHuman(remote, local);
   return { state: remote };
 }
 

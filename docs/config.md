@@ -754,7 +754,8 @@ flow's or a slice's files alone, the cross pass, and an engine pass do not count
 `attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, one file a
 repository and number, as the [review record](review.md#answering-in-the-session) is: `reviews/pr-<N>-<owner>--<name>.json`,
 whichever remote is origin, so a review of one repository's pull request never counts for another's. A record under the
-old name `reviews/pr-<N>.json` counts for the repository it names, or for origin when it names none.
+old name `reviews/pr-<N>.json` counts for the repository it names, or for origin when it names none; when both files
+exist, as when a session on an older plugin attests under the old name, the one recorded later counts.
 It prints a marker:
 `<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->`. A request that carries the marker for its own pull request
 and repository also passes, so a new session or machine need not review again.

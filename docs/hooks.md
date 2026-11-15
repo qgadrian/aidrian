@@ -960,8 +960,14 @@ A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be che
 The check also reads the subagent's brief, the first prompt of its transcript. A handoff file the brief asks this agent to
 write must exist when it stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
 or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
-for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not, the hook
-sends the agent back once, on the first stop of its turn, to write it. The file is the record its dispatcher reads:
+for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not,
+the hook writes the agent's final report there: the message of its last handback call (Claude Code's `SubagentHandback`)
+when no text follows it, else its last message. A report that is a JSON object, alone or as its one fenced block, is
+written as that object; any other report as `{ "written_by": "stop-hook", "report": "<text>" }`. A file that appeared
+in the meantime, such as one its dispatcher wrote, is kept. So a brief that names the file for an agent with no file tool
+or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
+The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write,
+or while a background task of its own still runs, since that stop is no end of its work. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
 a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief
 says to read, is not asked of it. A forked subagent's first prompt is its parent's, so the check finds nothing there.
@@ -987,8 +993,9 @@ for the plugin, once per run of send-backs. The count is written before each sen
 written is let end, so the check never loops.
 
 The send-back alone did not hold: subagents still ended their turn with a background agent running. So the Agent hook
-also rewrites the dispatch before it runs: a call a subagent makes, one whose payload has `agent_id`, with
-`run_in_background: true` runs with it `false`. The subagent then gets the child's report as the call's result, and
+also rewrites the dispatch before it runs: a call a subagent makes, one whose payload has `agent_id`, runs with
+`run_in_background: false` unless it already sets that. A call that leaves the flag out is rewritten too: Claude Code
+launches a subagent's dispatch in the background by default. The subagent then gets the child's report as the call's result, and
 several dispatches in one turn still run side by side. The main session's background dispatches run as written, since a
 background agent's report wakes it. A background shell is left as it is, for a server the subagent polls; the stop hook
 still checks it. A host whose agent tool reaches no hook, such as Codex, is not rewritten.

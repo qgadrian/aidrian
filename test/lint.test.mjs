@@ -248,6 +248,55 @@ test('aidrian lint runs every lint on a project and prints the always-doc budget
   assert.deepEqual([run(['nope']).status, run(['nope']).stderr], [1, 'unknown lint: nope; use one of skills, agents, paths, budget, terms, review, personas\n']);
 });
 
+test('aidrian lint budget --pin pins the docs over budget under "warn", and under "fail" only lowers and drops pins', (t) => {
+  const run = (args, cwd) => spawnSync(CLI, ['lint', ...args], { cwd, encoding: 'utf8' });
+  const dir = tempDir(t);
+  execFileSync('git', ['init', '-q', dir]);
+  mkdirSync(path.join(dir, '.aidrian/knowledge'), { recursive: true });
+  mkdirSync(path.join(dir, 'kb'));
+  const file = path.join(dir, '.aidrian/config.json');
+  writeFileSync(path.join(dir, 'kb/a.md'), 'a'.repeat(30));
+  writeFileSync(path.join(dir, 'kb/b.md'), 'b'.repeat(40));
+  writeFileSync(path.join(dir, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'kb', description: 'Rules.', docs: { 'a.md': { summary: 'A.', tags: ['testing'] }, 'b.md': { summary: 'B.', tags: ['testing'] } } }));
+  const budgets = () => JSON.parse(readFileSync(file, 'utf8')).knowledge.budgets;
+  writeFileSync(file, JSON.stringify({ version: 1, knowledge: { budgets: { taggedDocBytes: 20 } } }));
+
+  const adopt = run(['budget', '--pin'], dir);
+  assert.deepEqual([adopt.status, adopt.stdout], [0, 'budget: 2 docs pinned in .aidrian/config.json knowledge.budgets.baseline, rewritten\n']);
+  assert.deepEqual(budgets(), { taggedDocBytes: 20, baseline: { 'kb/a.md': 30, 'kb/b.md': 40 } });
+
+  writeFileSync(file, JSON.stringify({ version: 1, knowledge: { budgets: { ...budgets(), enforce: 'fail' } } }));
+  writeFileSync(path.join(dir, 'kb/a.md'), 'a'.repeat(10));
+  writeFileSync(path.join(dir, 'kb/b.md'), 'b'.repeat(35));
+  writeFileSync(path.join(dir, 'kb/c.md'), 'c'.repeat(25));
+  writeFileSync(path.join(dir, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'kb', description: 'Rules.', docs: { 'a.md': { summary: 'A.', tags: ['testing'] }, 'b.md': { summary: 'B.', tags: ['testing'] }, 'c.md': { summary: 'C.', tags: ['testing'] } } }));
+  const ratchet = run(['budget', '--pin'], dir);
+  assert.deepEqual([ratchet.status, ratchet.stderr], [1, 'budget: knowledge.budgets.enforce is "fail", so --pin adds and raises no pin; still over budget: kb/c.md\n'], 'a new doc over budget gets no pin');
+  assert.deepEqual(budgets().baseline, { 'kb/b.md': 35 }, 'a shrunk doc is pinned lower, and one within budget is dropped');
+  assert.equal(run(['budget'], dir).status, 1, 'the unpinned doc still fails');
+  assert.deepEqual([run(['skills', '--pin'], dir).status, run(['skills', '--pin'], dir).stderr], [1, '--pin works only with aidrian lint budget\n']);
+
+  // A developer's local source is never pinned into the team's config.json, whatever its size.
+  writeFileSync(file, JSON.stringify({ version: 1, knowledge: { budgets: { taggedDocBytes: 20 } } }));
+  const source = tempDir(t);
+  mkdirSync(path.join(source, 'knowledge'));
+  mkdirSync(path.join(source, 'notes'));
+  writeFileSync(path.join(source, 'notes/mine.md'), 'm'.repeat(50));
+  writeFileSync(path.join(source, 'knowledge/notes.json'), JSON.stringify({ dir: 'notes', description: 'Mine.', docs: { 'mine.md': { summary: 'Mine.', tags: ['testing'] } } }));
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ sources: [source] }));
+  assert.equal(run(['budget', '--pin'], dir).status, 0);
+  assert.deepEqual(budgets().baseline, { 'kb/b.md': 35, 'kb/c.md': 25 }, 'only the team docs are pinned');
+  assert.doesNotMatch(readFileSync(file, 'utf8'), /mine\.md/u);
+
+  // An index that does not load would drop its bucket's pins, so --pin writes nothing.
+  const before = readFileSync(file, 'utf8');
+  writeFileSync(path.join(dir, '.aidrian/knowledge/kb.json'), '{ not json');
+  const broken = run(['budget', '--pin'], dir);
+  assert.equal(broken.status, 1);
+  assert.match(broken.stderr, /^budget: --pin changes nothing while the knowledge indexes have errors:\n/u);
+  assert.equal(readFileSync(file, 'utf8'), before);
+});
+
 test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad cite are errors; no invariants is a warning', (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-lint-review-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

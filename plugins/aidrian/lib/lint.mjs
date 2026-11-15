@@ -7,7 +7,8 @@
 //   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, a known model and effort,
 //           and no ask for an amend
 //   paths   tracked and untracked, non-ignored files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
-//   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each tagged doc (knowledge.mjs)
+//   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each doc (knowledge.mjs);
+//           --pin rewrites knowledge.budgets.baseline in config.json to the docs over budget now, at their sizes
 //   terms   tracked files hold no banned term of the terms file (terms.mjs): a `block` hit fails, a `warn` hit warns;
 //           --staged reads what the index holds, --rule <id> runs one rule. `code` rules are left to the project's
 //           linter. Off while config.json `terms.file` is null
@@ -15,12 +16,12 @@
 //   personas  every knowledge doc tagged `personas` has the persona sections, a Success: line per task, and no two
 //           tasks with one title; a quoted span in a Success: paragraph warns (personas.mjs)
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
-import { isDirectory, isFile } from './fs.mjs';
+import { isDirectory, isFile, isObject, readJson } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { projectFolders } from './hosts/index.mjs';
 import { checkBudgets, loadKnowledge } from './knowledge.mjs';
@@ -59,18 +60,23 @@ const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
 export const commands = {
   lint: {
-    usage: '[skills|agents|paths|budget|terms|review|personas] [DIR...] [--staged] [--rule ID] [--project DIR]',
+    usage: '[skills|agents|paths|budget|terms|review|personas] [DIR...] [--staged] [--rule ID] [--pin] [--project DIR]',
     about: 'lint skills, agents, personal paths, the knowledge budgets, the banned terms, the review config, and the persona docs; DIR replaces .claude/skills or .claude/agents',
     run(args) {
-      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' }, staged: { type: 'boolean' }, rule: { type: 'string' } } });
+      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' }, staged: { type: 'boolean' }, rule: { type: 'string' }, pin: { type: 'boolean' } } });
       const [kind, ...dirs] = positionals;
       if (kind !== undefined && !KINDS.includes(kind)) {
         console.error(`unknown lint: ${kind}; use one of ${KINDS.join(', ')}`);
         return 1;
       }
+      if (values.pin && kind !== 'budget') {
+        console.error('--pin works only with aidrian lint budget');
+        return 1;
+      }
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
-      const { buckets } = loadKnowledge(project);
+      const { buckets, errors } = loadKnowledge(project);
+      if (values.pin) return pinBudget(project, config.knowledge.budgets, buckets, errors);
       const at = (rel) => path.join(project.root, rel);
       const runs = {
         skills: () => lintSkills(dirs.length ? dirs : projectFolders('skills').map(at), config.skills),
@@ -91,6 +97,43 @@ export const commands = {
     },
   },
 };
+
+// Rewrites knowledge.budgets.baseline in the team's config.json to the docs over budget now, at their sizes, and removes
+// the key when no doc is over. Under "warn" it pins every such doc, to adopt "fail"; under "fail" it only lowers and drops
+// pins, so a run never lets a new doc off: pinning one then is a hand edit to config.json the Human sees in review.
+// It refuses while an index has an error, since a bucket it could not read would lose its pins, and it pins only the
+// team's buckets: a local source is one developer's, at a path no one else has.
+function pinBudget(project, budgets, buckets, errors) {
+  if (errors.length) {
+    console.error(`budget: --pin changes nothing while the knowledge indexes have errors:\n${errors.join('\n')}`);
+    return 1;
+  }
+  const { enforce, baseline } = budgets;
+  const current = checkBudgets(project.root, buckets.filter((bucket) => bucket.source === null), budgets).pins;
+  const pins = enforce === 'fail'
+    ? Object.fromEntries(Object.entries(current).filter(([doc]) => Object.hasOwn(baseline, doc)).map(([doc, bytes]) => [doc, Math.min(bytes, baseline[doc])]))
+    : current;
+  const left = Object.keys(current).filter((doc) => !Object.hasOwn(pins, doc) || current[doc] > pins[doc]);
+  const file = path.join(project.root, project.paths.config);
+  const config = readJson(project.root, project.paths.config, []);
+  if (!isObject(config)) {
+    console.error(`budget: cannot read ${project.paths.config}: run aidrian check`);
+    return 1;
+  }
+  const written = isObject(config.knowledge?.budgets) ? { ...config.knowledge.budgets } : {};
+  const before = JSON.stringify(written.baseline ?? {});
+  if (Object.keys(pins).length) written.baseline = pins;
+  else delete written.baseline;
+  config.knowledge = { ...(isObject(config.knowledge) ? config.knowledge : {}), budgets: written };
+  if (!Object.keys(written).length) delete config.knowledge.budgets;
+  if (!Object.keys(config.knowledge).length) delete config.knowledge;
+  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+  const count = Object.keys(pins).length;
+  const changed = JSON.stringify(pins) === before ? 'unchanged' : 'rewritten';
+  console.log(`budget: ${count} doc${count === 1 ? '' : 's'} pinned in ${project.paths.config} knowledge.budgets.baseline, ${changed}`);
+  if (left.length) console.error(`budget: knowledge.budgets.enforce is "fail", so --pin adds and raises no pin; still over budget: ${left.join(', ')}`);
+  return left.length ? 1 : 0;
+}
 
 export function lintSkills(dirs, { descriptionChars, listingBytes }) {
   const problems = [];

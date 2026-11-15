@@ -292,27 +292,54 @@ export function indexedPaths(buckets) {
 
 // The knowledge budgets, config.json `knowledge.budgets`. Every session and subagent reads the `always` docs, so their
 // total warns above `alwaysBytes` and fails above twice that. A route to a tag reads each of its docs whole, so a tagged
-// doc above `taggedDocBytes` warns. Returns { problems, warnings, summary, always }; `always` is
-// { bytes, budget, buckets: { <id>: bytes } }, for aidrian report docs.
-export function checkBudgets(root, buckets, { alwaysBytes, taggedDocBytes }) {
+// doc above `taggedDocBytes` is over budget, and so is an untagged doc above `untaggedDocBytes` when that is set.
+// `enforce` says what over budget does: "warn" prints a warning, and "fail" makes it an error, the `always` total above
+// `alwaysBytes` included. `baseline` pins docs that were over budget when "fail" came on, each at a size: a pinned doc
+// is a warning until it grows past its pin, which is an error under "fail". A pin above the doc's size, or on a doc
+// within budget or no longer indexed, is a warning to lower or drop it, so the pins only shrink.
+// Returns { problems, warnings, summary, always, pins }: `always` is { bytes, budget, buckets: { <id>: bytes } }, for
+// aidrian report docs, and `pins` the baseline that pins every doc over budget now, at its size, for `lint budget --pin`.
+export function checkBudgets(root, buckets, { alwaysBytes, taggedDocBytes, untaggedDocBytes = null, enforce = 'warn', baseline = {} }) {
   const size = (doc) => fileBytes(path.resolve(root, doc)) ?? 0;
+  const fail = enforce === 'fail';
   const perBucket = buckets.map((bucket) => [bucket.id, bucket.always.reduce((sum, doc) => sum + size(doc), 0)]);
   const total = perBucket.reduce((sum, [, bytes]) => sum + bytes, 0);
   const summary = `${total} of ${alwaysBytes} always-doc bytes${perBucket.length ? ` (${perBucket.map(([id, bytes]) => `${id} ${bytes}`).join(', ')})` : ''}`;
   const always = (over) =>
     `always docs: ${total} bytes, over ${over}; every session and subagent reads them: keep one or two short docs, and move the rest behind tags or to search`;
-  const problems = total > 2 * alwaysBytes ? [always(`twice knowledge.budgets.alwaysBytes (${alwaysBytes})`)] : [];
-  const warnings = total > alwaysBytes && !problems.length ? [always(`knowledge.budgets.alwaysBytes (${alwaysBytes})`)] : [];
-  for (const doc of indexRows(buckets)) {
-    const bytes = size(doc.path);
-    if (doc.tags.length && bytes > taggedDocBytes) {
-      warnings.push(
-        `${doc.path}: ${bytes} bytes, over knowledge.budgets.taggedDocBytes (${taggedDocBytes}); every route to ${doc.tags.join(', ')} reads it whole: ` +
-          'split it into a short rule card and a reference, or drop its tags so only search finds it',
-      );
+  const problems = [];
+  const warnings = [];
+  if (total > 2 * alwaysBytes) problems.push(always(`twice knowledge.budgets.alwaysBytes (${alwaysBytes})`));
+  else if (total > alwaysBytes) (fail ? problems : warnings).push(always(`knowledge.budgets.alwaysBytes (${alwaysBytes})`));
+  // Two buckets may index one doc: it is measured once, with the tags of both.
+  const docs = new Map();
+  for (const doc of indexRows(buckets)) docs.set(doc.path, [...new Set([...(docs.get(doc.path) ?? []), ...doc.tags])]);
+  const pins = {};
+  const pinned = new Set();
+  const repin = 'run aidrian lint budget --pin';
+  for (const [doc, tags] of docs) {
+    const bytes = size(doc);
+    const [key, limit, why] = tags.length
+      ? ['taggedDocBytes', taggedDocBytes, `every route to ${tags.join(', ')} reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it`]
+      : ['untaggedDocBytes', untaggedDocBytes, 'agents read it whole once search finds it: split it by topic'];
+    if (limit === null || bytes <= limit) continue;
+    pins[doc] = bytes;
+    const over = `${doc}: ${bytes} bytes, over knowledge.budgets.${key} (${limit})`;
+    const pin = Object.hasOwn(baseline, doc) ? baseline[doc] : null;
+    if (pin === null) {
+      (fail ? problems : warnings).push(`${over}; ${why}`);
+      continue;
     }
+    pinned.add(doc);
+    if (bytes > pin) (fail ? problems : warnings).push(`${over}, and past its pin in knowledge.budgets.baseline (${pin}); a pinned doc may only shrink: ${why}`);
+    else if (bytes < pin) warnings.push(`${over}, pinned at ${pin} in knowledge.budgets.baseline: lower the pin to ${bytes}; ${repin}`);
+    else warnings.push(`${over}, pinned in knowledge.budgets.baseline: ${why}`);
   }
-  return { problems, warnings, summary, always: { bytes: total, budget: alwaysBytes, buckets: Object.fromEntries(perBucket) } };
+  for (const doc of Object.keys(baseline).filter((each) => !pinned.has(each))) {
+    const state = docs.has(doc) ? 'is within its budget' : 'is not an indexed doc';
+    warnings.push(`knowledge.budgets.baseline pins ${doc}, which ${state}: drop the pin; ${repin}`);
+  }
+  return { problems, warnings, summary, always: { bytes: total, budget: alwaysBytes, buckets: Object.fromEntries(perBucket) }, pins };
 }
 
 // The docs that match `words`, best first. A doc that matches more of the distinct words ranks first, wherever each one

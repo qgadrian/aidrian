@@ -95,7 +95,7 @@ export const SCHEMA = {
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
   terms: { file: 'textOrNull' },
-  knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' }, defaults: { codeStyle: 'boolean' } },
+  knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive', untaggedDocBytes: 'positiveOrNull', enforce: 'budgetEnforce', baseline: 'docBytes' }, defaults: { codeStyle: 'boolean' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
   session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore' } },
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },

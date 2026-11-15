@@ -59,7 +59,7 @@ export const DEFAULTS = deepFreeze({
   // The terms file (lib/terms.mjs); null turns the terms rule off.
   terms: { file: null },
   // The docs this plugin ships under a project's own knowledge, each on unless set to false (DEFAULT_DOCS in lib/knowledge.mjs).
-  knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 }, defaults: { codeStyle: true } },
+  knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576, untaggedDocBytes: null, enforce: 'warn', baseline: {} }, defaults: { codeStyle: true } },
   skills: { descriptionChars: 160, listingBytes: 9216 },
   // The session-length reminder (lib/session-length.mjs, docs/handoff.md): it fires once a call costs `costRatio` times
   // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off.

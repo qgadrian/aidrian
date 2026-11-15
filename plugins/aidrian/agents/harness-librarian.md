@@ -22,7 +22,7 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `docs`, `ha
 - Point the main session at the buckets: the project's `AGENTS.md` says to load them with the `knowledge` skill,
   and `CLAUDE.md` holds `@AGENTS.md`.
 - Keep `always` to one or two short docs: each is read at every session start. Point tags at rule cards of about 10 KB,
-  and leave plans and long references untagged, for search. `aidrian check` warns past config.json `knowledge.budgets`.
+  and leave plans and long references untagged, for search. `aidrian check` warns past config.json `knowledge.budgets`, or fails under `enforce: "fail"`; never add a pin to `baseline` to pass it.
 - After every change, run `aidrian check` and `aidrian lint`, and fix what they report.
 
 ## Write knowledge

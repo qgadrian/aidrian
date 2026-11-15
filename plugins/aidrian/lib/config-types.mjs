@@ -64,6 +64,12 @@ export const TYPES = {
   ],
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
+  positiveOrNull: [(value) => value === null || (Number.isInteger(value) && value > 0), 'a whole number above 0, or null'],
+  budgetEnforce: [(value) => ['warn', 'fail'].includes(value), '"warn" or "fail"'],
+  docBytes: [
+    (value) => isObject(value) && Object.entries(value).every(([doc, bytes]) => isText(doc) && Number.isInteger(bytes) && bytes > 0),
+    'an object of doc paths, each to a whole number of bytes above 0',
+  ],
   percent: [(value) => Number.isInteger(value) && value > 0 && value <= 100, 'a whole number from 1 to 100'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
   // At 1 a call costs what it would in a fresh session, so a handoff saves nothing; under 1.1 the saving per call is

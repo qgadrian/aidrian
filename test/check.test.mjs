@@ -31,6 +31,19 @@ function exampleRepo(t) {
   return dir;
 }
 
+// A git repository with the example's .gitignore and one bucket of one untagged 40-byte doc.
+function tempRepo(t) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', dir]);
+  cpSync(path.join(EXAMPLE, '.gitignore'), path.join(dir, '.gitignore'));
+  mkdirSync(path.join(dir, '.aidrian/knowledge'), { recursive: true });
+  mkdirSync(path.join(dir, 'kb'));
+  writeFileSync(path.join(dir, 'kb/ref.md'), '# Reference\n\nA long reference doc here.\n');
+  writeFileSync(path.join(dir, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'kb', description: 'Ref.', docs: { 'ref.md': { summary: 'The reference.' } } }));
+  return dir;
+}
+
 test('check passes on a copy of the example consumer in its own repository', (t) => {
   const dir = exampleRepo(t);
   const { status, stdout, stderr } = run(['check'], path.join(dir, 'docs'));
@@ -79,6 +92,54 @@ test('check warns past the knowledge budgets, and fails when the always docs pas
   const failed = check({ alwaysBytes: Math.floor((always - 1) / 2) });
   assert.deepEqual([failed.status, failed.stdout], [1, '']);
   assert.match(failed.stderr, new RegExp(`^always docs: ${always} bytes, over twice knowledge\\.budgets\\.alwaysBytes \\(${Math.floor((always - 1) / 2)}\\); `));
+});
+
+test('knowledge.budgets.enforce "fail" makes an over-budget doc an error, and a pinned doc fails only once it grows', (t) => {
+  const dir = exampleRepo(t);
+  const doc = 'docs/knowledge/engineering/branches-and-reviews.md';
+  const largest = statSync(path.join(dir, doc)).size;
+  const file = path.join(dir, '.aidrian/config.json');
+  const check = (budgets) => {
+    writeFileSync(file, JSON.stringify({ version: 1, knowledge: { budgets: { taggedDocBytes: largest - 1, ...budgets } } }));
+    return run(['check'], dir);
+  };
+  const over = `${doc}: ${largest} bytes, over knowledge.budgets.taggedDocBytes (${largest - 1})`;
+  const escaped = over.replace(/[.()]/gu, '\\$&');
+  assert.equal(check({}).status, 0, 'the default, "warn", still passes');
+  const failed = check({ enforce: 'fail' });
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, new RegExp(`^${escaped}; every route to orchestration, review reads it whole`, 'mu'));
+
+  const pinned = check({ enforce: 'fail', baseline: { [doc]: largest } });
+  assert.deepEqual([pinned.status, pinned.stderr.split('\n')[0]], [0, `warning: ${over}, pinned in knowledge.budgets.baseline: every route to orchestration, review reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it`]);
+  const grown = check({ enforce: 'fail', baseline: { [doc]: largest - 1 } });
+  assert.equal(grown.status, 1, 'a doc past its pin fails');
+  assert.match(grown.stderr, new RegExp(`^${escaped}, and past its pin in knowledge\\.budgets\\.baseline \\(${largest - 1}\\); a pinned doc may only shrink`, 'mu'));
+  const slack = check({ enforce: 'fail', baseline: { [doc]: largest + 10, 'docs/gone.md': 5 } });
+  assert.equal(slack.status, 0);
+  assert.deepEqual(slack.stderr.split('\n').slice(0, 2), [
+    `warning: ${over}, pinned at ${largest + 10} in knowledge.budgets.baseline: lower the pin to ${largest}; run aidrian lint budget --pin`,
+    'warning: knowledge.budgets.baseline pins docs/gone.md, which is not an indexed doc: drop the pin; run aidrian lint budget --pin',
+  ]);
+
+  writeFileSync(path.join(dir, 'docs/knowledge/engineering/branches-and-reviews.md'), 'small\n');
+  const always = statSync(path.join(dir, 'docs/knowledge/engineering/working-agreement.md')).size;
+  writeFileSync(file, JSON.stringify({ version: 1, knowledge: { budgets: { enforce: 'fail', alwaysBytes: always - 1 } } }));
+  assert.match(run(['check'], dir).stderr, new RegExp(`^always docs: ${always} bytes, over knowledge\\.budgets\\.alwaysBytes \\(${always - 1}\\)`, 'mu'), 'under "fail" the always total over its budget is an error too');
+  assert.match(check({ enforce: 'nope' }).stderr, /"knowledge\.budgets\.enforce" must be "warn" or "fail"/u);
+  assert.match(check({ baseline: { [doc]: 0 } }).stderr, /"knowledge\.budgets\.baseline" must be an object of doc paths, each to a whole number of bytes above 0/u);
+});
+
+test('knowledge.budgets.untaggedDocBytes caps the docs only search finds', (t) => {
+  const dir = tempRepo(t);
+  const check = (budgets) => {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, knowledge: { budgets } }));
+    return run(['check'], dir);
+  };
+  const note = 'note: 1 of 1 docs have no tags; no agent routes to them\n';
+  assert.deepEqual([check({}).status, check({}).stderr], [0, note], 'no cap by default');
+  const capped = check({ untaggedDocBytes: 10, enforce: 'fail' });
+  assert.deepEqual([capped.status, capped.stderr], [1, `${note}kb/ref.md: 40 bytes, over knowledge.budgets.untaggedDocBytes (10); agents read it whole once search finds it: split it by topic\n`]);
 });
 
 test('check passes on a config without tracker, and names the key of each tracker problem', (t) => {

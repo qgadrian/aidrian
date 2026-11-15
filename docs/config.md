@@ -57,7 +57,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<Markdown, LICENSE, NOTICE, raster images, fonts>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
-  "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 }, "defaults": { "codeStyle": true } },
+  "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576, "untaggedDocBytes": null, "enforce": "warn", "baseline": {} }, "defaults": { "codeStyle": true } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0 } },
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
@@ -179,6 +179,9 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
+| `knowledge.budgets.untaggedDocBytes` | The bytes one untagged knowledge doc may have; `null`, the default, sets no cap: [Knowledge budgets](#knowledge-budgets). |
+| `knowledge.budgets.enforce` | What a doc over budget does: `"warn"`, the default, prints a warning; `"fail"` fails `aidrian check` and `aidrian lint budget`: [Enforcing the budgets](#enforcing-the-budgets). |
+| `knowledge.budgets.baseline` | The docs over budget when `"fail"` came on, each pinned at a size it may not pass, as `{ "<doc path>": <bytes> }`: [Enforcing the budgets](#enforcing-the-budgets). |
 | `knowledge.defaults.codeStyle` | `false` takes the plugin's [default code-style doc](knowledge.md#default-code-style) out of every `code_style` route. `true`, the default, lists it after the project's own `code_style` docs, which win where they conflict. |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
 | `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
@@ -1032,8 +1035,10 @@ Every session and subagent reads the `always` docs, and `aidrian-knowledge route
 - The `always` docs of all buckets together: a warning above `alwaysBytes`, 16 KB by default, and an error above twice that.
 - Each doc with at least one tag: a warning above `taggedDocBytes`, 24 KB by default.
   Split such a doc into a short rule card and a reference, or drop its tags so that only search finds it.
+- Each doc with no tag: a warning above `untaggedDocBytes`, when it is set. An agent reads such a doc whole once search
+  finds it, so a project whose references grow can cap them too. It is `null` by default, with no cap.
 
-The warnings print on stderr, and the check still passes. `aidrian check` prints the `always` total on its last line;
+Under the default `"enforce": "warn"`, the warnings print on stderr, and the check still passes. `aidrian check` prints the `always` total on its last line;
 the warning below is one line, wrapped here:
 
 ```console
@@ -1044,6 +1049,23 @@ ok: .aidrian (2 buckets, 8 docs)
 state: /home/you/.local/state/aidrian/projects/notes-1a2b3c4d
 budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)
 ```
+
+### Enforcing the budgets
+
+A warning lets a doc grow back past its budget, since nothing stops a push.
+`"enforce": "fail"` makes each budget warning above an error, so `aidrian check` and `aidrian lint budget` exit 1:
+a doc over its budget, and the `always` docs over `alwaysBytes`. A CI job or a pre-push hook that runs either then stops the push.
+
+A project with docs over budget already pins them first, then turns `"fail"` on:
+
+1. Under `"warn"`, run `aidrian lint budget --pin`. It writes `knowledge.budgets.baseline` in `config.json`, each doc over
+   budget at its size in bytes now, such as `{ "docs/guest-crm.md": 29812 }`.
+2. Set `"enforce": "fail"` in the same change, and commit both.
+
+A pinned doc stays a warning while it is at or under its pin, and fails once it grows past it, so a pinned doc may only shrink.
+A pin above its doc's size, or on a doc within budget or no longer indexed, is a warning to lower or drop it.
+Under `"fail"`, `aidrian lint budget --pin` only lowers and drops pins. It never adds a pin or raises one, and it exits 1
+naming each doc it left over budget. Pinning a new doc is then a hand edit to `config.json`, a decision a reviewer sees in the diff.
 
 The key `docs.alwaysBudgetBytes` moved here as `alwaysBytes`; a `config.json` that still sets it gets an error naming the new key.
 [knowledge.md](knowledge.md#shaping-buckets) says how to shape buckets that stay within the budgets.

@@ -17,6 +17,7 @@ import { projectRuleReason } from './agent-gates.mjs';
 import { checkDeadline } from './deadline.mjs';
 import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-guard.mjs';
 import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
+import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { ARMING_FILE, storePath } from './handoff-markers.mjs';
 import { opaqueShellCommand } from './hosts/index.mjs';
 import { stateRoot } from './project.mjs';
@@ -91,15 +92,8 @@ const GLOB = /[*?[]/u;
 const STORE_TAIL = path.join('handoffs', '.continue');
 
 // Each spelling of a glob write from a known folder, as { prefix, rest }: `prefix` is the real, case-folded path of its
-// parts before the first glob, and `rest` the parts from there on, a glob or a plain name each.
-function globPaths({ text, dirs = [] }) {
-  const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => path.join(dir, text));
-  return spelled.map((each) => {
-    const parts = path.resolve(each).split(path.sep);
-    const at = parts.findIndex((part) => GLOB.test(part));
-    return { prefix: real(parts.slice(0, at).join(path.sep) || path.sep), rest: parts.slice(at) };
-  });
-}
+// parts before the first glob, and `rest` the parts from there on, a glob or a plain name each (globStarts).
+const globPaths = (glob) => globStarts(glob).map(({ start, rest }) => ({ prefix: real(start), rest }));
 
 // Whether a glob write reaches the store: each part it spells matches the store's part at that depth, so it names the
 // store, a file in it, or a folder that holds it. A part that is only stars, such as zsh's `**`, matches any number of
@@ -115,7 +109,9 @@ function globReaches({ prefix, rest }, store) {
 // Why the subagent call in `input` may not run because it writes in the continuation store of the state folder `state`
 // gives, or null: { match, reason }. `state` is called only when a target may lie in the store, so a call that writes
 // nowhere near the state root runs no git. It writes there when a target lies in the store, or is a folder that holds
-// it and no checkout, or a glob may reach the store; a target in a folder no path names, or code an interpreter runs,
+// it and no checkout, or a glob may reach the store, by the path it spells or through a link already on disk in any part
+// it expands (globLinksTo), as `tee /tmp/alias*` does when `/tmp/alias` links to a marker, and `/va*/...` through
+// macOS's `/var`; a target in a folder no path names, or code an interpreter runs,
 // counts when it names `handoffs/.continue`, a marker below `.continue/`, or a path part named as a file that arms or
 // delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB). A glob word of a command in a shell the lexer
 // cannot read counts by those names, and when it names the store by its name, as `.con*`, `han*`, or `handoffs/*` do, from any folder
@@ -132,19 +128,20 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   if (joined || names.some(namesStore) || globs.some(unsure)) {
     return { match: 'may change the continuation store', reason: why('may change', 'handoffs/.continue') };
   }
-  const known = globs.filter((glob) => !glob.unsure).flatMap(globPaths);
+  const sure = globs.filter((glob) => !glob.unsure);
+  const known = sure.flatMap(globPaths);
   if (files.length === 0 && known.length === 0) return null;
   const root = real(stateRoot());
   const near = (target) => isWithin(root, target) || isWithin(target, root);
-  if (!dir && ![...files.map(real), ...known.map(({ prefix }) => prefix)].some(near)) return null;
-  const spelled = storePath(state());
-  const store = real(spelled);
+  // A glob anywhere may pass a link into the state root; the walk reads each folder once a call (linkWalk).
+  const seen = linkWalk(input);
+  const linksTo = (target) => sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+  if (!dir && ![...files.map(real), ...known.map(({ prefix }) => prefix)].some(near) && !linksTo(root)) return null;
+  const store = real(storePath(state()));
   const roots = project.checkouts.map(real);
   const holds = (target) => target !== store && isWithin(target, store);
-  // A glob in a part the real path renames, as `/va*` for macOS's `/var`, reaches the store as the path spells it.
-  const stores = [...new Set([store, fold(path.resolve(spelled))])];
   const hit = files.map(real).some((target) => isWithin(store, target) || (holds(target) && !roots.some((each) => isWithin(target, each))))
-    || known.some((glob) => stores.some((each) => globReaches(glob, each)));
+    || known.some((glob) => globReaches(glob, store)) || linksTo(store);
   if (!hit) return null;
   const verb = opaque ? 'may change' : 'changes';
   return { match: `${verb} the continuation store`, reason: why(verb, store) };

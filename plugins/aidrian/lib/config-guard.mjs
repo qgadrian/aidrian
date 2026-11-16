@@ -10,13 +10,14 @@
 // unless its code is one of the few that only read (READS). The guard keeps a gate from changing for the next session;
 // within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { checkDeadline } from './deadline.mjs';
-import { foldCase, globParts, isEntry, isWithin, partsReach } from './fs.mjs';
+import { globParts, isEntry, isWithin } from './fs.mjs';
+import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
@@ -71,9 +72,10 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
   const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
   const shell = globs.filter((glob) => !glob.opaque);
+  const seen = linkWalk(input);
   const named = namedFile(names, files, project, guarded)
-    ?? globbedFile(shell, spelled, targets.length + names.length + globs.length > 1, input.tool_input?.command ?? '')
-    ?? opaqueGlobbedFile(globs.filter((glob) => glob.opaque), spelled, project.checkouts, new Set(spelled.slice(spelled.length - also.length).flat()));
+    ?? globbedFile(shell, spelled, seen, targets.length + names.length + globs.length > 1, input.tool_input?.command ?? '')
+    ?? opaqueGlobbedFile(globs.filter((glob) => glob.opaque), spelled, seen, project.checkouts, new Set(spelled.slice(spelled.length - also.length).flat()));
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -91,7 +93,9 @@ const SWITCHES = Object.freeze([
 // Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, or
 // the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that names its key. It targets the file by its name, in any folder and
-// case, or by a Bash glob whose last part matches that name, such as its name with a `*` for its end. This holds with no
+// case, by a Bash glob whose last part matches that name, such as its name with a `*` for its end, or by a Bash glob from
+// a folder the lexer knows that passes a link to the file already on disk (globLinksTo), as `tee out/alias*` does
+// when `out/alias` links to it. This holds with no
 // gates set, and other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
 // A command in a shell the lexer cannot read that names the local file, or has a glob that may reach it
 // (opaqueGlobReaches), is refused whether or not it names a key: it may set a switch by a key it builds, and the guard
@@ -105,10 +109,12 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   const { files, names, globs } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
-  const globbed = globs.some(({ text, opaque: unread }) => !unread && globParts(text, [], 'i').pattern.test(local));
-  const aimed = targets.length > 0 || globbed || names.some((name) => name.toLowerCase().includes(local));
   const locals = configFiles(project).filter((file) => path.basename(file) === local).map((file) => [file]);
-  const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, project.checkouts) !== null;
+  const seen = linkWalk(input);
+  const linked = (glob) => glob.unsure === false && locals.some(([file]) => globLinksTo(glob, canonical(file), seen));
+  const globbed = globs.some((glob) => !glob.opaque && (globParts(glob.text, [], 'i').pattern.test(local) || linked(glob)));
+  const aimed = targets.length > 0 || globbed || names.some((name) => name.toLowerCase().includes(local));
+  const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached) return null;
   if (opaque) {
     const how = aimed ? 'names' : 'has a glob that may reach';
@@ -205,7 +211,6 @@ function readTargets(input) {
   };
 }
 
-const GLOB_WORD = /[*?[]/u;
 // PowerShell cmdlets that only read, by name and by the aliases PowerShell 7 gives them on every platform, so not `write`
 // or `gsv`, aliases on Windows only, which on another system run a program of that name; the tool loads no profile that
 // could change them. One pipeline of these alone, each word plain, writes nothing (writeTargets).
@@ -307,33 +312,34 @@ function namedFile(names, files, project, also) {
 // `files` pairs each guarded file's spelled path with its canonical one; either may match, and the canonical is returned.
 // `others` says the call has another write, a glob or not, which may create a link, in the glob's folder or above it,
 // that the glob then follows after the disk was read; `command` is the call's whole command line.
-function globbedFile(globs, files, others = true, command = '') {
+// A glob from a folder the lexer knows, simple or not, also reaches a file through a link already on disk in any part
+// it expands, as `printf x | tee out/alias*` or `out/l*/config.json` do (globLinksTo, with `seen` the call's linkWalk).
+function globbedFile(globs, files, seen, others = true, command = '') {
   // The glob's folder is trusted only in one simple command the lexer reads exactly: a plain file tool, plain words, no
   // `..`. A `cd`, a wrapper (`env -C`), a variable, braces, quotes, or a second command may each move or hide what the
   // glob reaches, and every such shape is judged by name instead: failing closed.
   const simple =
     !others && SIMPLE_COMMAND.test(command) && !command.split(/[ \t/]+/u).includes('..');
-  return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
+  const reaches = (pair, { text, dirs = [], unsure = true }) => pair.some((file) => {
     checkDeadline();
     const { head, pattern, folders } = globParts(text, dirs);
     if (unsure || !simple || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     return folders.some((folder) =>
       [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
-      // An entry the glob matches may be a symlink to the file from any folder, which a write follows.
-      entries(folder).some((name) => pattern.test(name) && (isWithin(canonical(path.join(folder, name)), pair[1]) || sameFile(path.join(folder, name), pair[1]))));
-  })))?.[1] ?? null;
+      // An entry the glob matches may be a hard link to the file, which keeps its own path.
+      entries(folder).some((name) => pattern.test(name) && sameFile(path.join(folder, name), pair[1])));
+  });
+  return files.find((pair) => globs.some((glob) => reaches(pair, glob) || (glob.unsure === false && globLinksTo(glob, pair[1], seen))))?.[1] ?? null;
 }
 
 // The guarded file one of `globs`, glob words of a command in a shell the lexer cannot read, may reach, or null.
 // `files` pairs each guarded file's spelled path with its canonical one, as globbedFile's do; the last of a pair is returned.
 // `checkouts` are the project's checkouts, whose folder a glob never names by name alone, and `deep` the files, of either
 // spelling, whose folder it names only with the folder above it, as `aidrian/sessions` for the gate snapshot.
-// The most link entries the guards read and test for one call; past it, a glob counts as one that may reach the file.
-const LINK_BUDGET = 100000;
-function opaqueGlobbedFile(globs, files, checkouts = [], deep = new Set()) {
+// `seen` is the call's linkWalk, so a folder counts against the link budget once a call (lib/glob-links.mjs).
+function opaqueGlobbedFile(globs, files, seen, checkouts = [], deep = new Set()) {
   if (globs.length === 0) return null;
   const roots = new Set(checkouts.flatMap((dir) => [path.resolve(dir), canonical(dir)]));
-  const seen = { folders: new Map(), entries: new Map(), keys: new Map(), reals: new Map(), left: LINK_BUDGET };
   const folderParts = (file) => (deep.has(file) ? 2 : roots.has(path.dirname(file)) ? 0 : 1);
   return files.find((pair) => globs.some((glob) => pair.some((file) => opaqueGlobReaches(glob, file, seen, folderParts(file)))))?.at(-1) ?? null;
 }
@@ -343,18 +349,10 @@ function opaqueGlobbedFile(globs, files, checkouts = [], deep = new Set()) {
 // path at that depth, in any case, as it names the file, a folder that holds it, or a link to either: a glob matches only
 // what is there, so `src/*` or `*.json` in a folder without the file does not. `seen` caches what each folder holds and
 // counts the entries left to read (LINK_BUDGET), each folder once (folderOf); `folderParts` is globNamesFile's.
-function opaqueGlobReaches({ text, dirs = [] }, file, seen, folderParts) {
+function opaqueGlobReaches(glob, file, seen, folderParts) {
   checkDeadline();
-  if (globNamesFile(text, file, { folderParts })) return true;
-  const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => path.join(dir, text));
-  return spelled.some((each) => {
-    const parts = path.resolve(each).split(path.sep);
-    const at = parts.findIndex((part) => GLOB_WORD.test(part));
-    if (at <= 0) return false;
-    const rest = parts.slice(at);
-    // The root splits to an empty part, or a drive's name, that needs its separator back.
-    const head = parts.slice(0, at).join(path.sep);
-    const start = at === 1 ? `${head}${path.sep}` : head;
+  if (globNamesFile(glob.text, file, { folderParts })) return true;
+  return globStarts(glob).some(({ start, rest }) => {
     // A wildcard before the last part may pass a link in any folder it reaches, not only the first.
     if (rest.slice(0, -1).some((part) => GLOB_WORD.test(part)) && linkBelow(start, rest, file, seen)) return true;
     const folder = folderOf(start, seen);
@@ -372,106 +370,6 @@ function opaqueGlobReaches({ text, dirs = [] }, file, seen, folderParts) {
   });
 }
 
-// Whether glob path parts `rest`, from the folder `start`, pass a link to `file`, or to a folder that holds it, in any
-// folder they reach: each part is matched, in any case, against what is there, folder by folder, the folders a link
-// leads to included. Each folder is read once a call (entriesOf), so the entries count against `seen.left` once, however
-// many guarded files and spellings walk it; past it, the glob counts as one that reaches it. Each link is resolved from
-// the folder's spelling that reached it (realOf).
-function linkBelow(start, rest, file, seen) {
-  let level = [start];
-  for (const [i, part] of rest.entries()) {
-    const next = [];
-    for (const dir of level) {
-      checkDeadline();
-      const found = entriesOf(dir, seen);
-      if (found === null) return true;
-      for (const entry of found.filter(({ name }) => partMatches(part, name))) {
-        if (entry.link) {
-          const real = realOf(path.join(dir, entry.name), seen);
-          if (linkReaches(real, rest.slice(i + 1), file)) return true;
-          next.push(real);
-        } else if (entry.folder) next.push(path.join(dir, entry.name));
-      }
-    }
-    level = next;
-  }
-  return false;
-}
-
-// What a folder holds for linkBelow, cached in `seen.entries` by the folder on disk, so each folder counts against
-// `seen.left` once a call: each entry's name, and whether it is a link or a folder; or null past the link budget. Where a
-// link leads is not kept here, as another spelling of the folder resolves it to another path (realOf). `seen.keys` caches
-// each spelling's folderKey.
-function entriesOf(dir, seen) {
-  if (!seen.keys.has(dir)) seen.keys.set(dir, folderKey(dir));
-  const key = seen.keys.get(dir);
-  if (!seen.entries.has(key)) {
-    let found = [];
-    try {
-      found = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      // A folder it cannot read holds nothing it can match.
-    }
-    seen.left -= found.length;
-    seen.entries.set(key, seen.left < 0 ? null : found.map((entry) => ({ name: entry.name, link: entry.isSymbolicLink(), folder: entry.isDirectory() })));
-  }
-  return seen.entries.get(key);
-}
-
-// What a folder holds for opaqueGlobReaches: { dirs, real, links }, or null past the link budget. `dirs` are its
-// spellings, as given and with its links resolved; `real` is the second; `links` are the names of the links in it, which
-// opaqueGlobReaches resolves from `real` (realOf) only when the glob matches one. The names are cached in `seen.folders`
-// by the folder on disk, so another spelling of it, in another letter case or with `.` parts, reads and counts them once.
-function folderOf(folder, seen) {
-  const real = canonical(folder);
-  const key = folderKey(real);
-  if (!seen.folders.has(key)) {
-    let names = [];
-    try {
-      names = readdirSync(real, { withFileTypes: true }).filter((entry) => entry.isSymbolicLink()).map(({ name }) => name);
-    } catch {
-      // A folder it cannot read holds nothing it can match.
-    }
-    seen.left -= names.length;
-    seen.folders.set(key, seen.left < 0 ? null : names);
-  }
-  const links = seen.folders.get(key);
-  return links === null ? null : { dirs: [...new Set([folder, real])], real, links };
-}
-
-// Where the link `at` leads, cached in `seen.reals` by its path as spelled: canonical keeps the letter case it is given,
-// so each spelling of a folder resolves its links itself, never to another spelling's target.
-function realOf(at, seen) {
-  checkDeadline();
-  if (!seen.reals.has(at)) seen.reals.set(at, canonical(at));
-  return seen.reals.get(at);
-}
-
-// Whether the link target `real` is `file`, or a folder that holds it that glob parts `rest` reach below it
-// (reachesFile). The paths are compared as the disk compares them (foldCase): on a disk that ignores case,
-// `WEBAPP/conf` holds `webapp/conf/app.json`, though no string compare says so.
-function linkReaches(real, rest, file) {
-  const [dir, target] = [foldCase(real), foldCase(file)];
-  if (dir === target || sameFile(real, file)) return true;
-  return isWithin(dir, target) && reachesFile(rest, path.relative(dir, target).split(path.sep));
-}
-
-// A folder's device and inode, or its path when it cannot be read.
-function folderKey(folder) {
-  try {
-    const { dev, ino } = statSync(folder);
-    return `${dev}:${ino}`;
-  } catch {
-    return folder;
-  }
-}
-
-// Whether glob path parts reach a guarded file's path parts `reached` below the same folder, in any case (partsReach): one
-// that ends above the file names a folder that holds it; one that goes on below the file reaches nothing of it.
-const reachesFile = (glob, reached) => partsReach(glob, reached, partMatches, false);
-
-const partMatches = (part, name) => (GLOB_WORD.test(part) ? globParts(part, [], 'i').pattern.test(name) : part.toLowerCase() === name.toLowerCase());
-
 // Whether a glob word names `file` by its name alone, as one in a shell that changed its folder first may reach it: its
 // last part matches the file's name, or its folder's, and starts with a plain text of at least NAMED_START characters
 // past any dots, as the local file's name with a `*` for its end, `conf*`, `.aid*`, or `conf[i]g.json` do; or its last
@@ -488,16 +386,6 @@ export function globNamesFile(text, file, { folderParts = 1 } = {}) {
   if (GLOB_WORD.test(last) && (names(last, name) || (folderParts === 1 && names(last, folder)))) return true;
   if (folderParts === 2 && parts.length > 1 && GLOB_WORD.test(`${parts.at(-2)}${last}`) && names(parts.at(-2), above) && names(last, folder)) return true;
   return parts.length > 1 && names(parts.at(-2), folder) && partMatches(last, name);
-}
-
-// Whether two paths are one file on disk: a hard link keeps its own path, so only the device and inode tell.
-function sameFile(a, b) {
-  try {
-    const [x, y] = [statSync(a), statSync(b)];
-    return x.dev === y.dev && x.ino === y.ino;
-  } catch {
-    return false;
-  }
 }
 
 // Spaces and tabs only: a newline separates commands, as `;` does. No `cp` or `mv`: they write into a directory the glob

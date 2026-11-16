@@ -864,11 +864,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   perl and ruby have none. Read, `cat`, and `jq` still read the files, as the block says.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
   A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
+  A glob from a folder the guard knows also counts when a link already on disk, in any part it expands, leads to one of
+  the files or a folder that holds it, as `printf x | tee out/alias*` does when `out/alias` links to config.json.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
-  or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file or a glob
-  that matches it, such as `.aidrian.local.js*`:
+  or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
+  that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
   the [auto-merge](config.md#auto-merge), [unattended waiver](config.md#unattended-waiver), and review-approvals switches
   are the main session's. Other writes to that file follow the rules above.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
@@ -883,6 +885,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   literal path to it, in any letter case on a disk that folds case, through a glob that may reach it, or after a `cd`
   the guard can follow, nor a file named as a marker that arms or delivers a continuation where the path is unknown,
   such as after a `cd` it cannot follow. Otherwise a subagent could write the marker it may not arm.
+  A glob from a known folder also counts when a link already on disk, in any part it expands, leads to a marker, into
+  the store, or to a folder that holds it, as `tee /tmp/alias*` does when `/tmp/alias` links to a marker, and `/va*/…`
+  does through macOS's `/var` link; that walk shares the time and link budgets below.
   It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
   and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
   cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
@@ -925,7 +930,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
   a subagent's call is refused, as the guards could not finish reading the command in time, and the main session's runs,
   as the guards allow it anyway. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
-  be in, is refused at once, and a glob that leads the guards through more than 100,000 links counts as one that may
+  be in, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
   reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
   so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.
   A link a glob passes is resolved from the spelling of its folder that reached it, and its target is compared with a

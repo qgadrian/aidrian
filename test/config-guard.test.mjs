@@ -686,6 +686,78 @@ test('a subagent may not write in the handoff continuation store, with or withou
   }
 });
 
+// A folder outside the project and the state root, which may hold links to guarded files.
+function outside(t) {
+  const out = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-links-')));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  return out;
+}
+
+test('a subagent\'s glob that passes an existing link to an armed marker or the store, in any part it expands, is refused', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const state = stateDir(findProject(dir));
+  const handoffs = path.join(state, 'handoffs');
+  const marker = path.join(handoffs, '.continue/armed-s1.json');
+  mkdirSync(path.dirname(marker), { recursive: true });
+  writeFileSync(marker, '{}');
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const out = outside(t);
+  symlinkSync(marker, path.join(out, 'marker-alias'));
+  symlinkSync(handoffs, path.join(out, 'hlink'));
+  mkdirSync(path.join(out, 'a'));
+  symlinkSync(handoffs, path.join(out, 'a/hl'));
+  writeFileSync(path.join(out, 'other.txt'), '');
+  const run = (tool, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8' });
+  for (const [tool, toolInput] of [
+    // The glob's last match is a link to the marker.
+    ['Bash', { command: `echo '{}' | tee ${out}/marker-alias*` }],
+    ['Bash', { command: `echo '{}' > ${out}/marker-a?ias` }],
+    ['Monitor', { command: `echo '{}' | tee ${out}/marker-al*`, description: 'watch' }],
+    ['PowerShell', { command: `Set-Content ${out}/marker-al* '{}'` }],
+    // A wildcard folder part passes a link to the folder that holds the store, at the glob's first folder or below it.
+    ['Bash', { command: `echo '{}' > ${out}/hl*/.continue/armed-s1.json` }],
+    ['Bash', { command: `echo '{}' > ${out}/*/h?/.continue/armed-s1.json` }],
+    ['PowerShell', { command: `Set-Content ${out}/*/h?/.continue/armed-s1.json '{}'` }],
+  ]) {
+    const result = run(tool, toolInput);
+    assert.equal(result.status, 2, `${tool}: ${toolInput.command}`);
+    assert.match(result.stderr, /the handoff continuation store, where only the main session's `aidrian handoff` commands write/u, toolInput.command);
+  }
+  for (const [tool, toolInput] of [
+    ['Bash', { command: `echo x | tee ${out}/other*` }],
+    ['Bash', { command: `rm -f ${out}/a/*.log` }],
+    ['Monitor', { command: `echo x | tee ${out}/oth*.txt`, description: 'watch' }],
+    ['PowerShell', { command: `Remove-Item ${out}/oth*.txt` }],
+  ]) {
+    const result = run(tool, toolInput);
+    assert.equal(result.status, 0, `${tool}: ${toolInput.command}: ${result.stderr}`);
+  }
+});
+
+test('a subagent\'s glob that passes an existing link to a config file or the local file is refused; one that reaches neither runs', (t) => {
+  const { dir } = project(t);
+  writeFileSync(path.join(dir, '.aidrian.local.json'), '{}');
+  const out = outside(t);
+  symlinkSync(path.join(dir, '.aidrian/config.json'), path.join(out, 'conf-alias'));
+  symlinkSync(path.join(dir, '.aidrian.local.json'), path.join(out, 'local-alias'));
+  mkdirSync(path.join(out, 'dist'));
+  symlinkSync(path.join(dir, '.aidrian/config.json'), path.join(out, 'dist/alias'));
+  symlinkSync(path.join(out, 'dist'), path.join(out, 'dlink'));
+  const run = (command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
+  for (const command of [`printf x | tee ${out}/conf-al*`, `printf x | tee ${out}/dl*/al*`]) {
+    const result = run(command);
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
+  }
+  const switched = run(`echo '${JSON.stringify({ github: { autoMerge: 'on' } })}' | tee ${out}/local-al*`);
+  assert.equal(switched.status, 2);
+  assert.match(switched.stderr, /it sets github\.autoMerge in \.aidrian\.local\.json/u);
+  for (const command of [`printf x | tee ${out}/other*`, `printf x | tee ${out}/dist/*.txt`]) {
+    const result = run(command);
+    assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+  }
+});
+
 test('a subagent\'s PowerShell command that names a guarded config file or the machine switches is refused; a Bash(prefix) allow never admits one', (t) => {
   const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
   const gated = project(t).dir;

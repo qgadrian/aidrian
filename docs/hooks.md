@@ -887,7 +887,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   such as after a `cd` it cannot follow. Otherwise a subagent could write the marker it may not arm.
   A glob from a known folder also counts when a link already on disk, in any part it expands, leads to a marker, into
   the store, or to a folder that holds it, as `tee /tmp/alias*` does when `/tmp/alias` links to a marker, and `/va*/…`
-  does through macOS's `/var` link; that walk shares the time and link budgets below.
+  does through macOS's `/var` link; that walk shares the time and link budgets below. A `**` part spans any number of
+  folders, as `tee out/**/alias*` reaches `out/a/b/alias`, and the walk follows links to folders inside it, though the
+  shell may not; it reads each folder once a part, so a link that loops ends the walk.
   It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
   and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
   cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit

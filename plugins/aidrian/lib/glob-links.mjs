@@ -54,22 +54,38 @@ export const globLinksTo = (glob, file, seen, { below = false } = {}) =>
 // leads to included. With `below`, a link that leads inside `file` counts too. Each folder is read once a call
 // (entriesOf), so the entries count against `seen.left` once, however many guarded files and spellings walk it; past
 // it, the glob counts as one that reaches it. Each link is resolved from the folder's spelling that reached it (realOf).
-// A folder two links lead to is walked once a part, so the walk costs at most its parts times the entries it reads.
+// A part that is only stars, as zsh's `**`, spans any number of folders, none included, and a run of them reads as one.
+// Inside it the walk follows a link to a folder too, though the shell may not: failing closed. It visits each folder on
+// disk once a part (folderKey), so a link that loops ends the walk there. A folder two links lead to is walked once a
+// part, so the walk costs at most its parts times the entries it reads, however many such parts the glob has.
 export function linkBelow(start, rest, file, seen, below = false) {
+  const parts = rest.filter((part, i) => !(MANY.test(part) && MANY.test(rest[i - 1] ?? '')));
   let level = [start];
-  for (const [i, part] of rest.entries()) {
-    const matches = partMatcher(part);
+  for (const [i, part] of parts.entries()) {
+    const many = MANY.test(part);
+    const matches = many ? () => true : partMatcher(part);
+    // Past a link, the parts still to match: a `**` part may match more folders below the link's target.
+    const after = parts.slice(many ? i : i + 1);
     const next = new Set();
-    for (const dir of level) {
+    const visited = new Set();
+    const queue = [...level];
+    for (let at = 0; at < queue.length; at += 1) {
+      const dir = queue[at];
       checkDeadline();
+      if (many) {
+        const key = keyOf(dir, seen);
+        if (visited.has(key)) continue;
+        visited.add(key);
+        next.add(dir);
+      }
       const found = entriesOf(dir, seen);
       if (found === null) return true;
       for (const entry of found.filter(({ name }) => matches(name))) {
-        if (entry.link) {
-          const real = realOf(path.join(dir, entry.name), seen);
-          if (linkReaches(real, rest.slice(i + 1), file, below)) return true;
-          next.add(real);
-        } else if (entry.folder) next.add(path.join(dir, entry.name));
+        const reached = entry.link ? realOf(path.join(dir, entry.name), seen) : path.join(dir, entry.name);
+        if (entry.link && linkReaches(reached, after, file, below)) return true;
+        if (!entry.link && !entry.folder) continue;
+        if (many) queue.push(reached);
+        else next.add(reached);
       }
     }
     level = [...next];
@@ -77,13 +93,21 @@ export function linkBelow(start, rest, file, seen, below = false) {
   return false;
 }
 
+// A glob part that is only stars, which zsh, and bash with globstar, read as any number of folders.
+const MANY = /^\*{2,}$/u;
+
+// A folder's folderKey, cached in `seen.keys` by its spelling.
+function keyOf(dir, seen) {
+  if (!seen.keys.has(dir)) seen.keys.set(dir, folderKey(dir));
+  return seen.keys.get(dir);
+}
+
 // What a folder holds for linkBelow, cached in `seen.entries` by the folder on disk, so each folder counts against
 // `seen.left` once a call: each entry's name, and whether it is a link or a folder; or null past the link budget. Where a
 // link leads is not kept here, as another spelling of the folder resolves it to another path (realOf). `seen.keys` caches
 // each spelling's folderKey.
 function entriesOf(dir, seen) {
-  if (!seen.keys.has(dir)) seen.keys.set(dir, folderKey(dir));
-  const key = seen.keys.get(dir);
+  const key = keyOf(dir, seen);
   if (!seen.entries.has(key)) {
     let found = [];
     try {
@@ -128,13 +152,23 @@ export function realOf(at, seen) {
 }
 
 // Whether the link target `real` is `file`, or a folder that holds it that glob parts `rest` reach below it
-// (reachesFile), or, with `below`, a path inside `file`. The paths are compared as the disk compares them (foldCase):
+// (reachesFile), or, with `below`, a path inside `file` that the glob ends at, or a folder there that it goes on into:
+// nothing is written below a file. The paths are compared as the disk compares them (foldCase):
 // on a disk that ignores case, `WEBAPP/conf` holds `webapp/conf/app.json`, though no string compare says so.
 export function linkReaches(real, rest, file, below = false) {
   const [dir, target] = [foldCase(real), foldCase(file)];
   if (dir === target || sameFile(real, file)) return true;
-  if (below && isWithin(target, dir)) return true;
+  if (below && isWithin(target, dir) && (rest.every((part) => MANY.test(part)) || isFolder(real))) return true;
   return isWithin(dir, target) && reachesFile(rest, path.relative(dir, target).split(path.sep), below);
+}
+
+// Whether `file` is a folder on disk.
+function isFolder(file) {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 // A folder's device and inode, or its path when it cannot be read.

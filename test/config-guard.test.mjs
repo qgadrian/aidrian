@@ -734,6 +734,56 @@ test('a subagent\'s glob that passes an existing link to an armed marker or the 
   }
 });
 
+test('a subagent\'s ** glob passes a link to the store any number of folders down, through looping links in time; one that reaches nothing runs', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const state = stateDir(findProject(dir));
+  const marker = path.join(state, 'handoffs/.continue/armed-s1.json');
+  mkdirSync(path.dirname(marker), { recursive: true });
+  writeFileSync(marker, '{}');
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const out = outside(t);
+  mkdirSync(path.join(out, 'a/b'), { recursive: true });
+  symlinkSync(marker, path.join(out, 'a/b/alias'));
+  // Links that loop, to the folder above and to their own folder, with a link to the marker below them.
+  const loop = outside(t);
+  mkdirSync(path.join(loop, 'x/y'), { recursive: true });
+  symlinkSync('..', path.join(loop, 'x/up'));
+  symlinkSync('.', path.join(loop, 'x/self'));
+  symlinkSync(marker, path.join(loop, 'x/y/alias'));
+  const clean = outside(t);
+  mkdirSync(path.join(clean, 'a/b'), { recursive: true });
+  symlinkSync('..', path.join(clean, 'a/up'));
+  writeFileSync(path.join(clean, 'a/b/notes.log'), '');
+  const run = (tool, toolInput) => {
+    const started = performance.now();
+    const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8', timeout: 5000 });
+    return { ...result, took: performance.now() - started };
+  };
+  for (const [tool, toolInput] of [
+    ['Bash', { command: `printf x | tee ${out}/**/alias*` }],
+    ['Monitor', { command: `printf x | tee ${out}/**/alias*`, description: 'watch' }],
+    ['PowerShell', { command: `Set-Content ${out}/**/alias* x` }],
+    ['Bash', { command: `printf x | tee ${loop}/**/alias*` }],
+    ['PowerShell', { command: `Set-Content ${loop}/**/alias* x` }],
+  ]) {
+    const result = run(tool, toolInput);
+    assert.equal(result.status, 2, `${tool}: ${toolInput.command}`);
+    assert.match(result.stderr, /the handoff continuation store/u, toolInput.command);
+    assert.ok(result.took < 4000, `${toolInput.command}: took ${Math.round(result.took)} ms`);
+  }
+  for (const [tool, toolInput] of [
+    ['Bash', { command: `rm -f ${clean}/**/**/*.log` }],
+    ['Monitor', { command: `rm -f ${clean}/**/*.log`, description: 'watch' }],
+    ['PowerShell', { command: `Remove-Item ${clean}/**/*.log` }],
+    // A link to the marker file under `**` leads to nothing below it.
+    ['Bash', { command: `rm -f ${out}/**/*.log` }],
+  ]) {
+    const result = run(tool, toolInput);
+    assert.equal(result.status, 0, `${tool}: ${toolInput.command}: ${result.stderr}`);
+    assert.ok(result.took < 4000, `${toolInput.command}: took ${Math.round(result.took)} ms`);
+  }
+});
+
 test('a subagent\'s glob that passes an existing link to a config file or the local file is refused; one that reaches neither runs', (t) => {
   const { dir } = project(t);
   writeFileSync(path.join(dir, '.aidrian.local.json'), '{}');

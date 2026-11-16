@@ -545,11 +545,20 @@ test('a subagent may not run `aidrian handoff continue`, with or without gates, 
     'aidrian $CMD x.md',
     'A="handoff continue"; aidrian $A x.md',
     'aidrian "$CMD" x.md',
+    // A command word built from a variable or a substitution, before plain words that read handoff, then continue.
+    '$AIDRIAN handoff continue x.md',
+    '"${AIDRIAN}" handoff continue x.md --route clear',
+    '$(command -v aidrian) handoff continue x.md',
+    '`command -v aidrian` handoff continue x.md',
+    'env $AIDRIAN handoff --route clear continue x.md',
   ];
   const allowed = [
     'aidrian handoff check x.md',
     'aidrian handoff snapshot x.md',
     'aidrian "$SUB" check x.md',
+    '$AIDRIAN handoff check x.md',
+    '$TOOL continue x.md',
+    '$EDITOR handoff.md',
     'echo aidrian handoff continue',
     "grep -n 'handoff continue' docs/handoff.md",
   ];
@@ -560,6 +569,14 @@ test('a subagent may not run `aidrian handoff continue`, with or without gates, 
       assert.match(result.stderr, /it runs `aidrian handoff continue`, which arms a continuation of the main session/u, `${label}: ${command}`);
     }
     for (const command of allowed) assert.equal(run(cwd, subagent(cwd, 'Bash', { command })).status, 0, `${label}: ${command}`);
+    // Claude Code's Monitor tool runs its command in a shell, as Bash does, and a subagent may call it.
+    for (const command of [blocked[0], blocked[4], '$AIDRIAN handoff continue x.md']) {
+      const result = run(cwd, subagent(cwd, 'Monitor', { command, description: 'watch' }));
+      assert.equal(result.status, 2, `${label}: Monitor ${command}`);
+      assert.match(result.stderr, /it runs `aidrian handoff continue`/u, `${label}: Monitor ${command}`);
+    }
+    assert.equal(run(cwd, subagent(cwd, 'Monitor', { command: allowed[0], description: 'watch' })).status, 0, `${label}: Monitor check`);
+    assert.equal(run(cwd, subagent(cwd, 'Monitor', { ws: { url: 'wss://example.test/aidrian handoff continue' } })).status, 0, `${label}: a WebSocket watch runs no shell`);
     const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(cwd, 'Bash', { command: blocked[0] });
     assert.equal(run(cwd, main).status, 0, `${label}: the main session may`);
   }
@@ -611,6 +628,10 @@ test('a subagent may not write in the handoff continuation store, with or withou
         `rm -rf /${state.split('/')[1].slice(0, 2)}*/${state.split('/').slice(2).join('/')}/handoffs/.continue`,
         `rm -rf /${realpathSync(state).split('/')[1].slice(0, 2)}*/${realpathSync(state).split('/').slice(2).join('/')}/handoffs/.continue`,
       ].map((command) => ['Bash', { command }]),
+      // Claude Code's Monitor tool runs its command in a shell, as Bash does.
+      ['Monitor', { command: `echo {} > ${store}/armed-S.json`, description: 'watch' }],
+      ['Monitor', { command: `cp /tmp/x.json ${store}/ready-s1.json && tail -f /tmp/log`, description: 'watch' }],
+      ['Monitor', { command: 'cd "$X/handoffs/.continue" && echo {} > armed-s1.json', description: 'watch' }],
       // On a disk that folds case, any spelling reaches the store.
       ...(FOLDS ? [
         ['Write', { file_path: path.join(handoffs, '.CONTINUE/armed-s1.json'), content: '{}' }],
@@ -636,6 +657,7 @@ test('a subagent may not write in the handoff continuation store, with or withou
       ['Bash', { command: 'rm build/[a-z]*.o' }],
       ['Bash', { command: 'touch src/[z-a].js' }],
       ['Bash', { command: `rm -rf ${handoffs}/[0-9]*.md` }],
+      ['Monitor', { command: `tail -f ${store}/armed-s1.json`, description: 'watch' }],
     ]) {
       assert.equal(run(subagent(dir, tool, toolInput)).status, 0, label(toolInput));
     }

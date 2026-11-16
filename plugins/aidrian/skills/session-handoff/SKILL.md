@@ -6,7 +6,7 @@ description: Write a handoff brief so a fresh session can resume this work, when
 # session-handoff
 
 Write a self-sufficient brief for the current work, so the user can end this session and resume in a fresh one
-without losing context: the brief carries the context instead of the transcript.
+without losing context.
 
 ## When
 
@@ -25,11 +25,12 @@ or an unattended run that ends with its task unfinished.
 
 ## Steps
 
-1. **Settle running work.** When the session hands off now (step 7) and the route is not `none` (`--continue`, else
-   `session.handoff.continue`), wait for or stop every agent, background job, and scheduled or loop run before writing,
-   so Still running is None: a report, or a message from another session, starts a turn here after the gate, and that
-   cancels the continuation. Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one
-   left running under Still running: what runs, where its output lands, and what to do with it.
+1. **Settle running work.** When the session hands off now (step 7), run the read-only `aidrian handoff route`, with
+   `--route <route>` when `--continue` gave one: it prints the route this host runs. Unless that is `route: none`, wait
+   for or stop every agent, background job, and scheduled or loop run before writing, so Still running is None:
+   a report, or a message from another session, starts a turn here after the gate, and that cancels the continuation.
+   Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one left running under
+   Still running: what runs, where its output lands, and what to do with it.
 2. **Read the state with commands, not memory.** Use it to write Done and the Current state line that names the worktree,
    the branch, and the pull request, never as a snapshot:
    `git branch --show-current`, `git rev-parse --show-toplevel`, `git status --porcelain`, `git log --oneline -5`,
@@ -64,7 +65,7 @@ or an unattended run that ends with its task unfinished.
    resume instructions.
 7. **Continue, when the session hands off now**: at the session-length reminder, the plan offer, a usage-limit warning,
    or the Human's request. A checkpoint brief that a running skill writes and then works past skips this step.
-   - Unless the route is `none`, nothing still runs: step 1 settled it.
+   - Unless step 1 printed `route: none`, nothing still runs: step 1 settled it.
    - A current brief (rule 7) last written more than 15 minutes ago is refreshed first, by steps 4 to 6.
    - After step 6 exits 0, run `aidrian handoff continue <brief>`, with `--route <route>` when `--continue` gave one:
      - `continue: none`: print the resume instructions, and the `fallback:` line when there is one.

@@ -12,7 +12,7 @@
 // passed. A --prior that is the brief itself is refused: its earlier text is gone.
 //   4. The chain: `Chain: n` above the first section counts the automatic continuations in a row that led to the
 //      brief (chainOf). It must be a whole number, and no lower than the floor the session was given when a continuation
-//      started it (lib/handoff-markers.mjs readFrom). A brief right inside `<state>/handoffs/` that passes is stamped with
+//      started it, whatever the brief's slug (lib/handoff-markers.mjs readFrom). A brief right inside `<state>/handoffs/` that passes is stamped with
 //      the sha256 of its bytes, which `aidrian handoff continue` (lib/handoff-continue.mjs) requires.
 //   5. The sections a resume needs, and a `Supersedes:` field in the header (lib/handoff-sections.mjs).
 
@@ -22,7 +22,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
-import { openStore, readFrom, slugOf, stampChecked } from './handoff-markers.mjs';
+import { openStore, readFrom, stampChecked } from './handoff-markers.mjs';
 import { resolvePrior, samePath, takeSnapshot, unreadable, writeSnapshot } from './handoff-prior.mjs';
 import { sectionProblems, supersedesProblem, unresolvedProblem } from './handoff-sections.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
@@ -42,19 +42,22 @@ const flat = (text) => text.replace(/\s+/g, ' ');
 
 export const commands = {
   handoff: {
-    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE]',
-    about: 'snapshot the brief a refresh supersedes, check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines, then arm its continuation',
+    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE] | route [--route ROUTE]',
+    about: 'snapshot the brief a refresh supersedes, check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines, then arm its continuation; route prints the continue route this host runs, and writes nothing',
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' }, route: { type: 'string' } } });
       const [action, brief, ...extra] = positionals;
+      const usage = () => problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
+      if (action === 'route') {
+        if (brief !== undefined || values.prior !== undefined) return usage();
+        const { routeOf } = await import('./handoff-continue.mjs');
+        return printed(routeOf({ override: values.route }));
+      }
       const shaped = action === 'continue' ? values.prior === undefined : ['check', 'snapshot'].includes(action) && values.route === undefined;
-      if (!shaped || !brief || extra.length) return problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
+      if (!shaped || !brief || extra.length) return usage();
       if (action === 'continue') {
         const { continueBrief } = await import('./handoff-continue.mjs');
-        const { exitCode, out, err } = continueBrief(brief, { override: values.route, chainOf });
-        if (out.length) console.log(out.join('\n'));
-        if (err.length) console.error(err.join('\n'));
-        return exitCode;
+        return printed(continueBrief(brief, { override: values.route, chainOf }));
       }
       const briefPath = path.resolve(brief);
       const prior = values.prior && path.resolve(values.prior);
@@ -73,7 +76,7 @@ export const commands = {
       // A config with errors exits 2, as an unreadable input does: it is not a finding.
       const project = projectAt(process.cwd());
       const config = commandConfig(project, { exitCode: 2 });
-      const { exitCode, lines } = checkBrief(briefPath, prior, config.docs.wrapLimit, continueSetting(project, config, briefPath));
+      const { exitCode, lines } = checkBrief(briefPath, prior, config.docs.wrapLimit, continueSetting(project, config));
       (exitCode === 0 ? console.log : console.error)(lines.join('\n'));
       return exitCode;
     },
@@ -81,9 +84,10 @@ export const commands = {
 };
 
 // What the check needs of the continuation store: { store, floor }. `floor` is the chain the session running the
-// check was given for this brief's slug when a continuation started it, else 0. Without a state folder git can tell,
-// the brief is checked as before: no floor and no stamp.
-function continueSetting(project, config, briefPath, env = process.env) {
+// check was given when a continuation started it, else 0, for a brief of any slug: a session continued from one brief
+// that hands off under another name is still the same run of continuations. Without a state folder git can tell, the
+// brief is checked as before: no floor and no stamp.
+function continueSetting(project, config, env = process.env) {
   let store;
   try {
     store = openStore(stateDir(project, { config, env }), { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
@@ -92,7 +96,7 @@ function continueSetting(project, config, briefPath, env = process.env) {
   }
   const { session } = sessionIdentity(env);
   const from = session ? readFrom(store, session) : null;
-  return { store, floor: from && from.slug === slugOf(briefPath) ? from.chain : 0 };
+  return { store, floor: from ? from.chain : 0 };
 }
 
 // The chain count of a brief: the whole number of its `Chain:` field above the first section, 0 when it has none, and
@@ -111,6 +115,13 @@ function chainProblems(text, floor) {
   if (chain === null) return ['Chain: the value is not a whole number: write `Chain: <n>`, the automatic continuations in a row that led here, 0 or more'];
   if (chain < floor) return [`Chain: ${chain} is below ${floor}, the count this session continues: write \`Chain: ${floor}\``];
   return [];
+}
+
+// Prints a gate result's { out, err } and returns its exit code.
+function printed({ exitCode, out, err }) {
+  if (out.length) console.log(out.join('\n'));
+  if (err.length) console.error(err.join('\n'));
+  return exitCode;
 }
 
 // Exit 2 with one line: an input that cannot be read is not a finding.

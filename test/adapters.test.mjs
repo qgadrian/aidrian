@@ -430,3 +430,16 @@ for (const host of HOSTS) {
     assert.match(refused.stderr, /the connected workspace is "https:\/\/linear\.app\/another"/u);
   });
 }
+
+test('a Claude Code Monitor call that runs a shell command reads as the standard Bash, with its own name kept', () => {
+  const claude = HOSTS.find((host) => host.id === 'claude-code');
+  const monitor = { session_id: 's', agent_id: 'a1', tool_name: 'Monitor', tool_input: { command: 'tail -f log', description: 'watch' }, cwd: '/x' };
+  const read = claude.hookInput(monitor);
+  assert.deepEqual(read, { ...monitor, tool_name: 'Bash', raw_tool_name: 'Monitor' });
+  assert.deepEqual(UNKNOWN_HOST.hookInput(monitor), read, 'a payload no host claims is read the same way');
+  const ws = { ...monitor, tool_input: { ws: { url: 'wss://example.test' } } };
+  assert.deepEqual(claude.hookInput(ws), ws, 'a WebSocket watch runs no shell');
+  // A gate that names Monitor still matches the call by the name it was sent as.
+  assert.ok([read.tool_name, read.raw_tool_name].some((name) => nameMatches('Monitor', name)));
+  for (const host of HOSTS.filter((each) => each !== claude)) assert.deepEqual(host.hookInput(monitor), monitor, host.id);
+});

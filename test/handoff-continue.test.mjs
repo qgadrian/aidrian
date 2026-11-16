@@ -18,6 +18,7 @@ import {
   openStore,
   promote,
   readArmed,
+  readContainedBrief,
   readFrom,
   stampChecked,
   storePath,
@@ -308,6 +309,30 @@ test('aidrian handoff check stamps the brief and aidrian handoff continue arms i
   assert.match(armed.stdout, /^say: /mu);
 });
 
+test('aidrian handoff route prints the route this host runs, none on a fallback, and writes nothing', (t) => {
+  const run = (setting, env, ...args) => spawnSync(CLI, ['handoff', 'route', ...args], { cwd: setting.dir, encoding: 'utf8', env: { ...process.env, ...env } });
+  const lines = (result) => [result.status, ...result.stdout.trimEnd().split('\n')];
+  const clear = setup(t);
+  passCheck(clear);
+  const before = readdirSync(clear.store.dir).sort();
+  assert.deepEqual(lines(run(clear, CLAUDE)), [0, 'route: clear']);
+  assert.deepEqual(lines(run(clear, CLAUDE, '--route', 'none')), [0, 'route: none']);
+  // A route the host does not run: what the gate would fall back from, so the skill settles nothing for it.
+  const [status, first, fallback] = lines(run(clear, CODEX));
+  assert.deepEqual([status, first], [0, 'route: none'], 'Codex lists no route');
+  assert.match(fallback, /^fallback: the clear route does not run on this host \(Codex\)/u);
+  assert.match(lines(run(clear, CLAUDE, '--route', 'compact'))[2], /^fallback: the compact route does not run on this host/u);
+  assert.match(lines(run(clear, CLAUDE, '--route', 'background'))[2], /^fallback: --route background runs only when/u);
+  const compact = setup(t, { continue: 'compact' });
+  assert.deepEqual(lines(run(compact, CLAUDE)).slice(0, 2), [0, 'route: none'], 'a configured route this release does not run');
+  assert.deepEqual(lines(run(setup(t, { continue: 'none' }), CLAUDE)), [0, 'route: none']);
+  assert.equal(run(clear, CLAUDE, '--route', 'teleport').status, 2);
+  assert.equal(run(clear, CLAUDE, clear.file).status, 2, 'it takes no brief');
+  assert.deepEqual(readdirSync(clear.store.dir).sort(), before, 'it writes nothing');
+  assert.equal(readArmed(clear.store, 'session-1'), null);
+  assert.equal(existsSync(storePath(compact.state)), false, 'nor makes the store');
+});
+
 test('the latest gate run decides: a refusal or a fallback cancels the marker the session armed before', (t) => {
   const setting = setup(t);
   passCheck(setting);
@@ -328,10 +353,17 @@ test('the gate refuses a brief whose Chain is below the floor this session was g
   noteFrom(setting.store, 'session-1', { slug: 'widget', chain: 2, brief: setting.file, route: 'clear' });
   const result = gate(setting);
   assert.deepEqual([result.exitCode, result.out], [1, []]);
-  assert.match(result.err[0], /the brief's Chain is below this session's floor 2; set Chain: 2/u);
+  assert.match(result.err[0], /the brief's Chain is below this session's floor 2, which a continuation from the brief widget gave it; set Chain: 2/u);
   assert.equal(readArmed(setting.store, 'session-1'), null);
+  // A continued session that hands off under another slug is held to its floor all the same.
   noteFrom(setting.store, 'session-1', { slug: 'other', chain: 2, brief: path.join(setting.handoffs, '2026-11-15-other.md'), route: 'clear' });
-  assert.equal(gate(setting).exitCode, 0, 'a floor for another slug does not hold');
+  const renamed = gate(setting);
+  assert.deepEqual([renamed.exitCode, renamed.out], [1, []], 'a floor given for another slug holds too');
+  assert.match(renamed.err[0], /below this session's floor 2, which a continuation from the brief other gave it/u);
+  assert.equal(readArmed(setting.store, 'session-1'), null);
+  writeFileSync(setting.file, brief(2));
+  passCheck(setting);
+  assert.equal(gate(setting).exitCode, 0, 'at the floor it arms');
 });
 
 test('a FIFO or a folder named like a brief exits 2 at once, and reads nothing', (t) => {
@@ -362,6 +394,37 @@ test('a store behind a symlink is refused: a linked .continue, or a handoffs fol
   mkdirSync(path.join(setting.dir, 'notes'));
   symlinkSync(path.join(setting.dir, 'notes'), path.join(state, 'handoffs'));
   assert.match(openStore(state, { checkouts: [setting.dir], maxChain: 3 }).refused, /is inside the checkout/u);
+});
+
+test('a store whose folder every user may write, or another user owns, is refused; a marker or brief of another user is never read', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'no user ids, or root owns anything' }, (t) => {
+  const setting = setup(t);
+  const uid = process.getuid();
+  mkdirSync(storePath(setting.state), { recursive: true });
+  for (const dir of [setting.state, setting.handoffs, storePath(setting.state)]) {
+    chmodSync(dir, 0o777);
+    const loose = openStore(setting.state, { checkouts: [setting.dir], maxChain: 3 });
+    assert.match(loose.refused, /is writable by every user/u, dir);
+    assert.ok(loose.refused.includes(dir), dir);
+    assert.equal(arm(loose, marker(setting)), null, dir);
+    chmodSync(dir, 0o775);
+    assert.equal(openStore(setting.state, { checkouts: [setting.dir], maxChain: 3 }).refused, null, `${dir}: a folder its group may write passes`);
+    chmodSync(dir, 0o700);
+  }
+  chmodSync(storePath(setting.state), 0o777);
+  passCheck(setting);
+  const result = gate(setting);
+  assert.deepEqual([result.exitCode, result.out[0]], [0, 'continue: none']);
+  assert.match(result.out[1], /^fallback: the folder \S+ of the continuation store is writable by every user/u);
+  chmodSync(storePath(setting.state), 0o700);
+
+  assert.match(openStore(setting.state, { checkouts: [setting.dir], maxChain: 3, uid: uid + 1 }).refused, /is owned by another user/u);
+  const { store } = setting;
+  assert.ok(arm(store, marker(setting)));
+  assert.ok(readArmed(store, 'session-1'));
+  const stranger = { ...store, uid: uid + 1 };
+  assert.equal(readArmed(stranger, 'session-1'), null, 'a marker of another user is never read');
+  assert.match(readContainedBrief(stranger, setting.file).problem, /is owned by another user/u);
+  assert.equal(readContainedBrief(store, setting.file).problem, undefined);
 });
 
 test('a store spelled in another letter case is still inside its checkout', { skip: !['darwin', 'win32'].includes(process.platform) && 'the disk does not fold case' }, (t) => {

@@ -348,11 +348,15 @@ test('a passing check stamps a brief inside <state>/handoffs/ with its bytes, an
 
   const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'continued-1' };
   const check = () => spawnSync(CLI, ['handoff', 'check', inside], { cwd: project, encoding: 'utf8', env });
-  noteFrom(store, 'continued-1', { slug: 'other', chain: 2, brief: path.join(state, 'handoffs/2026-11-15-other.md'), route: 'clear' });
-  assert.equal(check().status, 0, 'a floor for another slug does not hold');
+  assert.equal(check().status, 0, 'no floor yet');
   assert.notEqual(checkedSha(store, '2026-11-15-task.md'), stamped, 'the command stamps the changed brief');
   noteFrom(store, 'continued-1', { slug: 'task', chain: 1, brief: inside, route: 'clear' });
   const low = check();
   assert.equal(low.status, 1);
   assert.match(low.stderr, /Chain: 0 is below 1/u);
+  // A session continued from one brief that hands off under another slug is still the same run of continuations.
+  noteFrom(store, 'continued-1', { slug: 'other', chain: 2, brief: path.join(state, 'handoffs/2026-11-15-other.md'), route: 'clear' });
+  const renamed = check();
+  assert.equal(renamed.status, 1, 'a floor given for another slug holds too');
+  assert.match(renamed.stderr, /Chain: 0 is below 2/u);
 });

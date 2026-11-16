@@ -26,6 +26,15 @@ const PLUGIN_GITHUB_TOOL = new RegExp(PLUGIN_GITHUB_MATCHER, 'u');
 
 const toolName = (name) => (typeof name === 'string' && PLUGIN_GITHUB_TOOL.test(name) ? `mcp__github__${name.slice(name.lastIndexOf('__') + 2)}` : name);
 
+// Its tools other than Bash that run `tool_input.command` in a shell. Monitor runs its command in the background under
+// Bash's permission rules, and a subagent may call it (code.claude.com/docs/en/tools-reference#monitor-tool). A hook
+// whose matcher is Bash already gets those commands as Bash calls; one whose matcher takes every tool, as the agent gates
+// hook's does, gets the Monitor call itself (code.claude.com/docs/en/hooks#match-monitor-commands). So such a call reads
+// as the standard Bash, and every guard of a shell command reads it. A WebSocket watch takes `ws`, runs no shell, and
+// stays as it is. docs/providers/claude-code.md#shell-commands-of-the-monitor-tool.
+export const SHELL_TOOLS = Object.freeze(['Monitor']);
+const shellCommand = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof input.tool_input?.command === 'string';
+
 export default {
   id: 'claude-code',
   name: 'Claude Code',
@@ -51,8 +60,10 @@ export default {
   // Its names are the standard, which is what hooks.json matches; a plugin's GitHub server has its own matcher there.
   rawToolName: (standard) => standard,
   toolResponse: responseObjects,
-  // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames).
+  // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
+  // as `Monitor` in an agent gate does for a Monitor call read as Bash.
   hookInput(input) {
+    if (shellCommand(input)) return { ...input, tool_name: 'Bash', raw_tool_name: input.tool_name };
     const name = toolName(input.tool_name);
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },

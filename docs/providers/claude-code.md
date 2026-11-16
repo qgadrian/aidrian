@@ -108,11 +108,22 @@ Checked on Claude Code 2.1.314, with a hook that logged each call:
 
 So Claude Code holds each agent to its gates, tool by tool and pattern by pattern.
 
+## Shell commands of the Monitor tool
+
+The Monitor tool runs its `command` in a shell, in the background, under Bash's permission rules, and a subagent may
+call it ([tools reference](https://code.claude.com/docs/en/tools-reference#monitor-tool)). A hook whose matcher is Bash
+gets those commands as Bash calls; one whose matcher takes every tool, as the agent gates hook's does, gets the Monitor
+call itself ([hooks reference](https://code.claude.com/docs/en/hooks#match-monitor-commands)). So the adapter's
+`hookInput` reads a Monitor call with a `command` as `Bash`, with `raw_tool_name: "Monitor"`, and the guards of a shell
+command, such as the [handoff guard](../hooks.md#agent-gates), read it as they read Bash. A gate that names `Monitor`
+still matches it. A WebSocket watch takes `ws` in place of `command`, runs no shell, and stays as it is.
+
 ## Handoff continuation
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
 types `/clear` and then any message, which is the adapter's `steps.clear`, and the new session resumes from the brief.
-`compact` and `background` fall back to `none` until their release.
+`compact` and `background` fall back to `none` until their release, and `aidrian handoff route` prints `route: none` for them.
+What follows is the host behavior the route rests on; the route itself has not yet run live from end to end.
 
 Verified on Claude Code 2.1.325 on 2026-11-15, with a throwaway plugin:
 
@@ -138,9 +149,11 @@ Not verified, each with its answer in the design:
 | Whether other built-in commands fire UserPromptSubmit | Each one that does cancels the continuation, as any prompt does: only those four are spared. |
 | Whether a hook payload's `cwd` follows a `cd` in the Bash tool | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. |
 
-UserPromptSubmit also fires when a background subagent reports back, on a scheduled-task or loop iteration, and on a
-message from another session ([its hooks reference](https://code.claude.com/docs/en/hooks)). Each of those after the
-gate cancels the continuation, so the `session-handoff` skill settles them all before it runs the gate.
+UserPromptSubmit also fires when a background subagent reports back, on a scheduled-task or loop iteration, on a
+message from another session, and on the output of Claude's code in a Code Mode session when that code runs in the
+background ([its hooks reference](https://code.claude.com/docs/en/hooks#userpromptsubmit)). Each of those after the
+gate cancels the continuation, so the `session-handoff` skill's first step settles them all, Code Mode code running
+in the background among its background jobs, before it writes the brief and runs the gate.
 The SessionEnd hook promotes the continuation before it hands the session row to its worker, within the host's 1.5 seconds.
 
 ## Limits

@@ -12,7 +12,8 @@
 // goes, whatever the exit, so a clear never delivers an earlier brief. A disk that refuses the store's write exits 2.
 // The main session alone runs it: the agent-gates hook refuses it to a subagent, whose shell carries the main session's
 // id (lib/handoff-guard.mjs handoffContinueDenial). The route a host can do, and what it asks of the Human, are the host
-// adapter's `capabilities.handoffContinue`; this file names no host.
+// adapter's `capabilities.handoffContinue`; this file names no host. `aidrian handoff route` (routeOf) prints the route
+// the gate would take here, for the skill's first step, and writes nothing.
 // The hooks' side of the clear route is at the end: a prompt cancels an armed marker (cancelOnPrompt), the session end
 // promotes it (promoteCleared), and the session start the clear begins takes it and delivers it (takeCleared,
 // deliverCleared, continuationContext). The hooks load this file only on a host that lists a route.
@@ -46,20 +47,35 @@ export function effectiveRoute(configured, host, override) {
 }
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const routeProblem = (override) => (override !== undefined && !CONTINUE_ROUTES.includes(override)
+  ? { exitCode: 2, out: [], err: [`--route must be ${CONTINUE_ROUTES.map((each) => `"${each}"`).join(', ')}`] }
+  : null);
+
+// `aidrian handoff route [--route ROUTE]`: the route a handoff from `cwd` would go on by on this host, as effectiveRoute
+// decides, so the session-handoff skill knows before it writes the brief whether to settle every running agent.
+// It prints `route: <route>`, `none` on a fallback, and the `fallback:` line then, exit 0; exit 2 on an unknown --route
+// or a config with errors (CONFIG_ERROR). It opens no store and writes nothing. The gate may still fall back for what
+// only a brief or the store tells, such as its chain or a store it refuses.
+export function routeOf({ override, env = process.env, cwd = process.cwd() } = {}) {
+  const bad = routeProblem(override);
+  if (bad) return bad;
+  const config = commandConfig(projectAt(cwd), { exitCode: 2 });
+  const { route, fallback } = effectiveRoute(config.session.handoff.continue, detectHost({ env }), override);
+  return { exitCode: 0, out: [`route: ${route}`, ...(fallback ? [`fallback: ${fallback}`] : [])], err: [] };
+}
 
 // Runs the gate on `brief`, a path from `cwd`, and returns { exitCode, out, err }: the lines for stdout and stderr.
 // `chainOf` reads a brief's chain count (lib/handoff-brief.mjs). Throws config.mjs's CONFIG_ERROR, exit 2, on a config
 // with errors.
 export function continueBrief(brief, { override, chainOf, env = process.env, cwd = process.cwd(), now = Date.now() }) {
-  if (override !== undefined && !CONTINUE_ROUTES.includes(override)) {
-    return { exitCode: 2, out: [], err: [`--route must be ${CONTINUE_ROUTES.map((each) => `"${each}"`).join(', ')}`] };
-  }
+  const bad = routeProblem(override);
+  if (bad) return bad;
   const project = projectAt(cwd);
   const config = commandConfig(project, { exitCode: 2 });
   const { continue: configured, maxChain } = config.session.handoff;
   const store = openStore(stateDir(project, { config, env }), { checkouts: project.checkouts, maxChain });
   const given = path.resolve(cwd, brief);
-  const found = readContainedBrief(store.handoffs, given);
+  const found = readContainedBrief(store, given);
   if (found.problem) return { exitCode: 2, out: [], err: [`${given} ${found.problem}`] };
 
   const session = sessionIdentity(env).session;
@@ -96,9 +112,11 @@ function decide({ found, store, session, override, configured, maxChain, chainOf
   if (chain === null || checkedSha(store, path.basename(found.path), { now }) !== hash) {
     return refuse(`${found.path} has no passing check of its current text: run \`aidrian handoff check ${found.path}\` first, then run this again`);
   }
+  // A continued session's floor holds for every brief it writes, whatever its slug: a handoff under another name is
+  // still the same run of continuations.
   const floor = readFrom(store, session, { now });
-  if (floor?.slug === slug && chain < floor.chain) {
-    return refuse(`the brief's Chain is below this session's floor ${floor.chain}; set Chain: ${floor.chain} in ${found.path}, check it, and run this again`);
+  if (floor && chain < floor.chain) {
+    return refuse(`the brief's Chain is below this session's floor ${floor.chain}, which a continuation from the brief ${floor.slug} gave it; set Chain: ${floor.chain} in ${found.path}, check it, and run this again`);
   }
   const mtime = Math.floor(found.mtimeMs);
   if (!fresh(mtime, now, BRIEF_WINDOW)) {
@@ -175,7 +193,7 @@ export async function takeCleared(store, hostPid) {
 // no control character; otherwise the banner names the slug alone.
 export function deliverCleared(store, marker, session, { now = Date.now() } = {}) {
   sweep(store, now);
-  const found = readContainedBrief(store.handoffs, marker.brief);
+  const found = readContainedBrief(store, marker.brief);
   // Checked first: every other problem names the folder, and a path is printed only when it is plain text.
   const problem = (hasControl(store.handoffs) || hasControl(found.path ?? '') ? 'lies in a folder whose path holds a control character' : null)
     ?? found.problem

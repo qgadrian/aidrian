@@ -6,13 +6,14 @@
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
 //   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
 // A subagent may write none of them (lib/handoff-guard.mjs), so the store's own rules keep a stray file harmless:
-// every write is a temporary file and a rename; every read refuses a symlink, a wrong shape, and a time outside its
-// window, on the recorded field and on the file's own modification time, in the past or the future; and a store that
-// resolves inside a checkout of the repository, as with `state.dir` set to a folder in it, is never written or read.
+// every write is a temporary file and a rename; every read refuses a symlink, a file another user owns, a wrong shape,
+// and a time outside its window, on the recorded field and on the file's own modification time, in the past or the
+// future; and a store that resolves inside a checkout of the repository, as with `state.dir` set to a folder in it, or
+// whose state, handoffs, or store folder another user owns or every user may write, is never written or read.
 // No function throws on a missing folder; a read returns null for anything it cannot use.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { CONTINUE_ROUTES } from './config-schema.mjs';
@@ -62,11 +63,15 @@ export function slugOf(name) {
   return BRIEF_FILE.exec(base)?.[2] ?? base.replace(/\.md$/u, '');
 }
 
-// The store of the state folder `state`: { dir, handoffs, maxChain, refused }. `dir` is the real path of the store's
-// folder. `refused` says why no marker may be written or read there, or is null: the store's folder is a symlink, or
-// it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the case it
-// was spelled in. `maxChain` is session.handoff.maxChain, which bounds every chain a marker holds.
-export function openStore(state, { checkouts = [], maxChain }) {
+// The store of the state folder `state`: { dir, handoffs, maxChain, uid, refused }. `dir` is the real path of the
+// store's folder. `refused` says why no marker may be written or read there, or is null: the store's folder is a
+// symlink; it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the
+// case it was spelled in; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
+// writable by every user. A folder its group may write passes: a umask of 002 is common. A folder not made yet passes,
+// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds every
+// chain a marker holds. `uid` is this process's user, null where the system has none, and every read refuses a marker
+// or a brief another user owns.
+export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
   const real = resolvedPath(storePath(state));
   const checkout = real && checkouts.find((each) => {
@@ -77,7 +82,30 @@ export function openStore(state, { checkouts = [], maxChain }) {
   if (real === null) refused = `the continuation store ${storePath(state)} is behind a broken symlink`;
   else if (isLink(storePath(state))) refused = `the continuation store ${storePath(state)} is a symlink, and no continuation marker is kept behind one`;
   else if (checkout) refused = `the continuation store ${real} is inside the checkout ${checkout}, where no continuation marker is kept; move state.dir out of the repository`;
-  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain, refused });
+  else {
+    const loose = [state, handoffs, storePath(state)].map((dir) => [dir, looseFolder(dir, uid)]).find(([, why]) => why);
+    if (loose) refused = `the folder ${loose[0]} of the continuation store ${loose[1]}, so no continuation marker is kept there; make it the user's own, writable by that user alone`;
+  }
+  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain, uid, refused });
+}
+
+const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
+
+// Whether a stat names a file of another user than `uid`; never where the system has no user ids.
+const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
+
+// Why the folder `dir` cannot hold the store, or null: another user than `uid` owns it, or every user may write it.
+// A folder that is not there, or cannot be read, gives null: the store's own checks then refuse what they cannot read.
+function looseFolder(dir, uid) {
+  let stat;
+  try {
+    stat = statSync(dir);
+  } catch {
+    return null;
+  }
+  if (foreign(stat, uid)) return `is owned by another user (uid ${stat.uid})`;
+  if ((stat.mode & 0o002) !== 0) return 'is writable by every user';
+  return null;
 }
 
 function isLink(file) {
@@ -89,9 +117,9 @@ function isLink(file) {
 }
 
 // The brief at `file` as the gate and the delivery take it: { path, bytes, mtimeMs } when its real path is a regular
-// file right inside `handoffs`, not a symlink, named by BRIEF_FILE, and under BRIEF_CAP, all checked before it is read;
-// else { problem }. The bytes are read once, from the file that was checked.
-export function readContainedBrief(handoffs, file) {
+// file right inside the store's handoffs folder, not a symlink, owned by the store's user, named by BRIEF_FILE, and
+// under BRIEF_CAP, all checked before it is read; else { problem }. The bytes are read once, from the file that was checked.
+export function readContainedBrief({ handoffs, uid }, file) {
   const place = briefPlace(handoffs, file);
   if (place.problem) return place;
   let fd;
@@ -99,6 +127,7 @@ export function readContainedBrief(handoffs, file) {
     fd = openSync(place.path, NO_FOLLOW);
     const stat = fstatSync(fd);
     if (!stat.isFile()) return { problem: 'is not a regular file' };
+    if (foreign(stat, uid)) return { problem: `is owned by another user (uid ${stat.uid}), and the gate reads no brief of another user` };
     if (stat.size >= BRIEF_CAP) return { problem: `is ${stat.size} bytes, and the gate reads no brief of ${BRIEF_CAP} bytes or more` };
     return { path: place.path, bytes: readFileSync(fd), mtimeMs: stat.mtimeMs };
   } catch (error) {
@@ -148,7 +177,8 @@ const isFrom = (value, maxChain) => isObject(value) && CONTINUE_ROUTES.includes(
 const isChecked = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256) && Number.isFinite(value.at);
 
 // The marker in the file `name` of the store, or null: when the store is refused, the file is missing, a symlink, no
-// regular file, or larger than MARKER_CAP, its modification time or `value[field]` is outside `window`, or `shape` refuses it.
+// regular file, owned by another user, or larger than MARKER_CAP, its modification time or `value[field]` is outside
+// `window`, or `shape` refuses it.
 function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1]] ?? DAY, shape }) {
   if (store.refused || !name) return null;
   let fd;
@@ -157,7 +187,7 @@ function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1
     if (!lstatSync(file).isFile()) return null;
     fd = openSync(file, NO_FOLLOW);
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > MARKER_CAP || !fresh(Math.floor(stat.mtimeMs), now, window)) return null;
+    if (!stat.isFile() || foreign(stat, store.uid) || stat.size > MARKER_CAP || !fresh(Math.floor(stat.mtimeMs), now, window)) return null;
     const value = JSON.parse(readFileSync(fd, 'utf8'));
     return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
   } catch {

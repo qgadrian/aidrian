@@ -1,7 +1,8 @@
 // The guard that keeps a subagent out of the handoff continuation (docs/handoff.md#continue), with or without gates:
 // it may not run `aidrian handoff continue`, which arms a continuation of the main session, nor write in the
 // continuation store, `<state>/handoffs/.continue/` (lib/handoff-markers.mjs). scripts/hook-agent-gates.mjs asks it
-// before every tool call. It reads a call's targets as lib/config-guard.mjs does, and, like that guard, it is for
+// before every tool call. A host's other tools that run a shell command, such as Claude Code's Monitor, reach it as Bash
+// calls (lib/hosts/claude-code.mjs hookInput). It reads a call's targets as lib/config-guard.mjs does, and, like that guard, it is for
 // agents that cooperate: what the shared lexer cannot see, it cannot see either. The known limits of that lexer, which
 // this guard accepts: brace expansion (`{a,b}`), ANSI-C quoting (`$'...'`), a link created and written through in one
 // call, the outputs of `tar -C` and `curl -o`, a program that runs its arguments as a command (`xargs aidrian ...`,
@@ -24,7 +25,9 @@ const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_
 // { match, reason }. The gate cannot tell a subagent by itself, since a subagent's shell carries the main session's id.
 // It reads the command as lib/rules/decisions-set.mjs does, wherever it runs, refuses a shell fed text it cannot read
 // as commands when that text names the action, and refuses a command word it cannot read, as in `aidrian $CMD x.md`,
-// unless a later plain word is `check` or `snapshot`, the actions any agent may run. A known limit of the shared lexer:
+// unless a later plain word is `check` or `snapshot`, the actions any agent may run. A command word built from a variable
+// or a substitution, as in `$AIDRIAN handoff continue x.md`, is refused when its later plain words read `handoff`, then
+// `continue`: it may be aidrian, and no other program takes those words. A known limit of the shared lexer:
 // a program that runs its arguments as a command, such as `xargs aidrian ...` or `find ... -exec aidrian ...`, is not
 // read as aidrian.
 export function handoffContinueDenial(input, { names: { human } }) {
@@ -37,6 +40,11 @@ export function handoffContinueDenial(input, { names: { human } }) {
 
 function runsContinue({ invocation, unread }) {
   if (unread !== undefined && /\bhandoff\b[^\n;|&]*\bcontinue\b/u.test(unread)) return true;
+  if (invocation.dynamic) {
+    const words = invocation.args.filter((token) => !token.dynamic).map((token) => token.text);
+    const at = words.indexOf('handoff');
+    if (at !== -1 && words.includes('continue', at + 1)) return true;
+  }
   const [first, ...rest] = aidrianArgs(invocation) ?? [];
   if (!first) return false;
   if (first.dynamic) return !rest.some((token) => !token.dynamic && ['check', 'snapshot'].includes(token.text));

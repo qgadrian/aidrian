@@ -742,13 +742,15 @@ test('the handoff skills run the continue gate after the check, carry the chain,
   const gate = step(handoff, 7);
   for (const words of ['the session-length reminder, the plan offer, a usage-limit warning, or the Human\'s request',
     'A checkpoint brief that a running skill writes and then works past skips this step',
-    'Unless the route is `none`, nothing still runs: step 1 settled it', 'last written more than 15 minutes ago is refreshed first',
+    'Unless step 1 printed `route: none`, nothing still runs: step 1 settled it', 'last written more than 15 minutes ago is refreshed first',
     'After step 6 exits 0, run `aidrian handoff continue <brief>`',
     '`continue: none`: print the resume instructions, and the `fallback:` line when there is one',
     '`continue: clear`: tell the Human the `say:` line and nothing else, then end the turn',
     'Exit 1: do what its message names', 'A second refusal, or exit 2: print the resume instructions and the reason',
   ]) assert.ok(gate.includes(words), `step 7: ${words}`);
-  for (const words of ['When the session hands off now (step 7) and the route is not `none` (`--continue`, else `session.handoff.continue`), wait for or stop every agent, background job, and scheduled or loop run before writing, so Still running is None',
+  // Step 1 settles running work only for the route the host runs, which the gate decides the same way (effectiveRoute).
+  for (const words of ['When the session hands off now (step 7), run the read-only `aidrian handoff route`, with `--route <route>` when `--continue` gave one: it prints the route this host runs',
+    'Unless that is `route: none`, wait for or stop every agent, background job, and scheduled or loop run before writing, so Still running is None',
     'starts a turn here after the gate, and that cancels the continuation',
     'Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one left running under Still running']) assert.ok(step(handoff, 1).includes(words), `step 1: ${words}`);
   assert.ok(step(handoff, 8).includes('unless step 7 printed them or told the `say:` line'));

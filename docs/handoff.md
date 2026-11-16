@@ -96,8 +96,17 @@ A route the host does not list falls back the same way. Which host does which ro
 
 | Route | Host |
 | --- | --- |
-| `clear` | Claude Code (verified on 2.1.325): [Handoff continuation](providers/claude-code.md#handoff-continuation) |
+| `clear` | Claude Code: host behavior verified on 2.1.325, the route not yet run live: [Handoff continuation](providers/claude-code.md#handoff-continuation) |
 | any | Codex: none, so every route falls back to `"none"` |
+
+### The route the host runs
+
+`aidrian handoff route [--route <route>]` prints `route: <route>`, the route a handoff would go on by here, as the gate
+decides it from `--route` or `session.handoff.continue` and the host's routes. A route the host does not run prints
+`route: none` and the `fallback:` line, as with `"compact"` on Claude Code in this release or any route on Codex.
+It reads the config and nothing else, writes nothing, and exits 2 on an unknown `--route` or a config with errors.
+The `session-handoff` skill runs it in its first step, so it settles every running agent only when a continuation can
+follow. The gate may still fall back for what only the brief or the store tells, such as the brief's chain.
 
 ### The gate
 
@@ -113,7 +122,8 @@ whatever the config says, and `background` only when the config says `"backgroun
 3. A fallback prints `continue: none` and one `fallback:` line, exit 0: the host does not list the route, or tells the
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a
    control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
-   it; or the brief's chain is `maxChain` or more.
+   it; the state, handoffs, or store folder is owned by another user or writable by every user; or the brief's chain
+   is `maxChain` or more.
 4. A refusal exits 1 with the reason and the remedy on stderr, since the session can fix it: no passing check of the
    brief's current bytes (run `aidrian handoff check` first), a brief last written more than 15 minutes ago or dated in
    the future (refresh it), or a `Chain` below the floor this session was given (set it, and check again).
@@ -129,7 +139,9 @@ carries the main session's id, and keeps a subagent from writing in the store, w
 
 The store is `<state>/handoffs/.continue/` ([project-folder.md](project-folder.md#local-state)), shared by every
 worktree and clone of the project. Every write is a temporary file and a rename. Every read refuses a symlink, a marker
-of the wrong shape, and a time outside its window, in the past or the future. A sweep deletes the armed, ready, and
+or a brief another user owns, a marker of the wrong shape, and a time outside its window, in the past or the future.
+A store whose state, handoffs, or store folder another user owns, or every user may write, is neither written nor read;
+a folder its group may write passes, since a umask of 002 is common. A sweep deletes the armed, ready, and
 stamp files after 24 hours, and the chain floors after 30 days.
 
 ### The chain
@@ -139,7 +151,9 @@ row that led to the session writing the brief. A session started by an automatic
 start context names; a session a person started by typing the resume writes 0.
 
 - `aidrian handoff check` fails a `Chain` that is not a whole number, and one below the floor of the session that runs
-  it: the number its delivery recorded for the brief's slug. So an agent that forgets to count is caught by a script.
+  it: the number its delivery recorded, whatever the brief's slug, since a continued session that hands off under
+  another name is still the same run. So an agent that forgets to count, or renames the work, is caught by a script.
+  The gate refuses such a brief too.
 - The gate falls back at `Chain` `maxChain` or more: with the default 3, briefs with Chain 0, 1, and 2 continue, and the
   brief the third continued session writes is resumed by a person, which starts the count again.
 
@@ -166,8 +180,8 @@ start context names; a session a person started by typing the resume writes 0.
 Limits:
 
 - Anything that starts a turn in the session after the gate cancels the continuation: a prompt, and also a background
-  agent's report, a scheduled or loop run, and a message from another session. So the skill's continue step settles
-  every agent, background job, and scheduled run before it runs the gate.
+  agent's report, a scheduled or loop run, and a message from another session. So the skill settles every agent,
+  background job, and scheduled or loop run in its first step, before it writes the brief and runs the gate.
 - The Human types two things: the clear command and one message.
 - A store inside a checkout of the repository delivers nothing, and the gate's `fallback:` line says so.
 - A hook that cannot read the store lets the session start as it would without one: the Human resumes by hand.

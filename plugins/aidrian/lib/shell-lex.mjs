@@ -452,7 +452,8 @@ function splitStringInvocation(value, depth, rest = []) {
   return readInvocation([...carried, ...rest], depth + 1);
 }
 
-// Reads the program of a segment: { program, args, negated, chdir }. It skips the shell words above, a subshell's
+// Reads the program of a segment: { program, dynamic, args, negated, chdir }. `dynamic` is whether the command word is
+// built from a variable or a substitution, as in `$TOOL x` or `$(command -v tool) x`, so `program` is no name. It skips the shell words above, a subshell's
 // parentheses, a `!` (which runs the command and inverts its status: `negated`), leading `VAR=value` assignments, and
 // the wrappers above with their options, so `(sudo env FOO=1 command grep -c x f)` reads as grep. `program` is the base
 // name; `args` exclude redirections and their targets; `chdir` is the directory a wrapper moves to, or null.
@@ -564,7 +565,7 @@ export function readInvocation(segment, depth = 0) {
     peelAssignments();
   }
   const program = usable[index]?.text ?? '';
-  return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir, environment };
+  return { program: program.split('/').pop() ?? '', dynamic: usable[index]?.dynamic === true, args: usable.slice(index + 1), negated, chdir, environment };
 }
 
 // The builtins that set or export a shell variable named in their arguments.

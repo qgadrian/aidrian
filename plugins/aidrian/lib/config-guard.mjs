@@ -330,10 +330,10 @@ const reachesFile = (glob, reached) => partsReach(glob, reached, partMatches, fa
 const partMatches = (part, name) => (GLOB_WORD.test(part) ? globParts(part, [], 'i').pattern.test(name) : part.toLowerCase() === name.toLowerCase());
 
 // Whether a glob word names `file` by its name alone, as one in a shell that changed its folder first may reach it: its
-// last part matches the file's name or its folder's, and starts with a plain text that is no dots alone, as
-// `.aidrian.local.js*`, `c*`, or `conf[i]g.json` for config.json; or its last two parts match the file's folder and name,
-// the folder by its name or such a glob, as `.aidrian/*` or `.aid*/*` for `.aidrian/config.json`. So `*`, `*.json`, and
-// `.*` alone name no file. lib/handoff-guard.mjs reads it too.
+// last part matches the file's name or its folder's, and starts with a plain text that is no dots alone, as the local
+// file's name with a `*` for its end, `c*`, or `conf[i]g.json` for config.json; or its last two parts match the file's
+// folder and name, the folder by its name or such a glob, as `<project folder>/*` for its config.json. So `*`, `*.json`,
+// and `.*` alone name no file. lib/handoff-guard.mjs reads it too.
 export function globNamesFile(text, file) {
   const parts = text.split('/').filter(Boolean);
   const last = parts.at(-1) ?? '';

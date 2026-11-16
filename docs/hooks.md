@@ -899,18 +899,34 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   A word with `*`, `?`, or `[` is a glob, judged two ways. From the call's folder, it reaches a guarded file when each of
   its parts matches the file's path at that depth, in any case, among what is there: the file, a folder that holds it, or a
   link to either; so `src\*` or `*.json` in a folder without the file reaches nothing, while `Remove-Item *` at the project
-  root reaches `.aidrian/`. By name alone, since the shell may change its folder first, it counts only when its last part
-  matches the file's name or its folder's and starts with a plain text other than dots, as `.aidrian.local.js*`, `c*`,
-  `conf[i]g.json`, or `.c*` for `.continue` do, or when its last two parts match the file's folder and name, as `.aidrian\*`
-  or `handoffs\*` do; `*`, `*.json`, and `.*` alone name nothing. A glob is matched in at most its length times the name's
-  steps, never by backtracking, so no run of stars or `**` parts can hold the hook past its timeout.
+  root reaches `.aidrian/`. A glob with a wildcard before its last part, as `src\*\x\l\*.json`, is followed through
+  each folder it reaches, so a link below its first folder to a guarded folder counts too. By name alone, since the shell
+  may change its folder first, it counts only when its last part matches the file's name or its folder's and starts with
+  at least three plain characters past any dots, as `.aidrian.local.js*`, `conf*`, `.aid*`, `conf[i]g.json`, or `.con*`
+  and `han*` for `handoffs/.continue` do, or when its last two parts match the file's folder and name, as `.aidrian\*` or
+  `handoffs\*` do. Its last part never names a checkout's folder, whose name a project's paths share, and names the gate
+  snapshot's folder only with the folder above it, as `aidrian\ses*`. So `*`, `*.json`, `.*`, `c*`, `.c*`, and `src\w*`
+  in a checkout named `webapp` name nothing. A `-Name:value` word, its dash `-` or U+2013 to U+2015, counts its value as a
+  word too. One pipeline of read-only cmdlets, such as `Get-ChildItem`, `Get-Content`, `Select-String`, `Where-Object`, or
+  `Get-Process`, each word plain, with no variable, subexpression, script block, redirection, or `;`, writes nothing and is
+  not judged by its paths and globs, so `Get-ChildItem *` and `dir .*` run anywhere; `Get-ChildItem * | Remove-Item` is
+  judged.
+  A glob is matched in at most its length times the name's steps, never by backtracking.
   It may not hold both the words `handoff` and `continue`, nor a word that names or reaches the continuation store
   (`handoffs/.continue`, a `.continue` part, a marker's file name, a folder that holds the store, or a glob that reaches
   it), nor `.aidrian.local.json`, by name or by a glob that may reach it; while gates are set, nor a word that names or
-  reaches a file that sets them. Each counts whether the command reads or writes, since the guard cannot tell, so the block
+  reaches a file that sets them. Outside a read-only pipeline, each counts whether the command reads or writes, since the
+  guard cannot tell, so the block
   says it may change the file, or, for a glob, that it may reach it; Read still reads the file
   ([provider page](providers/claude-code.md#powershell-commands)). A subagent's command of more than 512 words, counting
-  each case, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
+  each case, is refused, since the guards resolve no more.
+- The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
+  past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
+  a subagent's call is refused, as the guards could not finish reading the command in time, and the main session's runs,
+  as the guards allow it anyway. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
+  be in, is refused at once, and a glob that leads the guards through more than 100,000 links counts as one that may
+  reach a guarded file. A path that passes more links than the system follows in one lookup, which no command can open,
+  is read as spelled. `AIDRIAN_GUARD_BUDGET_MS` in the hook's environment may only lower the budget, as a test does. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
   such a call, and the gates are asked before any guard ([config](config.md#agents)).
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.

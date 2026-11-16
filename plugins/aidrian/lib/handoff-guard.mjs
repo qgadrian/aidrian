@@ -14,6 +14,7 @@
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
+import { checkDeadline } from './deadline.mjs';
 import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-guard.mjs';
 import { globParts, isWithin, partsReach } from './fs.mjs';
 import { ARMING_FILE, foldCase, storePath } from './handoff-markers.mjs';
@@ -75,7 +76,10 @@ const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:a
 // A disk that folds case reaches the store by any spelling of its path.
 const fold = foldCase;
 const FOLD_FLAG = foldCase('A') === 'a' ? 'i' : '';
-const real = (file) => fold(canonical(file));
+const real = (file) => {
+  checkDeadline();
+  return fold(canonical(file));
+};
 
 // Whether a text from a folder no path gives names the store or one of its files.
 const namesStore = (text) => STORE_NAME.test(text) || text.split('/').some((part) => MARKER_NAME.test(part));
@@ -103,6 +107,7 @@ function globPaths({ text, dirs = [] }) {
 function globReaches({ prefix, rest }, store) {
   // The root splits to two empty parts: only the first stands for it.
   const split = (file) => file.split(path.sep).filter((part, i) => i === 0 || part !== '');
+  checkDeadline();
   const matches = (part, name) => (GLOB.test(part) ? globParts(part, [], FOLD_FLAG).pattern.test(name) : fold(part) === name);
   return partsReach([...split(prefix), ...rest], split(store), matches, true);
 }
@@ -113,7 +118,7 @@ function globReaches({ prefix, rest }, store) {
 // it and no checkout, or a glob may reach the store; a target in a folder no path names, or code an interpreter runs,
 // counts when it names `handoffs/.continue`, a marker below `.continue/`, or a path part named as a file that arms or
 // delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB). A glob word of a command in a shell the lexer
-// cannot read counts by those names, and when it names the store by its name, as `.c*` or `handoffs/*` do, from any folder
+// cannot read counts by those names, and when it names the store by its name, as `.con*`, `han*`, or `handoffs/*` do, from any folder
 // (globNamesFile), since such a shell may change its folder first. Such a command may only read what it names, so its
 // block says it may change the store.
 export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state) {

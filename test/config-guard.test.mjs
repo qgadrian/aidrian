@@ -645,7 +645,7 @@ test('a subagent may not write in the handoff continuation store, with or withou
       ['PowerShell', { command: String.raw`Set-Content -Path "$env:S\handoffs\.continue\armed-s1.json" -Value '{}'` }],
       ['PowerShell', { command: String.raw`Copy-Item C:\tmp\x.json READY-s1.json` }],
       ['PowerShell', { command: "New-Item -ItemType Directory (Join-Path $s 'handoffs' '.Continue')" }],
-      ['PowerShell', { command: `Get-Content ${store}/armed-s1.json` }],
+      ['PowerShell', { command: `Get-Content ${store}/armed-s1.json | Set-Content x.json` }],
       // On a disk that folds case, any spelling reaches the store.
       ...(FOLDS ? [
         ['Write', { file_path: path.join(handoffs, '.CONTINUE/armed-s1.json'), content: '{}' }],
@@ -674,6 +674,8 @@ test('a subagent may not write in the handoff continuation store, with or withou
       ['Monitor', { command: `tail -f ${store}/armed-s1.json`, description: 'watch' }],
       ['PowerShell', { command: 'Get-ChildItem $env:TEMP | Select-Object -First 3' }],
       ['PowerShell', { command: `Remove-Item ${handoffs}/2026-11-15-x.md` }],
+      // One pipeline of read-only cmdlets with plain words writes nothing, as `cat` does not.
+      ['PowerShell', { command: `Get-Content ${store}/armed-s1.json` }],
     ]) {
       assert.equal(run(subagent(dir, tool, toolInput)).status, 0, label(toolInput));
     }
@@ -812,7 +814,7 @@ test('a subagent\'s plain PowerShell glob is judged by the folder it reaches, an
     assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
   }
   // By name, from any folder, as a shell that changed its folder first may reach it.
-  for (const command of [String.raw`Set-Location ..; Remove-Item -Recurse .aidrian\*`, 'Remove-Item -Recurse ../.aid*/*', 'Remove-Item c*', 'Remove-Item conf[i]g.json']) {
+  for (const command of [String.raw`Set-Location ..; Remove-Item -Recurse .aidrian\*`, 'Remove-Item -Recurse ../.aid*/*', 'Remove-Item conf*', 'Remove-Item conf[i]g.json']) {
     const result = run(path.join(gated, 'src'), command);
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);

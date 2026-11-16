@@ -164,9 +164,17 @@ function bashPrefix(pattern) {
 // read past wrappers such as `sudo` and `env`, and past git's global options, so `git -C x push` is `git push`. The
 // shell itself stays a command too, so an `allow` list must still name it. A command run by `eval`, `xargs`, a pipe into
 // a shell, or a script is not read.
+// The last command read and its commands, so a call's every Bash(<prefix>) pattern reads its command once.
+let lexed = { command: null, found: [] };
 function commands(toolInput) {
   const command = toolInput?.command;
   if (typeof command !== 'string') return [];
+  if (lexed.command === command) return lexed.found;
+  lexed = { command, found: readCommands(command) };
+  return lexed.found;
+}
+
+function readCommands(command) {
   const found = [];
   const read = (line, depth) => {
     for (const { segments, inputs } of commandLines(line).map(lexInputs)) {

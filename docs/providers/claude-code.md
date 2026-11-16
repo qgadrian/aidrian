@@ -129,7 +129,7 @@ as they read Bash on every version.
 
 ## PowerShell commands
 
-The PowerShell tool runs its `command` in PowerShell. It is on by default on Windows, with or without Git Bash, and opt-in on
+The PowerShell tool runs its `command` in PowerShell. It is on by default on Windows (with Git Bash installed, only for claude.ai and Console accounts unless `CLAUDE_CODE_USE_POWERSHELL_TOOL=1`), and opt-in on
 Linux, macOS, and WSL, and a subagent may call it ([tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool)).
 The shared lexer reads POSIX shells, and it misreads PowerShell's `@(...)`, its backtick escapes, and its quoting, so the
 adapter never reads a PowerShell call as Bash, and no `Bash(<prefix>)` pattern in an `allow` list ever admits one.
@@ -148,7 +148,9 @@ adapter never reads a PowerShell call as Bash, and no `Bash(<prefix>)` pattern i
   `'a'+'b'` folded, and quotes removed, typographic quotes such as `‘` and `“` included, so ``hand`off`` is `handoff`.
   A word that is a path counts by that path, from the call's folder when relative and from the home folder after a
   leading `~`, and a word with `*`, `?`, or `[` counts as a glob, judged as the [hooks page](../hooks.md#agent-gates) says.
-  A command of more than 512 words, counting each case, is refused for a subagent, as the guards read no more.
+  One pipeline of read-only cmdlets with plain words, such as `Get-ChildItem *` or `Get-ChildItem | Where-Object Name -like 'h*'`,
+  writes nothing and is not judged. A command of more than 512 words, counting each case, is refused for a subagent, as
+  the guards read no more, and so is one they cannot finish reading within their time budget.
 - The [Bash rules](../hooks.md#bash-rules), which hooks.json matches to Bash, do not run on a PowerShell command.
 
 This rests on the [tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool) and the

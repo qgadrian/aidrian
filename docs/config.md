@@ -1123,7 +1123,10 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   for a Bash deny only on Windows with Git Bash installed. So on Windows without Git Bash, a `Bash` deny in `main` or `*`
   leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
 - The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
-  denied however long its command is.
+  denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
+  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, and the main
+  session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
+  than 1024 write targets are refused too, as the guards read no more ([hooks](hooks.md#agent-gates)).
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
 - An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
   only read files until the file is fixed.

@@ -5,6 +5,9 @@
 // It runs before every tool call, so without gates it stops as soon as it has read the config and run the guards that hold
 // without gates; a call a gate blocks exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook
 // records its blocks (lib/hook-deny.mjs). The gates are asked before any guard, so a call they deny never waits on one.
+// The guards then run under a time budget (lib/deadline.mjs), GUARD_BUDGET_MS from the hook's start, well inside the
+// host's 5 second hook timeout, past which the host runs the call with no guard: a subagent's call they cannot finish
+// reading in time is refused (config-guard.mjs deadlineDenial), and the main session's runs, as the guards allow it anyway.
 // A subagent's call also meets the gates its session started with (lib/gate-snapshot.mjs), so a config.json deleted,
 // replaced, or moved away during the session lifts none of them; without a snapshot, as when the hooks were installed
 // during the session, only the current config counts, unless the session started with gates and the snapshot is gone:
@@ -20,11 +23,17 @@ import path from 'node:path';
 import { gateDenial, readOnlyDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
-import { configWriteDenial, machineSwitchWriteDenial, opaqueLimitDenial } from '../lib/config-guard.mjs';
+import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
+import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { continueStoreWriteDenial, handoffContinueDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
+
+// The milliseconds from the hook's start the guards may take. AIDRIAN_GUARD_BUDGET_MS may only lower it, as a test does.
+const GUARD_BUDGET_MS = 2500;
+const lowered = process.env.AIDRIAN_GUARD_BUDGET_MS ? Number(process.env.AIDRIAN_GUARD_BUDGET_MS) : Number.NaN;
+const budget = Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, GUARD_BUDGET_MS) : GUARD_BUDGET_MS;
 
 await runHook(async (input) => {
   try {
@@ -65,15 +74,26 @@ async function gate(input) {
     ? gateDenial(input, config, project.paths) ?? started.map((agents) => gateDenial(input, { ...config, agents }, project.paths, { started: true })).find(Boolean)
     : null;
   if (gate) await block(input, 'agent-gates', gate.reason, { match: gate.match, project, config });
-  const guard = opaqueLimitDenial(input, config)
-    ?? machineSwitchWriteDenial(input, project, config)
-    ?? handoffContinueDenial(input, config)
-    ?? continueStoreWriteDenial(input, project, config, () => stateDir(project, { config }));
-  if (guard) await block(input, 'config-guard', guard.reason, { match: guard.match, project, config });
-  if (!gated) return;
-  const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
-  const denial = configWriteDenial(input, project, config, { also: guarded });
+  let denial;
+  try {
+    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot));
+  } catch (error) {
+    if (!(error instanceof PastDeadline)) throw error;
+    denial = deadlineDenial(input, config);
+  }
   if (denial) await block(input, 'config-guard', denial.reason, { match: denial.match, project, config });
+}
+
+// The first guard's denial of the call, or null.
+function guards(input, project, config, gated, snapshot) {
+  const guard = opaqueLimitDenial(input, config)
+    ?? writeLimitDenial(input, config)
+    ?? handoffContinueDenial(input, config)
+    ?? continueStoreWriteDenial(input, project, config, () => stateDir(project, { config }))
+    ?? machineSwitchWriteDenial(input, project, config);
+  if (guard || !gated) return guard;
+  const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
+  return configWriteDenial(input, project, config, { also: guarded });
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

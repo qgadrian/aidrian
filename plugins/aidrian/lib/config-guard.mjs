@@ -11,10 +11,11 @@
 // within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { globParts, isWithin } from './fs.mjs';
+import { globParts, isEntry, isWithin, partsReach } from './fs.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
@@ -67,7 +68,10 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   }
   // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
   const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
-  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1, input.tool_input?.command ?? '');
+  const shell = globs.filter((glob) => !glob.opaque);
+  const named = namedFile(names, files, project, guarded)
+    ?? globbedFile(shell, spelled, targets.length + names.length + globs.length > 1, input.tool_input?.command ?? '')
+    ?? opaqueGlobbedFile(globs.filter((glob) => glob.opaque), spelled);
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -85,10 +89,11 @@ const SWITCHES = Object.freeze([
 // Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, or
 // the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that names its key. It targets the file by its name, in any folder and
-// case, or by a glob whose last part matches that name, such as its name with a `*` for its end. This holds with no gates set, and
-// other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
-// A command in a shell the lexer cannot read that names the local file is refused whether or not it names a key: it may
-// set a switch by a key it builds, and the guard cannot tell.
+// case, or by a Bash glob whose last part matches that name, such as its name with a `*` for its end. This holds with no
+// gates set, and other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
+// A command in a shell the lexer cannot read that names the local file, or has a glob that may reach it
+// (opaqueGlobReaches), is refused whether or not it names a key: it may set a switch by a key it builds, and the guard
+// cannot tell.
 export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
   const opaque = opaqueShellCommand(input) !== null;
@@ -98,10 +103,14 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   const { files, names, globs } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
-  const globbed = globs.some(({ text, dirs = [] }) => globParts(text, dirs, 'i').pattern.test(local));
-  if (targets.length === 0 && !globbed && !names.some((name) => name.toLowerCase().includes(local))) return null;
+  const globbed = globs.some(({ text, opaque: unread }) => !unread && globParts(text, [], 'i').pattern.test(local));
+  const aimed = targets.length > 0 || globbed || names.some((name) => name.toLowerCase().includes(local));
+  const locals = configFiles(project).filter((file) => path.basename(file) === local).map((file) => [file]);
+  const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals) !== null;
+  if (!aimed && !reached) return null;
   if (opaque) {
-    const why = `it names ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which only the main session may set`;
+    const how = aimed ? 'names' : 'has a glob that may reach';
+    const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which only the main session may set`;
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
   }
   const hit = isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
@@ -155,20 +164,21 @@ function switchIn(text, valueIn) {
 // folder no path gives: a relative target written after a `cd` to an unknown folder, code an interpreter runs, and the
 // words of a command in a shell the lexer cannot read (opaqueWords); `globs` are bashWrites's glob targets.
 // lib/handoff-guard.mjs reads them too. A path with a bracket class is a file and a glob both. A command in a shell the
-// lexer cannot read writes, failing closed, to the path each of its words gives, from the call's folder when it is
-// relative, and to the glob each word with `*`, `?`, or `[` is, from the call's folder and, since such a shell may change
-// its folder first, by its name alone.
+// lexer cannot read writes, failing closed, to the path each of its first OPAQUE_WORDS words gives, from the call's folder
+// when it is relative and from the home folder after a leading `~`, and to the glob each such word with `*`, `?`, or `[`
+// is, marked `opaque`: the guards judge it by the folder it reaches from the call's folder, and, since such a shell may
+// change its folder first, by its name when that names a guarded file (opaqueGlobReaches). `names` holds every word.
 export function writeTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
   const opaque = opaqueShellCommand(input);
   if (opaque !== null) {
     const words = opaqueWords(opaque);
-    const globbed = words.filter((word) => GLOB_WORD.test(word));
+    const read = words.slice(0, OPAQUE_WORDS).map(fromHome);
     return {
-      files: words.filter((word) => !GLOB_WORD.test(word)).map((word) => path.resolve(cwd, word)),
+      files: read.filter((word) => !GLOB_WORD.test(word)).map((word) => path.resolve(cwd, word)),
       names: words,
-      globs: globbed.flatMap((text) => (path.isAbsolute(text) ? [{ text, dirs: [], unsure: false }] : [{ text, dirs: [cwd], unsure: false }, { text, dirs: [], unsure: true }])),
+      globs: read.filter((word) => GLOB_WORD.test(word)).map((text) => ({ text, dirs: path.isAbsolute(text) ? [] : [cwd], unsure: false, opaque: true })),
     };
   }
   const command = input.tool_input?.command;
@@ -186,12 +196,32 @@ export function writeTargets(input) {
 const GLOB_WORD = /[*?[]/u;
 const BRACKET = /\[[^/]*\]/u;
 
+// The most words of a command in a shell the lexer cannot read that the guards resolve as paths and globs. A subagent's
+// command with more is refused (opaqueLimitDenial), so a long one cannot keep the hook past its timeout unread.
+export const OPAQUE_WORDS = 512;
+
+// A word as such a shell reads a leading `~`: `~` and `~/x` (`~\x`, its backslash read as a `/`) are in the home folder.
+const fromHome = (word) => (word === '~' || word.startsWith('~/') ? path.join(homedir(), word.slice(1)) : word);
+
+// Why the subagent call in `input` may not run because its command, in a shell the lexer cannot read, has more words than
+// the guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest.
+export function opaqueLimitDenial(input, { names: { human } }) {
+  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+  const opaque = opaqueShellCommand(input);
+  if (opaque === null) return null;
+  const count = opaqueWords(opaque).length;
+  if (count <= OPAQUE_WORDS) return null;
+  const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file only the main session may change`;
+  return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands') };
+}
+
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy
 // with the joins such a shell makes undone: each backtick, its escape character, removed, each literal join of two quoted
 // texts, as `'hand'+'off'`, folded into one, and each quote removed, so `hand`off`, `hand"off"`, and `'hand'+'off'`
-// each read `handoff`. lib/handoff-guard.mjs reads them too.
+// each read `handoff`. A typographic quote, U+2018 to U+201E, is a quote too, as PowerShell reads one.
+// lib/handoff-guard.mjs reads them too.
 export function opaqueTexts(command) {
-  const joined = command.replaceAll('`', '').replace(/['"]\s*\+\s*['"]/gu, '').replace(/['"]/gu, '');
+  const joined = command.replaceAll('`', '').replace(/['"\u2018-\u201E]\s*\+\s*['"\u2018-\u201E]/gu, '').replace(/['"\u2018-\u201E]/gu, '');
   return joined === command ? [command] : [command, joined];
 }
 
@@ -200,7 +230,7 @@ export function opaqueTexts(command) {
 // as a `/`, and each word also in lower case, since such a shell may reach a file by any case of its name. Failing closed:
 // a word a read names counts too.
 export function opaqueWords(command) {
-  const words = opaqueTexts(command).flatMap((text) => text.replaceAll('\\', '/').split(/[\s'"`;|&(){}<>,=+@]+/u).filter(Boolean));
+  const words = opaqueTexts(command).flatMap((text) => text.replaceAll('\\', '/').split(/[\s'"\u2018-\u201E`;|&(){}<>,=+@]+/u).filter(Boolean));
   return [...new Set([...words, ...words.map((word) => word.toLowerCase())])];
 }
 
@@ -241,6 +271,76 @@ function globbedFile(globs, files, others = true, command = '') {
       // An entry the glob matches may be a symlink to the file from any folder, which a write follows.
       entries(folder).some((name) => pattern.test(name) && (isWithin(canonical(path.join(folder, name)), pair[1]) || sameFile(path.join(folder, name), pair[1]))));
   })))?.[1] ?? null;
+}
+
+// The guarded file one of `globs`, glob words of a command in a shell the lexer cannot read, may reach, or null.
+// `files` pairs each guarded file's spelled path with its canonical one, as globbedFile's do; the last of a pair is returned.
+function opaqueGlobbedFile(globs, files) {
+  if (globs.length === 0) return null;
+  const folders = new Map();
+  return files.find((pair) => globs.some((glob) => pair.some((file) => opaqueGlobReaches(glob, file, folders))))?.at(-1) ?? null;
+}
+
+// Whether `glob`, a glob word of a command in a shell the lexer cannot read as writeTargets gives it, may reach `file`:
+// by its name (globNamesFile), or from the call's folder (`dirs`), when each of its parts matches the part of the file's
+// path at that depth, in any case, as it names the file, a folder that holds it, or a link to either: a glob matches only
+// what is there, so `src/*` or `*.json` in a folder without the file does not. `folders` caches what each folder holds.
+function opaqueGlobReaches({ text, dirs = [] }, file, folders = new Map()) {
+  if (globNamesFile(text, file)) return true;
+  const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => path.join(dir, text));
+  return spelled.some((each) => {
+    const parts = path.resolve(each).split(path.sep);
+    const at = parts.findIndex((part) => GLOB_WORD.test(part));
+    if (at <= 0) return false;
+    const rest = parts.slice(at);
+    // The root splits to an empty part, or a drive's name, that needs its separator back.
+    const head = parts.slice(0, at).join(path.sep);
+    const { dirs: here, links } = folderOf(at === 1 ? `${head}${path.sep}` : head, folders);
+    const below = (dir) => {
+      if (!isWithin(dir, file) || dir === file) return false;
+      const reached = path.relative(dir, file).split(path.sep);
+      return isEntry(path.join(dir, reached[0])) && reachesFile(rest, reached);
+    };
+    if (here.some(below)) return true;
+    // An entry the glob's first part matches may be a link to the file, or to a folder that holds it, from anywhere.
+    const first = globParts(rest[0], [], 'i').pattern;
+    return links.some(({ name, real }) => first.test(name) && (real === file || sameFile(real, file) || (isWithin(real, file) && reachesFile(rest.slice(1), path.relative(real, file).split(path.sep)))));
+  });
+}
+
+// What a folder holds for opaqueGlobReaches, cached in `folders`: { dirs, links }, its spellings, as given and with its
+// links resolved, and the links in it, each with its name and where it leads.
+function folderOf(folder, folders) {
+  if (!folders.has(folder)) {
+    let found = [];
+    try {
+      found = readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.isSymbolicLink()).map(({ name }) => ({ name, real: canonical(path.join(folder, name)) }));
+    } catch {
+      // A folder it cannot read holds nothing it can match.
+    }
+    folders.set(folder, { dirs: [...new Set([folder, canonical(folder)])], links: found });
+  }
+  return folders.get(folder);
+}
+
+// Whether glob path parts reach a guarded file's path parts `reached` below the same folder, in any case (partsReach): one
+// that ends above the file names a folder that holds it; one that goes on below the file reaches nothing of it.
+const reachesFile = (glob, reached) => partsReach(glob, reached, partMatches, false);
+
+const partMatches = (part, name) => (GLOB_WORD.test(part) ? globParts(part, [], 'i').pattern.test(name) : part.toLowerCase() === name.toLowerCase());
+
+// Whether a glob word names `file` by its name alone, as one in a shell that changed its folder first may reach it: its
+// last part matches the file's name or its folder's, and starts with a plain text that is no dots alone, as
+// `.aidrian.local.js*`, `c*`, or `conf[i]g.json` for config.json; or its last two parts match the file's folder and name,
+// the folder by its name or such a glob, as `.aidrian/*` or `.aid*/*` for `.aidrian/config.json`. So `*`, `*.json`, and
+// `.*` alone name no file. lib/handoff-guard.mjs reads it too.
+export function globNamesFile(text, file) {
+  const parts = text.split('/').filter(Boolean);
+  const last = parts.at(-1) ?? '';
+  const [name, folder] = [path.basename(file), path.basename(path.dirname(file))];
+  const names = (part, each) => partMatches(part, each) && (!GLOB_WORD.test(part) || !/^\.*$/u.test(part.split(/[*?[]/u)[0]));
+  if (GLOB_WORD.test(last) && [name, folder].some((each) => names(last, each))) return true;
+  return parts.length > 1 && names(parts.at(-2), folder) && partMatches(last, name);
 }
 
 // Whether two paths are one file on disk: a hard link keeps its own path, so only the device and inode tell.

@@ -102,7 +102,7 @@ export function isDirectory(dir) {
 }
 
 // Whether `file` is there at all, a broken symlink included.
-function isEntry(file) {
+export function isEntry(file) {
   try {
     lstatSync(file);
     return true;
@@ -133,29 +133,83 @@ export function globPattern(glob) {
 // that folds case. The pattern reads `*`, `?`, and a `[...]` class, `[!...]` or `[^...]` negated, with a `]` right after
 // the opening as a member, as the shell does. A class it does not model, such as `[[:alpha:]]`, or cannot compile, such
 // as the reversed range `[z-a]`, matches any one character: a guard that reads a glob, such as lib/config-guard.mjs
-// and lib/handoff-guard.mjs, fails closed. It never throws.
+// and lib/handoff-guard.mjs, fails closed. It never throws. A command gives the glob, so `pattern` is no regular
+// expression, which may take time exponential in its stars (globMatcher).
 export function globParts(text, dirs = [], flags = '') {
   const parts = text.replace(/\/+$/u, '').split('/');
   const last = parts.pop();
   const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
-  return { head, pattern: new RegExp(`^${globSource(last)}$`, `u${flags}`), folders: path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head)) };
+  return { head, pattern: globMatcher(last, flags), folders: path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head)) };
 }
 
-// The regular expression source of one glob path part.
-function globSource(part) {
-  let source = '';
+// Whether glob path parts reach the path parts `reached`, from the same folder: each glob part matches the one at its
+// depth (`matches`), and a part that is only stars, as zsh's `**`, matches any number of parts, none included. A glob that
+// ends first names a folder that holds the path; `below` says whether one that goes on past the path's last part reaches
+// it too, as a write into a folder does. It fills a table row by row and never recurses, so a glob of any number of parts
+// costs its parts times the path's, and no command can run it out of stack.
+export function partsReach(glob, reached, matches, below) {
+  const many = glob.map((part) => /^\*{2,}$/u.test(part));
+  let next = new Array(reached.length + 1).fill(true);
+  for (let g = glob.length - 1; g >= 0; g -= 1) {
+    const row = new Array(reached.length + 1);
+    row[reached.length] = below || (many[g] && next[reached.length]);
+    for (let r = reached.length - 1; r >= 0; r -= 1) row[r] = many[g] ? next[r] || row[r + 1] : next[r + 1] && matches(glob[g], reached[r]);
+    next = row;
+  }
+  return next[0];
+}
+
+const STAR = Symbol('star');
+
+// One glob path part as { test(name) }: `*` matches any run of characters, `?` and a class one each, and the rest itself.
+// A run of `*` folds into one, and a failed match goes back only to the last `*` it passed, so a test takes at most the
+// part's length times the name's in steps, whatever the part holds. `flags` holds `i` to fold case.
+function globMatcher(part, flags) {
+  const tokens = [];
+  const one = (source) => {
+    const pattern = new RegExp(`^${source}$`, `u${flags}`);
+    return (char) => pattern.test(char);
+  };
   for (let i = 0; i < part.length; i += 1) {
-    const char = part[i];
-    const close = char === '[' ? classEnd(part, i) : -1;
-    if (char === '*') source += '.*';
-    else if (char === '?') source += '.';
-    else if (close === -1) source += char.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-    else {
-      source += classSource(part.slice(i + 1, close));
+    const close = part[i] === '[' ? classEnd(part, i) : -1;
+    if (part[i] === '*') {
+      if (tokens.at(-1) !== STAR) tokens.push(STAR);
+    } else if (part[i] === '?') tokens.push(one('.'));
+    else if (close !== -1) {
+      tokens.push(one(classSource(part.slice(i + 1, close))));
       i = close;
+    } else {
+      const char = String.fromCodePoint(part.codePointAt(i));
+      tokens.push(flags.includes('i') ? one(char.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')) : (each) => each === char);
+      i += char.length - 1;
     }
   }
-  return source;
+  return { test: (name) => matchTokens(tokens, Array.from(String(name))) };
+}
+
+// Whether `chars` match `tokens` whole: at a mismatch, the last `*` passed takes one more character, and none before it
+// needs to change, since a `*` matches any run.
+function matchTokens(tokens, chars) {
+  let t = 0;
+  let c = 0;
+  let star = -1;
+  let taken = 0;
+  while (c < chars.length) {
+    if (tokens[t] === STAR) {
+      star = t;
+      taken = c;
+      t += 1;
+    } else if (t < tokens.length && tokens[t](chars[c])) {
+      t += 1;
+      c += 1;
+    } else if (star !== -1) {
+      t = star + 1;
+      taken += 1;
+      c = taken;
+    } else return false;
+  }
+  while (tokens[t] === STAR) t += 1;
+  return t === tokens.length;
 }
 
 // The index of the `]` that closes the class opened at `start`, or -1 when none does and the `[` is a plain character.

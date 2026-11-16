@@ -47,7 +47,8 @@ export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw
 // The names a deny matches the call by: toolNames; `permission_tool_name`, the standard tool whose permission rules the
 // host runs this call under when that is another tool, as an adapter's `hookInput` sets it; and, for a command in a shell
 // the lexer cannot read (opaqueShellCommand), the standard Bash. A Bash deny cannot be held to a command no lexer reads,
-// so every Bash deny, bare or by prefix, covers it, as Claude Code turns its PowerShell tool off for any Bash deny rule
+// so every Bash deny, bare or by prefix, covers it on every platform; a host may do the like only in some setups, as
+// Claude Code turns its PowerShell tool off for a Bash deny only on Windows with Git Bash installed
 // (code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool). lib/agent-gates.mjs
 // reads such a call as matching every Bash(<prefix>) pattern.
 export const deniedNames = (input) => [...toolNames(input), input.permission_tool_name, opaqueShellCommand(input) === null ? null : 'Bash']

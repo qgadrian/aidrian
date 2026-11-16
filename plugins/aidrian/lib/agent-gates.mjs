@@ -57,14 +57,22 @@ export function gateDenial(input, { agents, names: { human } }, paths, { started
   for (const [name, { deny = [] }] of entries) {
     const hit = deny.find((pattern) => denied.some((name) => denies(pattern, name, input.tool_input, unread)));
     if (!hit) continue;
-    const byName = called.some((name) => denies(hit, name, input.tool_input, false));
-    const why = byName ? '' : `; a Bash deny covers ${calledName(input)} too, since the gate cannot read its command to tell what it runs`;
-    return blocked(input, `agents.${name}.deny has "${hit}"`, where, why);
+    return blocked(input, `agents.${name}.deny has "${hit}"`, where, coveredWhy(input, hit, called, unread));
   }
   for (const [name, { allow }] of entries) {
     if (allow && !allows(allow, called, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, where);
   }
   return null;
+}
+
+// Why the deny `hit` covers a call it does not name, or '' when it names it: the call's command is `unread`, in a shell
+// the gate cannot read, or the host runs the call under another tool's permission rules (`permission_tool_name`).
+function coveredWhy(input, hit, called, unread) {
+  if (called.some((name) => denies(hit, name, input.tool_input, false))) return '';
+  const tool = calledName(input);
+  if (unread) return `; a Bash deny covers ${tool} too, since the gate cannot read its command to tell what it runs`;
+  const under = input.permission_tool_name;
+  return `; a ${under} deny covers ${tool} too, since the host runs it under ${under}'s permission rules`;
 }
 
 // The `agents` keys that name the caller. A plugin agent answers to its short name too, in each host's form of it

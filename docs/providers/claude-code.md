@@ -129,21 +129,26 @@ as they read Bash on every version.
 
 ## PowerShell commands
 
-The PowerShell tool runs its `command` in PowerShell. It is on by default on Windows and opt-in on Linux, macOS, and WSL,
-and a subagent may call it ([tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool)).
+The PowerShell tool runs its `command` in PowerShell. It is on by default on Windows, with or without Git Bash, and opt-in on
+Linux, macOS, and WSL, and a subagent may call it ([tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool)).
 The shared lexer reads POSIX shells, and it misreads PowerShell's `@(...)`, its backtick escapes, and its quoting, so the
 adapter never reads a PowerShell call as Bash, and no `Bash(<prefix>)` pattern in an `allow` list ever admits one.
 
 - In a `deny` list, every `Bash` and `Bash(<prefix>)` pattern blocks every PowerShell call, for the main session and every
-  agent, as Claude Code turns the tool off for any Bash deny rule
-  ([tools reference](https://code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool)):
-  a gate that cannot read the command cannot hold it to the prefix, and the block says so. A `PowerShell` pattern names it too.
+  agent, on every platform: a gate that cannot read the command cannot hold it to the prefix, and the block says so.
+  A `PowerShell` pattern names it too. Claude Code does the like only on Windows with Git Bash installed, and keeps the
+  tool on there with `CLAUDE_CODE_USE_POWERSHELL_TOOL=1` or a `PowerShell` permission rule
+  ([tools reference](https://code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool)).
+  A recorded limit: on Windows without Git Bash, where PowerShell is the only shell tool, a `Bash` deny in `main` or `*`
+  leaves the main session no shell tool.
 - The adapter lists the tool in `opaqueShellTools`, and the [agent gates hook](../hooks.md#agent-gates) reads its command
   as opaque text, failing closed for a subagent: a command that holds the words `handoff` and `continue`, or names the
   continuation store, a folder that holds it, a marker, or `.aidrian.local.json`, is refused, and, while gates are set,
   one that names a file that sets them. Each word is read as given and with PowerShell's joins undone: backticks removed,
-  `'a'+'b'` folded, and quotes removed, so ``hand`off`` is `handoff`. A word that is a path counts by that path, from the
-  call's folder when relative, and a word with `*`, `?`, or `[` counts as a glob.
+  `'a'+'b'` folded, and quotes removed, typographic quotes such as `‘` and `“` included, so ``hand`off`` is `handoff`.
+  A word that is a path counts by that path, from the call's folder when relative and from the home folder after a
+  leading `~`, and a word with `*`, `?`, or `[` counts as a glob, judged as the [hooks page](../hooks.md#agent-gates) says.
+  A command of more than 512 words, counting each case, is refused for a subagent, as the guards read no more.
 - The [Bash rules](../hooks.md#bash-rules), which hooks.json matches to Bash, do not run on a PowerShell command.
 
 This rests on the [tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool) and the

@@ -2,8 +2,9 @@
 // lib/agent-gates.mjs decides, then lib/config-guard.mjs keeps a subagent from changing the files that set the gates,
 // and, with or without gates, from setting the machine's auto-merge switch; lib/handoff-guard.mjs, with or without
 // gates, from running `aidrian handoff continue` or writing in the handoff continuation store.
-// It runs before every tool call, so without gates it stops as soon as it has read the config; a call a gate blocks
-// exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook records its blocks (lib/hook-deny.mjs).
+// It runs before every tool call, so without gates it stops as soon as it has read the config and run the guards that hold
+// without gates; a call a gate blocks exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook
+// records its blocks (lib/hook-deny.mjs). The gates are asked before any guard, so a call they deny never waits on one.
 // A subagent's call also meets the gates its session started with (lib/gate-snapshot.mjs), so a config.json deleted,
 // replaced, or moved away during the session lifts none of them; without a snapshot, as when the hooks were installed
 // during the session, only the current config counts, unless the session started with gates and the snapshot is gone:
@@ -19,7 +20,7 @@ import path from 'node:path';
 import { gateDenial, readOnlyDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
-import { configWriteDenial, machineSwitchWriteDenial } from '../lib/config-guard.mjs';
+import { configWriteDenial, machineSwitchWriteDenial, opaqueLimitDenial } from '../lib/config-guard.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { continueStoreWriteDenial, handoffContinueDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
@@ -56,17 +57,23 @@ async function gate(input) {
   const broken = unreadable(project, current, errors) ?? (current ? malformedGates(gateErrors) : null);
   const failed = broken && unreadableConfigDenial(input, broken.file, broken.problem, config);
   if (failed) await block(input, 'agent-gates', failed.reason, { match: failed.match, project, config });
-  const machineSwitch = machineSwitchWriteDenial(input, project, config);
-  if (machineSwitch) await block(input, 'config-guard', machineSwitch.reason, { match: machineSwitch.match, project, config });
-  const handoff = handoffContinueDenial(input, config) ?? continueStoreWriteDenial(input, project, config, () => stateDir(project, { config }));
-  if (handoff) await block(input, 'config-guard', handoff.reason, { match: handoff.match, project, config });
+  // The gates come before the guards, which resolve the paths and globs a command gives: however long those take, a call
+  // a gate denies is denied first.
   const started = (snapshot?.gates ?? []).filter((agents) => Object.keys(agents).length > 0);
-  if (Object.keys(config.agents).length === 0 && started.length === 0) return;
-  const gate = gateDenial(input, config, project.paths)
-    ?? started.map((agents) => gateDenial(input, { ...config, agents }, project.paths, { started: true })).find(Boolean);
+  const gated = Object.keys(config.agents).length > 0 || started.length > 0;
+  const gate = gated
+    ? gateDenial(input, config, project.paths) ?? started.map((agents) => gateDenial(input, { ...config, agents }, project.paths, { started: true })).find(Boolean)
+    : null;
+  if (gate) await block(input, 'agent-gates', gate.reason, { match: gate.match, project, config });
+  const guard = opaqueLimitDenial(input, config)
+    ?? machineSwitchWriteDenial(input, project, config)
+    ?? handoffContinueDenial(input, config)
+    ?? continueStoreWriteDenial(input, project, config, () => stateDir(project, { config }));
+  if (guard) await block(input, 'config-guard', guard.reason, { match: guard.match, project, config });
+  if (!gated) return;
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
-  const [rule, denial] = gate ? ['agent-gates', gate] : ['config-guard', configWriteDenial(input, project, config, { also: guarded })];
-  if (denial) await block(input, rule, denial.reason, { match: denial.match, project, config });
+  const denial = configWriteDenial(input, project, config, { also: guarded });
+  if (denial) await block(input, 'config-guard', denial.reason, { match: denial.match, project, config });
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

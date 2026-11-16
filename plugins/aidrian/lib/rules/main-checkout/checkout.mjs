@@ -103,31 +103,46 @@ const PATH_LIMIT = 4096;
 
 // The path with symlinks resolved, for the part of it that exists; git reports the main checkout that way. A link whose
 // target does not exist yet is followed too: a write through it creates that target, as `echo x > link` does.
+// A path longer than the system's limit names no file, and stays as spelled: a command may give one, and resolving it
+// would only cost the hook time.
 export function canonical(file) {
-  return throughLinks(file, 0);
+  return file.length > PATH_LIMIT ? file : throughLinks(file, 0);
 }
 
 // canonical, after `hops` links not made yet. A link is followed only when what it leads to does not exist (ENOENT):
 // past a loop (ELOOP) or a folder it may not read (EACCES), the path stays as spelled, so a link that nests itself
 // returns at once. At the hop or length limit, the last target reached is returned.
+// The longest leading part that resolves is found by halves: a part below one that does not resolve never does, so a
+// path takes as many tries as halvings, not one a part.
 function throughLinks(file, hops) {
-  const tail = [];
-  let current = file;
-  for (;;) {
+  const spelled = path.normalize(file);
+  const { root } = path.parse(spelled);
+  const parts = spelled.slice(root.length).split(path.sep).filter(Boolean);
+  const upTo = (count) => path.join(root, ...parts.slice(0, count));
+  const resolve = (count) => {
     try {
-      return path.join(realpathSync(current), ...tail);
+      return { real: realpathSync(upTo(count)) };
     } catch (error) {
-      const target = error?.code === 'ENOENT' ? linkTarget(current) : null;
-      if (target !== null) {
-        const next = path.join(target, ...tail);
-        return hops + 1 >= LINK_HOPS || next.length > PATH_LIMIT ? next : throughLinks(next, hops + 1);
-      }
-      const parent = path.dirname(current);
-      if (parent === current) return file;
-      tail.unshift(path.basename(current));
-      current = parent;
+      return { error };
     }
+  };
+  const whole = resolve(parts.length);
+  if (whole.real !== undefined) return whole.real;
+  let [found, missing] = [-1, parts.length];
+  let real = null;
+  while (missing - found > 1) {
+    const middle = Math.floor((found + missing + 1) / 2);
+    const tried = middle === parts.length ? whole : resolve(middle);
+    if (tried.real === undefined) missing = middle;
+    else [found, real] = [middle, tried.real];
   }
+  const failed = missing === parts.length ? whole : resolve(missing);
+  const target = failed.error?.code === 'ENOENT' ? linkTarget(upTo(missing)) : null;
+  if (target !== null) {
+    const next = path.join(target, ...parts.slice(missing));
+    return hops + 1 >= LINK_HOPS || next.length > PATH_LIMIT ? next : throughLinks(next, hops + 1);
+  }
+  return real === null ? file : path.join(real, ...parts.slice(found));
 }
 
 // Where the link `file` points, resolved from the real folder it sits in, or null when `file` is no link.

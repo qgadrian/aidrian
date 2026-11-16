@@ -847,6 +847,8 @@ The reason also tells the agent not to reach the same result with another tool, 
 The block is [recorded](#recorded-blocks) as `agent-gates`, with that gate as its reason.
 A gate that blocks one session a third time becomes a lesson for the project, not the plugin: the gates are the project's.
 The hook runs for every tool, so a project without gates still pays for one process that finds the project, reads its config, and exits.
+It asks the gates before any guard below, so a call a gate denies is denied before the guards read its paths and globs,
+however long they would take.
 
 While any gate is set, the hook also blocks a subagent that changes a file that sets the gates, so an agent cannot lift its own:
 config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout's when the project is a git worktree.
@@ -892,13 +894,24 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the guards read its `command` as opaque text, split into words at blanks, quotes, and the characters that join words,
   with `\` read as `/`, in any letter case, and fail closed for a subagent. The words come from the command as given
   and from a copy with its joins undone: backticks removed, a literal join such as `'a'+'b'` folded, and quotes removed,
-  so ``hand`off`` reads `handoff`. A word that is a path counts as that path, from the call's folder when it is relative,
-  and a word with `*`, `?`, or `[` as a glob. It may not hold both the words `handoff` and `continue`, nor a word that
-  names or reaches the continuation store (`handoffs/.continue`, a `.continue` part, a marker's file name, a folder that
-  holds the store, or a glob that reaches it), nor `.aidrian.local.json`, by name or by a glob; while gates are set, nor
-  a word that names a file that sets them. Each counts whether the command reads or writes, since the guard cannot tell,
-  so the block says it may change the file; Read still reads the file ([provider page](providers/claude-code.md#powershell-commands)).
-  In the gates, every `Bash` and `Bash(<prefix>)` deny blocks such a call ([config](config.md#agents)).
+  so ``hand`off`` reads `handoff`; a typographic quote, U+2018 to U+201E, is a quote. A word that is a path counts as
+  that path, from the call's folder when it is relative and from the home folder after a leading `~`.
+  A word with `*`, `?`, or `[` is a glob, judged two ways. From the call's folder, it reaches a guarded file when each of
+  its parts matches the file's path at that depth, in any case, among what is there: the file, a folder that holds it, or a
+  link to either; so `src\*` or `*.json` in a folder without the file reaches nothing, while `Remove-Item *` at the project
+  root reaches `.aidrian/`. By name alone, since the shell may change its folder first, it counts only when its last part
+  matches the file's name or its folder's and starts with a plain text other than dots, as `.aidrian.local.js*`, `c*`,
+  `conf[i]g.json`, or `.c*` for `.continue` do, or when its last two parts match the file's folder and name, as `.aidrian\*`
+  or `handoffs\*` do; `*`, `*.json`, and `.*` alone name nothing. A glob is matched in at most its length times the name's
+  steps, never by backtracking, so no run of stars or `**` parts can hold the hook past its timeout.
+  It may not hold both the words `handoff` and `continue`, nor a word that names or reaches the continuation store
+  (`handoffs/.continue`, a `.continue` part, a marker's file name, a folder that holds the store, or a glob that reaches
+  it), nor `.aidrian.local.json`, by name or by a glob that may reach it; while gates are set, nor a word that names or
+  reaches a file that sets them. Each counts whether the command reads or writes, since the guard cannot tell, so the block
+  says it may change the file, or, for a glob, that it may reach it; Read still reads the file
+  ([provider page](providers/claude-code.md#powershell-commands)). A subagent's command of more than 512 words, counting
+  each case, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
+  such a call, and the gates are asked before any guard ([config](config.md#agents)).
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.

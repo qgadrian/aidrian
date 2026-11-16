@@ -7,7 +7,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { configWriteDenial } from '../plugins/aidrian/lib/config-guard.mjs';
+import { configWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { configFiles, findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 
@@ -774,13 +774,132 @@ test('a subagent may not set a machine switch through a glob that matches the lo
   }
   const shell = run('PowerShell', { command: "Set-Content .aidrian.local.js* '{}'" });
   assert.equal(shell.status, 2);
-  assert.match(shell.stderr, /it names \.aidrian\.local\.json in a shell command the guard cannot read/u);
+  assert.match(shell.stderr, /it has a glob that may reach \.aidrian\.local\.json in a shell command the guard cannot read/u);
   for (const command of [`echo '${on}' > notes.js*`, 'echo autoMerge > docs/*.md']) assert.equal(run('Bash', { command }).status, 0, command);
   // With gates, a bracket class in a config file's name is read as the glob the shell expands, as `*` is.
   const gated = project(t).dir;
   const config = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(gated, 'Bash', { command: 'echo {} > .aidrian/conf[i]g.json' })), cwd: gated, encoding: 'utf8' });
   assert.equal(config.status, 2);
   assert.match(config.stderr, /may change \.aidrian\/config\.json/u);
+});
+
+test('a subagent\'s plain PowerShell glob is judged by the folder it reaches, and by its name only when that names a guarded file', (t) => {
+  const run = (cwd, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(cwd, 'PowerShell', { command })), cwd, encoding: 'utf8' });
+  const plain = [
+    String.raw`Get-ChildItem src\*`,
+    'Get-ChildItem *.json',
+    String.raw`Remove-Item -Recurse -Force dist\*`,
+    'Copy-Item src/* out/',
+    'dir .*',
+    "(Get-Content notes.txt) -replace '.*', ''",
+    '$n = 3 * 4',
+    "Get-ChildItem | Where-Object Name -like '*config*'",
+  ];
+  // With no gates, nothing guarded lies where they reach; with gates, from a folder that holds none of the config.
+  const open = project(t, { version: 1 }).dir;
+  const gated = project(t).dir;
+  for (const [cwd, label] of [[open, 'no gates'], [path.join(gated, 'src'), 'gates, from src']]) {
+    for (const command of plain) {
+      const result = run(cwd, command);
+      assert.equal(result.status, 0, `${label}: ${command}: ${result.stderr}`);
+    }
+  }
+  for (const command of ['Get-ChildItem *.json', 'Copy-Item src/* out/', "Get-ChildItem | Where-Object Name -like '*config*'"]) assert.equal(run(gated, command).status, 0, `gates: ${command}`);
+  // From the project root, a glob that reaches the config folder or the local file still counts, as it may delete them.
+  for (const command of ['Remove-Item -Recurse -Force *', 'Remove-Item -Recurse .*', 'Remove-Item -Recurse .aidria?']) {
+    const result = run(gated, command);
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
+  }
+  // By name, from any folder, as a shell that changed its folder first may reach it.
+  for (const command of [String.raw`Set-Location ..; Remove-Item -Recurse .aidrian\*`, 'Remove-Item -Recurse ../.aid*/*', 'Remove-Item c*', 'Remove-Item conf[i]g.json']) {
+    const result = run(path.join(gated, 'src'), command);
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
+  }
+  writeFileSync(path.join(open, '.aidrian.local.json'), '{}');
+  for (const command of ['Remove-Item *.json', 'Set-Location ..; Set-Content .aidrian.local.js* x', 'Copy-Item x.json .AIDRIAN.LOCAL.[j]son']) {
+    const result = run(path.join(open, command.startsWith('Set-Location') ? 'src' : ''), command);
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /it has a glob that may reach \.aidrian\.local\.json in a shell command the guard cannot read/u, command);
+  }
+  assert.equal(run(path.join(open, 'src'), 'Remove-Item *.json').status, 0, 'a folder without the local file');
+});
+
+test('a subagent\'s PowerShell command reads a typographic quote as a quote, for each guard', (t) => {
+  const run = (cwd, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(cwd, 'PowerShell', { command })), cwd, encoding: 'utf8' });
+  const open = project(t, { version: 1 }).dir;
+  const gated = project(t).dir;
+  for (const [cwd, command, reason] of [
+    [open, 'aidrian hand\u2018off\u2019 cont\u201Cinue\u201D x.md', /it runs `aidrian handoff continue`/u],
+    [open, 'aidrian (\u201Chand\u201D + \u201Coff\u201D) continue x.md', /it runs `aidrian handoff continue`/u],
+    [open, String.raw`Remove-Item -Recurse $env:S\handoffs\.cont` + '\u2019inue\u2019', /the handoff continuation store/u],
+    [open, 'Set-Content .aidrian.lo\u2018cal\u2019.json x', /it names \.aidrian\.local\.json in a shell command the guard cannot read/u],
+    [open, 'Set-Content (\u2018.aidrian.lo\u2019+\u201Acal.json\u201B) x', /it names \.aidrian\.local\.json in a shell command the guard cannot read/u],
+    [gated, 'Set-Content .aidrian/conf\u201Eig\u201D.json x', /may change \.aidrian\/config\.json/u],
+  ]) {
+    const result = run(cwd, command);
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, reason, command);
+  }
+});
+
+test('a subagent\'s PowerShell word that starts with ~ is read in the home folder, as a Bash one is', (t) => {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-home-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const { dir } = project(t, { version: 1 });
+  const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_STATE_HOME: path.join(home, '.local/state') };
+  const store = path.join(stateDir(findProject(dir), { env }), 'handoffs/.continue');
+  mkdirSync(store, { recursive: true });
+  const run = (tool, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, { command })), cwd: dir, encoding: 'utf8', env });
+  for (const [tool, command] of [
+    ['Bash', 'rm -rf ~/.local/state/aidrian'],
+    ['PowerShell', 'Remove-Item -Recurse -Force ~/.local/state/aidrian'],
+    ['PowerShell', String.raw`Remove-Item -Recurse -Force ~\.local\state\aidrian`],
+  ]) {
+    const result = run(tool, command);
+    assert.equal(result.status, 2, `${tool}: ${command}`);
+    assert.match(result.stderr, /the handoff continuation store/u, command);
+  }
+  assert.equal(run('PowerShell', 'Get-ChildItem ~/Documents').status, 0);
+});
+
+test('a subagent\'s PowerShell command with more words than the guards read is refused; the main session\'s runs', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const words = (count) => Array.from({ length: count }, (_, i) => `w${i}`).join(' ');
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  // Write-Host counts twice, as given and in lower case.
+  const refused = run(subagent(dir, 'PowerShell', { command: `Write-Host ${words(OPAQUE_WORDS - 1)}` }));
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, new RegExp(`its command has ${OPAQUE_WORDS + 1} words, counting each case, and the guards read at most ${OPAQUE_WORDS}`, 'u'));
+  assert.equal(run(subagent(dir, 'PowerShell', { command: words(OPAQUE_WORDS) })).status, 0, 'as many as the guards read');
+  const { agent_id: _id, agent_type: _type, ...main } = subagent(dir, 'PowerShell', { command: `Write-Host ${words(OPAQUE_WORDS)}` });
+  assert.equal(run(main).status, 0, 'the main session may');
+});
+
+test('a glob of many thousand ** parts still reaches the store, for Bash and PowerShell, and never runs the guard out of stack', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const run = (tool, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, { command })), cwd: dir, encoding: 'utf8', timeout: 4000 });
+  const deep = `${'/**'.repeat(17000)}/x`;
+  for (const [tool, command] of [['Bash', `rm -rf ${deep}`], ['PowerShell', `Remove-Item -Recurse ${deep}`]]) {
+    const result = run(tool, command);
+    assert.equal(result.status, 2, `${tool}: ${result.signal ?? ''}`);
+    assert.match(result.stderr, /the handoff continuation store/u, tool);
+  }
+});
+
+test('globParts answers in milliseconds on a part of many wildcards, as it reads them', () => {
+  for (const [part, name, expected] of [
+    [`${'*'.repeat(40)}x`, '.aidrian.local.json', false],
+    [`${'*'.repeat(40)}n`, '.aidrian.local.json', true],
+    [`${'*a'.repeat(30)}b`, 'a'.repeat(60), false],
+    [`${'?*'.repeat(30)}`, 'a'.repeat(30), true],
+    [`${'[a-z]*'.repeat(30)}!`, 'a'.repeat(200), false],
+  ]) {
+    const started = performance.now();
+    assert.equal(globParts(part, [], 'i').pattern.test(name), expected, part);
+    assert.ok(performance.now() - started < 100, `${part} took ${performance.now() - started} ms`);
+  }
 });
 
 test('globParts reads *, ?, and a [...] class, negated with !, in the last path part', () => {

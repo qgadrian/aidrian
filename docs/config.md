@@ -1118,9 +1118,12 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   of them, as a Bash command must, so `"allow": ["Monitor", "Bash(git status)"]` lets only `git status` run through Monitor.
   A WebSocket watch stays Monitor; a bare `Bash` in `deny` covers it, and no `Bash(<prefix>)` pattern matches it.
   A PowerShell command is never admitted by a `Bash` or `Bash(<prefix>)` pattern in `allow`, only by `PowerShell`.
-  In `deny`, every `Bash` and `Bash(<prefix>)` pattern blocks every PowerShell call, whatever its command, since the gate
-  cannot read a PowerShell command to tell what it runs; Claude Code turns its PowerShell tool off for any Bash deny rule
-  the same way ([provider page](providers/claude-code.md#powershell-commands)).
+  In `deny`, every `Bash` and `Bash(<prefix>)` pattern blocks every PowerShell call, whatever its command, on every
+  platform, since the gate cannot read a PowerShell command to tell what it runs. Claude Code itself turns the tool off
+  for a Bash deny only on Windows with Git Bash installed. So on Windows without Git Bash, a `Bash` deny in `main` or `*`
+  leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
+- The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
+  denied however long its command is.
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
 - An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
   only read files until the file is fixed.

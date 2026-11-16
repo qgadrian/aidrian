@@ -41,8 +41,10 @@ const shellWatch = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof in
 // Its tools that run `tool_input.command` in a shell the shared lexer cannot read. PowerShell, on by default on Windows
 // and opt-in on Linux, macOS, and WSL, runs its command as PowerShell, whose `@(...)`, backtick escapes, and quoting a
 // POSIX lexer misreads, so it is never read as Bash, and a Bash(prefix) gate never admits it: the guards read its command
-// as opaque text and fail closed for a subagent, and every Bash deny covers it, as the host turns the tool off for any
-// Bash deny rule (lib/hosts/index.mjs opaqueShellCommand, deniedNames). This rests on the tools and hooks references, which
+// as opaque text and fail closed for a subagent, and every Bash deny covers it on every platform, since the gate cannot
+// read its command; the host itself turns the tool off for a Bash deny only on Windows with Git Bash installed, and on
+// Windows without Git Bash a Bash deny in `main` or `*` leaves the main session no shell tool, a recorded limit
+// (lib/hosts/index.mjs opaqueShellCommand, deniedNames). This rests on the tools and hooks references, which
 // give its command as `tool_input.command`, and on fixtures; it has not run live.
 // docs/providers/claude-code.md#powershell-commands.
 const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);

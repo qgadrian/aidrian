@@ -14,8 +14,8 @@
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { bashCall, opaqueTexts, writeTargets } from './config-guard.mjs';
-import { globParts, isWithin } from './fs.mjs';
+import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-guard.mjs';
+import { globParts, isWithin, partsReach } from './fs.mjs';
 import { ARMING_FILE, foldCase, storePath } from './handoff-markers.mjs';
 import { opaqueShellCommand } from './hosts/index.mjs';
 import { stateRoot } from './project.mjs';
@@ -83,6 +83,8 @@ const namesStore = (text) => STORE_NAME.test(text) || text.split('/').some((part
 const globNamesStore = (text) => namesStore(text) || text.split('/').some((part) => MARKER_GLOB.test(part.split(/[*?[]/u)[0]) && GLOB.test(part));
 
 const GLOB = /[*?[]/u;
+// The store's folder and the one that holds it, as a glob from any folder may name them.
+const STORE_TAIL = path.join('handoffs', '.continue');
 
 // Each spelling of a glob write from a known folder, as { prefix, rest }: `prefix` is the real, case-folded path of its
 // parts before the first glob, and `rest` the parts from there on, a glob or a plain name each.
@@ -97,19 +99,12 @@ function globPaths({ text, dirs = [] }) {
 
 // Whether a glob write reaches the store: each part it spells matches the store's part at that depth, so it names the
 // store, a file in it, or a folder that holds it. A part that is only stars, such as zsh's `**`, matches any number of
-// parts, none included.
+// parts, none included (partsReach, which never recurses, so no glob of many parts can run the guard out of stack).
 function globReaches({ prefix, rest }, store) {
   // The root splits to two empty parts: only the first stands for it.
   const split = (file) => file.split(path.sep).filter((part, i) => i === 0 || part !== '');
-  const target = [...split(prefix), ...rest];
-  const parts = split(store);
   const matches = (part, name) => (GLOB.test(part) ? globParts(part, [], FOLD_FLAG).pattern.test(name) : fold(part) === name);
-  const reach = (t, s) => {
-    if (t === target.length || s === parts.length) return true;
-    if (/^\*{2,}$/u.test(target[t])) return reach(t + 1, s) || reach(t, s + 1);
-    return matches(target[t], parts[s]) && reach(t + 1, s + 1);
-  };
-  return reach(0, 0);
+  return partsReach([...split(prefix), ...rest], split(store), matches, true);
 }
 
 // Why the subagent call in `input` may not run because it writes in the continuation store of the state folder `state`
@@ -117,8 +112,10 @@ function globReaches({ prefix, rest }, store) {
 // nowhere near the state root runs no git. It writes there when a target lies in the store, or is a folder that holds
 // it and no checkout, or a glob may reach the store; a target in a folder no path names, or code an interpreter runs,
 // counts when it names `handoffs/.continue`, a marker below `.continue/`, or a path part named as a file that arms or
-// delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB). A command in a shell the lexer cannot read may
-// only read what it names, so its block says it may change the store.
+// delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB). A glob word of a command in a shell the lexer
+// cannot read counts by those names, and when it names the store by its name, as `.c*` or `handoffs/*` do, from any folder
+// (globNamesFile), since such a shell may change its folder first. Such a command may only read what it names, so its
+// block says it may change the store.
 export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state) {
   if (!isSubagent(input)) return null;
   const opaque = opaqueShellCommand(input) !== null;
@@ -126,7 +123,8 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the handoff continuation store, where only the main session's \`aidrian handoff\` commands write`, human);
   // A command no lexer reads may join `.continue` to a path it builds, as a path joiner does.
   const joined = opaque && names.some((name) => name.split('/').some((part) => STORE_FOLDER.test(part)));
-  if (joined || names.some(namesStore) || globs.some((glob) => glob.unsure && globNamesStore(glob.text))) {
+  const unsure = (glob) => ((glob.unsure || glob.opaque) && globNamesStore(glob.text)) || (glob.opaque && globNamesFile(glob.text, STORE_TAIL));
+  if (joined || names.some(namesStore) || globs.some(unsure)) {
     return { match: 'may change the continuation store', reason: why('may change', 'handoffs/.continue') };
   }
   const known = globs.filter((glob) => !glob.unsure).flatMap(globPaths);

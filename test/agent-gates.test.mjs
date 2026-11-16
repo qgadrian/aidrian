@@ -117,6 +117,10 @@ test('a bare Bash deny covers every call of a tool run under Bash\'s rules, a We
   assert.equal(verdict({ explorer: { deny: ['Bash(git push)'] } }, ws), null, 'a watch runs no command a prefix can match');
   assert.match(verdict({ explorer: { deny: ['Bash(git push)'] } }, monitor({ command: 'git push' })), /deny has "Bash\(git push\)"/u);
   assert.equal(verdict({ explorer: { deny: ['Bash'] } }, agentCall('aidrian:explorer', 'Read', {})), null);
+  // The gate reads a watch's settings, so its block says the host runs the tool under Bash's rules, not that it cannot read it.
+  const reason = verdict({ explorer: { deny: ['Bash'] } }, ws);
+  assert.match(reason, /; a Bash deny covers Monitor too, since the host runs it under Bash's permission rules/u);
+  assert.doesNotMatch(reason, /cannot read its command/u);
 });
 
 test('a block names the tool the agent called, when the host sent another name than the standard one', () => {
@@ -125,11 +129,12 @@ test('a block names the tool the agent called, when the host sent another name t
   assert.match(verdict({ explorer: { deny: ['Bash'] } }, agentCall('aidrian:explorer', 'Bash', bash('ls'))), /^aidrian: Bash is blocked/u);
 });
 
-// Claude Code's PowerShell tool runs a shell the lexer cannot read, and the host turns it off for any Bash deny rule
+// Claude Code's PowerShell tool runs a shell the lexer cannot read, so the gate holds every Bash deny to it on every
+// platform; the host itself turns the tool off for a Bash deny only on Windows with Git Bash installed
 // (code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool).
 const shell = (call) => UNKNOWN_HOST.hookInput(call);
 
-test('every Bash deny, bare or by prefix, covers a PowerShell call, for a subagent and the main session', () => {
+test('every Bash deny, bare or by prefix, covers a PowerShell call, for a subagent and the main session, since the gate cannot read it', () => {
   const covered = /deny has "Bash(?:\(git push\))?"[^\n]*; a Bash deny covers PowerShell too, since the gate cannot read its command to tell what it runs/u;
   for (const command of ['git push', 'Get-ChildItem src']) {
     assert.match(verdict({ explorer: { deny: ['Bash'] } }, shell(agentCall('aidrian:explorer', 'PowerShell', bash(command)))), covered, command);
@@ -201,6 +206,29 @@ test('the hook blocks with exit 2 and the rule on stderr, and exits 0 silently w
   ]) {
     const { status, stdout, stderr } = run(cwd, input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], `${cwd}: ${input.tool_input.command}`);
+  }
+});
+
+test('a gate denies a call before any guard resolves its paths or globs, so a long or starry command meets it inside the hook\'s timeout', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gates-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, agents: { explorer: { deny: ['Bash(git push)'] } } }));
+  // hooks/hooks.json gives the hook 5 seconds; past them the host runs the call with no gate.
+  const run = (tool, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...shell(agentCall('aidrian:explorer', tool, bash(command))), cwd: dir }), cwd: dir, encoding: 'utf8', timeout: 4000 });
+  const stars = `${'*'.repeat(16)}x`;
+  const long = 'a/'.repeat(26000);
+  for (const [tool, command] of [
+    ['PowerShell', `git push; Write-Host ${stars}`],
+    ['Bash', `echo autoMerge > ${stars}; git push`],
+    ['PowerShell', `git push # ${long}`],
+    ['Bash', `echo x > ${long}; git push`],
+  ]) {
+    const started = Date.now();
+    const result = run(tool, command);
+    assert.equal(result.status, 2, `${tool} ${command.slice(0, 40)}: ${result.signal ?? ''}`);
+    assert.match(result.stderr, /agents\.explorer\.deny has "Bash\(git push\)"/u, command.slice(0, 40));
+    assert.ok(Date.now() - started < 3000, `${tool} ${command.slice(0, 40)} took ${Date.now() - started} ms`);
   }
 });
 

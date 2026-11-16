@@ -23,63 +23,44 @@ or an unattended run that ends with its task unfinished.
 ## Steps
 
 1. **Settle running work.** If agents or background jobs are still running, wait for the ones the brief needs,
-   stop the rest on purpose, and record what is still pending: what runs, where its output lands, what to do with it.
-2. **Read the state with commands, not memory.** Use it to write "Done" and the pointer line, never as a snapshot:
+   stop the rest on purpose, and record each one left running under Still running: what runs, where its output lands,
+   and what to do with it.
+2. **Read the state with commands, not memory.** Use it to write Done and the Current state line that names the worktree,
+   the branch, and the pull request, never as a snapshot:
    `git branch --show-current`, `git rev-parse --show-toplevel`, `git status --porcelain`, `git log --oneline -5`,
    and `gh pr view --json number,url,state,headRefName` when a pull request may exist.
 3. **Pick the path.** Run `aidrian state`; the brief is `<state>/handoffs/<UTC date>-<slug>.md`, where `<slug>` is the
    branch name after its last `/`, or a short task name. Every worktree shares that folder, so a fresh session finds it.
 4. **Snapshot what it supersedes.** Once per refresh, before the first write, run `aidrian handoff snapshot <brief>`
    (add `--prior <old brief>` when the old brief has another slug). Never in a fix round: it would snapshot your draft.
-5. **Write the brief** from the template below, then reread it as a reader with no context and fix it until:
+5. **Write the brief** from the template in `references/brief-template.md`, read for every brief.
+   Then reread the brief as a reader with no context, and fix it until:
    - every still-valid decision, gotcha, fact (ids, mappings, hand-edited data), and runbook step of the brief it
      supersedes is carried, not pointed at; the header names each dropped item with why it is obsolete;
    - each command in Next steps matches the tool's real options, read in this session;
    - each conditional step names its condition and its exact command for every branch;
    - each resume command carries every flag that is not stored on disk;
-   - open risks and questions from agents' results are carried whole, or pointed at by exact path and field;
+   - open risks and questions from agents' results are under Open risks and questions, whole or by exact path and field;
    - each commit step names the paths to stage and what stays out;
    - lines are one sentence each and within the project's line limit.
 
    Under a usage-limit warning, write first, then review and rewrite.
-6. **Check it.** Run `aidrian handoff check <brief>` (same `--prior` as step 4). Exit 1 lists long lines,
-   a missing advice line, and the identifiers from the superseded brief's Decisions locked and Gotchas that the new one no longer names:
-   carry each, or name it as dropped. Compare the prose-only items it prints by hand, at exit 0 too.
+6. **Check it.** Run `aidrian handoff check <brief>` (same `--prior` as step 4). Exit 1 lists:
+   - long lines, and a missing advice line;
+   - each required section that is missing or empty: Objective, Current state with its `Worktree:` and `Branch:`
+     values, Still running, Next steps with a numbered item, and Open risks and questions;
+   - a header with no `Supersedes:` value, or one that names a brief no prior was found for: rerun with `--prior`;
+   - the identifiers from the superseded brief's Decisions locked, Gotchas, Next steps, Key paths, and Open risks and
+     questions that the new one no longer names: carry each, name a done step under Done with its command or commit,
+     or name it in the header as dropped, with why.
+
+   Fix each finding and run the check again. Compare the prose-only items it prints by hand, at exit 0 too.
+   A finding the session cannot fix, such as a superseded brief that no longer exists, is told to the Human with the
+   resume instructions.
 7. **Print the resume instructions** below.
 
 Refreshing the brief for the same task overwrites the same file. A run that crosses a UTC date starts a new file,
 and the newest brief wins.
-
-## Brief template
-
-```markdown
-# Handoff: <task title>
-Written: <UTC timestamp> | Phase completed: <plan | implement | review | ...> | Supersedes: <brief or none>
-Advice from <writer>, not a spec: check each claim against the docs and code before building on it.
-
-## Objective
-<one to three lines: the task, and what "done" means>
-
-## Current state
-- Worktree: <path> | Branch: <name> | Pull request: <url or none>
-- Verification already run: <exact commands>
-- Product quorums: the count of automatic quorum runs this session, for `aidrian quorum route --runs`, when any ran
-
-## Decisions locked (do not relitigate)
-- <decision>: <one-line reason, and who decided>
-
-## Done
-- <item and its evidence: a commit, a passing command>
-
-## Next steps (ordered)
-1. <the smallest next action, with exact paths and commands>
-
-## Key paths
-- <files and docs the next session reads first>
-
-## Gotchas
-- <traps found: flaky checks, false alarms, naming traps>
-```
 
 ## Resume instructions
 

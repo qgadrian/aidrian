@@ -28,7 +28,9 @@ import { HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const ADVICE = 'Advice from Claude, not a spec: check each claim against the docs and code before building on it.';
-const brief = (chain = 0) => `# Handoff: continue the widget\nWritten: 2026-11-15 | Chain: ${chain}\n${ADVICE}\n\n## Objective\n- Ship the widget.\n`;
+// A brief that passes `aidrian handoff check`: the advice line, a Supersedes field, and the five sections it requires.
+const SECTIONS = '## Current state\n- Worktree: none yet | Branch: to create\n\n## Still running\nNone.\n\n## Next steps\n1. Ship it.\n\n## Open risks and questions\nNone.\n';
+const brief = (chain = 0) => `# Handoff: continue the widget\nWritten: 2026-11-15 | Chain: ${chain} | Supersedes: none\n${ADVICE}\n\n## Objective\n- Ship the widget.\n\n${SECTIONS}`;
 const CLAUDE = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'session-1' };
 const CODEX = { CODEX_THREAD_ID: 'thread-1' };
 const SHA = 'a'.repeat(64);
@@ -269,7 +271,7 @@ test('the gate takes only a regular brief right inside the handoffs folder, name
   const misnamed = path.join(setting.handoffs, 'widget.md');
   writeFileSync(misnamed, brief());
   const deeper = path.join(setting.handoffs, '.prior');
-  mkdirSync(deeper);
+  mkdirSync(deeper, { recursive: true });
   writeFileSync(path.join(deeper, '2026-11-15-widget.md'), brief());
   const big = path.join(setting.handoffs, '2026-11-15-big.md');
   writeFileSync(big, `${brief()}${'x'.repeat(BRIEF_CAP)}\n`);

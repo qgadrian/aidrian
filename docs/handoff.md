@@ -132,6 +132,30 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
 - `session-handoff` writes the brief into `<state>/handoffs/`, where `<state>` is the folder `aidrian state` prints.
   It writes one only when the Human allowed it: the Human asks, a run's `--handoff` flag asks, or `mode` is `"auto"`.
   The brief says under its title that it is an agent's advice, not a spec, and `aidrian handoff check` fails one that does not.
+  It is written from the skill's `references/brief-template.md`.
+- `aidrian handoff check <brief> [--prior <brief>]` holds the brief it checks to what a resume needs, since after a
+  continuation the brief is all the new session has. It exits 1, with one finding each, for:
+  - a required section that is missing or empty: `## Objective` with a line of text, `## Current state` with a
+    `Worktree:` value and a `Branch:` value, `## Still running` and `## Open risks and questions` with a line of text
+    (`None.` when there is nothing), and `## Next steps` with a numbered item at the start of a line.
+    A heading matches by its first words in any case, so `## Next steps (ordered)` counts; a line inside a code fence does not.
+  - a header, the text above the first section, with no `Supersedes:` value. A value that begins with `none` names no
+    brief; any other value names one, and when no superseded brief is found, nothing was compared, which is a finding:
+    run the check again with `--prior <that brief>`.
+  - a backticked identifier of the superseded brief's Decisions locked, Gotchas, Next steps, Key paths, or Open risks and
+    questions that the new brief names nowhere. Current state, Still running, and Done are not compared: they hold
+    state, which the next session reads fresh.
+
+  The superseded brief is held to nothing: a brief of any older format compares as it is. It is `--prior`, else the
+  snapshot in `<state>/handoffs/.prior/<name>` that `aidrian handoff snapshot` took before a refresh, else the newest
+  other brief of the same slug. A passing check keeps the brief that passed as that snapshot, so the next check of the
+  file compares with what last passed; a copy the disk refuses changes neither the output nor the exit code.
+  A `--prior` that is the brief itself exits 2 for both `check` and `snapshot`: its earlier text is gone. Same file
+  means the same device and inode, so a symlink, a hard link, and a letter-case variant on a case-insensitive disk count.
+  A header that names this same file, with no snapshot to compare, is a finding the session tells the Human.
+  A snapshot is written to a temporary file of a random name in `.prior/` and renamed over its name, so a link planted
+  there is replaced, never written through. Every snapshot file is 0600, and a `.prior/` the command creates is 0700;
+  one that exists keeps its mode. A `.prior` that is itself a link is refused: nothing is written or removed through it.
 - `session-continue`, the first step of the fresh session, reads the newest brief in full, enters its worktree,
   reads the state fresh, and continues at its next steps. It keeps the brief's locked decisions, and checks each other
   claim a step builds on against the docs and code; where they disagree, the docs and code win.

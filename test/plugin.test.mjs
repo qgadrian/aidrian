@@ -706,13 +706,41 @@ test('the shared rule states the continue path in its order, and why the writer 
   ]) assert.match(section, line);
 });
 
+test('the handoff brief template is its own file, the skill names it, and both skills name the sections a resume needs', () => {
+  const handoff = flat('plugins/aidrian/skills/session-handoff/SKILL.md');
+  const step = (text, n) => text.slice(text.indexOf(` ${n}. **`), text.indexOf(` ${n + 1}. **`) === -1 ? undefined : text.indexOf(` ${n + 1}. **`));
+  assert.ok(step(handoff, 5).includes('`references/brief-template.md`'), 'step 5 names the template');
+  assert.doesNotMatch(handoff, /## Brief template|```markdown|^# Handoff: /mu, 'SKILL.md holds no template');
+  const template = readFileSync(path.join(PLUGIN, 'skills/session-handoff/references/brief-template.md'), 'utf8');
+  const order = ['Objective', 'Current state', 'Still running', 'Decisions locked', 'Done', 'Next steps', 'Open risks and questions', 'Key paths', 'Gotchas'];
+  assert.deepEqual([...template.matchAll(/^## (.+?)(?: \(.*\))?$/gmu)].map((match) => match[1]), order);
+  assert.match(template, /^- <what runs, [^>]*> \| Output: <where it lands> \| Then: <what to do with it>, or the line None\.$/mu);
+  assert.match(template, /^## Open risks and questions\n- <each risk or question [^\n]*, or the line None\.$/mu);
+  assert.doesNotMatch(handoff, /pointer line/);
+  assert.ok(step(handoff, 1).includes('under Still running'), 'step 1 records running work under Still running');
+  assert.ok(step(handoff, 2).includes('the Current state line that names the worktree, the branch, and the pull request'));
+  assert.ok(step(handoff, 5).includes('Open risks and questions'));
+  const check = step(handoff, 6);
+  for (const words of ['Objective, Current state with its `Worktree:` and `Branch:` values, Still running, Next steps with a numbered item, and Open risks and questions',
+    'a header with no `Supersedes:` value, or one that names a brief no prior was found for',
+    'Decisions locked, Gotchas, Next steps, Key paths, and Open risks and questions', 'name a done step under Done',
+    'is told to the Human with the resume instructions']) assert.ok(check.includes(words), `step 6: ${words}`);
+  const resume = flat('plugins/aidrian/skills/session-continue/SKILL.md');
+  assert.ok(step(resume, 1).includes('Still running') && step(resume, 1).includes('Open risks and questions'), 'step 1 lists both sections');
+  assert.ok(step(resume, 3).includes('Take each Still running item before the same work starts again: check whether it still runs, and read its output where the brief says it lands'));
+  assert.ok(step(resume, 4).includes('read the Open risks and questions before the step each bears on'));
+  // Search finds the handoff doc by the words a session asking about the cost model or the brief check would use.
+  const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
+  for (const words of ['break-even', 'aidrian handoff check', 'brief sections']) assert.ok(docs['handoff.md'].summary.includes(words), `handoff.md summary: ${words}`);
+});
+
 test('a reused ledger reaches what a settled marker means, the handoff carries the run count, and search finds the route', () => {
   const rule = flat(RULE_FILE);
   const after = rule.slice(rule.indexOf('### After a ruling'), rule.indexOf('### The continue path'));
   assert.match(after, /A `human` whose reason names a settled marker means read the rule in its doc, not ask again/);
   assert.doesNotMatch(rule.slice(rule.indexOf('### The continue path')), /names a settled marker/);
   assert.doesNotMatch(rule, /could turn the route to `human`/);
-  assert.match(flat('plugins/aidrian/skills/session-handoff/SKILL.md'), /the count of automatic quorum runs/);
+  assert.match(flat('plugins/aidrian/skills/session-handoff/references/brief-template.md'), /the count of automatic quorum runs/);
   assert.match(flat('docs/config.md'), /The `persona-audit-triage` skill runs `resolve` on a held finding's product decision, reports the answer, and always asks/);
   const row = /`aidrian quorum route` and `aidrian quorum provisional` write the same row, with the same `key`/;
   assert.match(flat('docs/dispatch-log.md'), row);

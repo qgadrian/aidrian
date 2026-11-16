@@ -140,6 +140,7 @@ and the dispatch log on each machine. They live in one state folder per project,
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
+│   └── .prior/           the brief a refresh supersedes, and the last brief that passed aidrian handoff check
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
@@ -194,7 +195,8 @@ the orchestrator uses it to name each background agent's handoff file.
 `aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)).
 `aidrian audits` lists the persona audits and records their triage ([personas.md](personas.md#triage)).
 A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbox), in the state folder of the plugin's own repository.
-`aidrian handoff` checks a handoff brief against the one it supersedes, and that it says it is advice, not a spec.
+`aidrian handoff` checks a handoff brief against the one it supersedes, that it says it is advice, not a spec,
+and that it holds the sections a resume needs ([handoff.md](handoff.md#the-skills)).
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
 The `quorum` skill runs in one of three modes, and its ledger records which in `mode`.

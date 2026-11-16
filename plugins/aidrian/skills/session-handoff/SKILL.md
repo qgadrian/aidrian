@@ -20,11 +20,16 @@ or an unattended run that ends with its task unfinished.
 - `"off"`: write none unless the Human asks.
 - Never when the task is done and the user is here: with nothing to resume, a brief only costs tokens.
 
+`--continue <route>`, optional, is the route the Human chose for this brief, passed to the gate in step 7 as
+`--route <route>`; without it the gate reads config.json `session.handoff.continue`.
+
 ## Steps
 
-1. **Settle running work.** If agents or background jobs are still running, wait for the ones the brief needs,
-   stop the rest on purpose, and record each one left running under Still running: what runs, where its output lands,
-   and what to do with it.
+1. **Settle running work.** When the session hands off now (step 7) and the route is not `none` (`--continue`, else
+   `session.handoff.continue`), wait for or stop every agent, background job, and scheduled or loop run before writing,
+   so Still running is None: a report, or a message from another session, starts a turn here after the gate, and that
+   cancels the continuation. Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one
+   left running under Still running: what runs, where its output lands, and what to do with it.
 2. **Read the state with commands, not memory.** Use it to write Done and the Current state line that names the worktree,
    the branch, and the pull request, never as a snapshot:
    `git branch --show-current`, `git rev-parse --show-toplevel`, `git status --porcelain`, `git log --oneline -5`,
@@ -57,7 +62,16 @@ or an unattended run that ends with its task unfinished.
    Fix each finding and run the check again. Compare the prose-only items it prints by hand, at exit 0 too.
    A finding the session cannot fix, such as a superseded brief that no longer exists, is told to the Human with the
    resume instructions.
-7. **Print the resume instructions** below.
+7. **Continue, when the session hands off now**: at the session-length reminder, the plan offer, a usage-limit warning,
+   or the Human's request. A checkpoint brief that a running skill writes and then works past skips this step.
+   - Unless the route is `none`, nothing still runs: step 1 settled it.
+   - A current brief (rule 7) last written more than 15 minutes ago is refreshed first, by steps 4 to 6.
+   - After step 6 exits 0, run `aidrian handoff continue <brief>`, with `--route <route>` when `--continue` gave one:
+     - `continue: none`: print the resume instructions, and the `fallback:` line when there is one.
+     - `continue: clear`: tell the Human the `say:` line and nothing else, then end the turn.
+     - Exit 1: do what its message names, such as the check or a refresh, and run it once more. A second refusal,
+       or exit 2: print the resume instructions and the reason.
+8. **Print the resume instructions** below, unless step 7 printed them or told the `say:` line.
 
 Refreshing the brief for the same task overwrites the same file. A run that crosses a UTC date starts a new file,
 and the newest brief wins.
@@ -84,3 +98,4 @@ Print these at the end, and nothing about worktree paths or drift checks: the `s
 7. **Skip a current brief.** When the brief for this task exists and nothing changed since (no commit, decision,
    or new next step), say it is current and give its path, instead of rewriting it.
 8. This skill commits, pushes, and ends nothing; the user decides when to close the session.
+   After `continue: clear` it ends the turn, and the Human clears the session.

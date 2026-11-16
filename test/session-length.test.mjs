@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import {
   BRIEF_CALLS, handoffCost, handoffReason, nextRatio, planApprovedContext, readMarker, RESUME_TOKENS, sessionUsage, stopReminder, tokenCeiling,
 } from '../plugins/aidrian/lib/session-length.mjs';
@@ -144,14 +145,14 @@ function setup(t, session) {
   const temp = path.join(base, 'tmp');
   mkdirSync(temp);
   const marker = path.join(temp, 'aidrian-session-length-abc-123');
-  const stop = (fields) => {
+  const stop = (fields, env = {}) => {
     const input = JSON.stringify({ hook_event_name: 'Stop', session_id: 'abc-123', transcript_path: transcript, cwd: dir, stop_hook_active: false, ...fields });
-    const { status, stderr } = spawnSync(process.execPath, [HOOK], { input, cwd: dir, encoding: 'utf8', env: { ...process.env, TMPDIR: temp } });
+    const { status, stderr } = spawnSync(process.execPath, [HOOK], { input, cwd: dir, encoding: 'utf8', env: { ...process.env, TMPDIR: temp, ...env } });
     return { status, stderr };
   };
-  const plan = (fields = {}) => {
+  const plan = (fields = {}, env = {}) => {
     const input = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', transcript_path: transcript, cwd: dir, ...fields });
-    const { status, stdout } = spawnSync(process.execPath, [PLAN_HOOK], { input, cwd: dir, encoding: 'utf8' });
+    const { status, stdout } = spawnSync(process.execPath, [PLAN_HOOK], { input, cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
     assert.equal(status, 0);
     return stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : '';
   };
@@ -338,4 +339,74 @@ test('a costRatio raised mid-session above twice the last firing holds: no firin
   const fired = stopReminder([call('w', 50_000), call('c', 282_000)].join('\n'), handoff, marker);
   assert.equal(fired.marker.lastRatio, 3);
   assert.match(fired.reason, /comes back once each call costs 6 times/);
+});
+
+// Today's texts, before any continue route: with no route, or route none, both hooks keep them word for word.
+const NOT_WORTH = 'Judge first whether a handoff is worth it. It is not when the task is done or nearly done, or the work left takes fewer model calls than the handoff needs to pay back, when a subagent or background job is still running and its result comes back to this session, or when the user already said to finish here or that they are not watching: then end this turn without mentioning this reminder, which comes back once x. ';
+const LONG = 'This session is long: each call costs 2.1 times what it would in a fresh session started from a handoff brief, and a handoff pays back after about 54 more model calls, an estimate. ';
+const APPROVED = 'The plan is approved, and each call costs 2.1 times what it would in a fresh session started from a handoff brief, and a handoff pays back after about 54 more model calls, an estimate. Building in a fresh session that reads the plan costs less per turn, and now no worktree, branch, or running agent needs a brief. ';
+const TODAY = {
+  reminder: {
+    ask: `${LONG}${NOT_WORTH}Otherwise end this turn with one short question to the user: hand off now, or keep going? If they choose to hand off, run the session-handoff skill; if they keep going, carry on.`,
+    auto: `${LONG}${NOT_WORTH}Otherwise run the session-handoff skill now to write the brief, then tell the user in one line that you wrote it, its path, and that the session-continue skill resumes it.`,
+  },
+  plan: {
+    ask: `${APPROVED}Before the first build step, ask the user one short question: hand off now, or build here? Skip the question when the rest takes a few calls, or when the user already said to finish here or that they are not watching.`,
+    auto: `${APPROVED}Before the first build step, run the session-handoff skill to write the brief, then tell the user its path and that the session-continue skill resumes it. Build here instead when the rest takes a few calls, or when the user already said to finish here or that they are not watching.`,
+  },
+};
+const LONG_USAGE = usageOf({ first: 58_676, last: 215_620 });
+const HOW = 'do the host step, then any message';
+
+test('with no continue route, or route none, the reminder and the plan offer keep their text word for word', () => {
+  const cost = handoffCost(LONG_USAGE);
+  for (const mode of ['ask', 'auto']) {
+    for (const continuation of [undefined, { route: 'none' }, { route: 'none', how: HOW }]) {
+      assert.equal(handoffReason(mode, { cost, next: ['x'], ...continuation }), TODAY.reminder[mode], `${mode} ${JSON.stringify(continuation)}`);
+      assert.equal(planApprovedContext({ mode, costRatio: 2, maxTokens: 0 }, LONG_USAGE, continuation), TODAY.plan[mode], `${mode} ${JSON.stringify(continuation)}`);
+    }
+  }
+});
+
+test('with the clear route, auto runs the continue step and ends the turn, and ask names what a yes takes', () => {
+  const cost = handoffCost(LONG_USAGE);
+  const clear = { route: 'clear', how: HOW };
+  const auto = handoffReason('auto', { cost, next: ['x'], ...clear });
+  assert.ok(auto.startsWith(`${LONG}${NOT_WORTH}`), 'the reasons a handoff is not worth it stay');
+  assert.match(auto, /Otherwise run the session-handoff skill now to write the brief and set up the continuation: its continue step prints what to tell the user\. Say that in one line, then end this turn\.$/);
+  assert.doesNotMatch(auto, /resumes it|keep going/);
+  const ask = handoffReason('ask', { cost, next: ['x'], ...clear });
+  assert.ok(ask.startsWith(`${LONG}${NOT_WORTH}`));
+  assert.match(ask, /hand off now, or keep going\? Say in it what a handoff takes from them: do the host step, then any message\. If they choose to hand off, run the session-handoff skill; if they keep going, carry on\.$/);
+
+  const offer = planApprovedContext({ mode: 'auto', costRatio: 2, maxTokens: 0 }, LONG_USAGE, clear);
+  assert.ok(offer.startsWith(APPROVED));
+  assert.match(offer, /Build here when the rest takes a few calls, or when the user already said to finish here or that they are not watching\. Otherwise, before the first build step, run the session-handoff skill to write the brief and set up the continuation: its continue step prints what to tell the user\. Say that in one line, end this turn, and do not start the build here\.$/);
+  const question = planApprovedContext({ mode: 'ask', costRatio: 2, maxTokens: 0 }, LONG_USAGE, clear);
+  assert.match(question, /hand off now, or build here\? Say in it what a handoff takes from them: do the host step, then any message\. Skip the question when the rest takes a few calls/);
+  assert.equal(planApprovedContext({ mode: 'off', costRatio: 2, maxTokens: 0 }, LONG_USAGE, clear), null, 'off is off');
+});
+
+test('the Stop hook and the plan hook word the route of the session host, and a host without it gets the none text', (t) => {
+  const CLAUDE = { CLAUDECODE: '1' };
+  const how = claudeCode.capabilities.handoffContinue.steps.clear;
+  for (const mode of ['ask', 'auto']) {
+    const { stop, plan, reach } = setup(t, { handoff: { mode, continue: 'clear' } });
+    reach(205_352);
+    const clear = stop({}, CLAUDE).stderr;
+    assert.match(clear, mode === 'ask' ? /Say in it what a handoff takes from them: / : /its continue step prints what to tell the user/, `${mode}: the Stop hook on Claude Code`);
+    if (mode === 'ask') assert.ok(clear.includes(how), 'the phrase comes from the adapter');
+    const offer = plan({}, CLAUDE);
+    assert.match(offer, mode === 'ask' ? /Say in it what a handoff takes from them/ : /do not start the build here\.$/, `${mode}: the plan hook on Claude Code`);
+    // No host the adapters know: no route, so today's text.
+    const other = setup(t, { handoff: { mode, continue: 'clear' } });
+    other.reach(205_352);
+    assert.doesNotMatch(other.stop().stderr, /continue step|takes from them/, `${mode}: an unknown host`);
+    assert.doesNotMatch(other.plan(), /continue step|takes from them/, `${mode}: the plan offer on an unknown host`);
+  }
+  // A route this host does not list yet falls back to none.
+  const compact = setup(t, { handoff: { mode: 'auto', continue: 'compact' } });
+  compact.reach(205_352);
+  assert.match(compact.stop({}, CLAUDE).stderr, /then tell the user in one line that you wrote it, its path, and that the session-continue skill resumes it\.\n$/);
+  assert.match(compact.plan({}, CLAUDE), /tell the user its path and that the session-continue skill resumes it/);
 });

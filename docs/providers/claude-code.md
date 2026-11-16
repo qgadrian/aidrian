@@ -54,7 +54,8 @@ The [host adapter](../../plugins/aidrian/lib/hosts/claude-code.mjs) holds what t
 its payloads need no mapping, since their names are the standard, but for [a GitHub MCP server from a plugin](#a-github-mcp-server-from-a-plugin).
 [Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified) has the evidence.
 
-Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, and reports `Hook cancelled`.
+Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, about 1.5 seconds whatever
+the `timeout` in `hooks.json` says, and reports `Hook cancelled`.
 The session-end hook deletes the session's temporary files itself, and hands the [`session` row](../dispatch-log.md#session-when-a-session-ends)
 to a detached worker, so a long session's transcripts never hold up the exit.
 For a session holding a [tracker refusal marker](../config.md#how-a-write-is-judged), it also writes one `hook_deny` row in process.
@@ -106,6 +107,41 @@ Checked on Claude Code 2.1.314, with a hook that logged each call:
 - A session started with `claude --agent <name>` carries `agent_type` alone, so it is both `main` and that agent.
 
 So Claude Code holds each agent to its gates, tool by tool and pattern by pattern.
+
+## Handoff continuation
+
+Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
+types `/clear` and then any message, which is the adapter's `steps.clear`, and the new session resumes from the brief.
+`compact` and `background` fall back to `none` until their release.
+
+Verified on Claude Code 2.1.325 on 2026-11-15, with a throwaway plugin:
+
+- The clear command issues a new session id. SessionEnd fires with `reason: "clear"` and the old id, then SessionStart
+  with `source: "clear"` and the new id, about 100 ms later; both carry the same `cwd`. Its docs do not promise that order,
+  so the session start waits up to 600 ms for the session end while a `clear` continuation is armed.
+- Every hook's parent process is the `claude` host process, and it is the same before and after the clear: SessionStart
+  with `source: "startup"`, SessionEnd with `reason: "clear"`, SessionStart with `source: "clear"`, and UserPromptSubmit
+  all had one parent. A Bash tool command's parent is not it: node, then the shell, then that process. So the adapter's
+  `hookHostPid()` is the hook's parent, and binds a continuation to the terminal that cleared. Were a later release, or
+  a wrapper around a hook's command, to put another process between them, no id would match and nothing would be
+  delivered: a miss, never a wrong take.
+- SessionStart output `{ systemMessage, hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } }`
+  shows the banner to the Human, and the context reached the model after a clear.
+- SessionStart's sources are `startup`, `resume`, `clear`, `compact`, and `fork`.
+
+Not verified, each with its answer in the design:
+
+| Not verified | What the plugin does |
+| --- | --- |
+| Whether `CLAUDE_CODE_SESSION_ID` in the Bash tool follows a clear | The gate arms for the id the Bash tool gives. Were it the old id, a second continuation in a row would arm for a session that has already ended, and deliver nothing: the `say:` line names the resume by hand. |
+| Whether UserPromptSubmit fires for the clear or compact command | The adapter's `keepsArmed(prompt)` leaves the continuation for `/clear`, `/reset`, `/new`, and `/compact`. |
+| Whether other built-in commands fire UserPromptSubmit | Each one that does cancels the continuation, as any prompt does: only those four are spared. |
+| Whether a hook payload's `cwd` follows a `cd` in the Bash tool | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. |
+
+UserPromptSubmit also fires when a background subagent reports back, on a scheduled-task or loop iteration, and on a
+message from another session ([its hooks reference](https://code.claude.com/docs/en/hooks)). Each of those after the
+gate cancels the continuation, so the `session-handoff` skill settles them all before it runs the gate.
+The SessionEnd hook promotes the continuation before it hands the session row to its worker, within the host's 1.5 seconds.
 
 ## Limits
 

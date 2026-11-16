@@ -86,6 +86,8 @@ export PATH="${aidrian_dir}bin:$PATH"
   the session-length reminder reads Claude Code transcripts only and stays quiet.
 - The subagent-stop and session-end inputs are not verified.
   Those hooks run, write nothing they cannot read, and never send a Codex agent back.
+- No [handoff continuation](../handoff.md#continue) route runs here: the adapter lists none, so every
+  `session.handoff.continue` falls back to `none`, and the reminder and the plan offer keep their text.
 
 To check that the hooks run, open a session, run `git commit --amend --dry-run`, and check that the Bash hook blocks it.
 

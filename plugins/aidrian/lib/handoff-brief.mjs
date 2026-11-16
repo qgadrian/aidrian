@@ -1,27 +1,40 @@
-// `aidrian handoff`: the mechanical half of the session-handoff skill's review of a brief.
+// `aidrian handoff`: the mechanical half of the session-handoff skill's review of a brief. A resumed session has only the
+// brief, so the check holds the brief it checks to what a resume needs, and the superseded brief, of any format, to nothing.
 //   1. Carry-forward: a brief that supersedes another still names every backticked identifier (ids, paths, commands)
-//      from the other's "Decisions locked" and "Gotchas" sections, or names it as dropped. A refresh that only points
-//      at the old brief silently loses those facts. Prose-only items have no identifier; they are printed for a
-//      by-hand comparison instead.
+//      from the other's CARRIED_NAMES sections, or names it as dropped; a refresh that only points at the old brief
+//      loses those facts. Prose-only items are printed for a by-hand comparison. A `Supersedes:` value that names a
+//      brief no prior resolves to is a finding: nothing was compared.
 //   2. Line length: Markdown lines over config.json `docs.wrapLimit`, for hosts without the PostToolUse wrap hook.
 //   3. The advice line: above its first section, the brief says it is an agent's advice, not a spec (ADVICE_LINE), so
 //      the session that resumes it checks its claims against the docs and code instead of building on them as fact.
-// The prior brief is --prior, else the snapshot `snapshot` took before an overwrite, else the newest other brief with
-// the same slug (<date>-<slug>.md). A passing check removes the snapshot.
+// The prior brief is --prior, else the snapshot, else the newest other brief with the same slug (lib/handoff-prior.mjs).
+// A passing check keeps the brief that passed as the snapshot, so the next check of that file compares with what last
+// passed. A --prior that is the brief itself is refused: its earlier text is gone.
+//   4. The chain: `Chain: n` above the first section counts the automatic continuations in a row that led to the
+//      brief (chainOf). It must be a whole number, and no lower than the floor the session was given when a continuation
+//      started it, whatever the brief's slug (lib/handoff-markers.mjs readFrom). A brief right inside `<state>/handoffs/` that passes is stamped with
+//      the sha256 of its bytes, which `aidrian handoff continue` (lib/handoff-continue.mjs) requires.
+//   5. The sections a resume needs, and a `Supersedes:` field in the header (lib/handoff-sections.mjs).
 
-import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
+import { openStore, readFrom, stampChecked } from './handoff-markers.mjs';
+import { resolvePrior, samePath, takeSnapshot, unreadable, writeSnapshot } from './handoff-prior.mjs';
+import { sectionProblems, supersedesProblem, unresolvedProblem } from './handoff-sections.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 import { findWrapViolations } from './markdown-wrap.mjs';
-import { projectAt } from './project.mjs';
+import { projectAt, stateDir } from './project.mjs';
 import { usageLines } from './usage.mjs';
 
-const CARRIED_SECTION = /^(decisions|gotchas)\b/i;
+const CARRIED_SECTION = /^(decisions|gotchas|next steps|key paths|open risks)\b/i;
+const CARRIED_NAMES = 'Decisions locked, Gotchas, Next steps, Key paths, and Open risks and questions';
 // The template's line: `Advice from <writer>, not a spec: check each claim against the docs and code before building on it.`
 export const ADVICE_LINE = /^Advice from \S.*, not a spec\b/mu;
-const BRIEF_NAME = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/;
+export { findSupersededBrief, resolvePrior, snapshotPath, takeSnapshot } from './handoff-prior.mjs';
 // Shorter spans (`!`, `ok`) are syntax, not identifiers.
 const MIN_IDENTIFIER_LENGTH = 3;
 // A wrap is not an edit: whitespace runs, newlines included, compare as one space.
@@ -29,12 +42,23 @@ const flat = (text) => text.replace(/\s+/g, ' ');
 
 export const commands = {
   handoff: {
-    usage: '(check | snapshot) BRIEF [--prior BRIEF]',
-    about: 'snapshot the brief a refresh supersedes, then check the new brief carries its identifiers and wraps its lines',
-    run(args) {
-      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' } } });
+    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE] | route [--route ROUTE]',
+    about: 'snapshot the brief a refresh supersedes, check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines, then arm its continuation; route prints the continue route this host runs, and writes nothing',
+    async run(args) {
+      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' }, route: { type: 'string' } } });
       const [action, brief, ...extra] = positionals;
-      if (!['check', 'snapshot'].includes(action) || !brief || extra.length) return problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
+      const usage = () => problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
+      if (action === 'route') {
+        if (brief !== undefined || values.prior !== undefined) return usage();
+        const { routeOf } = await import('./handoff-continue.mjs');
+        return printed(routeOf({ override: values.route }));
+      }
+      const shaped = action === 'continue' ? values.prior === undefined : ['check', 'snapshot'].includes(action) && values.route === undefined;
+      if (!shaped || !brief || extra.length) return usage();
+      if (action === 'continue') {
+        const { continueBrief } = await import('./handoff-continue.mjs');
+        return printed(continueBrief(brief, { override: values.route, chainOf }));
+      }
       const briefPath = path.resolve(brief);
       const prior = values.prior && path.resolve(values.prior);
       const priorProblem = prior && unreadable(prior);
@@ -43,18 +67,62 @@ export const commands = {
       const briefProblem = unreadable(briefPath);
       if (briefProblem && !(action === 'snapshot' && briefProblem === 'does not exist')) return problem(`${briefPath} ${briefProblem}`);
       if (action === 'snapshot') {
+        if (prior && samePath(prior, briefPath)) return problem(`--prior ${prior}: the prior is the brief itself: run snapshot without --prior, which saves the brief before the refresh overwrites it`);
         const taken = takeSnapshot(briefPath, prior);
         if (taken?.problem) return problem(`${taken.source} ${taken.problem}`);
         console.log(taken ? `saved ${taken.source} to ${taken.snapshot}` : 'no brief to supersede; check compares nothing unless given --prior');
         return 0;
       }
       // A config with errors exits 2, as an unreadable input does: it is not a finding.
-      const { exitCode, lines } = checkBrief(briefPath, prior, commandConfig(projectAt(process.cwd()), { exitCode: 2 }).docs.wrapLimit);
+      const project = projectAt(process.cwd());
+      const config = commandConfig(project, { exitCode: 2 });
+      const { exitCode, lines } = checkBrief(briefPath, prior, config.docs.wrapLimit, continueSetting(project, config));
       (exitCode === 0 ? console.log : console.error)(lines.join('\n'));
       return exitCode;
     },
   },
 };
+
+// What the check needs of the continuation store: { store, floor }. `floor` is the chain the session running the
+// check was given when a continuation started it, else 0, for a brief of any slug: a session continued from one brief
+// that hands off under another name is still the same run of continuations. Without a state folder git can tell, the
+// brief is checked as before: no floor and no stamp.
+function continueSetting(project, config, env = process.env) {
+  let store;
+  try {
+    store = openStore(stateDir(project, { config, env }), { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
+  } catch {
+    return { store: null, floor: 0 };
+  }
+  const { session } = sessionIdentity(env);
+  const from = session ? readFrom(store, session) : null;
+  return { store, floor: from ? from.chain : 0 };
+}
+
+// The chain count of a brief: the whole number of its `Chain:` field above the first section, 0 when it has none, and
+// null when the value is no whole number.
+export function chainOf(text) {
+  const header = String(text ?? '').split(/^##\s/mu)[0];
+  const match = /(?<![\w-])Chain:[ \t]*([^|\n]*)/iu.exec(header);
+  if (!match) return 0;
+  const value = match[1].trim();
+  return /^\d{1,9}$/u.test(value) ? Number(value) : null;
+}
+
+// The findings for a brief's chain count against the session's `floor`.
+function chainProblems(text, floor) {
+  const chain = chainOf(text);
+  if (chain === null) return ['Chain: the value is not a whole number: write `Chain: <n>`, the automatic continuations in a row that led here, 0 or more'];
+  if (chain < floor) return [`Chain: ${chain} is below ${floor}, the count this session continues: write \`Chain: ${floor}\``];
+  return [];
+}
+
+// Prints a gate result's { out, err } and returns its exit code.
+function printed({ exitCode, out, err }) {
+  if (out.length) console.log(out.join('\n'));
+  if (err.length) console.error(err.join('\n'));
+  return exitCode;
+}
 
 // Exit 2 with one line: an input that cannot be read is not a finding.
 function problem(message) {
@@ -72,11 +140,6 @@ function nextFenceState(fence, line) {
   if (fence === null) return { char: match[1][0], length: match[1].length };
   if (match[1][0] !== fence.char || match[1].length < fence.length) return fence;
   return /^[ \t]*\r?$/.test(match[2]) ? null : fence;
-}
-
-// `<dir>/.prior/<name>`: where `snapshot` keeps the brief an overwrite destroys.
-export function snapshotPath(briefPath) {
-  return path.join(path.dirname(briefPath), '.prior', path.basename(briefPath));
 }
 
 // The top-level items of the carried sections: a line at column 0 with its indented lines and fenced blocks.
@@ -128,54 +191,19 @@ export function findCarryGaps(briefText, priorText) {
   return { missing, unchecked };
 }
 
-// The newest other `<date>-<slug>.md` beside the brief with the same slug, dated no later than it; or null.
-export function findSupersededBrief(briefPath) {
-  const dir = path.dirname(briefPath);
-  const name = path.basename(briefPath);
-  const match = name.match(BRIEF_NAME);
-  if (!match || !existsSync(dir)) return null;
-  const newest = readdirSync(dir)
-    .filter((file) => {
-      const other = file.match(BRIEF_NAME);
-      return file !== name && other?.[2] === match[2] && other[1] <= match[1];
-    })
-    .sort()
-    .at(-1);
-  return newest ? path.join(dir, newest) : null;
-}
-
-export function resolvePrior(briefPath, explicitPrior) {
-  if (explicitPrior) return { path: explicitPrior, source: 'explicit' };
-  if (existsSync(snapshotPath(briefPath))) return { path: snapshotPath(briefPath), source: 'snapshot' };
-  const sameSlug = findSupersededBrief(briefPath);
-  return sameSlug ? { path: sameSlug, source: 'same slug' } : null;
-}
-
-// Copies what the coming write supersedes into the snapshot, or clears a stale snapshot when nothing is.
-export function takeSnapshot(briefPath, explicitPrior) {
-  const snapshot = snapshotPath(briefPath);
-  const source = explicitPrior ?? (existsSync(briefPath) ? briefPath : findSupersededBrief(briefPath));
-  if (!source) {
-    rmSync(snapshot, { force: true });
-    return null;
-  }
-  const reason = unreadable(source);
-  if (reason) return { source, problem: reason };
-  mkdirSync(path.dirname(snapshot), { recursive: true });
-  copyFileSync(source, snapshot);
-  return { source, snapshot };
-}
-
 // The finding for a brief with no advice line above its first section, or null.
 export const adviceProblem = (text) =>
   ADVICE_LINE.test(text.split(/^##\s/mu)[0]) ? null : 'No advice line above the first section: add "Advice from <writer>, not a spec: check each claim against the docs and code before building on it."';
 
-// { exitCode: 0 clean, 1 findings, 2 an unreadable prior; lines }. `limit` 0 skips the line-length check.
-export function checkBrief(briefPath, explicitPrior, limit = 155) {
-  const briefText = readFileSync(briefPath, 'utf8');
-  const advice = adviceProblem(briefText);
-  const lines = [`handoff check: ${briefPath}`, ...(advice ? [advice] : [])];
-  let findings = advice ? 1 : 0;
+// { exitCode: 0 clean, 1 findings, 2 an unreadable prior, or a prior that is the brief itself; lines }. `limit` 0 skips
+// the line-length check. `floor` is the lowest chain count the brief may give; `store`, the continuation store, takes the
+// stamp of a brief that passes.
+export function checkBrief(briefPath, explicitPrior, limit = 155, { floor = 0, store = null } = {}) {
+  const bytes = readFileSync(briefPath);
+  const briefText = bytes.toString('utf8');
+  const header = [adviceProblem(briefText), ...chainProblems(briefText, floor), ...sectionProblems(briefText), supersedesProblem(briefText)].filter(Boolean);
+  const lines = [`handoff check: ${briefPath}`, ...header];
+  let findings = header.length;
   const wrap = limit > 0 ? findWrapViolations(briefText, limit) : [];
   if (wrap.length) {
     findings += wrap.length;
@@ -184,40 +212,53 @@ export function checkBrief(briefPath, explicitPrior, limit = 155) {
   const prior = resolvePrior(briefPath, explicitPrior);
   const priorProblem = prior && unreadable(prior.path);
   if (priorProblem) return { exitCode: 2, lines: [`${prior.path} ${priorProblem}`] };
-  if (!prior) {
-    lines.push('Carry-forward: no superseded brief found; nothing to compare.');
-  } else {
-    const { missing, unchecked } = findCarryGaps(briefText, readFileSync(prior.path, 'utf8'));
-    lines.push(`Carry-forward against ${prior.path} (${prior.source}):`);
-    if (!missing.length) lines.push('  every identifier from its Decisions locked and Gotchas is still named.');
-    else {
-      const count = missing.reduce((sum, item) => sum + item.identifiers.length, 0);
-      findings += count;
-      lines.push(`  ${count} identifier(s) no longer named. Carry each, or name it with why it is obsolete:`);
-      for (const item of missing) lines.push(`  - [${item.section}] ${item.identifiers.map((id) => `\`${id}\``).join(', ')}`, `      from: ${item.snippet}`);
-    }
-    if (unchecked.length) {
-      lines.push(`  ${unchecked.length} prose-only item(s) carry no identifier; compare each by hand:`);
-      for (const item of unchecked) {
-        const [first, ...rest] = item.text.split('\n');
-        lines.push(`  - [${item.section}] ${first.trim()}`, ...rest.map((line) => `    ${line}`));
-      }
-    }
+  if (prior?.source === 'explicit' && samePath(prior.path, briefPath)) {
+    return { exitCode: 2, lines: [`--prior ${prior.path}: the prior is the brief itself: its earlier text is gone, so nothing can be compared`] };
   }
+  const carried = carryForward(briefPath, briefText, prior);
+  findings += carried.findings;
+  lines.push(...carried.lines);
   if (findings === 0) {
-    rmSync(snapshotPath(briefPath), { force: true });
+    // The bytes that passed become the snapshot; a copy the disk refuses changes neither the lines nor the exit code.
+    try {
+      writeSnapshot(briefPath, bytes);
+    } catch {}
+    if (store) stamp(store, briefPath, bytes, lines);
     lines.push('OK');
   }
   return { exitCode: findings === 0 ? 0 : 1, lines };
 }
 
-// Why a path cannot be read as a brief, or null.
-function unreadable(file) {
+// { findings, lines }: the carry-forward of a brief against its resolved `prior`, or the finding or note for none.
+function carryForward(briefPath, briefText, prior) {
+  if (!prior) {
+    const unresolved = unresolvedProblem(briefText, path.basename(briefPath));
+    return unresolved ? { findings: 1, lines: [unresolved] } : { findings: 0, lines: ['Carry-forward: no superseded brief found; nothing to compare.'] };
+  }
+  const { missing, unchecked } = findCarryGaps(briefText, readFileSync(prior.path, 'utf8'));
+  const lines = [`Carry-forward against ${prior.path} (${prior.source}):`];
+  const findings = missing.reduce((sum, item) => sum + item.identifiers.length, 0);
+  if (!findings) lines.push(`  every identifier from its ${CARRIED_NAMES} is still named.`);
+  else {
+    lines.push(`  ${findings} identifier(s) no longer named. Carry each, name it under Done once its step is done, or name it in the header with why it is obsolete:`);
+    for (const item of missing) lines.push(`  - [${item.section}] ${item.identifiers.map((id) => `\`${id}\``).join(', ')}`, `      from: ${item.snippet}`);
+  }
+  if (unchecked.length) {
+    lines.push(`  ${unchecked.length} prose-only item(s) carry no identifier; compare each by hand:`);
+    for (const item of unchecked) {
+      const [first, ...rest] = item.text.split('\n');
+      lines.push(`  - [${item.section}] ${first.trim()}`, ...rest.map((line) => `    ${line}`));
+    }
+  }
+  return { findings, lines };
+}
+
+// Stamps a brief that passed for the continue gate. A stamp the disk refuses changes no exit code: the gate then asks
+// for the check again.
+function stamp(store, briefPath, bytes, lines) {
   try {
-    if (!statSync(file).isFile()) return 'is not a file';
-    accessSync(file, constants.R_OK);
-    return null;
+    stampChecked(store, briefPath, createHash('sha256').update(bytes).digest('hex'));
   } catch (error) {
-    return error.code === 'ENOENT' ? 'does not exist' : `cannot be read (${error.code})`;
+    lines.push(`The pass could not be recorded for \`aidrian handoff continue\` (${error.code ?? error.message}).`);
   }
 }

@@ -2,6 +2,7 @@
 // they read does. scripts/test-state.mjs uses the same list for the test suite.
 // - IDENTITY_VARS of lib/hosts/: the running session's identity, as each host names it.
 // - AIDRIAN_ALLOW_*: the escape hatches that switch a rule off; a reviewer never runs with one.
+// - AIDRIAN_GUARD_BUDGET_MS: a lower time budget for the agent gate hook's guards, which refuses more.
 // - GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and the others git sets in a hook: with one set, a `git` call acts on
 //   another repository than the one in its folder.
 
@@ -18,7 +19,7 @@ export const GIT_VARS = Object.freeze([
 // `env` without those variables, changed in place and returned.
 export function isolate(env) {
   for (const key of Object.keys(env)) {
-    if (SESSION_VARS.includes(key) || GIT_VARS.includes(key) || key.startsWith('AIDRIAN_ALLOW_')) delete env[key];
+    if (SESSION_VARS.includes(key) || GIT_VARS.includes(key) || key.startsWith('AIDRIAN_ALLOW_') || key === 'AIDRIAN_GUARD_BUDGET_MS') delete env[key];
   }
   return env;
 }

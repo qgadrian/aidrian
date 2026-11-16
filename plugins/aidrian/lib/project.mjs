@@ -34,8 +34,8 @@ const defaultRead = () => undefined;
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
   'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
-  'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
-  'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
+  'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
+  'handoff-continue', 'handoff-guard', 'handoff-markers', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
   'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-length', 'shell-lex',
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',

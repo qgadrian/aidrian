@@ -12,7 +12,8 @@
 //   agent is sent back for one more turn to judge whether a handoff is worth it: in `ask` mode to ask the user, in `auto`
 //   mode to write the brief, or in either to do nothing (lib/session-length.mjs). A marker in the temporary folder holds
 //   the ratio at the last cost firing and the ceiling's firings, so the cost reminder comes back once the ratio doubles
-//   and the ceiling once the context does. It reads Claude Code transcripts only.
+//   and the ceiling once the context does. It reads Claude Code transcripts only. Its text follows the continue route
+//   the session's host can do (lib/session-length.mjs continuation), so with `clear` the agent ends the turn after the brief.
 // `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
 // sent back, so nothing can loop: each stop sends back at most once, for one of the three.
 
@@ -24,12 +25,12 @@ import { loadConfig } from '../lib/config.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
-import { stopReminder } from '../lib/session-length.mjs';
+import { continuation, stopReminder } from '../lib/session-length.mjs';
 import { announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
 import { handBack } from '../lib/stop-handback.mjs';
 import { readText } from '../lib/transcript.mjs';
 
-await runHook((input) => {
+await runHook(async (input) => {
   if (input.stop_hook_active !== false) return;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
@@ -47,7 +48,7 @@ await runHook((input) => {
   const { handoff } = session;
   if (handoff.mode === 'off' || !text) return;
   const marker = path.join(tmpdir(), `aidrian-session-length-${input.session_id}`);
-  const reminder = stopReminder(text, handoff, readText(marker));
+  const reminder = stopReminder(text, handoff, readText(marker), await continuation(handoff, host));
   if (!reminder) return;
   writeFileSync(marker, `${JSON.stringify(reminder.marker)}\n`);
   deny(reminder.reason);

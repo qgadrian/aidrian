@@ -16,9 +16,9 @@ the tracker write guard, and the question names check also record each block: se
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
-| A session or subagent starts | The [start lines](#start-lines) | Claude Code, Codex | no |
+| A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
-| A new turn starts: a prompt, a background agent's report, or a scheduled run | The [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code | no |
+| A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
@@ -35,7 +35,7 @@ the tracker write guard, and the question names check also record each block: se
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
-| A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
+| A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
 The Bash rules run in the order of their table, in one process.
 A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
@@ -129,6 +129,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
 | [Tracker write guard](config.md#tracker) | Off unless config.json sets `"tracker": { "enabled": true }`, with the keys that key needs |
 | Session-length reminder and plan handoff offer | `"session": { "handoff": { "mode": "off" } }` |
+| [Handoff continuation](handoff.md#continue), and its session start, new turn, and session end steps | No config turns the steps off: on a host with a route they run, and act only on a continuation the gate armed. The gate arms one only for `session.handoff.continue`, such as `"session": { "handoff": { "continue": "clear" } }`, or the `session-handoff` skill's `--continue`; with `"none"`, the default, and no `--continue`, nothing is armed |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery and background checks still run |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
@@ -846,6 +847,8 @@ The reason also tells the agent not to reach the same result with another tool, 
 The block is [recorded](#recorded-blocks) as `agent-gates`, with that gate as its reason.
 A gate that blocks one session a third time becomes a lesson for the project, not the plugin: the gates are the project's.
 The hook runs for every tool, so a project without gates still pays for one process that finds the project, reads its config, and exits.
+It asks the gates before any guard below, so a call a gate denies is denied before the guards read its paths and globs,
+however long they would take.
 
 While any gate is set, the hook also blocks a subagent that changes a file that sets the gates, so an agent cannot lift its own:
 config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout's when the project is a git worktree.
@@ -860,15 +863,90 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   in Node `require(p)`, `readFileSync(p)`, and `JSON.parse(readFileSync(p))`, each printed or not, with `p` a quoted path.
   perl and ruby have none. Read, `cat`, and `jq` still read the files, as the block says.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
+  A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
+  A glob from a folder the guard knows also counts when a link already on disk, in any part it expands, leads to one of
+  the files or a folder that holds it, as `printf x | tee out/alias*` does when `out/alias` links to config.json.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
-  or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`:
+  or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
+  that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
   the [auto-merge](config.md#auto-merge), [unattended waiver](config.md#unattended-waiver), and review-approvals switches
   are the main session's. Other writes to that file follow the rules above.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's.
+- With or without gates, a subagent may not run `aidrian handoff continue`, the [handoff gate](handoff.md#the-gate),
+  which arms a continuation of the main session: its shell carries the main session's id, so the command cannot tell it
+  from the main session. It reads the command wherever it runs in the line, as the [decision answer rule](#bash-rules) does,
+  and refuses a command word built from a variable or a substitution, as in `$AIDRIAN handoff continue x.md`,
+  when its later plain words read `handoff`, then `continue`.
+- With or without gates, a subagent may not write in the continuation store, `<state>/handoffs/.continue/`, by a
+  literal path to it, in any letter case on a disk that folds case, through a glob that may reach it, or after a `cd`
+  the guard can follow, nor a file named as a marker that arms or delivers a continuation where the path is unknown,
+  such as after a `cd` it cannot follow. Otherwise a subagent could write the marker it may not arm.
+  A glob from a known folder also counts when a link already on disk, in any part it expands, leads to a marker, into
+  the store, or to a folder that holds it, as `tee /tmp/alias*` does when `/tmp/alias` links to a marker, and `/va*/…`
+  does through macOS's `/var` link; that walk shares the time and link budgets below. A `**` part spans any number of
+  folders, as `tee out/**/alias*` reaches `out/a/b/alias`, and the walk follows links to folders inside it, though the
+  shell may not; it reads each folder once a part, so a link that loops ends the walk. A plain part, with no wildcard,
+  is looked up by its name, as a shell passes it with search permission alone, so `tee /tmp/x*/n/alias` counts when
+  `n` may be passed but not listed (mode `0311`); a wildcard part in such a folder counts as one that reaches the store.
+  The guard reads the call's literal paths and names first, and walks links only after the other guards' path and name
+  checks, so a call they refuse by name, such as a write of `.aidrian.local.json`, is refused before any link walk.
+  It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
+  and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
+  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
+  of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
+  Both blocks are [recorded](#recorded-blocks) as `config-guard`.
+- A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule
+  above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
+- A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:
+  the guards read its `command` as opaque text, split into words at blanks, quotes, and the characters that join words,
+  with `\` read as `/`, in any letter case, and fail closed for a subagent. The words come from the command as given
+  and from a copy with its joins undone: backticks removed, a literal join such as `'a'+'b'` folded, and quotes removed,
+  so ``hand`off`` reads `handoff`; a typographic quote, U+2018 to U+201E, is a quote. A word that is a path counts as
+  that path, from the call's folder when it is relative and from the home folder after a leading `~`.
+  A word with `*`, `?`, or `[` is a glob, judged two ways. From the call's folder, it reaches a guarded file when each of
+  its parts matches the file's path at that depth, in any case, among what is there: the file, a folder that holds it, or a
+  link to either; so `src\*` or `*.json` in a folder without the file reaches nothing, while `Remove-Item *` at the project
+  root reaches `.aidrian/`. A glob with a wildcard before its last part, as `src\*\x\l\*.json`, is followed through
+  each folder it reaches, so a link below its first folder to a guarded folder counts too. By name alone, since the shell
+  may change its folder first, it counts only when its last part matches the file's name or its folder's and starts with
+  at least three plain characters past any dots, as `.aidrian.local.js*`, `conf*`, `.aid*`, `conf[i]g.json`, or `.con*`
+  and `han*` for `handoffs/.continue` do, or when its last two parts match the file's folder and name, as `.aidrian\*` or
+  `handoffs\*` do. Its last part never names a checkout's folder, whose name a project's paths share, and names the gate
+  snapshot's folder only with the folder above it, as `aidrian\ses*`. So `*`, `*.json`, `.*`, `c*`, `.c*`, and `src\w*`
+  in a checkout named `webapp` name nothing. A `-Name:value` word, its dash `-` or U+2013 to U+2015, counts its value as a
+  word too. One pipeline of read-only cmdlets, such as `Get-ChildItem`, `Get-Content`, `Select-String`, `Where-Object`, or
+  `Get-Process`, each word plain, with no variable, subexpression, script block, redirection, or `;`, writes nothing and is
+  not judged by its paths and globs, so `Get-ChildItem *` and `dir .*` run anywhere; `Get-ChildItem * | Remove-Item` is
+  judged. Such a pipeline still may not hold both `handoff` and `continue`, and still counts toward the 512-word cap below.
+  A glob is matched in at most its length times the name's steps, never by backtracking.
+  It may not hold both the words `handoff` and `continue`, nor a word that names or reaches the continuation store
+  (`handoffs/.continue`, a `.continue` part, a marker's file name, a folder that holds the store, or a glob that reaches
+  it), nor `.aidrian.local.json`, by name or by a glob that may reach it; while gates are set, nor a word that names or
+  reaches a file that sets them. Outside a read-only pipeline, each counts whether the command reads or writes, since the
+  guard cannot tell, so the block
+  says it may change the file, or, for a glob, that it may reach it; Read still reads the file
+  ([provider page](providers/claude-code.md#powershell-commands)). A subagent's command of more than 512 words, counting
+  each case, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
+  such a call, and the gates are asked before any guard ([config](config.md#agents)).
+- The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
+  past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
+  a subagent's call is refused, as the guards could not finish reading the command in time, and the main session's runs,
+  as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
+  the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it
+  does not match. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
+  be in, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
+  reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
+  so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.
+  A link a glob passes is resolved from the spelling of its folder that reached it, and its target is compared with a
+  guarded file in any letter case on macOS and Windows, whose disks ignore case by default, so a glob in another case of
+  the project folder, such as `WEBAPP\node_modules\*\dist`, is judged as the one in its own case is.
+  A path that passes more links than the system follows in one lookup is read as spelled: a command that reaches it in
+  two lookups, as after a `cd` partway along, is not followed, an accepted limit.
+  `AIDRIAN_GUARD_BUDGET_MS` in the hook's environment may only lower the budget, as a test does.
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.
@@ -1071,6 +1149,9 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   last firing, and a compaction resets it.
 - When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan hook tells the agent to offer the same handoff
   before its first build step, from halfway to `costRatio`: a cost ratio of 1.5 by default.
+- Both word the handoff for the [continue route](handoff.md#continue) the session's host can do. With `clear`, `auto`
+  runs the `session-handoff` skill, whose continue step arms the continuation, and ends the turn, and `ask` names what a
+  handoff then takes from the Human. With `none`, or a route the host does not list, the text is as above.
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.

@@ -4,6 +4,7 @@
 import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
+import { checkDeadline } from '../../deadline.mjs';
 import { globPattern } from '../../fs.mjs';
 
 import { loadConfig } from '../../config.mjs';
@@ -103,31 +104,85 @@ const PATH_LIMIT = 4096;
 
 // The path with symlinks resolved, for the part of it that exists; git reports the main checkout that way. A link whose
 // target does not exist yet is followed too: a write through it creates that target, as `echo x > link` does.
+// A path longer than the system's limit names no file, and stays as spelled: a command may give one, and resolving it
+// would only cost the hook time.
 export function canonical(file) {
-  return throughLinks(file, 0);
+  return file.length > PATH_LIMIT ? file : throughLinks(file, 0);
 }
 
 // canonical, after `hops` links not made yet. A link is followed only when what it leads to does not exist (ENOENT):
 // past a loop (ELOOP) or a folder it may not read (EACCES), the path stays as spelled, so a link that nests itself
 // returns at once. At the hop or length limit, the last target reached is returned.
+// The system's own lookup (realpathSync.native) is asked first, as it answers at once: a path that passes more links
+// than it follows in one lookup (ELOOP) stays as spelled, however long its chain. A command that reaches it in two
+// lookups, as after a `cd` partway along, is not followed: an accepted limit.
+// Otherwise the path as given is resolved by realpathSync, which keeps its letter case. The longest leading part that resolves is
+// the whole path, its parent, or else is found by halves: a part below one that does not resolve never does, so a path
+// takes as many tries as halvings, not one a part. A part the system finds too long to look up (ENAMETOOLONG) is
+// tried by realpathSync, which reads one part at a time, unless a shorter part above it already loops.
 function throughLinks(file, hops) {
-  const tail = [];
-  let current = file;
-  for (;;) {
+  const spelled = path.normalize(file);
+  const { root } = path.parse(spelled);
+  const parts = spelled.slice(root.length).split(path.sep).filter(Boolean);
+  const upTo = (count) => path.join(root, ...parts.slice(0, count));
+  const looped = Symbol('looped');
+  const native = (count) => {
     try {
-      return path.join(realpathSync(current), ...tail);
+      realpathSync.native(upTo(count));
+      return null;
     } catch (error) {
-      const target = error?.code === 'ENOENT' ? linkTarget(current) : null;
-      if (target !== null) {
-        const next = path.join(target, ...tail);
-        return hops + 1 >= LINK_HOPS || next.length > PATH_LIMIT ? next : throughLinks(next, hops + 1);
-      }
-      const parent = path.dirname(current);
-      if (parent === current) return file;
-      tail.unshift(path.basename(current));
-      current = parent;
+      return error;
     }
+  };
+  // Once a part is too long for the system's lookup, the longest part above it that is not is asked whether it loops.
+  let shorter = null;
+  const loopsAbove = (count) => {
+    if (shorter === null) {
+      let at = count;
+      let error;
+      do {
+        at = Math.floor(at / 2);
+        error = native(at);
+      } while (at > 0 && error?.code === 'ENAMETOOLONG');
+      shorter = error?.code === 'ELOOP';
+    }
+    return shorter;
+  };
+  const resolve = (count) => {
+    checkDeadline();
+    const error = native(count);
+    if (error?.code === 'ELOOP' || (error?.code === 'ENAMETOOLONG' && loopsAbove(count))) return looped;
+    if (error && error.code !== 'ENAMETOOLONG') return { error };
+    try {
+      return { real: realpathSync(upTo(count)) };
+    } catch (error) {
+      return { error };
+    }
+  };
+  const whole = resolve(parts.length);
+  if (whole === looped) return file;
+  if (whole.real !== undefined) return whole.real;
+  const parent = parts.length > 0 ? resolve(parts.length - 1) : whole;
+  if (parent === looped) return file;
+  let [found, missing] = parent.real === undefined ? [-1, parts.length - 1] : [parts.length - 1, parts.length];
+  let real = parent.real ?? null;
+  const tries = new Map([[parts.length, whole], [parts.length - 1, parent]]);
+  while (missing - found > 1) {
+    const middle = Math.floor((found + missing + 1) / 2);
+    const tried = resolve(middle);
+    if (tried === looped) return file;
+    tries.set(middle, tried);
+    if (tried.real === undefined) missing = middle;
+    else [found, real] = [middle, tried.real];
   }
+  const failed = tries.get(missing) ?? resolve(missing);
+  if (failed === looped) return file;
+  const target = failed.error?.code === 'ENOENT' ? linkTarget(upTo(missing)) : null;
+  if (target !== null) {
+    const next = path.join(target, ...parts.slice(missing));
+    return hops + 1 >= LINK_HOPS || next.length > PATH_LIMIT ? next : throughLinks(next, hops + 1);
+  }
+  return real === null ? file : path.join(real, ...parts.slice(found));
 }
 
 // Where the link `file` points, resolved from the real folder it sits in, or null when `file` is no link.

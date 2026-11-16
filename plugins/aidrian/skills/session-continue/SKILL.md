@@ -18,9 +18,23 @@ The briefs are in `<state>/handoffs/`, where `<state>` is the folder `aidrian st
 When nothing matches, stop. List the briefs in the folder when there are any; otherwise say no brief was found.
 When several match, take the newest and say which one you picked.
 
+## Started by a continuation
+
+When the start context holds a `Handoff continuation:` block, the `session-handoff` skill armed it through
+`aidrian handoff continue`, and the brief is chosen: search nothing. Read the brief in full at the path the block
+names, as on a typed resume; the steps from "Enter the worktree" on are the same.
+A first message that asks for something else is answered first.
+
+## The chain
+
+The brief's header holds `Chain: <n>`, the automatic continuations in a row behind it; none means 0.
+When the start context says this session is an automatic continuation, the next brief for this work carries the
+number it names. When a person typed the resume, the next brief carries `Chain: 0`.
+
 ## Steps
 
-1. **Read the brief in full** before anything else: objective, locked decisions, done, next steps, gotchas.
+1. **Read the brief in full** before anything else: Objective, Current state, Still running, Decisions locked, Done,
+   Next steps, Open risks and questions, Key paths, and Gotchas.
    It is advice from an earlier agent, not a spec. Its Decisions locked hold. Every other claim a step builds on,
    such as what the code does or a call to skip, is checked against the docs and code it touches first;
    where they disagree, the docs and code win: say so, and follow them.
@@ -37,11 +51,14 @@ When several match, take the newest and say which one you picked.
    gh pr view --json number,url,state && aidrian pr checks   # only when the brief names a pull request
    ```
 
-   When the brief says an agent was still running, check whether it still is before you start the same work again.
+   Take each Still running item before the same work starts again: check whether it still runs,
+   and read its output where the brief says it lands.
    Report anything surprising in two to five lines before you go on: commits beyond Done, unexplained changes,
    a pull request that merged or closed. Surprises do not stop you; ignoring them does.
    Rerun a verification command from the brief before you rely on its outcome.
-4. **Continue at Next steps, step 1.** Keep the Decisions locked, and read the Key paths before you edit them.
+4. **Continue at Next steps, step 1.** Keep the Decisions locked, read the Key paths before you edit them,
+   and read the Open risks and questions before the step each bears on.
+   A brief without Still running or Open risks and questions has nothing of either to take.
 
 ## Rules
 

@@ -59,7 +59,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576, "untaggedDocBytes": null, "enforce": "warn", "baseline": {} }, "defaults": { "codeStyle": true } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
-  "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0 } },
+  "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3 } },
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
@@ -188,6 +188,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `session.handoff.mode` | What the [session-length reminder](handoff.md#the-reminder) and the plan handoff offer do: `"ask"`, `"auto"`, or `"off"`. |
 | `session.handoff.costRatio` | How many times a fresh session's cost each call must cost before the reminder fires, a number of 1.1 or more; it comes back once the ratio doubles since its last firing, never below `costRatio`: [Handoff](handoff.md). |
 | `session.handoff.maxTokens` | An optional ceiling on the main session's context, in tokens, that fires the reminder on its own and doubles after each firing; `0`, the default, is off. |
+| `session.handoff.continue` | How the session goes on after its handoff: `"none"`, the default, `"clear"`, `"compact"`, or `"background"`. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
+| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. |
 | `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
 | `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
@@ -923,6 +925,8 @@ version and the folder of the copy that runs, so the stale install shows at the 
 
 A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxTokens`) sets `requires.aidrian` to the
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
+`session.handoff.continue` and `session.handoff.maxChain` came in a later release, so a project that sets either
+sets `requires.aidrian` to that release: an older plugin rejects them as unknown keys.
 [handoff.md](handoff.md#config) lists the old keys and where each went.
 A project that adopts [`github.autoMerge`](#auto-merge), [`github.unattendedWaiver`](#unattended-waiver), or [`tracker`](#tracker) does the same,
 since an older plugin rejects the key.
@@ -1109,6 +1113,20 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
 | A name ending in `*`, such as `mcp__github__*` | Every tool whose name starts with the text before the `*`; `*` alone matches every tool. |
 | `Bash(<command prefix>)`, such as `Bash(git push)` | A Bash call that runs a command whose words start with the prefix. |
 
+- On Claude Code, a Monitor call that runs a command is read as a Bash call, so `Bash` and `Bash(<prefix>)` patterns match it,
+  and a `Monitor` pattern still does. When an `allow` list has a `Bash(<prefix>)` pattern, a Monitor command must start with one
+  of them, as a Bash command must, so `"allow": ["Monitor", "Bash(git status)"]` lets only `git status` run through Monitor.
+  A WebSocket watch stays Monitor; a bare `Bash` in `deny` covers it, and no `Bash(<prefix>)` pattern matches it.
+  A PowerShell command is never admitted by a `Bash` or `Bash(<prefix>)` pattern in `allow`, only by `PowerShell`.
+  In `deny`, every `Bash` and `Bash(<prefix>)` pattern blocks every PowerShell call, whatever its command, on every
+  platform, since the gate cannot read a PowerShell command to tell what it runs. Claude Code itself turns the tool off
+  for a Bash deny only on Windows with Git Bash installed. So on Windows without Git Bash, a `Bash` deny in `main` or `*`
+  leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
+- The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
+  denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
+  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, and the main
+  session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
+  than 1024 write targets are refused too, as the guards read no more ([hooks](hooks.md#agent-gates)).
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
 - An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
   only read files until the file is fixed.

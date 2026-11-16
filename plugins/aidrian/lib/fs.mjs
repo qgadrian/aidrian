@@ -35,6 +35,11 @@ export function linksOutside(root, rel, within = '') {
   return real === null || realWithin === null || !isWithin(realWithin, real);
 }
 
+// A path as a disk that folds case compares it: in lower case on macOS and Windows, as it is elsewhere. A real path keeps
+// the letter case it was spelled in, so two spellings of one file compare equal only folded.
+const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
+export const foldCase = (file) => (FOLDS ? file.toLowerCase() : file);
+
 // Whether `file` is the folder `dir` or lies below it, by the paths as given: neither is resolved through symlinks.
 export function isWithin(dir, file) {
   const rel = path.relative(dir, file);
@@ -102,7 +107,7 @@ export function isDirectory(dir) {
 }
 
 // Whether `file` is there at all, a broken symlink included.
-function isEntry(file) {
+export function isEntry(file) {
   try {
     lstatSync(file);
     return true;
@@ -126,4 +131,137 @@ export function globPattern(glob) {
     else body += part.replace(/[.+?^${}()|[\]\\]/gu, '\\$&');
   }
   return new RegExp(`^${body}$`, 'u');
+}
+
+// A glob target's parts: { head, pattern, folders }. `head` is its folder as written, `pattern` matches the path part
+// right below it, and `folders` are `head` from each of `dirs`. `flags` adds to the pattern's, such as `i` on a disk
+// that folds case. The pattern reads `*`, `?`, and a `[...]` class, `[!...]` or `[^...]` negated, with a `]` right after
+// the opening as a member, as the shell does. A class it does not model, such as `[[:alpha:]]`, or cannot compile, such
+// as the reversed range `[z-a]`, matches any one character: a guard that reads a glob, such as lib/config-guard.mjs
+// and lib/handoff-guard.mjs, fails closed. It never throws. A command gives the glob, so `pattern` is no regular
+// expression, which may take time exponential in its stars (globMatcher).
+export function globParts(text, dirs = [], flags = '') {
+  const parts = text.replace(/\/+$/u, '').split('/');
+  const last = parts.pop();
+  const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
+  return { head, pattern: globMatcher(last, flags), folders: path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head)) };
+}
+
+// Whether glob path parts reach the path parts `reached`, from the same folder: each glob part matches the one at its
+// depth (`matches`), and a part that is only stars, as zsh's `**`, matches any number of parts, none included. A glob that
+// ends first names a folder that holds the path; `below` says whether one that goes on past the path's last part reaches
+// it too, as a write into a folder does. It fills a table row by row and never recurses, so a glob of any number of parts
+// costs its parts times the path's, and no command can run it out of stack.
+export function partsReach(glob, reached, matches, below) {
+  const many = glob.map((part) => /^\*{2,}$/u.test(part));
+  let next = new Array(reached.length + 1).fill(true);
+  for (let g = glob.length - 1; g >= 0; g -= 1) {
+    const row = new Array(reached.length + 1);
+    row[reached.length] = below || (many[g] && next[reached.length]);
+    for (let r = reached.length - 1; r >= 0; r -= 1) row[r] = many[g] ? next[r] || row[r + 1] : next[r + 1] && matches(glob[g], reached[r]);
+    next = row;
+  }
+  return next[0];
+}
+
+const STAR = Symbol('star');
+
+// One glob path part as { test(name) }: `*` matches any run of characters, `?` and a class one each, and the rest itself.
+// A run of `*` folds into one, and a failed match goes back only to the last `*` it passed, so a test takes at most the
+// part's length times the name's in steps, whatever the part holds. A name shorter than the characters the part needs
+// fails at once, so a test takes at most about twice the name's length squared in steps, however long the part.
+// Each token keeps what it answered for each character, so its regular expression runs once a character.
+// `flags` holds `i` to fold case.
+function globMatcher(part, flags) {
+  const tokens = [];
+  const one = (source) => {
+    let pattern;
+    const known = new Map();
+    return (char) => {
+      if (!known.has(char)) {
+        pattern ??= new RegExp(`^${source}$`, `u${flags}`);
+        known.set(char, pattern.test(char));
+      }
+      return known.get(char);
+    };
+  };
+  for (let i = 0; i < part.length; i += 1) {
+    const close = part[i] === '[' ? classEnd(part, i) : -1;
+    if (part[i] === '*') {
+      if (tokens.at(-1) !== STAR) tokens.push(STAR);
+    } else if (part[i] === '?') tokens.push(one('.'));
+    else if (close !== -1) {
+      tokens.push(one(classSource(part.slice(i + 1, close))));
+      i = close;
+    } else {
+      const char = String.fromCodePoint(part.codePointAt(i));
+      tokens.push(flags.includes('i') ? one(char.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')) : (each) => each === char);
+      i += char.length - 1;
+    }
+  }
+  const needs = tokens.filter((token) => token !== STAR).length;
+  const tail = tokens.includes(STAR) ? tokens.length - 1 - tokens.lastIndexOf(STAR) : 0;
+  return {
+    test: (name) => {
+      const chars = Array.from(String(name));
+      if (chars.length < needs) return false;
+      // The tokens after the last `*` match the name's end one for one, and the ones before the first its start, which
+      // matchTokens tries first: most names that fail, fail at one end at once.
+      for (let i = 1; i <= tail; i += 1) if (!tokens[tokens.length - i](chars[chars.length - i])) return false;
+      return matchTokens(tokens, chars);
+    },
+  };
+}
+
+// Whether `chars` match `tokens` whole: at a mismatch, the last `*` passed takes one more character, and none before it
+// needs to change, since a `*` matches any run.
+function matchTokens(tokens, chars) {
+  let t = 0;
+  let c = 0;
+  let star = -1;
+  let taken = 0;
+  while (c < chars.length) {
+    if (tokens[t] === STAR) {
+      star = t;
+      taken = c;
+      t += 1;
+    } else if (t < tokens.length && tokens[t](chars[c])) {
+      t += 1;
+      c += 1;
+    } else if (star !== -1) {
+      t = star + 1;
+      taken += 1;
+      c = taken;
+    } else return false;
+  }
+  while (tokens[t] === STAR) t += 1;
+  return t === tokens.length;
+}
+
+// The index of the `]` that closes the class opened at `start`, or -1 when none does and the `[` is a plain character.
+// A `[:name:]`, `[.x.]`, or `[=x=]` inside the class holds a `]` that does not close it.
+function classEnd(part, start) {
+  let i = start + 1;
+  if (part[i] === '!' || part[i] === '^') i += 1;
+  if (part[i] === ']') i += 1;
+  for (; i < part.length; i += 1) {
+    if (part[i] === ']') return i;
+    const inner = part[i] === '[' && ':.='.includes(part[i + 1] ?? 'x') ? part.indexOf(`${part[i + 1]}]`, i + 2) : -1;
+    if (inner !== -1) i = inner + 1;
+  }
+  return -1;
+}
+
+// A class's body as a regular expression class, or `.` for a body it does not model or cannot compile.
+function classSource(body) {
+  if (/\[[:.=]/u.test(body)) return '.';
+  const negated = body[0] === '!' || body[0] === '^';
+  const members = (negated ? body.slice(1) : body).replace(/[\\\][^]/gu, '\\$&');
+  const source = `[${negated ? '^' : ''}${members}]`;
+  try {
+    new RegExp(source, 'u');
+    return source;
+  } catch {
+    return '.';
+  }
 }

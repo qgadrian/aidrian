@@ -97,7 +97,7 @@ export const SCHEMA = {
   terms: { file: 'textOrNull' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive', untaggedDocBytes: 'positiveOrNull', enforce: 'budgetEnforce', baseline: 'docBytes' }, defaults: { codeStyle: 'boolean' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
-  session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore' } },
+  session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positive' } },
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
@@ -147,6 +147,9 @@ export const REMOVED = {
 
 // The modes a string `session.handoff` held before the handoff settings became a group.
 export const HANDOFF_MODES = ['off', 'ask', 'auto'];
+// How a session goes on after its handoff, `session.handoff.continue`. The schema takes every route; which of them run is the
+// host adapter's `capabilities.handoffContinue.routes`, and a route it does not list falls back to none.
+export const CONTINUE_ROUTES = ['none', 'clear', 'compact', 'background'];
 
 // The fields config.json `attribution` may list (lib/attribution.mjs).
 export const COMMIT_FIELDS = ['agent', 'model', 'effort', 'tool', 'env'];

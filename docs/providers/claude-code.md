@@ -54,7 +54,8 @@ The [host adapter](../../plugins/aidrian/lib/hosts/claude-code.mjs) holds what t
 its payloads need no mapping, since their names are the standard, but for [a GitHub MCP server from a plugin](#a-github-mcp-server-from-a-plugin).
 [Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified) has the evidence.
 
-Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, and reports `Hook cancelled`.
+Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, about 1.5 seconds whatever
+the `timeout` in `hooks.json` says, and reports `Hook cancelled`.
 The session-end hook deletes the session's temporary files itself, and hands the [`session` row](../dispatch-log.md#session-when-a-session-ends)
 to a detached worker, so a long session's transcripts never hold up the exit.
 For a session holding a [tracker refusal marker](../config.md#how-a-write-is-judged), it also writes one `hook_deny` row in process.
@@ -106,6 +107,105 @@ Checked on Claude Code 2.1.314, with a hook that logged each call:
 - A session started with `claude --agent <name>` carries `agent_type` alone, so it is both `main` and that agent.
 
 So Claude Code holds each agent to its gates, tool by tool and pattern by pattern.
+
+## Shell commands of the Monitor tool
+
+The Monitor tool runs its `command` in a shell, in the background, under Bash's permission rules, and a subagent may
+call it ([tools reference](https://code.claude.com/docs/en/tools-reference#monitor-tool)). From Claude Code 2.1.314, a hook
+whose matcher is Bash gets those commands as Bash calls; before that version the [Bash rules](../hooks.md#bash-rules),
+which hooks.json matches to Bash, skip a Monitor command. A hook whose matcher takes every tool, as the agent gates hook's
+does, gets the Monitor call itself on every version ([hooks reference](https://code.claude.com/docs/en/hooks#match-monitor-commands)).
+So the adapter's `hookInput` reads a Monitor call with a `command` as `Bash`, with `raw_tool_name: "Monitor"`, and the
+handoff guard, the config guard, and the machine-switch guard of the [agent gates hook](../hooks.md#agent-gates) read it
+as they read Bash on every version.
+
+- A gate's `Bash` and `Bash(<prefix>)` patterns match a Monitor command. A `Monitor` pattern still matches it too,
+  but when the same `allow` list has a `Bash(<prefix>)` pattern, the command must start with one of them, as a Bash call's must:
+  `["Monitor", "Bash(git status)"]` lets `git status` run through Monitor, and not `rm -rf build` ([config](../config.md#agents)).
+- A WebSocket watch takes `ws` in place of `command` and runs no shell, so it keeps the name `Monitor`.
+  It runs under Bash's permission rules all the same, so `hookInput` adds `permission_tool_name: "Bash"`, and a bare
+  `Bash` deny covers it; a `Bash(<prefix>)` pattern never matches it.
+- A block names the tool the agent called, `Monitor`, not `Bash`.
+
+## PowerShell commands
+
+The PowerShell tool runs its `command` in PowerShell. It is on by default on Windows (with Git Bash installed, only for claude.ai and Console accounts unless `CLAUDE_CODE_USE_POWERSHELL_TOOL=1`), and opt-in on
+Linux, macOS, and WSL, and a subagent may call it ([tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool)).
+The shared lexer reads POSIX shells, and it misreads PowerShell's `@(...)`, its backtick escapes, and its quoting, so the
+adapter never reads a PowerShell call as Bash, and no `Bash(<prefix>)` pattern in an `allow` list ever admits one.
+
+- In a `deny` list, every `Bash` and `Bash(<prefix>)` pattern blocks every PowerShell call, for the main session and every
+  agent, on every platform: a gate that cannot read the command cannot hold it to the prefix, and the block says so.
+  A `PowerShell` pattern names it too. Claude Code does the like only on Windows with Git Bash installed, and keeps the
+  tool on there with `CLAUDE_CODE_USE_POWERSHELL_TOOL=1` or a `PowerShell` permission rule
+  ([tools reference](https://code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool)).
+  A recorded limit: on Windows without Git Bash, where PowerShell is the only shell tool, a `Bash` deny in `main` or `*`
+  leaves the main session no shell tool.
+- The adapter lists the tool in `opaqueShellTools`, and the [agent gates hook](../hooks.md#agent-gates) reads its command
+  as opaque text, failing closed for a subagent: a command that holds the words `handoff` and `continue`, or names the
+  continuation store, a folder that holds it, a marker, or `.aidrian.local.json`, is refused, and, while gates are set,
+  one that names a file that sets them. Each word is read as given and with PowerShell's joins undone: backticks removed,
+  `'a'+'b'` folded, and quotes removed, typographic quotes such as `‘` and `“` included, so ``hand`off`` is `handoff`.
+  A word that is a path counts by that path, from the call's folder when relative and from the home folder after a
+  leading `~`, and a word with `*`, `?`, or `[` counts as a glob, judged as the [hooks page](../hooks.md#agent-gates) says.
+  One pipeline of read-only cmdlets with plain words, such as `Get-ChildItem *` or `Get-ChildItem | Where-Object Name -like 'h*'`,
+  writes nothing and is not judged by its paths and globs, though it still may not hold both `handoff` and `continue`,
+  and still counts toward the word cap. A command of more than 512 words, counting each case, is refused for a subagent, as
+  the guards read no more, and so is one they cannot finish reading within their time budget.
+- The [Bash rules](../hooks.md#bash-rules), which hooks.json matches to Bash, do not run on a PowerShell command.
+
+This rests on the [tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool) and the
+[hooks reference](https://code.claude.com/docs/en/hooks#powershell), which give its command as `tool_input.command`, the
+Bash tool's field, and on test fixtures of that shape. It has not run live: no session here had the PowerShell tool on.
+
+## Handoff continuation
+
+Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
+types `/clear` and then any message, which is the adapter's `steps.clear`, and the new session resumes from the brief.
+`compact` and `background` fall back to `none` until their release, and `aidrian handoff route` prints `route: none` for them.
+The route is verified on Claude Code 2.1.325: the host behavior it rests on on 2026-11-15, with a throwaway plugin, and
+the route from end to end on 2026-11-16, with the plugin loaded from a branch. That live run found:
+
+- The Bash tool's folder follows a `cd`: the gate ran from inside the task worktree and wrote the same project store,
+  and the continuation was delivered. After the clear the new session starts in the folder the session was launched in,
+  and the resume enters the worktree.
+- `CLAUDE_CODE_SESSION_ID` in the Bash tool follows a clear: after the clear it printed the new session's id, the one
+  the delivered continuation was bound to. So a second continuation in a row, with `Chain: 1`, armed for the live
+  session and was delivered.
+- The line that says a continuation was cancelled is model context only, the prompt hook's `additionalContext`: the Human
+  does not see it.
+- Whether typing `/clear` alone runs the prompt hook was not observed; `keepsArmed(prompt)` keeps the continuation
+  either way.
+
+The host behavior, from the throwaway plugin:
+
+- The clear command issues a new session id. SessionEnd fires with `reason: "clear"` and the old id, then SessionStart
+  with `source: "clear"` and the new id, about 100 ms later; both carry the same `cwd`. Its docs do not promise that order,
+  so the session start waits up to 600 ms for the session end while a `clear` continuation is armed.
+- Every hook's parent process is the `claude` host process, and it is the same before and after the clear: SessionStart
+  with `source: "startup"`, SessionEnd with `reason: "clear"`, SessionStart with `source: "clear"`, and UserPromptSubmit
+  all had one parent. A Bash tool command's parent is not it: node, then the shell, then that process. So the adapter's
+  `hookHostPid()` is the hook's parent, and binds a continuation to the terminal that cleared. Were a later release, or
+  a wrapper around a hook's command, to put another process between them, no id would match and nothing would be
+  delivered: a miss, never a wrong take.
+- SessionStart output `{ systemMessage, hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } }`
+  shows the banner to the Human, and the context reached the model after a clear.
+- SessionStart's sources are `startup`, `resume`, `clear`, `compact`, and `fork`.
+
+Not verified, each with its answer in the design:
+
+| Not verified | What the plugin does |
+| --- | --- |
+| Whether UserPromptSubmit fires for the clear or compact command | The adapter's `keepsArmed(prompt)` leaves the continuation for `/clear`, `/reset`, `/new`, and `/compact`. |
+| Whether other built-in commands fire UserPromptSubmit | Each one that does cancels the continuation, as any prompt does: only those four are spared. |
+| Whether a hook payload's `cwd` follows a `cd` in the Bash tool, as the Bash tool's own folder does | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. |
+
+UserPromptSubmit also fires when a background subagent reports back, on a scheduled-task or loop iteration, on a
+message from another session, and on the output of Claude's code in a Code Mode session when that code runs in the
+background ([its hooks reference](https://code.claude.com/docs/en/hooks#userpromptsubmit)). Each of those after the
+gate cancels the continuation, so the `session-handoff` skill's first step settles them all, Code Mode code running
+in the background among its background jobs, before it writes the brief and runs the gate.
+The SessionEnd hook promotes the continuation before it hands the session row to its worker, within the host's 1.5 seconds.
 
 ## Limits
 

@@ -1,13 +1,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
 import {
   carriedItems,
+  chainOf,
   checkBrief,
   findCarryGaps,
   findSupersededBrief,
@@ -15,6 +16,7 @@ import {
   snapshotPath,
   takeSnapshot,
 } from '../plugins/aidrian/lib/handoff-brief.mjs';
+import { checkedSha, noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 
@@ -42,6 +44,28 @@ ${ADVICE}
 - Never edit \`sub_TEST0…\` in the dashboard before deploy.
 - Production DB was hand-edited to show the customer active.
 `;
+
+// The five sections a brief must hold, with no identifier of their own: what a fixture that must pass adds.
+const SECTIONS = `
+## Objective
+- Heal the cancelled subscription.
+
+## Current state
+- Worktree: none yet; create one in step 1 | Branch: to create | Pull request: none
+
+## Still running
+None.
+
+## Next steps (ordered)
+1. Run the suite.
+
+## Open risks and questions
+None.
+`;
+// A brief that passes the check on its own: a header with the advice line and a Supersedes field, then the sections.
+const complete = (body = '', header = 'Supersedes: none') => `# Handoff: heal\nWritten: 2026-01-02 | ${header}\n${ADVICE}\n${SECTIONS}${body}`;
+// PRIOR's Decisions locked and Gotchas, carried whole.
+const CARRIED = PRIOR.slice(PRIOR.indexOf('## Decisions locked'));
 
 const tempBriefDir = () => mkdtempSync(path.join(tmpdir(), 'aidrian-handoff-'));
 const write = (dir, name, text) => {
@@ -189,25 +213,26 @@ test('checkBrief fails on a lost identifier and keeps the snapshot for the fix r
   assert.equal(existsSync(snapshotPath(brief)), true);
 });
 
-test('checkBrief passes a brief that carries everything, and consumes the snapshot', () => {
+test('checkBrief passes a brief that carries everything, and keeps it as the snapshot', () => {
   const dir = tempBriefDir();
   const brief = write(dir, '2026-01-02-task.md', PRIOR);
   takeSnapshot(brief);
+  writeFileSync(brief, complete(`\n${CARRIED}`));
   const result = checkBrief(brief);
   assert.equal(result.exitCode, 0);
   assert.equal(result.lines.at(-1), 'OK');
-  assert.equal(existsSync(snapshotPath(brief)), false);
+  assert.equal(readFileSync(snapshotPath(brief), 'utf8'), complete(`\n${CARRIED}`));
 });
 
-test('checkBrief prints a prose-only item whole, even on the exit-0 run that consumes the snapshot', () => {
+test('checkBrief prints a prose-only item whole, even on the exit-0 run that keeps the snapshot', () => {
   const dir = tempBriefDir();
   const first = '- Production DB was hand-edited to show the customer active, so every check that reads the subscription row agrees.';
   const continuation = '  Restore it from the dashboard export before deploying the heal.';
-  const brief = write(dir, '2026-01-02-task.md', `# Handoff\n${ADVICE}\n\n## Gotchas\n${first}\n${continuation}\n`);
+  const brief = write(dir, '2026-01-02-task.md', complete(`\n## Gotchas\n${first}\n${continuation}\n`));
   takeSnapshot(brief);
   const result = checkBrief(brief);
   assert.equal(result.exitCode, 0);
-  assert.equal(existsSync(snapshotPath(brief)), false);
+  assert.equal(readFileSync(snapshotPath(brief), 'utf8'), complete(`\n## Gotchas\n${first}\n${continuation}\n`));
   const at = result.lines.indexOf(`  - [Gotchas] ${first}`);
   assert.ok(at !== -1, 'the first line is printed uncut');
   assert.equal(result.lines[at + 1], `    ${continuation}`);
@@ -233,6 +258,11 @@ test('checkBrief fails a brief with no advice line above its first section, and 
   writeFileSync(brief, `# Handoff: solo${body}${ADVICE}\n`);
   assert.equal(checkBrief(brief).exitCode, 1, 'the line counts only above the first section');
   writeFileSync(brief, `# Handoff: solo\nWritten: 2026-01-02\n${ADVICE}${body}`);
+  const alone = checkBrief(brief);
+  assert.equal(alone.exitCode, 1, 'an advice line and a Next steps section alone');
+  assert.deepEqual(alone.lines.filter((line) => /^[A-Z][\w ]+: /u.test(line)).map((line) => line.split(':')[0]),
+    ['Objective', 'Current state', 'Still running', 'Open risks and questions', 'Supersedes']);
+  writeFileSync(brief, complete());
   assert.equal(checkBrief(brief).exitCode, 0);
 });
 
@@ -259,7 +289,8 @@ test('aidrian handoff: exit codes for usage, snapshot, findings, a clean brief, 
   const findings = run('check', brief);
   assert.equal(findings.status, 1);
   assert.match(findings.stderr, /identifier\(s\) no longer named/);
-  writeFileSync(brief, readFileSync(older, 'utf8'));
+  assert.ok(readFileSync(older, 'utf8').includes(CARRIED));
+  writeFileSync(brief, complete(`\n${CARRIED}`));
   assert.deepEqual([run('check', brief).status, run('check', brief).stdout.trim().split('\n').at(-1)], [0, 'OK']);
   const notAFile = path.join(dir, 'folder.md');
   mkdirSync(notAFile);
@@ -270,7 +301,62 @@ test('the line-length limit comes from config.json, and 0 turns it off', () => {
   const dir = tempBriefDir();
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, docs: { wrapLimit: 0 } }));
-  const brief = write(dir, '2026-01-02-solo.md', `# Handoff\n${ADVICE}\n- ${'word '.repeat(40)}\n`);
+  const brief = write(dir, '2026-01-02-solo.md', complete(`- ${'word '.repeat(40)}\n`));
   assert.equal(spawnSync(CLI, ['handoff', 'check', brief], { cwd: dir, encoding: 'utf8' }).status, 0);
   assert.equal(checkBrief(brief, undefined, 155).exitCode, 1);
+});
+
+test('chainOf reads Chain: n above the first section; none is 0, and a value that is no whole number is null', () => {
+  assert.equal(chainOf(`# Handoff\nWritten: 2026-11-15 | Chain: 2\n${ADVICE}\n`), 2);
+  assert.equal(chainOf(`# Handoff\nWritten: 2026-11-15\n${ADVICE}\n\n## Done\n- Chain: 5\n`), 0, 'below the first section counts for nothing');
+  for (const value of ['two', '-1', '1.5', '']) assert.equal(chainOf(`# Handoff\nWritten: x | Chain: ${value}\n`), null, value);
+});
+
+test('checkBrief fails a Chain that is no whole number, and one below the floor it is given', () => {
+  const dir = tempBriefDir();
+  const brief = write(dir, '2026-01-02-solo.md', `# Handoff\nWritten: 2026-01-02 | Chain: x\n${ADVICE}\n`);
+  const bad = checkBrief(brief, undefined, 0);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.lines.join('\n'), /Chain: the value is not a whole number/u);
+  writeFileSync(brief, complete('', 'Chain: 1 | Supersedes: none'));
+  assert.equal(checkBrief(brief, undefined, 0, { floor: 1 }).exitCode, 0);
+  const low = checkBrief(brief, undefined, 0, { floor: 2 });
+  assert.equal(low.exitCode, 1);
+  assert.match(low.lines.join('\n'), /Chain: 1 is below 2, the count this session continues: write `Chain: 2`/u);
+});
+
+test('a passing check stamps a brief inside <state>/handoffs/ with its bytes, and only there; the command holds the session floor', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-stamp-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'project');
+  const state = path.join(root, 'state');
+  mkdirSync(path.join(project, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(state, 'handoffs'), { recursive: true });
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: state } }));
+  const store = openStore(state, { checkouts: [project], maxChain: 3 });
+  const text = complete('', 'Chain: 0 | Supersedes: none');
+  const inside = write(path.join(state, 'handoffs'), '2026-11-15-task.md', text);
+  const outside = write(project, '2026-11-15-task.md', text);
+  assert.equal(checkBrief(outside, undefined, 0, { store }).exitCode, 0);
+  assert.equal(checkedSha(store, '2026-11-15-task.md'), null, 'no stamp for a brief outside the handoffs folder');
+  assert.equal(checkBrief(inside, undefined, 0, { store }).exitCode, 0);
+  const stamped = checkedSha(store, '2026-11-15-task.md');
+  assert.match(stamped, /^[0-9a-f]{64}$/u);
+  writeFileSync(inside, `${text}- More.\n`);
+  assert.equal(checkBrief(inside, undefined, 0).exitCode, 0);
+  assert.equal(checkedSha(store, '2026-11-15-task.md'), stamped, 'a check with no store stamps nothing');
+
+  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'continued-1' };
+  const check = () => spawnSync(CLI, ['handoff', 'check', inside], { cwd: project, encoding: 'utf8', env });
+  assert.equal(check().status, 0, 'no floor yet');
+  assert.notEqual(checkedSha(store, '2026-11-15-task.md'), stamped, 'the command stamps the changed brief');
+  noteFrom(store, 'continued-1', { slug: 'task', chain: 1, brief: inside, route: 'clear' });
+  const low = check();
+  assert.equal(low.status, 1);
+  assert.match(low.stderr, /Chain: 0 is below 1/u);
+  // A session continued from one brief that hands off under another slug is still the same run of continuations.
+  noteFrom(store, 'continued-1', { slug: 'other', chain: 2, brief: path.join(state, 'handoffs/2026-11-15-other.md'), route: 'clear' });
+  const renamed = check();
+  assert.equal(renamed.status, 1, 'a floor given for another slug holds too');
+  assert.match(renamed.stderr, /Chain: 0 is below 2/u);
 });

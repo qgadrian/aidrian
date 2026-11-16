@@ -26,6 +26,29 @@ const PLUGIN_GITHUB_TOOL = new RegExp(PLUGIN_GITHUB_MATCHER, 'u');
 
 const toolName = (name) => (typeof name === 'string' && PLUGIN_GITHUB_TOOL.test(name) ? `mcp__github__${name.slice(name.lastIndexOf('__') + 2)}` : name);
 
+// Its tools other than Bash that run `tool_input.command` in a shell. Monitor runs its command in the background under
+// Bash's permission rules, and a subagent may call it (code.claude.com/docs/en/tools-reference#monitor-tool). From 2.1.314
+// a hook whose matcher is Bash gets those commands as Bash calls; one whose matcher takes every tool, as the agent gates
+// hook's does, gets the Monitor call itself (code.claude.com/docs/en/hooks#match-monitor-commands). So such a call reads
+// as the standard Bash, and every guard of a shell command reads it. A WebSocket watch takes `ws` and runs no shell, so it
+// keeps its name; it still runs under Bash's permission rules, so it carries `permission_tool_name: "Bash"`, and a bare
+// Bash deny in an agent gate covers it too (lib/hosts/index.mjs deniedNames).
+// docs/providers/claude-code.md#shell-commands-of-the-monitor-tool.
+export const SHELL_TOOLS = Object.freeze(['Monitor']);
+const shellCommand = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof input.tool_input?.command === 'string';
+const shellWatch = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof input.tool_input?.command !== 'string';
+
+// Its tools that run `tool_input.command` in a shell the shared lexer cannot read. PowerShell, on by default on Windows
+// and opt-in on Linux, macOS, and WSL, runs its command as PowerShell, whose `@(...)`, backtick escapes, and quoting a
+// POSIX lexer misreads, so it is never read as Bash, and a Bash(prefix) gate never admits it: the guards read its command
+// as opaque text and fail closed for a subagent, and every Bash deny covers it on every platform, since the gate cannot
+// read its command; the host itself turns the tool off for a Bash deny only on Windows with Git Bash installed, and on
+// Windows without Git Bash a Bash deny in `main` or `*` leaves the main session no shell tool, a recorded limit
+// (lib/hosts/index.mjs opaqueShellCommand, deniedNames). This rests on the tools and hooks references, which
+// give its command as `tool_input.command`, and on fixtures; it has not run live.
+// docs/providers/claude-code.md#powershell-commands.
+const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
+
 export default {
   id: 'claude-code',
   name: 'Claude Code',
@@ -51,11 +74,15 @@ export default {
   // Its names are the standard, which is what hooks.json matches; a plugin's GitHub server has its own matcher there.
   rawToolName: (standard) => standard,
   toolResponse: responseObjects,
-  // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames).
+  // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
+  // as `Monitor` in an agent gate does for a Monitor call read as Bash.
   hookInput(input) {
+    if (shellCommand(input)) return { ...input, tool_name: 'Bash', raw_tool_name: input.tool_name };
+    if (shellWatch(input)) return { ...input, permission_tool_name: 'Bash' };
     const name = toolName(input.tool_name);
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },
+  opaqueShellTools: OPAQUE_SHELL_TOOLS,
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];
@@ -76,5 +103,15 @@ export default {
     ],
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
+    // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
+    // the claude process, names the session before and after it.
+    handoffContinue: {
+      routes: ['clear'],
+      steps: { clear: 'type /clear, then any message' },
+      // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference
+      // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
+      keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),
+      hookHostPid: (pid = process.ppid) => (Number.isInteger(pid) && pid > 1 ? pid : null),
+    },
   },
 };

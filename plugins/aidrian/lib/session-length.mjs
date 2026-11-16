@@ -1,7 +1,10 @@
 // The session-length reminder behind the Stop hook and the plan-approval offer: what continuing a Claude Code session
 // costs against a fresh one started from a handoff brief, read from its transcript, and what the hooks tell the agent
 // once config.json `session.handoff` says it is time. docs/handoff.md describes the cost model and its constants.
+// Both texts follow the route the session goes on by after its handoff, `session.handoff.continue` as the host can do it
+// (continuation); with `none` they are what they were before the routes existed.
 
+import { continueRoutes } from './hosts/index.mjs';
 import { aggregateUsage, CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './transcript.mjs';
 
 // B: the tokens a fresh session reads to resume from a brief, the measured median before its first edit or dispatch.
@@ -105,8 +108,8 @@ const costLine = ({ ratio, breakEven }) =>
 // What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
 // marker's text or null. A compaction since the marker resets both triggers, so the session is reminded from costRatio
 // again. A firing changes only what the trigger that fired holds: the cost one records its ratio, the ceiling raises its
-// count past every doubling it reached.
-export function stopReminder(text, handoff, markerText) {
+// count past every doubling it reached. `continuation` is the hooks' { route, how }.
+export function stopReminder(text, handoff, markerText, continuation = {}) {
   const usage = sessionUsage(text);
   if (!usage.calls) return null;
   let counts = readMarker(markerText, usage.compactions, handoff.costRatio);
@@ -125,7 +128,7 @@ export function stopReminder(text, handoff, markerText) {
   if (byTokens) next.push(`the context reaches ${Math.round(tokenCeiling(handoff.maxTokens, marker.tokens) / 1000)}k tokens`);
   if (byCost) next.push(`each call costs ${round(nextRatio(handoff.costRatio, marker.lastRatio))} times what a fresh session's would`);
   return {
-    reason: handoffReason(handoff.mode, { cost: byCost ? cost : null, tokens: byTokens ? usage.last : null, next }),
+    reason: handoffReason(handoff.mode, { cost: byCost ? cost : null, tokens: byTokens ? usage.last : null, next, ...continuation }),
     marker,
   };
 }
@@ -141,26 +144,46 @@ const notWorthIt = (cost, next) => 'Judge first whether a handoff is worth it. I
   `or when ${USER_SAID}: then end this turn without mentioning this reminder, ` +
   `which comes back once ${next.join(' or ')}. `;
 
+// The route the hooks word a handoff for, from config.json `session.handoff` and the session's host: { route, how },
+// where `how` is the host's phrase for what the route takes from the Human (its adapter's `steps[route]`). The gate's
+// module, which decides the route for the command too, loads only when the config asks for a route the host has.
+export async function continuation(handoff, host) {
+  if ((handoff.continue ?? 'none') === 'none' || !continueRoutes(host).length) return { route: 'none', how: null };
+  const { effectiveRoute } = await import('./handoff-continue.mjs');
+  const { route } = effectiveRoute(handoff.continue, host);
+  return { route, how: route === 'none' ? null : host.capabilities.handoffContinue.steps?.[route] ?? null };
+}
+
+// With the clear route, the session-handoff skill's continue step arms the continuation after the brief and prints the
+// line for the Human, who then clears the session: this one does nothing more.
+const continues = ({ route, how }) => route === 'clear' && typeof how === 'string';
+const SET_UP = 'to write the brief and set up the continuation: its continue step prints what to tell the user. Say that in one line';
+const askHow = (how) => `Say in it what a handoff takes from them: ${how}. `;
+
 // The message that sends the agent back for one more turn, in `ask` or `auto` mode. Doing nothing is a valid answer.
 // `cost` is handoffCost's result when the cost trigger fired, `tokens` the context when the ceiling did, and `next`
-// says when each comes back.
-export function handoffReason(mode, { cost = null, tokens = null, next }) {
+// says when each comes back. `route` and `how` are continuation's.
+export function handoffReason(mode, { cost = null, tokens = null, next, route = 'none', how = null }) {
   const found = [tokens !== null && kTokens(tokens), cost && costLine(cost)].filter(Boolean).join(', and ');
   const why = cost ? '' : 'A fresh session started from a handoff brief works from a smaller context. ';
   const head = `This session is long: ${found}. ${why}${notWorthIt(cost, next)}`;
+  const clear = continues({ route, how });
   if (mode === 'auto') {
+    if (clear) return `${head}Otherwise run the session-handoff skill now ${SET_UP}, then end this turn.`;
     return `${head}Otherwise run the session-handoff skill now to write the brief, ` +
       'then tell the user in one line that you wrote it, its path, and that the session-continue skill resumes it.';
   }
   return `${head}Otherwise end this turn with one short question to the user: hand off now, or keep going? ` +
+    (clear ? askHow(how) : '') +
     'If they choose to hand off, run the session-handoff skill; if they keep going, carry on.';
 }
 
 // What the plan hook adds once the Human approves a plan, or null. Halfway to costRatio is enough here: the plan is on
 // disk and nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning
 // context. It fires at r ≥ 1 + (costRatio − 1) / 2, halfway from a fresh session's 1 to costRatio, or at half of
-// maxTokens when the ceiling is set.
-export function planApprovedContext(handoff, usage) {
+// maxTokens when the ceiling is set. `continuation` is the hooks' { route, how }: with the clear route the build starts in
+// the session the clear begins, never here.
+export function planApprovedContext(handoff, usage, { route = 'none', how = null } = {}) {
   if (handoff.mode === 'off' || !usage.calls) return null;
   const cost = handoffCost(usage);
   const byCost = cost.breakEven !== null && cost.ratio >= 1 + (handoff.costRatio - 1) / 2;
@@ -169,10 +192,16 @@ export function planApprovedContext(handoff, usage) {
   const found = [byTokens && `this session already carries ${kTokens(usage.last)}`, byCost && costLine(cost)].filter(Boolean).join(', and ');
   const head = `The plan is approved, and ${found}. ` +
     'Building in a fresh session that reads the plan costs less per turn, and now no worktree, branch, or running agent needs a brief. ';
+  const clear = continues({ route, how });
   if (handoff.mode === 'auto') {
+    if (clear) {
+      return `${head}Build here when the rest takes a few calls, or when ${USER_SAID}. ` +
+        `Otherwise, before the first build step, run the session-handoff skill ${SET_UP}, end this turn, and do not start the build here.`;
+    }
     return `${head}Before the first build step, run the session-handoff skill to write the brief, then tell the user its path and that ` +
       `the session-continue skill resumes it. Build here instead when the rest takes a few calls, or when ${USER_SAID}.`;
   }
   return `${head}Before the first build step, ask the user one short question: hand off now, or build here? ` +
+    (clear ? askHow(how) : '') +
     `Skip the question when the rest takes a few calls, or when ${USER_SAID}.`;
 }

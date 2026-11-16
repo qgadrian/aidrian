@@ -2,6 +2,7 @@
 
 import path from 'node:path';
 
+import { checkDeadline } from '../../deadline.mjs';
 import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from '../../shell-lex.mjs';
 import { cdChange, directoryChange } from './directory-change.mjs';
 import { expandHome, WRITERS, written } from './writers.mjs';
@@ -44,6 +45,8 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
   const targets = [];
   const visit = (line, place, depth) => {
     for (const { segment, substitutions } of lexSteps(line)) {
+      // Under the agent gate hook's time budget (lib/deadline.mjs); a no-op elsewhere.
+      checkDeadline();
       if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) visit(body, place, depth + 1);
       segment.forEach((token, i) => {
         const next = segment[i + 1];

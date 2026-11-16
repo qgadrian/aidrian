@@ -4,6 +4,8 @@
 // payload to session-row.mjs, which writes the session's row in the dispatch log. The host cancels a SessionEnd hook after
 // a short time, and reading a long session's transcripts takes longer, so the worker runs detached and the hook exits as
 // soon as the payload is written to it.
+// Before that, a main session that ends by a clear on a host with a continuation route has its armed handoff continuation
+// promoted, bound to the host process this hook runs under, for the session the clear starts (lib/handoff-continue.mjs).
 
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
@@ -13,6 +15,7 @@ import path from 'node:path';
 import { loadConfig } from '../lib/config.mjs';
 import { forgetGateSnapshot, snapshotPath } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
+import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { forgetDenials } from '../lib/lesson-signals.mjs';
 import { findProject } from '../lib/project.mjs';
 import { NO_READ_LANDED, refusalMarker } from '../lib/tracker-guard.mjs';
@@ -29,10 +32,14 @@ await runHook(async (input) => {
   if (typeof input.session_id === 'string' && /^[\w-]+$/u.test(input.session_id)) {
     rmSync(path.join(tmpdir(), `aidrian-session-length-${input.session_id}`), { force: true });
   }
-  if (typeof input.transcript_path !== 'string') return;
+  // A subagent's payload promotes nothing: the continuation is the main session's.
+  const cleared = input.reason === 'clear' && !input.agent_id;
+  if (!cleared && typeof input.transcript_path !== 'string') return;
+  // Found once for both: the host gives this hook a short budget.
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   const config = project && loadConfig(project).config;
-  if (!config?.telemetry.enabled) return;
+  if (cleared && config) await promoteCleared(input, project, config);
+  if (typeof input.transcript_path !== 'string' || !config?.telemetry.enabled) return;
   // detached: the worker outlives this process, in its own process group. The hook does not call process.exit: it
   // exits once stdin.end has flushed the payload, while unref lets it exit without waiting for the worker.
   const worker = spawn(process.execPath, [WORKER], { detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
@@ -41,6 +48,19 @@ await runHook(async (input) => {
   worker.stdin.end(JSON.stringify({ ...input, ended_at: endedAt }));
   worker.unref();
 });
+
+// The ending session's armed continuation becomes ready for the session the clear starts. Any other reason does
+// nothing here, so an exit keeps its short budget. Never throws: a store it cannot read costs the continuation alone.
+async function promoteCleared(input, project, config) {
+  try {
+    const host = detectHost({ input });
+    if (!continueRoutes(host).length) return;
+    const { projectStore, promoteCleared: promote } = await import('../lib/handoff-continue.mjs');
+    promote(projectStore(project, config), host, input.session_id);
+  } catch {
+    // Not promoted: the Human resumes by hand, as the gate's say: line names.
+  }
+}
 
 function trackerRecord(sessionId) {
   return snapshotPath(sessionId)?.replace(/\.json$/u, '.tracker.json');

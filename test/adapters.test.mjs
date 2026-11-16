@@ -13,7 +13,8 @@ import test from 'node:test';
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
-import { agentAliases, detectHost, HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
+import { agentAliases, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -154,6 +155,45 @@ for (const host of [...HOSTS, fakeHost]) {
     assert.deepEqual(matcherProblems(host), []);
   });
 }
+
+for (const host of HOSTS) {
+  test(`host ${host.id} declares the handoff continue routes it can do, each with its step, and its host process for clear`, () => {
+    const routes = host.capabilities.handoffContinue?.routes;
+    assert.ok(Array.isArray(routes), 'capabilities.handoffContinue.routes is a list, empty when no route runs');
+    assert.deepEqual(continueRoutes(host), routes);
+    for (const route of routes) {
+      assert.ok(CONTINUE_ROUTES.includes(route) && route !== 'none', `${route} is a route of session.handoff.continue other than none`);
+      const step = host.capabilities.handoffContinue.steps?.[route];
+      assert.ok(typeof step === 'string' && step.trim() !== '', `${route} says what it takes from the Human`);
+    }
+    if (routes.includes('clear')) {
+      assert.equal(typeof host.capabilities.handoffContinue.hookHostPid, 'function', 'clear needs the host process a hook runs under');
+      assert.equal(typeof host.capabilities.handoffContinue.keepsArmed, 'function', 'clear needs to know its own command cancels nothing');
+    }
+  });
+}
+
+test('a host without the handoff continue capability has no route, the unknown one included', () => {
+  assert.deepEqual(continueRoutes(fakeHost), []);
+  assert.deepEqual(continueRoutes(UNKNOWN_HOST), []);
+  assert.deepEqual(continueRoutes({ ...fakeHost, capabilities: { ...fakeHost.capabilities, handoffContinue: {} } }), []);
+});
+
+test('Claude Code continues by clear: its own clear and compact commands keep a continue armed, and a hook\'s parent is its process', () => {
+  const claudeCode = HOSTS.find((host) => host.id === 'claude-code');
+  const codex = HOSTS.find((host) => host.id === 'codex');
+  const { routes, steps, keepsArmed, hookHostPid } = claudeCode.capabilities.handoffContinue;
+  assert.deepEqual(routes, ['clear']);
+  assert.match(steps.clear, /\/clear, then any message/u);
+  for (const prompt of ['/clear', ' /clear\n', '/clear old-work', '/new', '/reset', '/reset x', '/compact', '/compact keep the test output']) {
+    assert.equal(keepsArmed(prompt), true, prompt);
+  }
+  for (const prompt of ['clear', '/clearly', '/newer', '/resets', '/compacted', 'please /clear', '', undefined, null, 7]) assert.equal(keepsArmed(prompt), false, String(prompt));
+  assert.equal(hookHostPid(), process.ppid > 1 ? process.ppid : null);
+  assert.equal(hookHostPid(4242), 4242);
+  for (const pid of [1, 0, -5, 2.5, '4242', null, Number.NaN]) assert.equal(hookHostPid(pid), null, String(pid));
+  assert.deepEqual(codex.capabilities.handoffContinue, { routes: [] });
+});
 
 test('a host whose raw names miss the matchers is told apart: it fails that check, and has to name another delivery', () => {
   const lowerCase = { ...fakeHost, rawToolName: (standard) => standard.toLowerCase() };
@@ -390,3 +430,26 @@ for (const host of HOSTS) {
     assert.match(refused.stderr, /the connected workspace is "https:\/\/linear\.app\/another"/u);
   });
 }
+
+test('a Claude Code Monitor call that runs a shell command reads as the standard Bash, with its own name kept', () => {
+  const claude = HOSTS.find((host) => host.id === 'claude-code');
+  const monitor = { session_id: 's', agent_id: 'a1', tool_name: 'Monitor', tool_input: { command: 'tail -f log', description: 'watch' }, cwd: '/x' };
+  const read = claude.hookInput(monitor);
+  assert.deepEqual(read, { ...monitor, tool_name: 'Bash', raw_tool_name: 'Monitor' });
+  assert.deepEqual(UNKNOWN_HOST.hookInput(monitor), read, 'a payload no host claims is read the same way');
+  const ws = { ...monitor, tool_input: { ws: { url: 'wss://example.test' } } };
+  assert.deepEqual(claude.hookInput(ws), { ...ws, permission_tool_name: 'Bash' }, 'a WebSocket watch runs no shell, under Bash\'s permission rules');
+  assert.deepEqual(deniedNames(claude.hookInput(ws)), ['Monitor', 'Bash']);
+  // A gate that names Monitor still matches the call by the name it was sent as.
+  assert.ok([read.tool_name, read.raw_tool_name].some((name) => nameMatches('Monitor', name)));
+  for (const host of HOSTS.filter((each) => each !== claude)) assert.deepEqual(host.hookInput(monitor), monitor, host.id);
+});
+
+test('a Claude Code PowerShell call is never read as Bash: its command is opaque text to the guards', () => {
+  const claude = HOSTS.find((host) => host.id === 'claude-code');
+  const call = { session_id: 's', agent_id: 'a1', tool_name: 'PowerShell', tool_input: { command: 'Get-ChildItem @(1, 2) `n' }, cwd: '/x' };
+  assert.deepEqual(claude.hookInput(call), call, 'it keeps its name, so no Bash(prefix) pattern matches it');
+  assert.equal(opaqueShellCommand(UNKNOWN_HOST.hookInput(call)), call.tool_input.command);
+  for (const tool of ['Bash', 'Monitor', 'Read']) assert.equal(opaqueShellCommand(UNKNOWN_HOST.hookInput({ ...call, tool_name: tool })), null, tool);
+  assert.equal(opaqueShellCommand({ ...call, tool_input: {} }), null, 'a call with no command');
+});

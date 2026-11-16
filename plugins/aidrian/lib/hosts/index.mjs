@@ -44,6 +44,23 @@ export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, 
 // so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.
 export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
 
+// The names a deny matches the call by: toolNames; `permission_tool_name`, the standard tool whose permission rules the
+// host runs this call under when that is another tool, as an adapter's `hookInput` sets it; and, for a command in a shell
+// the lexer cannot read (opaqueShellCommand), the standard Bash. A Bash deny cannot be held to a command no lexer reads,
+// so every Bash deny, bare or by prefix, covers it on every platform; a host may do the like only in some setups, as
+// Claude Code turns its PowerShell tool off for a Bash deny only on Windows with Git Bash installed
+// (code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool). lib/agent-gates.mjs
+// reads such a call as matching every Bash(<prefix>) pattern.
+export const deniedNames = (input) => [...toolNames(input), input.permission_tool_name, opaqueShellCommand(input) === null ? null : 'Bash']
+  .filter((each, i, all) => typeof each === 'string' && each !== '' && all.indexOf(each) === i);
+
+// The command of a call that runs one in a shell the shared lexer cannot read, from an adapter's `opaqueShellTools`, or null.
+// The guards read it as opaque text, never as Bash, and fail closed for a subagent (lib/config-guard.mjs opaqueWords).
+export function opaqueShellCommand({ tool_name: tool, tool_input: given }) {
+  const command = given?.command;
+  return typeof command === 'string' && HOSTS.some((host) => host.opaqueShellTools?.includes(tool)) ? command : null;
+}
+
 // A GitHub tool call as { tool, given }, in the terms of the GitHub MCP server's tool: what a host's connector stands for, from the
 // adapter's `githubTools`, with its repository split into `owner` and `repo`, and the adapter's `fixed` values, the inputs its
 // tool implies without taking them, such as `draft: false` for a tool that only marks ready. `name` is the standard name; any
@@ -106,6 +123,9 @@ export const projectFolders = (kind) => HOSTS.flatMap((host) => host.projectFold
 
 // `models` in config.json, per host: { <key>: { model, effort } }.
 export const modelChoices = () => Object.fromEntries(HOSTS.map((host) => [host.modelsKey, host.modelChoices]));
+
+// The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
+export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];
 
 // What each host says about the tracker guard, as { host, ...capability }.
 export const trackerGuards = (hosts = HOSTS) => hosts.map((host) => ({ host, ...host.capabilities.trackerGuard }));

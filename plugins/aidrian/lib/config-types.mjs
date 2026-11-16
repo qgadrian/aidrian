@@ -3,7 +3,7 @@
 import path from 'node:path';
 
 import { agentNameProblem, ALL, MAIN } from './agent-gates.mjs';
-import { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, HANDOFF_MODES, MAX_PLAN_OBJECTIONS, PR_FIELDS } from './config-schema.mjs';
+import { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, CONTINUE_ROUTES, HANDOFF_MODES, MAX_PLAN_OBJECTIONS, PR_FIELDS } from './config-schema.mjs';
 import { CLASS_MAX, DECISION_MODES, decisionClasses, isClassName, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isObject } from './fs.mjs';
@@ -78,6 +78,7 @@ export const TYPES = {
   commitFields: [(value) => Array.isArray(value) && value.every((f) => COMMIT_FIELDS.includes(f)), `a list of ${COMMIT_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   handoffMode: [(value) => HANDOFF_MODES.includes(value), '"off", "ask", or "auto"'],
+  continueRoute: [(value) => CONTINUE_ROUTES.includes(value), () => oneOf(CONTINUE_ROUTES)],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
   extraMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
   onOff: [(value) => ['on', 'off'].includes(value), '"on" or "off"'],

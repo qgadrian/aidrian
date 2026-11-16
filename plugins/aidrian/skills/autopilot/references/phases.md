@@ -39,6 +39,7 @@ With `autoStart` on, only the small, clear row follows `unattended`, as § Who d
 When `SKILL.md` § Checkpoints allows a brief, write it with the `session-handoff` skill, in this session and never through an agent,
 which knows nothing of the run.
 Checkpoint after the implementation is committed, after the draft opens, after each review round, and at any stop, before the report.
+A checkpoint brief sets up no continuation: the run works past it, so the skill's continue step is skipped.
 
 ## 2. The draft pull request
 

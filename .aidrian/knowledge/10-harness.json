@@ -48,7 +48,7 @@
       "tags": []
     },
     "handoff.md": {
-      "summary": "Session handoff: the session-length reminder and plan offer, the cost ratio and break-even model, session.handoff config, session-handoff and session-continue.",
+      "summary": "Handoff: reminder, plan offer, break-even, continuation, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, route, brief sections.",
       "tags": []
     },
     "config.md": {

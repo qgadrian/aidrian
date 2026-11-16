@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,6 +10,7 @@ import test, { after } from 'node:test';
 import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-guard.mjs';
+import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
 
@@ -117,7 +118,7 @@ test('AIDRIAN_GUARD_BUDGET_MS above the hook\'s own budget cannot raise it: a ca
   const slow = path.join(path.dirname(dir), 'slow.mjs');
   writeFileSync(slow, 'const end = performance.now() + 2700;\nwhile (performance.now() < end);\n');
   const env = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${pathToFileURL(slow).href}`.trim() };
-  for (const raised of ['99999', '2501']) {
+  for (const raised of ['99999', '4000']) {
     const refused = run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...env, AIDRIAN_GUARD_BUDGET_MS: raised });
     assert.equal(refused.signal, null, `${raised}: stopped after ${Math.round(refused.took)} ms`);
     assert.equal(refused.status, 2, `${raised}: ${refused.stderr}`);
@@ -218,4 +219,35 @@ test('a PowerShell glob over a tree under the link budget runs, however many gua
   const refused = run(subagent(dir, 'PowerShell', String.raw`Remove-Item -Recurse node_modules\*\dist`));
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /may change \.aidrian\/config\.json/u);
+});
+
+test('a PowerShell glob reaches a link below it through any letter case of its folder, alone or after another spelling', (t) => {
+  const dir = project(t);
+  const upper = path.join(path.dirname(dir), 'WEBAPP');
+  if (!existsSync(upper)) {
+    t.skip('this disk keeps letter cases apart, so WEBAPP is another folder');
+    return;
+  }
+  mkdirSync(path.join(dir, 'node_modules/p1'), { recursive: true });
+  symlinkSync('../../.aidrian', path.join(dir, 'node_modules/p1/dist'));
+  // Each spelling resolves its own links: the second glob is not judged by the target the first one's spelling gave.
+  const commands = [`Remove-Item -Recurse ${upper}/node_modules/*/dist ${dir}/node_modules/*/dist`];
+  // One spelling alone: its link's target keeps that spelling's case, and is compared as the disk compares names.
+  if (foldCase('A') === 'a') commands.push(`Remove-Item -Recurse ${upper}/node_modules/*/dist`, `Remove-Item -Recurse ${upper}/node_modules/p1/*`);
+  for (const command of commands) {
+    const result = run(subagent(dir, 'PowerShell', command));
+    assert.equal(result.status, 2, `${command.replaceAll(path.dirname(dir), '<parent>')}: ${result.stderr}`);
+    assert.match(result.stderr, /may change \.aidrian\/config\.json/u);
+  }
+});
+
+test('the links in a PowerShell glob\'s first folder count once a call, however many guarded files are tested', (t) => {
+  const dir = project(t);
+  // 15,000 links that the glob does not match: read once, they fit the link budget; counted again for each guarded file
+  // and each of its spellings, they would not.
+  mkdirSync(path.join(dir, 'links'));
+  for (let i = 0; i < 15000; i += 1) symlinkSync(`/nonexistent/${i}`, path.join(dir, 'links', `l${i}`));
+  const result = run(subagent(dir, 'PowerShell', String.raw`Remove-Item links\x*`));
+  inTime(result, 'PowerShell');
+  assert.equal(result.status, 0, result.stderr);
 });

@@ -35,6 +35,11 @@ export function linksOutside(root, rel, within = '') {
   return real === null || realWithin === null || !isWithin(realWithin, real);
 }
 
+// A path as a disk that folds case compares it: in lower case on macOS and Windows, as it is elsewhere. A real path keeps
+// the letter case it was spelled in, so two spellings of one file compare equal only folded.
+const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
+export const foldCase = (file) => (FOLDS ? file.toLowerCase() : file);
+
 // Whether `file` is the folder `dir` or lies below it, by the paths as given: neither is resolved through symlinks.
 export function isWithin(dir, file) {
   const rel = path.relative(dir, file);

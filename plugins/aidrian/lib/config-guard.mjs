@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { checkDeadline } from './deadline.mjs';
-import { globParts, isEntry, isWithin, partsReach } from './fs.mjs';
+import { foldCase, globParts, isEntry, isWithin, partsReach } from './fs.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
@@ -333,7 +333,7 @@ const LINK_BUDGET = 100000;
 function opaqueGlobbedFile(globs, files, checkouts = [], deep = new Set()) {
   if (globs.length === 0) return null;
   const roots = new Set(checkouts.flatMap((dir) => [path.resolve(dir), canonical(dir)]));
-  const seen = { folders: new Map(), entries: new Map(), keys: new Map(), left: LINK_BUDGET };
+  const seen = { folders: new Map(), entries: new Map(), keys: new Map(), reals: new Map(), left: LINK_BUDGET };
   const folderParts = (file) => (deep.has(file) ? 2 : roots.has(path.dirname(file)) ? 0 : 1);
   return files.find((pair) => globs.some((glob) => pair.some((file) => opaqueGlobReaches(glob, file, seen, folderParts(file)))))?.at(-1) ?? null;
 }
@@ -342,7 +342,7 @@ function opaqueGlobbedFile(globs, files, checkouts = [], deep = new Set()) {
 // by its name (globNamesFile), or from the call's folder (`dirs`), when each of its parts matches the part of the file's
 // path at that depth, in any case, as it names the file, a folder that holds it, or a link to either: a glob matches only
 // what is there, so `src/*` or `*.json` in a folder without the file does not. `seen` caches what each folder holds and
-// counts the links left to read (LINK_BUDGET); `folderParts` is globNamesFile's.
+// counts the entries left to read (LINK_BUDGET), each folder once (folderOf); `folderParts` is globNamesFile's.
 function opaqueGlobReaches({ text, dirs = [] }, file, seen, folderParts) {
   checkDeadline();
   if (globNamesFile(text, file, { folderParts })) return true;
@@ -359,7 +359,7 @@ function opaqueGlobReaches({ text, dirs = [] }, file, seen, folderParts) {
     if (rest.slice(0, -1).some((part) => GLOB_WORD.test(part)) && linkBelow(start, rest, file, seen)) return true;
     const folder = folderOf(start, seen);
     if (folder === null) return true;
-    const { dirs: here, links } = folder;
+    const { dirs: here, real, links } = folder;
     const below = (dir) => {
       if (!isWithin(dir, file) || dir === file) return false;
       const reached = path.relative(dir, file).split(path.sep);
@@ -368,14 +368,15 @@ function opaqueGlobReaches({ text, dirs = [] }, file, seen, folderParts) {
     if (here.some(below)) return true;
     // An entry the glob's first part matches may be a link to the file, or to a folder that holds it, from anywhere.
     const first = globParts(rest[0], [], 'i').pattern;
-    return links.some(({ name, real }) => (seen.left -= 1) < 0 || (first.test(name) && (real === file || sameFile(real, file) || (isWithin(real, file) && reachesFile(rest.slice(1), path.relative(real, file).split(path.sep))))));
+    return links.some((name) => first.test(name) && linkReaches(realOf(path.join(real, name), seen), rest.slice(1), file));
   });
 }
 
 // Whether glob path parts `rest`, from the folder `start`, pass a link to `file`, or to a folder that holds it, in any
 // folder they reach: each part is matched, in any case, against what is there, folder by folder, the folders a link
 // leads to included. Each folder is read once a call (entriesOf), so the entries count against `seen.left` once, however
-// many guarded files and spellings walk it; past it, the glob counts as one that reaches it.
+// many guarded files and spellings walk it; past it, the glob counts as one that reaches it. Each link is resolved from
+// the folder's spelling that reached it (realOf).
 function linkBelow(start, rest, file, seen) {
   let level = [start];
   for (const [i, part] of rest.entries()) {
@@ -386,10 +387,8 @@ function linkBelow(start, rest, file, seen) {
       if (found === null) return true;
       for (const entry of found.filter(({ name }) => partMatches(part, name))) {
         if (entry.link) {
-          // A link is resolved once, the first time a part matches it.
-          entry.real ??= canonical(path.join(dir, entry.name));
-          const { real } = entry;
-          if (real === file || sameFile(real, file) || (isWithin(real, file) && reachesFile(rest.slice(i + 1), path.relative(real, file).split(path.sep)))) return true;
+          const real = realOf(path.join(dir, entry.name), seen);
+          if (linkReaches(real, rest.slice(i + 1), file)) return true;
           next.push(real);
         } else if (entry.folder) next.push(path.join(dir, entry.name));
       }
@@ -400,8 +399,9 @@ function linkBelow(start, rest, file, seen) {
 }
 
 // What a folder holds for linkBelow, cached in `seen.entries` by the folder on disk, so each folder counts against
-// `seen.left` once a call: each entry's name, whether it is a link or a folder, and, once linkBelow resolves a link, where
-// it leads; or null past the link budget. `seen.keys` caches each spelling's folderKey.
+// `seen.left` once a call: each entry's name, and whether it is a link or a folder; or null past the link budget. Where a
+// link leads is not kept here, as another spelling of the folder resolves it to another path (realOf). `seen.keys` caches
+// each spelling's folderKey.
 function entriesOf(dir, seen) {
   if (!seen.keys.has(dir)) seen.keys.set(dir, folderKey(dir));
   const key = seen.keys.get(dir);
@@ -418,9 +418,10 @@ function entriesOf(dir, seen) {
   return seen.entries.get(key);
 }
 
-// What a folder holds for opaqueGlobReaches, cached in `seen.folders` by the folder on disk, so another spelling of it,
-// in another letter case or with `.` parts, is read once: { dirs, links }, its spellings, as given and with its links
-// resolved, and the links in it, each with its name and where it leads; or null past the link budget.
+// What a folder holds for opaqueGlobReaches: { dirs, real, links }, or null past the link budget. `dirs` are its
+// spellings, as given and with its links resolved; `real` is the second; `links` are the names of the links in it, which
+// opaqueGlobReaches resolves from `real` (realOf) only when the glob matches one. The names are cached in `seen.folders`
+// by the folder on disk, so another spelling of it, in another letter case or with `.` parts, reads and counts them once.
 function folderOf(folder, seen) {
   const real = canonical(folder);
   const key = folderKey(real);
@@ -432,13 +433,27 @@ function folderOf(folder, seen) {
       // A folder it cannot read holds nothing it can match.
     }
     seen.left -= names.length;
-    seen.folders.set(key, seen.left < 0 ? null : names.map((name) => {
-      checkDeadline();
-      return { name, real: canonical(path.join(real, name)) };
-    }));
+    seen.folders.set(key, seen.left < 0 ? null : names);
   }
   const links = seen.folders.get(key);
-  return links === null ? null : { dirs: [...new Set([folder, real])], links };
+  return links === null ? null : { dirs: [...new Set([folder, real])], real, links };
+}
+
+// Where the link `at` leads, cached in `seen.reals` by its path as spelled: canonical keeps the letter case it is given,
+// so each spelling of a folder resolves its links itself, never to another spelling's target.
+function realOf(at, seen) {
+  checkDeadline();
+  if (!seen.reals.has(at)) seen.reals.set(at, canonical(at));
+  return seen.reals.get(at);
+}
+
+// Whether the link target `real` is `file`, or a folder that holds it that glob parts `rest` reach below it
+// (reachesFile). The paths are compared as the disk compares them (foldCase): on a disk that ignores case,
+// `WEBAPP/conf` holds `webapp/conf/app.json`, though no string compare says so.
+function linkReaches(real, rest, file) {
+  const [dir, target] = [foldCase(real), foldCase(file)];
+  if (dir === target || sameFile(real, file)) return true;
+  return isWithin(dir, target) && reachesFile(rest, path.relative(dir, target).split(path.sep));
 }
 
 // A folder's device and inode, or its path when it cannot be read.

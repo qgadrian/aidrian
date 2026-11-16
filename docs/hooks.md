@@ -928,6 +928,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   be in, is refused at once, and a glob that leads the guards through more than 100,000 links counts as one that may
   reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
   so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.
+  A link a glob passes is resolved from the spelling of its folder that reached it, and its target is compared with a
+  guarded file in any letter case on macOS and Windows, whose disks ignore case by default, so a glob in another case of
+  the project folder, such as `WEBAPP\node_modules\*\dist`, is judged as the one in its own case is.
   A path that passes more links than the system follows in one lookup is read as spelled: a command that reaches it in
   two lookups, as after a `cd` partway along, is not followed, an accepted limit.
   `AIDRIAN_GUARD_BUDGET_MS` in the hook's environment may only lower the budget, as a test does.

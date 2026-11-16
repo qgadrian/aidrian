@@ -17,7 +17,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdi
 import path from 'node:path';
 
 import { CONTINUE_ROUTES } from './config-schema.mjs';
-import { isObject, isWithin, resolvedPath } from './fs.mjs';
+import { foldCase, isObject, isWithin, resolvedPath } from './fs.mjs';
 
 // A session id that may name a file.
 export const SESSION_ID = /^[\w-]{1,128}$/u;
@@ -47,9 +47,6 @@ const STORE_FILE = new RegExp(String.raw`^(?:(?:armed|ready|tasks|from|gone)-${S
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
 export const ARMING_FILE = new RegExp(String.raw`^(?:(?:armed|ready|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json$`, 'u');
-// A path as a disk that folds case compares it: in lower case on macOS and Windows, as it is elsewhere.
-const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
-export const foldCase = (file) => (FOLDS ? file.toLowerCase() : file);
 const TEMPORARY = /^\.(.+)\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // No read follows a symlink, and none waits on a FIFO or a device that has no writer.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);

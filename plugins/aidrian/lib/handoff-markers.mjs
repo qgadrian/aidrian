@@ -28,6 +28,12 @@ export const BRIEF_FILE = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/u;
 export const BRIEF_CAP = 256 * 1024;
 // How long after its session ended a ready marker may be taken.
 export const READY_WINDOW = 10 * 1000;
+// Whether `text`, a path, holds a character that could end or forge a line in what a session reads: a C0 or C1 control,
+// or a Unicode line or paragraph separator. Such a path is never armed, delivered, or printed.
+export const hasControl = (text) => /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(String(text));
+// A marker file larger than this is never read: the store's own markers are a few hundred bytes, and a hook may read
+// one each step of its wait.
+export const MARKER_CAP = 64 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
@@ -141,8 +147,8 @@ const isFrom = (value, maxChain) => isObject(value) && CONTINUE_ROUTES.includes(
 
 const isChecked = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256) && Number.isFinite(value.at);
 
-// The marker in the file `name` of the store, or null: when the store is refused, the file is missing, a symlink, or
-// no regular file, its modification time or `value[field]` is outside `window`, or `shape` refuses it.
+// The marker in the file `name` of the store, or null: when the store is refused, the file is missing, a symlink, no
+// regular file, or larger than MARKER_CAP, its modification time or `value[field]` is outside `window`, or `shape` refuses it.
 function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1]] ?? DAY, shape }) {
   if (store.refused || !name) return null;
   let fd;
@@ -151,7 +157,7 @@ function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1
     if (!lstatSync(file).isFile()) return null;
     fd = openSync(file, NO_FOLLOW);
     const stat = fstatSync(fd);
-    if (!stat.isFile() || !fresh(Math.floor(stat.mtimeMs), now, window)) return null;
+    if (!stat.isFile() || stat.size > MARKER_CAP || !fresh(Math.floor(stat.mtimeMs), now, window)) return null;
     const value = JSON.parse(readFileSync(fd, 'utf8'));
     return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
   } catch {
@@ -241,6 +247,21 @@ export function takeReady(store, { hostPid, now = Date.now() } = {}) {
     if (marker) return marker;
   }
   return null;
+}
+
+const ARMED_FILE = new RegExp(String.raw`^armed-(${SESSION_PART})\.json$`, 'u');
+
+// What the store holds for a session start after a clear, from one listing: { listed, armed }. `listed` is whether any
+// armed or ready file is there at all; `armed`, whether some session has a well-formed `clear` marker armed, so its
+// session end may still promote it.
+export function clearPending(store, { now = Date.now() } = {}) {
+  const names = store.refused ? [] : listStore(store);
+  const listed = names.some((name) => /^(?:armed|ready)-/u.test(name));
+  const armed = listed && names.some((name) => {
+    const session = ARMED_FILE.exec(name)?.[1];
+    return session !== undefined && readArmed(store, session, { now })?.route === 'clear';
+  });
+  return { listed, armed };
 }
 
 // Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to.

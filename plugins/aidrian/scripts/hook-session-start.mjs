@@ -13,6 +13,10 @@
 // stdout to the context; SubagentStart (`--subagent`) needs it wrapped in JSON. Prints nothing outside a project.
 // At SessionStart it also saves the project's agent gates for the session (lib/gate-snapshot.mjs), which the gate hook
 // holds every subagent to until the session ends.
+// The main session's lines are collected and printed once. After a clear (`source: "clear"`), on a host that lists the
+// clear route, the hook takes the handoff continuation the cleared session armed under the same host process
+// (lib/handoff-continue.mjs takeCleared): then it prints one JSON object, the banner as `systemMessage` and the same
+// lines, then the continuation, as `additionalContext`. Without one it prints the plain lines, as with any source.
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -22,7 +26,7 @@ import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
-import { detectHost } from '../lib/hosts/index.mjs';
+import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
@@ -60,25 +64,58 @@ await runHook(async (input) => {
   if (subagent) {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
   } else {
-    console.log(`${lines}\n${FORMAT}`);
+    await mainSessionOutput(input, project, { lines, config, buckets });
+  }
+});
+
+// Prints the main session's lines once: `lines`, the format line, then the lines below. An error stops the lines that
+// follow it, and those before it still print, as when each printed on its own. After a clear that delivers a
+// continuation, they print as one JSON object, with the banner.
+async function mainSessionOutput(input, project, { lines, config, buckets }) {
+  const out = [`${lines}\n${FORMAT}`];
+  let delivery = null;
+  try {
     const floor = versionFloorProblem(config);
-    if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
+    if (floor) out.push(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
-    if (lessons) console.log(lessons);
+    if (lessons) out.push(lessons);
     const decisions = decisionsLine(project.root, buckets, config);
-    if (decisions) console.log(decisions);
+    if (decisions) out.push(decisions);
     const audits = auditLine(project, config);
-    if (audits) console.log(audits);
+    if (audits) out.push(audits);
     if (config.tracker.enabled === true) {
       // Loaded only with the guard on, so a project without it pays nothing here.
       const gap = (await import('../lib/tracker-check.mjs')).unwatchedLine(config.tracker, detectHost({ input }));
-      if (gap) console.log(gap);
+      if (gap) out.push(gap);
     }
     const inherited = inheritedOverrideLine(config);
-    if (inherited) console.log(inherited);
-    for (const warning of unpushedMainLine(project, config)) console.log(warning);
+    if (inherited) out.push(inherited);
+    out.push(...unpushedMainLine(project, config));
+    if (input.source === 'clear' && !input.agent_id) delivery = await clearDelivery(input, project, config);
+  } finally {
+    const plain = out.join('\n');
+    if (!delivery) console.log(plain);
+    else {
+      const additionalContext = delivery.context ? `${plain}\n${delivery.context}` : plain;
+      console.log(JSON.stringify({ systemMessage: delivery.systemMessage, hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }));
+    }
   }
-});
+}
+
+// The continuation a clear delivers to the main session, { systemMessage, context }, or null. Loaded only after a
+// clear on a host with the route, and in a `try`: a store it cannot read costs the delivery, never the start lines.
+async function clearDelivery(input, project, config) {
+  try {
+    const host = detectHost({ input });
+    if (!continueRoutes(host).includes('clear')) return null;
+    const { deliverCleared, hookHostPid, projectStore, takeCleared } = await import('../lib/handoff-continue.mjs');
+    const store = projectStore(project, config);
+    const marker = await takeCleared(store, hookHostPid(host));
+    return marker && deliverCleared(store, marker, input.session_id);
+  } catch {
+    return null;
+  }
+}
 
 // The reminder of the decisions an agent made alone that the Human has not answered, from the indexed docs of the working
 // copy, as the domain pause counts them: a marker whose only problem is its class counts too. A marker in a file no index

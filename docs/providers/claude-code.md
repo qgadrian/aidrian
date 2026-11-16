@@ -146,9 +146,12 @@ types `/clear` and then any message, which is the adapter's `steps.clear`, and t
 The route is verified on Claude Code 2.1.325: the host behavior it rests on on 2026-11-15, with a throwaway plugin, and
 the route from end to end on 2026-11-16, with the plugin loaded from a branch. That live run found:
 
-- The gate ran from inside the task worktree, since the Bash tool's folder follows a `cd`, and wrote the same project
-  store. After the clear the new session starts in the folder the session was launched in, and the resume enters the
-  worktree.
+- The Bash tool's folder follows a `cd`: the gate ran from inside the task worktree and wrote the same project store,
+  and the continuation was delivered. After the clear the new session starts in the folder the session was launched in,
+  and the resume enters the worktree.
+- `CLAUDE_CODE_SESSION_ID` in the Bash tool follows a clear: after the clear it printed the new session's id, the one
+  the delivered continuation was bound to. So a second continuation in a row, with `Chain: 1`, armed for the live
+  session and was delivered.
 - The line that says a continuation was cancelled is model context only, the prompt hook's `additionalContext`: the Human
   does not see it.
 - Whether typing `/clear` alone runs the prompt hook was not observed; `keepsArmed(prompt)` keeps the continuation
@@ -173,10 +176,9 @@ Not verified, each with its answer in the design:
 
 | Not verified | What the plugin does |
 | --- | --- |
-| Whether `CLAUDE_CODE_SESSION_ID` in the Bash tool follows a clear | The gate arms for the id the Bash tool gives. Were it the old id, a second continuation in a row would arm for a session that has already ended, and deliver nothing: the `say:` line names the resume by hand. |
 | Whether UserPromptSubmit fires for the clear or compact command | The adapter's `keepsArmed(prompt)` leaves the continuation for `/clear`, `/reset`, `/new`, and `/compact`. |
 | Whether other built-in commands fire UserPromptSubmit | Each one that does cancels the continuation, as any prompt does: only those four are spared. |
-| Whether a hook payload's `cwd` follows a `cd` in the Bash tool | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. |
+| Whether a hook payload's `cwd` follows a `cd` in the Bash tool, as the Bash tool's own folder does | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. |
 
 UserPromptSubmit also fires when a background subagent reports back, on a scheduled-task or loop iteration, on a
 message from another session, and on the output of Claude's code in a Code Mode session when that code runs in the

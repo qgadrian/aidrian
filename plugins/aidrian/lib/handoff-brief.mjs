@@ -8,14 +8,21 @@
 //      the session that resumes it checks its claims against the docs and code instead of building on them as fact.
 // The prior brief is --prior, else the snapshot `snapshot` took before an overwrite, else the newest other brief with
 // the same slug (<date>-<slug>.md). A passing check removes the snapshot.
+//   4. The chain: `Chain: n` above the first section counts the automatic continuations in a row that led to the
+//      brief (chainOf). It must be a whole number, and no lower than the floor the session was given when a continuation
+//      started it (lib/handoff-markers.mjs readFrom). A brief right inside `<state>/handoffs/` that passes is stamped with
+//      the sha256 of its bytes, which `aidrian handoff continue` (lib/handoff-continue.mjs) requires.
 
+import { createHash } from 'node:crypto';
 import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
+import { openStore, readFrom, slugOf, stampChecked } from './handoff-markers.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 import { findWrapViolations } from './markdown-wrap.mjs';
-import { projectAt } from './project.mjs';
+import { projectAt, stateDir } from './project.mjs';
 import { usageLines } from './usage.mjs';
 
 const CARRIED_SECTION = /^(decisions|gotchas)\b/i;
@@ -29,12 +36,20 @@ const flat = (text) => text.replace(/\s+/g, ' ');
 
 export const commands = {
   handoff: {
-    usage: '(check | snapshot) BRIEF [--prior BRIEF]',
-    about: 'snapshot the brief a refresh supersedes, then check the new brief carries its identifiers and wraps its lines',
-    run(args) {
-      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' } } });
+    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE]',
+    about: 'snapshot the brief a refresh supersedes, check the new brief carries its identifiers and wraps its lines, then arm its continuation',
+    async run(args) {
+      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' }, route: { type: 'string' } } });
       const [action, brief, ...extra] = positionals;
-      if (!['check', 'snapshot'].includes(action) || !brief || extra.length) return problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
+      const shaped = action === 'continue' ? values.prior === undefined : ['check', 'snapshot'].includes(action) && values.route === undefined;
+      if (!shaped || !brief || extra.length) return problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
+      if (action === 'continue') {
+        const { continueBrief } = await import('./handoff-continue.mjs');
+        const { exitCode, out, err } = continueBrief(brief, { override: values.route, chainOf });
+        if (out.length) console.log(out.join('\n'));
+        if (err.length) console.error(err.join('\n'));
+        return exitCode;
+      }
       const briefPath = path.resolve(brief);
       const prior = values.prior && path.resolve(values.prior);
       const priorProblem = prior && unreadable(prior);
@@ -49,12 +64,47 @@ export const commands = {
         return 0;
       }
       // A config with errors exits 2, as an unreadable input does: it is not a finding.
-      const { exitCode, lines } = checkBrief(briefPath, prior, commandConfig(projectAt(process.cwd()), { exitCode: 2 }).docs.wrapLimit);
+      const project = projectAt(process.cwd());
+      const config = commandConfig(project, { exitCode: 2 });
+      const { exitCode, lines } = checkBrief(briefPath, prior, config.docs.wrapLimit, continueSetting(project, config, briefPath));
       (exitCode === 0 ? console.log : console.error)(lines.join('\n'));
       return exitCode;
     },
   },
 };
+
+// What the check needs of the continuation store: { store, floor }. `floor` is the chain the session running the
+// check was given for this brief's slug when a continuation started it, else 0. Without a state folder git can tell,
+// the brief is checked as before: no floor and no stamp.
+function continueSetting(project, config, briefPath, env = process.env) {
+  let store;
+  try {
+    store = openStore(stateDir(project, { config, env }), { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
+  } catch {
+    return { store: null, floor: 0 };
+  }
+  const { session } = sessionIdentity(env);
+  const from = session ? readFrom(store, session) : null;
+  return { store, floor: from && from.slug === slugOf(briefPath) ? from.chain : 0 };
+}
+
+// The chain count of a brief: the whole number of its `Chain:` field above the first section, 0 when it has none, and
+// null when the value is no whole number.
+export function chainOf(text) {
+  const header = String(text ?? '').split(/^##\s/mu)[0];
+  const match = /(?<![\w-])Chain:[ \t]*([^|\n]*)/iu.exec(header);
+  if (!match) return 0;
+  const value = match[1].trim();
+  return /^\d{1,9}$/u.test(value) ? Number(value) : null;
+}
+
+// The findings for a brief's chain count against the session's `floor`.
+function chainProblems(text, floor) {
+  const chain = chainOf(text);
+  if (chain === null) return ['Chain: the value is not a whole number: write `Chain: <n>`, the automatic continuations in a row that led here, 0 or more'];
+  if (chain < floor) return [`Chain: ${chain} is below ${floor}, the count this session continues: write \`Chain: ${floor}\``];
+  return [];
+}
 
 // Exit 2 with one line: an input that cannot be read is not a finding.
 function problem(message) {
@@ -170,12 +220,15 @@ export function takeSnapshot(briefPath, explicitPrior) {
 export const adviceProblem = (text) =>
   ADVICE_LINE.test(text.split(/^##\s/mu)[0]) ? null : 'No advice line above the first section: add "Advice from <writer>, not a spec: check each claim against the docs and code before building on it."';
 
-// { exitCode: 0 clean, 1 findings, 2 an unreadable prior; lines }. `limit` 0 skips the line-length check.
-export function checkBrief(briefPath, explicitPrior, limit = 155) {
-  const briefText = readFileSync(briefPath, 'utf8');
+// { exitCode: 0 clean, 1 findings, 2 an unreadable prior; lines }. `limit` 0 skips the line-length check. `floor` is the
+// lowest chain count the brief may give; `store`, the continuation store, takes the stamp of a brief that passes.
+export function checkBrief(briefPath, explicitPrior, limit = 155, { floor = 0, store = null } = {}) {
+  const bytes = readFileSync(briefPath);
+  const briefText = bytes.toString('utf8');
   const advice = adviceProblem(briefText);
-  const lines = [`handoff check: ${briefPath}`, ...(advice ? [advice] : [])];
-  let findings = advice ? 1 : 0;
+  const chain = chainProblems(briefText, floor);
+  const lines = [`handoff check: ${briefPath}`, ...(advice ? [advice] : []), ...chain];
+  let findings = (advice ? 1 : 0) + chain.length;
   const wrap = limit > 0 ? findWrapViolations(briefText, limit) : [];
   if (wrap.length) {
     findings += wrap.length;
@@ -206,9 +259,20 @@ export function checkBrief(briefPath, explicitPrior, limit = 155) {
   }
   if (findings === 0) {
     rmSync(snapshotPath(briefPath), { force: true });
+    if (store) stamp(store, briefPath, bytes, lines);
     lines.push('OK');
   }
   return { exitCode: findings === 0 ? 0 : 1, lines };
+}
+
+// Stamps a brief that passed for the continue gate. A stamp the disk refuses changes no exit code: the gate then asks
+// for the check again.
+function stamp(store, briefPath, bytes, lines) {
+  try {
+    stampChecked(store, briefPath, createHash('sha256').update(bytes).digest('hex'));
+  } catch (error) {
+    lines.push(`The pass could not be recorded for \`aidrian handoff continue\` (${error.code ?? error.message}).`);
+  }
 }
 
 // Why a path cannot be read as a brief, or null.

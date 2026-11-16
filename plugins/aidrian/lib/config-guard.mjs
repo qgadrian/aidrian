@@ -12,7 +12,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { isWithin } from './fs.mjs';
+import { globParts, isWithin } from './fs.mjs';
 import { fileEditOf, isFileEditTool } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
@@ -84,7 +84,7 @@ const SWITCHES = Object.freeze([
 // file stay allowed. Like the rest of this guard, it is for agents that cooperate.
 export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
-  const isBash = input.tool_name === 'Bash';
+  const isBash = bashCall(input);
   const named = SWITCHES.filter(({ key }) => !isBash || String(input.tool_input?.command).includes(key));
   if (named.length === 0) return null;
   const { files, names } = writeTargets(input);
@@ -95,6 +95,9 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   if (!hit) return null;
   return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${hit.why}`, human) };
 }
+
+// Whether `input` is a Bash call; lib/handoff-guard.mjs asks it too.
+export const bashCall = (input) => input.tool_name === 'Bash';
 
 // Whether a Write, Edit, or apply_patch of the local `file` changes the switch. A Write or Edit changes it when its text
 // names the key, or when the file it leaves parses to another value than the file on disk, which covers
@@ -135,9 +138,10 @@ function switchIn(text, valueIn) {
   }
 }
 
-// What the call writes: { files, names }. `files` are absolute paths; `names` are texts that may name a file in a folder
-// no path gives: a relative target written after a `cd` to an unknown folder, and code an interpreter runs.
-function writeTargets(input) {
+// What the call writes: { files, names, globs }. `files` are absolute paths; `names` are texts that may name a file in a
+// folder no path gives: a relative target written after a `cd` to an unknown folder, and code an interpreter runs;
+// `globs` are bashWrites's glob targets. lib/handoff-guard.mjs reads them too.
+export function writeTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
   const command = input.tool_input?.command;
@@ -179,14 +183,9 @@ function globbedFile(globs, files, others = true, command = '') {
   // glob reaches, and every such shape is judged by name instead: failing closed.
   const simple =
     !others && SIMPLE_COMMAND.test(command) && !command.split(/[ \t/]+/u).includes('..');
-  const regex = (glob) =>
-    new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
   return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
-    const parts = text.replace(/\/+$/u, '').split('/');
-    const pattern = regex(parts.pop());
-    const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
+    const { head, pattern, folders } = globParts(text, dirs);
     if (unsure || !simple || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
-    const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
     return folders.some((folder) =>
       [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
       // An entry the glob matches may be a symlink to the file from any folder, which a write follows.
@@ -205,8 +204,9 @@ function sameFile(a, b) {
 }
 
 // Spaces and tabs only: a newline separates commands, as `;` does. No `cp` or `mv`: they write into a directory the glob
-// matches, below the entry this check resolves. `rm` removes a link, never its target.
-const SIMPLE_COMMAND = /^[ \t]*(?:rm|touch|truncate|tee|echo|printf|cat|mkdir)(?:[ \t]+[\w./*?=>-]+)*[ \t]*$/u;
+// matches, below the entry this check resolves. `rm` removes a link, never its target. A word may hold a bracket class,
+// `[a-z]`, `[!x]`, or `[[:alpha:]]`, which reaches no further than `*` does.
+const SIMPLE_COMMAND = /^[ \t]*(?:rm|touch|truncate|tee|echo|printf|cat|mkdir)(?:[ \t]+[\w./*?=>[\]!^:-]+)*[ \t]*$/u;
 
 // A folder's entry names, or none when it cannot be read.
 function entries(folder) {

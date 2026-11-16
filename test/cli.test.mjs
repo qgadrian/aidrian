@@ -1336,6 +1336,7 @@ test('every command that reads config.json stops on its errors before it acts; o
     [['lint'], 1],
     [['lesson', 'list'], 1],
     [['handoff', 'check', 'brief.md'], 2],
+    [['handoff', 'continue', 'brief.md'], 2],
     [['report'], 1],
     [['pr', 'await-review', '1'], 1],
     [['pr', 'checks', '1'], 3],

@@ -127,3 +127,61 @@ export function globPattern(glob) {
   }
   return new RegExp(`^${body}$`, 'u');
 }
+
+// A glob target's parts: { head, pattern, folders }. `head` is its folder as written, `pattern` matches the path part
+// right below it, and `folders` are `head` from each of `dirs`. `flags` adds to the pattern's, such as `i` on a disk
+// that folds case. The pattern reads `*`, `?`, and a `[...]` class, `[!...]` or `[^...]` negated, with a `]` right after
+// the opening as a member, as the shell does. A class it does not model, such as `[[:alpha:]]`, or cannot compile, such
+// as the reversed range `[z-a]`, matches any one character: a guard that reads a glob, such as lib/config-guard.mjs
+// and lib/handoff-guard.mjs, fails closed. It never throws.
+export function globParts(text, dirs = [], flags = '') {
+  const parts = text.replace(/\/+$/u, '').split('/');
+  const last = parts.pop();
+  const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
+  return { head, pattern: new RegExp(`^${globSource(last)}$`, `u${flags}`), folders: path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head)) };
+}
+
+// The regular expression source of one glob path part.
+function globSource(part) {
+  let source = '';
+  for (let i = 0; i < part.length; i += 1) {
+    const char = part[i];
+    const close = char === '[' ? classEnd(part, i) : -1;
+    if (char === '*') source += '.*';
+    else if (char === '?') source += '.';
+    else if (close === -1) source += char.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    else {
+      source += classSource(part.slice(i + 1, close));
+      i = close;
+    }
+  }
+  return source;
+}
+
+// The index of the `]` that closes the class opened at `start`, or -1 when none does and the `[` is a plain character.
+// A `[:name:]`, `[.x.]`, or `[=x=]` inside the class holds a `]` that does not close it.
+function classEnd(part, start) {
+  let i = start + 1;
+  if (part[i] === '!' || part[i] === '^') i += 1;
+  if (part[i] === ']') i += 1;
+  for (; i < part.length; i += 1) {
+    if (part[i] === ']') return i;
+    const inner = part[i] === '[' && ':.='.includes(part[i + 1] ?? 'x') ? part.indexOf(`${part[i + 1]}]`, i + 2) : -1;
+    if (inner !== -1) i = inner + 1;
+  }
+  return -1;
+}
+
+// A class's body as a regular expression class, or `.` for a body it does not model or cannot compile.
+function classSource(body) {
+  if (/\[[:.=]/u.test(body)) return '.';
+  const negated = body[0] === '!' || body[0] === '^';
+  const members = (negated ? body.slice(1) : body).replace(/[\\\][^]/gu, '\\$&');
+  const source = `[${negated ? '^' : ''}${members}]`;
+  try {
+    new RegExp(source, 'u');
+    return source;
+  } catch {
+    return '.';
+  }
+}

@@ -8,12 +8,14 @@ import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial } from '../plugins/aidrian/lib/config-guard.mjs';
-import { configFiles, findProject } from '../plugins/aidrian/lib/project.mjs';
+import { globParts } from '../plugins/aidrian/lib/fs.mjs';
+import { configFiles, findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
 after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true }));
 
+const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const GATED = { version: 1, agents: { explorer: { deny: ['WebFetch'] } }, names: { human: 'the product owner' } };
 
@@ -517,4 +519,165 @@ test('a subagent may not change the auto-merge switch without naming it: the gua
   }
   const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, ...edit('"autoMerge": "off"', '"autoMerge": "on"'));
   assert.equal(run(main).status, 0, 'the main session may');
+});
+
+test('a subagent may not run `aidrian handoff continue`, with or without gates, in or out of a project; the main session may', (t) => {
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-noproject-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
+  const blocked = [
+    'aidrian handoff continue /tmp/2026-11-15-x.md',
+    'aidrian handoff continue /tmp/2026-11-15-x.md --route clear',
+    'aidrian handoff --route clear continue x.md',
+    '/opt/plugin/bin/aidrian handoff continue x.md',
+    'node /opt/plugin/lib/cli.mjs handoff continue x.md',
+    'cd /tmp && aidrian handoff continue x.md',
+    "bash -c 'aidrian handoff continue x.md'",
+    'echo "$(aidrian handoff continue x.md)"',
+    "echo 'aidrian handoff continue x.md' | bash",
+    'aidrian handoff "$ACTION" x.md',
+    // A command word the lexer cannot read.
+    'aidrian "$SUB" continue x.md',
+    'A=handoff; aidrian $A continue x.md',
+    'aidrian "$(echo handoff)" continue x.md',
+    'aidrian "$SUB" "$ACTION" x.md',
+    'aidrian "$SUB"',
+    'aidrian $CMD x.md',
+    'A="handoff continue"; aidrian $A x.md',
+    'aidrian "$CMD" x.md',
+  ];
+  const allowed = [
+    'aidrian handoff check x.md',
+    'aidrian handoff snapshot x.md',
+    'aidrian "$SUB" check x.md',
+    'echo aidrian handoff continue',
+    "grep -n 'handoff continue' docs/handoff.md",
+  ];
+  for (const [cwd, label] of [[project(t, { version: 1 }).dir, 'no gates'], [project(t).dir, 'gates'], [outside, 'no project']]) {
+    for (const command of blocked) {
+      const result = run(cwd, subagent(cwd, 'Bash', { command }));
+      assert.equal(result.status, 2, `${label}: ${command}`);
+      assert.match(result.stderr, /it runs `aidrian handoff continue`, which arms a continuation of the main session/u, `${label}: ${command}`);
+    }
+    for (const command of allowed) assert.equal(run(cwd, subagent(cwd, 'Bash', { command })).status, 0, `${label}: ${command}`);
+    const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(cwd, 'Bash', { command: blocked[0] });
+    assert.equal(run(cwd, main).status, 0, `${label}: the main session may`);
+  }
+  const { dir } = project(t, { version: 1 });
+  const patch = { command: '*** Begin Patch\n*** Add File: notes.md\n+aidrian handoff continue x.md\n*** End Patch\n' };
+  assert.equal(run(dir, subagent(dir, 'apply_patch', patch)).status, 0, 'a patch that names the command runs nothing');
+});
+
+test('a subagent may not write in the handoff continuation store, with or without gates; the main session may', (t) => {
+  for (const config of [{ version: 1 }, GATED]) {
+    const { dir } = project(t, config);
+    const state = stateDir(findProject(dir));
+    const root = path.join(process.env.XDG_STATE_HOME, 'aidrian');
+    const handoffs = path.join(state, 'handoffs');
+    const store = path.join(handoffs, '.continue');
+    mkdirSync(store, { recursive: true });
+    t.after(() => rmSync(state, { recursive: true, force: true }));
+    const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+    const label = (toolInput) => `${config.agents ? 'gates' : 'no gates'}: ${JSON.stringify(toolInput)}`;
+    for (const [tool, toolInput] of [
+      ['Write', { file_path: path.join(store, 'armed-s1.json'), content: '{}' }],
+      ['Edit', { file_path: path.join(store, 'from-s1.json'), old_string: '1', new_string: '2' }],
+      ...[
+        `echo {} > ${store}/ready-s1.json`,
+        `cp /tmp/x.json ${store}/`,
+        `mv /tmp/x.json ${store}/checked-2026-11-15-x.md.json`,
+        `rm -rf ${handoffs}`,
+        `rm -rf ${state}`,
+        `rm -rf ${handoffs}/*`,
+        `rm ${store}/*`,
+        'cd "$STATE/handoffs" && echo {} > .continue/armed-s1.json',
+        `python3 -c "open('${store}/armed-s1.json', 'w').write('{}')"`,
+        'node -e "require(\'fs\').writeFileSync(process.env.S + \'/handoffs/.continue/armed-s1.json\', \'{}\')"',
+        // A marker's name in a folder no path gives, in any case, and a bracket glob the shell expands.
+        'cd "$X/handoffs/.continue" && echo {} > armed-s1.json',
+        'cd "$X" && echo {} > READY-s1.json',
+        `rm -rf ${handoffs}/[.]continue`,
+        `rm -rf ${handoffs}/[.]cont*`,
+        `rm -rf ${state}/handoff[s]/.continue`,
+        // Bracket forms the guard does not model, or cannot compile, match any one character; `**` crosses folders.
+        `cp /tmp/x.json ${handoffs}/.continu[]e]/`,
+        `cp /tmp/x.json ${handoffs}/.continu[[:alpha:]]/`,
+        `touch ${handoffs}/[z-a]; cp /tmp/x.json ${handoffs}/.continu[e]/`,
+        `cp /tmp/x.json ${root}/**/.continue/`,
+        `rm ${root}/**/.continue/armed-*.json`,
+        'cd "$X/handoffs/.continue" && rm -f armed-*',
+        // A glob in the first path part, right below the root.
+        'rm -rf /*',
+        `rm -rf /${state.split('/')[1].slice(0, 2)}*/${state.split('/').slice(2).join('/')}/handoffs/.continue`,
+        `rm -rf /${realpathSync(state).split('/')[1].slice(0, 2)}*/${realpathSync(state).split('/').slice(2).join('/')}/handoffs/.continue`,
+      ].map((command) => ['Bash', { command }]),
+      // On a disk that folds case, any spelling reaches the store.
+      ...(FOLDS ? [
+        ['Write', { file_path: path.join(handoffs, '.CONTINUE/armed-s1.json'), content: '{}' }],
+        ['Write', { file_path: path.join(state, 'Handoffs/.continue/armed-s1.json'), content: '{}' }],
+        ['Bash', { command: `echo {} > ${handoffs}/.Continue/armed-s1.json` }],
+        ['Bash', { command: 'cd "$X" && echo {} > Handoffs/.Continue/notes.json' }],
+      ] : []),
+    ]) {
+      const result = run(subagent(dir, tool, toolInput));
+      assert.equal(result.status, 2, label(toolInput));
+      assert.match(result.stderr, /the handoff continuation store, where only the main session's `aidrian handoff` commands write/u, label(toolInput));
+    }
+    for (const [tool, toolInput] of [
+      ['Write', { file_path: path.join(handoffs, '2026-11-15-x.md'), content: '# Handoff\n' }],
+      ['Write', { file_path: path.join(dir, 'src/app.js'), content: 'export {};\n' }],
+      ['Bash', { command: `rm ${handoffs}/*.md` }],
+      ['Bash', { command: `cat ${store}/armed-s1.json` }],
+      ['Bash', { command: 'echo x > /tmp/aidrian-guard-unrelated.txt' }],
+      ['Bash', { command: 'cd "$X" && echo {} > notes.json' }],
+      // A chain floor's or task record's name is a common word: only the path rules cover them.
+      ['Bash', { command: 'cd "$OUT" && echo {} > from-api.json' }],
+      ['Bash', { command: 'cd "$OUT" && echo [] > tasks-list.json' }],
+      ['Bash', { command: 'rm build/[a-z]*.o' }],
+      ['Bash', { command: 'touch src/[z-a].js' }],
+      ['Bash', { command: `rm -rf ${handoffs}/[0-9]*.md` }],
+    ]) {
+      assert.equal(run(subagent(dir, tool, toolInput)).status, 0, label(toolInput));
+    }
+    const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: path.join(store, 'armed-s1.json'), content: '{}' });
+    assert.equal(run(main).status, 0, 'the main session may');
+  }
+});
+
+test('globParts reads *, ?, and a [...] class, negated with !, in the last path part', () => {
+  const { head, pattern, folders } = globParts('a/[.]cont*', ['/x', '/y']);
+  assert.deepEqual([head, folders], ['a', ['/x/a', '/y/a']]);
+  assert.ok(pattern.test('.continue'));
+  assert.ok(!pattern.test('xcontinue'));
+  assert.ok(globParts('/s/[!.]x?').pattern.test('ax1'));
+  assert.ok(!globParts('/s/[!.]x?').pattern.test('.x1'));
+  assert.ok(globParts('/s/[a-c].md').pattern.test('b.md'));
+  assert.ok(globParts('/s/.CONTINUE', [], 'i').pattern.test('.continue'));
+  // As the shell reads a class: a leading `]` is a member, and a POSIX class holds a `]` that does not close it.
+  assert.ok(globParts('/s/.continu[]e]').pattern.test('.continue'));
+  assert.ok(globParts('/s/[[:alpha:]x]y').pattern.test('zy'));
+  // What it cannot compile or does not model matches any one character, and never throws.
+  for (const text of ['/s/[z-a]*', '/s/[a-\\]*', '/s/.continu[[:alpha:]]', '/s/[[.a.]]x']) assert.doesNotThrow(() => globParts(text), text);
+  assert.ok(globParts('/s/[z-a]*').pattern.test('.continue'));
+  assert.ok(globParts('/s/.continu[[:alpha:]]').pattern.test('.continue'));
+  assert.ok(globParts('/s/a[b').pattern.test('a[b'), 'an unclosed bracket is a plain character');
+});
+
+test('the store guard follows state.dir to a folder outside the state root', (t) => {
+  const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-elsewhere-')));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  const { dir } = project(t, { version: 1, state: { dir: elsewhere } });
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  assert.equal(run(subagent(dir, 'Write', { file_path: path.join(elsewhere, 'handoffs/.continue/armed-s1.json'), content: '{}' })).status, 2);
+  assert.equal(run(subagent(dir, 'Write', { file_path: path.join(elsewhere, 'handoffs/2026-11-15-x.md'), content: '#\n' })).status, 0);
+});
+
+test('a gated subagent\'s bracket glob in a known folder gets the folder check, as a `*` glob does', (t) => {
+  const { dir } = project(t);
+  mkdirSync(path.join(dir, 'build'));
+  const run = (command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
+  for (const command of ['rm -rf build/[a-z]*', 'rm -f build/[[:alpha:]]*', 'rm -f build/[!.]x']) assert.equal(run(command).status, 0, command);
+  const refused = run('rm -f .aidrian/[c]onfig.json*');
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /\.aidrian\/config\.json/u);
 });

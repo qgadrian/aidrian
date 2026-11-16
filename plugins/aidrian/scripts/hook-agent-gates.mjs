@@ -1,6 +1,7 @@
 // PreToolUse hook for every tool: the project's per-agent tool gates, `agents` in config.json and the local file.
 // lib/agent-gates.mjs decides, then lib/config-guard.mjs keeps a subagent from changing the files that set the gates,
-// and, with or without gates, from setting the machine's auto-merge switch.
+// and, with or without gates, from setting the machine's auto-merge switch; lib/handoff-guard.mjs, with or without
+// gates, from running `aidrian handoff continue` or writing in the handoff continuation store.
 // It runs before every tool call, so without gates it stops as soon as it has read the config; a call a gate blocks
 // exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook records its blocks (lib/hook-deny.mjs).
 // A subagent's call also meets the gates its session started with (lib/gate-snapshot.mjs), so a config.json deleted,
@@ -20,8 +21,9 @@ import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, machineSwitchWriteDenial } from '../lib/config-guard.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
-import { findProject, openProject } from '../lib/project.mjs';
+import { findProject, openProject, stateDir } from '../lib/project.mjs';
 
 await runHook(async (input) => {
   try {
@@ -43,7 +45,12 @@ async function gate(input) {
     const denial = unreadableConfigDenial(input, snapshot.file, snapshot.problem, settings, 'to start a new session, which takes the gates from the config again');
     if (denial) await block(input, 'agent-gates', denial.reason, { match: 'the gate snapshot cannot be read', project: project ?? undefined, config: settings });
   }
-  if (!project) return;
+  if (!project) {
+    // The gate command runs outside a project too, with the defaults.
+    const outside = handoffContinueDenial(input, DEFAULTS);
+    if (outside) await block(input, 'config-guard', outside.reason, { match: outside.match });
+    return;
+  }
   const { config, errors, gateErrors, current } = loadConfig(project);
   // An `agents` error that lifts a gate: read it as a file that cannot be read.
   const broken = unreadable(project, current, errors) ?? (current ? malformedGates(gateErrors) : null);
@@ -51,6 +58,8 @@ async function gate(input) {
   if (failed) await block(input, 'agent-gates', failed.reason, { match: failed.match, project, config });
   const machineSwitch = machineSwitchWriteDenial(input, project, config);
   if (machineSwitch) await block(input, 'config-guard', machineSwitch.reason, { match: machineSwitch.match, project, config });
+  const handoff = handoffContinueDenial(input, config) ?? continueStoreWriteDenial(input, project, config, () => stateDir(project, { config }));
+  if (handoff) await block(input, 'config-guard', handoff.reason, { match: handoff.match, project, config });
   const started = (snapshot?.gates ?? []).filter((agents) => Object.keys(agents).length > 0);
   if (Object.keys(config.agents).length === 0 && started.length === 0) return;
   const gate = gateDenial(input, config, project.paths)

@@ -2,7 +2,7 @@
 // config-merge.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
 // call. docs/config.md#agents gives the rules.
 
-import { agentAliases, deniedNames, toolNames } from './hosts/index.mjs';
+import { agentAliases, deniedNames, opaqueShellCommand, toolNames } from './hosts/index.mjs';
 import { commandLines, inlineShellCommand, lexInputs, readGit, readInvocation, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 // The entry that applies to every agent, and the one for the main session, which has no `agent_id`. Both select gates;
@@ -43,18 +43,23 @@ export function patternProblem(pattern) {
 // session's snapshot (lib/gate-snapshot.mjs), which the reason says a change to those files cannot lift.
 // Every entry that names the caller applies: `*`, `main` for the main session, and the agent's name, full or short.
 // A deny that matches wins; then each entry with an `allow` list must match the call. A deny matches the call by each of
-// its names (deniedNames), so a bare Bash deny also covers a tool the host runs under Bash's permission rules.
+// its names (deniedNames), so a bare Bash deny also covers a tool the host runs under Bash's permission rules, and every
+// Bash deny, bare or by prefix, covers a command in a shell the lexer cannot read, for the main session and every agent.
 export function gateDenial(input, { agents, names: { human } }, paths, { started = false } = {}) {
   const tool = input.tool_name;
   if (typeof tool !== 'string' || tool === '') return null;
   const called = toolNames(input);
   const denied = deniedNames(input);
+  const unread = opaqueShellCommand(input) !== null;
   const caller = callerNames(input);
   const entries = Object.entries(agents).filter(([name]) => caller.has(name));
   const where = { human, paths, started };
   for (const [name, { deny = [] }] of entries) {
-    const hit = deny.find((pattern) => denied.some((name) => denies(pattern, name, input.tool_input)));
-    if (hit) return blocked(input, `agents.${name}.deny has "${hit}"`, where);
+    const hit = deny.find((pattern) => denied.some((name) => denies(pattern, name, input.tool_input, unread)));
+    if (!hit) continue;
+    const byName = called.some((name) => denies(hit, name, input.tool_input, false));
+    const why = byName ? '' : `; a Bash deny covers ${calledName(input)} too, since the gate cannot read its command to tell what it runs`;
+    return blocked(input, `agents.${name}.deny has "${hit}"`, where, why);
   }
   for (const [name, { allow }] of entries) {
     if (allow && !allows(allow, called, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, where);
@@ -95,26 +100,30 @@ export function readOnlyDenial(input, match, why, { names: { human } }, fix) {
 // that differs (`raw_tool_name`), since that is the tool the agent called, who called it, `why`, and that it should ask
 // `human` for `ask` rather than work around the rule. The gates and the config guard block with it.
 export function projectRuleReason(input, why, human, ask = 'what the task needs') {
-  const sent = [input.raw_tool_name, input.tool_name].find((name) => typeof name === 'string' && name !== '');
-  const tool = sent ?? 'this tool';
+  const tool = calledName(input);
   let who = typeof input.agent_id === 'string' && input.agent_id !== '' ? 'a subagent' : 'the main session';
   if (typeof input.agent_type === 'string' && input.agent_type !== '') who = `the agent "${input.agent_type}"`;
   return `aidrian: ${tool} is blocked for ${who} in this project: ${why}.`
     + ` This is a project rule: do not reach the same result with another tool; tell ${human} ${ask}.`;
 }
 
-function blocked(input, rule, { human, paths, started }) {
+// The name of the tool the agent called: the one the host sent when that differs (`raw_tool_name`), else the standard one.
+const calledName = (input) => [input.raw_tool_name, input.tool_name].find((name) => typeof name === 'string' && name !== '') ?? 'this tool';
+
+// `why` adds to the rule's source, such as why the rule covers this tool.
+function blocked(input, rule, { human, paths, started }, why = '') {
   const source = started
     ? `${rule}, as the project set it when this session started (a change to ${paths.config} or ${paths.local} during the session cannot lift it)`
     : `${rule} (${paths.config}, or ${paths.local}, which wins)`;
-  return { match: rule, reason: projectRuleReason(input, source, human) };
+  return { match: rule, reason: projectRuleReason(input, `${source}${why}`, human) };
 }
 
-// A deny pattern matches the tool by name; Bash(<prefix>) matches a Bash call where any command starts with the prefix.
-function denies(pattern, tool, toolInput) {
+// A deny pattern matches the tool by name; Bash(<prefix>) matches a Bash call where any command starts with the prefix,
+// and every call whose command is `unread`, in a shell the lexer cannot read, since no prefix can be told apart there.
+function denies(pattern, tool, toolInput, unread) {
   const prefix = bashPrefix(pattern);
   if (!prefix) return nameMatches(pattern, tool);
-  return tool === 'Bash' && commands(toolInput).some((words) => startsWith(words, prefix));
+  return tool === 'Bash' && (unread || commands(toolInput).some((words) => startsWith(words, prefix)));
 }
 
 // An allow list lets the call run when a pattern names it, or, for Bash, when every command starts with an allowed

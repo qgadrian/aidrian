@@ -861,10 +861,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   in Node `require(p)`, `readFileSync(p)`, and `JSON.parse(readFileSync(p))`, each printed or not, with `p` a quoted path.
   perl and ruby have none. Read, `cat`, and `jq` still read the files, as the block says.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
+  A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
-  or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`:
+  or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file or a glob
+  that matches it, such as `.aidrian.local.js*`:
   the [auto-merge](config.md#auto-merge), [unattended waiver](config.md#unattended-waiver), and review-approvals switches
   are the main session's. Other writes to that file follow the rules above.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
@@ -888,11 +890,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
 - A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:
   the guards read its `command` as opaque text, split into words at blanks, quotes, and the characters that join words,
-  with `\` read as `/`, in any letter case, and fail closed for a subagent. It may not hold both the words `handoff` and
-  `continue`, nor a word that names the continuation store (`handoffs/.continue`, a `.continue` part, or a marker's
-  file name), nor `.aidrian.local.json`; while gates are set, nor a word that names a file that sets them. Each counts
-  whether the command reads or writes, since the guard cannot tell; Read still reads the file
-  ([provider page](providers/claude-code.md#powershell-commands)).
+  with `\` read as `/`, in any letter case, and fail closed for a subagent. The words come from the command as given
+  and from a copy with its joins undone: backticks removed, a literal join such as `'a'+'b'` folded, and quotes removed,
+  so ``hand`off`` reads `handoff`. A word that is a path counts as that path, from the call's folder when it is relative,
+  and a word with `*`, `?`, or `[` as a glob. It may not hold both the words `handoff` and `continue`, nor a word that
+  names or reaches the continuation store (`handoffs/.continue`, a `.continue` part, a marker's file name, a folder that
+  holds the store, or a glob that reaches it), nor `.aidrian.local.json`, by name or by a glob; while gates are set, nor
+  a word that names a file that sets them. Each counts whether the command reads or writes, since the guard cannot tell,
+  so the block says it may change the file; Read still reads the file ([provider page](providers/claude-code.md#powershell-commands)).
+  In the gates, every `Bash` and `Bash(<prefix>)` deny blocks such a call ([config](config.md#agents)).
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.

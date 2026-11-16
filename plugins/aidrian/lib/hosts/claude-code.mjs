@@ -38,10 +38,13 @@ export const SHELL_TOOLS = Object.freeze(['Monitor']);
 const shellCommand = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof input.tool_input?.command === 'string';
 const shellWatch = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof input.tool_input?.command !== 'string';
 
-// Its tools that run `tool_input.command` in a shell the shared lexer cannot read. PowerShell, on Windows, runs its command
-// as PowerShell, whose `@(...)`, backtick escapes, and quoting a POSIX lexer misreads, so it is never read as Bash, and a
-// Bash(prefix) gate never admits it: the guards read its command as opaque text and fail closed for a subagent
-// (lib/hosts/index.mjs opaqueShellCommand). docs/providers/claude-code.md#powershell-commands.
+// Its tools that run `tool_input.command` in a shell the shared lexer cannot read. PowerShell, on by default on Windows
+// and opt-in on Linux, macOS, and WSL, runs its command as PowerShell, whose `@(...)`, backtick escapes, and quoting a
+// POSIX lexer misreads, so it is never read as Bash, and a Bash(prefix) gate never admits it: the guards read its command
+// as opaque text and fail closed for a subagent, and every Bash deny covers it, as the host turns the tool off for any
+// Bash deny rule (lib/hosts/index.mjs opaqueShellCommand, deniedNames). This rests on the tools and hooks references, which
+// give its command as `tool_input.command`, and on fixtures; it has not run live.
+// docs/providers/claude-code.md#powershell-commands.
 const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 
 export default {

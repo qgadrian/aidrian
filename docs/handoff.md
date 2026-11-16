@@ -122,7 +122,8 @@ whatever the config says, and `background` only when the config says `"backgroun
 3. A fallback prints `continue: none` and one `fallback:` line, exit 0: the host does not list the route, or tells the
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a
    control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
-   it; the state, handoffs, or store folder is owned by another user or writable by every user; or the brief's chain
+   it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
+   user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
    is `maxChain` or more.
 4. A refusal exits 1 with the reason and the remedy on stderr, since the session can fix it: no passing check of the
    brief's current bytes (run `aidrian handoff check` first), a brief last written more than 15 minutes ago or dated in
@@ -140,7 +141,8 @@ carries the main session's id, and keeps a subagent from writing in the store, w
 The store is `<state>/handoffs/.continue/` ([project-folder.md](project-folder.md#local-state)), shared by every
 worktree and clone of the project. Every write is a temporary file and a rename. Every read refuses a symlink, a marker
 or a brief another user owns, a marker of the wrong shape, and a time outside its window, in the past or the future.
-A store whose state, handoffs, or store folder another user owns, or every user may write, is neither written nor read;
+A store whose state, handoffs, or store folder another user owns, or every user may write, is neither written nor read,
+where the system has user ids (not on Windows, where Node reports every writable folder as writable by others);
 a folder its group may write passes, since a umask of 002 is common. A sweep deletes the armed, ready, and
 stamp files after 24 hours, and the chain floors after 30 days.
 

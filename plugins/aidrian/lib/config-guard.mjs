@@ -50,10 +50,12 @@ const INTERPRETERS = [
 // that folder also holds one of the project's checkouts, such as the project root or its worktree, as `cp notes.md .` does.
 // `also` lists more files to guard the same way, as absolute paths: the session's gate snapshot and the file that marks
 // the session gated (lib/gate-snapshot.mjs). Code an interpreter runs also may not name the folder that holds them.
+// A command in a shell the lexer cannot read may only read the file it names, so its block says it may change it.
 export function configWriteDenial(input, project, { names: { human } }, { also = [] } = {}) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
   const { files: targets, names, globs } = writeTargets(input);
   if (targets.length === 0 && names.length === 0 && globs.length === 0) return null;
+  const verb = opaqueShellCommand(input) === null ? 'changes' : 'may change';
   const roots = project.checkouts.map((dir) => canonical(dir));
   const guarded = also.map((file) => canonical(file));
   const files = [...configFiles(project).map((file) => canonical(file)), ...guarded];
@@ -61,7 +63,7 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   for (const target of targets.map((each) => canonical(each))) {
     const holdsRoot = roots.some((root) => isWithin(target, root));
     const file = files.find((each) => each === target || sameFile(each, target) || (!holdsRoot && isWithin(target, each)));
-    if (file) return blocked(input, shown(file), 'changes', human);
+    if (file) return blocked(input, shown(file), verb, human);
   }
   // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
   const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
@@ -82,8 +84,9 @@ const SWITCHES = Object.freeze([
 
 // Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, or
 // the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
-// switch (changesSwitch) or is a Bash command that names its key. This holds with no gates set, and other writes to that
-// file stay allowed. Like the rest of this guard, it is for agents that cooperate.
+// switch (changesSwitch) or is a Bash command that names its key. It targets the file by its name, in any folder and
+// case, or by a glob whose last part matches that name, such as its name with a `*` for its end. This holds with no gates set, and
+// other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
 // A command in a shell the lexer cannot read that names the local file is refused whether or not it names a key: it may
 // set a switch by a key it builds, and the guard cannot tell.
 export function machineSwitchWriteDenial(input, project, { names: { human } }) {
@@ -92,10 +95,11 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   const isBash = bashCall(input);
   const named = SWITCHES.filter(({ key }) => !isBash || String(input.tool_input?.command).includes(key));
   if (named.length === 0) return null;
-  const { files, names } = writeTargets(input);
+  const { files, names, globs } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
-  if (targets.length === 0 && !names.some((name) => name.toLowerCase().includes(local))) return null;
+  const globbed = globs.some(({ text, dirs = [] }) => globParts(text, dirs, 'i').pattern.test(local));
+  if (targets.length === 0 && !globbed && !names.some((name) => name.toLowerCase().includes(local))) return null;
   if (opaque) {
     const why = `it names ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which only the main session may set`;
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
@@ -150,27 +154,53 @@ function switchIn(text, valueIn) {
 // What the call writes: { files, names, globs }. `files` are absolute paths; `names` are texts that may name a file in a
 // folder no path gives: a relative target written after a `cd` to an unknown folder, code an interpreter runs, and the
 // words of a command in a shell the lexer cannot read (opaqueWords); `globs` are bashWrites's glob targets.
-// lib/handoff-guard.mjs reads them too.
+// lib/handoff-guard.mjs reads them too. A path with a bracket class is a file and a glob both. A command in a shell the
+// lexer cannot read writes, failing closed, to the path each of its words gives, from the call's folder when it is
+// relative, and to the glob each word with `*`, `?`, or `[` is, from the call's folder and, since such a shell may change
+// its folder first, by its name alone.
 export function writeTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
   const opaque = opaqueShellCommand(input);
-  if (opaque !== null) return { files: [], names: opaqueWords(opaque), globs: [] };
+  if (opaque !== null) {
+    const words = opaqueWords(opaque);
+    const globbed = words.filter((word) => GLOB_WORD.test(word));
+    return {
+      files: words.filter((word) => !GLOB_WORD.test(word)).map((word) => path.resolve(cwd, word)),
+      names: words,
+      globs: globbed.flatMap((text) => (path.isAbsolute(text) ? [{ text, dirs: [], unsure: false }] : [{ text, dirs: [cwd], unsure: false }, { text, dirs: [], unsure: true }])),
+    };
+  }
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string') return { files: [], names: [], globs: [] };
   const writes = bashWrites(command, cwd, { followCd: true, shells: true, restores: true, globs: true });
+  const files = writes.flatMap((write) => write.files);
   return {
-    files: writes.flatMap((write) => write.files),
+    files,
     names: [...writes.filter((write) => write.unsure && !write.glob && !path.isAbsolute(write.text)).map((write) => write.text), ...interpretedCode(command)],
-    globs: writes.filter((write) => write.glob),
+    // The lexer reads a bracket class, as in `[.]continue`, as a plain word; the shell expands it as a glob.
+    globs: [...writes.filter((write) => write.glob), ...files.filter((file) => BRACKET.test(file)).map((text) => ({ text, dirs: [], unsure: false }))],
   };
 }
 
-// The words of a command in a shell the lexer cannot read, each a text that may name a file: split at blanks, quotes,
-// backticks, and the characters that join or group words, with each backslash read as a `/`, and each word also in lower
-// case, since such a shell may reach a file by any case of its name. Failing closed: a word a read names counts too.
+const GLOB_WORD = /[*?[]/u;
+const BRACKET = /\[[^/]*\]/u;
+
+// The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy
+// with the joins such a shell makes undone: each backtick, its escape character, removed, each literal join of two quoted
+// texts, as `'hand'+'off'`, folded into one, and each quote removed, so `hand`off`, `hand"off"`, and `'hand'+'off'`
+// each read `handoff`. lib/handoff-guard.mjs reads them too.
+export function opaqueTexts(command) {
+  const joined = command.replaceAll('`', '').replace(/['"]\s*\+\s*['"]/gu, '').replace(/['"]/gu, '');
+  return joined === command ? [command] : [command, joined];
+}
+
+// The words of a command in a shell the lexer cannot read, each a text that may name a file: the words of each of its
+// opaqueTexts, split at blanks, quotes, backticks, and the characters that join or group words, with each backslash read
+// as a `/`, and each word also in lower case, since such a shell may reach a file by any case of its name. Failing closed:
+// a word a read names counts too.
 export function opaqueWords(command) {
-  const words = command.replaceAll('\\', '/').split(/[\s'"`;|&(){}<>,=+@]+/u).filter(Boolean);
+  const words = opaqueTexts(command).flatMap((text) => text.replaceAll('\\', '/').split(/[\s'"`;|&(){}<>,=+@]+/u).filter(Boolean));
   return [...new Set([...words, ...words.map((word) => word.toLowerCase())])];
 }
 

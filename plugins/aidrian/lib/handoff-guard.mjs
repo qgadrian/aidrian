@@ -3,17 +3,18 @@
 // continuation store, `<state>/handoffs/.continue/` (lib/handoff-markers.mjs). scripts/hook-agent-gates.mjs asks it
 // before every tool call. A host's other tools that run a shell command, such as Claude Code's Monitor, reach it as Bash
 // calls (lib/hosts/claude-code.mjs hookInput); a command in a shell the shared lexer cannot read (lib/hosts/index.mjs
-// opaqueShellCommand) is read as opaque text, and refused when its words may run the gate or name the store.
+// opaqueShellCommand) is read as opaque text, and refused when its words may run the gate, or name or reach the store.
 // It reads a call's targets as lib/config-guard.mjs does, and, like that guard, it is for agents that cooperate: what
-// the shared lexer cannot see, it cannot see either. The known limits of that lexer, which this guard accepts: brace expansion (`{a,b}`), ANSI-C quoting (`$'...'`), a link created and written through in one
-// call, the outputs of `tar -C` and `curl -o`, a program that runs its arguments as a command (`xargs aidrian ...`,
-// `find ... -exec aidrian ...`), and a path built from a variable. The gate's own checks (lib/handoff-markers.mjs)
-// keep what gets past harmless: a stray marker of the wrong shape, time, or host process is never delivered.
+// the shared lexer cannot see, it cannot see either. The known limits of that lexer, which this guard accepts: brace
+// expansion (`{a,b}`), ANSI-C quoting (`$'...'`), a link created and written through in one call, the outputs of
+// `tar -C` and `curl -o`, a program that runs its arguments as a command (`xargs aidrian ...`, `find ... -exec
+// aidrian ...`), and a path built from a variable. The gate's own checks (lib/handoff-markers.mjs) keep what gets past
+// harmless: a stray marker of the wrong shape, time, or host process is never delivered.
 
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { bashCall, writeTargets } from './config-guard.mjs';
+import { bashCall, opaqueTexts, writeTargets } from './config-guard.mjs';
 import { globParts, isWithin } from './fs.mjs';
 import { ARMING_FILE, foldCase, storePath } from './handoff-markers.mjs';
 import { opaqueShellCommand } from './hosts/index.mjs';
@@ -32,13 +33,15 @@ const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_
 // `continue`: it may be aidrian, and no other program takes those words. A known limit of the shared lexer:
 // a program that runs its arguments as a command, such as `xargs aidrian ...` or `find ... -exec aidrian ...`, is not
 // read as aidrian. A command in a shell the lexer cannot read is refused when it holds the words `handoff` and
-// `continue`, in any case and order: such a shell may build the call from them, and the guard cannot tell.
+// `continue`, in any case and order, as given or with that shell's joins undone (opaqueTexts), as in `hand`off`: such a
+// shell may build the call from them, and the guard cannot tell.
 export function handoffContinueDenial(input, { names: { human } }) {
   if (!isSubagent(input)) return null;
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
   if (typeof command !== 'string') return null;
-  if (opaque !== null ? !OPAQUE_CONTINUE.every((word) => word.test(opaque)) : !walkCommands(command, null).some(runsContinue)) return null;
+  const texts = opaque === null ? [] : opaqueTexts(opaque);
+  if (opaque !== null ? !OPAQUE_CONTINUE.every((word) => texts.some((text) => word.test(text))) : !walkCommands(command, null).some(runsContinue)) return null;
   const why = 'it runs `aidrian handoff continue`, which arms a continuation of the main session, and only the main session may run it';
   return { match: 'runs aidrian handoff continue', reason: projectRuleReason(input, why, human, 'that the brief is checked; the main session runs the gate') };
 }
@@ -114,15 +117,15 @@ function globReaches({ prefix, rest }, store) {
 // nowhere near the state root runs no git. It writes there when a target lies in the store, or is a folder that holds
 // it and no checkout, or a glob may reach the store; a target in a folder no path names, or code an interpreter runs,
 // counts when it names `handoffs/.continue`, a marker below `.continue/`, or a path part named as a file that arms or
-// delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB).
+// delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB). A command in a shell the lexer cannot read may
+// only read what it names, so its block says it may change the store.
 export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state) {
   if (!isSubagent(input)) return null;
-  const { files, names, globs: written } = writeTargets(input);
-  // The lexer reads `[.]continue` as a plain word; the shell expands it as a glob.
-  const globs = [...written, ...files.filter((file) => /\[[^/]*\]/u.test(file)).map((file) => ({ text: file, dirs: [], unsure: false }))];
+  const opaque = opaqueShellCommand(input) !== null;
+  const { files, names, globs } = writeTargets(input);
   const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the handoff continuation store, where only the main session's \`aidrian handoff\` commands write`, human);
   // A command no lexer reads may join `.continue` to a path it builds, as a path joiner does.
-  const joined = opaqueShellCommand(input) !== null && names.some((name) => name.split('/').some((part) => STORE_FOLDER.test(part)));
+  const joined = opaque && names.some((name) => name.split('/').some((part) => STORE_FOLDER.test(part)));
   if (joined || names.some(namesStore) || globs.some((glob) => glob.unsure && globNamesStore(glob.text))) {
     return { match: 'may change the continuation store', reason: why('may change', 'handoffs/.continue') };
   }
@@ -139,5 +142,7 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   const stores = [...new Set([store, fold(path.resolve(spelled))])];
   const hit = files.map(real).some((target) => isWithin(store, target) || (holds(target) && !roots.some((each) => isWithin(target, each))))
     || known.some((glob) => stores.some((each) => globReaches(glob, each)));
-  return hit ? { match: 'changes the continuation store', reason: why('changes', store) } : null;
+  if (!hit) return null;
+  const verb = opaque ? 'may change' : 'changes';
+  return { match: `${verb} the continuation store`, reason: why(verb, store) };
 }

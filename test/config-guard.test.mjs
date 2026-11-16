@@ -708,6 +708,81 @@ test('a subagent\'s PowerShell command that names a guarded config file or the m
   assert.match(shell.stderr, /agents\.explorer\.allow does not list it/u);
 });
 
+test('a subagent\'s PowerShell command is judged also with its backtick escapes, quote joins, and literal + joins undone', (t) => {
+  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
+  const refused = (cwd, command, reason) => {
+    const result = run(cwd, subagent(cwd, 'PowerShell', { command }));
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, reason, command);
+  };
+  const open = project(t, { version: 1 }).dir;
+  for (const command of ['aidrian hand`off cont`inue x.md', 'aidrian hand"off" cont"inue" x.md', "aidrian ('hand'+'off') (\"cont\" + \"inue\") x.md"]) {
+    refused(open, command, /it runs `aidrian handoff continue`/u);
+  }
+  for (const command of [String.raw`Set-Content $env:S\handoffs\.cont` + '`' + String.raw`inue\arm` + '`' + 'ed-s1.json \'{}\'', "Set-Content ($env:S + '\\handoffs\\.cont' + 'inue\\armed-s1.json') '{}'"]) {
+    refused(open, command, /the handoff continuation store/u);
+  }
+  for (const command of ["Set-Content .aidrian.lo`cal.json '{}'", "Set-Content ('.aidrian.lo'+'cal.json') '{}'"]) {
+    refused(open, command, /it names \.aidrian\.local\.json in a shell command the guard cannot read/u);
+  }
+  const gated = project(t).dir;
+  for (const command of ["Set-Content .aidrian/conf`ig.json '{}'", "Set-Content (\".aidrian/con\" + \"fig.json\") '{}'"]) {
+    refused(gated, command, /may change \.aidrian\/config\.json, which sets this project's agent gates/u);
+  }
+  for (const command of ['Write-Host "a`tb"', "Write-Host ('a' + 'b')"]) assert.equal(run(gated, subagent(gated, 'PowerShell', { command })).status, 0, command);
+});
+
+test('a subagent\'s PowerShell command that names the store, a folder that holds it, or a glob that reaches it by path is refused', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const state = stateDir(findProject(dir));
+  const handoffs = path.join(state, 'handoffs');
+  const store = path.join(handoffs, '.continue');
+  mkdirSync(store, { recursive: true });
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const windows = (file) => file.replaceAll('/', '\\');
+  for (const [cwd, command] of [
+    [dir, `Remove-Item -Recurse -Force ${windows(handoffs)}`],
+    [dir, `Remove-Item -Recurse -Force ${state}`],
+    [dir, `Remove-Item -Recurse -Force ${windows(handoffs)}\\.c*`],
+    [dir, `Copy-Item C:\\tmp\\x.json ${store}`],
+    [dir, `Set-Location ${handoffs}; Remove-Item -Recurse -Force .c*`],
+  ]) {
+    const result = run(subagent(cwd, 'PowerShell', { command }));
+    assert.equal(result.status, 2, `${cwd}: ${command}`);
+    assert.match(result.stderr, /may change [^\n]*, the handoff continuation store/u, command);
+  }
+  for (const command of [`Remove-Item ${handoffs}/2026-*.md`, `Get-ChildItem ${handoffs}/2026-11-15-x.md`]) {
+    assert.equal(run(subagent(dir, 'PowerShell', { command })).status, 0, command);
+  }
+  const gated = project(t).dir;
+  for (const command of [`Remove-Item -Recurse ${windows(gated)}\\.aidrian\\c*`, 'Remove-Item .aidrian/c*', 'Remove-Item .aidrian/conf[i]g.json']) {
+    const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(gated, 'PowerShell', { command })), cwd: gated, encoding: 'utf8' });
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
+  }
+});
+
+test('a subagent may not set a machine switch through a glob that matches the local file', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const run = (tool, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8' });
+  const on = JSON.stringify({ github: { autoMerge: 'on' } });
+  for (const command of [`echo '${on}' > .aidrian.local.js*`, `echo '${on}' > .AIDRIAN.LOCAL.JS?N`, `echo '${on}' > .aidrian.local.[j]son`]) {
+    const result = run('Bash', { command });
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /it sets github\.autoMerge in \.aidrian\.local\.json/u, command);
+  }
+  const shell = run('PowerShell', { command: "Set-Content .aidrian.local.js* '{}'" });
+  assert.equal(shell.status, 2);
+  assert.match(shell.stderr, /it names \.aidrian\.local\.json in a shell command the guard cannot read/u);
+  for (const command of [`echo '${on}' > notes.js*`, 'echo autoMerge > docs/*.md']) assert.equal(run('Bash', { command }).status, 0, command);
+  // With gates, a bracket class in a config file's name is read as the glob the shell expands, as `*` is.
+  const gated = project(t).dir;
+  const config = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(gated, 'Bash', { command: 'echo {} > .aidrian/conf[i]g.json' })), cwd: gated, encoding: 'utf8' });
+  assert.equal(config.status, 2);
+  assert.match(config.stderr, /may change \.aidrian\/config\.json/u);
+});
+
 test('globParts reads *, ?, and a [...] class, negated with !, in the last path part', () => {
   const { head, pattern, folders } = globParts('a/[.]cont*', ['/x', '/y']);
   assert.deepEqual([head, folders], ['a', ['/x/a', '/y/a']]);

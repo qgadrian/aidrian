@@ -125,6 +125,35 @@ test('a block names the tool the agent called, when the host sent another name t
   assert.match(verdict({ explorer: { deny: ['Bash'] } }, agentCall('aidrian:explorer', 'Bash', bash('ls'))), /^aidrian: Bash is blocked/u);
 });
 
+// Claude Code's PowerShell tool runs a shell the lexer cannot read, and the host turns it off for any Bash deny rule
+// (code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool).
+const shell = (call) => UNKNOWN_HOST.hookInput(call);
+
+test('every Bash deny, bare or by prefix, covers a PowerShell call, for a subagent and the main session', () => {
+  const covered = /deny has "Bash(?:\(git push\))?"[^\n]*; a Bash deny covers PowerShell too, since the gate cannot read its command to tell what it runs/u;
+  for (const command of ['git push', 'Get-ChildItem src']) {
+    assert.match(verdict({ explorer: { deny: ['Bash'] } }, shell(agentCall('aidrian:explorer', 'PowerShell', bash(command)))), covered, command);
+    assert.match(verdict({ explorer: { deny: ['Bash(git push)'] } }, shell(agentCall('aidrian:explorer', 'PowerShell', bash(command)))), covered, command);
+    assert.match(verdict({ main: { deny: ['Bash(git push)'] } }, shell(mainCall('PowerShell', bash(command)))), covered, command);
+  }
+  const reason = verdict({ main: { deny: ['Bash(git push)'] } }, shell(mainCall('PowerShell', bash('git push'))));
+  assert.match(reason, /^aidrian: PowerShell is blocked for the main session in this project: agents\.main\.deny has "Bash\(git push\)"/u);
+  // A pattern that names the tool itself blocks it by name, with no word on Bash.
+  for (const pattern of ['PowerShell', '*']) {
+    assert.doesNotMatch(verdict({ explorer: { deny: [pattern] } }, shell(agentCall('aidrian:explorer', 'PowerShell', bash('ls')))), /a Bash deny covers/u, pattern);
+  }
+  assert.equal(verdict({ explorer: { deny: ['WebFetch'] } }, shell(agentCall('aidrian:explorer', 'PowerShell', bash('git push')))), null);
+  assert.equal(verdict({ main: { deny: ['Bash(git push)'] } }, shell(mainCall('Bash', bash('git status')))), null, 'a Bash call still meets the prefix');
+});
+
+test('a block of a Codex app tool names the tool as Codex sent it', () => {
+  const sent = 'mcp__codex_apps__linear__save_issue';
+  const input = shell(agentCall('aidrian-explorer', sent));
+  assert.equal(input.tool_name, 'mcp__codex_apps_linear__save_issue', 'the adapter reads it in the standard form');
+  const reason = verdict({ explorer: { deny: ['mcp__codex_apps_linear__*'] } }, input);
+  assert.match(reason, /^aidrian: mcp__codex_apps__linear__save_issue is blocked for the agent "aidrian-explorer" in this project: agents\.explorer\.deny has "mcp__codex_apps_linear__\*"/u);
+});
+
 test('* applies to every caller; main to the main session, also one started with --agent; a name to that agent', () => {
   const agents = { '*': { deny: ['WebSearch'] }, main: { deny: ['Write'] }, explorer: { deny: ['Grep'] } };
   const plugin = (tool) => agentCall('aidrian:explorer', tool);

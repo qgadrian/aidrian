@@ -44,9 +44,14 @@ export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, 
 // so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.
 export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
 
-// The names a deny matches the call by: toolNames, and `permission_tool_name`, the standard tool whose permission rules the
-// host runs this call under when that is another tool, as an adapter's `hookInput` sets it.
-export const deniedNames = (input) => [...toolNames(input), input.permission_tool_name].filter((each, i, all) => typeof each === 'string' && each !== '' && all.indexOf(each) === i);
+// The names a deny matches the call by: toolNames; `permission_tool_name`, the standard tool whose permission rules the
+// host runs this call under when that is another tool, as an adapter's `hookInput` sets it; and, for a command in a shell
+// the lexer cannot read (opaqueShellCommand), the standard Bash. A Bash deny cannot be held to a command no lexer reads,
+// so every Bash deny, bare or by prefix, covers it, as Claude Code turns its PowerShell tool off for any Bash deny rule
+// (code.claude.com/docs/en/tools-reference#bash-deny-rules-also-turn-off-the-powershell-tool). lib/agent-gates.mjs
+// reads such a call as matching every Bash(<prefix>) pattern.
+export const deniedNames = (input) => [...toolNames(input), input.permission_tool_name, opaqueShellCommand(input) === null ? null : 'Bash']
+  .filter((each, i, all) => typeof each === 'string' && each !== '' && all.indexOf(each) === i);
 
 // The command of a call that runs one in a shell the shared lexer cannot read, from an adapter's `opaqueShellTools`, or null.
 // The guards read it as opaque text, never as Bash, and fail closed for a subagent (lib/config-guard.mjs opaqueWords).

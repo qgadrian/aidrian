@@ -6,7 +6,7 @@
 // alike; lib/handoff-guard.mjs for the continuation store. A call walks each folder once (linkWalk), within the link
 // budget and the guards' time budget (lib/deadline.mjs).
 
-import { readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkDeadline } from './deadline.mjs';
@@ -50,10 +50,13 @@ export const globLinksTo = (glob, file, seen, { below = false } = {}) =>
   globStarts(glob).some(({ start, rest }) => linkBelow(start, rest, file, seen, below));
 
 // Whether glob path parts `rest`, from the folder `start`, pass a link to `file`, or to a folder that holds it, in any
-// folder they reach: each part is matched, in any case, against what is there, folder by folder, the folders a link
-// leads to included. With `below`, a link that leads inside `file` counts too. Each folder is read once a call
-// (entriesOf), so the entries count against `seen.left` once, however many guarded files and spellings walk it; past
-// it, the glob counts as one that reaches it. Each link is resolved from the folder's spelling that reached it (realOf).
+// folder they reach: each wildcard part is matched, in any case, against what is there, folder by folder, the folders a
+// link leads to included, and each plain part is looked up by its name (entryAt), as a shell passes it with search
+// permission alone, so a link in a folder it may pass but not list counts too. A wildcard part in a folder it may not list
+// counts as one that reaches the file (UNREADABLE): failing closed. The time budget is checked at each entry, so no
+// folder of many long names holds the walk past it. With `below`, a link that leads inside `file` counts too. Each
+// folder is read once a call (entriesOf), so the entries count against `seen.left` once, however many guarded files and
+// spellings walk it, and so does each plain look-up; past it, the glob counts as one that reaches it. Each link is resolved from the folder's spelling that reached it (realOf).
 // A part that is only stars, as zsh's `**`, spans any number of folders, none included, and a run of them reads as one.
 // Inside it the walk follows a link to a folder too, though the shell may not: failing closed. It visits each folder on
 // disk once a part (folderKey), so a link that loops ends the walk there. A folder two links lead to is walked once a
@@ -63,7 +66,8 @@ export function linkBelow(start, rest, file, seen, below = false) {
   let level = [start];
   for (const [i, part] of parts.entries()) {
     const many = MANY.test(part);
-    const matches = many ? () => true : partMatcher(part);
+    const plain = !many && !GLOB_WORD.test(part);
+    const matches = many || plain ? () => true : partMatcher(part);
     // Past a link, the parts still to match: a `**` part may match more folders below the link's target.
     const after = parts.slice(many ? i : i + 1);
     const next = new Set();
@@ -78,9 +82,11 @@ export function linkBelow(start, rest, file, seen, below = false) {
         visited.add(key);
         next.add(dir);
       }
-      const found = entriesOf(dir, seen);
-      if (found === null) return true;
-      for (const entry of found.filter(({ name }) => matches(name))) {
+      const found = plain ? entryAt(dir, part, seen) : entriesOf(dir, seen);
+      if (found === null || (found === UNREADABLE && !many)) return true;
+      for (const entry of found === UNREADABLE ? [] : found) {
+        checkDeadline();
+        if (!matches(entry.name)) continue;
         const reached = entry.link ? realOf(path.join(dir, entry.name), seen) : path.join(dir, entry.name);
         if (entry.link && linkReaches(reached, after, file, below)) return true;
         if (!entry.link && !entry.folder) continue;
@@ -103,7 +109,8 @@ function keyOf(dir, seen) {
 }
 
 // What a folder holds for linkBelow, cached in `seen.entries` by the folder on disk, so each folder counts against
-// `seen.left` once a call: each entry's name, and whether it is a link or a folder; or null past the link budget. Where a
+// `seen.left` once a call: each entry's name, and whether it is a link or a folder; null past the link budget; or
+// UNREADABLE for a folder that is there but may not be listed, which a shell may still pass by a plain name. Where a
 // link leads is not kept here, as another spelling of the folder resolves it to another path (realOf). `seen.keys` caches
 // each spelling's folderKey.
 function entriesOf(dir, seen) {
@@ -112,8 +119,12 @@ function entriesOf(dir, seen) {
     let found = [];
     try {
       found = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      // A folder it cannot read holds nothing it can match.
+    } catch (error) {
+      // A folder that is not there, or not a folder, holds nothing it can match.
+      if (DENIED.has(error.code)) {
+        seen.entries.set(key, UNREADABLE);
+        return UNREADABLE;
+      }
     }
     seen.left -= found.length;
     seen.entries.set(key, seen.left < 0 ? null : found.map((entry) => ({ name: entry.name, link: entry.isSymbolicLink(), folder: entry.isDirectory() })));
@@ -121,7 +132,26 @@ function entriesOf(dir, seen) {
   return seen.entries.get(key);
 }
 
-// What a folder holds for a glob's first part: { dirs, real, links }, or null past the link budget. `dirs` are its
+// What entriesOf gives for a folder that is there but may not be listed.
+const UNREADABLE = Symbol('unreadable');
+// The errors of a folder that is there but may not be listed.
+const DENIED = new Set(['EACCES', 'EPERM']);
+
+// The entry named `name` in the folder `dir`, as entriesOf gives one, in a list: one entry, or none when there is none
+// the call may reach; or null past the link budget. Each look-up counts against `seen.left`.
+function entryAt(dir, name, seen) {
+  seen.left -= 1;
+  if (seen.left < 0) return null;
+  try {
+    const stat = lstatSync(path.join(dir, name));
+    return [{ name, link: stat.isSymbolicLink(), folder: stat.isDirectory() }];
+  } catch {
+    return [];
+  }
+}
+
+// What a folder holds for a glob's first part: { dirs, real, links }, or null past the link budget or for a folder that
+// is there but may not be listed, as the part may then match a link the guard cannot see: failing closed. `dirs` are its
 // spellings, as given and with its links resolved; `real` is the second; `links` are the names of the links in it, which
 // a guard resolves from `real` (realOf) only when the glob matches one. The names are cached in `seen.folders` by the
 // folder on disk, so another spelling of it, in another letter case or with `.` parts, reads and counts them once.
@@ -130,13 +160,15 @@ export function folderOf(folder, seen) {
   const key = folderKey(real);
   if (!seen.folders.has(key)) {
     let names = [];
+    let denied = false;
     try {
       names = readdirSync(real, { withFileTypes: true }).filter((entry) => entry.isSymbolicLink()).map(({ name }) => name);
-    } catch {
-      // A folder it cannot read holds nothing it can match.
+    } catch (error) {
+      // A folder that is not there, or not a folder, holds nothing it can match.
+      denied = DENIED.has(error.code);
     }
     seen.left -= names.length;
-    seen.folders.set(key, seen.left < 0 ? null : names);
+    seen.folders.set(key, seen.left < 0 || denied ? null : names);
   }
   const links = seen.folders.get(key);
   return links === null ? null : { dirs: [...new Set([folder, real])], real, links };

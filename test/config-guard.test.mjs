@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -805,6 +805,62 @@ test('a subagent\'s glob that passes an existing link to a config file or the lo
   for (const command of [`printf x | tee ${out}/other*`, `printf x | tee ${out}/dist/*.txt`]) {
     const result = run(command);
     assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+  }
+});
+
+test('a subagent\'s glob that passes a link in a folder it may pass but not list is refused, and so is a wildcard there; a plain miss runs', (t) => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    t.skip('folder modes do not keep this user from listing a folder');
+    return;
+  }
+  const { dir } = project(t);
+  writeFileSync(path.join(dir, '.aidrian.local.json'), '{}');
+  const state = stateDir(findProject(dir));
+  const marker = path.join(state, 'handoffs/.continue/armed-s1.json');
+  mkdirSync(path.dirname(marker), { recursive: true });
+  writeFileSync(marker, '{}');
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const out = outside(t);
+  // A folder a shell may pass by name, with search permission, but not list: `x*/shut/marker` writes through its link.
+  const shut = path.join(out, 'xdir/shut');
+  mkdirSync(shut, { recursive: true });
+  symlinkSync(marker, path.join(shut, 'marker'));
+  symlinkSync(path.join(dir, '.aidrian/config.json'), path.join(shut, 'conf'));
+  symlinkSync(path.join(dir, '.aidrian.local.json'), path.join(shut, 'local'));
+  // A state folder spelled through a link inside such a folder, which a glob reaches by that spelling.
+  const real = path.join(out, 'real');
+  mkdirSync(path.join(real, 'st'), { recursive: true });
+  mkdirSync(path.join(out, 'nr'));
+  symlinkSync(real, path.join(out, 'nr/link'));
+  const env = { ...process.env, XDG_STATE_HOME: path.join(out, 'nr/link/st') };
+  const spelled = path.join(stateDir(findProject(dir), { env }), 'handoffs/.continue');
+  mkdirSync(spelled, { recursive: true });
+  writeFileSync(path.join(spelled, 'armed-s1.json'), '{}');
+  const run = (tool, toolInput, given = process.env) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8', env: given });
+  chmodSync(shut, 0o311);
+  chmodSync(path.join(out, 'nr'), 0o311);
+  try {
+    for (const [tool, toolInput, reason, given] of [
+      ['Bash', { command: `echo '{}' | tee ${out}/x*/shut/marker` }, /the handoff continuation store/u],
+      ['Monitor', { command: `echo '{}' | tee ${out}/x*/shut/marker`, description: 'watch' }, /the handoff continuation store/u],
+      ['Bash', { command: `printf x | tee ${out}/x*/shut/conf` }, /may change \.aidrian\/config\.json/u],
+      ['PowerShell', { command: `Set-Content ${out}/x*/shut/conf x` }, /may change \.aidrian\/config\.json/u],
+      ['Bash', { command: `echo '${JSON.stringify({ github: { autoMerge: 'on' } })}' | tee ${out}/x*/shut/local` }, /it sets github\.autoMerge in \.aidrian\.local\.json/u],
+      ['Bash', { command: `echo '{}' | tee ${spelled.replace(`${out}/nr/`, `${out}/n*/`)}/armed-s1.json` }, /the handoff continuation store/u, env],
+      // A wildcard part in a folder that may not be listed may match a link the guard cannot see.
+      ['Bash', { command: `printf x | tee ${out}/xdir/shut/m*` }, /./u],
+    ]) {
+      const result = run(tool, toolInput, given);
+      assert.equal(result.status, 2, `${tool}: ${toolInput.command}: ${result.stderr}`);
+      assert.match(result.stderr, reason, toolInput.command);
+    }
+    for (const command of [`printf x | tee ${out}/x*/shut/notes.txt`, `printf x | tee ${out}/n*/link/notes.txt`]) {
+      const result = run('Bash', { command });
+      assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+    }
+  } finally {
+    chmodSync(shut, 0o755);
+    chmodSync(path.join(out, 'nr'), 0o755);
   }
 });
 

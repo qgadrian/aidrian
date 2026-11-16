@@ -116,8 +116,9 @@ function globReaches({ prefix, rest }, store) {
 // delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB). A glob word of a command in a shell the lexer
 // cannot read counts by those names, and when it names the store by its name, as `.con*`, `han*`, or `handoffs/*` do, from any folder
 // (globNamesFile), since such a shell may change its folder first. Such a command may only read what it names, so its
-// block says it may change the store.
-export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state) {
+// block says it may change the store. With `links` false it skips the link walk, which reads folders on disk, so the
+// agent gate hook asks it so first, and again with the walk after the other guards' cheaper checks.
+export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true } = {}) {
   if (!isSubagent(input)) return null;
   const opaque = opaqueShellCommand(input) !== null;
   const { files, names, globs } = writeTargets(input);
@@ -135,7 +136,7 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   const near = (target) => isWithin(root, target) || isWithin(target, root);
   // A glob anywhere may pass a link into the state root; the walk reads each folder once a call (linkWalk).
   const seen = linkWalk(input);
-  const linksTo = (target) => sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+  const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
   if (!dir && ![...files.map(real), ...known.map(({ prefix }) => prefix)].some(near) && !linksTo(root)) return null;
   const store = real(storePath(state()));
   const roots = project.checkouts.map(real);

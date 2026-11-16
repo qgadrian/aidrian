@@ -112,8 +112,9 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   const locals = configFiles(project).filter((file) => path.basename(file) === local).map((file) => [file]);
   const seen = linkWalk(input);
   const linked = (glob) => glob.unsure === false && locals.some(([file]) => globLinksTo(glob, canonical(file), seen));
-  const globbed = globs.some((glob) => !glob.opaque && (globParts(glob.text, [], 'i').pattern.test(local) || linked(glob)));
-  const aimed = targets.length > 0 || globbed || names.some((name) => name.toLowerCase().includes(local));
+  const globbed = () => globs.some((glob) => !glob.opaque && (globParts(glob.text, [], 'i').pattern.test(local) || linked(glob)));
+  // The paths and names first: a call they settle reads no folder on disk.
+  const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached) return null;
   if (opaque) {
@@ -327,7 +328,10 @@ function globbedFile(globs, files, seen, others = true, command = '') {
     return folders.some((folder) =>
       [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
       // An entry the glob matches may be a hard link to the file, which keeps its own path.
-      entries(folder).some((name) => pattern.test(name) && sameFile(path.join(folder, name), pair[1])));
+      entries(folder).some((name) => {
+        checkDeadline();
+        return pattern.test(name) && sameFile(path.join(folder, name), pair[1]);
+      }));
   });
   return files.find((pair) => globs.some((glob) => reaches(pair, glob) || (glob.unsure === false && globLinksTo(glob, pair[1], seen))))?.[1] ?? null;
 }
@@ -366,7 +370,11 @@ function opaqueGlobReaches(glob, file, seen, folderParts) {
     if (here.some(below)) return true;
     // An entry the glob's first part matches may be a link to the file, or to a folder that holds it, from anywhere.
     const first = globParts(rest[0], [], 'i').pattern;
-    return links.some((name) => first.test(name) && linkReaches(realOf(path.join(real, name), seen), rest.slice(1), file));
+    // The time budget is checked at each name, so no folder of many long names holds the guard past it.
+    return links.some((name) => {
+      checkDeadline();
+      return first.test(name) && linkReaches(realOf(path.join(real, name), seen), rest.slice(1), file);
+    });
   });
 }
 

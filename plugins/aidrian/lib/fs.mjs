@@ -168,12 +168,22 @@ const STAR = Symbol('star');
 
 // One glob path part as { test(name) }: `*` matches any run of characters, `?` and a class one each, and the rest itself.
 // A run of `*` folds into one, and a failed match goes back only to the last `*` it passed, so a test takes at most the
-// part's length times the name's in steps, whatever the part holds. `flags` holds `i` to fold case.
+// part's length times the name's in steps, whatever the part holds. A name shorter than the characters the part needs
+// fails at once, so a test takes at most about twice the name's length squared in steps, however long the part.
+// Each token keeps what it answered for each character, so its regular expression runs once a character.
+// `flags` holds `i` to fold case.
 function globMatcher(part, flags) {
   const tokens = [];
   const one = (source) => {
-    const pattern = new RegExp(`^${source}$`, `u${flags}`);
-    return (char) => pattern.test(char);
+    let pattern;
+    const known = new Map();
+    return (char) => {
+      if (!known.has(char)) {
+        pattern ??= new RegExp(`^${source}$`, `u${flags}`);
+        known.set(char, pattern.test(char));
+      }
+      return known.get(char);
+    };
   };
   for (let i = 0; i < part.length; i += 1) {
     const close = part[i] === '[' ? classEnd(part, i) : -1;
@@ -189,7 +199,18 @@ function globMatcher(part, flags) {
       i += char.length - 1;
     }
   }
-  return { test: (name) => matchTokens(tokens, Array.from(String(name))) };
+  const needs = tokens.filter((token) => token !== STAR).length;
+  const tail = tokens.includes(STAR) ? tokens.length - 1 - tokens.lastIndexOf(STAR) : 0;
+  return {
+    test: (name) => {
+      const chars = Array.from(String(name));
+      if (chars.length < needs) return false;
+      // The tokens after the last `*` match the name's end one for one, and the ones before the first its start, which
+      // matchTokens tries first: most names that fail, fail at one end at once.
+      for (let i = 1; i <= tail; i += 1) if (!tokens[tokens.length - i](chars[chars.length - i])) return false;
+      return matchTokens(tokens, chars);
+    },
+  };
 }
 
 // Whether `chars` match `tokens` whole: at a mismatch, the last `*` passed takes one more character, and none before it

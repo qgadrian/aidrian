@@ -84,16 +84,19 @@ async function gate(input) {
   if (denial) await block(input, 'config-guard', denial.reason, { match: denial.match, project, config });
 }
 
-// The first guard's denial of the call, or null.
+// The first guard's denial of the call, or null. The store guard runs first without its link walk, which reads folders
+// on disk, and with it last, so a call the other guards refuse by the paths and names it gives is refused before any walk.
 function guards(input, project, config, gated, snapshot) {
-  const guard = opaqueLimitDenial(input, config)
+  let dir;
+  const state = () => (dir ??= stateDir(project, { config }));
+  const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
+  return opaqueLimitDenial(input, config)
     ?? writeLimitDenial(input, config)
     ?? handoffContinueDenial(input, config)
-    ?? continueStoreWriteDenial(input, project, config, () => stateDir(project, { config }))
-    ?? machineSwitchWriteDenial(input, project, config);
-  if (guard || !gated) return guard;
-  const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
-  return configWriteDenial(input, project, config, { also: guarded });
+    ?? continueStoreWriteDenial(input, project, config, state, { links: false })
+    ?? machineSwitchWriteDenial(input, project, config)
+    ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
+    ?? continueStoreWriteDenial(input, project, config, state);
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

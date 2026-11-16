@@ -889,7 +889,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the store, or to a folder that holds it, as `tee /tmp/alias*` does when `/tmp/alias` links to a marker, and `/va*/…`
   does through macOS's `/var` link; that walk shares the time and link budgets below. A `**` part spans any number of
   folders, as `tee out/**/alias*` reaches `out/a/b/alias`, and the walk follows links to folders inside it, though the
-  shell may not; it reads each folder once a part, so a link that loops ends the walk.
+  shell may not; it reads each folder once a part, so a link that loops ends the walk. A plain part, with no wildcard,
+  is looked up by its name, as a shell passes it with search permission alone, so `tee /tmp/x*/n/alias` counts when
+  `n` may be passed but not listed (mode `0311`); a wildcard part in such a folder counts as one that reaches the store.
+  The guard reads the call's literal paths and names first, and walks links only after the other guards' path and name
+  checks, so a call they refuse by name, such as a write of `.aidrian.local.json`, is refused before any link walk.
   It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
   and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
   cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
@@ -931,7 +935,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
   a subagent's call is refused, as the guards could not finish reading the command in time, and the main session's runs,
-  as the guards allow it anyway. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
+  as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
+  the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it
+  does not match. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
   be in, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
   reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
   so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.

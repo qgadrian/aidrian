@@ -10,7 +10,7 @@ import test, { after } from 'node:test';
 import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-guard.mjs';
-import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
+import { foldCase, globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
 
@@ -250,4 +250,36 @@ test('the links in a PowerShell glob\'s first folder count once a call, however 
   const result = run(subagent(dir, 'PowerShell', String.raw`Remove-Item links\x*`));
   inTime(result, 'PowerShell');
   assert.equal(result.status, 0, result.stderr);
+});
+
+test('a glob over a folder of many long names answers in time, and a write the guards refuse by its name is refused before any walk', (t) => {
+  const dir = project(t);
+  // 20,000 links with 240-character names, each a near miss for the glob: one test of a name against it takes
+  // thousands of steps, so one pass over the folder outlasts the guards' budget, and several the host's timeout.
+  const big = path.join(path.dirname(dir), 'big');
+  mkdirSync(big);
+  for (let i = 0; i < 20000; i += 1) symlinkSync(`/nonexistent/${i}`, path.join(big, `${String(i).padStart(5, '0')}${'a'.repeat(234)}b`));
+  const glob = `${big}/*${'a'.repeat(120)}c*b`;
+  for (const [tool, command] of [['Bash', `printf x | tee ${glob}`], ['PowerShell', `Remove-Item ${glob}`]]) {
+    inTime(run(subagent(dir, tool, command)), tool);
+  }
+  for (const [command, reason] of [
+    [`printf '{"github":{"autoMerge":"on"}}' > .aidrian.local.json; rm -f ${glob}`, /it sets github\.autoMerge in \.aidrian\.local\.json/u],
+    [`printf '{}' > .aidrian/config.json; rm -f ${glob}`, /it changes \.aidrian\/config\.json/u],
+  ]) {
+    const refused = run(subagent(dir, 'Bash', command));
+    inTime(refused, command.slice(0, 40));
+    assert.equal(refused.status, 2, refused.stderr);
+    assert.match(refused.stderr, reason);
+  }
+});
+
+test('globParts rejects at once a name that fails at its end or is shorter than the part, whatever the part\'s length', () => {
+  const names = Array.from({ length: 20000 }, (_, i) => `${String(i).padStart(5, '0')}${'a'.repeat(235)}`);
+  for (const part of [`*${'a'.repeat(120)}b`, `*${'a*'.repeat(5000)}`]) {
+    const { pattern } = globParts(part, [], 'i');
+    const started = performance.now();
+    assert.equal(names.some((name) => pattern.test(name)), false, part.slice(0, 20));
+    assert.ok(performance.now() - started < 500, `${part.slice(0, 20)}: took ${Math.round(performance.now() - started)} ms`);
+  }
 });

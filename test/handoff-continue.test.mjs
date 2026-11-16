@@ -293,6 +293,36 @@ test('the gate takes only a regular brief right inside the handoffs folder, name
   assert.equal(readArmed(setting.store, 'session-1'), null);
 });
 
+test('a brief whose parent path is spelled in another letter case is stamped and armed on a disk that folds case', (t) => {
+  const setting = setup(t);
+  const spelled = path.join(setting.root, 'STATE', 'handoffs', path.basename(setting.file));
+  if (!existsSync(spelled)) return t.skip('this disk keeps letter case apart');
+  assert.ok(stampChecked(setting.store, spelled, SHA), 'the stamp is recorded');
+  passCheck(setting, spelled);
+  const result = gate(setting, { brief: spelled });
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  assert.equal(result.out[0], 'continue: clear');
+  assert.equal(readArmed(setting.store, 'session-1').slug, 'widget');
+});
+
+test('a brief in a sibling folder of the handoffs folder is refused, also through a folder link', (t) => {
+  const setting = setup(t);
+  const sibling = path.join(setting.state, 'handoffs-copy');
+  mkdirSync(sibling);
+  const copy = path.join(sibling, path.basename(setting.file));
+  writeFileSync(copy, brief());
+  const linked = path.join(setting.state, 'linked');
+  symlinkSync(sibling, linked);
+  for (const file of [copy, path.join(linked, path.basename(setting.file))]) {
+    assert.match(readContainedBrief(setting.store, file).problem, /is not in /u, file);
+    assert.equal(stampChecked(setting.store, file, SHA), null, file);
+    const result = gate(setting, { brief: file });
+    assert.equal(result.exitCode, 2, file);
+    assert.match(result.err[0], /is not in /u, file);
+  }
+  assert.equal(readArmed(setting.store, 'session-1'), null);
+});
+
 test('aidrian handoff check stamps the brief and aidrian handoff continue arms it, from the command line', (t) => {
   const setting = setup(t);
   const env = { ...process.env, ...CLAUDE };

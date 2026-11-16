@@ -137,7 +137,7 @@ export function readContainedBrief({ handoffs, uid }, file) {
   }
 }
 
-// { path } when `file` is a regular file and no symlink, its real path lies right inside the real `handoffs`, and its
+// { path } when `file` is a regular file and no symlink, the folder of its real path is the `handoffs` folder, and its
 // name is a brief's; else { problem }.
 function briefPlace(handoffs, file) {
   try {
@@ -145,12 +145,23 @@ function briefPlace(handoffs, file) {
     if (stat.isSymbolicLink()) return { problem: 'is a symlink' };
     if (!stat.isFile()) return { problem: 'is not a regular file' };
     const real = realpathSync(file);
-    if (path.dirname(real) !== realpathSync(handoffs)) return { problem: `is not in ${handoffs}` };
+    if (!sameFolder(path.dirname(real), handoffs)) return { problem: `is not in ${handoffs}` };
     if (!BRIEF_FILE.test(path.basename(real))) return { problem: 'is not named <UTC date>-<slug>.md' };
     return { path: real };
   } catch (error) {
     return { problem: error.code === 'ENOENT' ? `does not exist, or ${handoffs} does not` : `cannot be read (${error.code ?? 'unreadable'})` };
   }
+}
+
+// Whether the real folder `real` is the folder `dir`, by identity: the same device and inode, which every spelling of
+// one folder shares. A real path keeps the letter case it was given, so on a disk that folds case two spellings of one
+// folder differ as text. Where the disk reports no inode, as some Windows disks do, the real paths compare in the case
+// the disk folds to.
+function sameFolder(real, dir) {
+  const [one, other] = [statSync(real, { bigint: true }), statSync(dir, { bigint: true })];
+  if (one.dev !== other.dev) return false;
+  if (one.ino !== 0n || other.ino !== 0n) return one.ino === other.ino;
+  return foldCase(real) === foldCase(realpathSync(dir));
 }
 
 // Whether `t` is a time no later than `now` and at most `window` before it.

@@ -117,7 +117,8 @@ whatever the config says, and `background` only when the config says `"backgroun
 
 1. Exit 2: usage, an unknown `--route`, a config with errors, or a brief the store does not hold. The brief must be,
    by its real path, a regular file right inside `<state>/handoffs/`, no symlink, named `<UTC date>-<slug>.md`, and
-   under 256 KB. A disk that refuses the marker's write exits 2 too.
+   under 256 KB. Its folder is compared by identity, device and inode, so on a disk that folds letter case any
+   spelling of the path passes, at the check's stamp, the gate, and the delivery alike. A disk that refuses the marker's write exits 2 too.
 2. `none` prints `continue: none` and exits 0.
 3. A fallback prints `continue: none` and one `fallback:` line, exit 0: the host does not list the route, or tells the
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a

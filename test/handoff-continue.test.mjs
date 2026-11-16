@@ -427,6 +427,16 @@ test('a store whose folder every user may write, or another user owns, is refuse
   assert.equal(readContainedBrief(store, setting.file).problem, undefined);
 });
 
+// On Windows Node reports every writable folder with the other-write bit, and the process has no user id.
+test('a store opened with no user id is never refused for the mode of its folders', { skip: process.platform === 'win32' && 'chmod sets no other-write bit here' }, (t) => {
+  const setting = setup(t);
+  mkdirSync(storePath(setting.state), { recursive: true });
+  for (const dir of [setting.state, setting.handoffs, storePath(setting.state)]) chmodSync(dir, 0o777);
+  const store = openStore(setting.state, { checkouts: [setting.dir], maxChain: 3, uid: null });
+  assert.equal(store.refused, null);
+  assert.ok(arm(store, marker(setting)), 'the store keeps its markers');
+});
+
 test('a store spelled in another letter case is still inside its checkout', { skip: !['darwin', 'win32'].includes(process.platform) && 'the disk does not fold case' }, (t) => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-case-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));

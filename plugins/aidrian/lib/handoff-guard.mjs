@@ -2,9 +2,10 @@
 // it may not run `aidrian handoff continue`, which arms a continuation of the main session, nor write in the
 // continuation store, `<state>/handoffs/.continue/` (lib/handoff-markers.mjs). scripts/hook-agent-gates.mjs asks it
 // before every tool call. A host's other tools that run a shell command, such as Claude Code's Monitor, reach it as Bash
-// calls (lib/hosts/claude-code.mjs hookInput). It reads a call's targets as lib/config-guard.mjs does, and, like that guard, it is for
-// agents that cooperate: what the shared lexer cannot see, it cannot see either. The known limits of that lexer, which
-// this guard accepts: brace expansion (`{a,b}`), ANSI-C quoting (`$'...'`), a link created and written through in one
+// calls (lib/hosts/claude-code.mjs hookInput); a command in a shell the shared lexer cannot read (lib/hosts/index.mjs
+// opaqueShellCommand) is read as opaque text, and refused when its words may run the gate or name the store.
+// It reads a call's targets as lib/config-guard.mjs does, and, like that guard, it is for agents that cooperate: what
+// the shared lexer cannot see, it cannot see either. The known limits of that lexer, which this guard accepts: brace expansion (`{a,b}`), ANSI-C quoting (`$'...'`), a link created and written through in one
 // call, the outputs of `tar -C` and `curl -o`, a program that runs its arguments as a command (`xargs aidrian ...`,
 // `find ... -exec aidrian ...`), and a path built from a variable. The gate's own checks (lib/handoff-markers.mjs)
 // keep what gets past harmless: a stray marker of the wrong shape, time, or host process is never delivered.
@@ -15,6 +16,7 @@ import { projectRuleReason } from './agent-gates.mjs';
 import { bashCall, writeTargets } from './config-guard.mjs';
 import { globParts, isWithin } from './fs.mjs';
 import { ARMING_FILE, foldCase, storePath } from './handoff-markers.mjs';
+import { opaqueShellCommand } from './hosts/index.mjs';
 import { stateRoot } from './project.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
@@ -29,14 +31,19 @@ const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_
 // or a substitution, as in `$AIDRIAN handoff continue x.md`, is refused when its later plain words read `handoff`, then
 // `continue`: it may be aidrian, and no other program takes those words. A known limit of the shared lexer:
 // a program that runs its arguments as a command, such as `xargs aidrian ...` or `find ... -exec aidrian ...`, is not
-// read as aidrian.
+// read as aidrian. A command in a shell the lexer cannot read is refused when it holds the words `handoff` and
+// `continue`, in any case and order: such a shell may build the call from them, and the guard cannot tell.
 export function handoffContinueDenial(input, { names: { human } }) {
-  const command = input.tool_input?.command;
-  if (!isSubagent(input) || !bashCall(input) || typeof command !== 'string') return null;
-  if (!walkCommands(command, null).some(runsContinue)) return null;
+  if (!isSubagent(input)) return null;
+  const opaque = opaqueShellCommand(input);
+  const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
+  if (typeof command !== 'string') return null;
+  if (opaque !== null ? !OPAQUE_CONTINUE.every((word) => word.test(opaque)) : !walkCommands(command, null).some(runsContinue)) return null;
   const why = 'it runs `aidrian handoff continue`, which arms a continuation of the main session, and only the main session may run it';
   return { match: 'runs aidrian handoff continue', reason: projectRuleReason(input, why, human, 'that the brief is checked; the main session runs the gate') };
 }
+
+const OPAQUE_CONTINUE = [/\bhandoff\b/iu, /\bcontinue\b/iu];
 
 function runsContinue({ invocation, unread }) {
   if (unread !== undefined && /\bhandoff\b[^\n;|&]*\bcontinue\b/u.test(unread)) return true;
@@ -58,6 +65,8 @@ function runsContinue({ invocation, unread }) {
 const MARKER_NAME = new RegExp(ARMING_FILE.source, 'iu');
 // An unsure glob's part whose plain start names such a file, as `armed-*`.
 const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked)-/iu;
+// A word of a command no lexer reads that names the store's folder by its own name.
+const STORE_FOLDER = /^\.continue$/iu;
 // A text that names the store's folder, or a marker in it.
 const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:armed|ready|from|checked|gone|tasks|taken)-)/iu;
 // A disk that folds case reaches the store by any spelling of its path.
@@ -112,7 +121,9 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   // The lexer reads `[.]continue` as a plain word; the shell expands it as a glob.
   const globs = [...written, ...files.filter((file) => /\[[^/]*\]/u.test(file)).map((file) => ({ text: file, dirs: [], unsure: false }))];
   const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the handoff continuation store, where only the main session's \`aidrian handoff\` commands write`, human);
-  if (names.some(namesStore) || globs.some((glob) => glob.unsure && globNamesStore(glob.text))) {
+  // A command no lexer reads may join `.continue` to a path it builds, as a path joiner does.
+  const joined = opaqueShellCommand(input) !== null && names.some((name) => name.split('/').some((part) => STORE_FOLDER.test(part)));
+  if (joined || names.some(namesStore) || globs.some((glob) => glob.unsure && globNamesStore(glob.text))) {
     return { match: 'may change the continuation store', reason: why('may change', 'handoffs/.continue') };
   }
   const known = globs.filter((glob) => !glob.unsure).flatMap(globPaths);

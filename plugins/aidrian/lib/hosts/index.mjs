@@ -44,6 +44,17 @@ export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, 
 // so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.
 export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
 
+// The names a deny matches the call by: toolNames, and `permission_tool_name`, the standard tool whose permission rules the
+// host runs this call under when that is another tool, as an adapter's `hookInput` sets it.
+export const deniedNames = (input) => [...toolNames(input), input.permission_tool_name].filter((each, i, all) => typeof each === 'string' && each !== '' && all.indexOf(each) === i);
+
+// The command of a call that runs one in a shell the shared lexer cannot read, from an adapter's `opaqueShellTools`, or null.
+// The guards read it as opaque text, never as Bash, and fail closed for a subagent (lib/config-guard.mjs opaqueWords).
+export function opaqueShellCommand({ tool_name: tool, tool_input: given }) {
+  const command = given?.command;
+  return typeof command === 'string' && HOSTS.some((host) => host.opaqueShellTools?.includes(tool)) ? command : null;
+}
+
 // A GitHub tool call as { tool, given }, in the terms of the GitHub MCP server's tool: what a host's connector stands for, from the
 // adapter's `githubTools`, with its repository split into `owner` and `repo`, and the adapter's `fixed` values, the inputs its
 // tool implies without taking them, such as `draft: false` for a tool that only marks ready. `name` is the standard name; any

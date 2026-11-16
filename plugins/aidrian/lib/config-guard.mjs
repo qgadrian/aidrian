@@ -3,7 +3,9 @@
 // still can. scripts/hook-agent-gates.mjs asks it before every tool call; docs/config.md#agents gives the rule.
 // It reads the targets the way the main-checkout rule does: Edit, Write, NotebookEdit, and apply_patch by the path they
 // name, and a Bash command by the paths it writes. Unlike that rule it follows each `cd` and reads `sh -c` strings, and
-// when the shell's folder is unknown it judges a relative target by its name alone. An interpreter run with code on its
+// when the shell's folder is unknown it judges a relative target by its name alone. A command in a shell the lexer cannot
+// read (lib/hosts/index.mjs opaqueShellCommand) counts as a write to each file its words name, as code an interpreter
+// runs does: it may read or write any of them, and the guard cannot tell which. An interpreter run with code on its
 // command line or its input, such as `python3 -c` or a heredoc, counts as a write to each of the files its words name,
 // unless its code is one of the few that only read (READS). The guard keeps a gate from changing for the next session;
 // within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
@@ -13,7 +15,7 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { globParts, isWithin } from './fs.mjs';
-import { fileEditOf, isFileEditTool } from './hosts/index.mjs';
+import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
 import { commandLines, inlineShellCommand, lexInputs, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
@@ -82,8 +84,11 @@ const SWITCHES = Object.freeze([
 // the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that names its key. This holds with no gates set, and other writes to that
 // file stay allowed. Like the rest of this guard, it is for agents that cooperate.
+// A command in a shell the lexer cannot read that names the local file is refused whether or not it names a key: it may
+// set a switch by a key it builds, and the guard cannot tell.
 export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+  const opaque = opaqueShellCommand(input) !== null;
   const isBash = bashCall(input);
   const named = SWITCHES.filter(({ key }) => !isBash || String(input.tool_input?.command).includes(key));
   if (named.length === 0) return null;
@@ -91,6 +96,10 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
   if (targets.length === 0 && !names.some((name) => name.toLowerCase().includes(local))) return null;
+  if (opaque) {
+    const why = `it names ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which only the main session may set`;
+    return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
+  }
   const hit = isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
   if (!hit) return null;
   return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${hit.why}`, human) };
@@ -139,11 +148,14 @@ function switchIn(text, valueIn) {
 }
 
 // What the call writes: { files, names, globs }. `files` are absolute paths; `names` are texts that may name a file in a
-// folder no path gives: a relative target written after a `cd` to an unknown folder, and code an interpreter runs;
-// `globs` are bashWrites's glob targets. lib/handoff-guard.mjs reads them too.
+// folder no path gives: a relative target written after a `cd` to an unknown folder, code an interpreter runs, and the
+// words of a command in a shell the lexer cannot read (opaqueWords); `globs` are bashWrites's glob targets.
+// lib/handoff-guard.mjs reads them too.
 export function writeTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
+  const opaque = opaqueShellCommand(input);
+  if (opaque !== null) return { files: [], names: opaqueWords(opaque), globs: [] };
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string') return { files: [], names: [], globs: [] };
   const writes = bashWrites(command, cwd, { followCd: true, shells: true, restores: true, globs: true });
@@ -152,6 +164,14 @@ export function writeTargets(input) {
     names: [...writes.filter((write) => write.unsure && !write.glob && !path.isAbsolute(write.text)).map((write) => write.text), ...interpretedCode(command)],
     globs: writes.filter((write) => write.glob),
   };
+}
+
+// The words of a command in a shell the lexer cannot read, each a text that may name a file: split at blanks, quotes,
+// backticks, and the characters that join or group words, with each backslash read as a `/`, and each word also in lower
+// case, since such a shell may reach a file by any case of its name. Failing closed: a word a read names counts too.
+export function opaqueWords(command) {
+  const words = command.replaceAll('\\', '/').split(/[\s'"`;|&(){}<>,=+@]+/u).filter(Boolean);
+  return [...new Set([...words, ...words.map((word) => word.toLowerCase())])];
 }
 
 // The guarded file one of `names` names, or null: by its file name, for config.json by the project folder's name, and

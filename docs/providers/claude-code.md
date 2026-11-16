@@ -111,21 +111,50 @@ So Claude Code holds each agent to its gates, tool by tool and pattern by patter
 ## Shell commands of the Monitor tool
 
 The Monitor tool runs its `command` in a shell, in the background, under Bash's permission rules, and a subagent may
-call it ([tools reference](https://code.claude.com/docs/en/tools-reference#monitor-tool)). A hook whose matcher is Bash
-gets those commands as Bash calls; one whose matcher takes every tool, as the agent gates hook's does, gets the Monitor
-call itself ([hooks reference](https://code.claude.com/docs/en/hooks#match-monitor-commands)). So the adapter's
-`hookInput` reads a Monitor call with a `command` as `Bash`, with `raw_tool_name: "Monitor"`, and the guards of a shell
-command, such as the [handoff guard](../hooks.md#agent-gates), read it as they read Bash. A gate that names `Monitor`
-still matches it. A WebSocket watch takes `ws` in place of `command`, runs no shell, and stays as it is.
+call it ([tools reference](https://code.claude.com/docs/en/tools-reference#monitor-tool)). From Claude Code 2.1.314, a hook
+whose matcher is Bash gets those commands as Bash calls; before that version the [Bash rules](../hooks.md#bash-rules),
+which hooks.json matches to Bash, skip a Monitor command. A hook whose matcher takes every tool, as the agent gates hook's
+does, gets the Monitor call itself on every version ([hooks reference](https://code.claude.com/docs/en/hooks#match-monitor-commands)).
+So the adapter's `hookInput` reads a Monitor call with a `command` as `Bash`, with `raw_tool_name: "Monitor"`, and the
+handoff guard, the config guard, and the machine-switch guard of the [agent gates hook](../hooks.md#agent-gates) read it
+as they read Bash on every version.
+
+- A gate's `Bash` and `Bash(<prefix>)` patterns match a Monitor command. A `Monitor` pattern still matches it too,
+  but when the same `allow` list has a `Bash(<prefix>)` pattern, the command must start with one of them, as a Bash call's must:
+  `["Monitor", "Bash(git status)"]` lets `git status` run through Monitor, and not `rm -rf build` ([config](../config.md#agents)).
+- A WebSocket watch takes `ws` in place of `command` and runs no shell, so it keeps the name `Monitor`.
+  It runs under Bash's permission rules all the same, so `hookInput` adds `permission_tool_name: "Bash"`, and a bare
+  `Bash` deny covers it; a `Bash(<prefix>)` pattern never matches it.
+- A block names the tool the agent called, `Monitor`, not `Bash`.
+
+## PowerShell commands
+
+The PowerShell tool runs its `command` in PowerShell, on Windows, and a subagent may call it
+([tools reference](https://code.claude.com/docs/en/tools-reference#powershell-tool)). The shared lexer reads POSIX shells,
+and it misreads PowerShell's `@(...)`, its backtick escapes, and its quoting, so the adapter never reads a PowerShell call
+as Bash, and no `Bash(<prefix>)` pattern ever admits one: a gate matches it only by the name `PowerShell`.
+The adapter lists it in `opaqueShellTools`, and the [agent gates hook](../hooks.md#agent-gates) reads its command as opaque
+text, failing closed for a subagent: a command that holds the words `handoff` and `continue`, or names the continuation
+store, a marker, or `.aidrian.local.json`, is refused, and, while gates are set, one that names a file that sets them.
+The [Bash rules](../hooks.md#bash-rules), which hooks.json matches to Bash, do not run on a PowerShell command.
 
 ## Handoff continuation
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
 types `/clear` and then any message, which is the adapter's `steps.clear`, and the new session resumes from the brief.
 `compact` and `background` fall back to `none` until their release, and `aidrian handoff route` prints `route: none` for them.
-What follows is the host behavior the route rests on; the route itself has not yet run live from end to end.
+The route is verified on Claude Code 2.1.325: the host behavior it rests on on 2026-11-15, with a throwaway plugin, and
+the route from end to end on 2026-11-16, with the plugin loaded from a branch. That live run found:
 
-Verified on Claude Code 2.1.325 on 2026-11-15, with a throwaway plugin:
+- The gate ran from inside the task worktree, since the Bash tool's folder follows a `cd`, and wrote the same project
+  store. After the clear the new session starts in the folder the session was launched in, and the resume enters the
+  worktree.
+- The line that says a continuation was cancelled is model context only, the prompt hook's `additionalContext`: the Human
+  does not see it.
+- Whether typing `/clear` alone runs the prompt hook was not observed; `keepsArmed(prompt)` keeps the continuation
+  either way.
+
+The host behavior, from the throwaway plugin:
 
 - The clear command issues a new session id. SessionEnd fires with `reason: "clear"` and the old id, then SessionStart
   with `source: "clear"` and the new id, about 100 ms later; both carry the same `cwd`. Its docs do not promise that order,

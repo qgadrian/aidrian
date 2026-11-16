@@ -96,7 +96,7 @@ A route the host does not list falls back the same way. Which host does which ro
 
 | Route | Host |
 | --- | --- |
-| `clear` | Claude Code: host behavior verified on 2.1.325, the route not yet run live: [Handoff continuation](providers/claude-code.md#handoff-continuation) |
+| `clear` | Claude Code: verified on 2.1.325: [Handoff continuation](providers/claude-code.md#handoff-continuation) |
 | any | Codex: none, so every route falls back to `"none"` |
 
 ### The route the host runs

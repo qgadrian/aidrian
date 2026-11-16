@@ -16,9 +16,9 @@ the tracker write guard, and the question names check also record each block: se
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
-| A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; the continuation Claude Code: host behavior verified on 2.1.325, the route not yet run live ([provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
-| A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code: host behavior verified on 2.1.325, the route not yet run live ([provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
@@ -35,7 +35,7 @@ the tracker write guard, and the question names check also record each block: se
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
-| A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code: host behavior verified on 2.1.325, the route not yet run live ([provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
 The Bash rules run in the order of their table, in one process.
 A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
@@ -879,12 +879,20 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   literal path to it, in any letter case on a disk that folds case, through a glob that may reach it, or after a `cd`
   the guard can follow, nor a file named as a marker that arms or delivers a continuation where the path is unknown,
   such as after a `cd` it cannot follow. Otherwise a subagent could write the marker it may not arm.
-  It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue"`,
-  and a write after a `cd ~/…`, pass when they name no marker by its file name. That is an accepted limit of a guard
-  for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
+  It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
+  and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
+  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
+  of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule
-  above and the gates: a gate that names `Monitor` still matches it ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
+  above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
+- A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:
+  the guards read its `command` as opaque text, split into words at blanks, quotes, and the characters that join words,
+  with `\` read as `/`, in any letter case, and fail closed for a subagent. It may not hold both the words `handoff` and
+  `continue`, nor a word that names the continuation store (`handoffs/.continue`, a `.continue` part, or a marker's
+  file name), nor `.aidrian.local.json`; while gates are set, nor a word that names a file that sets them. Each counts
+  whether the command reads or writes, since the guard cannot tell; Read still reads the file
+  ([provider page](providers/claude-code.md#powershell-commands)).
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.

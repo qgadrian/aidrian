@@ -59,7 +59,8 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `serverSpelling(server)` | How it spells a server's name, such as a hyphen as an underscore |
 | `githubTools` | Optional: a GitHub connector's merge, comment, and ready tools by standard name, each with `as`, the GitHub MCP server's tool it stands for, `repo`, its `owner/name` input, `fields`, and `fixed`, the inputs the tool implies without taking them, such as `draft: false`. `hooks.json` lists each by its raw name |
 | `toolResponse(response)` | The objects a tool's response holds, the most direct first |
-| `hookInput(input)` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is |
+| `hookInput(input)` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is. A call of a tool the host runs under another tool's permission rules may carry `permission_tool_name`, that tool's standard name, which a bare deny of it then covers (`deniedNames` in `lib/hosts/index.mjs`) |
+| `opaqueShellTools` | Optional: its tools that run `tool_input.command` in a shell the shared lexer cannot read, such as PowerShell. They keep their own name, so no `Bash(<prefix>)` pattern admits them, and the guards read the command as opaque text, failing closed for a subagent (`opaqueShellCommand` in `lib/hosts/index.mjs`) |
 | `fileEditTools`, `fileEdit(tool, input)` | Its file edit tools, and each call in a shape `fileEditOf` in `lib/hosts/index.mjs` lists |
 | `projectFolders` | Where a project keeps its skills and agents for it, if the plugin's lint can read them |
 | `modelsKey`, `modelChoices` | Its key under `models` in config.json, and what that key takes |
@@ -76,7 +77,8 @@ The standard the shared code reads is what `hooks.json` matches: `Bash`, `Agent`
 `test/host-coupling.test.mjs` lists each use of those tool names.
 `apply_patch` is not one of them: it is one host's file edit, read through `fileEditOf`.
 A host that differs maps to the standard in `hookInput` and `toolName`, as `test/fixtures/adapters/fake-host.mjs` does.
-A project's pattern may name a tool either way, since the gates and the guard match `tool_name` and `raw_tool_name`.
+A project's pattern may name a tool either way, since the gates and the guard match `tool_name` and `raw_tool_name`,
+and a block names the tool by `raw_tool_name`, the one the agent called.
 Keep the adapter small and let it read no file when it loads: every hook loads it.
 
 ### What the fixtures do not prove

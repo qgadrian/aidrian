@@ -577,6 +577,15 @@ test('a subagent may not run `aidrian handoff continue`, with or without gates, 
     }
     assert.equal(run(cwd, subagent(cwd, 'Monitor', { command: allowed[0], description: 'watch' })).status, 0, `${label}: Monitor check`);
     assert.equal(run(cwd, subagent(cwd, 'Monitor', { ws: { url: 'wss://example.test/aidrian handoff continue' } })).status, 0, `${label}: a WebSocket watch runs no shell`);
+    // Claude Code's PowerShell tool runs a shell the lexer cannot read: its words are judged as opaque text.
+    for (const command of ['aidrian handoff continue x.md', 'node C:/plugin/lib/cli.mjs handoff continue x.md', '& $a Handoff @("Continue", "x.md")', "$w = 'continue'; aidrian handoff $w x.md"]) {
+      const result = run(cwd, subagent(cwd, 'PowerShell', { command }));
+      assert.equal(result.status, 2, `${label}: PowerShell ${command}`);
+      assert.match(result.stderr, /^aidrian: PowerShell is blocked for the agent "aidrian:explorer"[^\n]*it runs `aidrian handoff continue`/u, `${label}: PowerShell ${command}`);
+    }
+    for (const command of ['Get-ChildItem C:/repo', 'aidrian handoff check x.md']) assert.equal(run(cwd, subagent(cwd, 'PowerShell', { command })).status, 0, `${label}: PowerShell ${command}`);
+    const { agent_id: _id, agent_type: _type, ...mainShell } = subagent(cwd, 'PowerShell', { command: 'aidrian handoff continue x.md' });
+    assert.equal(run(cwd, mainShell).status, 0, `${label}: the main session's PowerShell may`);
     const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(cwd, 'Bash', { command: blocked[0] });
     assert.equal(run(cwd, main).status, 0, `${label}: the main session may`);
   }
@@ -632,6 +641,11 @@ test('a subagent may not write in the handoff continuation store, with or withou
       ['Monitor', { command: `echo {} > ${store}/armed-S.json`, description: 'watch' }],
       ['Monitor', { command: `cp /tmp/x.json ${store}/ready-s1.json && tail -f /tmp/log`, description: 'watch' }],
       ['Monitor', { command: 'cd "$X/handoffs/.continue" && echo {} > armed-s1.json', description: 'watch' }],
+      // Claude Code's PowerShell tool runs a shell the lexer cannot read: a word that names the store or a marker counts.
+      ['PowerShell', { command: String.raw`Set-Content -Path "$env:S\handoffs\.continue\armed-s1.json" -Value '{}'` }],
+      ['PowerShell', { command: String.raw`Copy-Item C:\tmp\x.json READY-s1.json` }],
+      ['PowerShell', { command: "New-Item -ItemType Directory (Join-Path $s 'handoffs' '.Continue')" }],
+      ['PowerShell', { command: `Get-Content ${store}/armed-s1.json` }],
       // On a disk that folds case, any spelling reaches the store.
       ...(FOLDS ? [
         ['Write', { file_path: path.join(handoffs, '.CONTINUE/armed-s1.json'), content: '{}' }],
@@ -658,12 +672,40 @@ test('a subagent may not write in the handoff continuation store, with or withou
       ['Bash', { command: 'touch src/[z-a].js' }],
       ['Bash', { command: `rm -rf ${handoffs}/[0-9]*.md` }],
       ['Monitor', { command: `tail -f ${store}/armed-s1.json`, description: 'watch' }],
+      ['PowerShell', { command: 'Get-ChildItem $env:TEMP | Select-Object -First 3' }],
+      ['PowerShell', { command: `Remove-Item ${handoffs}/2026-11-15-x.md` }],
     ]) {
       assert.equal(run(subagent(dir, tool, toolInput)).status, 0, label(toolInput));
     }
     const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: path.join(store, 'armed-s1.json'), content: '{}' });
     assert.equal(run(main).status, 0, 'the main session may');
+    const { agent_id: _id, agent_type: _type, ...mainShell } = subagent(dir, 'PowerShell', { command: `Set-Content ${store}/armed-s1.json '{}'` });
+    assert.equal(run(mainShell).status, 0, 'the main session\'s PowerShell may');
   }
+});
+
+test('a subagent\'s PowerShell command that names a guarded config file or the machine switches is refused; a Bash(prefix) allow never admits one', (t) => {
+  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
+  const gated = project(t).dir;
+  for (const command of [String.raw`Set-Content .AIDRIAN\Config.json '{}'`, "Remove-Item -Recurse .aidrian/config.json"]) {
+    const result = run(gated, subagent(gated, 'PowerShell', { command }));
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /^aidrian: PowerShell is blocked[^\n]*may change \.aidrian\/config\.json, which sets this project's agent gates/u, command);
+  }
+  assert.equal(run(gated, subagent(gated, 'PowerShell', { command: 'Get-ChildItem src' })).status, 0);
+  const open = project(t, { version: 1 }).dir;
+  for (const command of ["(Get-Content .aidrian.local.json) -replace 'off','on' | Set-Content .aidrian.local.json", '$j = gc .AIDRIAN.LOCAL.JSON | ConvertFrom-Json; $j.github.automerge = "on"']) {
+    const result = run(open, subagent(open, 'PowerShell', { command }));
+    assert.equal(result.status, 2, command);
+    assert.match(result.stderr, /it names \.aidrian\.local\.json in a shell command the guard cannot read/u, command);
+  }
+  assert.equal(run(open, subagent(open, 'PowerShell', { command: 'Get-Content README.md' })).status, 0);
+  const { agent_id: _id, agent_type: _type, ...main } = subagent(open, 'PowerShell', { command: "Set-Content .aidrian.local.json '{}'" });
+  assert.equal(run(open, main).status, 0, 'the main session may');
+  const limited = project(t, { version: 1, agents: { explorer: { allow: ['Read', 'Bash(git status)'] } } }).dir;
+  const shell = run(limited, subagent(limited, 'PowerShell', { command: 'git status' }));
+  assert.equal(shell.status, 2, 'a Bash(prefix) allow never admits a PowerShell command');
+  assert.match(shell.stderr, /agents\.explorer\.allow does not list it/u);
 });
 
 test('globParts reads *, ?, and a [...] class, negated with !, in the last path part', () => {

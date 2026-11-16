@@ -14,7 +14,7 @@ import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
-import { agentAliases, continueRoutes, detectHost, HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { agentAliases, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -438,8 +438,18 @@ test('a Claude Code Monitor call that runs a shell command reads as the standard
   assert.deepEqual(read, { ...monitor, tool_name: 'Bash', raw_tool_name: 'Monitor' });
   assert.deepEqual(UNKNOWN_HOST.hookInput(monitor), read, 'a payload no host claims is read the same way');
   const ws = { ...monitor, tool_input: { ws: { url: 'wss://example.test' } } };
-  assert.deepEqual(claude.hookInput(ws), ws, 'a WebSocket watch runs no shell');
+  assert.deepEqual(claude.hookInput(ws), { ...ws, permission_tool_name: 'Bash' }, 'a WebSocket watch runs no shell, under Bash\'s permission rules');
+  assert.deepEqual(deniedNames(claude.hookInput(ws)), ['Monitor', 'Bash']);
   // A gate that names Monitor still matches the call by the name it was sent as.
   assert.ok([read.tool_name, read.raw_tool_name].some((name) => nameMatches('Monitor', name)));
   for (const host of HOSTS.filter((each) => each !== claude)) assert.deepEqual(host.hookInput(monitor), monitor, host.id);
+});
+
+test('a Claude Code PowerShell call is never read as Bash: its command is opaque text to the guards', () => {
+  const claude = HOSTS.find((host) => host.id === 'claude-code');
+  const call = { session_id: 's', agent_id: 'a1', tool_name: 'PowerShell', tool_input: { command: 'Get-ChildItem @(1, 2) `n' }, cwd: '/x' };
+  assert.deepEqual(claude.hookInput(call), call, 'it keeps its name, so no Bash(prefix) pattern matches it');
+  assert.equal(opaqueShellCommand(UNKNOWN_HOST.hookInput(call)), call.tool_input.command);
+  for (const tool of ['Bash', 'Monitor', 'Read']) assert.equal(opaqueShellCommand(UNKNOWN_HOST.hookInput({ ...call, tool_name: tool })), null, tool);
+  assert.equal(opaqueShellCommand({ ...call, tool_input: {} }), null, 'a call with no command');
 });

@@ -910,7 +910,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   word too. One pipeline of read-only cmdlets, such as `Get-ChildItem`, `Get-Content`, `Select-String`, `Where-Object`, or
   `Get-Process`, each word plain, with no variable, subexpression, script block, redirection, or `;`, writes nothing and is
   not judged by its paths and globs, so `Get-ChildItem *` and `dir .*` run anywhere; `Get-ChildItem * | Remove-Item` is
-  judged.
+  judged. Such a pipeline still may not hold both `handoff` and `continue`, and still counts toward the 512-word cap below.
   A glob is matched in at most its length times the name's steps, never by backtracking.
   It may not hold both the words `handoff` and `continue`, nor a word that names or reaches the continuation store
   (`handoffs/.continue`, a `.continue` part, a marker's file name, a folder that holds the store, or a glob that reaches
@@ -919,15 +919,18 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   guard cannot tell, so the block
   says it may change the file, or, for a glob, that it may reach it; Read still reads the file
   ([provider page](providers/claude-code.md#powershell-commands)). A subagent's command of more than 512 words, counting
-  each case, is refused, since the guards resolve no more.
+  each case, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
+  such a call, and the gates are asked before any guard ([config](config.md#agents)).
 - The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
   a subagent's call is refused, as the guards could not finish reading the command in time, and the main session's runs,
   as the guards allow it anyway. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
   be in, is refused at once, and a glob that leads the guards through more than 100,000 links counts as one that may
-  reach a guarded file. A path that passes more links than the system follows in one lookup, which no command can open,
-  is read as spelled. `AIDRIAN_GUARD_BUDGET_MS` in the hook's environment may only lower the budget, as a test does. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
-  such a call, and the gates are asked before any guard ([config](config.md#agents)).
+  reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
+  so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.
+  A path that passes more links than the system follows in one lookup is read as spelled: a command that reaches it in
+  two lookups, as after a `cd` partway along, is not followed, an accepted limit.
+  `AIDRIAN_GUARD_BUDGET_MS` in the hook's environment may only lower the budget, as a test does.
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.

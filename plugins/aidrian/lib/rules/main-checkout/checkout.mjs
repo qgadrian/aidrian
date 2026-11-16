@@ -114,8 +114,9 @@ export function canonical(file) {
 // past a loop (ELOOP) or a folder it may not read (EACCES), the path stays as spelled, so a link that nests itself
 // returns at once. At the hop or length limit, the last target reached is returned.
 // The system's own lookup (realpathSync.native) is asked first, as it answers at once: a path that passes more links
-// than it follows in one lookup (ELOOP), which no command can open either, stays as spelled, however long its chain;
-// the path as given is resolved by realpathSync, which keeps its letter case. The longest leading part that resolves is
+// than it follows in one lookup (ELOOP) stays as spelled, however long its chain. A command that reaches it in two
+// lookups, as after a `cd` partway along, is not followed: an accepted limit.
+// Otherwise the path as given is resolved by realpathSync, which keeps its letter case. The longest leading part that resolves is
 // the whole path, its parent, or else is found by halves: a part below one that does not resolve never does, so a path
 // takes as many tries as halvings, not one a part. A part the system finds too long to look up (ENAMETOOLONG) is
 // tried by realpathSync, which reads one part at a time, unless a shorter part above it already loops.

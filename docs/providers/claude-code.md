@@ -149,7 +149,8 @@ adapter never reads a PowerShell call as Bash, and no `Bash(<prefix>)` pattern i
   A word that is a path counts by that path, from the call's folder when relative and from the home folder after a
   leading `~`, and a word with `*`, `?`, or `[` counts as a glob, judged as the [hooks page](../hooks.md#agent-gates) says.
   One pipeline of read-only cmdlets with plain words, such as `Get-ChildItem *` or `Get-ChildItem | Where-Object Name -like 'h*'`,
-  writes nothing and is not judged. A command of more than 512 words, counting each case, is refused for a subagent, as
+  writes nothing and is not judged by its paths and globs, though it still may not hold both `handoff` and `continue`,
+  and still counts toward the word cap. A command of more than 512 words, counting each case, is refused for a subagent, as
   the guards read no more, and so is one they cannot finish reading within their time budget.
 - The [Bash rules](../hooks.md#bash-rules), which hooks.json matches to Bash, do not run on a PowerShell command.
 

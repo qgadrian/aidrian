@@ -4,12 +4,14 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test, { after } from 'node:test';
 
 import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -109,6 +111,26 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
   assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '600000' }).status, 0);
 });
 
+test('AIDRIAN_GUARD_BUDGET_MS above the hook\'s own budget cannot raise it: a call still reading past 2.5 seconds is refused', (t) => {
+  const dir = project(t);
+  // A preload that holds the hook for 2.7 seconds before its guards start, so they run past the hook's 2.5 second budget.
+  const slow = path.join(path.dirname(dir), 'slow.mjs');
+  writeFileSync(slow, 'const end = performance.now() + 2700;\nwhile (performance.now() < end);\n');
+  const env = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${pathToFileURL(slow).href}`.trim() };
+  for (const raised of ['99999', '2501']) {
+    const refused = run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...env, AIDRIAN_GUARD_BUDGET_MS: raised });
+    assert.equal(refused.signal, null, `${raised}: stopped after ${Math.round(refused.took)} ms`);
+    assert.equal(refused.status, 2, `${raised}: ${refused.stderr}`);
+    assert.match(refused.stderr, /the guards could not finish reading this command in time/u, raised);
+  }
+});
+
+test('isolate drops AIDRIAN_GUARD_BUDGET_MS, so a reviewer or a test never runs the guards on a lowered budget', () => {
+  const env = isolate({ AIDRIAN_GUARD_BUDGET_MS: '0', PATH: '/usr/bin' });
+  assert.equal(env.AIDRIAN_GUARD_BUDGET_MS, undefined);
+  assert.equal(env.PATH, '/usr/bin', 'the rest stays');
+});
+
 test('a subagent\'s read-only PowerShell pipeline runs, and its writes by a glob are judged by three plain characters', (t) => {
   const dir = project(t);
   const open = project(t, { version: 1 });
@@ -138,6 +160,9 @@ test('a subagent\'s read-only PowerShell pipeline runs, and its writes by a glob
     [path.join(dir, 'src'), 'Remove-Item -Recurse han*'],
     [path.join(dir, 'src'), 'Remove-Item -Recurse .aid*'],
     [path.join(dir, 'src'), 'Remove-Item conf*'],
+    // Aliases on Windows only: on another system each runs a program of that name, which is judged.
+    [dir, 'write .aidrian/config.json'],
+    [dir, 'gsv .aidrian/config.json'],
   ]) {
     assert.equal(run(subagent(cwd, 'PowerShell', command)).status, 2, command);
   }
@@ -174,4 +199,23 @@ test('a subagent\'s PowerShell glob with a wildcard before its last part is judg
   }
   mkdirSync(path.join(dir, 'dist/b'), { recursive: true });
   assert.equal(run(subagent(dir, 'PowerShell', String.raw`Remove-Item -Recurse dist\*\*`)).status, 0, 'no link below');
+});
+
+test('a PowerShell glob over a tree under the link budget runs, however many guarded files walk it, and a link in it is still refused', (t) => {
+  const dir = project(t);
+  // 2000 packages of 12 files: 26,000 entries, a quarter of the link budget, read once a call, not once a guarded file.
+  for (let i = 0; i < 2000; i += 1) {
+    const each = path.join(dir, 'node_modules', `p${i}`);
+    mkdirSync(each, { recursive: true });
+    for (let j = 0; j < 12; j += 1) writeFileSync(path.join(each, `f${j}.js`), '');
+  }
+  for (const command of [String.raw`Remove-Item -Recurse node_modules\*\dist`, String.raw`Remove-Item node_modules\*\*.map`]) {
+    const result = run(subagent(dir, 'PowerShell', command));
+    inTime(result, command);
+    assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+  }
+  symlinkSync('../../.aidrian', path.join(dir, 'node_modules/p1999/dist'));
+  const refused = run(subagent(dir, 'PowerShell', String.raw`Remove-Item -Recurse node_modules\*\dist`));
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /may change \.aidrian\/config\.json/u);
 });

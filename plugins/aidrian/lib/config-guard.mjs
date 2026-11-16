@@ -206,9 +206,10 @@ function readTargets(input) {
 }
 
 const GLOB_WORD = /[*?[]/u;
-// PowerShell cmdlets that only read, by name and by the aliases PowerShell 7 gives them on every platform; the tool loads
-// no profile that could change them. One pipeline of these alone, each word plain, writes nothing (writeTargets).
-const READERS = ['Get-ChildItem', 'gci', 'dir', 'Get-Item', 'gi', 'Get-ItemProperty', 'gp', 'Get-Content', 'gc', 'Select-String', 'sls', 'Test-Path', 'Resolve-Path', 'rvpa', 'Split-Path', 'Get-Location', 'gl', 'pwd', 'Where-Object', 'where', '?', 'Select-Object', 'select', 'Sort-Object', 'Measure-Object', 'measure', 'Group-Object', 'group', 'Format-Table', 'ft', 'Format-List', 'fl', 'Format-Wide', 'fw', 'Out-String', 'Out-Host', 'Get-Command', 'gcm', 'Get-Help', 'Get-Process', 'gps', 'Get-Service', 'gsv', 'Get-Date', 'Write-Output', 'echo', 'write', 'Write-Host'];
+// PowerShell cmdlets that only read, by name and by the aliases PowerShell 7 gives them on every platform, so not `write`
+// or `gsv`, aliases on Windows only, which on another system run a program of that name; the tool loads no profile that
+// could change them. One pipeline of these alone, each word plain, writes nothing (writeTargets).
+const READERS = ['Get-ChildItem', 'gci', 'dir', 'Get-Item', 'gi', 'Get-ItemProperty', 'gp', 'Get-Content', 'gc', 'Select-String', 'sls', 'Test-Path', 'Resolve-Path', 'rvpa', 'Split-Path', 'Get-Location', 'gl', 'pwd', 'Where-Object', 'where', '?', 'Select-Object', 'select', 'Sort-Object', 'Measure-Object', 'measure', 'Group-Object', 'group', 'Format-Table', 'ft', 'Format-List', 'fl', 'Format-Wide', 'fw', 'Out-String', 'Out-Host', 'Get-Command', 'gcm', 'Get-Help', 'Get-Process', 'gps', 'Get-Service', 'Get-Date', 'Write-Output', 'echo', 'Write-Host'];
 // A plain word: no variable, subexpression, script block, splat, redirection, operator, escape, or comment; a bracket
 // class; or a quoted text with no `$`, backtick, or typographic quote in it.
 const PLAIN = String.raw`(?:[^\s$(){}\[\];&|<>\x60@#'"\u2018-\u201E]|\[[^\s\]$\x60]*\]|'[^'$\x60\u2018-\u201B\n]*'|"[^"$\x60\u201C-\u201E\n]*")+`;
@@ -332,7 +333,7 @@ const LINK_BUDGET = 100000;
 function opaqueGlobbedFile(globs, files, checkouts = [], deep = new Set()) {
   if (globs.length === 0) return null;
   const roots = new Set(checkouts.flatMap((dir) => [path.resolve(dir), canonical(dir)]));
-  const seen = { folders: new Map(), left: LINK_BUDGET };
+  const seen = { folders: new Map(), entries: new Map(), keys: new Map(), left: LINK_BUDGET };
   const folderParts = (file) => (deep.has(file) ? 2 : roots.has(path.dirname(file)) ? 0 : 1);
   return files.find((pair) => globs.some((glob) => pair.some((file) => opaqueGlobReaches(glob, file, seen, folderParts(file)))))?.at(-1) ?? null;
 }
@@ -373,33 +374,48 @@ function opaqueGlobReaches({ text, dirs = [] }, file, seen, folderParts) {
 
 // Whether glob path parts `rest`, from the folder `start`, pass a link to `file`, or to a folder that holds it, in any
 // folder they reach: each part is matched, in any case, against what is there, folder by folder, the folders a link
-// leads to included. The entries it reads count against `seen.left`; past it, the glob counts as one that reaches it.
+// leads to included. Each folder is read once a call (entriesOf), so the entries count against `seen.left` once, however
+// many guarded files and spellings walk it; past it, the glob counts as one that reaches it.
 function linkBelow(start, rest, file, seen) {
   let level = [start];
   for (const [i, part] of rest.entries()) {
     const next = [];
     for (const dir of level) {
       checkDeadline();
-      let found = [];
-      try {
-        found = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        // A folder it cannot read holds nothing it can match.
-      }
-      seen.left -= found.length;
-      if (seen.left < 0) return true;
+      const found = entriesOf(dir, seen);
+      if (found === null) return true;
       for (const entry of found.filter(({ name }) => partMatches(part, name))) {
-        const at = path.join(dir, entry.name);
-        if (entry.isSymbolicLink()) {
-          const real = canonical(at);
+        if (entry.link) {
+          // A link is resolved once, the first time a part matches it.
+          entry.real ??= canonical(path.join(dir, entry.name));
+          const { real } = entry;
           if (real === file || sameFile(real, file) || (isWithin(real, file) && reachesFile(rest.slice(i + 1), path.relative(real, file).split(path.sep)))) return true;
           next.push(real);
-        } else if (entry.isDirectory()) next.push(at);
+        } else if (entry.folder) next.push(path.join(dir, entry.name));
       }
     }
     level = next;
   }
   return false;
+}
+
+// What a folder holds for linkBelow, cached in `seen.entries` by the folder on disk, so each folder counts against
+// `seen.left` once a call: each entry's name, whether it is a link or a folder, and, once linkBelow resolves a link, where
+// it leads; or null past the link budget. `seen.keys` caches each spelling's folderKey.
+function entriesOf(dir, seen) {
+  if (!seen.keys.has(dir)) seen.keys.set(dir, folderKey(dir));
+  const key = seen.keys.get(dir);
+  if (!seen.entries.has(key)) {
+    let found = [];
+    try {
+      found = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      // A folder it cannot read holds nothing it can match.
+    }
+    seen.left -= found.length;
+    seen.entries.set(key, seen.left < 0 ? null : found.map((entry) => ({ name: entry.name, link: entry.isSymbolicLink(), folder: entry.isDirectory() })));
+  }
+  return seen.entries.get(key);
 }
 
 // What a folder holds for opaqueGlobReaches, cached in `seen.folders` by the folder on disk, so another spelling of it,

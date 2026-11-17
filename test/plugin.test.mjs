@@ -738,20 +738,20 @@ test('the handoff brief template is its own file, the skill names it, and both s
 test('the handoff skills run the continue gate after the check, carry the chain, and skip it for a checkpoint', () => {
   const handoff = flat('plugins/aidrian/skills/session-handoff/SKILL.md');
   const step = (text, n) => text.slice(text.indexOf(` ${n}. **`), text.indexOf(` ${n + 1}. **`) === -1 ? undefined : text.indexOf(` ${n + 1}. **`));
-  assert.match(handoff, /`--continue <route>`, optional, is the route the Human chose for this brief, passed to the gate in step 7 as `--route <route>`/);
+  assert.match(handoff, /`--continue <route>`, optional, is the route the Human chose for this brief, passed to the gate in step 7 as `--route <route>`; without it the gate reads config\.json `session\.handoff`\. The background route also needs the machine's and the base branch's switches/);
   const gate = step(handoff, 7);
   for (const words of ['the session-length reminder, the plan offer, a usage-limit warning, or the Human\'s request',
     'A checkpoint brief that a running skill writes and then works past skips this step',
     'Unless step 1 printed `route: none`, nothing still runs: step 1 settled it', 'last written more than 15 minutes ago is refreshed first',
     'After step 6 exits 0, run `aidrian handoff continue <brief>`',
     '`continue: none`: print the resume instructions, and the `fallback:` line when there is one',
-    '`continue: clear` or `continue: background`: tell the Human the `say:` line and nothing else, then end the turn',
+    '`continue: clear` or `continue: background`: tell the Human the `fallback:` line when there is one, then the `say:` line and nothing else, and end the turn',
     'Exit 1: do what its message names', 'A second refusal, or exit 2: print the resume instructions and the reason',
   ]) assert.ok(gate.includes(words), `step 7: ${words}`);
   // Step 1 settles running work only for the route the host runs, which the gate decides the same way (effectiveRoute).
   for (const words of ['When the session hands off now (step 7), run the read-only `aidrian handoff route`, with `--route <route>` when `--continue` gave one: it prints the route this host runs',
     'Unless that is `route: none`, wait for or stop every agent, background job, and scheduled or loop run before writing, so Still running is None',
-    'starts a turn here after the gate, and that cancels the continuation',
+    'starts a turn here after the gate: it cancels a clear continuation, and runs beside a background session',
     'Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one left running under Still running']) assert.ok(step(handoff, 1).includes(words), `step 1: ${words}`);
   assert.ok(step(handoff, 8).includes('unless step 7 printed them or told the `say:` line'));
   assert.match(handoff, /8\. This skill commits, pushes, and ends nothing; the user decides when to close the session\. After `continue: clear` it ends the turn, and the Human clears the session; after `continue: background` it ends the turn and does nothing more\./);
@@ -761,7 +761,8 @@ test('the handoff skills run the continue gate after the check, carry the chain,
   const resume = flat('plugins/aidrian/skills/session-continue/SKILL.md');
   const injected = resume.slice(resume.indexOf('## Started by a continuation'), resume.indexOf('## The chain'));
   for (const words of ['`Handoff continuation:` block', '`aidrian handoff continue`', 'search nothing',
-    'Read the brief in full at the path the block names', 'the steps from "Enter the worktree" on are the same',
+    'Read the brief in full at the path the block says to read', 'in a background session, the kept copy of the checked bytes',
+    'The steps from "Enter the worktree" on are the same', 'what the block reserves for the Human still waits for the Human',
     'A first message that asks for something else is answered first']) assert.ok(injected.includes(words), `injection: ${words}`);
   // The label the skill quotes is the one the session start writes.
   const label = /`([^`]+)` block/u.exec(injected)?.[1];
@@ -770,7 +771,10 @@ test('the handoff skills run the continue gate after the check, carry the chain,
   assert.ok(label && context.startsWith(label), `${label} starts ${context.split('\n')[0]}`);
   // And the one the background route's first message carries.
   assert.ok(injected.includes('the start context or the first message holds'), 'the background route\'s block comes as the first message');
-  assert.ok(backgroundPrompt({ marker, maxChain: 3 }).startsWith(label));
+  const prompt = backgroundPrompt({ marker, kept: '/state/handoffs/.continue/continued-ab.md', maxChain: 3 });
+  assert.ok(prompt.startsWith(label));
+  assert.ok(prompt.includes('Actions reserved for the Human still wait for the Human'), 'the prompt holds what the skill says it reserves');
+  assert.ok(step(handoff, 5).includes('`references/brief-reread.md`, read for every brief'), 'step 5 names the reread list');
   assert.match(resume, /When the start context or that block says this session is an automatic continuation, the next brief for this work carries the number it names\. When a person typed the resume, the next brief carries `Chain: 0`\./);
   assert.match(flat('plugins/aidrian/skills/autopilot/references/phases.md'), /A checkpoint brief sets up no continuation/);
   // Search finds the handoff doc by the continuation's words too.

@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -161,7 +161,9 @@ function setup(t, session) {
     return stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : '';
   };
   const counts = () => JSON.parse(readFileSync(marker, 'utf8'));
-  return { stop, plan, reach, temp, marker, counts, transcript };
+  // A temporary repository driven with `git -C`: no test sets GIT_DIR.
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8' });
+  return { stop, plan, reach, temp, marker, counts, transcript, dir, git };
 }
 
 const QUIET = { status: 0, stderr: '' };
@@ -420,7 +422,7 @@ test('with the clear route, auto runs the continue step and ends the turn, and a
   assert.equal(planApprovedContext({ mode: 'off', costRatio: 2, maxTokens: 0 }, LONG_USAGE, clear), null, 'off is off');
 });
 
-test('with the background route, nothing is typed: auto ends the turn for good, ask says so, and not watching is no reason to stay', () => {
+test('with the background route, nothing is typed: auto ends the turn for good, and not watching is no reason to stay; ask still asks someone there', () => {
   const cost = handoffCost(LONG_USAGE);
   const how = claudeCode.capabilities.handoffContinue.steps.background;
   assert.match(how, /^nothing to type\b/u);
@@ -431,12 +433,15 @@ test('with the background route, nothing is typed: auto ends the turn for good, 
   assert.match(auto, /its continue step prints what to tell the user\. Say that in one line, then end this turn: a new session goes on with the work in the background, and this one does nothing more\.$/u);
   const ask = handoffReason('ask', { cost, next: ['x'], ...background });
   assert.match(ask, /hand off now, or keep going\? Say in it what a handoff takes from them: nothing to type, since a new session starts in the background and resumes from the brief by itself\. /u);
-  assert.doesNotMatch(`${auto}${ask}`, /\/clear|not watching/u);
+  assert.ok(ask.startsWith(`${LONG}${NOT_WORTH}`), 'ask asks the Human, so a Human who is not watching is still a reason to stay');
+  assert.doesNotMatch(`${auto}${ask}`, /\/clear/u);
+  assert.doesNotMatch(auto, /not watching/u);
 
   const offer = planApprovedContext({ mode: 'auto', costRatio: 2, maxTokens: 0 }, LONG_USAGE, background);
   assert.match(offer, /or when the user already said to finish here\. Otherwise, before the first build step, run the session-handoff skill to write the brief and set up the continuation: .* end this turn, and do not start the build here: a new session goes on with the work in the background, and this one does nothing more\.$/u);
   const question = planApprovedContext({ mode: 'ask', costRatio: 2, maxTokens: 0 }, LONG_USAGE, background);
   assert.match(question, /Say in it what a handoff takes from them: nothing to type/u);
+  assert.match(question, /or when the user already said to finish here or that they are not watching\.$/u, 'the plan question keeps not watching');
 });
 
 test('the Stop hook and the plan hook word the route of the session host, and a host without it gets the none text', (t) => {
@@ -461,8 +466,20 @@ test('the Stop hook and the plan hook word the route of the session host, and a 
   compact.reach(205_352);
   assert.match(compact.stop({}, CLAUDE).stderr, /then tell the user in one line that you wrote it, its path, and that the session-continue skill resumes it\.\n$/);
   assert.match(compact.plan({}, CLAUDE), /tell the user its path and that the session-continue skill resumes it/);
-  // The opt-in for zero keystrokes, mode auto and continue background, reaches the Stop hook on Claude Code.
-  const background = setup(t, { handoff: { mode: 'auto', continue: 'background' } });
+  // Mode auto with no continue is the background route, but only with this machine's switch on and the base branch
+  // agreeing: without the switch the hooks word the clear route the gate falls back to.
+  const unswitched = setup(t, { handoff: { mode: 'auto' } });
+  unswitched.reach(205_352);
+  const fellBack = unswitched.stop({}, CLAUDE).stderr;
+  assert.match(fellBack, /its continue step prints what to tell the user\. Say that in one line, then end this turn\.\n$/u);
+  assert.match(fellBack, /or that they are not watching/u, 'the clear route still needs someone to type');
+  const background = setup(t, { handoff: { mode: 'auto' } });
+  background.git('init', '-q', '-b', 'main');
+  background.git('add', '.aidrian/config.json');
+  background.git('commit', '-q', '-m', 'config');
+  writeFileSync(path.join(background.dir, '.aidrian.local.json'), JSON.stringify({ handoff: { background: 'on' } }));
   background.reach(205_352);
-  assert.match(background.stop({}, CLAUDE).stderr, /then end this turn: a new session goes on with the work in the background, and this one does nothing more\.\n$/u);
+  const automatic = background.stop({}, CLAUDE).stderr;
+  assert.match(automatic, /then end this turn: a new session goes on with the work in the background, and this one does nothing more\.\n$/u);
+  assert.doesNotMatch(automatic, /not watching/u);
 });

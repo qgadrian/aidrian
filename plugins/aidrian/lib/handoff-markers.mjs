@@ -5,6 +5,10 @@
 //   armed-<session>.json       { route, session, brief, slug, chain, sha256, armed_at }
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
 //   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
+//   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
+//   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
+// A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
+// takes it for every session id that starts with it.
 // A subagent may write none of them (lib/handoff-guard.mjs), so the store's own rules keep a stray file harmless:
 // every write is a temporary file and a rename; every read refuses a symlink, a file another user owns, a wrong shape,
 // and a time outside its window, on the recorded field and on the file's own modification time, in the past or the
@@ -38,15 +42,23 @@ export const MARKER_CAP = 64 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, from: 30 * DAY, gone: 30 * DAY };
-const KIND = /^(armed|ready|checked|tasks|taken|from|gone)-/u;
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY };
+const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued)-/u;
+// The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
+// the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
+const CHAIN_CEILING = 10_000;
+// A short id a floor may be filed under: what a host prints before its listing names the session's full id.
+const SHORT_FROM = /^from-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
+// A session name the say line prints in single quotes, and a started marker keeps: no quote, `$`, `;`, or other
+// character a shell reads inside them.
+export const PLAIN_NAME = /^[\w .@:\u00b7-]{1,100}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
-const STORE_FILE = new RegExp(String.raw`^(?:(?:armed|ready|tasks|from|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json$`, 'u');
+const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
-export const ARMING_FILE = new RegExp(String.raw`^(?:(?:armed|ready|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json$`, 'u');
+export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 const TEMPORARY = /^\.(.+)\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // No read follows a symlink, and none waits on a FIFO or a device that has no writer.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -182,8 +194,14 @@ function isArmed(value, maxChain) {
 
 const isReady = (value, maxChain) => isArmed(value, maxChain) && Number.isFinite(value.ended_at) && isPid(value.host_pid);
 
-const isFrom = (value, maxChain) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
-  && SLUG.test(value.slug) && whole(value.chain, 0, maxChain) && briefOf(value.brief, value.slug) && Number.isFinite(value.at);
+const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
+  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at);
+
+const isStarted = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
+  && typeof value.slug === 'string' && SLUG.test(value.slug) && briefOf(value.brief, value.slug) && whole(value.chain, 0, CHAIN_CEILING)
+  && typeof value.id === 'string' && SESSION_ID.test(value.id) && (value.session === null || (typeof value.session === 'string' && SESSION_ID.test(value.session)))
+  && (value.name === null || (typeof value.name === 'string' && PLAIN_NAME.test(value.name)))
+  && typeof value.cwd === 'string' && path.isAbsolute(value.cwd) && !hasControl(value.cwd) && Number.isFinite(value.at);
 
 const isChecked = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256) && Number.isFinite(value.at);
 
@@ -211,11 +229,15 @@ function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1
 // Writes `value` to the file `name` of the store, through a temporary file and a rename. Returns the file, or null when
 // the store is refused. Creates the folder; throws only on a write the disk refuses.
 function writeMarker(store, name, value) {
+  return writeStoreFile(store, name, `${JSON.stringify(value)}\n`);
+}
+
+function writeStoreFile(store, name, content) {
   if (store.refused || !name) return null;
   mkdirSync(store.dir, { recursive: true, mode: 0o700 });
   const file = path.join(store.dir, name);
   const temporary = path.join(store.dir, `.${name}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
-  writeFileSync(temporary, `${JSON.stringify(value)}\n`, { flag: 'wx', mode: 0o600 });
+  writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
   try {
     renameSync(temporary, file);
   } catch (error) {
@@ -306,14 +328,46 @@ export function clearPending(store, { now = Date.now() } = {}) {
 }
 
 // Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to.
+// `session` may be the short id a host printed for a session it started, which readFrom matches by prefix.
 export function noteFrom(store, session, { slug, chain, brief, route }, { now = Date.now() } = {}) {
   const value = { slug, chain, brief, route, at: now };
-  return isFrom(value, store.maxChain) ? writeMarker(store, sessionFile('from', session), value) : null;
+  return isFrom(value) ? writeMarker(store, sessionFile('from', session), value) : null;
 }
 
-// The chain floor `session` was given, or null.
+// The chain floor `session` was given, or null: its own, or the highest one filed under a short id it starts with, as
+// a background start files one when the host had not listed the new session's full id yet.
 export function readFrom(store, session, { now = Date.now() } = {}) {
-  return readMarker(store, sessionFile('from', session), { now, field: 'at', shape: isFrom });
+  const read = (name) => readMarker(store, name, { now, field: 'at', shape: isFrom });
+  const own = read(sessionFile('from', session));
+  if (own || typeof session !== 'string' || !SESSION_ID.test(session)) return own;
+  const prefixOf = (name) => {
+    const short = SHORT_FROM.exec(name)?.[1];
+    return short !== undefined && short !== session && session.startsWith(short);
+  };
+  return listStore(store)
+    .filter(prefixOf)
+    .map(read)
+    .filter(Boolean)
+    .reduce((high, each) => (high && high.chain >= each.chain ? high : each), null);
+}
+
+// Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
+// brief, chain, id, session, name, cwd }, where `id` is the id the gate names it by, `session` its full id or null, and
+// `name` a plain name or null. Returns the file, or null when the store is refused or the value has a wrong shape.
+export function noteStarted(store, session, started, { now = Date.now() } = {}) {
+  const value = { sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, at: now };
+  return isStarted(value) ? writeMarker(store, sessionFile('started', session), value) : null;
+}
+
+// The background start `session` made in the last day, or null.
+export function readStarted(store, session, { now = Date.now() } = {}) {
+  return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted });
+}
+
+// Keeps `bytes`, a brief that passed the check, as `continued-<sha256>.md` in the store, owner-only, so the session a
+// background start begins reads the very bytes the gate checked. Returns its path, or null when the store is refused.
+export function keepBrief(store, bytes, sha256) {
+  return SHA256.test(sha256) ? writeStoreFile(store, `continued-${sha256}.md`, bytes) : null;
 }
 
 const checkedFile = (name) => (BRIEF_FILE.test(name) && SLUG.test(slugOf(name)) ? `checked-${name}.json` : null);

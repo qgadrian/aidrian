@@ -20,14 +20,16 @@ or an unattended run that ends with its task unfinished.
 - Never when the task is done and the user is here: with nothing to resume, a brief only costs tokens.
 
 `--continue <route>`, optional, is the route the Human chose for this brief, passed to the gate in step 7 as
-`--route <route>`; without it the gate reads config.json `session.handoff.continue`.
+`--route <route>`; without it the gate reads config.json `session.handoff`. The background route also needs the
+machine's and the base branch's switches; without them the gate falls back, and its `fallback:` line says why.
 
 ## Steps
 
 1. **Settle running work.** When the session hands off now (step 7), run the read-only `aidrian handoff route`, with
    `--route <route>` when `--continue` gave one: it prints the route this host runs. Unless that is `route: none`, wait
    for or stop every agent, background job, and scheduled or loop run before writing, so Still running is None:
-   a report, or a message from another session, starts a turn here after the gate, and that cancels the continuation.
+   a report, or a message from another session, starts a turn here after the gate: it cancels a clear continuation,
+   and runs beside a background session.
    Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one left running under
    Still running: what runs, where its output lands, and what to do with it.
 2. **Read the state with commands, not memory.** Use it to write Done and the Current state line that names the worktree,
@@ -39,15 +41,8 @@ or an unattended run that ends with its task unfinished.
 4. **Snapshot what it supersedes.** Once per refresh, before the first write, run `aidrian handoff snapshot <brief>`
    (add `--prior <old brief>` when the old brief has another slug). Never in a fix round: it would snapshot your draft.
 5. **Write the brief** from the template in `references/brief-template.md`, read for every brief.
-   Then reread the brief as a reader with no context, and fix it until:
-   - every still-valid decision, gotcha, fact (ids, mappings, hand-edited data), and runbook step of the brief it
-     supersedes is carried, not pointed at; the header names each dropped item with why it is obsolete;
-   - each command in Next steps matches the tool's real options, read in this session;
-   - each conditional step names its condition and its exact command for every branch;
-   - each resume command carries every flag that is not stored on disk;
-   - open risks and questions from agents' results are under Open risks and questions, whole or by exact path and field;
-   - each commit step names the paths to stage and what stays out;
-   - lines are one sentence each and within the project's line limit.
+   Then reread it as a reader with no context, and fix it until every item of `references/brief-reread.md`, read for
+   every brief, holds, such as open risks and questions from agents' results carried under Open risks and questions.
 
    Under a usage-limit warning, write first, then review and rewrite.
 6. **Check it.** Run `aidrian handoff check <brief>` (same `--prior` as step 4). Exit 1 lists:
@@ -68,7 +63,8 @@ or an unattended run that ends with its task unfinished.
    - A current brief (rule 7) last written more than 15 minutes ago is refreshed first, by steps 4 to 6.
    - After step 6 exits 0, run `aidrian handoff continue <brief>`, with `--route <route>` when `--continue` gave one:
      - `continue: none`: print the resume instructions, and the `fallback:` line when there is one.
-     - `continue: clear` or `continue: background`: tell the Human the `say:` line and nothing else, then end the turn.
+     - `continue: clear` or `continue: background`: tell the Human the `fallback:` line when there is one, then the
+       `say:` line and nothing else, and end the turn.
      - Exit 1: do what its message names, such as the check or a refresh, and run it once more. A second refusal,
        or exit 2: print the resume instructions and the reason.
 8. **Print the resume instructions** below, unless step 7 printed them or told the `say:` line.

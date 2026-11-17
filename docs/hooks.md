@@ -18,7 +18,7 @@ the tracker write guard, and the question names check also record each block: se
 | --- | --- | --- | --- |
 | A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
-| A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command, and one line naming the [background session](handoff.md#the-background-route) that owns the work when the session handed it off in the last 24 hours; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
@@ -1151,7 +1151,11 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   before its first build step, from halfway to `costRatio`: a cost ratio of 1.5 by default.
 - Both word the handoff for the [continue route](handoff.md#continue) the session's host can do. With `clear`, `auto`
   runs the `session-handoff` skill, whose continue step arms the continuation, and ends the turn, and `ask` names what a
-  handoff then takes from the Human. With `none`, or a route the host does not list, the text is as above.
+  handoff then takes from the Human. With `background`, `auto` does the same and says a new session goes on in the
+  background while this one does nothing more, and a Human who is not watching is no reason to skip it; `ask` says
+  nothing is typed, and still counts a Human who is not watching. A background route this machine or the base branch
+  has not turned on is worded as the clear route the gate falls back to, read only on a stop that fires.
+  With `none`, or a route the host does not list, the text is as above.
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.

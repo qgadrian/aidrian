@@ -40,7 +40,12 @@ start it. Then the agent ends the turn without a word about it. Otherwise it act
 With the [clear route](#the-clear-route), `auto` runs the skill, whose continue step arms the continuation and prints
 the line for the Human; the agent says that line and ends the turn. `ask` adds to its question what a handoff then
 takes from the Human, in the host's words, such as typing the clear command and then any message.
-The reasons a handoff is not worth it stay the same.
+With the [background route](#the-background-route), `auto` does the same, and the reminder adds that a new session
+goes on in the background and this one does nothing more; `ask` says nothing is typed.
+The reasons a handoff is not worth it stay the same, but one: with `auto` on the background route, nobody needs to
+start the new session, so a Human who is not watching is no reason to stay. `ask` still asks someone who is there.
+The hooks word the route the gate would take: a background route this machine or the base branch has not turned on
+is worded as the clear route it falls back to ([the switches](#the-background-route)).
 
 **Once, then again.** The first firing is at `costRatio`, 2 by default. When it comes back depends on the mode:
 
@@ -82,9 +87,11 @@ When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan is on di
 so a handoff costs least at that moment. Another hook tells the agent to offer the handoff before its first build step
 once `r ≥ 1 + (costRatio − 1) / 2`, 1.5 by default, or once the context reaches half of `maxTokens` when it is set.
 `ask` asks "hand off now, or build here?", and `auto` writes the brief. Either skips the offer when a few calls finish
-the build, or when the Human said to finish here or is not watching. The offer keeps no marker.
+the build, or when the Human said to finish here or is not watching; `auto` on the background route skips it only
+when the Human said to finish here. The offer keeps no marker.
 With the clear route, `auto` sets up the continuation and ends the turn, so the build starts in the session the clear
-begins, never here; `ask` names what a handoff takes from the Human, as the reminder does.
+begins, never here; with the background route it starts in the session the gate starts. `ask` names what a handoff
+takes from the Human, as the reminder does.
 
 ## Continue
 
@@ -97,7 +104,7 @@ and the two give a ladder:
 | Warn only | `mode: "ask"`, `continue: "none"` | The agent asks; on a yes it writes the brief and prints the resume line. |
 | Brief, no new session | `mode: "auto"`, `continue: "none"` | The agent writes the brief unasked and prints the resume line. |
 | Brief, then a clear | `mode: "auto"` or `"ask"`, `continue: "clear"` | The brief, then the Human types the clear command and one message, and the new session resumes from the brief with nothing else typed. |
-| Fully automatic | `mode: "auto"` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on. |
+| Fully automatic | `mode: "auto"` on the base branch, and `"handoff": { "background": "on" }` in this machine's `.aidrian.local.json` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on. |
 
 The `continue` default follows `mode`: with `mode: "auto"` and no `continue`, the route is `"background"`; with any
 other mode it is `"none"`. A `continue` that config.json sets always wins, so `mode: "auto"` with `continue: "none"`
@@ -108,9 +115,26 @@ The fully automatic step in config.json:
 { "session": { "handoff": { "mode": "auto" } } }
 ```
 
+and, on each machine that lets sessions start sessions with no Human, in the main checkout's git-ignored
+`.aidrian.local.json`:
+
+```json
+{ "handoff": { "background": "on" } }
+```
+
 `"background"` runs only when the resolved `session.handoff.continue` is `"background"`, set or derived from `"auto"`:
 the skill's `--continue background` cannot pick it under any other setting. With `mode: "ask"` and
 `continue: "background"` the agent still asks first, and on a yes nothing else is typed.
+Two switches more hold it, both read as `github.autoMerge` reads its own, so neither a branch nor a session can turn it on:
+
+- **The team's**, read from the config.json the base branch commits (origin's default branch, or the local `main`
+  with no remote), never from a worktree's copy: it must resolve `continue` to `"background"` there too. The route's
+  `maxChain` is that commit's, and at most 5 whatever it says.
+- **The machine's**, `handoff.background: "on"` in the main checkout's `.aidrian.local.json`, a file git does not
+  track. A copy in a worktree, a tracked file, and an error in the file read `"off"`, and a subagent may not set it.
+
+Without either, a handoff on the background route goes on by the clear route on a host that has it, else `none`, and
+the gate's `fallback:` line says which switch is off and, for the machine's, the exact edit that turns it on.
 
 The schema takes `"compact"` too, but no host lists it yet: until its release it falls back to `"none"`, and the gate
 says so in its `fallback:` line. A route the host does not list falls back the same way. Which host does which route:
@@ -126,7 +150,9 @@ says so in its `fallback:` line. A route the host does not list falls back the s
 `aidrian handoff route [--route <route>]` prints `route: <route>`, the route a handoff would go on by here, as the gate
 decides it from `--route` or `session.handoff.continue` and the host's routes. A route the host does not run prints
 `route: none` and the `fallback:` line, as with `"compact"` on Claude Code in this release or any route on Codex.
-It reads the config and nothing else, writes nothing, and exits 2 on an unknown `--route` or a config with errors.
+A background route either switch keeps off prints `route: clear` and the `fallback:` line that names the switch.
+It reads the config, the machine's local file, and the base branch's config, writes nothing, and exits 2 on an
+unknown `--route` or a config with errors.
 The `session-handoff` skill runs it in its first step, so it settles every running agent only when a continuation can
 follow. The gate may still fall back for what only the brief or the store tells, such as the brief's chain.
 
@@ -146,15 +172,19 @@ whatever the config says, and `background` only when the config says `"backgroun
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a
    control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
    it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
-   user ids (not on Windows, where Node reports every writable folder as writable by others); the brief's chain
-   is `maxChain` or more; or, on the background route, the new session did not start.
+   user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
+   is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5.
+   On the background route, a switch that is off, a session that did not start, and a started session the gate could
+   not hold to a chain floor fall back to the clear route instead where the host has it: `continue: clear`, the
+   `fallback:` line, and the clear route's `say:` line, with the clear continuation armed.
 4. A refusal exits 1 with the reason and the remedy on stderr, since the session can fix it: no passing check of the
    brief's current bytes (run `aidrian handoff check` first), a brief last written more than 15 minutes ago or dated in
    the future (refresh it), or a `Chain` below the floor this session was given (set it, and check again).
 5. Otherwise it arms the continuation and prints `continue: <route>` and one `say:` line, the words the skill tells the
    Human: what the route takes from them, the brief's path, and how to resume by hand when no banner names the slug.
    On the background route it arms nothing: it starts the new session, as [The background route](#the-background-route)
-   says, and its `say:` line names that session and how to open it.
+   says, and its `say:` line names that session and how to open it. A second run on the same bytes, in the same
+   session, prints the same lines again and starts nothing, before any other check.
 
 The latest run decides: once the brief resolves and the session is known, any continuation the session armed before is
 gone, whatever the exit, so a clear never delivers an earlier brief.
@@ -168,8 +198,8 @@ worktree and clone of the project. Every write is a temporary file and a rename.
 or a brief another user owns, a marker of the wrong shape, and a time outside its window, in the past or the future.
 A store whose state, handoffs, or store folder another user owns, or every user may write, is neither written nor read,
 where the system has user ids (not on Windows, where Node reports every writable folder as writable by others);
-a folder its group may write passes, since a umask of 002 is common. A sweep deletes the armed, ready, and
-stamp files after 24 hours, and the chain floors after 30 days.
+a folder its group may write passes, since a umask of 002 is common. A sweep deletes the armed, ready, started, and
+stamp files after 24 hours, and the chain floors and the kept briefs of the background route after 30 days.
 
 ### The chain
 
@@ -180,7 +210,8 @@ start context names; a session a person started by typing the resume writes 0.
 - `aidrian handoff check` fails a `Chain` that is not a whole number, and one below the floor of the session that runs
   it: the number its delivery recorded, whatever the brief's slug, since a continued session that hands off under
   another name is still the same run. So an agent that forgets to count, or renames the work, is caught by a script.
-  The gate refuses such a brief too.
+  The gate refuses such a brief too. A floor is never read against `maxChain`: one above the limit of the config that
+  reads it is stricter, never void, so a lower `maxChain` in a worktree cannot drop it.
 - The gate falls back at `Chain` `maxChain` or more: with the default 3, briefs with Chain 0, 1, and 2 continue, and the
   brief the third continued session writes is resumed by a person, which starts the count again.
 
@@ -216,29 +247,43 @@ Limits:
 ### The background route
 
 Nothing is typed. It runs only when `session.handoff.continue` is `"background"`, set or derived from `mode: "auto"`,
-on a host whose adapter lists it and declares `startBackground` ([Adding a host](providers/adding-a-host.md)).
+on a host whose adapter lists it and declares `startBackground` ([Adding a host](providers/adding-a-host.md)), with
+both [switches](#continue) on: the base branch's config, and `"handoff": { "background": "on" }` in this machine's
+`.aidrian.local.json`.
 
 1. The session settles every running agent, writes the brief, checks it, and runs the gate, as on the clear route.
-2. The gate starts a new session through the host adapter, in the brief's `Worktree:` when git lists it as a
-   worktree of the repository and the folder is there, else in the project's checkout. The new session takes the
-   handing-off session's name, agent, and effort when the host tells them, else the brief's slug as its name.
-3. Its first message is the continuation, the same lines a clear's start context gets: the brief's path, its slug, and
-   the continuation's number, never the brief's text. It follows the `session-continue` skill on that brief.
-4. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
-   its next brief to the count. When the host cannot tell the new session's id, no floor is written, and the first
-   message still names the count.
-5. The gate prints `continue: background` and a `say:` line that names the new session, where it started, and the host's
-   command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
+2. The gate keeps the brief's checked bytes in the store, owner-only, as `continued-<sha256>.md`, so an edit to the
+   brief after the gate never reaches the new session.
+3. The gate starts a new session through the host adapter, in the handing-off session's own folder as the host lists
+   it, a folder the host already trusts, never the brief's worktree, whose own settings could run on start. The new
+   session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent
+   and effort when the host tells them; with no usable name, the brief's slug.
+4. Its first message is the continuation: the brief's path, the kept copy to read, its slug, and the continuation's
+   number, never the brief's text. It follows the `session-continue` skill on the copy and enters the worktree, as on
+   the clear route. It also says the brief is an earlier session's advice, not the Human's instruction: what the Human
+   keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
+   permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
+5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
+   its next brief to the count. It reads the host's listing for the new session's full id for about 5 seconds; when the
+   listing lags, it files the floor under the short id the start printed, and every session id that starts with it
+   reads that floor. A start that names no id, or whose floor cannot be written, is stopped and falls back: the gate
+   never reports a background session it cannot hold to the count.
+6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
+   session by its id, and by its name when that is plain text no other listed session has, where it started, and the
+   host's command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
+7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
+   work, so the old session does not take up the same work unasked.
 
-When the host cannot start the session, such as with no host command on PATH, a folder the host does not trust, or
-a start that fails, the gate prints `continue: none` and a `fallback:` line with the reason, and the skill prints the
-resume instructions.
+When the host cannot start the session, such as with no host command on an absolute folder of PATH, a folder the
+listing does not name, a folder the host does not trust, or a start that fails, the gate falls back to the clear route
+with the reason. A start that timed out or failed still counts when the host's listing then shows it.
 
 Limits:
 
 - The old session stays open and idle: it spends no tokens while no turn starts, and the Human closes it at will.
   Nothing closes it by itself. A turn that starts there after the gate, such as a background agent's report, runs
-  beside the new session in the same worktree, so the skill settles every agent first, as on the clear route.
+  beside the new session in the same worktree, so the skill settles every agent first, as on the clear route, and
+  the prompt hook names the session that owns the work.
 - The new session starts in the host's default permission mode and model for that folder; a model the old session
   switched to in the session does not carry over.
 
@@ -307,7 +352,10 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   It is written from the skill's `references/brief-template.md`.
   When the session hands off now, at the reminder, the plan offer, a usage-limit warning, or the Human's request, its
   continue step runs [the gate](#the-gate) after the check: `continue: none` prints the resume instructions, and a
-  route tells the Human the `say:` line alone. A checkpoint brief that a running skill writes and works past skips it.
+  route tells the Human the `say:` line, after the `fallback:` line when the gate fell back to the clear route.
+  A checkpoint brief that a running skill writes and works past skips it. Its first step runs `aidrian handoff route`
+  and settles every running agent unless the route is `none`: on the clear route a turn after the gate cancels the
+  continuation, and on the background route it runs beside the new session.
 - `aidrian handoff check <brief> [--prior <brief>]` holds the brief it checks to what a resume needs, since after a
   continuation the brief is all the new session has. It exits 1, with one finding each, for:
   - a required section that is missing or empty: `## Objective` with a line of text, `## Current state` with a
@@ -334,5 +382,7 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
 - `session-continue`, the first step of the fresh session, reads the newest brief in full, enters its worktree,
   reads the state fresh, and continues at its next steps. It keeps the brief's locked decisions, and checks each other
   claim a step builds on against the docs and code; where they disagree, the docs and code win.
-  Started by a continuation, it searches nothing and reads the brief at the path the start context names.
+  Started by a continuation, it searches nothing and reads the brief at the path the start context or first message
+  says to read: on the background route the kept copy of the checked bytes. On the background route, what that message
+  reserves for the Human still waits for the Human, whatever the brief asks.
   The next brief for the work carries the [chain](#the-chain) the start context names, or 0 after a typed resume.

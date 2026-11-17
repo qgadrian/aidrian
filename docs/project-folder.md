@@ -12,7 +12,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
-.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, agent gates, decisions, and the auto-merge, review-approvals, and product feedback choices on one machine (optional, git-ignored)
+.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, agent gates, decisions, and the auto-merge, review-approvals, background handoff, and product feedback choices on one machine (optional, git-ignored)
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
@@ -89,8 +89,10 @@ It writes nothing at all when a symlink would take a write outside the project, 
   These two are the only `github` keys the file takes; an error in that group reads both `"off"`.
   `reviewApprovals`, the machine's [review approvals](review.md#sign-off-by-the-human) choice, must be `"on"` or `"off"`;
   anything else is an error, and it reads `"off"`.
+  `handoff`, the machine's [background handoff](handoff.md#the-background-route) choice, takes only `background`,
+  `"on"` or `"off"`; anything else is an error, and it reads `"off"`. Unset is off.
   When git tracks `.aidrian.local.json`, in any case, a branch could carry it,
-  so `github.autoMerge`, `github.unattendedWaiver`, and `reviewApprovals` read `"off"` and check names the
+  so `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`, and `handoff.background` read `"off"` and check names the
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.
   `review.productFeedback` takes only `auto`, true or false. In the main checkout's file, a tracked copy, or a checkout where git
   cannot say, has its value ignored and the same error: [Product feedback](config.md#product-feedback).

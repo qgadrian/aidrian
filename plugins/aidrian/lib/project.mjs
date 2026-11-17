@@ -2,7 +2,7 @@
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
 // docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
 // personal model choices, personal names, personal telemetry settings, personal decision settings, and the machine's
-// auto-merge and product feedback choices, and the machine-local state folder outside the repository.
+// auto-merge, background handoff, and product feedback choices, and the machine-local state folder outside the repository.
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -136,7 +136,7 @@ export function projectAt(start) {
 
 // The project rooted at `root`, whether or not its folder exists yet:
 // { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
-// localAutoMerge, localUnattendedWaiver, localReviewApprovals, localFeedbackAuto, errors, unreadable }.
+// localAutoMerge, localUnattendedWaiver, localReviewApprovals, localHandoffBackground, localFeedbackAuto, errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
@@ -147,6 +147,8 @@ export function projectAt(start) {
 // where "unset" is off: the team's `github.unattendedWaiver.allow` still decides (resolveUnattendedWaiver).
 // `localReviewApprovals` is its `reviewApprovals`, read the same way: "on" or
 // "off", "unset" when no file sets it; the team's `review.approvals.allow` still decides (lib/review/approvals.mjs).
+// `localHandoffBackground` is its `handoff.background`, read the same way; the base branch's session.handoff still
+// decides (lib/handoff-continue.mjs backgroundGate).
 // `localFeedbackAuto` is the main checkout's `review.productFeedback.auto`: true or false, or undefined when unset or
 // unusable (mainFeedbackAuto), so the team's value holds. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
@@ -177,6 +179,7 @@ export function openProject(root, roots) {
     localUnattendedWaiver: local.unattendedWaiver,
     localReviewApprovals: local.reviewApprovals,
     localUnattendedSignoff: local.unattendedSignoff,
+    localHandoffBackground: local.handoffBackground,
     localFeedbackAuto: local.feedbackAuto,
     errors,
     unreadable,
@@ -276,7 +279,7 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff'];
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff', 'handoff'];
 
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, unattendedWaiver, reviewApprovals, feedbackAuto }. A git worktree has no copy of that git-ignored
 // file, so it is read from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with
@@ -286,7 +289,7 @@ const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review
 // Behind such a copy, the main checkout's file gets every check it gets when it is the one loaded, and its errors are
 // reported, so a worktree's copy hides none of them.
 function readLocal(checkouts, errors, unreadable) {
-  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...UNSET_SWITCHES };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const main = checkouts.at(-1);
@@ -314,7 +317,8 @@ function checkedLocal(raw, dir) {
   const unattendedWaiver = localUnattendedWaiver(raw);
   const reviewApprovals = localReviewApprovals(raw, problems);
   const unattendedSignoff = localUnattendedSignoff(raw, problems);
-  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, problems };
+  const handoffBackground = localHandoffBackground(raw, problems);
+  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, handoffBackground, problems };
 }
 
 // The main checkout's local file behind a worktree's own copy, through checkedLocal: undefined when there is none, null
@@ -328,21 +332,30 @@ function mainLocal(main, errors) {
   return file;
 }
 
+const UNSET_SWITCHES = Object.freeze({ autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset', handoffBackground: 'unset' });
+
 // This machine's switches, from the main checkout's file as checkedLocal read it: each "unset" when there is no file,
 // and "off" when it cannot be read. An error anywhere in the file, a tracked-file one too, reads an unset auto-merge
 // "off", so it never follows a team default of "on", and the waiver "off" though it says "on": a wrong local file never
 // turns merging on, nor lets a verdict stand in for the Human.
 function machineSwitches(file, main, errors) {
-  if (file === undefined) return { autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
-  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off' };
+  if (file === undefined) return UNSET_SWITCHES;
+  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off', handoffBackground: 'off' };
   const tracked = [];
   const autoMerge = untrackedSwitch(file.autoMerge, 'github.autoMerge', main, tracked);
   const unattendedWaiver = untrackedSwitch(file.unattendedWaiver, 'github.unattendedWaiver', main, tracked);
   const reviewApprovals = untrackedSwitch(file.reviewApprovals, 'reviewApprovals', main, tracked);
   const unattendedSignoff = untrackedSwitch(file.unattendedSignoff, 'unattendedSignoff', main, tracked);
+  const handoffBackground = untrackedSwitch(file.handoffBackground, 'handoff.background', main, tracked);
   errors.push(...tracked);
   const broken = file.problems.length > 0 || tracked.length > 0;
-  return { autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge, unattendedWaiver: broken ? 'off' : unattendedWaiver, reviewApprovals, unattendedSignoff: broken ? 'off' : unattendedSignoff };
+  return {
+    autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge,
+    unattendedWaiver: broken ? 'off' : unattendedWaiver,
+    reviewApprovals,
+    unattendedSignoff: broken ? 'off' : unattendedSignoff,
+    handoffBackground: broken ? 'off' : handoffBackground,
+  };
 }
 
 // A switch `value` the local file in `main` sets, named `key` in its errors. A local file git tracks travels with a
@@ -438,6 +451,18 @@ function localUnattendedSignoff(raw, errors) {
   if (!Object.hasOwn(raw, 'unattendedSignoff')) return 'unset';
   if (raw.unattendedSignoff === 'on' || raw.unattendedSignoff === 'off') return raw.unattendedSignoff;
   errors.push(`${LOCAL}: "unattendedSignoff" must be "on" or "off"`);
+  return 'off';
+}
+
+// The local file's `handoff.background` as "on", "off", or "unset": whether this machine lets a handoff start a new
+// session in the background with no Human, when the team's base branch resolves session.handoff.continue to
+// "background" (docs/handoff.md#the-background-route). `handoff` takes that one key; anything else is an error and reads "off".
+function localHandoffBackground(raw, errors) {
+  if (!Object.hasOwn(raw, 'handoff')) return 'unset';
+  const given = raw.handoff;
+  const keys = isObject(given) ? Object.keys(given) : [];
+  if (isObject(given) && keys.every((key) => key === 'background') && ['on', 'off', undefined].includes(given.background)) return given.background ?? 'unset';
+  errors.push(`${LOCAL}: "handoff" must be { "background": "on" } or { "background": "off" }`);
   return 'off';
 }
 

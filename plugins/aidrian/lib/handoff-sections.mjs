@@ -56,22 +56,6 @@ export function sectionProblems(text) {
   });
 }
 
-// The first `Worktree:` value of the brief's Current state section, or null when it has none: the folder the
-// background route of `aidrian handoff continue` starts the new session in, once git lists it as a worktree.
-export function worktreeOf(text) {
-  const current = REQUIRED.find((section) => section.name === 'Current state');
-  let inside = false;
-  for (const line of unfencedLines(String(text ?? ''))) {
-    const title = headingOf(line);
-    if (title !== null) inside = current.heading.test(title);
-    else if (inside) {
-      const value = labelValues([line], 'Worktree').find((each) => each !== '');
-      if (value) return value.replace(/^`|`$/gu, '');
-    }
-  }
-  return null;
-}
-
 // The header's `Supersedes:` value, trimmed of spaces and emphasis marks, in the text above the first `## `: from the
 // label to the next `|` or the line's end. null when the header has no such field.
 export function supersedesOf(text) {

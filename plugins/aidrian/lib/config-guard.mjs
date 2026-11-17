@@ -86,12 +86,13 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'unattendedWaiver', valueIn: (parsed) => parsed?.github?.unattendedWaiver, name: 'github.unattendedWaiver', why: 'only the main session may let a recorded judge verdict waive the merge guard', patched: /^[+-].*(?:unattendedWaiver|"enabled"\s*:)/mu }),
   Object.freeze({ key: 'reviewApprovals', valueIn: (parsed) => parsed?.reviewApprovals, name: 'reviewApprovals', why: 'only the main session may let a named approver\'s review close a flow invariant, or stop it', patched: /^[+-].*reviewApprovals/mu }),
   Object.freeze({ key: 'unattendedSignoff', valueIn: (parsed) => parsed?.unattendedSignoff, name: 'unattendedSignoff', why: 'only the main session may let a judge\'s ruling close a flow invariant in place of the Human', patched: /^[+-].*unattendedSignoff/mu }),
+  Object.freeze({ key: 'background', valueIn: (parsed) => parsed?.handoff?.background, name: 'handoff.background', why: 'only the main session may let a handoff start sessions in the background with no Human', patched: /^[+-].*"background"\s*:/mu }),
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
 ]);
 
-// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, or
-// the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
+// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals,
+// the background handoff, or the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that names its key. It targets the file by its name, in any folder and
 // case, by a Bash glob whose last part matches that name, such as its name with a `*` for its end, or by a Bash glob from
 // a folder the lexer knows that passes a link to the file already on disk (globLinksTo), as `tee out/alias*` does

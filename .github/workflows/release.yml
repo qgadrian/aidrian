@@ -1,9 +1,12 @@
 name: Release
 
-# A release is a version change on main: hosts install the plugin from main and cache it by version.
-# After each merge, scripts/version.mjs release raises the version for the plugin commits since the latest v* tag,
-# at the level their subjects call for, and this job commits, tags, and pushes it, then publishes the release notes.
-# Run it by hand to force a level, such as major for 1.0.0.
+# A release is a version change on main: hosts install each plugin from main and cache it by version.
+# After each merge, scripts/version.mjs release raises each plugin's version for its own commits since its own latest
+# tag, at the level their subjects call for. A first job, with no write token, runs it and npm run check. A second job,
+# the only one with the write token, first fails unless the first job's commit is a full sha already on main, then
+# installs nothing and runs no repository code but scripts/version.mjs: it runs release again on that commit, requires
+# the same result lines, commits and tags, pushes, and publishes the notes.
+# Run it by hand to force aidrian's level, such as major for 1.0.0.
 
 on:
   push:
@@ -12,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       level:
-        description: Release level; auto reads the commit subjects since the last tag
+        description: aidrian's release level; auto reads the commit subjects since its last tag
         type: choice
         options:
           - auto
@@ -24,29 +27,33 @@ on:
 permissions:
   contents: read
 
-# One release at a time, and none cancelled halfway: each run releases everything on main since the last tag.
+# One release at a time, and none cancelled halfway: each run releases everything on main since each plugin's last tag.
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
+  check:
+    name: Check the release
     # The release commit itself releases nothing. A push made with GITHUB_TOKEN starts no workflow anyway.
     if: ${{ !startsWith(github.event.head_commit.message, 'chore(release)') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      sha: ${{ steps.version.outputs.sha }}
+      results: ${{ steps.version.outputs.results }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The newest main, not the pushed commit: a run that waited in the queue releases what merged meanwhile.
           ref: main
-          # The tags and the history to them: the release counts the plugin commits since the latest v* tag.
+          # The tags and the history to them: the release counts each plugin's commits since its latest tag.
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -55,40 +62,126 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Raise the version
+      # Before the install: scripts/version.mjs needs no dependency, so no installed code shapes the outputs.
+      - name: Raise the versions
         id: version
         env:
           LEVEL: ${{ inputs.level }}
         run: |
-          args=()
-          if [ -n "$LEVEL" ] && [ "$LEVEL" != auto ]; then args=(--level "$LEVEL"); fi
-          node scripts/version.mjs release "${args[@]}" | tee release.out
-          last=$(tail -n 1 release.out)
-          rm release.out
-          case "$last" in version=*) echo "$last" >> "$GITHUB_OUTPUT" ;; esac
+          # No pipe: the step fails on release's own exit status, before any line reaches GITHUB_OUTPUT.
+          node scripts/version.mjs release --level "$LEVEL" > "$RUNNER_TEMP/release.out"
+          cat "$RUNNER_TEMP/release.out"
+          node scripts/version.mjs check-results "$RUNNER_TEMP/release.out"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          { echo 'results<<END_OF_RESULTS'; cat "$RUNNER_TEMP/release.out"; echo 'END_OF_RESULTS'; } >> "$GITHUB_OUTPUT"
+
+      # No install script runs: the dev dependencies need none.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
 
       - name: Check the release
-        if: steps.version.outputs.version != ''
         run: npm run check
 
-      - name: Commit, tag, and push
-        if: steps.version.outputs.version != ''
+  release:
+    name: Release
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      # Before any node step: the commit whose code runs here, beside the token, must be a full sha already on main.
+      - name: Verify the checked commit
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ needs.check.outputs.sha }}
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -q -am "chore(release): aidrian v$VERSION"
-          git tag -a "v$VERSION" -m "aidrian v$VERSION"
+          full='^[0-9a-f]{40}$'
+          if ! [[ "$SHA" =~ $full ]]; then
+            echo "the check job's commit is not a full sha" >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$SHA" ]; then
+            echo "the checkout is not the check job's commit" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" refs/remotes/origin/main; then
+            echo "the check job's commit is not on main" >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          # No cache, and no token for the action itself: only the push and the notes get the token.
+          package-manager-cache: false
+          token: ''
+
+      - name: Raise the versions again
+        env:
+          LEVEL: ${{ inputs.level }}
+          RESULTS: ${{ needs.check.outputs.results }}
+        run: node scripts/version.mjs release --level "$LEVEL" --expect "$RESULTS"
+
+      - name: Commit and tag
+        env:
+          RESULTS: ${{ needs.check.outputs.results }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: node scripts/version.mjs commit-and-tag --results "$RESULTS"
+
+      - name: Push
+        env:
+          TOKEN: ${{ github.token }}
+          RESULTS: ${{ needs.check.outputs.results }}
+          BASE: ${{ needs.check.outputs.sha }}
+        run: |
+          refs=()
+          if [ "$(git rev-parse HEAD)" != "$BASE" ]; then refs+=("HEAD:refs/heads/main"); fi
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then continue; fi
+            rest="${line#* }"
+            refs+=("refs/tags/${rest%% *}")
+          done <<< "$RESULTS"
+          if [ "${#refs[@]}" -eq 0 ]; then exit 0; fi
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
           # Both or neither: a tag without its commit on main, or the reverse, would break the next release.
-          git push --atomic origin HEAD:main "v$VERSION"
+          # No hook runs where the token is.
+          GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            GIT_CONFIG_KEY_1="core.hooksPath" GIT_CONFIG_VALUE_1="/dev/null" \
+            git push --atomic origin "${refs[@]}"
 
       - name: Publish the release notes
-        if: steps.version.outputs.version != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: gh release create "v$VERSION" --title "aidrian v$VERSION" --generate-notes --verify-tag
+          RESULTS: ${{ needs.check.outputs.results }}
+        run: |
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then continue; fi
+            name="${line%%=*}"
+            rest="${line#*=}"
+            version="${rest%% *}"
+            rest="${rest#* }"
+            tag="${rest%% *}"
+            previous="${rest#* }"
+            start=()
+            if [ "$previous" != - ]; then start=(--notes-start-tag "$previous"); fi
+            # Only aidrian's release is the repository's latest.
+            latest=()
+            if [ "$name" != aidrian ]; then latest=(--latest=false); fi
+            gh release create "$tag" --verify-tag --generate-notes --title "$name v$version" "${start[@]}" "${latest[@]}"
+          done <<< "$RESULTS"
+
+      - name: Check every plugin has a tag
+        run: node scripts/version.mjs tag-check

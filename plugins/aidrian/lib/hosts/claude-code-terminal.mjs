@@ -39,10 +39,13 @@ export function isWrappedHost({ pid, shell, run = runPs }) {
   return found !== null && found.pid === pid && found.ppid === shell && path.basename(found.comm) === PROGRAM;
 }
 
+// Whether a Human attends the session whose environment is `env`: an interactive session, not a background one.
+export const attended = (env) => env.CLAUDE_CODE_SESSION_ATTENDED === '1';
+
 // The `claude` process of the session whose environment is `env`, when a Human attends it and the shell `shell` started
 // it: its pid, or null.
 export function hostProcess({ env, shell, run = runPs }) {
-  if (env.CLAUDE_CODE_SESSION_ATTENDED !== '1' || !/^\d{1,10}$/u.test(env.CLAUDE_PID ?? '')) return null;
+  if (!attended(env) || !/^\d{1,10}$/u.test(env.CLAUDE_PID ?? '')) return null;
   const pid = Number(env.CLAUDE_PID);
   return isWrappedHost({ pid, shell, run }) ? pid : null;
 }

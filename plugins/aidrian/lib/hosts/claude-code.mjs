@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, findLine, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
-import { END_SIGNAL, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
+import { attended, END_SIGNAL, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -152,6 +152,7 @@ export default {
       replaceTerminal: {
         program: PROGRAM,
         attach: 'attach',
+        attended,
         hostProcess: ({ env, shell, run }) => hostProcess({ env, shell, run }),
         isHost: ({ pid, shell, run }) => isWrappedHost({ pid, shell, run }),
         signal: END_SIGNAL,

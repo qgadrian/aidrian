@@ -63,6 +63,11 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
   the session never asks the Human whether to hand off or keep going; it judges by itself and runs the
   `session-handoff` skill when a handoff is worth it. `"ask"` and `"off"` print nothing;
+- in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), one
+  `Handoff terminal:` line while this machine's `handoff.background` is `"on"` and config.json resolves
+  `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
+  not start: after a background handoff its terminal stays on the old session, and the line names
+  `aidrian shell-init zsh --install`, or bash's, for the Human to run once;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.

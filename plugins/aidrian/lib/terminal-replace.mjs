@@ -33,7 +33,7 @@ export const END_DELAY = 2000;
 // An id the shell function opens; the shell function holds it to the same pattern.
 export const OPEN_ID = /^[0-9A-Za-z][-_0-9A-Za-z]{3,127}$/u;
 const WORD = /^[a-z][a-z0-9-]{0,31}$/u;
-const SHELLS = ['zsh'];
+export const SHELLS = ['zsh', 'bash'];
 const HELPER = path.resolve(import.meta.dirname, '../scripts/end-host.mjs');
 
 const isPid = (value) => Number.isInteger(value) && value > 1 && value < 2 ** 31;
@@ -53,6 +53,18 @@ export function terminalOf(host, { env, run }) {
   if (!replace || shell === null) return null;
   const hostPid = replace.hostProcess({ env, shell, run });
   return isPid(hostPid) ? { hostPid, shell } : null;
+}
+
+// The session start's line for an attended session the shell function did not start, on a host that can replace a
+// terminal, while this machine's switch `background` is on and the working config's `handoff` resolves to the
+// background route in `auto` mode: after a handoff its terminal would stay on the old session. Else null.
+export function unwrappedLine({ host, background, handoff, env, human }) {
+  const replace = replacer(host);
+  if (!replace || background !== 'on' || handoff?.mode !== 'auto' || handoff?.continue !== 'background') return null;
+  if (shellPid(env) !== null || !replace.attended(env)) return null;
+  return `Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's \`${replace.program}\`, ` +
+    `so after a background handoff this terminal stays on the old session beside the new one. For it to follow, ${human} runs ` +
+    '`aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal.';
 }
 
 // The folder shell records live in, under the state root `env` names.
@@ -116,8 +128,8 @@ export async function endHost({ host, pid, shell, delay, hosts = HOSTS, kill = p
   return true;
 }
 
-// The shell function for `shell` that wraps each host program `hosts` can replace a terminal for, or null for a shell
-// with none.
+// The shell function for `shell`, one of SHELLS, that wraps each host program `hosts` can replace a terminal for, or null
+// for another shell.
 export function shellInit(shell, hosts = HOSTS) {
   if (!SHELLS.includes(shell)) return null;
   const replacers = hosts.map(replacer).filter(Boolean);
@@ -128,48 +140,33 @@ export function shellInit(shell, hosts = HOSTS) {
     `# aidrian shell-init ${shell}: once a session that handed off ends itself, open the new one in this terminal.`,
     '# docs/handoff.md#replacing-the-terminal',
   ];
-  for (const { program, attach } of replacers) lines.push(...zshFunction(program, attach));
+  for (const { program, attach } of replacers) lines.push(...shellFunction(shell, program, attach));
   return `${lines.join('\n')}\n`;
 }
 
-// A zsh function named `program` that runs it with SHELL_VAR set, then, while this shell's record is a regular file
-// this user owns, deletes it and opens the session it names when its id is plain and its expiry has not passed.
-// It keeps the exit code of the last program it ran, and runs nothing from the record but that id.
-function zshFunction(program, attach) {
+// A function named `program` that runs it with SHELL_VAR set, then, while this shell's record is a regular file this
+// user owns, deletes it and opens the session it names when its id is plain and its expiry has not passed. It keeps the
+// exit code of the last program it ran, and runs nothing from the record but that id. zsh and bash read the same body;
+// zsh first resets its options for the function, so a setting such as RE_MATCH_PCRE cannot change the patterns.
+function shellFunction(shell, program, attach) {
   return [
     `${program}() {`,
-    '  emulate -L zsh',
-    `  local rc id expires base=$HOME/.local/state pattern='${OPEN_ID.source}'`,
+    ...(shell === 'zsh' ? ['  emulate -L zsh'] : []),
+    `  local rc id expires base=$HOME/.local/state pattern='${OPEN_ID.source}' digits='^[0-9]{1,12}$'`,
     '  [[ $XDG_STATE_HOME == /* ]] && base=$XDG_STATE_HOME',
     `  local next=$base/aidrian/${TERMINAL_FOLDER}/$$`,
     `  ${SHELL_VAR}=$$ command ${program} "$@"`,
     '  rc=$?',
     '  while [[ -f $next && ! -L $next && -O $next ]]; do',
     '    id= expires=',
-    '    IFS=\' \' read -r id expires < $next',
-    '    command rm -f -- $next',
-    '    [[ $id =~ $pattern && $expires =~ \'^[0-9]{1,12}$\' ]] || break',
+    "    IFS=' ' read -r id expires < \"$next\"",
+    '    command rm -f -- "$next"',
+    '    [[ $id =~ $pattern && $expires =~ $digits ]] || break',
     '    (( expires >= $(command date +%s) )) || break',
-    `    ${SHELL_VAR}=$$ command ${program} ${attach} $id`,
+    `    ${SHELL_VAR}=$$ command ${program} ${attach} "$id"`,
     '    rc=$?',
     '  done',
     '  return $rc',
     '}',
   ];
 }
-
-export const commands = {
-  'shell-init': {
-    usage: 'zsh',
-    about: 'print the shell function that opens the new session in the same terminal once a background handoff ends the old one; add `eval "$(aidrian shell-init zsh)"` to ~/.zshrc',
-    run(args) {
-      const text = args.length === 1 ? shellInit(args[0]) : null;
-      if (text === null) {
-        console.error(`usage: aidrian shell-init ${SHELLS.join(' | ')}`);
-        return 2;
-      }
-      process.stdout.write(text);
-      return 0;
-    },
-  },
-};

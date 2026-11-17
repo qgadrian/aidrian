@@ -284,9 +284,9 @@ row reads the floor the gate wrote.
 The adapter's `replaceTerminal` (`lib/hosts/claude-code-terminal.mjs`) lets a session that handed off end itself, so
 the terminal that ran it opens the new session ([handoff.md](../handoff.md#replacing-the-terminal)). The shell function
 `aidrian shell-init zsh` prints wraps `claude`, opens the next session with `command claude attach <id>`, and gives
-`claude` the shell's pid as `AIDRIAN_SHELL_PID`. The session's host process is `CLAUDE_PID`, when
-`CLAUDE_CODE_SESSION_ATTENDED` is `1` and `ps -o pid=,ppid=,comm= -p <pid>` shows a process named `claude` whose
-parent is that shell; it reads no process's arguments. It ends that process with SIGTERM.
+`claude` the shell's pid as `AIDRIAN_SHELL_PID`. A session is attended when `CLAUDE_CODE_SESSION_ATTENDED` is `1`.
+Its host process is `CLAUDE_PID`, when it is attended and `ps -o pid=,ppid=,comm= -p <pid>` shows a process named
+`claude` whose parent is that shell; it reads no process's arguments. It ends that process with SIGTERM.
 
 Checked by hand on Claude Code 2.1.326 on 2026-11-17, in a pseudo-terminal, with throwaway sessions in a trusted
 folder and a trivial prompt:

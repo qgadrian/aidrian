@@ -364,16 +364,29 @@ Limits:
 
 ### Replacing the terminal
 
-With one line in the shell's startup file, a background handoff also replaces the old session in its terminal: the
-old session ends itself once its turn ends, and the same terminal opens the new one, with nothing typed. For zsh, in
-`~/.zshrc`:
+With a block in the shell's startup file, a background handoff also replaces the old session in its terminal: the
+old session ends itself once its turn ends, and the same terminal opens the new one, with nothing typed. A host's
+plugins have no install step, so the Human adds the block once, in a terminal:
 
 ```sh
-eval "$(aidrian shell-init zsh)"
+aidrian shell-init zsh --install    # or bash, into ~/.bashrc
+aidrian shell-init zsh --uninstall  # removes it
 ```
 
-`aidrian shell-init zsh` prints a function named for each host program that can do it, today `claude`, and exits 2 for
-any other shell. The function runs the program as `command claude "$@"`, with `AIDRIAN_SHELL_PID` set to the shell's
+`--install` appends the block to `~/.zshrc`, `$ZDOTDIR/.zshrc` when `ZDOTDIR` is set, or `~/.bashrc`, creating the
+file when it is missing, between the lines `# >>> aidrian shell-init >>>` and `# <<< aidrian shell-init <<<`, and
+changes no other line. A file that already holds the block, or a line of its own outside one that runs
+`aidrian shell-init`, is left as it is, and the command says so. `--uninstall` removes every block, from its start
+marker to its end marker, and nothing else; a start marker with no end after it changes nothing and exits 1. A
+startup file that is a link stays one, and keeps its mode. Each prints what it did.
+
+At each shell start, the block finds `aidrian` again, so a plugin update that moves the installed copy needs no new
+install. It runs the `aidrian` on PATH, a shell function included. Without one, it runs the copy with the highest
+version, compared as numbers, among the folders named `<major>.<minor>.<patch>` beside the copy that installed it,
+where the host keeps the plugin's versions. A copy that is not one of those versions, such as a checkout, runs its
+own `bin/aidrian`. With none left, the block does nothing.
+The block evals `aidrian shell-init zsh` (or `bash`), which prints a function named for each host program that can do
+it, today `claude`, and exits 2 for any other shell. The function runs the program as `command claude "$@"`, with `AIDRIAN_SHELL_PID` set to the shell's
 own pid. Once the program exits, it reads and deletes this shell's record,
 `$XDG_STATE_HOME/aidrian/handoff-terminals/<shell pid>`, a line `<id> <expiry in epoch seconds>`. When the record is a
 regular file this user owns, not a symlink, its expiry has not passed, and the id is letters, digits, dashes, and
@@ -386,7 +399,9 @@ It runs only where every switch of the background route is on, and `session.hand
 
 1. Once the background session started and the gate recorded it, the gate asks the host adapter for this session's host
    process. It must be a child of the shell `AIDRIAN_SHELL_PID` names, of the host's program, and attended by a Human,
-   as the host tells it. The gate then notes in the continuation store, `ending-<session>.json`, the host process, the
+   as the host tells it. A session a Human attends that the shell function did not start, while this machine's switch
+   and the working config turn the route on in `auto` mode, gets a `Handoff terminal:` line at its start that says its
+   terminal will not follow, and names the install command ([Start lines](hooks.md#start-lines)). The gate then notes in the continuation store, `ending-<session>.json`, the host process, the
    shell, and the new session's id. It notes nothing for a session no Human attends, known by its unattended mark or
    its chain floor of route `background`, or when anything above is missing, and the say line ends with the plain line
    on how to open the new session instead.

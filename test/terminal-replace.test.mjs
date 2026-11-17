@@ -27,6 +27,8 @@ const WRAPPED = { AIDRIAN_SHELL_PID: '4242', CLAUDE_PID: '4343', CLAUDE_CODE_SES
 const psSays = (line) => (command, args) => (command === '/bin/ps' && args.at(-1) === '4343' ? { status: 0, stdout: `${line}\n` } : { status: 1, stdout: '' });
 const OWN = psSays('4343 4242 claude');
 const ZSH = spawnSync('zsh', ['-f', '-c', 'exit 0']).status === 0;
+const BASH = spawnSync('bash', ['--norc', '--noprofile', '-c', 'exit 0']).status === 0;
+const SHELL_ARGS = { zsh: ['-f', '-c'], bash: ['--norc', '--noprofile', '-c'] };
 
 function folder(t, prefix) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
@@ -150,7 +152,7 @@ test('the Stop hook ends the session its gate asked to end, after the turn, and 
 // Runs `script` in `zsh -f` after the shell function, with a fake `claude` first on PATH that logs its shell variable and
 // arguments; on a start it writes `next` as this shell's record and exits 143, and on `attach <id>` it writes the record
 // `chain[id]` when given, and exits 5.
-function inZsh(t, { next = null, chain = {}, script = 'claude --resume x; print rc=$?' } = {}) {
+function inShell(t, { shell = 'zsh', next = null, chain = {}, script = 'claude --resume x; echo rc=$?' } = {}) {
   const root = folder(t, 'aidrian-zsh-');
   const state = path.join(root, 'state');
   const bin = path.join(root, 'bin');
@@ -170,37 +172,37 @@ function inZsh(t, { next = null, chain = {}, script = 'claude --resume x; print 
     next === null ? ':' : `printf '%s\\n' '${next}' > "$dir/$AIDRIAN_SHELL_PID"`,
     'exit 143',
   ].join('\n'), { mode: 0o755 });
-  const init = path.join(root, 'init.zsh');
-  writeFileSync(init, shellInit('zsh'));
-  const result = spawnSync('zsh', ['-f', '-c', `source '${init}'; print shell=$$; ${script}`], {
+  const init = path.join(root, 'init.sh');
+  writeFileSync(init, shellInit(shell));
+  const result = spawnSync(shell, [...SHELL_ARGS[shell], `source '${init}'; echo shell=$$; ${script}`], {
     env: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, HOME: root, XDG_STATE_HOME: state }, encoding: 'utf8',
   });
-  const shell = /shell=(\d+)/u.exec(result.stdout)?.[1];
+  const pid = /shell=(\d+)/u.exec(result.stdout)?.[1];
   const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
-  return { result, shell, calls, record: path.join(records, String(shell)), records };
+  return { result, shell: pid, calls, record: path.join(records, String(pid)), records };
 }
 
 const later = () => Math.floor(Date.now() / 1000) + 60;
 
 test('the shell function runs the program with the shell\'s pid, keeps its exit code, and opens nothing with no record', { skip: !ZSH }, (t) => {
-  const { result, shell, calls } = inZsh(t);
+  const { result, shell, calls } = inShell(t);
   assert.match(result.stdout, /rc=143$/mu);
   assert.deepEqual(calls, [`${shell} --resume x`]);
 });
 
 test('the shell function opens the session a fresh record names, deletes the record, and follows the next hop too', { skip: !ZSH }, (t) => {
-  const once = inZsh(t, { next: `abcd1234 ${later()}` });
+  const once = inShell(t, { next: `abcd1234 ${later()}` });
   assert.deepEqual(once.calls, [`${once.shell} --resume x`, `${once.shell} attach abcd1234`]);
   assert.match(once.result.stdout, /rc=5$/mu, 'the exit code of the last program it ran');
   assert.equal(existsSync(once.record), false, 'the record is deleted');
 
-  const twice = inZsh(t, { next: `first-id ${later()}`, chain: { 'first-id': `second-id ${later()}` } });
+  const twice = inShell(t, { next: `first-id ${later()}`, chain: { 'first-id': `second-id ${later()}` } });
   assert.deepEqual(twice.calls.slice(1), [`${twice.shell} attach first-id`, `${twice.shell} attach second-id`]);
 });
 
 test('the shell function runs nothing but a plain id from a fresh record of its own', { skip: !ZSH }, (t) => {
   for (const next of [`ab;true ${later()}`, `$(id) ${later()}`, `abcd1234 ${Math.floor(Date.now() / 1000) - 5}`, 'abcd1234 soon', 'abc 9999999999', `-rf ${later()}`]) {
-    const { result, shell, calls, record } = inZsh(t, { next });
+    const { result, shell, calls, record } = inShell(t, { next });
     assert.deepEqual(calls, [`${shell} --resume x`], next);
     assert.match(result.stdout, /rc=143$/mu, next);
     assert.equal(existsSync(record), false, `${next}: the record is deleted all the same`);
@@ -208,18 +210,34 @@ test('the shell function runs nothing but a plain id from a fresh record of its 
   const root = folder(t, 'aidrian-link-');
   const target = path.join(root, 'target');
   writeFileSync(target, `abcd1234 ${later()}\n`);
-  const { calls, record } = inZsh(t, { script: `mkdir -p "$XDG_STATE_HOME/aidrian/handoff-terminals" && ln -s '${target}' "$XDG_STATE_HOME/aidrian/handoff-terminals/$$" && claude; print rc=$?` });
+  const { calls, record } = inShell(t, { script: `mkdir -p "$XDG_STATE_HOME/aidrian/handoff-terminals" && ln -s '${target}' "$XDG_STATE_HOME/aidrian/handoff-terminals/$$" && claude; echo rc=$?` });
   assert.equal(calls.length, 1, 'a record that is a symlink is never read');
   assert.ok(lstatSync(record).isSymbolicLink());
 });
 
-test('aidrian shell-init prints the zsh function for each host that replaces a terminal, and refuses another shell', () => {
-  const zsh = spawnSync(CLI, ['shell-init', 'zsh'], { encoding: 'utf8' });
-  assert.equal(zsh.status, 0, zsh.stderr);
-  assert.equal(zsh.stdout, shellInit('zsh'));
-  assert.match(zsh.stdout, /^claude\(\) \{$/mu);
-  assert.doesNotMatch(zsh.stdout, /^codex\(\)/mu, 'a host with no route has no function');
-  for (const args of [['bash'], [], ['zsh', 'extra']]) assert.equal(spawnSync(CLI, ['shell-init', ...args], { encoding: 'utf8' }).status, 2, args.join(' '));
+test('aidrian shell-init prints the function for zsh and bash, for each host that replaces a terminal, and refuses another shell', () => {
+  for (const shell of ['zsh', 'bash']) {
+    const printed = spawnSync(CLI, ['shell-init', shell], { encoding: 'utf8' });
+    assert.equal(printed.status, 0, printed.stderr);
+    assert.equal(printed.stdout, shellInit(shell));
+    assert.match(printed.stdout, /^claude\(\) \{$/mu);
+    assert.doesNotMatch(printed.stdout, /^codex\(\)/mu, 'a host with no route has no function');
+  }
+  assert.match(shellInit('zsh'), /^ {2}emulate -L zsh$/mu);
+  assert.doesNotMatch(shellInit('bash'), /emulate/u);
+  for (const args of [['fish'], [], ['zsh', 'extra'], ['zsh', '--install', '--uninstall']]) {
+    assert.equal(spawnSync(CLI, ['shell-init', ...args], { encoding: 'utf8' }).status, 2, args.join(' '));
+  }
+});
+
+test('in bash the shell function follows a fresh record and keeps the exit code without one', { skip: !BASH }, (t) => {
+  const none = inShell(t, { shell: 'bash' });
+  assert.deepEqual(none.calls, [`${none.shell} --resume x`]);
+  assert.match(none.result.stdout, /rc=143$/mu);
+  const once = inShell(t, { shell: 'bash', next: `abcd1234 ${later()}`, chain: { abcd1234: `ab;true ${later()}` } });
+  assert.deepEqual(once.calls, [`${once.shell} --resume x`, `${once.shell} attach abcd1234`]);
+  assert.match(once.result.stdout, /rc=5$/mu);
+  assert.equal(existsSync(once.record), false);
 });
 
 test('a shell record is written only for a pid and a plain id, in a folder that is the user\'s alone', (t) => {

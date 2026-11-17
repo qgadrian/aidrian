@@ -12,8 +12,9 @@
 //   agent is sent back for one more turn to judge whether a handoff is worth it: in `ask` mode to ask the user, in `auto`
 //   mode to write the brief, or in either to do nothing (lib/session-length.mjs). A marker in the temporary folder holds
 //   the ratio at the last cost firing and the ceiling's firings, so the cost reminder comes back once the ratio doubles
-//   and the ceiling once the context does. It reads Claude Code transcripts only. Its text follows the continue route
-//   the session's host can do (lib/session-length.mjs continuation), so with `clear` the agent ends the turn after the brief.
+//   in `ask` mode, or climbs one step in `auto` (lib/session-length.mjs nextRatio), and the ceiling once the context
+//   doubles. It reads Claude Code transcripts only. Its text follows the continue route the session's host can do
+//   (lib/session-length.mjs continuation), so with `clear` the agent ends the turn after the brief.
 // `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
 // sent back, so nothing can loop: each stop sends back at most once, for one of the three.
 

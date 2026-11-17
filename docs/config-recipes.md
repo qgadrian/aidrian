@@ -7,7 +7,7 @@ The `harness-setup` skill offers them as its working-style question.
 
 | Recipe | The Human | Sessions stop for |
 | --- | --- | --- |
-| [Full autonomy](#full-autonomy) | Is not there | A security verdict or a critical-flow sign-off; every other call takes a safe default |
+| [Full autonomy](#full-autonomy) | Is not there | Security verdicts, critical-flow sign-offs, and hard product calls in a floor class |
 | [Autopilot](#autopilot) | Supervises several sessions from above | Product calls, extra review rounds, the floor classes |
 | [Hands-on](#hands-on) | Works beside each session | Every decision, the ready mark, the review loop, the handoff |
 
@@ -75,11 +75,15 @@ What it turns on:
   stand in for the Human's answer to the merge guard ([Unattended waiver](config.md#unattended-waiver)) and close a
   disputed invariant ([unattended rulings](review.md#unattended-rulings)).
 - Agents settle every reversible decision ([Decisions](config.md#decisions)), and an unattended run takes a safe default
-  even on a floor class (`safeDefaults: "all"`). A hard product call runs a quorum, and work goes on on its ruling.
-- The handoff continues in a background session with nothing typed, up to 5 in a row ([Handoff](handoff.md)).
+  even on a floor class (`safeDefaults: "all"`). A hard product call runs a quorum, and work goes on on its ruling,
+  unless the call is in a floor class, such as money or data loss: then the ruling waits for a person, and the work that
+  depends on it is parked.
+- On Claude Code, the handoff continues in a background session with nothing typed, up to 5 in a row ([Handoff](handoff.md)).
+  Codex has no background route: there the handoff writes a brief, and a person resumes it.
 - Persona-audit triage files issues without asking.
 
 What it still keeps for a person: a security verdict and a critical-flow sign-off, which no setting hands to an agent;
+a hard product call in a floor class, after its quorum; on Codex, resuming a handoff;
 a pull request that edits what steers the harness, such as `AGENTS.md`, a skill, or `.claude/`, unless the team also sets
 `github.autoMerge.includeGuardedPaths` after reading its risk; and a merge that branch protection forbids.
 
@@ -128,7 +132,8 @@ What it turns on, and where it stops:
   and a hard product call first runs a quorum, so the question the Human gets comes with a recommendation.
 - An extra review round past the cap needs the Human's yes (`extraRounds: "ask"`), and so does a waiver: it is left off.
 - An unattended run parks a floor-class decision for the Human instead of taking a default.
-- The handoff continues in the background, up to 3 in a row before a person looks.
+- On Claude Code, the handoff continues in the background, up to 3 in a row before a person looks.
+  On Codex it writes a brief for a person to resume.
 
 ## Hands-on
 

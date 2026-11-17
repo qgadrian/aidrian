@@ -13,10 +13,11 @@ Ask it before the main-checkout guard question, whose answer hands-on sets, as o
 2. **Hands-on** (`hands-on`): the Human works beside each session. Sessions ask before each decision, the review loop,
    the ready mark, and a handoff. The most interrupting.
 3. **Autopilot** (`autopilot`): the Human supervises several sessions from above. Sessions merge, decide reversible
-   non-product calls, and hand off alone, and stop for product calls and extra review rounds.
+   non-product calls, and hand off alone on Claude Code, and stop for product calls and extra review rounds.
 4. **Full autonomy** (`full-autonomy`): no one watches. Sessions merge, decide, and continue alone, and an unattended
-   run takes a safe default even on a security, critical-flow, money, or data-loss call. Only a security verdict and a
-   critical-flow sign-off wait.
+   run takes a safe default even on a security, critical-flow, money, or data-loss call. A security verdict, a
+   critical-flow sign-off, and a hard product call in one of those classes still wait. On Codex, a handoff waits for a
+   person to resume it.
 
 ## Applying it, in the step 3 brief
 

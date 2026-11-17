@@ -3,8 +3,9 @@ name: Release
 # A release is a version change on main: hosts install each plugin from main and cache it by version.
 # After each merge, scripts/version.mjs release raises each plugin's version for its own commits since its own latest
 # tag, at the level their subjects call for. A first job, with no write token, runs it and npm run check. A second job,
-# the only one with the write token, installs nothing and runs no repository code but scripts/version.mjs: it runs
-# release again on the same commit, requires the same result lines, commits and tags, pushes, and publishes the notes.
+# the only one with the write token, first fails unless the first job's commit is a full sha already on main, then
+# installs nothing and runs no repository code but scripts/version.mjs: it runs release again on that commit, requires
+# the same result lines, commits and tags, pushes, and publishes the notes.
 # Run it by hand to force aidrian's level, such as major for 1.0.0.
 
 on:
@@ -61,22 +62,22 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
-
+      # Before the install: scripts/version.mjs needs no dependency, so no installed code shapes the outputs.
       - name: Raise the versions
         id: version
         env:
           LEVEL: ${{ inputs.level }}
         run: |
-          args=()
-          if [ -n "$LEVEL" ] && [ "$LEVEL" != auto ]; then args=(--level "$LEVEL"); fi
           # No pipe: the step fails on release's own exit status, before any line reaches GITHUB_OUTPUT.
-          node scripts/version.mjs release "${args[@]}" > "$RUNNER_TEMP/release.out"
+          node scripts/version.mjs release --level "$LEVEL" > "$RUNNER_TEMP/release.out"
           cat "$RUNNER_TEMP/release.out"
           node scripts/version.mjs check-results "$RUNNER_TEMP/release.out"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           { echo 'results<<END_OF_RESULTS'; cat "$RUNNER_TEMP/release.out"; echo 'END_OF_RESULTS'; } >> "$GITHUB_OUTPUT"
+
+      # No install script runs: the dev dependencies need none.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
 
       - name: Check the release
         run: npm run check
@@ -97,24 +98,38 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      # Before any node step: the commit whose code runs here, beside the token, must be a full sha already on main.
+      - name: Verify the checked commit
+        env:
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          full='^[0-9a-f]{40}$'
+          if ! [[ "$SHA" =~ $full ]]; then
+            echo "the check job's commit is not a full sha" >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$SHA" ]; then
+            echo "the checkout is not the check job's commit" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "the check job's commit is not on main" >&2
+            exit 1
+          fi
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          # No cache, and no token for the action itself: only the push and the notes get the token.
+          package-manager-cache: false
+          token: ''
 
       - name: Raise the versions again
         env:
           LEVEL: ${{ inputs.level }}
           RESULTS: ${{ needs.check.outputs.results }}
-        run: |
-          args=()
-          if [ -n "$LEVEL" ] && [ "$LEVEL" != auto ]; then args=(--level "$LEVEL"); fi
-          node scripts/version.mjs release "${args[@]}" > "$RUNNER_TEMP/release.out"
-          node scripts/version.mjs check-results "$RUNNER_TEMP/release.out"
-          if [ "$(cat "$RUNNER_TEMP/release.out")" != "$(printf '%s\n' "$RESULTS")" ]; then
-            echo "the result lines differ from the check job's" >&2
-            exit 1
-          fi
+        run: node scripts/version.mjs release --level "$LEVEL" --expect "$RESULTS"
 
       - name: Commit and tag
         env:
@@ -123,12 +138,7 @@ jobs:
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: |
-          names=()
-          while IFS= read -r line; do
-            if [ -n "$line" ]; then names+=("${line%%=*}"); fi
-          done <<< "$RESULTS"
-          if [ "${#names[@]}" -gt 0 ]; then node scripts/version.mjs commit-and-tag "${names[@]}"; fi
+        run: node scripts/version.mjs commit-and-tag --results "$RESULTS"
 
       - name: Push
         env:
@@ -147,7 +157,9 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
           # Both or neither: a tag without its commit on main, or the reverse, would break the next release.
-          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+          # No hook runs where the token is.
+          GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            GIT_CONFIG_KEY_1="core.hooksPath" GIT_CONFIG_VALUE_1="/dev/null" \
             git push --atomic origin "${refs[@]}"
 
       - name: Publish the release notes
@@ -165,7 +177,10 @@ jobs:
             previous="${rest#* }"
             start=()
             if [ "$previous" != - ]; then start=(--notes-start-tag "$previous"); fi
-            gh release create "$tag" --verify-tag --generate-notes --title "$name v$version" "${start[@]}"
+            # Only aidrian's release is the repository's latest.
+            latest=()
+            if [ "$name" != aidrian ]; then latest=(--latest=false); fi
+            gh release create "$tag" --verify-tag --generate-notes --title "$name v$version" "${start[@]}" "${latest[@]}"
           done <<< "$RESULTS"
 
       - name: Check every plugin has a tag

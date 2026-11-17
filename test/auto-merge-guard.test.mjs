@@ -162,11 +162,14 @@ test('the reviewers, the hooks, and the manifests are guarded', () => {
   }
 });
 
-test("the cockpit's folder and the release script are guarded", () => {
-  for (const file of ['plugins/aidrian-cockpit/lib/snapshot-client.mjs', 'plugins/aidrian-cockpit/.claude-plugin/plugin.json', 'scripts/version.mjs']) {
-    assert.ok(guarded(file), file);
-  }
-  for (const file of ['plugins/aidrian-cockpit-extra/x.mjs', 'scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(guarded(file), false, file);
+test("the Claude mod's folder is guarded everywhere, and the release script only in the plugin's own repository", () => {
+  for (const file of ['plugins/aidrian-claude-mod/lib/snapshot-client.mjs', 'plugins/aidrian-claude-mod/.claude-plugin/plugin.json']) assert.ok(guarded(file), file);
+  for (const file of ['plugins/aidrian-claude-mod-extra/x.mjs', 'scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(guarded(file), false, file);
+  const release = (file, pluginRepository) => pathsProblem({ files: [{ path: file, changeType: 'MODIFIED' }], changedFiles: 1 }, '', { pluginRepository });
+  assert.equal(guarded('scripts/version.mjs'), false, 'another project may have a scripts/version.mjs of its own');
+  assert.equal(release('scripts/version.mjs', false), null);
+  assert.match(release('scripts/version.mjs', true) ?? '', /^it changes "scripts\/version\.mjs", the plugin repository's release script, which runs in the release job that holds the write token$/u);
+  for (const file of ['scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(release(file, true), null, file);
 });
 
 test('no module can add a trusted author association', () => {

@@ -7,11 +7,16 @@
 //                                                       branch changes a plugin's version from the merge base with
 //                                                       origin/main, or if a marketplace entry sets a version for no plugin
 //   node scripts/version.mjs lint-title "<title>"       exit 1 unless the title is a Conventional Commit subject
-//   node scripts/version.mjs release [--level <level>]  raise each plugin's version for its commits since its own latest
+//   node scripts/version.mjs release [--level <level|auto|>] [--expect <lines>]
+//                                                       raise each plugin's version for its commits since its own latest
 //                                                       tag; print one result line per released plugin on stdout, and
-//                                                       everything else on stderr
+//                                                       everything else on stderr. auto, or empty, reads the subjects.
+//                                                       With --expect, fail before writing unless the result lines are
+//                                                       those, as the token job requires of the check job's
 //   node scripts/version.mjs check-results <file>       exit 1 unless every line of the file is a well-formed result line
 //   node scripts/version.mjs commit-and-tag <name>...   commit the released plugins' version files once, and tag each
+//   node scripts/version.mjs commit-and-tag --results <lines>
+//                                                       the same, for the plugins of these result lines and their tags
 //   node scripts/version.mjs tag-check                  exit 1 while a plugin whose folder exists has no tag of its prefix
 //
 // An installed plugin updates only when its version changes, and a version change is a release: the release workflow
@@ -27,7 +32,9 @@
 // A table plugin whose folder does not exist is skipped. The comparison with main is skipped where it cannot run:
 // without origin/main, and on main itself.
 //
-// This script imports only node: built-ins, so a test can copy it into a scratch repository and run it there.
+// This script imports only node: built-ins, so a test can copy it into a scratch repository and run it there. It stays
+// one whole file: the release workflow's token job runs no repository code but this script, and the auto-merge guard
+// names only this file, so a module split out of it would run with the token and escape the guard.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -38,8 +45,8 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const MAIN = 'origin/main';
 const LEVELS = ['patch', 'minor', 'major'];
 const RELEASE_SUBJECT = 'chore(release)';
-const USAGE = `usage: node scripts/version.mjs [${LEVELS.join('|')}] | --check | lint-title "<title>" | release [--level ${LEVELS.join('|')}]`
-  + ' | check-results <file> | commit-and-tag <name>... | tag-check';
+const USAGE = `usage: node scripts/version.mjs [${LEVELS.join('|')}] | --check | lint-title "<title>" | release [--level ${LEVELS.join('|')}|auto]`
+  + ' [--expect <lines>] | check-results <file> | commit-and-tag <name>... | commit-and-tag --results <lines> | tag-check';
 
 // Each plugin of the marketplaces: its folder, its tag prefix, and each file that always carries its version, with the
 // key path to each copy in it. The first file is the plugin's manifest, whose adding commit a first release tags.
@@ -56,10 +63,10 @@ export const PLUGINS = [
     ],
   },
   {
-    name: 'aidrian-cockpit',
-    dir: 'plugins/aidrian-cockpit',
-    prefix: 'aidrian-cockpit-v',
-    files: [['plugins/aidrian-cockpit/.claude-plugin/plugin.json', [['version']]]],
+    name: 'aidrian-claude-mod',
+    dir: 'plugins/aidrian-claude-mod',
+    prefix: 'aidrian-claude-mod-v',
+    files: [['plugins/aidrian-claude-mod/.claude-plugin/plugin.json', [['version']]]],
   },
 ];
 const AIDRIAN = PLUGINS[0];
@@ -67,7 +74,7 @@ const MARKETPLACES = ['.claude-plugin/marketplace.json', '.agents/plugins/market
 const VERSION = String.raw`(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)`;
 
 const pluginNamed = (name) => PLUGINS.find((plugin) => plugin.name === name);
-// The tag glob of a plugin: `v[0-9]*` never matches `aidrian-cockpit-v0.1.0`, and the cockpit's never matches `v0.65.0`.
+// The tag glob of a plugin: `v[0-9]*` never matches `aidrian-claude-mod-v0.1.0`, and the Claude mod's never matches `v0.65.0`.
 export const tagPattern = (plugin) => `${plugin.prefix}[0-9]*`;
 // The table plugins whose folder exists in the working tree.
 export const presentPlugins = (root = ROOT) => PLUGINS.filter((plugin) => existsSync(path.join(root, plugin.dir)));
@@ -108,6 +115,15 @@ export function versionLocations(root = ROOT, plugin = AIDRIAN) {
 
 // The files a plugin's version is written in, by path from PLUGINS and the marketplaces.
 const versionPaths = (root, plugin) => versionFiles(readWorkingTree(root), plugin).filter(({ paths }) => paths.length).map(({ file }) => file);
+
+// The places a plugin's version is written whose value in the working tree differs from HEAD's: [{ file, where }]. A
+// marketplace may carry several plugins' versions, so a file can change for one plugin and not for another.
+function changedLocations(root, plugin) {
+  const atHead = (file) => (gitLine(root, 'cat-file', '-e', `HEAD:${file}`) === null ? null : JSON.parse(gitOutput(root, 'show', `HEAD:${file}`)));
+  const before = new Map(locationsOf(versionFiles(atHead, plugin)).map(({ where, version }) => [where, version]));
+  return versionFiles(readWorkingTree(root), plugin).flatMap(({ file, data, paths }) => locationsOf([{ file, data, paths }])
+    .filter(({ where, version }) => before.get(where) !== version).map(({ where }) => ({ file, where })));
+}
 
 // Write `version` to every place in versionLocations. Files keep npm's format: two-space indent, final newline.
 export function setVersion(version, root = ROOT, plugin = AIDRIAN) {
@@ -275,9 +291,16 @@ const hasTag = (root, plugin) => lines(gitOutput(root, 'tag', '--list', tagPatte
 // A plugin's first release: its manifest's version, no bump, tagged on the commit that added the manifest. Refused,
 // with the tag-by-hand message, when a later commit touches the plugin's folder.
 function firstRelease(root, plugin, current) {
-  const added = manifestCommit(root, plugin);
   const tag = `${plugin.prefix}${current}`;
+  // Where the history cannot show a first release, the tag is missing: tag the commit that set the version, by hand.
+  const missing = (why) => new Error(`${plugin.name}: no ${tagPattern(plugin)} tag is reachable from HEAD, ${why}, so there is`
+    + ` nothing to count commits from. Tag the commit that set ${current} once, then push the tag: git tag ${tag} <commit>`
+    + ` && git push origin ${tag}`);
+  if (gitLine(root, 'rev-parse', '--is-shallow-repository') !== 'false') throw missing('and this clone is shallow');
+  const added = manifestCommit(root, plugin);
   if (!added) throw new Error(`${plugin.name}: no commit reachable from HEAD adds ${plugin.files[0][0]}, so its first release has nothing to tag`);
+  const addedVersion = JSON.parse(gitOutput(root, 'show', `${added}:${plugin.files[0][0]}`)).version;
+  if (addedVersion !== current) throw missing(`and the commit that added ${plugin.files[0][0]}, ${added}, holds ${addedVersion}, not ${current}`);
   const later = lines(gitOutput(root, 'log', '--format=%H', `${added}..HEAD`, '--', plugin.dir));
   if (later.length) {
     return {
@@ -315,12 +338,16 @@ function planRelease(root, plugin, level) {
 // releases it even with no commit waiting; every other plugin takes the level its own commits call for. All or nothing:
 // every plugin is planned before any file is written, and any failure throws with no file changed. A refused first
 // release is the one exception: it lands in `refused` and the others still release.
+// With `expect`, a block of result lines, it also throws, before it writes, unless its result lines are those.
 // Returns { results, refused, notes }.
-export function release(level, root = ROOT) {
+export function release(level, root = ROOT, { expect } = {}) {
   const stray = marketplaceProblem(root);
   if (stray) throw new Error(stray);
   const plans = presentPlugins(root).map((plugin) => planRelease(root, plugin, plugin === AIDRIAN ? level : undefined));
   const results = plans.filter((plan) => plan.name);
+  if (expect !== undefined && results.map(resultLine).join('\n') !== lines(expect).join('\n')) {
+    throw new Error(`the result lines differ from the expected ones:\n${results.map(resultLine).join('\n') || '(none)'}\nexpected:\n${lines(expect).join('\n') || '(none)'}`);
+  }
   for (const result of results) if (!result.first) setVersion(result.version, root, pluginNamed(result.name));
   return {
     results,
@@ -330,6 +357,13 @@ export function release(level, root = ROOT) {
 }
 
 export const resultLine = ({ name, version, tag, previous }) => `${name}=${version} ${tag} ${previous}`;
+
+// The plugins of a block of result lines, each with its tag: Map(name -> tag). Throws unless the block is well formed.
+function resultsOf(text) {
+  const problem = resultsProblem(text);
+  if (problem) throw new Error(problem);
+  return new Map(lines(text).map((line) => [line.slice(0, line.indexOf('=')), line.split(' ')[1]]));
+}
 
 // Why this text is not a block of result lines, each `<name>=<x.y.z> <tag> <previous tag or ->` with a PLUGINS name,
 // that plugin's prefix on both tags, and no name twice; null when it is one. An empty block is one.
@@ -348,22 +382,41 @@ export function resultsProblem(text) {
   return null;
 }
 
-function runRelease(args) {
-  let level;
-  if (args.length) {
-    if (args.length !== 2 || args[0] !== '--level' || !LEVELS.includes(args[1])) return fail(`${USAGE}\nunknown argument: ${args.join(' ')}`);
-    level = args[1];
+// `release`'s flags: { level, expect }, or { bad } naming the argument it does not take. A --level of auto, or empty, as
+// the workflow passes when no level is chosen, reads the subjects.
+function releaseFlags(args) {
+  const flags = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const [flag, value] = [args[index], args[index + 1]];
+    if (value === undefined || (flag !== '--level' && flag !== '--expect') || flag.slice(2) in flags) return { bad: args.slice(index).join(' ') };
+    flags[flag.slice(2)] = value;
   }
+  if (flags.level === 'auto' || flags.level === '') delete flags.level;
+  if (flags.level !== undefined && !LEVELS.includes(flags.level)) return { bad: `--level ${flags.level}` };
+  return flags;
+}
+
+// Why a release result was made, for the log.
+function releaseReason(result) {
+  if (result.first) return 'its first release, from its manifest';
+  if (result.level) return `--level ${result.level}`;
+  return `${result.subjects.length} plugin commit(s)`;
+}
+
+function runRelease(args) {
+  const { bad, level, expect } = releaseFlags(args);
+  if (bad !== undefined) return fail(`${USAGE}\nunknown argument: ${bad}`);
+  if (expect !== undefined && resultsProblem(expect)) return fail(`--expect: ${resultsProblem(expect)}`);
   let outcome;
   try {
-    outcome = release(level);
+    outcome = release(level, ROOT, { expect });
   } catch (error) {
     return fail(error.message);
   }
   for (const note of outcome.notes) console.error(note);
   for (const refused of outcome.refused) console.error(refused);
   for (const result of outcome.results) {
-    const why = result.first ? 'its first release, from its manifest' : (result.level ? `--level ${result.level}` : `${result.subjects.length} plugin commit(s)`);
+    const why = releaseReason(result);
     console.error(`${result.name} ${result.from ?? '-'} -> ${result.version}, for ${why}:${result.subjects.map((subject) => `\n  ${subject}`).join('')}`);
   }
   for (const result of outcome.results) console.log(resultLine(result));
@@ -371,8 +424,11 @@ function runRelease(args) {
 
 // Commit the version files of the named plugins once, and tag each: on that commit, or for a first release on the
 // commit that added its manifest. Refuses an unknown or repeated name, a tag that exists, and any changed path other
-// than those plugins' version files, before it commits or tags anything. Returns { commit, tags }.
-export function commitAndTag(names, root = ROOT) {
+// than those plugins' version files, before it commits or tags anything. It decides by version location, not by file: a
+// first release must leave every place of its plugin's version as HEAD has it, and any other release must change at
+// least one, so a marketplace that carries two plugins' versions changes for one without counting for the other. With
+// `tags`, a name-to-tag map from result lines, it refuses a plugin whose tag would differ. Returns { commit, tags }.
+export function commitAndTag(names, root = ROOT, { tags: expected } = {}) {
   if (!names.length) throw new Error('commit-and-tag takes the name of each released plugin');
   const plugins = names.map((name, index) => {
     const plugin = pluginNamed(name);
@@ -388,10 +444,12 @@ export function commitAndTag(names, root = ROOT) {
     const version = agreedVersion(root, plugin);
     const tag = `${plugin.prefix}${version}`;
     if (gitLine(root, 'rev-parse', '--verify', '--quiet', `refs/tags/${tag}`) !== null) throw new Error(`commit-and-tag: the tag ${tag} exists; a tag never moves`);
+    if (expected && expected.get(plugin.name) !== tag) throw new Error(`commit-and-tag: ${plugin.name} would tag ${tag}, not ${expected.get(plugin.name)}`);
     const first = !hasTag(root, plugin);
-    const files = versionPaths(root, plugin).filter((file) => changed.includes(file));
-    if (first === Boolean(files.length)) throw new Error(`commit-and-tag: ${plugin.name} ${first ? 'has its first release but changed a version file' : 'changed no version file'}`);
-    return { plugin, version, tag, first, files };
+    const moved = changedLocations(root, plugin);
+    if (first && moved.length) throw new Error(`commit-and-tag: ${plugin.name} has its first release but changed its version in ${moved[0].where}`);
+    if (!first && !moved.length) throw new Error(`commit-and-tag: ${plugin.name} changed no place of its version`);
+    return { plugin, version, tag, first, files: moved.map(({ file }) => file) };
   });
   const files = [...new Set(planned.flatMap((each) => each.files))];
   let commit = null;
@@ -438,7 +496,10 @@ function main(args) {
   }
   if (arg === 'commit-and-tag') {
     return attempt(() => {
-      const { commit, tags } = commitAndTag(rest);
+      if (rest[0] === '--results' && rest.length !== 2) throw new Error(`${USAGE}\ncommit-and-tag --results takes one argument, the result lines`);
+      const released = rest[0] === '--results' ? resultsOf(rest[1]) : null;
+      if (released?.size === 0) return console.log('nothing released: no commit and no tag');
+      const { commit, tags } = released ? commitAndTag([...released.keys()], ROOT, { tags: released }) : commitAndTag(rest);
       console.log(`${commit ? `committed ${commit}` : 'no commit'}; tagged ${tags.join(', ')}`);
     });
   }

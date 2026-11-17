@@ -18,7 +18,7 @@ const DOC = [
   long('Domain separation is strict', 10),
   long('Operator quick actions answer at once', 25),
   long('Settings controllability is non-negotiable', 12),
-  '  - **Exception — the Overview cockpit**: it has no off switch.',
+  '  - **Exception — the Overview dashboard**: it has no off switch.',
   '',
   'A closing paragraph,',
   'over two lines.',
@@ -42,7 +42,7 @@ test('blocksOf splits a section into top-level list items, paragraphs, and fence
     'A closing paragraph,',
     '```',
   ]);
-  assert.match(blocks[2], /Exception — the Overview cockpit/u, 'a nested exception belongs to its bullet');
+  assert.match(blocks[2], /Exception — the Overview dashboard/u, 'a nested exception belongs to its bullet');
   assert.equal(blocks[4], '```\n- not a list item, inside a fence\n```');
 });
 
@@ -91,7 +91,7 @@ test('focus sends only the blocks it names, in section order, and names the ques
   const [one] = invariantsOf({ invariants: [{ id: 'controls', cite: 'product.md#core-product-invariants', focus: 'settings controllability' }] }, read).invariants;
   assert.equal(one.text, 'Does the change keep "Core Product Invariants: settings controllability" as the cited section defines it?');
   assert.match(one.source, /^Core Product Invariants\n\n- Settings controllability is non-negotiable:/u);
-  assert.match(one.source, /Overview cockpit/u);
+  assert.match(one.source, /Overview dashboard/u);
   assert.doesNotMatch(one.source, /Domain separation|cut at/u);
   const two = focusBlocks(section, ['**Settings** controllability', 'Domain separation', 'Nope']);
   assert.deepEqual(two.blocks.map((block) => block.split('\n')[0]), ['- Domain separation is strict:', '- Settings controllability is non-negotiable:']);

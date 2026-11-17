@@ -13,7 +13,7 @@
 
 import path from 'node:path';
 
-import { GUARDED_PATHS } from './project.mjs';
+import { GUARDED_PATHS, PLUGIN_REPOSITORY_PATHS } from './project.mjs';
 import { QUIET_TEST_FILES } from './review/diff.mjs';
 import { globPattern } from './fs.mjs';
 import { classify, ONLY_NON_BEHAVIOUR, pathPattern } from './review/plan.mjs';
@@ -29,6 +29,9 @@ const DOT_SEGMENT = /(?:^|\/)\./u;
 // What a test reads: the review's test files (review/diff.mjs), and fixture or golden folders.
 const TEST_FILES = QUIET_TEST_FILES.map(pathPattern);
 const FIXTURES = /(?:^|\/)(?:fixtures?|__fixtures__|testdata|test-data|goldens?|__goldens?__)\//iu;
+
+// Why the plugin repository's release script keeps auto-merge off, after `it changes "<path>", `.
+export const RELEASE_SCRIPT = "the plugin repository's release script, which runs in the release job that holds the write token";
 
 // The change types a file may have: a type change (CHANGED), a copy, or a rename may hide what it does.
 const PLAIN_CHANGES = new Set(['ADDED', 'MODIFIED', 'DELETED']);
@@ -117,13 +120,15 @@ function changeProblem(named, changeType) {
 }
 
 // Why one changed file's path keeps the route off, or null. `file` is { path, changeType } from the top of the
-// repository; `own` its path from the project root; `loaded` what the start hook loads. Each refusal reads the repository
-// path, so a folder above the project root counts too; DOT_SEGMENT matches at any depth, so the repository path covers it.
-function pathProblem({ path: file, changeType }, own, loaded) {
+// repository; `own` its path from the project root; `loaded` what the start hook loads; `pluginRepository` whether the
+// project is the plugin's own repository, whose release script is guarded too. Each refusal reads the repository path, so
+// a folder above the project root counts too; DOT_SEGMENT matches at any depth, so the repository path covers it.
+function pathProblem({ path: file, changeType }, own, loaded, pluginRepository) {
   const named = JSON.stringify(file);
   const changed = changeProblem(named, changeType);
   if (changed) return changed;
   if (GUARDED_PATHS.test(file) || GUARDED_PATHS.test(own)) return `it changes ${named}, which instructs AI sessions`;
+  if (pluginRepository && PLUGIN_REPOSITORY_PATHS.test(file)) return `it changes ${named}, ${RELEASE_SCRIPT}`;
   const started = startLoadProblem(file, loaded);
   if (started) return started;
   if (DOT_SEGMENT.test(file)) return `it changes ${named}, whose path has a folder or file name that starts with ".", which tools and AI hosts read as settings`;
@@ -135,11 +140,11 @@ function pathProblem({ path: file, changeType }, own, loaded) {
 
 // Why one changed file keeps the route off, or null: its path, the default branch's review lists, the safe extensions,
 // each branch's `unreviewedPaths`, [[where, matchers]], and what the start hook loads.
-function fileProblem(file, prefix, review, lists, loaded) {
+function fileProblem(file, prefix, review, lists, loaded, pluginRepository) {
   const named = JSON.stringify(file.path);
   if (!file.path.startsWith(prefix)) return `it changes ${named}, outside this project's folder`;
   const own = file.path.slice(prefix.length);
-  const problem = pathProblem(file, own, loaded);
+  const problem = pathProblem(file, own, loaded, pluginRepository);
   if (problem) return problem;
   const sorted = classify([{ file: own }], review);
   if (sorted.ignored.length) return `it changes ${named}, which the default branch's review.ignore lists, so no review read it`;
@@ -156,8 +161,8 @@ function fileProblem(file, prefix, review, lists, loaded) {
 // `review` group, `errors` that config's errors, `lists` each branch's `unreviewedPaths` as [[`<repo> <branch>`, list]],
 // the default branch first and the base once, and `listErrors` the errors either config has under that key. `startDocs`
 // is what the start hook loads (startLoadProblem), and `tree` reads a folder of the head's tree (modeProblem); with
-// either missing, the route is off.
-export function noneNeededProblem(outcome, { files = null, prefix = '', review = null, errors = [], lists = null, listErrors = [], startDocs = null, tree = null }) {
+// either missing, the route is off. `pluginRepository` guards the plugin repository's release script (pathProblem).
+export function noneNeededProblem(outcome, { files = null, prefix = '', review = null, errors = [], lists = null, listErrors = [], startDocs = null, tree = null, pluginRepository = false }) {
   const { reasons } = outcome;
   if (!Array.isArray(reasons) || reasons.length !== 1 || reasons[0] !== ONLY_NON_BEHAVIOUR) return `its plan's reasons are not exactly ${JSON.stringify([ONLY_NON_BEHAVIOUR])}`;
   if (outcome.depth !== 'none') return 'its plan\'s depth is not `none`';
@@ -173,7 +178,7 @@ export function noneNeededProblem(outcome, { files = null, prefix = '', review =
   if (!files.length) return 'nothing was reviewed';
   const matchers = lists.map(([where, list]) => [where, list.map(wholePath)]);
   for (const file of files) {
-    const problem = fileProblem(file, prefix, review, matchers, startDocs);
+    const problem = fileProblem(file, prefix, review, matchers, startDocs, pluginRepository);
     if (problem) return problem;
   }
   return modeProblem(files, outcome.head, tree);

@@ -115,7 +115,7 @@ names each plugin's folder, its tag prefix, and the files that carry its version
 | Plugin | Folder | Tags | Version files |
 | --- | --- | --- | --- |
 | `aidrian` | `plugins/aidrian/` | `vX.Y.Z` | both plugin manifests, `package.json`, `package-lock.json` |
-| `aidrian-cockpit` | `plugins/aidrian-cockpit/` | `aidrian-cockpit-vX.Y.Z` | `.claude-plugin/plugin.json` |
+| `aidrian-claude-mod` | `plugins/aidrian-claude-mod/` | `aidrian-claude-mod-vX.Y.Z` | `.claude-plugin/plugin.json` |
 
 A marketplace entry that sets a version is one more version file, for the plugin its name matches; an entry that sets
 a version under a name no plugin has fails `npm run check`. A table plugin whose folder does not exist yet is skipped.
@@ -129,11 +129,16 @@ when it merges main, and need not before. Without `origin/main`, or on `main` it
 After each merge to main, the workflow runs `node scripts/version.mjs release`. For each plugin, it counts the commits
 since that plugin's latest tag that change its folder; with none, that plugin releases nothing. Otherwise it raises
 the version in every file that carries it, and prints one result line for the plugin. A first job, with no write token,
-runs `release` and `npm run check`. A second job, the only one with the write token, installs nothing: it runs
-`release` again on the same commit, requires the same result lines, then commits the version files once as
-`chore(release): aidrian vX.Y.Z, aidrian-cockpit vX.Y.Z`, tags each released plugin, pushes the commit and the tags at
-once, and publishes each tag's release notes. A plugin's notes list every pull request merged since that plugin's
-previous tag, the other plugin's too, since both share one history.
+runs `release` and writes its commit and result lines as outputs, then installs with `npm ci --ignore-scripts` and runs
+`npm run check`. A second job, the only one with the write token, first fails unless that commit is a full sha that
+is on `origin/main`. It installs nothing, caches nothing, and runs no repository code but `scripts/version.mjs`, one call
+per step: `release --expect` runs `release` again on that commit and fails, before it writes, unless its result lines
+are the first job's; `commit-and-tag --results` commits the version files once as
+`chore(release): aidrian vX.Y.Z, aidrian-claude-mod vX.Y.Z` and tags each released plugin, deciding by each place a
+version is written, so a marketplace that versions both plugins serves one plugin's release and another's first.
+The job then pushes the commit and the tags at once, with no git hook, and publishes each tag's release notes; only
+aidrian's release is marked the repository's latest. A plugin's notes list every pull request merged since that
+plugin's previous tag, the other plugin's too, since both share one history.
 
 The commit subjects pick the level. Main takes squash merges, so each subject is a pull request's title, and the
 `PR title` workflow fails a title that is not a Conventional Commit subject, such as `fix(hooks): let a hook pass`.
@@ -161,13 +166,15 @@ the plugin's manifest, with no bump, changes no file, and tags the commit that a
 main. When a later commit changes the plugin's folder before that first tag exists, the first release is refused, since
 the tag would name a version whose installs got later content: the release log names the tag and the commit, the other
 plugins still release, and the run fails at its last step, `tag-check`, until a person pushes that tag by hand:
-`git tag -a aidrian-cockpit-vX.Y.Z <commit> -m "aidrian-cockpit vX.Y.Z" && git push origin refs/tags/aidrian-cockpit-vX.Y.Z`.
+`git tag -a aidrian-claude-mod-vX.Y.Z <commit> -m "aidrian-claude-mod vX.Y.Z" && git push origin refs/tags/aidrian-claude-mod-vX.Y.Z`.
 The next run releases the later commits from it.
 
 The release fails, changing no file, when a plugin's tag exists but none is reachable from main, or its latest tag is
-not the version in its files. Tag the commit that set the version by hand, as the message says.
+not the version in its files. It fails the same way when a plugin has no tag of its prefix and the history cannot
+show a first release: the clone is shallow, or the commit that added the manifest holds another version than the files,
+as `aidrian`'s does in a clone with no tags. Tag the commit that set the version by hand, as the message says.
 
 ## Not included
 
 - OpenCode support, or a tracker other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
-- The optional cockpit pane. It lives on the `parked/cockpit` branch and is not reviewed.
+- The optional Claude mod, `aidrian-claude-mod`, a Claude Code plugin. The release already versions it (above), and its folder lands in a later pull request.

@@ -19,8 +19,9 @@ On a stop where the [announce check](hooks.md#announced-work) sends the agent ba
 
 When the main session ends a turn, the Stop hook reads its transcript and computes the cost ratio `r`:
 how many times more each call costs here than it would in a fresh session.
-Once `r` reaches `costRatio`, and again each time it doubles since the last firing, the hook sends the agent back
-for one more turn, with `r` and an estimate of `N`, the calls the work left must take before a handoff pays back, such as:
+Once `r` reaches `costRatio`, and again each time it doubles since the last firing in `ask` mode, or climbs a step
+of `max(costRatio − 1, 1)` in `auto`, the hook sends the agent back for one more turn, with `r` and an estimate of `N`,
+the calls the work left must take before a handoff pays back, such as:
 
 > each call costs 2.1 times what it would in a fresh session started from a handoff brief, and a handoff pays back
 > after about 54 more model calls, an estimate
@@ -41,11 +42,18 @@ the line for the Human; the agent says that line and ends the turn. `ask` adds t
 takes from the Human, in the host's words, such as typing the clear command and then any message.
 The reasons a handoff is not worth it stay the same.
 
-**Once, then at double.** The first firing is at `costRatio`, 2 by default. The reminder comes back only once `r`
-reaches twice the ratio at its last firing: 2, 4, 8 by default, or 1.5, 3, 6 at a `costRatio` of 1.5, and a first
-firing at 2.5 comes back at 5. It never comes back below `costRatio`, so a `costRatio` raised mid-session holds
-even where twice the last firing is lower. So neither a "keep going" nor a quiet skip turns the reminder off for the rest of the
-session, and a session that keeps going is nudged a few times at most.
+**Once, then again.** The first firing is at `costRatio`, 2 by default. When it comes back depends on the mode:
+
+- `ask` comes back only once `r` reaches twice the ratio at its last firing: 2, 4, 8 by default, or 1.5, 3, 6 at a
+  `costRatio` of 1.5, and a first firing at 2.5 comes back at 5. So a session that keeps going is asked a few times at most.
+- `auto` comes back one step above its last firing, since a skipped reminder costs the Human nothing. The step is
+  `max(costRatio − 1, 1)`: 2, 3, 4, 5 by default, or 3, 5, 7 at a `costRatio` of 3. A step of 1 is one more fresh
+  session's worth of context, about 74,000 more tokens at a 30,000-token baseline. So a session that skipped because an
+  agent was still running is offered the handoff again once each call costs one more fresh session's worth, and even a
+  `costRatio` of 1.1 does not fire at nearly every stop.
+
+In either mode it never comes back below `costRatio`, so a `costRatio` raised mid-session holds even where the next
+step is lower. So neither a "keep going" nor a quiet skip turns the reminder off for the rest of the session.
 The thresholds scale with the session's own baseline: with a 30,000-token baseline the first fires near 148,000 tokens of
 context, with a 60,000-token baseline near 208,000.
 
@@ -275,7 +283,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | Key | Meaning |
 | --- | --- |
 | `session.handoff.mode` | `"ask"`, `"auto"`, or `"off"`: what the reminder and the plan offer do. |
-| `session.handoff.costRatio` | The cost ratio of the first firing, a number of 1.1 or more; the reminder comes back once the ratio doubles since its last firing, never below `costRatio`. |
+| `session.handoff.costRatio` | The cost ratio of the first firing, a number of 1.1 or more; the reminder comes back once the ratio doubles since its last firing in `ask` mode, or climbs a step of `max(costRatio − 1, 1)` in `auto`, never below `costRatio`. |
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
 | `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. |

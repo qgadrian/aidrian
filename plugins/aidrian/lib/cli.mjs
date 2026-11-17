@@ -16,6 +16,7 @@ const COMMANDS = {
   lesson: './lesson-cli.mjs',
   audits: './audits-cli.mjs',
   handoff: './handoff-brief.mjs',
+  session: './session-snapshot.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',
   review: './review/bench.mjs',

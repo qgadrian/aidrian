@@ -23,36 +23,59 @@ const UNKEYED = 'unkeyed';
 // The transcript is opened non-blocking, so a FIFO given as one never makes the read wait.
 const READ = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 
+// How much of the transcript one step reads, at most, past the end of the line it must finish.
+export const CHUNK_BYTES = 8 * 1024 * 1024;
+
 // sessionUsage of the transcript at `transcript`, reading only what was written since the cache at `cacheFile`, a
-// usage.json in a folder sessionFolder gave, was saved, then saving the cache. With no cache file, or a cache that
-// cannot be used, it reads the whole transcript: a cache of another file, of a larger one, or whose offset no longer
-// follows a line feed, as after the file was rewritten in place. The read stops at the size fstat gave. Null when the
-// transcript is missing, unreadable, or no regular file. Never throws.
-export function cachedSessionUsage({ transcript, cacheFile = null }) {
+// usage.json in a folder sessionFolder gave, was saved. With no cache file, or a cache that cannot be used, it reads the
+// whole transcript: a cache of another file, of a larger one, or whose offset no longer follows a line feed, as after the
+// file was rewritten in place. It reads in steps of `chunkBytes`, each folded up to its last line feed and saved to the
+// cache, so memory stays bounded by the step, or by one longer line, and a read stopped midway goes on from there next
+// time. The read stops at the size fstat gave. Null when the transcript is missing, unreadable, or no regular file.
+// It writes no cache its reader would refuse: none past `cacheCap`, or with a key or model past its length; the last good
+// one then stays. Never throws.
+export function cachedSessionUsage({ transcript, cacheFile = null, chunkBytes = CHUNK_BYTES, cacheCap = USAGE_CACHE_CAP }) {
   let fd;
   try {
     fd = openSync(transcript, READ);
     const stat = fstatSync(fd);
     if (!stat.isFile()) return null;
-    const cache = cacheFile ? readUsageCache(cacheFile) : null;
+    const cache = cacheFile ? readUsageCache(cacheFile, { cap: cacheCap }) : null;
     const fits = cache && cache.dev === stat.dev && cache.inode === stat.ino && cache.size <= stat.size
       && (cache.offset === 0 || readRange(fd, cache.offset - 1, cache.offset)[0] === 0x0a);
     const fold = fits ? cache.fold : newUsageFold();
-    const offset = fits ? cache.offset : 0;
-    const bytes = readRange(fd, offset, stat.size);
-    const whole = bytes.lastIndexOf(0x0a) + 1;
-    foldUsage(fold, bytes.subarray(0, whole).toString('utf8'));
-    if (cacheFile && (!fits || whole > 0 || cache.size !== stat.size)) {
-      writeSessionFile(path.dirname(cacheFile), path.basename(cacheFile), cacheText(fold, { offset: offset + whole, size: stat.size, dev: stat.dev, inode: stat.ino }));
+    const save = (offset) => {
+      const text = cacheFile && cacheText(fold, { offset, size: stat.size, dev: stat.dev, inode: stat.ino });
+      return text && Buffer.byteLength(text) <= cacheCap ? writeSessionFile(path.dirname(cacheFile), path.basename(cacheFile), text) : null;
+    };
+    const step = Number.isSafeInteger(chunkBytes) && chunkBytes > 0 ? chunkBytes : CHUNK_BYTES;
+    let offset = fits ? cache.offset : 0;
+    let saved = fits && cache.size === stat.size;
+    for (let line = nextLines(fd, offset, stat.size, step); line.length; line = nextLines(fd, offset, stat.size, step)) {
+      foldUsage(fold, line.toString('utf8'));
+      offset += line.length;
+      saved = save(offset) !== null || saved;
     }
-    if (whole === bytes.length) return foldedUsage(fold);
+    if (!saved) save(offset);
+    const rest = readRange(fd, offset, stat.size);
+    if (!rest.length) return foldedUsage(fold);
     // A last line with no line feed yet is read now and again next time, when it may have grown.
     const copy = { requests: new Map(fold.requests), compactions: fold.compactions };
-    return foldedUsage(foldUsage(copy, bytes.subarray(whole).toString('utf8')));
+    return foldedUsage(foldUsage(copy, rest.toString('utf8')));
   } catch {
     return null;
   } finally {
     if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The whole lines of `fd` from `offset`, about `chunkBytes` of them, ending at a line feed: a step grows by `chunkBytes`
+// until it holds one, and is empty when none is left before `size`.
+function nextLines(fd, offset, size, chunkBytes) {
+  for (let end = Math.min(offset + chunkBytes, size); ; end = Math.min(end + chunkBytes, size)) {
+    const bytes = readRange(fd, offset, end);
+    const whole = bytes.lastIndexOf(0x0a) + 1;
+    if (whole > 0 || end >= size) return bytes.subarray(0, whole);
   }
 }
 
@@ -64,12 +87,14 @@ function readRange(fd, start, end) {
   return bytes.subarray(0, read);
 }
 
+// The cache's text, or null when a request's key or model is longer than the reader takes.
 function cacheText(fold, { offset, size, dev, inode }) {
   const requests = [...fold.requests].map(([key, { model, usage }]) => ({
     key: typeof key === 'string' ? `${ID_PREFIX}${key}` : UNKEYED,
     model,
     usage: storedUsage(usage),
   }));
+  if (!requests.every(isRequest)) return null;
   return `${JSON.stringify({ offset, size, dev, inode, requests, compactions: fold.compactions })}\n`;
 }
 
@@ -85,8 +110,8 @@ const isRequest = (each) => typeof each === 'object' && each !== null
 // by another user, larger than USAGE_CACHE_CAP, not JSON, or not of the cache's shape: offset, size, dev, inode, and
 // compactions non-negative integers with offset at most size, and each request a key, a model, and usage numbers, no
 // id twice. The requests are rebuilt as the fold's Map, never as an object keyed by a transcript value.
-export function readUsageCache(file) {
-  const read = readOwnFile(file, { cap: USAGE_CACHE_CAP });
+export function readUsageCache(file, { cap = USAGE_CACHE_CAP } = {}) {
+  const read = readOwnFile(file, { cap });
   if (!read) return null;
   let value;
   try {

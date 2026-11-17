@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { createGithubForge, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
 import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
@@ -167,13 +167,39 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity', 'servedRepository']);
+  assert.equal(facade.servedRepository, servedRepository);
   assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
   assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
   assert.equal(facade.repoIdentity, repoIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
   assert.equal(facade.MAX_BODY, 65_536, 'the adapter names GitHub\'s longest body, and the facade gives it to shared code');
+});
+
+test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {
+  const { forge, args } = recorded(() => '[]');
+  forge.mergedChanges(400, { fields: 'headRefName,headRefOid', repo: 'github.com/acme/notes' });
+  forge.mergedChanges(400, { fields: 'headRefName,headRefOid' });
+  assert.deepEqual(args(), [
+    ['pr', 'list', '--state', 'merged', '--limit', '400', '--json', 'headRefName,headRefOid', '--repo', 'github.com/acme/notes'],
+    ['pr', 'list', '--state', 'merged', '--limit', '400', '--json', 'headRefName,headRefOid'],
+  ]);
+  assert.deepEqual(FORGE_HOSTS, ['github.com']);
+  assert.ok(Object.isFrozen(FORGE_HOSTS));
+  const served = (remote) => servedRepository(repoIdentity(remote));
+  assert.equal(served('https://github.com/Acme/Notes.git'), 'github.com/acme/notes');
+  assert.equal(served('git@github.com:acme/my.repo_name-2.git'), 'github.com/acme/my.repo_name-2');
+  assert.equal(served('ssh://git@ssh.github.com:443/acme/notes.git'), 'github.com/acme/notes', 'an alias reads as its canonical host');
+  assert.equal(served('acme/notes'), 'github.com/acme/notes');
+  for (const remote of [
+    'https://gitlab.com/acme/notes.git', 'https://github.example.com/acme/notes.git', 'https://github.com/acme%2Fsub/notes.git',
+    'https://github.com/acme/sub/notes.git', 'git@github.com:acme/..', 'git@github.com:acme/.', 'git@github.com:../notes',
+    'https://github.com/-acme/notes', `https://github.com/acme/${'n'.repeat(101)}`, '/srv/git/notes',
+  ]) assert.equal(served(remote), null, remote);
+  for (const identity of [null, undefined, {}, { host: 'github.com' }, { host: 'github.com', path: 7 }, { host: 'GITHUB.COM', path: 'a/b' }]) {
+    assert.equal(servedRepository(identity), null, JSON.stringify(identity));
+  }
 });
 
 test('changeEvidence: a comment, review, or review comment of the pull request, each read by its id', () => {

@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, truncateSync, writeFileSync, writeSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, truncateSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -201,4 +201,57 @@ test('with no cache file the whole transcript is read and nothing is written', (
   writeFileSync(transcript, call({ id: 'a', context: 5_000 }) + call({ context: 6_000 }).trimEnd());
   assert.deepEqual(cachedSessionUsage({ transcript }), whole(transcript));
   assert.deepEqual(readdirSync(dir), ['transcript.jsonl']);
+});
+
+test('a read in small chunks, each ending at a line feed, gives the same answer, a line longer than a chunk included', () => {
+  const { transcript, cacheFile } = fixture();
+  const long = `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(300) } })}\n`;
+  const appends = [call({ id: 'a', context: 5_000 }) + long + call({ id: 'b', context: 6_000 }), COMPACTION + call({ id: 'a', context: 5_500 }).slice(0, 30)];
+  for (const text of appends) {
+    appendFileSync(transcript, text);
+    assert.deepEqual(cachedSessionUsage({ transcript, cacheFile, chunkBytes: 32 }), whole(transcript));
+    const { offset } = onDisk(cacheFile);
+    assert.equal(readFileSync(transcript)[offset - 1], 0x0a, 'the saved offset follows a line feed');
+  }
+});
+
+test('a cold read saves its progress chunk by chunk, so a read stopped midway goes on from there', { timeout: 60_000 }, async () => {
+  const { transcript, cacheFile } = fixture();
+  const filler = `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(20_000) } })}\n`;
+  let text = '';
+  for (let i = 0; i < 2000; i += 1) text += filler + call({ id: `m${i}`, context: 30_000 + i });
+  writeFileSync(transcript, text);
+  const module = new URL('../plugins/aidrian/lib/session-usage-cache.mjs', import.meta.url).href;
+  const script = `const { cachedSessionUsage } = await import(${JSON.stringify(module)});
+cachedSessionUsage({ transcript: ${JSON.stringify(transcript)}, cacheFile: ${JSON.stringify(cacheFile)}, chunkBytes: 64 * 1024 });`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore' });
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  const until = Date.now() + 30_000;
+  while (!existsSync(cacheFile) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 2));
+  child.kill('SIGKILL');
+  await exited;
+  const saved = readUsageCache(cacheFile);
+  assert.ok(saved, 'a cache was saved before the read finished');
+  assert.ok(saved.offset > 0 && saved.offset < statSync(transcript).size, `progress kept midway: ${saved.offset} of ${statSync(transcript).size}`);
+  assert.deepEqual(cachedSessionUsage({ transcript, cacheFile }), whole(transcript));
+});
+
+test('no cache is written that its reader would reject: past the cap, or with an id or a model past its length', () => {
+  const readable = (cacheFile, cap) => !existsSync(cacheFile) || readUsageCache(cacheFile, { cap }) !== null;
+  const small = fixture();
+  appendFileSync(small.transcript, call({ id: 'a', context: 5_000 }));
+  assert.deepEqual(cachedSessionUsage({ ...small, cacheCap: 400 }), whole(small.transcript));
+  const kept = readFileSync(small.cacheFile, 'utf8');
+  for (let i = 0; i < 5; i += 1) appendFileSync(small.transcript, call({ id: `b${i}`, context: 6_000 + i }));
+  assert.deepEqual(cachedSessionUsage({ ...small, cacheCap: 400 }), whole(small.transcript));
+  assert.ok(readable(small.cacheFile, 400), 'nothing past the cap is written');
+  assert.equal(readFileSync(small.cacheFile, 'utf8'), kept, 'the last good cache stays');
+  assert.deepEqual(cachedSessionUsage({ ...small, cacheCap: 400 }), whole(small.transcript), 'and the next read still agrees');
+  for (const line of [call({ id: 'x'.repeat(300), context: 5_000 }), call({ id: 'a', context: 5_000, model: 'm'.repeat(201) })]) {
+    const long = fixture();
+    appendFileSync(long.transcript, line);
+    assert.deepEqual(cachedSessionUsage(long), whole(long.transcript));
+    assert.ok(readable(long.cacheFile), 'no cache with a key or model the reader refuses');
+    assert.deepEqual(cachedSessionUsage(long), whole(long.transcript));
+  }
 });

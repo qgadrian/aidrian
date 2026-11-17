@@ -156,13 +156,14 @@ A forge is where a pull request lives: its checks, reviews, comments, and reposi
 | File | What it holds |
 | --- | --- |
 | `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs, killSignal }` and returns the frozen method object below. `run` is the test seam for the forge's command, and `killSignal` the signal that stops a call at `timeoutMs`, as the ready hold asks for SIGKILL |
-| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, the facade's helper `repoIdentity(value)` from `identity.mjs`, `isLogin(name)`, whether a name is shaped like the forge's login, as an invariant's `approvers` must be, and `MAX_BODY`, the longest body the forge takes for a comment or a review, which the adapter names (65,536 characters on GitHub) and an inline review checks its escaped length against. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
+| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, the facade's helper `repoIdentity(value)` from `identity.mjs`, the repository check `servedRepository(identity)`, which the active adapter answers, `isLogin(name)`, whether a name is shaped like the forge's login, as an invariant's `approvers` must be, and `MAX_BODY`, the longest body the forge takes for a comment or a review, which the adapter names (65,536 characters on GitHub) and an inline review checks its escaped length against. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
 | `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
 
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
 
 - `id`, `cwd`, and the helper `isTrustedCommenter(comment)`.
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, `pull`, `diff`, its diff as text,
+  where `mergedChanges` and `openChanges` take a `repo` option, the repository the check below names,
   `nodeChange`, the pull request a GraphQL node id names, `changeEdits(repo, n, { host })`, when its body was last edited
   and its title last renamed, and `changeFiles`, every changed file past the 100 `change` lists.
 - The repository: `repo`, `repository`, `contents`, `tree`, one folder of a commit's tree with each entry's mode, `visibility`, and `viewer`.
@@ -201,6 +202,13 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,
   so a GitHub Enterprise repository links to its own host. It returns null for anything else, and for a read that
   fails: the table then shows the two short SHAs as text.
+
+- The repository check, exported from the adapter's file and given to shared code by `index.mjs` as
+  `servedRepository(identity)`: given origin's identity as `repoIdentity` reads it, the repository as the adapter names
+  it to its forge, or null when the adapter does not serve it. The hosts it serves are a constant in the adapter's own
+  file, `FORGE_HOSTS` (`github.com` alone for GitHub); no config, remote, or cache adds one. GitHub's answers
+  `github.com/<owner>/<name>` only for a path of exactly two segments, an owner shaped as a login and a repository name,
+  never `.` or `..`. `aidrian session snapshot` asks it before the merged-heads read, and on null calls no forge.
 
 `repoIdentity(value)` is no method: it reads a remote URL or a `-R` value to `{ host, path }` before any forge is chosen,
 so it lives in `lib/forges/identity.mjs`, and an adapter neither implements nor carries it.

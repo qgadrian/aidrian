@@ -151,12 +151,23 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 │                         and triage.json, the decision on each finding (personas.md#triage)
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
+├── sessions/<session id>/  what aidrian session snapshot caches for one session, for its user alone:
+│   ├── usage.json            the transcript read so far, as the handoff numbers fold it, saved step by step
+│   └── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
+- `sessions/<session id>/` holds the caches of [`aidrian session snapshot`](handoff.md#the-snapshot), display data no
+  hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
+  `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
+  mode 0700, no bit for the group or others, checked before every write, read, and sweep; each file is written as a
+  temporary file, mode 0600, renamed over it, under the cache names alone. A state folder inside a checkout gets no
+  session folder, and neither does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
+  the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
+  others untouched for 30 days, deleting only the cache files and their temporary files, then the folder once empty.
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

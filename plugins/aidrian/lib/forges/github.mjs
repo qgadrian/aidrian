@@ -15,6 +15,21 @@ export const isTrustedCommenter = (comment) => MEMBER_ASSOCIATIONS.has(comment?.
 // Whether `name` is shaped like a GitHub login: letters, digits, and single hyphens between them, at most 39 characters.
 export const isLogin = (name) => typeof name === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/u.test(name);
 
+// The hosts this adapter serves, as a constant in its own source: no config, remote, ledger row, or cache adds one.
+export const FORGE_HOSTS = Object.freeze(['github.com']);
+// A GitHub repository name: letters, digits, `.`, `_`, and `-`, at most 100 characters, and never `.` or `..`.
+const REPOSITORY_NAME = /^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/u;
+
+// The repository check of the facade: given a repository's identity as repoIdentity reads it, `{ host, path }`, the
+// repository as gh names it, `<host>/<owner>/<name>`, or null. Only for a host of FORGE_HOSTS, named by the constant, and
+// a path of exactly two segments, an owner shaped as a login and a repository name.
+export function servedRepository(identity) {
+  const host = FORGE_HOSTS.find((each) => each === identity?.host);
+  const parts = typeof identity?.path === 'string' ? identity.path.split('/') : [];
+  if (!host || parts.length !== 2 || !isLogin(parts[0]) || !REPOSITORY_NAME.test(parts[1])) return null;
+  return `${host}/${parts[0]}/${parts[1]}`;
+}
+
 // The REST media type `aidrian pr await-review` has always named: index.mjs passes it as `mediaType` for `strictJson`.
 export const GITHUB_JSON = 'application/vnd.github+json';
 
@@ -225,10 +240,10 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       return json(['pr', 'view', ...target, '--json', fields, ...(repo ? ['--repo', repo] : [])]);
     },
     // The merged pull requests, newest first, at most `limit`, each with the `fields` named; with `sinceMs`, only those
-    // merged since then.
-    mergedChanges: (limit, { sinceMs = null, fields = 'number,reviews' } = {}) => {
+    // merged since then. `repo` lists that repository's, as servedRepository names it.
+    mergedChanges: (limit, { sinceMs = null, fields = 'number,reviews', repo = null } = {}) => {
       const search = sinceMs === null ? [] : ['--search', `merged:>=${new Date(sinceMs).toISOString().slice(0, 19)}+00:00`];
-      return json(['pr', 'list', '--state', 'merged', '--limit', String(limit), ...search, '--json', fields]);
+      return json(['pr', 'list', '--state', 'merged', '--limit', String(limit), ...search, '--json', fields, ...(repo ? ['--repo', repo] : [])]);
     },
     // The open pull requests, at most `limit`, each with the `fields` named; `repo` lists that repository's.
     openChanges: (limit, fields, { repo = null } = {}) => json(['pr', 'list', '--state', 'open', '--limit', String(limit), '--json', fields, ...(repo ? ['--repo', repo] : [])]),

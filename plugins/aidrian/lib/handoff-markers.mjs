@@ -327,6 +327,24 @@ export function readFrom(store, session, { now = Date.now() } = {}) {
   return readMarker(store, sessionFile('from', session), { now, field: 'at', shape: isFrom });
 }
 
+// The newest brief in the store's handoffs folder, by modification time, whichever session wrote it: { name, slug }, or
+// null, and null when the store is refused. A brief counts when its name matches BRIEF_FILE with a slug SLUG matches and
+// no control character, and lstat reports a regular file this user owns. It reads only the listing: no brief's text.
+export function latestBrief(store) {
+  if (store.refused) return null;
+  let newest = null;
+  for (const name of listFolder(store.handoffs)) {
+    if (!BRIEF_FILE.test(name) || !SLUG.test(slugOf(name)) || hasControl(name)) continue;
+    try {
+      const stat = lstatSync(path.join(store.handoffs, name));
+      if (stat.isFile() && !foreign(stat, store.uid) && !(newest?.mtimeMs >= stat.mtimeMs)) newest = { name, slug: slugOf(name), mtimeMs: stat.mtimeMs };
+    } catch {
+      // Gone meanwhile.
+    }
+  }
+  return newest && { name: newest.name, slug: newest.slug };
+}
+
 const checkedFile = (name) => (BRIEF_FILE.test(name) && SLUG.test(slugOf(name)) ? `checked-${name}.json` : null);
 
 // Stamps the brief at `briefPath` as passed, with the sha256 of the bytes that passed, when it is a brief right inside
@@ -359,10 +377,12 @@ export function sweep(store, now = Date.now()) {
   }
 }
 
-function listStore(store) {
+function listFolder(dir) {
   try {
-    return readdirSync(store.dir);
+    return readdirSync(dir);
   } catch {
     return [];
   }
 }
+
+const listStore = (store) => listFolder(store.dir);

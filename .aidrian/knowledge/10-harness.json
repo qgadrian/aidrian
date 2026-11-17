@@ -28,7 +28,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": "The .aidrian/ folder: init, check, lint, state, worktrees, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating.",
+      "summary": ".aidrian/: init, check, lint, state, sessions/, worktrees, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating.",
       "tags": []
     },
     "personas.md": {
@@ -48,7 +48,7 @@
       "tags": []
     },
     "handoff.md": {
-      "summary": "Handoff: reminder, plan offer, break-even, continuation, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, route, brief sections.",
+      "summary": "Reminder, plan offer, break-even, continuation, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, route, brief sections, snapshot.",
       "tags": []
     },
     "config.md": {

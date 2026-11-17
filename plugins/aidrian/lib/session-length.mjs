@@ -4,6 +4,10 @@
 // Both texts follow the route the session goes on by after its handoff, `session.handoff.continue` as the host can do it
 // (continuation); with `none` they are what they were before the routes existed.
 
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { SESSION_ID } from './handoff-markers.mjs';
 import { continueRoutes } from './hosts/index.mjs';
 import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './model-prices.mjs';
 import { aggregateUsage } from './transcript.mjs';
@@ -19,6 +23,11 @@ const OUTPUT_MULT = 5;
 const contextOf = (usage = {}) =>
   (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
 const oneHourOf = (usage) => usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+
+// The Stop hook's marker of the session `sessionId`, `aidrian-session-length-<session id>` in the system's temporary
+// folder, or null when the id fails SESSION_ID: the hook and `aidrian session snapshot` both build the path here.
+export const stopMarkerPath = (sessionId) =>
+  (typeof sessionId === 'string' && SESSION_ID.test(sessionId) ? path.join(tmpdir(), `aidrian-session-length-${sessionId}`) : null);
 
 // The fold sessionUsage reads a transcript with, and the usage cache (lib/session-usage-cache.mjs) keeps between reads:
 // { requests, compactions }. `requests` is aggregateUsage's Map of each request's { model, usage } in first-seen order,

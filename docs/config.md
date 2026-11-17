@@ -1680,6 +1680,14 @@ A session with any recorded read writes none, even when the read was on another 
 Every other refusal is recorded when it happens, including rule 1's two that no read clears, which need the key corrected.
 This depends on the session-end hook: on a host with no SessionEnd, and in a session that crashes, the refusal stays uncounted.
 
+## Session snapshot
+
+`aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A|B] [--deadline-ms N] [--json|--line]`
+prints what a status line shows for a session: its handoff numbers, from `session.handoff`, and the project's open
+lessons, worktrees, provisional decisions, untriaged audit findings, and the branch's ticket ([Handoff](handoff.md#the-snapshot)).
+Unlike the other commands it never stops on a `config.json` with errors: like the hooks, it uses the default in place
+of each bad value, and a section that cannot be read is null with its name in `errors`, so the status line keeps working.
+
 ## Checking
 
 `aidrian check` validates this file with the rest of the project folder.

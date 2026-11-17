@@ -5,8 +5,7 @@ description: Write a handoff brief so a fresh session can resume this work, when
 
 # session-handoff
 
-Write a self-sufficient brief for the current work, so the user can end this session and resume in a fresh one
-without losing context.
+Write a self-sufficient brief, so a fresh session resumes the work without losing context.
 
 ## When
 
@@ -69,13 +68,12 @@ or an unattended run that ends with its task unfinished.
    - A current brief (rule 7) last written more than 15 minutes ago is refreshed first, by steps 4 to 6.
    - After step 6 exits 0, run `aidrian handoff continue <brief>`, with `--route <route>` when `--continue` gave one:
      - `continue: none`: print the resume instructions, and the `fallback:` line when there is one.
-     - `continue: clear`: tell the Human the `say:` line and nothing else, then end the turn.
+     - `continue: clear` or `continue: background`: tell the Human the `say:` line and nothing else, then end the turn.
      - Exit 1: do what its message names, such as the check or a refresh, and run it once more. A second refusal,
        or exit 2: print the resume instructions and the reason.
 8. **Print the resume instructions** below, unless step 7 printed them or told the `say:` line.
 
-Refreshing the brief for the same task overwrites the same file. A run that crosses a UTC date starts a new file,
-and the newest brief wins.
+Refreshing the brief for the same task overwrites the same file. A run that crosses a UTC date starts a new file.
 
 ## Resume instructions
 
@@ -99,4 +97,5 @@ Print these at the end, and nothing about worktree paths or drift checks: the `s
 7. **Skip a current brief.** When the brief for this task exists and nothing changed since (no commit, decision,
    or new next step), say it is current and give its path, instead of rewriting it.
 8. This skill commits, pushes, and ends nothing; the user decides when to close the session.
-   After `continue: clear` it ends the turn, and the Human clears the session.
+   After `continue: clear` it ends the turn, and the Human clears the session; after `continue: background` it ends
+   the turn and does nothing more.

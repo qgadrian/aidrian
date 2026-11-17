@@ -413,7 +413,7 @@ test('github.titleIssuePrefix: off by default, so pull request titles are plain 
 
 test('the handoff settings load as a group, and a project sets any of them', (t) => {
   const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000 } } }));
-  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'none', maxChain: 3 } }]);
+  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'background', maxChain: 3 } }]);
   const chain = loadConfig(project(t, { version: 1, session: { handoff: { continue: 'clear', maxChain: 5 } } }));
   assert.deepEqual([chain.errors, chain.config.session.handoff], [[], { ...DEFAULTS.session.handoff, continue: 'clear', maxChain: 5 }]);
   const some = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'off' } } }));
@@ -428,13 +428,33 @@ test('the handoff continue route is none by default, a chain is 3 handoffs, and 
 
 test('a string session.handoff, the old shape, loads with the new continue defaults', (t) => {
   const { config } = loadConfig(project(t, { version: 1, session: { handoff: 'auto' } }));
-  assert.deepEqual(config.session.handoff, { mode: 'auto', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3 });
+  assert.deepEqual(config.session.handoff, { mode: 'auto', costRatio: 2, maxTokens: 0, continue: 'background', maxChain: 3 });
+  assert.equal(loadConfig(project(t, { version: 1, session: { handoff: 'ask' } })).config.session.handoff.continue, 'none');
+});
+
+test('the continue default follows the mode: auto with no continue is the background route, and a continue the file sets wins', (t) => {
+  const route = (handoff) => {
+    const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff } }));
+    assert.deepEqual(errors, [], JSON.stringify(handoff));
+    return config.session.handoff.continue;
+  };
+  assert.equal(route({ mode: 'auto' }), 'background', 'fully automatic');
+  assert.equal(route({ mode: 'auto', continue: 'clear' }), 'clear');
+  assert.equal(route({ mode: 'auto', continue: 'none' }), 'none', 'the old behaviour, kept by saying so');
+  assert.equal(route({ mode: 'ask' }), 'none');
+  assert.equal(route({ mode: 'off' }), 'none');
+  assert.equal(route({ costRatio: 3 }), 'none', 'the default mode is ask');
+  assert.equal(DEFAULTS.session.handoff.continue, 'none', 'no file: ask, and none');
+  const bad = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'auto', continue: 'fork' } } }));
+  assert.equal(bad.errors.length, 1, 'a bad continue is an error, not a quiet background');
 });
 
 test('a string session.handoff, the old shape, keeps its mode and is reported', (t) => {
   for (const mode of ['off', 'ask', 'auto']) {
     const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff: mode } }));
-    assert.deepEqual(config.session.handoff, { ...DEFAULTS.session.handoff, mode });
+    // Auto with no continue derives the background route, as the group does.
+    const route = mode === 'auto' ? 'background' : DEFAULTS.session.handoff.continue;
+    assert.deepEqual(config.session.handoff, { ...DEFAULTS.session.handoff, mode, continue: route });
     assert.deepEqual(errors, ['.aidrian/config.json: "session.handoff" is now "session.handoff.mode": move it']);
   }
 });

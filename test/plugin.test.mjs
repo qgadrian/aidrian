@@ -9,7 +9,7 @@ import test from 'node:test';
 import { parse } from 'yaml';
 
 import { decisionClasses, VOCAB_PATH } from '../plugins/aidrian/lib/decisions.mjs';
-import { continuationContext } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { backgroundPrompt, continuationContext } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
@@ -745,7 +745,7 @@ test('the handoff skills run the continue gate after the check, carry the chain,
     'Unless step 1 printed `route: none`, nothing still runs: step 1 settled it', 'last written more than 15 minutes ago is refreshed first',
     'After step 6 exits 0, run `aidrian handoff continue <brief>`',
     '`continue: none`: print the resume instructions, and the `fallback:` line when there is one',
-    '`continue: clear`: tell the Human the `say:` line and nothing else, then end the turn',
+    '`continue: clear` or `continue: background`: tell the Human the `say:` line and nothing else, then end the turn',
     'Exit 1: do what its message names', 'A second refusal, or exit 2: print the resume instructions and the reason',
   ]) assert.ok(gate.includes(words), `step 7: ${words}`);
   // Step 1 settles running work only for the route the host runs, which the gate decides the same way (effectiveRoute).
@@ -754,7 +754,7 @@ test('the handoff skills run the continue gate after the check, carry the chain,
     'starts a turn here after the gate, and that cancels the continuation',
     'Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one left running under Still running']) assert.ok(step(handoff, 1).includes(words), `step 1: ${words}`);
   assert.ok(step(handoff, 8).includes('unless step 7 printed them or told the `say:` line'));
-  assert.match(handoff, /8\. This skill commits, pushes, and ends nothing; the user decides when to close the session\. After `continue: clear` it ends the turn, and the Human clears the session\./);
+  assert.match(handoff, /8\. This skill commits, pushes, and ends nothing; the user decides when to close the session\. After `continue: clear` it ends the turn, and the Human clears the session; after `continue: background` it ends the turn and does nothing more\./);
   const template = flat('plugins/aidrian/skills/session-handoff/references/brief-template.md');
   assert.match(template, /\| Supersedes: <brief or none> \| Chain: <n> Advice from/);
   assert.match(template, /`Chain: <n>` counts the automatic continuations in a row that led to this brief/);
@@ -765,9 +765,13 @@ test('the handoff skills run the continue gate after the check, carry the chain,
     'A first message that asks for something else is answered first']) assert.ok(injected.includes(words), `injection: ${words}`);
   // The label the skill quotes is the one the session start writes.
   const label = /`([^`]+)` block/u.exec(injected)?.[1];
-  const context = continuationContext({ marker: { brief: '/state/handoffs/2026-11-16-task.md', slug: 'task', chain: 0 }, maxChain: 3, source: 'clear' });
+  const marker = { brief: '/state/handoffs/2026-11-16-task.md', slug: 'task', chain: 0 };
+  const context = continuationContext({ marker, maxChain: 3, source: 'clear' });
   assert.ok(label && context.startsWith(label), `${label} starts ${context.split('\n')[0]}`);
-  assert.match(resume, /When the start context says this session is an automatic continuation, the next brief for this work carries the number it names\. When a person typed the resume, the next brief carries `Chain: 0`\./);
+  // And the one the background route's first message carries.
+  assert.ok(injected.includes('the start context or the first message holds'), 'the background route\'s block comes as the first message');
+  assert.ok(backgroundPrompt({ marker, maxChain: 3 }).startsWith(label));
+  assert.match(resume, /When the start context or that block says this session is an automatic continuation, the next brief for this work carries the number it names\. When a person typed the resume, the next brief carries `Chain: 0`\./);
   assert.match(flat('plugins/aidrian/skills/autopilot/references/phases.md'), /A checkpoint brief sets up no continuation/);
   // Search finds the handoff doc by the continuation's words too.
   const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));

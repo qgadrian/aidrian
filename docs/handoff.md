@@ -80,7 +80,7 @@ begins, never here; `ask` names what a handoff takes from the Human, as the remi
 
 ## Continue
 
-`session.handoff.continue` says how the session goes on once its brief is written. It is independent of `mode`,
+`session.handoff.continue` says how the session goes on once its brief is written. Its default follows `mode`,
 and the two give a ladder:
 
 | Step | Config | What happens |
@@ -89,14 +89,28 @@ and the two give a ladder:
 | Warn only | `mode: "ask"`, `continue: "none"` | The agent asks; on a yes it writes the brief and prints the resume line. |
 | Brief, no new session | `mode: "auto"`, `continue: "none"` | The agent writes the brief unasked and prints the resume line. |
 | Brief, then a clear | `mode: "auto"` or `"ask"`, `continue: "clear"` | The brief, then the Human types the clear command and one message, and the new session resumes from the brief with nothing else typed. |
+| Fully automatic | `mode: "auto"` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on. |
 
-The schema takes `"compact"` and `"background"` too, the routes where nothing is typed, but no host lists them yet:
-until their release, either falls back to `"none"`, and the gate says so in its `fallback:` line.
-A route the host does not list falls back the same way. Which host does which route:
+The `continue` default follows `mode`: with `mode: "auto"` and no `continue`, the route is `"background"`; with any
+other mode it is `"none"`. A `continue` that config.json sets always wins, so `mode: "auto"` with `continue: "none"`
+keeps the brief-only step, and `continue: "clear"` the clear. Nothing set means `mode: "ask"` and `continue: "none"`.
+The fully automatic step in config.json:
+
+```json
+{ "session": { "handoff": { "mode": "auto" } } }
+```
+
+`"background"` runs only when the resolved `session.handoff.continue` is `"background"`, set or derived from `"auto"`:
+the skill's `--continue background` cannot pick it under any other setting. With `mode: "ask"` and
+`continue: "background"` the agent still asks first, and on a yes nothing else is typed.
+
+The schema takes `"compact"` too, but no host lists it yet: until its release it falls back to `"none"`, and the gate
+says so in its `fallback:` line. A route the host does not list falls back the same way. Which host does which route:
 
 | Route | Host |
 | --- | --- |
 | `clear` | Claude Code: verified on 2.1.325: [Handoff continuation](providers/claude-code.md#handoff-continuation) |
+| `background` | Claude Code: on 2.1.326, with `claude --bg`: [The background route](providers/claude-code.md#the-background-route) |
 | any | Codex: none, so every route falls back to `"none"` |
 
 ### The route the host runs
@@ -124,13 +138,15 @@ whatever the config says, and `background` only when the config says `"backgroun
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a
    control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
    it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
-   user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
-   is `maxChain` or more.
+   user ids (not on Windows, where Node reports every writable folder as writable by others); the brief's chain
+   is `maxChain` or more; or, on the background route, the new session did not start.
 4. A refusal exits 1 with the reason and the remedy on stderr, since the session can fix it: no passing check of the
    brief's current bytes (run `aidrian handoff check` first), a brief last written more than 15 minutes ago or dated in
    the future (refresh it), or a `Chain` below the floor this session was given (set it, and check again).
 5. Otherwise it arms the continuation and prints `continue: <route>` and one `say:` line, the words the skill tells the
    Human: what the route takes from them, the brief's path, and how to resume by hand when no banner names the slug.
+   On the background route it arms nothing: it starts the new session, as [The background route](#the-background-route)
+   says, and its `say:` line names that session and how to open it.
 
 The latest run decides: once the brief resolves and the session is known, any continuation the session armed before is
 gone, whatever the exit, so a clear never delivers an earlier brief.
@@ -189,6 +205,35 @@ Limits:
 - A store inside a checkout of the repository delivers nothing, and the gate's `fallback:` line says so.
 - A hook that cannot read the store lets the session start as it would without one: the Human resumes by hand.
 
+### The background route
+
+Nothing is typed. It runs only when `session.handoff.continue` is `"background"`, set or derived from `mode: "auto"`,
+on a host whose adapter lists it and declares `startBackground` ([Adding a host](providers/adding-a-host.md)).
+
+1. The session settles every running agent, writes the brief, checks it, and runs the gate, as on the clear route.
+2. The gate starts a new session through the host adapter, in the brief's `Worktree:` when git lists it as a
+   worktree of the repository and the folder is there, else in the project's checkout. The new session takes the
+   handing-off session's name, agent, and effort when the host tells them, else the brief's slug as its name.
+3. Its first message is the continuation, the same lines a clear's start context gets: the brief's path, its slug, and
+   the continuation's number, never the brief's text. It follows the `session-continue` skill on that brief.
+4. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
+   its next brief to the count. When the host cannot tell the new session's id, no floor is written, and the first
+   message still names the count.
+5. The gate prints `continue: background` and a `say:` line that names the new session, where it started, and the host's
+   command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
+
+When the host cannot start the session, such as with no host command on PATH, a folder the host does not trust, or
+a start that fails, the gate prints `continue: none` and a `fallback:` line with the reason, and the skill prints the
+resume instructions.
+
+Limits:
+
+- The old session stays open and idle: it spends no tokens while no turn starts, and the Human closes it at will.
+  Nothing closes it by itself. A turn that starts there after the gate, such as a background agent's report, runs
+  beside the new session in the same worktree, so the skill settles every agent first, as on the clear route.
+- The new session starts in the host's default permission mode and model for that folder; a model the old session
+  switched to in the session does not carry over.
+
 ## The cost model
 
 All costs are in input tokens of the model of the session's last main-session call.
@@ -232,7 +277,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | `session.handoff.mode` | `"ask"`, `"auto"`, or `"off"`: what the reminder and the plan offer do. |
 | `session.handoff.costRatio` | The cost ratio of the first firing, a number of 1.1 or more; the reminder comes back once the ratio doubles since its last firing, never below `costRatio`. |
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
-| `session.handoff.continue` | How the session goes on after its handoff: `"none"`, the default, `"clear"`, `"compact"`, or `"background"`. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
+| `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
 | `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from

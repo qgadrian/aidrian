@@ -52,6 +52,13 @@ export function checkoutRoots(cwd, options) {
   return { main: gitDir === commonDir ? current : path.dirname(commonDir), current };
 }
 
+// Every worktree of the repository `cwd` is in, the main checkout first, from `git worktree list`; none outside git.
+export function worktreePaths(cwd) {
+  const { status, stdout } = runGit(['worktree', 'list', '--porcelain'], cwd);
+  if (status !== 0) return [];
+  return stdout.split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length));
+}
+
 // Whether git ignores `file` (absolute, or relative to `root`).
 export function isIgnored(root, file) {
   const { status } = runGit(['check-ignore', '-q', '--', file], root);

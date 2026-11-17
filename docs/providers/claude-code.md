@@ -162,7 +162,8 @@ Bash tool's field, and on test fixtures of that shape. It has not run live: no s
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
 types `/clear` and then any message, which is the adapter's `steps.clear`, and the new session resumes from the brief.
-`compact` and `background` fall back to `none` until their release, and `aidrian handoff route` prints `route: none` for them.
+It also does the `background` route, below, where nothing is typed.
+`compact` falls back to `none` until its release, and `aidrian handoff route` prints `route: none` for it.
 The route is verified on Claude Code 2.1.325: the host behavior it rests on on 2026-11-15, with a throwaway plugin, and
 the route from end to end on 2026-11-16, with the plugin loaded from a branch. That live run found:
 
@@ -206,6 +207,40 @@ background ([its hooks reference](https://code.claude.com/docs/en/hooks#userprom
 gate cancels the continuation, so the `session-handoff` skill's first step settles them all, Code Mode code running
 in the background among its background jobs, before it writes the brief and runs the gate.
 The SessionEnd hook promotes the continuation before it hands the session row to its worker, within the host's 1.5 seconds.
+
+### The background route
+
+The adapter's `startBackground` (`lib/hosts/claude-code-background.mjs`) runs, from the brief's worktree:
+
+1. `claude agents --json`, for the handing-off session's `name`, by its `sessionId`.
+2. `claude --bg --name <name> [--agent <agent>] [--effort <effort>] <prompt>`, where the name is that session's, else the
+   brief's slug, the agent is `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter
+   accepts, and the prompt is the continuation. It reads the short id from its `backgrounded · <id> · <name>` line.
+3. `claude agents --json` again, for the new session's `sessionId` by that short id, which the gate records the
+   chain floor under.
+
+The `say:` line names `claude attach <name>` and `claude attach <id>`, which open the session, and `claude agents`,
+which lists it. `claude` missing from PATH, a non-zero exit, or no exit within 60 seconds is a fallback to `none`
+with the first line of its message.
+
+Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rather than a real brief:
+
+- `claude --bg` started from the Bash tool of a running session returns at once, prints
+  `backgrounded · <id> · <name>` and the commands that manage it, and exits 0; `claude agents --json` then lists the
+  session with `id`, `sessionId`, `name`, `kind: "background"`, and `cwd`, and the short id is the first part of the
+  session id.
+- `--bg` ignores `--session-id` with a warning, so the session id is read back from the listing.
+- The background session ran the plugin's SessionStart hook, whose project knowledge line reached its context, and its
+  UserPromptSubmit and Stop hooks. Its Bash tool's `CLAUDE_CODE_SESSION_ID` was its own id, not the starting
+  session's, and `CLAUDE_CODE_AGENT` was unset: the variables of the shell that ran `claude --bg` do not reach it.
+- In a folder the host has not trusted, with no terminal to ask, `claude --bg` exits 1 with `Workspace not trusted`,
+  which the gate turns into a fallback.
+- The background session started on the model and effort of the user's settings, not the starting session's.
+  `CLAUDE_EFFORT` carries the effort; the model is not passed on.
+
+Not verified: a background continuation from a real brief, end to end, with the plugin loaded from this branch:
+whether the session-continue skill runs from the first message as intended, and whether a second continuation in a
+row reads the floor the gate wrote.
 
 ## Limits
 

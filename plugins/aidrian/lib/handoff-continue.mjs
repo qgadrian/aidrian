@@ -7,9 +7,12 @@
 //      whose path holds a control character, which that line does not print;
 //   1  a refusal the session can fix, on stderr: no passing check of these bytes, a brief too old to arm, or a Chain
 //      below the floor this session was given when a continuation started it;
-//   0  `continue: <route>` and a `say:` line, once the marker is armed.
+//   0  `continue: <route>` and a `say:` line, once the marker is armed, or, on the background route, once the new
+//      session started; a background session that did not start gives `continue: none` and its `fallback:` line.
 // The latest run decides: once the brief resolves and the session id is known, any marker the session armed before
 // goes, whatever the exit, so a clear never delivers an earlier brief. A disk that refuses the store's write exits 2.
+// The background route arms no marker: the gate starts the new session itself, through the host adapter's
+// `startBackground` and the injectable `run`, and records its chain floor (startInBackground).
 // The main session alone runs it: the agent-gates hook refuses it to a subagent, whose shell carries the main session's
 // id (lib/handoff-guard.mjs handoffContinueDenial). The route a host can do, and what it asks of the Human, are the host
 // adapter's `capabilities.handoffContinue`; this file names no host. `aidrian handoff route` (routeOf) prints the route
@@ -19,12 +22,16 @@
 // deliverCleared, continuationContext). The hooks load this file only on a host that lists a route.
 
 import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { commandConfig } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, noteFrom, openStore, promote, readContainedBrief, readFrom, SESSION_ID, SLUG, slugOf, sweep, takeReady } from './handoff-markers.mjs';
+import { foldCase, resolvedPath } from './fs.mjs';
+import { worktreePaths } from './git.mjs';
+import { worktreeOf } from './handoff-sections.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { projectAt, stateDir } from './project.mjs';
 
@@ -66,8 +73,9 @@ export function routeOf({ override, env = process.env, cwd = process.cwd() } = {
 
 // Runs the gate on `brief`, a path from `cwd`, and returns { exitCode, out, err }: the lines for stdout and stderr.
 // `chainOf` reads a brief's chain count (lib/handoff-brief.mjs). Throws config.mjs's CONFIG_ERROR, exit 2, on a config
-// with errors.
-export function continueBrief(brief, { override, chainOf, env = process.env, cwd = process.cwd(), now = Date.now() }) {
+// with errors. `run`, spawnSync's shape, is what the background route starts commands with: the host's own when omitted,
+// and a test's stand-in, so no test starts a real session.
+export function continueBrief(brief, { override, chainOf, env = process.env, cwd = process.cwd(), now = Date.now(), run }) {
   const bad = routeProblem(override);
   if (bad) return bad;
   const project = projectAt(cwd);
@@ -82,7 +90,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
   const known = typeof session === 'string' && SESSION_ID.test(session);
   try {
     if (known) cancelArmed(store, session, { now });
-    return decide({ found, store, session: known ? session : null, override, configured, maxChain, chainOf, env, now });
+    return decide({ found, store, session: known ? session : null, override, configured, maxChain, chainOf, env, now, root: project.root, run });
   } catch (error) {
     if (typeof error?.code !== 'string') throw error;
     return { exitCode: 2, out: [], err: [`could not arm the continuation of ${found.path} (${error.code})`] };
@@ -90,10 +98,9 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
 }
 
 // The gate's steps 2 to 5 on a brief that resolved, once any earlier marker of `session` is gone.
-function decide({ found, store, session, override, configured, maxChain, chainOf, env, now }) {
+function decide({ found, store, session, override, configured, maxChain, chainOf, env, now, root, run }) {
   const host = detectHost({ env });
   const { route, fallback } = effectiveRoute(configured, host, override);
-  const none = (why) => ({ exitCode: 0, out: ['continue: none', ...(why ? [`fallback: ${why}`] : [])], err: [] });
   if (route === 'none') return none(fallback);
   // First: every later line may print the path, and the delivery refuses such a brief anyway.
   if (hasControl(store.handoffs) || hasControl(found.path)) {
@@ -125,6 +132,7 @@ function decide({ found, store, session, override, configured, maxChain, chainOf
   }
 
   sweep(store, now);
+  if (route === 'background') return startInBackground({ host, found, slug, chain, store, session, env, now, root, run });
   if (!arm(store, { route, session, brief: found.path, slug, chain, sha256: hash }, { now })) {
     return { exitCode: 2, out: [], err: [`could not arm the continuation of ${found.path}`] };
   }
@@ -138,6 +146,52 @@ function decide({ found, store, session, override, configured, maxChain, chainOf
     err: [],
   };
 }
+
+// The background route, once the brief passed every check: the host starts a new session in the brief's worktree,
+// whose first message is backgroundPrompt, and the gate records that session's chain floor, as the delivery of a clear
+// does. A session that did not start gives `continue: none` and its fallback line. The floor needs the new session's
+// id, which the host reads back after the start; when it cannot, the prompt still names the count for the next brief.
+function startInBackground({ host, found, slug, chain, store, session, env, now, root, run }) {
+  const cwd = briefWorktree(found.bytes.toString('utf8'), root);
+  const marker = { brief: found.path, slug, chain };
+  const prompt = backgroundPrompt({ marker, maxChain: store.maxChain });
+  let started;
+  try {
+    started = host.capabilities.handoffContinue.startBackground({ cwd, session, slug, env, prompt, run });
+  } catch (error) {
+    started = { problem: `the host's start failed (${error?.code ?? error?.message ?? 'no message'})` };
+  }
+  if (started.problem) return none(`no background session started, since ${started.problem}; a person resumes the brief`);
+  if (typeof started.session === 'string' && SESSION_ID.test(started.session)) {
+    try {
+      noteFrom(store, started.session, { slug, chain: chain + 1, brief: found.path, route: 'background' }, { now });
+    } catch {
+      // No floor: the prompt still names the count for the next brief.
+    }
+  }
+  const label = started.id ? `${started.name} (${started.id})` : started.name;
+  return {
+    exitCode: 0,
+    out: [
+      'continue: background',
+      `say: The brief ${slug} continues in the new background session ${label}, started in ${cwd}, with nothing to type: ${started.look}. It resumes from ${found.path}; this session stops here.`,
+    ],
+    err: [],
+  };
+}
+
+// The folder the background session starts in: the brief's `Worktree:` when git lists it as a worktree of the repository
+// at `root` and its folder is there, compared by real path in the case the disk folds to, else `root`. A value with a
+// control character is never taken, since the say line prints it.
+function briefWorktree(text, root) {
+  const named = worktreeOf(text);
+  const real = named && path.isAbsolute(named) && !hasControl(named) ? resolvedPath(named) : null;
+  if (!real || !statSync(real, { throwIfNoEntry: false })?.isDirectory()) return root;
+  const listed = worktreePaths(root).map((each) => resolvedPath(each)).filter(Boolean);
+  return listed.some((each) => foldCase(each) === foldCase(real)) ? real : root;
+}
+
+const none = (why) => ({ exitCode: 0, out: ['continue: none', ...(why ? [`fallback: ${why}`] : [])], err: [] });
 
 function refuse(reason) {
   return { exitCode: 1, out: [], err: [`aidrian handoff continue: ${reason}`] };
@@ -217,10 +271,20 @@ export function deliverCleared(store, marker, session, { now = Date.now() } = {}
 // which brief this session continues and as which continuation, what to do on the first message, and the chain the
 // next brief carries. `source` is how the session started, such as `clear`.
 export function continuationContext({ marker, maxChain, source }) {
+  return continuationLines({ marker, maxChain, how: `loaded automatically after a ${source}`, when: 'On the first message, unless it asks for something else, follow' });
+}
+
+// The first message of a session the background route starts, in the same words as continuationContext, from the
+// brief's validated path, slug, and chain alone: nothing of the brief's text.
+export function backgroundPrompt({ marker, maxChain }) {
+  return continuationLines({ marker, maxChain, how: 'started in the background by the session that wrote it', when: 'Now follow' });
+}
+
+function continuationLines({ marker, maxChain, how, when }) {
   const next = marker.chain + 1;
   return [
-    `Handoff continuation: this session continues the work of the handoff brief ${marker.brief}, for ${marker.slug}, loaded automatically after a ${source}, as continuation ${next} of ${maxChain}.`,
-    "On the first message, unless it asks for something else, follow the session-continue skill's steps on this brief: " +
+    `Handoff continuation: this session continues the work of the handoff brief ${marker.brief}, for ${marker.slug}, ${how}, as continuation ${next} of ${maxChain}.`,
+    `${when} the session-continue skill's steps on this brief: ` +
       `read the brief at ${marker.brief} in full first, enter its worktree, read the state fresh, report surprises, and continue at Next steps.`,
     `A later brief for this work carries Chain: ${next}.`,
   ].join('\n');

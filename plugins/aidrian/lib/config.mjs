@@ -12,7 +12,7 @@ import path from 'node:path';
 
 import { DEFAULTS, deepFreeze } from './config-defaults.mjs';
 import { localDecisions } from './config-local.mjs';
-import { checkAgents, checkModels, legacyHandoff, merge } from './config-merge.mjs';
+import { checkAgents, checkModels, handoffContinueDefault, legacyHandoff, merge } from './config-merge.mjs';
 import { NO_REVIEWER, SCHEMA } from './config-schema.mjs';
 import { older, pluginVersion, versionProblem } from './config-version.mjs';
 import { isFile, readJson } from './fs.mjs';
@@ -42,6 +42,7 @@ export function loadConfig(project) {
   const { version, ...rest } = raw;
   const values = legacyHandoff(rest, file, errors);
   const config = merge(SCHEMA, DEFAULTS, values, '', file, errors, gateErrors);
+  config.session = { ...config.session, handoff: handoffContinueDefault(config.session.handoff, values) };
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
   for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {

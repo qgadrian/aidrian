@@ -387,6 +387,25 @@ test('with the clear route, auto runs the continue step and ends the turn, and a
   assert.equal(planApprovedContext({ mode: 'off', costRatio: 2, maxTokens: 0 }, LONG_USAGE, clear), null, 'off is off');
 });
 
+test('with the background route, nothing is typed: auto ends the turn for good, ask says so, and not watching is no reason to stay', () => {
+  const cost = handoffCost(LONG_USAGE);
+  const how = claudeCode.capabilities.handoffContinue.steps.background;
+  assert.match(how, /^nothing to type\b/u);
+  const background = { route: 'background', how };
+  const watching = NOT_WORTH.replace(' or that they are not watching', '');
+  const auto = handoffReason('auto', { cost, next: ['x'], ...background });
+  assert.ok(auto.startsWith(`${LONG}${watching}`), 'a session that starts itself needs nobody watching');
+  assert.match(auto, /its continue step prints what to tell the user\. Say that in one line, then end this turn: a new session goes on with the work in the background, and this one does nothing more\.$/u);
+  const ask = handoffReason('ask', { cost, next: ['x'], ...background });
+  assert.match(ask, /hand off now, or keep going\? Say in it what a handoff takes from them: nothing to type, since a new session starts in the background and resumes from the brief by itself\. /u);
+  assert.doesNotMatch(`${auto}${ask}`, /\/clear|not watching/u);
+
+  const offer = planApprovedContext({ mode: 'auto', costRatio: 2, maxTokens: 0 }, LONG_USAGE, background);
+  assert.match(offer, /or when the user already said to finish here\. Otherwise, before the first build step, run the session-handoff skill to write the brief and set up the continuation: .* end this turn, and do not start the build here: a new session goes on with the work in the background, and this one does nothing more\.$/u);
+  const question = planApprovedContext({ mode: 'ask', costRatio: 2, maxTokens: 0 }, LONG_USAGE, background);
+  assert.match(question, /Say in it what a handoff takes from them: nothing to type/u);
+});
+
 test('the Stop hook and the plan hook word the route of the session host, and a host without it gets the none text', (t) => {
   const CLAUDE = { CLAUDECODE: '1' };
   const how = claudeCode.capabilities.handoffContinue.steps.clear;
@@ -409,4 +428,8 @@ test('the Stop hook and the plan hook word the route of the session host, and a 
   compact.reach(205_352);
   assert.match(compact.stop({}, CLAUDE).stderr, /then tell the user in one line that you wrote it, its path, and that the session-continue skill resumes it\.\n$/);
   assert.match(compact.plan({}, CLAUDE), /tell the user its path and that the session-continue skill resumes it/);
+  // The opt-in for zero keystrokes, mode auto and continue background, reaches the Stop hook on Claude Code.
+  const background = setup(t, { handoff: { mode: 'auto', continue: 'background' } });
+  background.reach(205_352);
+  assert.match(background.stop({}, CLAUDE).stderr, /then end this turn: a new session goes on with the work in the background, and this one does nothing more\.\n$/u);
 });

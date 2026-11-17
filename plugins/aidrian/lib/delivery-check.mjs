@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { checkoutRoots, runGit } from './git.mjs';
+import { checkoutRoots, worktreePaths } from './git.mjs';
 import { stateDir } from './project.mjs';
 import { firstPrompt, readText, filesTouched, lastHandback } from './transcript.mjs';
 
@@ -163,15 +163,8 @@ export function deliveryRoots(project, cwd) {
   } catch {
     // No state folder to read: the other roots still count.
   }
-  roots.push(...worktreeRoots(cwd), PLUGIN_FOLDER, ...skillFolders());
+  roots.push(...worktreePaths(cwd), PLUGIN_FOLDER, ...skillFolders());
   return [...new Set(roots)];
-}
-
-// Every worktree of the repository `cwd` is in, from `git worktree list`; none outside git.
-function worktreeRoots(cwd) {
-  const { status, stdout } = runGit(['worktree', 'list', '--porcelain'], cwd);
-  if (status !== 0) return [];
-  return stdout.split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length));
 }
 
 function skillFolders() {

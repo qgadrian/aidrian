@@ -5,7 +5,12 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { startBackground } from './claude-code-background.mjs';
 import { responseObjects } from './response.mjs';
+
+const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
+const agentName = (env) => env.CLAUDE_CODE_AGENT || null;
+const effort = (env) => env.CLAUDE_EFFORT || null;
 
 // CLAUDECODE=1 marks its hooks and its Bash tool; the others say the same for a process that lost that one.
 const MARKERS = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_AGENT', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_EFFORT'];
@@ -57,13 +62,13 @@ export default {
   delivery: 'hooks-json',
   // The `models` key of config.json, and what the Agent tool takes for it. docs/config.md#models cites both.
   modelsKey: 'claude',
-  modelChoices: { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  modelChoices: MODEL_CHOICES,
   identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID'],
   detectVars: ['CLAUDECODE', ...MARKERS],
   detect: ({ env }) => env.CLAUDECODE === '1' || MARKERS.some((name) => Boolean(env[name])),
   sessionId: (env) => env.CLAUDE_CODE_SESSION_ID || null,
-  agentName: (env) => env.CLAUDE_CODE_AGENT || null,
-  effort: (env) => env.CLAUDE_EFFORT || null,
+  agentName,
+  effort,
   runEnv: (env) => (env.CLAUDE_CODE_REMOTE === 'true' ? 'cloud' : null),
   // `aidrian:<agent>` for this plugin's agents, and `<plugin>:<agent>` for another's.
   pluginAgentPrefix: 'aidrian:',
@@ -104,10 +109,17 @@ export default {
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
-    // the claude process, names the session before and after it.
+    // the claude process, names the session before and after it. The background route starts a new session with
+    // `claude --bg` (lib/hosts/claude-code-background.mjs), under the session's name, agent, and effort.
     handoffContinue: {
-      routes: ['clear'],
-      steps: { clear: 'type /clear, then any message' },
+      routes: ['clear', 'background'],
+      steps: {
+        clear: 'type /clear, then any message',
+        background: 'nothing to type, since a new session starts in the background and resumes from the brief by itself',
+      },
+      startBackground: ({ cwd, session, slug, env, prompt, run }) => startBackground({
+        cwd, session, slug, prompt, run, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
+      }),
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),

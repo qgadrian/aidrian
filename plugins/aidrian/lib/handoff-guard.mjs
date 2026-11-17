@@ -180,11 +180,11 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
 // record (`from-`, `tasks-`) is not one: their names are common words, and the path rules cover them.
 const MARKER_NAME = new RegExp(ARMING_FILE.source, 'iu');
 // An unsure glob's part whose plain start names such a file, as `armed-*`.
-const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|continued)-/iu;
+const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|continued|ending)-/iu;
 // A word of a command no lexer reads that names the store's folder by its own name.
 const STORE_FOLDER = /^\.continue$/iu;
 // A text that names the store's folder, or a marker in it.
-const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:armed|ready|from|checked|gone|tasks|taken|started|continued)-)/iu;
+const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:armed|ready|from|checked|gone|tasks|taken|started|continued|ending)-)/iu;
 // A path part a change of mode or owner reaches the store through: its folder, or the handoffs folder that holds it.
 const STORE_PART = /^(?:handoffs|\.continue)$/iu;
 // The programs that change a file's mode or owner. A store, handoffs, or state folder every user may write, or a marker

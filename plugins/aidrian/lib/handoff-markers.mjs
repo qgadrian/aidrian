@@ -7,6 +7,8 @@
 //   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
+//   ending-<session>.json      { host_pid, shell, id, at }   a session that ends itself once its turn ends, so the
+//                              terminal that ran it opens the background session `id` (lib/terminal-replace.mjs)
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
 // takes it for every session id that starts with it, and the highest of those and the session's own wins. A floor of
 // route `background` marks a session no Human attends (startedInBackground).
@@ -42,9 +44,11 @@ export const hasControl = (text) => /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.
 export const MARKER_CAP = 64 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
+// How long a session's request to end itself holds: the turn that ran the gate ends well inside it.
+export const ENDING_WINDOW = 30 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY };
-const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued)-/u;
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW };
+const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued|ending)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
 const CHAIN_CEILING = 10_000;
@@ -58,10 +62,10 @@ const MODE = /^[A-Za-z]{1,32}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
-const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone|ending)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
-export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started|ending)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 const TEMPORARY = /^\.(.+)\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // No read follows a symlink, and none waits on a FIFO or a device that has no writer.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -372,6 +376,30 @@ export function noteStarted(store, session, started, { now = Date.now() } = {}) 
 // The background start `session` made in the last day, or null.
 export function readStarted(store, session, { now = Date.now() } = {}) {
   return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted });
+}
+
+const isEnding = (value) => isObject(value) && isPid(value.host_pid) && isPid(value.shell)
+  && typeof value.id === 'string' && SESSION_ID.test(value.id) && Number.isFinite(value.at);
+
+// Records that `session`, whose host process `hostPid` the shell `shell` started, ends itself once its turn ends, and
+// that the shell then opens the background session `id`. Returns the file, or null when the store is refused or a
+// value has a wrong shape.
+export function noteEnding(store, session, { hostPid, shell, id }, { now = Date.now() } = {}) {
+  const value = { host_pid: hostPid, shell, id, at: now };
+  return isEnding(value) ? writeMarker(store, sessionFile('ending', session), value) : null;
+}
+
+// Takes the request of `session` to end itself, written in the last ENDING_WINDOW, and deletes it, so it acts once:
+// { hostPid, shell, id }, or null. Never throws on a missing or refused store.
+export function takeEnding(store, session, { now = Date.now() } = {}) {
+  const name = sessionFile('ending', session);
+  const value = readMarker(store, name, { now, field: 'at', shape: isEnding });
+  try {
+    remove(store, name);
+  } catch {
+    // Left for the sweep; a read past its window finds nothing.
+  }
+  return value && { hostPid: value.host_pid, shell: value.shell, id: value.id };
 }
 
 // Keeps `bytes`, a brief that passed the check, as `continued-<sha256>.md` in the store, owner-only, so the session a

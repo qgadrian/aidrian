@@ -109,7 +109,7 @@ and the two give a ladder:
 | Warn only | `mode: "ask"`, `continue: "none"` | The agent asks; on a yes it writes the brief and prints the resume line. |
 | Brief, no new session | `mode: "auto"`, `continue: "none"` | The agent writes the brief unasked and prints the resume line. |
 | Brief, then a clear | `mode: "auto"` or `"ask"`, `continue: "clear"` | The brief, then the Human types the clear command and one message, and the new session resumes from the brief with nothing else typed. |
-| Fully automatic | `mode: "auto"` on the base branch, and `"handoff": { "background": "on" }` in this machine's `.aidrian.local.json` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on. |
+| Fully automatic | `mode: "auto"` on the base branch, and `"handoff": { "background": "on" }` in this machine's `.aidrian.local.json` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on; with the [shell function](#replacing-the-terminal), it also ends itself, and its terminal opens the new session. |
 
 The `continue` default follows `mode`: with `mode: "auto"` and no `continue`, the route is `"background"`; with any
 other mode it is `"none"`. A `continue` that config.json sets always wins, so `mode: "auto"` with `continue: "none"`
@@ -304,7 +304,10 @@ to another folder falls back to the clear route with that reason; committing `st
    count as the continuation.
 6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
-   host's command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
+   host's command to open it. The line ends on what becomes of this session: with the
+   [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends;
+   without it, `This session has ended its work; the new one is <name>, open it with <the host's command>.`
+   The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
 
@@ -315,10 +318,10 @@ listing does not show ends as step 5 says, by the clear route only when nothing 
 
 Limits:
 
-- The old session stays open and idle: it spends no tokens while no turn starts, and the Human closes it at will.
-  Nothing closes it by itself. A turn that starts there after the gate, such as a background agent's report, runs
-  beside the new session in the same worktree, so the skill settles every agent first, as on the clear route, and
-  the prompt hook names the session that owns the work.
+- Without the [shell function](#replacing-the-terminal), the old session stays open and idle: it spends no tokens
+  while no turn starts, and the Human closes it at will. A turn that starts there after the gate, such as a background
+  agent's report, runs beside the new session in the same worktree, so the skill settles every agent first, as on the
+  clear route, and the prompt hook names the session that owns the work.
 - The new session starts in the host's default model for that folder; a model the old session switched to in the
   session does not carry over. Its permission mode is the old session's, as step 3 says.
 - No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
@@ -358,6 +361,57 @@ Limits:
     would move the store, the session the gate reads floors for, or the host command it runs.
   A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
   closed.
+
+### Replacing the terminal
+
+With one line in the shell's startup file, a background handoff also replaces the old session in its terminal: the
+old session ends itself once its turn ends, and the same terminal opens the new one, with nothing typed. For zsh, in
+`~/.zshrc`:
+
+```sh
+eval "$(aidrian shell-init zsh)"
+```
+
+`aidrian shell-init zsh` prints a function named for each host program that can do it, today `claude`, and exits 2 for
+any other shell. The function runs the program as `command claude "$@"`, with `AIDRIAN_SHELL_PID` set to the shell's
+own pid. Once the program exits, it reads and deletes this shell's record,
+`$XDG_STATE_HOME/aidrian/handoff-terminals/<shell pid>`, a line `<id> <expiry in epoch seconds>`. When the record is a
+regular file this user owns, not a symlink, its expiry has not passed, and the id is letters, digits, dashes, and
+underscores, 4 to 128 of them, starting with a letter or digit, it runs the host's command that opens that session,
+`command claude attach <id>`, and reads the record again once that exits. With no record, or one it refuses, it returns
+the exit code of the last program it ran. It runs nothing from the record but that id.
+
+It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
+`"auto"`, on a host whose adapter declares `replaceTerminal` ([Adding a host](providers/adding-a-host.md)):
+
+1. Once the background session started and the gate recorded it, the gate asks the host adapter for this session's host
+   process. It must be a child of the shell `AIDRIAN_SHELL_PID` names, of the host's program, and attended by a Human,
+   as the host tells it. The gate then notes in the continuation store, `ending-<session>.json`, the host process, the
+   shell, and the new session's id. It notes nothing for a session no Human attends, known by its unattended mark or
+   its chain floor of route `background`, or when anything above is missing, and the say line ends with the plain line
+   on how to open the new session instead.
+2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
+   its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
+   shell's record, valid for 60 seconds, and starts a detached helper. The helper waits 2 seconds, so the host runs its
+   other Stop hooks and shows the last message. It checks the process is still the host's program that shell started,
+   and sends the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
+   A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
+   skips the session-length reminder.
+3. The host's program exits, and the shell function opens the new session in the same terminal.
+
+Limits:
+
+- A subagent cannot run the gate, and its stop is not the Stop hook's, so no subagent ends a process. A session no Human
+  attends never notes a request, and the Stop hook refuses one for it; the store, where the request lives, is closed to
+  both, as for a chain floor.
+- The next hop chains only through a session the shell function started. The session the terminal opens next is a
+  background session, which no Human attends as far as the hooks know, so when it hands off in turn, it ends nothing:
+  its say line names the next session and the command that opens it, which the Human runs after leaving this one.
+- The shell's record lies outside the continuation store, in a folder that is the user's alone (0700), each record 0600.
+  The hooks do not refuse a write there. A record another session of the same user wrote can only make the terminal open
+  a session by a plain id, within its minute, the next time a program the shell function ran exits.
+- A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
+  mid-turn. Its transcript is kept, and the work goes on in the new session.
 
 ## The cost model
 

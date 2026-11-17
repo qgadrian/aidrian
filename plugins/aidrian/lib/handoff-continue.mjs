@@ -34,9 +34,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { baseBranchTip, commandConfig, committedConfig, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
-import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteFrom, noteStarted, openStore, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, storePath, sweep, takeReady } from './handoff-markers.mjs';
+import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
+import { OPEN_ID, terminalOf } from './terminal-replace.mjs';
 import { dropPending, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
@@ -45,10 +46,10 @@ export const BRIEF_WINDOW = 15 * 60 * 1000;
 // so no config, wherever it is read, lets sessions start sessions without end.
 export const BACKGROUND_HOPS = 5;
 
-// Whether the background route may run for `project`: { ok: true, maxChain } or { ok: false, why }. This machine turns it
+// Whether the background route may run for `project`: { ok: true, maxChain, mode } or { ok: false, why }. This machine turns it
 // on in the main checkout's local file (`handoff.background`, project.mjs localHandoffBackground), and the team in the config.json of
 // the base branch, which resolves session.handoff.continue to "background", as `mode: "auto"` with no `continue` does:
-// a worktree's own config cannot. `maxChain` is the base branch's, at most BACKGROUND_HOPS. `working`, the config the
+// a worktree's own config cannot. `maxChain` is the base branch's, at most BACKGROUND_HOPS, and `mode` its session.handoff.mode. `working`, the config the
 // gate opens the continuation store with, must name the base branch's state.dir (config.mjs stateDirProblem): the store
 // holds the chain floors and the kept copy, so a working copy that moves it could start a session held to no floor.
 // The store as the command resolves it, with `env`, must also be the one the base branch's config names under the host's
@@ -70,7 +71,7 @@ export function backgroundGate(project, working, env = process.env) {
   if (working && !sameStore(stateDir(project, { config: working, env }), defaultStateDir(project, { config: team.config }))) {
     return { ok: false, why: 'the continuation store this command opens is not the one the base branch\'s config.json names under the host\'s own environment, as an XDG_STATE_HOME or HOME set for this command would move it, so the hooks would never read the chain floor it records' };
   }
-  return { ok: true, maxChain: Math.min(team.handoff.maxChain, BACKGROUND_HOPS) };
+  return { ok: true, maxChain: Math.min(team.handoff.maxChain, BACKGROUND_HOPS), mode: team.handoff.mode };
 }
 
 // Whether the state folders `one` and `other` hold one continuation store: their real paths, in the case the disk folds to.
@@ -108,7 +109,7 @@ const NO_GATE = Object.freeze({ ok: false, why: 'no project was given to read th
 // The route a handoff goes on by: { route, fallback, maxChain }. `override` is the command's --route, which may pick
 // `none`, `clear`, or `compact` whatever `configured` (session.handoff.continue) says, and `background` only when
 // `configured` is `background`. A route `host` does not list gives `none` with the fallback line that says why. The
-// background route asks `gateOf()`, backgroundGate's answer, and takes its `maxChain`; when it says no, the handoff goes
+// background route asks `gateOf()`, backgroundGate's answer, and takes its `maxChain` and `mode`; when it says no, the handoff goes
 // on by the clear route where the host has it, else none, with its reason as the fallback line.
 export function effectiveRoute(configured, host, override, gateOf = () => NO_GATE) {
   const route = override ?? configured;
@@ -121,7 +122,8 @@ export function effectiveRoute(configured, host, override, gateOf = () => NO_GAT
   }
   if (route !== 'background') return { route, fallback: null };
   const gate = gateOf();
-  if (gate.ok) return { route, fallback: null, maxChain: gate.maxChain };
+  const mode = gate.mode === undefined ? {} : { mode: gate.mode };
+  if (gate.ok) return { route, fallback: null, maxChain: gate.maxChain, ...mode };
   return byClear(host, gate.why);
 }
 
@@ -223,7 +225,7 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
 
   sweep(store, now);
   const ready = { host, found, slug, chain, hash, store, session, now };
-  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, env, run, wait, root });
+  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, mode: routed.mode, env, run, wait, root });
   return armed({ ...ready, route, fallback });
 }
 
@@ -261,7 +263,7 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // the pending mark stays until it lapses, nothing is armed, and the line says how to find and stop it (`findLine`).
 // Whatever surely did not start goes on by the clear route where the host has it (byClear).
 function startInBackground(ready) {
-  const { host, found, slug, chain, hash, store, session, now, maxChain, env, run, wait, root } = ready;
+  const { host, found, slug, chain, hash, store, session, now, maxChain, mode, env, run, wait, root } = ready;
   const handoff = host.capabilities.handoffContinue;
   const fallBack = (why) => {
     const routed = byClear(host, why);
@@ -296,7 +298,28 @@ function startInBackground(ready) {
     && safely(() => noteStarted(store, session, marker, { now }));
   if (!held) return unheld({ handoff, started, env, run, slug, release, fallBack });
   release();
-  return startedLines(host, marker);
+  return startedLines(host, marker, { ending: handTerminal({ host, store, session, env, run, now, mode, id: marker.id }) });
+}
+
+// Whether the session `session`, whose base branch's session.handoff.mode is `mode`, ends itself once this turn ends, so
+// the terminal that ran it opens the background session `id` (lib/terminal-replace.mjs): only in `auto` mode, on a host
+// that can, from a host process the shell function started and a Human attends, and never in a session no Human attends.
+// It notes the request in the store for the Stop hook. A request it cannot note is none: the session stays open.
+function handTerminal({ host, store, session, env, run, now, mode, id }) {
+  if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id)) return false;
+  if (unattendedHere(session, { store, env, now })) return false;
+  const terminal = safely(() => terminalOf(host, { env, run }));
+  return terminal !== null && safely(() => noteEnding(store, session, { ...terminal, id }, { now })) !== null;
+}
+
+// Whether no Human attends `session`: its unattended mark, or a chain floor of the background route, holds it. A mark
+// that cannot be read counts. The Stop hook asks it too, before a session ends itself.
+export function unattendedHere(session, { store, env, now }) {
+  try {
+    return readUnattendedMark(session, { env, now }) !== null || startedInBackground(store, session, { now });
+  } catch {
+    return true;
+  }
 }
 
 // A launch whose outcome is unknown: its pending mark stays to hold whatever it started until the mark lapses, and no
@@ -328,9 +351,16 @@ function safely(act) {
   }
 }
 
-// The lines of a background start, `marker` as noteStarted records it.
-function startedLines(host, marker) {
-  const look = host.capabilities.handoffContinue.attachLine?.({ id: marker.id, name: marker.name }) ?? `its id is ${marker.id}`;
+// The lines of a background start, `marker` as noteStarted records it. The say line ends on what becomes of this session:
+// with `ending`, its terminal switches to the new one once the turn ends; else a plain line on how to open the new one.
+function startedLines(host, marker, { ending = false } = {}) {
+  const { attachLine, attachCommand } = host.capabilities.handoffContinue;
+  const look = attachLine?.({ id: marker.id, name: marker.name }) ?? `its id is ${marker.id}`;
+  const called = typeof marker.name === 'string' && PLAIN_NAME.test(marker.name) ? marker.name : marker.id;
+  const open = attachCommand ? `, open it with \`${attachCommand({ id: marker.id })}\`` : '';
+  const last = ending
+    ? `This session has ended its work; this terminal switches to the new one, \`${called}\`, once this turn ends.`
+    : `This session has ended its work; the new one is \`${called}\`${open}.`;
   const named = marker.name ? ` '${marker.name}'` : '';
   // A start record an earlier version wrote, whose session started in the host's default mode: it may stop at a prompt.
   const mode = marker.mode === null ? ' It runs in the host\'s default permission mode, since this session\'s own could not be read, so it may stop at a permission prompt.' : '';
@@ -338,7 +368,7 @@ function startedLines(host, marker) {
     exitCode: 0,
     out: [
       'continue: background',
-      `say: The brief ${marker.slug} continues in the new background session ${marker.id}${named}, started in ${marker.cwd}, with nothing to type: ${look}.${mode} It resumes from ${marker.brief}; this session stops here.`,
+      `say: The brief ${marker.slug} continues in the new background session ${marker.id}${named}, started in ${marker.cwd}, with nothing to type: ${look}.${mode} It resumes from ${marker.brief}. ${last}`,
     ],
     err: [],
   };

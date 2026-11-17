@@ -143,7 +143,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
 │   ├── .prior/           the brief a refresh supersedes, and the last brief that passed aidrian handoff check
-│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors
+│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors, requests to end
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
@@ -161,7 +161,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
 - Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
   each session started with ([hooks.md](hooks.md#agent-gates)), and `unattended/`, the marks of the sessions the
-  [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days.
+  [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, and
+  `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, kept
+  60 seconds ([Replacing the terminal](handoff.md#replacing-the-terminal)).
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

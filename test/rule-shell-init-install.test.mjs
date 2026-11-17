@@ -16,7 +16,7 @@ test('denies an install or uninstall of the shell function, however aidrian is r
   deny('aidrian shell-init zsh --install');
   deny('aidrian shell-init bash --uninstall');
   deny('aidrian shell-init --install zsh');
-  deny('/Users/x/.claude/plugins/cache/m/aidrian/0.68.0/bin/aidrian shell-init zsh --install');
+  deny('/opt/plugins/cache/m/aidrian/0.68.0/bin/aidrian shell-init zsh --install');
   deny('node plugins/aidrian/lib/cli.mjs shell-init zsh --install');
   deny('cd ~ && aidrian shell-init zsh --install');
   deny('bash -c "aidrian shell-init zsh --install"');

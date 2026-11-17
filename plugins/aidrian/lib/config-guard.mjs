@@ -228,46 +228,59 @@ const STEP = String.raw`(?:${READERS.map((name) => name.replace('?', '\\?')).joi
 const READ_ONLY = new RegExp(String.raw`^[ \t]*${STEP}(?:[ \t]*\|[ \t]*${STEP})*[ \t]*$`, 'iu');
 const BRACKET = /\[[^/]*\]/u;
 
-// The most words of a command in a shell the lexer cannot read that the guards resolve as paths and globs. A subagent's
-// command with more is refused (opaqueLimitDenial): a guarded file may hide in the rest. What the guards still cannot
+// The most words of a command in a shell the lexer cannot read that the guards resolve as paths and globs. A command
+// with more, of a subagent or a session no Human attends, is refused (opaqueLimitDenial): a guarded file may hide in the rest. What the guards still cannot
 // finish in time, the agent gate hook's time budget answers (deadlineDenial).
 export const OPAQUE_WORDS = 512;
 
-// The most targets of a Bash call the guards resolve: its paths, its globs, and the texts that may name a file. A
-// subagent's call with more is refused (writeLimitDenial), as the guards resolve no more.
+// The most targets of a Bash call the guards resolve: its paths, its globs, and the texts that may name a file. A call
+// with more, of a subagent or a session no Human attends, is refused (writeLimitDenial), as the guards resolve no more.
 export const WRITE_TARGETS = 1024;
 
 // A word as such a shell reads a leading `~`: `~` and `~/x` (`~\x`, its backslash read as a `/`) are in the home folder.
 const fromHome = (word) => (word === '~' || word.startsWith('~/') ? path.join(homedir(), word.slice(1)) : word);
 
-// Why the subagent call in `input` may not run because its command, in a shell the lexer cannot read, has more words than
-// the guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest.
-export function opaqueLimitDenial(input, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
+
+// Who alone may change the files the guards keep, as a reason says it to a subagent, and to a main session no Human
+// attends, which `unattended()` says it is.
+const onlyMain = (subagent) => (subagent ? 'only the main session may change'
+  : 'only a main session a Human attends may change, and the background handoff route started this one, with no Human');
+
+// Why the call in `input` may not run because its command, in a shell the lexer cannot read, has more words than the
+// guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds
+// for a subagent, and for a main session `unattended()` says no Human attends, asked last.
+export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false } = {}) {
   const opaque = opaqueShellCommand(input);
   if (opaque === null) return null;
   const count = opaqueWords(opaque).length;
   if (count <= OPAQUE_WORDS) return null;
-  const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file only the main session may change`;
+  const subagent = isSubagent(input);
+  if (!subagent && !unattended()) return null;
+  const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file ${onlyMain(subagent)}`;
   return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands') };
 }
 
-// Why the subagent's Bash call in `input` may not run because it writes more targets than the guards resolve
-// (WRITE_TARGETS), or null: { match, reason }. Past that many, a guarded file may hide in the rest.
-export function writeLimitDenial(input, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '' || !bashCall(input)) return null;
+// Why the Bash call in `input` may not run because it writes more targets than the guards resolve (WRITE_TARGETS), or
+// null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds as opaqueLimitDenial does.
+export function writeLimitDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+  if (!bashCall(input)) return null;
   const { files, names, globs } = writeTargets(input);
   const count = files.length + names.length + globs.length;
   if (count <= WRITE_TARGETS) return null;
-  const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file only the main session may change`;
+  const subagent = isSubagent(input);
+  if (!subagent && !unattended()) return null;
+  const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file ${onlyMain(subagent)}`;
   return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands') };
 }
 
-// Why the subagent call in `input` may not run because the guards could not finish reading it within the agent gate
-// hook's time budget (lib/deadline.mjs), or null for the main session, whose call runs: { match, reason }.
-export function deadlineDenial(input, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
-  const why = 'the guards could not finish reading this command in time, so it may change a file only the main session may change';
+// Why the call in `input` may not run because the guards could not finish reading it within the agent gate hook's time
+// budget (lib/deadline.mjs), or null for a main session a Human attends, whose call runs: { match, reason }. It holds
+// for a subagent, and for a main session `unattended()` says no Human attends.
+export function deadlineDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+  const subagent = isSubagent(input);
+  if (!subagent && !unattended()) return null;
+  const why = `the guards could not finish reading this command in time, so it may change a file ${onlyMain(subagent)}`;
   return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands') };
 }
 

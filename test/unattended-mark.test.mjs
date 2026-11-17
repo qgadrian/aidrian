@@ -16,7 +16,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { defaultStateDir, findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
-import { MARK_AGE, markFolder, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { dropPending, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 // The hooks this file runs record their blocks, and the gate's marks, in the state root; keep them in a folder of its own.
 process.env.XDG_STATE_HOME = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
@@ -156,4 +156,42 @@ test('a marked session is held from a folder outside its project, and in another
   assert.equal(run('plain-session', `printf x > ${marks}/plain-session.json`, { agent: true, cwd: dir }).status, 2, 'nor forge one, in a project');
   // The marks are still there: every refusal was judged before the call ran.
   assert.deepEqual(readUnattendedMark(full), { root: dir });
+});
+
+test('while the gate starts a session, a session whose hooks run in the start folder with no mark of its own is held', (t) => {
+  const dir = project(t);
+  const outside = folder(t, 'aidrian-outside-');
+  const old = 'feed0004-0000-4000-8000-000000000004';
+  const fresh = 'cafe0005-0000-4000-8000-000000000005';
+  const pending = markPending(old, { cwd: dir, root: dir });
+  assert.ok(pending);
+  t.after(() => dropPending(pending));
+  const run = (session, command, cwd = dir) => spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd }), cwd, encoding: 'utf8',
+  });
+  const refused = [
+    [`echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, /sets handoff\.background in \.aidrian\.local\.json/u],
+    ['claude --bg "go on"', /starts or resumes a Claude Code session outside the handoff gate/u],
+    [`rm ${pending}`, /the unattended marks/u],
+  ];
+  for (const [command, reason] of refused) {
+    for (const cwd of [dir, path.join(dir, 'src')]) {
+      const result = run(fresh, command, cwd);
+      assert.equal(result.status, 2, `${cwd}: ${command}`);
+      assert.match(result.stderr, reason, command);
+      assert.match(result.stderr, /the background handoff route started this (?:session|one), with no Human/u, command);
+    }
+    assert.equal(run(old, command).status, 0, `the session that ran the gate: ${command}`);
+    if (!command.startsWith('rm ')) assert.equal(run(fresh, command, outside).status, 0, `another folder: ${command}`);
+  }
+  assert.equal(run(fresh, 'ls').status, 0);
+
+  // A pending mark lapses after PENDING_AGE; one it cannot read holds every session.
+  const lapsed = (Date.now() - PENDING_AGE - 60_000) / 1000;
+  utimesSync(pending, lapsed, lapsed);
+  assert.equal(run(fresh, 'claude --bg x').status, 0, 'a lapsed pending mark holds nobody');
+  writeFileSync(pending, 'not json');
+  assert.equal(run(fresh, 'claude --bg x', outside).status, 2, 'an unreadable pending mark holds every session');
+  assert.ok(dropPending(pending));
+  assert.equal(run(fresh, 'claude --bg x').status, 0, 'once the gate removed it, nobody');
 });

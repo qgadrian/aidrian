@@ -886,6 +886,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   and the user's own put it, and the hook reads that floor, and git, at most once a call, only for a call one of these
   guards would refuse it. It is held as a subagent is to the continuation store, below, so it can neither delete
   nor hide its own floor, and to the next three rules.
+  The host lists the new session's id only seconds after the session starts working, so before the gate starts it,
+  it files a pending mark, `pending.<the gate's session id>.json` in the same folder, naming the start folder. While
+  that mark is under 5 minutes old, every session whose call runs in that folder, or below it, and has no mark of its
+  own, but the one that ran the gate, is held as unattended; the gate removes it once the new session's own mark is
+  written, or nothing started. A pending mark the hook cannot read holds every session.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
@@ -953,16 +958,16 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   reaches a file that sets them. Outside a read-only pipeline, each counts whether the command reads or writes, since the
   guard cannot tell, so the block
   says it may change the file, or, for a glob, that it may reach it; Read still reads the file
-  ([provider page](providers/claude-code.md#powershell-commands)). A subagent's command of more than 512 words, counting
-  each case, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
+  ([provider page](providers/claude-code.md#powershell-commands)). A command of more than 512 words, counting
+  each case, of a subagent or of a session the background route started, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
   such a call, and the gates are asked before any guard ([config](config.md#agents)).
 - The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
-  a subagent's call is refused, as the guards could not finish reading the command in time, and the main session's runs,
-  as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
+  a call of a subagent, or of a main session the background handoff route started, is refused, as the guards could not
+  finish reading the command in time, and an attended main session's runs, as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
   the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it
-  does not match. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
-  be in, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
+  does not match. A Bash call of more than 1024 write targets, counting each folder a path may
+  be in, of a subagent or of a session the background route started, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
   reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
   so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.
   A link a glob passes is resolved from the spelling of its folder that reached it, and its target is compared with a

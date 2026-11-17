@@ -263,7 +263,9 @@ to another folder falls back to the clear route with that reason; committing `st
 2. The gate keeps the brief's checked bytes in the store, owner-only, as `continued-<sha256>.md`, so an edit to the
    brief after the gate never reaches the new session.
 3. The gate starts a new session through the host adapter, in the handing-off session's own folder as the host lists
-   it, a folder the host already trusts, never the brief's worktree, whose own settings could run on start. The new
+   it, a folder the host already trusts, never the brief's worktree, whose own settings could run on start.
+   Before the host starts anything, the gate files a pending mark on that folder, so the hooks hold the new session
+   from its first call, before the host lists its id (Limits, below); with no pending mark, nothing starts. The new
    session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent
    and effort when the host tells them; with no usable name, the brief's slug.
 4. Its first message is the continuation: the brief's path, the kept copy to read and its sha256, its slug, and the
@@ -281,9 +283,9 @@ to another folder falls back to the clear route with that reason; committing `st
    reads that floor. Under the same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`,
    which names the project's main checkout, so the hooks know the session wherever its calls run (Limits, below).
    A start with no id, printed or listed, has nothing to stop, and falls back to the clear route.
-   A start whose floor or mark cannot be written is stopped through the host and falls back to the clear route; when the stop
-   fails too, the gate prints `continue: none` and a `fallback:` line that names the running session and the host's
-   command to stop it, and arms no clear beside it. The gate never reports a background session it cannot hold to the
+   A start whose floor, mark, or start record (step 6) cannot be written is stopped through the host and falls back to
+   the clear route; when the stop fails too, the gate prints `continue: none` and a `fallback:` line that names the
+   running session and the host's command to stop it, arms no clear beside it, and leaves the pending mark to lapse. The gate never reports a background session it cannot hold to the
    count as the continuation.
 6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
@@ -311,6 +313,13 @@ Limits:
   beside that project's. The folder `$XDG_STATE_HOME/aidrian/unattended/` is the user's alone (0700), each mark too
   (0600); the hook also reads `~/.local/state/aidrian/unattended/` of the user it runs as, which no variable moves.
   A mark lasts 30 days, as a floor does, and each write sweeps older ones; an entry the hook cannot check counts.
+  The host lists the new session's id only seconds after it starts working, so before the start the gate files a
+  pending mark, `pending.<the gate's session id>.json` beside the marks, naming the start folder. For at most 5 minutes
+  it holds every session whose call runs in that folder or below it and has no mark of its own, but the session that ran
+  the gate, and one it cannot read holds every session. The gate removes it once the new session's own mark is written,
+  or when nothing started or the start was stopped. A Human's session in that folder is held too for those seconds.
+  Such a session, and one with a mark, is also refused a call the guards cannot finish reading within their time
+  budget, and a command with more write targets or words than they read, as a subagent is.
   A session the gate started before the marks is known by its chain floor of route `background`, under its full id or
   a short one, in the store of the working copy's `state.dir` or the base branch's, each where the hook's environment
   puts it and where the user's own puts it, as the gate does; the hook reads it only for a call the guards below would

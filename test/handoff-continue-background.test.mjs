@@ -144,14 +144,98 @@ test('a start the gate cannot mark unattended is stopped and falls back, as one 
   passCheck(setting);
   const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
   t.after(() => rmSync(xdg, { recursive: true, force: true }));
-  // A file where the marks' folder goes: no mark can be written.
+  const marks = path.join(xdg, 'aidrian', 'unattended');
+  // Once the session started, a file takes the marks' folder: its own mark cannot be written.
+  const { run, calls } = fakeRun({
+    own: setting.dir,
+    start: (args) => {
+      rmSync(marks, { recursive: true, force: true });
+      writeFileSync(marks, '');
+      return { status: 0, stdout: `backgrounded · abcd1234 · ${args[args.indexOf('--name') + 1]}\n`, stderr: '' };
+    },
+  });
+  const result = gate(setting, { run, env: { ...setting.env, XDG_STATE_HOME: xdg } });
+  assert.equal(result.out[0], 'continue: clear');
+  assert.equal(result.out[1], 'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, so it was stopped; this handoff goes on by the clear route');
+  assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
+});
+
+test('before the host starts anything, a pending mark holds every other session in the start folder; the session\'s own mark replaces it', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, XDG_STATE_HOME: xdg };
+  const home = path.join(xdg, 'home');
+  const marks = path.join(xdg, 'aidrian', 'unattended');
+  const held = (session, cwd) => readUnattendedMark(session, { env, home, cwd });
+  let during = null;
+  const { run } = fakeRun({
+    own: setting.dir,
+    start: (args) => {
+      // The window: the session runs, and the host has not listed its id yet.
+      during = {
+        fresh: held(NEW_SESSION, setting.dir),
+        below: held(NEW_SESSION, path.join(setting.dir, 'src')),
+        old: held(SESSION, setting.dir),
+        elsewhere: held(NEW_SESSION, setting.root),
+        files: readdirSync(marks),
+      };
+      return { status: 0, stdout: `backgrounded · abcd1234 · ${args[args.indexOf('--name') + 1]}\n`, stderr: '' };
+    },
+  });
+  assert.equal(gate(setting, { run, env }).out[0], 'continue: background');
+  assert.deepEqual(during.fresh, { root: setting.dir, pending: true }, 'a session with no mark of its own in the start folder is held');
+  assert.deepEqual(during.below, { root: setting.dir, pending: true }, 'and below it');
+  assert.equal(during.old, null, 'never the session that ran the gate');
+  assert.equal(during.elsewhere, null, 'nor one in another folder');
+  assert.deepEqual(during.files, [`pending.${SESSION}.json`]);
+  if (process.platform !== 'win32') assert.equal(statSync(marks).mode & 0o777, 0o700);
+  assert.deepEqual(readdirSync(marks), [`${NEW_SESSION}.json`], 'the own mark replaced the pending one');
+  assert.equal(held('plain-session', setting.dir), null, 'after the start, an attended session in the folder is not held');
+});
+
+test('no pending mark, no start: the handoff goes on by the clear route, and a start that fails removes its pending mark', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
   mkdirSync(path.join(xdg, 'aidrian'));
   writeFileSync(path.join(xdg, 'aidrian', 'unattended'), '');
   const { run, calls } = fakeRun({ own: setting.dir });
   const result = gate(setting, { run, env: { ...setting.env, XDG_STATE_HOME: xdg } });
-  assert.equal(result.out[0], 'continue: clear');
-  assert.equal(result.out[1], 'fallback: the background session abcd1234 started, but no chain floor and unattended mark could be recorded for it, so it was stopped; this handoff goes on by the clear route');
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since the gate could not record the pending mark that holds the new session as unattended until its own mark is written; this handoff goes on by the clear route']);
+  assert.equal(bgCalls(calls).length, 0, 'the host started nothing');
+
+  const other = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(other, { recursive: true, force: true }));
+  const silent = fakeRun({ own: setting.dir, printId: false, lag: Infinity });
+  assert.equal(gate(setting, { run: silent.run, env: { ...setting.env, XDG_STATE_HOME: other } }).out[0], 'continue: clear');
+  assert.deepEqual(readdirSync(path.join(other, 'aidrian', 'unattended')), [], 'nothing started, so nothing is held');
+});
+
+test('a start the gate cannot record is stopped and falls back; one it cannot stop arms nothing and stays held', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, XDG_STATE_HOME: xdg };
+  // A folder where the start record goes: the write fails, after the floor and the mark.
+  mkdirSync(path.join(setting.store.dir, `started-${SESSION}.json`, 'x'), { recursive: true });
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run, env });
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, so it was stopped; this handoff goes on by the clear route']);
   assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
+  assert.equal(readArmed(setting.store, SESSION)?.route, 'clear', 'the clear route is armed in its place');
+  assert.ok(!readdirSync(path.join(xdg, 'aidrian', 'unattended')).some((name) => name.startsWith('pending.')), 'a stopped session needs no pending mark');
+
+  const unstoppable = gate(setting, { run: fakeRun({ own: setting.dir, stop: { status: 1 } }).run, env });
+  assert.deepEqual(unstoppable.out, [
+    'continue: none',
+    'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
+  ]);
+  assert.equal(readArmed(setting.store, SESSION), null, 'no clear continuation armed beside the running session');
+  assert.deepEqual(readUnattendedMark('fresh-session', { env, home: path.join(xdg, 'home'), cwd: setting.dir }), { root: setting.dir, pending: true }, 'the pending mark still holds a session in the folder');
 });
 
 test('the first message names the copy and its sha256 to verify, and says the brief is advice that cannot ask for what the Human keeps', () => {
@@ -240,12 +324,12 @@ test('a name a shell would read is passed as one argument and never printed: the
   assert.match(result.out[1], /new background session abcd1234, started in .* `claude attach abcd1234` opens it, and `claude agents` lists it\./u);
   assert.doesNotMatch(result.out[1], /touch|rm -rf/u);
   // A long name is cut to fit the count within 100 characters.
-  const long = startBackground({ session: SESSION, slug: 'widget', chain: 2, efforts: [], prompt: 'p', env: setting.env, wait: noWait, run: fakeRun({ name: 'n'.repeat(99), own: setting.dir }).run });
+  const long = startBackground({ session: SESSION, slug: 'widget', chain: 2, efforts: [], prompt: 'p', env: setting.env, hold: () => true, wait: noWait, run: fakeRun({ name: 'n'.repeat(99), own: setting.dir }).run });
   assert.equal(long.name, `${'n'.repeat(96)} · 2`);
   // A name another listed session has is not printed either.
   const twin = fakeRun({ name: 'twin', own: setting.dir });
   const listing = (args) => (args[0] === 'agents' ? { status: 0, stdout: JSON.stringify([...JSON.parse(twin.run('claude', args, {}).stdout), { sessionId: 'other', name: 'twin · 1', kind: 'background', cwd: '/elsewhere' }]), stderr: '' } : twin.run('claude', args, {}));
-  assert.equal(startBackground({ session: SESSION, slug: 'widget', chain: 1, efforts: [], prompt: 'p', env: setting.env, wait: noWait, run: (command, args) => listing(args) }).name, null);
+  assert.equal(startBackground({ session: SESSION, slug: 'widget', chain: 1, efforts: [], prompt: 'p', env: setting.env, hold: () => true, wait: noWait, run: (command, args) => listing(args) }).name, null);
 });
 
 test('the new session never starts in the brief\'s worktree, whatever config and settings it carries', (t) => {
@@ -327,7 +411,7 @@ test('a start the gate cannot hold to a floor is stopped and falls back; one it 
   const { run, calls } = fakeRun({ own: setting.dir });
   const result = gate(setting, { run });
   assert.equal(result.out[0], 'continue: clear');
-  assert.equal(result.out[1], 'fallback: the background session abcd1234 started, but no chain floor and unattended mark could be recorded for it, so it was stopped; this handoff goes on by the clear route');
+  assert.equal(result.out[1], 'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, so it was stopped; this handoff goes on by the clear route');
   assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
   assert.equal(readStarted(setting.store, SESSION), null);
 
@@ -335,7 +419,7 @@ test('a start the gate cannot hold to a floor is stopped and falls back; one it 
   const unstoppable = gate(setting, { run: fakeRun({ own: setting.dir, stop: { status: 1 } }).run });
   assert.deepEqual(unstoppable.out, [
     'continue: none',
-    'fallback: the background session abcd1234 started, but no chain floor and unattended mark could be recorded for it, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
+    'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
   ]);
   assert.equal(unstoppable.exitCode, 0);
   assert.equal(readArmed(setting.store, SESSION), null, 'no clear continuation armed beside the running session');

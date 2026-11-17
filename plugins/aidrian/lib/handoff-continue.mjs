@@ -35,7 +35,7 @@ import { foldCase, resolvedPath } from './fs.mjs';
 import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteFrom, noteStarted, openStore, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
-import { markUnattended } from './unattended-mark.mjs';
+import { dropPending, markPending, markUnattended } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
 export const BRIEF_WINDOW = 15 * 60 * 1000;
@@ -244,11 +244,14 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
 // records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
 // under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start
-// itself. `root` is the main checkout of the project the gate ran in. No floor and mark, no success: a session the gate
-// cannot hold to the count is stopped, and the handoff goes on by the clear route. One that cannot be stopped either
-// runs on with no floor: the gate arms nothing beside it, and prints
-// `continue: none` with a fallback line that names it and the host's command to stop it (`stopLine`). Whatever does not
-// start goes on by the clear route where the host has it (byClear).
+// itself. `root` is the main checkout of the project the gate ran in. Before the host starts anything, the adapter calls
+// `hold` with the start folder, and the gate files a pending mark there, so the hooks hold the new session from its first
+// call, while the host has not yet listed its id; the gate removes it once the session's own mark is written, or nothing
+// started. No pending mark, no start. No floor, mark, and start record, no success: a session the gate cannot hold to
+// the count is stopped, and the handoff goes on by the clear route. One that cannot be stopped either runs on: the gate
+// arms nothing beside it, leaves its pending mark to hold it until it lapses, and prints `continue: none` with a fallback
+// line that names it and the host's command to stop it (`stopLine`). Whatever does not start goes on by the clear route
+// where the host has it (byClear).
 function startInBackground(ready) {
   const { host, found, slug, chain, hash, store, session, now, maxChain, env, run, wait, root } = ready;
   const handoff = host.capabilities.handoffContinue;
@@ -259,25 +262,43 @@ function startInBackground(ready) {
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
+  let pending = null;
+  const hold = (cwd) => {
+    pending = safely(() => markPending(session, { cwd, root, env, now: Date.now() }));
+    return pending !== null;
+  };
+  const release = () => pending && safely(() => dropPending(pending));
   let started;
   try {
-    started = handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, run, wait });
+    started = handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait });
   } catch (error) {
     started = { problem: `the host's start failed (${error?.code ?? error?.message ?? 'no message'})` };
   }
-  if (started.problem) return fallBack(`no background session started, since ${started.problem}`);
+  if (started.problem) {
+    release();
+    return fallBack(`no background session started, since ${started.problem}`);
+  }
   const record = { slug, chain: chain + 1, brief: found.path, route: 'background' };
   const id = started.session ?? started.id;
-  if (!safely(() => noteFrom(store, id, record, { now })) || !safely(() => markUnattended(id, { root, env, now }))) {
-    const unheld = `the background session ${started.id} started, but no chain floor and unattended mark could be recorded for it`;
-    if (safely(() => handoff.stopBackground?.({ id: started.id, env, run }))) return fallBack(`${unheld}, so it was stopped`);
-    // It runs on: a clear armed beside it would put a second session on the same work.
-    const stop = handoff.stopLine?.({ id: started.id }) ?? 'the host\'s own command stops it';
-    return none(`${unheld}, and it could not be stopped, so it is still running: ${stop}. Stop it before anything else resumes the brief ${slug}; then a person resumes the brief`);
-  }
   const marker = { sha256: hash, slug, brief: found.path, chain: chain + 1, id: started.id, session: started.session, name: started.name, cwd: started.cwd };
-  safely(() => noteStarted(store, session, marker, { now }));
+  const held = pending !== null && safely(() => noteFrom(store, id, record, { now })) && safely(() => markUnattended(id, { root, env, now }))
+    && safely(() => noteStarted(store, session, marker, { now }));
+  if (!held) return unheld({ handoff, started, env, run, slug, release, fallBack });
+  release();
   return startedLines(host, marker);
+}
+
+// A session `started` that the gate could not hold to the count: stopped, with its pending mark removed, and the handoff
+// goes on by `fallBack`; or, when it cannot be stopped, left held by its pending mark until that lapses, with nothing
+// armed beside it, since a clear would put a second session on the same work.
+function unheld({ handoff, started, env, run, slug, release, fallBack }) {
+  const why = `the background session ${started.id} started, but its chain floor, unattended mark, and start record could not all be recorded`;
+  if (safely(() => handoff.stopBackground?.({ id: started.id, env, run }))) {
+    release();
+    return fallBack(`${why}, so it was stopped`);
+  }
+  const stop = handoff.stopLine?.({ id: started.id }) ?? 'the host\'s own command stops it';
+  return none(`${why}, and it could not be stopped, so it is still running: ${stop}. Stop it before anything else resumes the brief ${slug}; then a person resumes the brief`);
 }
 
 // What `act` returns, or null when it throws: a store write the disk refuses.

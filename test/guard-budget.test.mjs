@@ -13,6 +13,7 @@ import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-
 import { foldCase, globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
+import { dropPending, markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -282,4 +283,40 @@ test('globParts rejects at once a name that fails at its end or is shorter than 
     assert.equal(names.some((name) => pattern.test(name)), false, part.slice(0, 20));
     assert.ok(performance.now() - started < 500, `${part.slice(0, 20)}: took ${Math.round(performance.now() - started)} ms`);
   }
+});
+
+test('a session no Human attends is held as a subagent past the time budget and the guards\' limits, in its window too', (t) => {
+  const dir = project(t);
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-budget-outside-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const marked = 'feed0006-0000-4000-8000-000000000006';
+  const fresh = 'cafe0007-0000-4000-8000-000000000007';
+  assert.ok(markUnattended(marked, { root: dir }));
+  const pending = markPending('beef0008-0000-4000-8000-000000000008', { cwd: dir, root: dir });
+  assert.ok(pending);
+  t.after(() => dropPending(pending));
+  const as = (session, input) => ({ ...main(input), session_id: session });
+  const late = { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '0' };
+  const unattended = /only a main session a Human attends may change, and the background handoff route started this one, with no Human/u;
+  for (const session of [marked, fresh]) {
+    for (const tool of ['Bash', 'PowerShell']) {
+      const refused = run(as(session, subagent(dir, tool, 'echo x > src/app.js')), late);
+      assert.equal(refused.status, 2, `${session} ${tool}: past the budget`);
+      assert.match(refused.stderr, /the guards could not finish reading this command in time/u);
+      assert.match(refused.stderr, unattended);
+    }
+    const many = run(as(session, subagent(dir, 'Bash', Array.from({ length: 20000 }, (_, i) => `: > a${i}`).join('; '))));
+    inTime(many, session);
+    assert.equal(many.status, 2, `${session}: more write targets than the guards read`);
+    assert.match(many.stderr, unattended);
+    const words = run(as(session, subagent(dir, 'PowerShell', `Remove-Item ${Array.from({ length: 600 }, (_, i) => `w${i}`).join(' ')}`)));
+    assert.equal(words.status, 2, `${session}: more words than the guards read`);
+    assert.match(words.stderr, unattended);
+  }
+  // Outside any project, a marked session past the budget is refused too.
+  assert.equal(run(as(marked, subagent(outside, 'Bash', 'aidrian handoff continue b.md')), late).status, 2, 'outside a project');
+  // Once the gate removed its pending mark, an attended main session keeps its calls past the budget.
+  assert.ok(dropPending(pending));
+  assert.equal(run(as('plain-session', subagent(dir, 'Bash', 'echo x > src/app.js')), late).status, 0, 'an attended session');
+  assert.equal(run(as('plain-session', subagent(outside, 'Bash', 'aidrian handoff continue b.md')), late).status, 0, 'an attended session outside a project');
 });

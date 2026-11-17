@@ -13,8 +13,11 @@
 // without gates; a call a gate blocks exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook
 // records its blocks (lib/hook-deny.mjs). The gates are asked before any guard, so a call they deny never waits on one.
 // The guards then run under a time budget (lib/deadline.mjs), GUARD_BUDGET_MS from the hook's start, well inside the
-// host's 5 second hook timeout, past which the host runs the call with no guard: a subagent's call they cannot finish
-// reading in time is refused (config-guard.mjs deadlineDenial), and the main session's runs, as the guards allow it anyway.
+// host's 5 second hook timeout, past which the host runs the call with no guard: a call of a subagent, or of a session no
+// Human attends, that they cannot finish reading in time is refused (config-guard.mjs deadlineDenial), and an attended
+// main session's runs, as the guards allow it anyway. The same two are refused a command longer than the guards read.
+// A session the gate is starting, whose id the host has not listed yet, is held by the gate's pending mark on its start
+// folder (lib/unattended-mark.mjs): every session whose call runs there with no mark of its own, but the one that ran it.
 // A subagent's call also meets the gates its session started with (lib/gate-snapshot.mjs), so a config.json deleted,
 // replaced, or moved away during the session lifts none of them; without a snapshot, as when the hooks were installed
 // during the session, only the current config counts, unless the session started with gates and the snapshot is gone:
@@ -58,7 +61,7 @@ await runHook(async (input) => {
 async function gate(input) {
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;
   // Read before any guard, wherever the call runs: a session the background route started stays held outside its project.
-  const mark = readUnattendedMark(input.session_id);
+  const mark = readUnattendedMark(input.session_id, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd() });
   const marked = mark?.root ? findProject(mark.root) : null;
   // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started
   // in, and the mark the one the gate ran in.
@@ -77,7 +80,7 @@ async function gate(input) {
         ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended }));
     } catch (error) {
       if (!(error instanceof PastDeadline)) throw error;
-      outside = deadlineDenial(input, DEFAULTS);
+      outside = deadlineDenial(input, DEFAULTS, { unattended });
     }
     if (outside) await block(input, 'config-guard', outside.reason, { match: outside.match });
     return;
@@ -95,29 +98,29 @@ async function gate(input) {
     ? gateDenial(input, config, project.paths) ?? started.map((agents) => gateDenial(input, { ...config, agents }, project.paths, { started: true })).find(Boolean)
     : null;
   if (gate) await block(input, 'agent-gates', gate.reason, { match: gate.match, project, config });
+  // Read once, before the call runs, so a call that deletes the session's floor is judged while the floor is there.
+  let alone;
+  const unattended = () => mark !== null || (alone ??= startedUnattended(project, config, input.session_id));
   let denial;
   try {
-    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, mark, marked));
+    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, marked, unattended));
   } catch (error) {
     if (!(error instanceof PastDeadline)) throw error;
-    denial = deadlineDenial(input, config);
+    denial = deadlineDenial(input, config, { unattended });
   }
   if (denial) await block(input, 'config-guard', denial.reason, { match: denial.match, project, config });
 }
 
 // The first guard's denial of the call, or null. The store guard runs first without its link walk, which reads folders
 // on disk, and with it last, so a call the other guards refuse by the paths and names it gives is refused before any walk.
-// `mark` is the session's unattended mark, or null, and `marked` the project it names, or null: when that is another
-// project than the call's, its store and its machine's switches are guarded too.
-function guards(input, project, config, gated, snapshot, mark, marked) {
+// `marked` is the project the session's unattended mark names, or null: when that is another project than the call's,
+// its store and its machine's switches are guarded too. `unattended()` says whether no Human attends the session.
+function guards(input, project, config, gated, snapshot, marked, unattended) {
   let dir;
   const state = () => (dir ??= stateDir(project, { config }));
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
-  // Read once, before the call runs, so a call that deletes the session's floor is judged while the floor is there.
-  let alone;
-  const unattended = () => mark !== null || (alone ??= startedUnattended(project, config, input.session_id));
-  return opaqueLimitDenial(input, config)
-    ?? writeLimitDenial(input, config)
+  return opaqueLimitDenial(input, config, { unattended })
+    ?? writeLimitDenial(input, config, { unattended })
     ?? handoffContinueDenial(input, config)
     ?? handoffEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })

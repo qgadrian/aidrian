@@ -103,8 +103,10 @@ export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
 // one when the output printed it; `session` its full id, or null when the listing did not name it within about 5
 // seconds; `name` its name when it is plain text no other listed session has, else null. A start that timed out or
 // failed still counts when the listing then shows it. `agent` and `effort` are the handing-off session's, passed on when
-// known. `run` and `wait` are a test's stand-ins, and `resolve` finds `claude` from `env`.
-export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, run = runCommand, wait = pause, resolve = claudeOnPath }) {
+// known. `hold(cwd)`, the gate's, files the pending mark that holds whatever session starts in that folder until its own
+// mark is written; it runs before `claude --bg`, and a start it does not confirm is none. `run` and `wait` are a test's
+// stand-ins, and `resolve` finds `claude` from `env`.
+export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, run = runCommand, wait = pause, resolve = claudeOnPath }) {
   const claude = resolve(env);
   if (!claude) return { problem: '`claude` is not on PATH, in an absolute folder' };
   const before = listed(run, claude, undefined);
@@ -112,6 +114,9 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
   const own = before.find((each) => each.sessionId === session);
   if (typeof own?.cwd !== 'string' || !path.isAbsolute(own.cwd) || CONTROL.test(own.cwd)) {
     return { problem: '`claude agents --json` does not list the folder of this session' };
+  }
+  if (typeof hold !== 'function' || !hold(own.cwd)) {
+    return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
   }
   const name = sessionName(own.name, slug, chain);
   const args = ['--bg', '--name', name];

@@ -427,9 +427,12 @@ checks: a worktree it counts may still hold work that cleanup asks about. The me
 origin's repository alone, when the forge adapter serves it (github.com today), and are cached for a minute in the
 session's folder. With no origin, or one on a host the adapter does not serve, `mergedNotCleaned` is null and `errors`
 does not name `worktrees`: that repository is unsupported, not failed. One session starts at most one forge call a
-minute, whatever became of the last; the call has 4 s, or `--deadline-ms`, and is killed past it, and the cached count
-then shows with `stale: true`, or as null with `worktrees` in `errors` when there is none. A value too large for the
-cache's 1 MiB read is not stored, but the attempt is, so the minute still holds.
+minute, whatever became of the last and however many snapshots start at once: a snapshot records its attempt under the
+cache's reservation, a lock file it takes over once a minute old, and one that finds the reservation held, or an attempt
+another snapshot recorded first, starts no call and shows the cached count as stale. The call has 4 s, or
+`--deadline-ms`, and is killed past it, and the cached count then shows with `stale: true`, or as null with `worktrees`
+in `errors` when there is none. A value too large for the cache's 1 MiB read is not stored, but the attempt is, so the
+minute still holds.
 
 **Run time.** Every git call the snapshot starts is killed at git's 2 s limit, and once one is, the later ones of the
 same run give up at once, but for the worktree list, which has its own 2 s. With the 4 s forge budget, a run takes at

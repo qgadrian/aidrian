@@ -155,7 +155,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── sessions/<session id>/  what aidrian session snapshot caches for one session, for its user alone:
 │   ├── usage.json            the transcript read so far, as the handoff numbers fold it, saved step by step
-│   └── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
+│   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
+│   └── merged-heads-cache.json.lock  held for a moment while a snapshot records its forge attempt
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
@@ -169,10 +170,13 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
   mode 0700, no bit for the group or others, checked before every write, read, and sweep; each file is written as a
-  temporary file, mode 0600, renamed over it, under the cache names alone. A state folder inside a checkout gets no
+  temporary file, mode 0600, renamed over it, under the cache names alone; a cache's reservation, `<name>.lock`, which
+  makes reading and recording its last attempt one exclusive step, is created only where nothing is, never through a
+  symlink, mode 0600, and taken over once older than the cache's window. A state folder inside a checkout gets no
   session folder, and neither does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
   the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
-  others untouched for 30 days, deleting only the cache files and their temporary files, then the folder once empty.
+  others untouched for 30 days, deleting only the cache files, their temporary files, and their reservations, then the
+  folder once empty.
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { SESSION_FILES, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { reservationName, reserveSessionFile, SESSION_FILES, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
@@ -111,7 +111,7 @@ test('a session or sessions folder any other user may read or write gives no fol
 test('creating a folder sweeps session folders untouched for 30 days, deleting only the helper\'s own files', () => {
   const { state, sessions } = stateWithSessions();
   const temporaries = SESSION_FILES.map((name) => path.basename(temporaryName(path.join(sessions, 'gone'), name)));
-  oldFolder(sessions, 'gone', 31, [...SESSION_FILES, ...temporaries]);
+  oldFolder(sessions, 'gone', 31, [...SESSION_FILES, ...temporaries, ...SESSION_FILES.map(reservationName)]);
   const kept = oldFolder(sessions, 'kept', 31, ['usage.json', 'notes.txt']);
   oldFolder(sessions, 'recent', 29);
   const touched = oldFolder(sessions, 'touched', 31, ['usage.json', 'prs.jsonl']);
@@ -202,4 +202,56 @@ test('a session file is not written into a folder another user may read, or thro
   assert.equal(writeSessionFile(linked, 'usage.json', '{}'), null);
   assert.deepEqual(readdirSync(target), []);
   assert.equal(writeSessionFile(path.join(root, 'missing'), 'usage.json', '{}'), null);
+});
+
+test('a reservation is one process`s alone until released, mode 0600, and only under a name the folder holds', () => {
+  const folder = sessionFolder(path.join(scratch(), 'state'), 'abc', NONE);
+  const name = 'merged-heads-cache.json';
+  const reservation = path.join(folder, reservationName(name));
+  for (const other of ['notes.txt', '../usage.json', '']) assert.equal(reserveSessionFile(folder, other, { staleMs: 60_000 }), null, other);
+  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000, token: 'not-hex' }), null);
+  assert.deepEqual(readdirSync(folder), []);
+  const release = reserveSessionFile(folder, name, { staleMs: 60_000 });
+  assert.equal(typeof release, 'function');
+  if (POSIX) assert.equal(statSync(reservation).mode & 0o777, 0o600);
+  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000 }), null, 'held by another');
+  assert.equal(typeof reserveSessionFile(folder, 'usage.json', { staleMs: 60_000 }), 'function', 'each file has its own');
+  release();
+  assert.equal(existsSync(reservation), false);
+  const again = reserveSessionFile(folder, name, { staleMs: 60_000 });
+  assert.equal(typeof again, 'function', 'free once released');
+  again();
+});
+
+test('a reservation older than staleMs, or from the future, is taken over, and the old holder`s release leaves the new one', () => {
+  const folder = sessionFolder(path.join(scratch(), 'state'), 'abc', NONE);
+  const name = 'merged-heads-cache.json';
+  const reservation = path.join(folder, reservationName(name));
+  const killed = reserveSessionFile(folder, name, { staleMs: 60_000 });
+  const then = new Date(Date.now() - 61_000);
+  utimesSync(reservation, then, then);
+  const taken = reserveSessionFile(folder, name, { staleMs: 60_000 });
+  assert.equal(typeof taken, 'function', 'a reservation a killed process left goes stale');
+  killed();
+  assert.equal(existsSync(reservation), true, 'the old holder releases only its own');
+  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000 }), null);
+  const later = new Date(Date.now() + 3_600_000);
+  utimesSync(reservation, later, later);
+  assert.equal(typeof reserveSessionFile(folder, name, { staleMs: 60_000 }), 'function', 'a clock that went back frees it');
+  assert.deepEqual(readdirSync(folder), [reservationName(name)], 'no temporary file is left');
+});
+
+test('a symlink or a folder at the reservation is never followed, removed, or taken', { skip: !POSIX }, () => {
+  const root = scratch();
+  const folder = sessionFolder(path.join(root, 'state'), 'abc', NONE);
+  const name = 'merged-heads-cache.json';
+  const reservation = path.join(folder, reservationName(name));
+  const target = path.join(root, 'target');
+  writeFileSync(target, 'keep');
+  symlinkSync(target, reservation);
+  const then = new Date(Date.now() - 61_000);
+  lutimesSync(reservation, then, then);
+  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000 }), null);
+  assert.equal(lstatSync(reservation).isSymbolicLink(), true);
+  assert.equal(readFileSync(target, 'utf8'), 'keep');
 });

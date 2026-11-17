@@ -9,6 +9,7 @@ import test from 'node:test';
 import { arm, noteFrom, noteStarted, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { cachedValue } from '../plugins/aidrian/lib/session-cached-value.mjs';
+import { reservationName, reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { DISPLAY_CAPS, displayText, MERGED_HEADS, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -638,4 +639,56 @@ test('cachedValue records its attempt before the refresh, and with no folder ref
   assert.equal(cachedValue({ ...options, folder: null, refresh: () => assert.fail('no folder, no call') }), null);
   assert.deepEqual(cachedValue({ ...options, now: Date.now() + 61_000, refresh: () => ['v'] }), { value: ['v'], stale: false });
   assert.deepEqual(cachedValue({ ...options, now: Date.now() + 62_000, refresh: () => assert.fail('inside the window') }), { value: ['v'], stale: false });
+});
+
+// A folder for its user alone holding an expired cache of `value`: its last attempt two windows ago.
+function expiredCache(value) {
+  const folder = scratch();
+  chmodSync(folder, 0o700);
+  const at = Date.now() - 120_000;
+  writeFileSync(path.join(folder, MERGED_HEADS.name), JSON.stringify({ value, valueAt: at, attemptAt: at }), { mode: 0o600 });
+  return { folder, options: { folder, name: MERGED_HEADS.name, windowMs: 60_000, cap: 1024, isValue: Array.isArray } };
+}
+
+test('cachedValue starts no refresh while another process holds the reservation, and takes over a stale one', () => {
+  const { folder, options } = expiredCache(['old']);
+  const held = reserveSessionFile(folder, MERGED_HEADS.name, { staleMs: 60_000 });
+  assert.deepEqual(cachedValue({ ...options, refresh: () => assert.fail('another process is recording its attempt') }), { value: ['old'], stale: true });
+  assert.equal(JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8')).attemptAt < Date.now() - 60_000, true, 'no attempt recorded');
+  const then = new Date(Date.now() - 61_000);
+  utimesSync(path.join(folder, reservationName(MERGED_HEADS.name)), then, then);
+  assert.deepEqual(cachedValue({ ...options, refresh: () => ['new'] }), { value: ['new'], stale: false }, 'a reservation a killed process left goes stale');
+  held();
+  assert.deepEqual(readdirSync(folder), [MERGED_HEADS.name], 'released, and the old holder`s release took nothing');
+  const { attemptAt } = JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8'));
+  const earlier = cachedValue({ ...options, now: attemptAt - 1000, refresh: () => assert.fail('a process whose clock read came first') });
+  assert.deepEqual(earlier, { value: ['new'], stale: false }, 'an attempt just after `now` is inside the window');
+  assert.deepEqual(cachedValue({ ...options, now: attemptAt - 61_000, refresh: () => ['back'] }), { value: ['back'], stale: false }, 'a clock a window back refreshes');
+});
+
+test('processes that start together on an expired cache start one refresh between them', async () => {
+  const { folder } = expiredCache(['old']);
+  const go = path.join(folder, 'go');
+  const log = path.join(folder, 'refreshes.log');
+  const script = `
+    import { appendFileSync, existsSync } from 'node:fs';
+    import { cachedValue } from ${JSON.stringify(path.join(LIB, 'session-cached-value.mjs'))};
+    while (!existsSync(${JSON.stringify(go)}));
+    const result = cachedValue({ folder: ${JSON.stringify(folder)}, name: ${JSON.stringify(MERGED_HEADS.name)}, windowMs: 60_000, cap: 1024,
+      isValue: Array.isArray, refresh: () => { appendFileSync(${JSON.stringify(log)}, 'x'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300); return ['new']; } });
+    process.stdout.write(JSON.stringify(result));`;
+  const children = Array.from({ length: 8 }, () => spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] }));
+  const results = children.map((child) => new Promise((resolve) => {
+    let out = '';
+    child.stdout.on('data', (chunk) => (out += chunk));
+    child.on('exit', (code) => resolve({ code, out }));
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  writeFileSync(go, '');
+  const done = await Promise.all(results);
+  assert.deepEqual(done.map(({ code }) => code), Array(8).fill(0));
+  assert.equal(readFileSync(log, 'utf8'), 'x', 'one refresh');
+  const answers = done.map(({ out }) => JSON.parse(out));
+  assert.equal(answers.filter((each) => each.stale === false).length, 1);
+  assert.ok(answers.every((each) => each.stale === false || each.value[0] === 'old'), 'the others give the stored value, stale');
 });

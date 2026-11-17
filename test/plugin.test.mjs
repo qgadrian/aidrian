@@ -754,6 +754,8 @@ test('the handoff skills run the continue gate after the check, carry the chain,
     'starts a turn here after the gate: it cancels a clear continuation, and runs beside a background session',
     'Otherwise wait for the ones the brief needs, stop the rest on purpose, and record each one left running under Still running']) assert.ok(step(handoff, 1).includes(words), `step 1: ${words}`);
   assert.ok(step(handoff, 8).includes('unless step 7 printed them or told the `say:` line'));
+  // In auto mode the Human already decided: a session that asks whether to hand off asks a settled question.
+  assert.match(handoff, /- `"auto"`: never ask the Human whether to hand off or keep going, at those points or any other\. Judge it alone, and when a handoff is worth it, write the brief and run step 7; otherwise keep working\./);
   assert.match(handoff, /8\. This skill commits, pushes, and ends nothing; the user decides when to close the session\. After `continue: clear` it ends the turn, and the Human clears the session; after `continue: background` it ends the turn and does nothing more\./);
   const template = flat('plugins/aidrian/skills/session-handoff/references/brief-template.md');
   assert.match(template, /\| Supersedes: <brief or none> \| Chain: <n> Advice from/);

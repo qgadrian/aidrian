@@ -53,6 +53,8 @@ const SHORT_FROM = /^from-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 // A session name the say line prints in single quotes, and a started marker keeps: no quote, `$`, `;`, or other
 // character a shell reads inside them.
 export const PLAIN_NAME = /^[\w .@:\u00b7-]{1,100}$/u;
+// A permission mode a start record names: a word.
+const MODE = /^[A-Za-z]{1,32}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
@@ -202,7 +204,8 @@ const isStarted = (value) => isObject(value) && typeof value.sha256 === 'string'
   && typeof value.slug === 'string' && SLUG.test(value.slug) && briefOf(value.brief, value.slug) && whole(value.chain, 0, CHAIN_CEILING)
   && typeof value.id === 'string' && SESSION_ID.test(value.id) && (value.session === null || (typeof value.session === 'string' && SESSION_ID.test(value.session)))
   && (value.name === null || (typeof value.name === 'string' && PLAIN_NAME.test(value.name)))
-  && typeof value.cwd === 'string' && path.isAbsolute(value.cwd) && !hasControl(value.cwd) && Number.isFinite(value.at);
+  && typeof value.cwd === 'string' && path.isAbsolute(value.cwd) && !hasControl(value.cwd) && Number.isFinite(value.at)
+  && (value.mode === undefined || value.mode === null || (typeof value.mode === 'string' && MODE.test(value.mode)));
 
 const isChecked = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256) && Number.isFinite(value.at);
 
@@ -358,10 +361,11 @@ function floorsOf(store, session, now) {
 }
 
 // Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
-// brief, chain, id, session, name, cwd }, where `id` is the id the gate names it by, `session` its full id or null, and
-// `name` a plain name or null. Returns the file, or null when the store is refused or the value has a wrong shape.
+// brief, chain, id, session, name, cwd, mode }, where `id` is the id the gate names it by, `session` its full id or null,
+// `name` a plain name or null, and `mode` the permission mode it started in, null when the host's default, or left out
+// when the host does not say. Returns the file, or null when the store is refused or the value has a wrong shape.
 export function noteStarted(store, session, started, { now = Date.now() } = {}) {
-  const value = { sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, at: now };
+  const value = { sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, ...(started.mode === undefined ? {} : { mode: started.mode }), at: now };
   return isStarted(value) ? writeMarker(store, sessionFile('started', session), value) : null;
 }
 

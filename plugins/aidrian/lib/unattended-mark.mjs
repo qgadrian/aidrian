@@ -11,17 +11,22 @@
 // unattendedMarkWriteDenial keeps a subagent, and a session no Human attends, from changing the folder.
 // A mark only ever refuses more, so a read fails closed: an entry it cannot check counts as a mark.
 // The new session's id is known only after the host lists it, seconds after it starts working. So before the start the
-// gate files a pending mark, `pending.<old session>.json`, { pending, cwd, session, root, at }, which holds every other
-// session whose call runs in the start folder `cwd`, or below it, and has no mark of its own, for PENDING_AGE at most;
-// the gate removes it once the session's own mark is written, or nothing started. A pending file it cannot read holds
-// every session but none: the session it names cannot be told apart from another.
+// gate files a pending mark, `pending.<old session>.json`, { pending, cwd, session, root, known, at }, which holds as
+// unattended, wherever its calls run, every session that has no mark of its own and is neither the session that ran the
+// gate nor one in `known`, the ids the host listed before the start, for PENDING_AGE at most. A session the host had not
+// listed then cannot be told apart from the new one by anything a hook reads: no folder, since the new session may change
+// to any, and no start time, which neither the hook's input nor the host's listing gives. So a session the Human starts
+// in that window is held too. A pending mark with no `known` holds every session but the gate's. The gate removes it once
+// the session's own mark is written, or when it knows nothing started; a launch whose outcome it cannot know keeps it
+// until it lapses. A pending file it cannot read holds every session but none: the session it names cannot be told
+// apart from another.
 
 import { randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
-import { foldCase, isObject, isWithin, resolvedPath } from './fs.mjs';
+import { isObject } from './fs.mjs';
 import { stateRoot } from './project.mjs';
 
 // The folder's name under the state root; lib/handoff-guard.mjs guards it by this name too.
@@ -39,6 +44,8 @@ const DAY = 24 * 60 * 60 * 1000;
 export const MARK_AGE = 30 * DAY;
 // How long a pending mark holds: past the host's longest start and listing, so it never lapses while the gate waits.
 export const PENDING_AGE = 5 * 60 * 1000;
+// The most session ids a pending mark keeps as known; a longer listing keeps none, and the mark holds every session.
+const KNOWN_CAP = 1000;
 // A mark this size or larger is never read for its root; it still counts as a mark.
 const MARK_CAP = 64 * 1024;
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -101,11 +108,13 @@ export function markUnattended(session, { root, env = process.env, now = Date.no
 }
 
 // Files the pending mark of the gate run by `session`, which is about to start a session in the folder `cwd`, with
-// `root` the main checkout of its project: the file, or null, as markUnattended. Never throws.
-export function markPending(session, { cwd, root, env = process.env, now = Date.now() } = {}) {
+// `root` the main checkout of its project and `known` the ids of the sessions the host listed before the start: the
+// file, or null, as markUnattended. With no usable `known`, the mark holds every session but `session`. Never throws.
+export function markPending(session, { cwd, root, known, env = process.env, now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session) || [cwd, root].some((each) => typeof each !== 'string' || !path.isAbsolute(each))) return null;
+  const ids = Array.isArray(known) && known.length <= KNOWN_CAP && known.every((id) => typeof id === 'string' && SESSION_ID.test(id)) ? [...new Set(known)] : null;
   try {
-    return writeMark(ownFolder(env, now), `pending.${session}.json`, { pending: true, cwd, session, root, at: now });
+    return writeMark(ownFolder(env, now), `pending.${session}.json`, { pending: true, cwd, session, root, ...(ids ? { known: ids } : {}), at: now });
   } catch {
     return null;
   }
@@ -125,8 +134,9 @@ export function dropPending(file) {
 // The mark of `session`, { root } where `root` is the main checkout the gate named, or null when it named none that can
 // be read; null when no mark holds. It reads each of markFolders the session's own mark and every mark under a short id
 // it starts with. A mark of another user, or one past MARK_AGE, does not hold; an entry or a folder it cannot check does.
-// With no mark of its own, a pending mark holds a session whose call runs in `cwd`, as { root, pending: true }.
-export function readUnattendedMark(session, { env = process.env, home, now = Date.now(), cwd } = {}) {
+// With no mark of its own, a pending mark holds the session, wherever its call runs, as { root, pending: true }, unless it
+// ran the gate or the host listed it before the start.
+export function readUnattendedMark(session, { env = process.env, home, now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const uid = processUid();
   let unchecked = false;
@@ -150,25 +160,23 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
     pending.push(...names.filter((name) => PENDING.test(name)).map((name) => path.join(folder, name)));
   }
   if (unchecked) return { root: null };
-  return typeof cwd === 'string' ? pendingHold(pending, session, cwd, uid, now) : null;
+  return pendingHold(pending, session, uid, now);
 }
 
-// The hold of the first of the pending marks `files` that holds `session` in the folder `cwd`, or null.
-function pendingHold(files, session, cwd, uid, now) {
-  const real = (file) => foldCase(resolvedPath(file) ?? path.resolve(file));
-  let here;
+// The hold of the first of the pending marks `files` that holds `session`, or null.
+function pendingHold(files, session, uid, now) {
   for (const file of files) {
     const found = readPending(file, uid, now);
-    if (found === null || found.session === session) continue;
+    if (found === null) continue;
     if (found === 'unchecked') return { root: null, pending: true };
-    here ??= real(cwd);
-    if (isWithin(real(found.cwd), here)) return { root: found.root, pending: true };
+    if (found.session === session || found.known?.includes(session)) continue;
+    return { root: found.root, pending: true };
   }
   return null;
 }
 
-// One pending mark: { session, cwd, root } when it holds, null when it does not, or 'unchecked' when it holds and cannot
-// be read.
+// One pending mark: { session, root, known } when it holds, null when it does not, or 'unchecked' when it holds and
+// cannot be read. `known` is null when the mark names none.
 function readPending(file, uid, now) {
   let stat;
   try {
@@ -180,8 +188,9 @@ function readPending(file, uid, now) {
   if (now - Math.floor(stat.mtimeMs) > PENDING_AGE) return null;
   const value = stat.isFile() && stat.size < MARK_CAP ? readJson(file) : null;
   const fits = isObject(value) && value.pending === true && typeof value.session === 'string'
-    && [value.cwd, value.root].every((each) => typeof each === 'string' && path.isAbsolute(each));
-  return fits ? { session: value.session, cwd: value.cwd, root: value.root } : 'unchecked';
+    && [value.cwd, value.root].every((each) => typeof each === 'string' && path.isAbsolute(each))
+    && (value.known === undefined || (Array.isArray(value.known) && value.known.every((id) => typeof id === 'string')));
+  return fits ? { session: value.session, root: value.root, known: value.known ?? null } : 'unchecked';
 }
 
 // One mark file: { root } when it holds, null when it does not, or 'unchecked' when it cannot be checked.

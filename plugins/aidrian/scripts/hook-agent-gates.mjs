@@ -16,8 +16,9 @@
 // host's 5 second hook timeout, past which the host runs the call with no guard: a call of a subagent, or of a session no
 // Human attends, that they cannot finish reading in time is refused (config-guard.mjs deadlineDenial), and an attended
 // main session's runs, as the guards allow it anyway. The same two are refused a command longer than the guards read.
-// A session the gate is starting, whose id the host has not listed yet, is held by the gate's pending mark on its start
-// folder (lib/unattended-mark.mjs): every session whose call runs there with no mark of its own, but the one that ran it.
+// A session the gate is starting, whose id the host has not listed yet, is held by the gate's pending mark
+// (lib/unattended-mark.mjs): every session with no mark of its own, wherever its call runs, but the one that ran the gate
+// and those the host listed before the start.
 // A subagent's call also meets the gates its session started with (lib/gate-snapshot.mjs), so a config.json deleted,
 // replaced, or moved away during the session lifts none of them; without a snapshot, as when the hooks were installed
 // during the session, only the current config counts, unless the session started with gates and the snapshot is gone:
@@ -61,7 +62,7 @@ await runHook(async (input) => {
 async function gate(input) {
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;
   // Read before any guard, wherever the call runs: a session the background route started stays held outside its project.
-  const mark = readUnattendedMark(input.session_id, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd() });
+  const mark = readUnattendedMark(input.session_id);
   const marked = mark?.root ? findProject(mark.root) : null;
   // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started
   // in, and the mark the one the gate ran in.

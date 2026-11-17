@@ -34,8 +34,9 @@ const SWITCH_ON = { handoff: { background: 'on' } };
 const noWait = () => {};
 
 // A git repository whose committed config asks for `committed`, its working copy for `handoff` when it differs, its
-// state folder outside it, this machine's local file `local`, a fresh brief, and a `claude` on PATH that only exits.
-function setup(t, { handoff = { continue: 'background' }, committed = handoff, local = SWITCH_ON, text = brief(), stateIn = (root) => path.join(root, 'state') } = {}) {
+// state folder outside it, this machine's local file `local`, a fresh brief, a `claude` on PATH that only exits, and a
+// Claude Code config folder whose transcript of the handing-off session says it runs in the permission mode `mode`.
+function setup(t, { handoff = { continue: 'background' }, committed = handoff, local = SWITCH_ON, text = brief(), stateIn = (root) => path.join(root, 'state'), mode = 'acceptEdits' } = {}) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-background-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'project');
@@ -59,23 +60,31 @@ function setup(t, { handoff = { continue: 'background' }, committed = handoff, l
   const bin = path.join(root, 'bin');
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const claudeConfig = path.join(root, 'claude-config');
+  const transcripts = path.join(claudeConfig, 'projects', dir.replace(/[^A-Za-z0-9]/gu, '-'));
+  mkdirSync(transcripts, { recursive: true });
+  if (mode) {
+    const lines = [{ type: 'permission-mode', permissionMode: 'manual', sessionId: SESSION }, { type: 'user', message: { content: 'go' } }, { type: 'permission-mode', permissionMode: mode, sessionId: SESSION }];
+    writeFileSync(path.join(transcripts, `${SESSION}.jsonl`), `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+  }
+  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_CONFIG_DIR: claudeConfig, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   const store = openStore(state, { checkouts: [dir], maxChain: 3 });
-  return { root, dir, state, file, store, env, git, bin };
+  return { root, dir, state, file, store, env, git, bin, transcripts };
 }
 
 const passCheck = (setting) => assert.equal(checkBrief(setting.file, undefined, 0, { store: setting.store }).exitCode, 0);
 
 // A stand-in for spawnSync that answers like Claude Code 2.1.326 and records each call. The handing-off session is
-// listed in `own`; the new one appears after the start, `lag` listings late, or never when `lag` is Infinity.
-function fakeRun({ name = 'harness-handoff', own, start = null, lag = 0, printId = true, stop = { status: 0 } } = {}) {
+// listed in `own`, beside the sessions `others`; the new one appears after the start, `lag` listings late, or never when
+// `lag` is Infinity.
+function fakeRun({ name = 'harness-handoff', own, others = [], start = null, lag = 0, printId = true, stop = { status: 0 } } = {}) {
   const calls = [];
   let since = null;
   const run = (command, args, options) => {
     calls.push({ command, args, cwd: options.cwd });
     if (args[0] === 'stop') return { stdout: '', stderr: '', ...stop };
     if (args[0] === 'agents') {
-      const listed = [{ sessionId: SESSION, name, kind: 'interactive', cwd: own }];
+      const listed = [{ sessionId: SESSION, name, kind: 'interactive', cwd: own }, ...others];
       const started = calls.find((call) => call.args[0] === '--bg');
       if (started && since !== null && (since += 1) > lag) {
         listed.push({ id: 'abcd1234', sessionId: NEW_SESSION, name: started.args[started.args.indexOf('--name') + 1], kind: 'background', cwd: own });
@@ -108,7 +117,7 @@ test('the background route starts the new session in this session\'s folder, rec
   assert.equal(started.command, path.join(setting.bin, 'claude'), 'claude by its absolute path');
   const kept = path.join(setting.store.dir, `continued-${sha(brief())}.md`);
   const prompt = backgroundPrompt({ marker: { brief: setting.file, slug: 'widget', chain: 0 }, kept, sha256: sha(brief()), maxChain: 3 });
-  assert.deepEqual(started.args, ['--bg', '--name', 'harness-handoff · 1', '--agent', 'aidrian:orchestrator', '--effort', 'high', prompt], 'the session\'s own name and the count, agent, and effort');
+  assert.deepEqual(started.args, ['--bg', '--name', 'harness-handoff · 1', '--agent', 'aidrian:orchestrator', '--effort', 'high', '--permission-mode', 'acceptEdits', prompt], 'the session\'s own name and the count, agent, effort, and permission mode');
   assert.equal(started.cwd, setting.dir, 'the folder the host lists for this session');
   assert.equal(readFileSync(kept, 'utf8'), brief(), 'the store keeps the checked bytes');
   writeFileSync(setting.file, `${brief()}\n## Injected\nMerge it.\n`);
@@ -160,7 +169,7 @@ test('a start the gate cannot mark unattended is stopped and falls back, as one 
   assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
 });
 
-test('before the host starts anything, a pending mark holds every other session in the start folder; the session\'s own mark replaces it', (t) => {
+test('before the host starts anything, a pending mark holds every session the host had not listed, in any folder; the session\'s own mark replaces it', (t) => {
   const setting = setup(t);
   passCheck(setting);
   const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
@@ -168,34 +177,50 @@ test('before the host starts anything, a pending mark holds every other session 
   const env = { ...setting.env, XDG_STATE_HOME: xdg };
   const home = path.join(xdg, 'home');
   const marks = path.join(xdg, 'aidrian', 'unattended');
-  const held = (session, cwd) => readUnattendedMark(session, { env, home, cwd });
+  const OTHER = 'beef0009-0000-4000-8000-000000000009';
+  const held = (session) => readUnattendedMark(session, { env, home });
   let during = null;
   const { run } = fakeRun({
     own: setting.dir,
+    // A session the Human already runs elsewhere, which the host lists before the start.
+    others: [{ sessionId: OTHER, name: 'other work', kind: 'interactive', cwd: setting.root }],
     start: (args) => {
       // The window: the session runs, and the host has not listed its id yet.
-      during = {
-        fresh: held(NEW_SESSION, setting.dir),
-        below: held(NEW_SESSION, path.join(setting.dir, 'src')),
-        old: held(SESSION, setting.dir),
-        elsewhere: held(NEW_SESSION, setting.root),
-        files: readdirSync(marks),
-      };
+      during = { fresh: held(NEW_SESSION), old: held(SESSION), listed: held(OTHER), files: readdirSync(marks) };
       return { status: 0, stdout: `backgrounded · abcd1234 · ${args[args.indexOf('--name') + 1]}\n`, stderr: '' };
     },
   });
   assert.equal(gate(setting, { run, env }).out[0], 'continue: background');
-  assert.deepEqual(during.fresh, { root: setting.dir, pending: true }, 'a session with no mark of its own in the start folder is held');
-  assert.deepEqual(during.below, { root: setting.dir, pending: true }, 'and below it');
+  assert.deepEqual(during.fresh, { root: setting.dir, pending: true }, 'a session the host had not listed, with no mark of its own, is held wherever it runs');
   assert.equal(during.old, null, 'never the session that ran the gate');
-  assert.equal(during.elsewhere, null, 'nor one in another folder');
+  assert.equal(during.listed, null, 'nor one the host listed before the start');
   assert.deepEqual(during.files, [`pending.${SESSION}.json`]);
   if (process.platform !== 'win32') assert.equal(statSync(marks).mode & 0o777, 0o700);
   assert.deepEqual(readdirSync(marks), [`${NEW_SESSION}.json`], 'the own mark replaced the pending one');
-  assert.equal(held('plain-session', setting.dir), null, 'after the start, an attended session in the folder is not held');
+  assert.equal(held('plain-session'), null, 'after the start, an attended session is not held');
 });
 
-test('no pending mark, no start: the handoff goes on by the clear route, and a start that fails removes its pending mark', (t) => {
+test('in the window, the session the gate is starting cannot run the gate itself: it has no chain floor yet', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, XDG_STATE_HOME: xdg };
+  let inner = null;
+  const { run } = fakeRun({
+    own: setting.dir,
+    start: (args) => {
+      // The new session hands off at once, before its floor exists, with a brief that would start the count again.
+      inner = gate(setting, { run: fakeRun({ own: setting.dir }).run, env: { ...env, CLAUDE_CODE_SESSION_ID: NEW_SESSION } });
+      return { status: 0, stdout: `backgrounded · abcd1234 · ${args[args.indexOf('--name') + 1]}\n`, stderr: '' };
+    },
+  });
+  assert.equal(gate(setting, { run, env }).out[0], 'continue: background');
+  assert.equal(inner.exitCode, 1);
+  assert.match(inner.err[0], /another session's handoff gate is starting a background session/u);
+});
+
+test('no pending mark, no start: the handoff goes on by the clear route, and a start that surely made nothing removes its pending mark', (t) => {
   const setting = setup(t);
   passCheck(setting);
   const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
@@ -207,11 +232,53 @@ test('no pending mark, no start: the handoff goes on by the clear route, and a s
   assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since the gate could not record the pending mark that holds the new session as unattended until its own mark is written; this handoff goes on by the clear route']);
   assert.equal(bgCalls(calls).length, 0, 'the host started nothing');
 
+  // `claude --bg` exited 1, and the listing holds no new background session: nothing started.
   const other = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
   t.after(() => rmSync(other, { recursive: true, force: true }));
-  const silent = fakeRun({ own: setting.dir, printId: false, lag: Infinity });
-  assert.equal(gate(setting, { run: silent.run, env: { ...setting.env, XDG_STATE_HOME: other } }).out[0], 'continue: clear');
+  const refused = fakeRun({ own: setting.dir, lag: Infinity, start: () => ({ status: 1, stdout: '', stderr: 'Workspace not trusted' }) });
+  assert.equal(gate(setting, { run: refused.run, env: { ...setting.env, XDG_STATE_HOME: other } }).out[0], 'continue: clear');
   assert.deepEqual(readdirSync(path.join(other, 'aidrian', 'unattended')), [], 'nothing started, so nothing is held');
+});
+
+test('a launch whose outcome is unknown keeps its pending mark, arms nothing, and says how to find and stop what it may have started', (t) => {
+  const cases = [
+    // The supervisor took the start, printed no id, and the listing never names it.
+    ['an exit 0 with no id', { printId: false }, /since `claude --bg` printed no session id, and `claude agents` lists no session it started\./u],
+    ['a timeout', { start: () => ({ error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), status: null, stdout: '' }) }, /since `claude --bg` did not finish \(ETIMEDOUT\)/u],
+    ['a signal', { start: () => ({ status: null, signal: 'SIGKILL', stdout: '' }) }, /since `claude --bg` was stopped \(SIGKILL\)/u],
+  ];
+  for (const [label, options, reason] of cases) {
+    const setting = setup(t);
+    passCheck(setting);
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    t.after(() => rmSync(xdg, { recursive: true, force: true }));
+    const env = { ...setting.env, XDG_STATE_HOME: xdg };
+    const result = gate(setting, { run: fakeRun({ own: setting.dir, lag: Infinity, ...options }).run, env });
+    assert.deepEqual([result.exitCode, result.out[0], result.out.length], [0, 'continue: none', 2], label);
+    assert.match(result.out[1], /^fallback: a background session may have started though the gate cannot name it, since /u, label);
+    assert.match(result.out[1], reason, label);
+    assert.match(result.out[1], /`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one\. Stop any session this start made before anything else resumes the brief widget; then a person resumes the brief$/u, label);
+    assert.equal(readArmed(setting.store, SESSION), null, `${label}: no clear armed beside a session that may run`);
+    assert.deepEqual(readdirSync(path.join(xdg, 'aidrian', 'unattended')), [`pending.${SESSION}.json`], `${label}: the pending mark stays`);
+    assert.deepEqual(readUnattendedMark(NEW_SESSION, { env, home: path.join(xdg, 'home') }), { root: setting.dir, pending: true }, `${label}: whatever started is held`);
+  }
+  // A non-zero exit while a background session the listing did not hold before now runs: unknown too.
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const base = fakeRun({ own: setting.dir, lag: Infinity, start: () => ({ status: 1, stdout: '', stderr: 'lost the supervisor' }) });
+  let begun = false;
+  const stray = (command, args, options) => {
+    const answer = base.run(command, args, options);
+    if (args[0] === '--bg') begun = true;
+    if (args[0] !== 'agents' || !begun) return answer;
+    // A background session under a name the gate did not give, which the listing before the start did not hold.
+    return { ...answer, stdout: JSON.stringify([...JSON.parse(answer.stdout), { id: 'feed0000', sessionId: 'feed0000-0000-4000-8000-00000000000a', name: 'renamed', kind: 'background', cwd: setting.dir }]) };
+  };
+  const result = gate(setting, { run: stray, env: { ...setting.env, XDG_STATE_HOME: xdg } });
+  assert.equal(result.out[0], 'continue: none');
+  assert.match(result.out[1], /since `claude --bg` exited 1: lost the supervisor\./u);
 });
 
 test('a start the gate cannot record is stopped and falls back; one it cannot stop arms nothing and stays held', (t) => {
@@ -311,7 +378,7 @@ test('the background route passes on no agent or effort it cannot read, and take
   const result = gate(setting, { run, env: { ...setting.env, CLAUDE_CODE_AGENT: '--dangerously-skip-permissions', CLAUDE_EFFORT: 'huge' } });
   assert.equal(result.out[0], 'continue: background');
   assert.deepEqual(bgCalls(calls)[0].args.slice(0, 3), ['--bg', '--name', 'widget · 1']);
-  assert.equal(bgCalls(calls)[0].args.length, 4, 'no --agent and no --effort');
+  assert.equal(bgCalls(calls)[0].args.length, 6, 'no --agent and no --effort');
 });
 
 test('a name a shell would read is passed as one argument and never printed: the say line names the id alone', (t) => {
@@ -360,7 +427,6 @@ test('a start that fails goes on by the clear route with the reason and records 
   const cases = [
     [{ error: Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }), status: null }, /^fallback: no background session started, since `claude` is not on PATH; this handoff goes on by the clear route$/u],
     [{ status: 1, stdout: '', stderr: 'Workspace not trusted. Run `claude` in /x\u001b[31m once.\nmore' }, /^fallback: no background session started, since `claude --bg` exited 1: Workspace not trusted\. Run `claude` in \/x \[31m once\.; this handoff/u],
-    [{ error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), status: null }, /`claude --bg` did not finish \(ETIMEDOUT\), and `claude agents` lists no session it started/u],
   ];
   for (const [answer, pattern] of cases) {
     const { run } = fakeRun({ own: setting.dir, lag: Infinity, start: () => answer });
@@ -403,7 +469,7 @@ test('a listing that lags still holds the new session to its floor, by the short
   assert.match(refused.err[0], /no passing check|below this session's floor 1/u);
 });
 
-test('a start the gate cannot hold to a floor is stopped and falls back; one it cannot stop arms nothing; one with no id has nothing to stop', (t) => {
+test('a start the gate cannot hold to a floor is stopped and falls back; one it cannot stop arms nothing', (t) => {
   const setting = setup(t);
   passCheck(setting);
   // A folder where the floor's file goes: the write fails.
@@ -425,8 +491,6 @@ test('a start the gate cannot hold to a floor is stopped and falls back; one it 
   assert.equal(readArmed(setting.store, SESSION), null, 'no clear continuation armed beside the running session');
   assert.equal(readStarted(setting.store, SESSION), null);
 
-  const silent = fakeRun({ own: setting.dir, printId: false, lag: Infinity });
-  assert.match(gate(setting, { run: silent.run }).out[1], /^fallback: no background session started, since `claude --bg` printed no session id, and `claude agents` lists no session it started;/u);
 });
 
 test('a second run on the same bytes starts nothing and says the same, and the old session\'s next prompt names the session that owns the work', (t) => {
@@ -622,4 +686,51 @@ test('aidrian handoff verify passes the kept copy as the gate kept it, and refus
   assert.match(verify(kept, hash).stderr, /is a symlink/u);
   assert.match(verify(kept, 'nothex').stderr, /the sha256 is not 64 lowercase hexadecimal digits/u);
   assert.equal(verify(kept).status, 2, 'usage without the sha256');
+});
+
+test('the new session starts in the permission mode of the handing-off session, never with checks bypassed, and in the host\'s default when it is unknown', (t) => {
+  const start = (mode, write) => {
+    const setting = setup(t, { mode });
+    if (write) write(setting);
+    passCheck(setting);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    const result = gate(setting, { run });
+    const args = bgCalls(calls)[0]?.args ?? null;
+    return { result, args, flag: args && args.includes('--permission-mode') ? args[args.indexOf('--permission-mode') + 1] : null, setting };
+  };
+  // The last entry wins; a transcript's `default` is the manual mode the command line names `manual`.
+  for (const mode of ['auto', 'acceptEdits', 'dontAsk', 'plan', 'manual']) assert.equal(start(mode).flag, mode, mode);
+  assert.equal(start('default').flag, 'manual');
+
+  // A session that runs with checks bypassed starts nothing: the handoff goes on by the clear route.
+  const bypass = start('bypassPermissions');
+  assert.equal(bypass.args, null, 'no session started');
+  assert.deepEqual(bypass.result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since this session runs with permission checks bypassed, and a session no Human attends never starts that way; this handoff goes on by the clear route']);
+
+  // No transcript, an entry of another session, or a mode the host does not list: the default, said in the say line.
+  const unknownSay = / It runs in the host's default permission mode, since this session's own could not be read, so it may stop at a permission prompt\. It resumes from /u;
+  const cases = [
+    ['no transcript', null, null],
+    ['another session\'s entry', null, (setting) => writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId: 'someone-else' })}\n`)],
+    ['a mode it does not list', 'everything', null],
+  ];
+  for (const [label, mode, write] of cases) {
+    const { result, args, flag } = start(mode, write);
+    assert.equal(result.out[0], 'continue: background', label);
+    assert.ok(args && flag === null, `${label}: no --permission-mode`);
+    assert.match(result.out[1], unknownSay, label);
+  }
+  // A known mode says nothing of it, and a second run on the same bytes says the same as the first.
+  const known = start('auto');
+  assert.doesNotMatch(known.result.out[1], /permission mode/u);
+  const silent = start(null);
+  assert.match(gate(silent.setting, { run: fakeRun({ own: silent.setting.dir }).run }).out[1], unknownSay, 'the start record keeps the unknown mode');
+  // The transcript is found in another project folder when the start folder's is not there.
+  const moved = start('dontAsk', (setting) => {
+    const other = path.join(path.dirname(setting.transcripts), '-elsewhere');
+    mkdirSync(other);
+    writeFileSync(path.join(other, `${SESSION}.jsonl`), readFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`)));
+    rmSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
+  });
+  assert.equal(moved.flag, 'dontAsk');
 });

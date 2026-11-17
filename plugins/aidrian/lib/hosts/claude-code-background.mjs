@@ -6,7 +6,8 @@
 // found on the absolute folders of PATH alone: an empty or relative entry would run whatever `claude` the folder holds.
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
+import { accessSync, closeSync, constants, fstatSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 // `claude --bg` may first start the supervisor, which takes a few seconds.
@@ -26,6 +27,14 @@ const PLAIN_NAME = /^[\w .@:\u00b7-]+$/u;
 // An agent name the command passes on: a word, or `<plugin>:<agent>`.
 const AGENT = /^[A-Za-z0-9][\w.:-]{0,127}$/u;
 const ID = /^[0-9A-Za-z][\w-]{3,127}$/u;
+// The permission modes `claude --help` lists for `--permission-mode` on 2.1.326, but `bypassPermissions`: a session no
+// Human attends never runs without permission checks. A transcript may name the manual mode `default`.
+const PERMISSION_MODES = new Set(['acceptEdits', 'auto', 'dontAsk', 'manual', 'plan']);
+const MODE_NAMES = new Map([['default', 'manual']]);
+const BYPASS = 'bypassPermissions';
+// How much of a transcript's end is read for its last permission mode entry.
+const MODE_TAIL = 16 * 1024 * 1024;
+const MODE_ENTRY = /^\{"type":"permission-mode".*$/gmu;
 
 export const runCommand = (command, args, { cwd, timeout }) => spawnSync(command, args, { cwd, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -82,6 +91,55 @@ function awaitSession({ run, claude, wait, ...want }) {
   return { entry: null, list };
 }
 
+// The permission mode the session `session` runs in, from the last `permission-mode` entry of its transcript,
+// `<config folder>/projects/<start folder, each character but a letter or digit as ->/<session>.jsonl`, else that file
+// in any project folder there: the mode's name, or null when none can be read. `env.CLAUDE_CONFIG_DIR` moves the config
+// folder, as it does for Claude Code. On 2.1.326 neither the gate's shell nor `claude agents --json` gives the mode; the
+// transcript holds `{"type":"permission-mode","permissionMode":<mode>,"sessionId":<id>}` from the start and each change.
+export function sessionMode({ session, cwd, env }) {
+  if (typeof session !== 'string' || !ID.test(session)) return null;
+  const projects = path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'projects');
+  const name = `${session}.jsonl`;
+  const first = path.join(projects, String(cwd).replace(/[^A-Za-z0-9]/gu, '-'), name);
+  let folders;
+  try {
+    folders = readdirSync(projects);
+  } catch {
+    return null;
+  }
+  for (const file of [first, ...folders.map((folder) => path.join(projects, folder, name))]) {
+    const tail = readTail(file);
+    if (tail === null) continue;
+    const entry = [...tail.matchAll(MODE_ENTRY)].map(([line]) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    }).filter((each) => each !== null && (each.sessionId === undefined || each.sessionId === session)).at(-1);
+    return typeof entry?.permissionMode === 'string' ? entry.permissionMode : null;
+  }
+  return null;
+}
+
+// The last MODE_TAIL bytes of the regular file `file`, as text, or null.
+function readTail(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    const length = Math.min(stat.size, MODE_TAIL);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, stat.size - length);
+    return buffer.toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 // The new session's name: the handing-off session's, else the slug, then ` · <chain>`, within 100 characters.
 function sessionName(own, slug, chain) {
   const suffix = ` · ${chain}`;
@@ -99,14 +157,18 @@ export function attachLine({ id, name }) {
 export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
 
 // Starts the session that resumes a brief, in the background, in the folder of the handing-off session `session` as the
-// host lists it: { id, session, name, cwd }, or { problem } when none started. `id` is the id to name it by, the short
-// one when the output printed it; `session` its full id, or null when the listing did not name it within about 5
-// seconds; `name` its name when it is plain text no other listed session has, else null. A start that timed out or
-// failed still counts when the listing then shows it. `agent` and `effort` are the handing-off session's, passed on when
-// known. `hold(cwd)`, the gate's, files the pending mark that holds whatever session starts in that folder until its own
-// mark is written; it runs before `claude --bg`, and a start it does not confirm is none. `run` and `wait` are a test's
-// stand-ins, and `resolve` finds `claude` from `env`.
-export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, run = runCommand, wait = pause, resolve = claudeOnPath }) {
+// host lists it: { id, session, name, cwd }, or { problem, uncertain } when none it can name started. `id` is the id to
+// name it by, the short one when the output printed it; `session` its full id, or null when the listing did not name it
+// within about 5 seconds; `name` its name when it is plain text no other listed session has, else null. A start that
+// timed out or failed still counts when the listing then shows it. `uncertain` is true when `claude --bg` ran and what
+// it did is unknown: it may have started a session the listing never named (startProblem). `agent` and `effort` are the
+// handing-off session's, passed on when known, and so is its permission mode (`readMode`, sessionMode by default), when
+// it is one of PERMISSION_MODES: `mode` in the result is the mode passed, or null when it was unknown and the session
+// starts in the host's default. A session that runs with permission checks bypassed starts nothing. `hold({ cwd, known })`, the gate's, files the pending mark that holds
+// every session the host had not listed, `known` being the ids it had, until the new session's own mark is written; it
+// runs before `claude --bg`, and a start it does not confirm is none. `run` and `wait` are a test's stand-ins, and
+// `resolve` finds `claude` from `env`.
+export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
   const claude = resolve(env);
   if (!claude) return { problem: '`claude` is not on PATH, in an absolute folder' };
   const before = listed(run, claude, undefined);
@@ -115,30 +177,49 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
   if (typeof own?.cwd !== 'string' || !path.isAbsolute(own.cwd) || CONTROL.test(own.cwd)) {
     return { problem: '`claude agents --json` does not list the folder of this session' };
   }
-  if (typeof hold !== 'function' || !hold(own.cwd)) {
+  const read = readMode({ session, cwd: own.cwd, env });
+  if (read === BYPASS) {
+    return { problem: 'this session runs with permission checks bypassed, and a session no Human attends never starts that way' };
+  }
+  const named = MODE_NAMES.get(read) ?? read;
+  const mode = PERMISSION_MODES.has(named) ? named : null;
+  const known = before.map((each) => each.sessionId).filter((id) => typeof id === 'string' && ID.test(id));
+  if (typeof hold !== 'function' || !hold({ cwd: own.cwd, known })) {
     return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
   }
   const name = sessionName(own.name, slug, chain);
   const args = ['--bg', '--name', name];
   if (typeof agent === 'string' && AGENT.test(agent)) args.push('--agent', agent);
   if (efforts.includes(effort)) args.push('--effort', effort);
+  if (mode) args.push('--permission-mode', mode);
   const result = run(claude, [...args, prompt], { cwd: own.cwd, timeout: START_TIMEOUT });
   const printed = STARTED.exec(String(result.stdout ?? ''))?.[1] ?? null;
   const want = { before: new Set(before.map((each) => each.sessionId)), cwd: own.cwd, id: printed, name };
   const { entry, list } = awaitSession({ run, claude, wait, ...want });
-  if (!entry && !printed) return { problem: startProblem(result) };
+  if (!entry && !printed) return startProblem(result, list, want.before);
   const id = printed ?? (typeof entry.id === 'string' && ID.test(entry.id) ? entry.id : entry.sessionId);
   const unique = (list ?? []).filter((each) => each.name === name).length === 1;
-  return { id, session: entry?.sessionId ?? null, name: unique && PLAIN_NAME.test(name) ? name : null, cwd: own.cwd };
+  return { id, session: entry?.sessionId ?? null, name: unique && PLAIN_NAME.test(name) ? name : null, cwd: own.cwd, mode };
 }
 
-// Why a start that printed no id and that the listing does not show made no session.
-function startProblem(result) {
-  if (result.error?.code === 'ENOENT') return '`claude` is not on PATH';
-  if (result.error) return `\`claude --bg\` did not finish (${result.error.code ?? 'no code'}), and \`claude agents\` lists no session it started`;
-  if (result.status !== 0) return `\`claude --bg\` exited ${result.status}: ${firstLine(result.stderr || result.stdout) || 'no message'}`;
-  return '`claude --bg` printed no session id, and `claude agents` lists no session it started';
+// Why a start that printed no id and that the listing does not show made no session it can name: { problem, uncertain }.
+// It is certain that none started only when `claude` never ran, or when it exited non-zero and the last listing it read,
+// `list`, holds no background session that the listing before the start, `before`, did not. A timeout, a signal, an exit
+// 0 with no id, a listing that never answered, or any new background session leaves it uncertain: the supervisor may
+// have taken the start.
+function startProblem(result, list, before) {
+  if (result.error?.code === 'ENOENT') return { problem: '`claude` is not on PATH', uncertain: false };
+  const unknown = list === null || list.some((each) => each.kind === 'background' && !before.has(each.sessionId));
+  if (result.error) return { problem: `\`claude --bg\` did not finish (${result.error.code ?? 'no code'}), and \`claude agents\` lists no session it started`, uncertain: true };
+  if (Number.isInteger(result.status) && result.status !== 0) {
+    return { problem: `\`claude --bg\` exited ${result.status}: ${firstLine(result.stderr || result.stdout) || 'no message'}`, uncertain: unknown };
+  }
+  if (result.status !== 0) return { problem: `\`claude --bg\` was stopped (${result.signal ?? 'no signal'}), and \`claude agents\` lists no session it started`, uncertain: true };
+  return { problem: '`claude --bg` printed no session id, and `claude agents` lists no session it started', uncertain: true };
 }
+
+// How the Human finds and stops a session a start may have made, when the gate cannot name it.
+export const findLine = () => '`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one';
 
 // Stops the background session `id`, as `claude stop` does: whether it exited 0.
 export function stopBackground({ id, env, run = runCommand, resolve = claudeOnPath }) {

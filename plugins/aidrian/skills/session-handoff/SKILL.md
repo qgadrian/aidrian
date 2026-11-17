@@ -14,6 +14,8 @@ or config.json `session.handoff.mode` is `"auto"`. The points where `"auto"` wri
 (plan to implement, implement to review, review to merge), the session-length reminder, a visible usage-limit warning,
 or an unattended run that ends with its task unfinished.
 
+- `"auto"`: never ask the Human whether to hand off or keep going, at those points or any other. Judge it alone, and
+  when a handoff is worth it, write the brief and run step 7; otherwise keep working.
 - `"ask"`, the default: at those points, ask the Human and write on a yes. An unattended run cannot ask: it writes none,
   and its report carries what a resume needs.
 - `"off"`: write none unless the Human asks.

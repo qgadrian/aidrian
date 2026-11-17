@@ -37,6 +37,11 @@ start it. Then the agent ends the turn without a word about it. Otherwise it act
 | `auto` | The agent writes the brief with the `session-handoff` skill and tells the Human its path. |
 | `off` | Nothing; neither hook sends the agent anything. |
 
+In `auto` the Human has already decided, so the session never asks whether to hand off or keep going, at a reminder
+or on its own: it judges by itself, and runs the `session-handoff` skill when a handoff is worth it. The
+[session start](hooks.md#start-lines) says so in a `Handoff:` line of the main session's context, and the skill says
+it too.
+
 With the [clear route](#the-clear-route), `auto` runs the skill, whose continue step arms the continuation and prints
 the line for the Human; the agent says that line and ends the turn. `ask` adds to its question what a handoff then
 takes from the Human, in the host's words, such as typing the clear command and then any message.
@@ -264,10 +269,14 @@ to another folder falls back to the clear route with that reason; committing `st
    brief after the gate never reaches the new session.
 3. The gate starts a new session through the host adapter, in the handing-off session's own folder as the host lists
    it, a folder the host already trusts, never the brief's worktree, whose own settings could run on start.
-   Before the host starts anything, the gate files a pending mark on that folder, so the hooks hold the new session
-   from its first call, before the host lists its id (Limits, below); with no pending mark, nothing starts. The new
-   session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent
-   and effort when the host tells them; with no usable name, the brief's slug.
+   Before the host starts anything, the gate files a pending mark that names the sessions the host lists then, so the
+   hooks hold the new session from its first call, in any folder, before the host lists its id (Limits, below); with
+   no pending mark, nothing starts. The new
+   session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent,
+   effort, and permission mode when the host tells them; with no usable name, the brief's slug. A handing-off session
+   that runs with permission checks bypassed starts none, and the handoff goes on by the clear route: a session no
+   Human attends never runs that way. When the host cannot tell the mode, the new session starts in the host's
+   default, and the `say:` line says it may stop at a permission prompt.
 4. Its first message is the continuation: the brief's path, the kept copy to read and its sha256, its slug, and the
    continuation's number, never the brief's text. It first runs `aidrian handoff verify <copy> <sha256>`, which exits 0
    only when the copy is a regular file of the session's user, named for that sha256, whose bytes still hash to it, and
@@ -282,7 +291,12 @@ to another folder falls back to the clear route with that reason; committing `st
    listing lags, it files the floor under the short id the start printed, and every session id that starts with it
    reads that floor. Under the same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`,
    which names the project's main checkout, so the hooks know the session wherever its calls run (Limits, below).
-   A start with no id, printed or listed, has nothing to stop, and falls back to the clear route.
+   A start that surely made nothing, such as one whose host command exited non-zero while the listing shows no new
+   session, falls back to the clear route. A start whose outcome is unknown, such as one that timed out, was stopped by a
+   signal, or exited 0 with no id that the listing then names, may have started a session the gate cannot name: the gate
+   keeps the pending mark until it lapses, arms no clear beside it, and prints `continue: none` and a `fallback:` line
+   that says so and how to find and stop it through the host. A session that runs past the pending mark's 5 minutes
+   is no longer held and has no chain floor, so the line asks the Human to stop it before anything resumes the brief.
    A start whose floor, mark, or start record (step 6) cannot be written is stopped through the host and falls back to
    the clear route; when the stop fails too, the gate prints `continue: none` and a `fallback:` line that names the
    running session and the host's command to stop it, arms no clear beside it, and leaves the pending mark to lapse. The gate never reports a background session it cannot hold to the
@@ -295,7 +309,8 @@ to another folder falls back to the clear route with that reason; committing `st
 
 When the host cannot start the session, such as with no host command on an absolute folder of PATH, a folder the
 listing does not name, a folder the host does not trust, or a start that fails, the gate falls back to the clear route
-with the reason. A start that timed out or failed still counts when the host's listing then shows it.
+with the reason. A start that timed out or failed still counts when the host's listing then shows it, and one the
+listing does not show ends as step 5 says, by the clear route only when nothing surely started.
 
 Limits:
 
@@ -303,8 +318,8 @@ Limits:
   Nothing closes it by itself. A turn that starts there after the gate, such as a background agent's report, runs
   beside the new session in the same worktree, so the skill settles every agent first, as on the clear route, and
   the prompt hook names the session that owns the work.
-- The new session starts in the host's default permission mode and model for that folder; a model the old session
-  switched to in the session does not carry over.
+- The new session starts in the host's default model for that folder; a model the old session switched to in the
+  session does not carry over. Its permission mode is the old session's, as step 3 says.
 - No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
   in `.aidrian.local.json`, as it refuses a subagent: `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`,
   `unattendedSignoff`, `handoff.background`, and `review.productFeedback`. The hook knows such a session by its
@@ -314,10 +329,16 @@ Limits:
   (0600); the hook also reads `~/.local/state/aidrian/unattended/` of the user it runs as, which no variable moves.
   A mark lasts 30 days, as a floor does, and each write sweeps older ones; an entry the hook cannot check counts.
   The host lists the new session's id only seconds after it starts working, so before the start the gate files a
-  pending mark, `pending.<the gate's session id>.json` beside the marks, naming the start folder. For at most 5 minutes
-  it holds every session whose call runs in that folder or below it and has no mark of its own, but the session that ran
-  the gate, and one it cannot read holds every session. The gate removes it once the new session's own mark is written,
-  or when nothing started or the start was stopped. A Human's session in that folder is held too for those seconds.
+  pending mark, `pending.<the gate's session id>.json` beside the marks, naming the start folder and the ids of the
+  sessions the host lists then. For at most 5 minutes it holds every session with no mark of its own, wherever its
+  calls run, but the session that ran the gate and the sessions the host listed before the start; one it cannot read,
+  or one that names no listing, holds every session but the gate's. A folder cannot tell the new session apart, since
+  it may change to any folder before the host lists its id, and no start time can: neither a hook's input nor the
+  host's listing gives one. So a session the Human starts in those seconds is held too, as is a session of another host,
+  which this host's listing never names. While it is held, the new session also cannot run the gate itself: it has no
+  chain floor yet, so the gate refuses it until the host lists it. The gate removes the pending mark once the new
+  session's own mark is written, or when nothing started or the start was stopped; a start whose outcome is unknown
+  keeps it until it lapses.
   Such a session, and one with a mark, is also refused a call the guards cannot finish reading within their time
   budget, and a command with more write targets or words than they read, as a subagent is.
   A session the gate started before the marks is known by its chain floor of route `background`, under its full id or

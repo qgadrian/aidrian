@@ -158,12 +158,13 @@ test('a marked session is held from a folder outside its project, and in another
   assert.deepEqual(readUnattendedMark(full), { root: dir });
 });
 
-test('while the gate starts a session, a session whose hooks run in the start folder with no mark of its own is held', (t) => {
+test('while the gate starts a session, every session the host had not listed and with no mark of its own is held, in whatever folder it works', (t) => {
   const dir = project(t);
   const outside = folder(t, 'aidrian-outside-');
   const old = 'feed0004-0000-4000-8000-000000000004';
   const fresh = 'cafe0005-0000-4000-8000-000000000005';
-  const pending = markPending(old, { cwd: dir, root: dir });
+  const listed = 'beef0006-0000-4000-8000-000000000006';
+  const pending = markPending(old, { cwd: dir, root: dir, known: [old, listed] });
   assert.ok(pending);
   t.after(() => dropPending(pending));
   const run = (session, command, cwd = dir) => spawnSync(process.execPath, [HOOK], {
@@ -175,16 +176,24 @@ test('while the gate starts a session, a session whose hooks run in the start fo
     [`rm ${pending}`, /the unattended marks/u],
   ];
   for (const [command, reason] of refused) {
-    for (const cwd of [dir, path.join(dir, 'src')]) {
+    // The new session may change folder before the host lists its id: below the start folder, or out of it.
+    for (const cwd of [dir, path.join(dir, 'src'), outside]) {
       const result = run(fresh, command, cwd);
       assert.equal(result.status, 2, `${cwd}: ${command}`);
       assert.match(result.stderr, reason, command);
       assert.match(result.stderr, /the background handoff route started this (?:session|one), with no Human/u, command);
     }
     assert.equal(run(old, command).status, 0, `the session that ran the gate: ${command}`);
-    if (!command.startsWith('rm ')) assert.equal(run(fresh, command, outside).status, 0, `another folder: ${command}`);
+    assert.equal(run(listed, command).status, 0, `a session the host listed before the start: ${command}`);
   }
   assert.equal(run(fresh, 'ls').status, 0);
+  assert.equal(run(fresh, 'ls', outside).status, 0, 'a held session still works');
+
+  // A pending mark that names no listing holds every session but the gate's.
+  const unlisted = markPending(old, { cwd: dir, root: dir });
+  assert.equal(unlisted, pending, 'the same gate\'s mark, written again');
+  assert.equal(run(listed, 'claude --bg x', outside).status, 2, 'with no listing, a session cannot show it was there before');
+  assert.equal(run(old, 'claude --bg x', outside).status, 0);
 
   // A pending mark lapses after PENDING_AGE; one it cannot read holds every session.
   const lapsed = (Date.now() - PENDING_AGE - 60_000) / 1000;

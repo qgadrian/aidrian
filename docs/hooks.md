@@ -60,6 +60,9 @@ At the start of every session and subagent, the hook prints:
   release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
+- in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
+  the session never asks the Human whether to hand off or keep going; it judges by itself and runs the
+  `session-handoff` skill when a handoff is worth it. `"ask"` and `"off"` print nothing;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
@@ -887,10 +890,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   guards would refuse it. It is held as a subagent is to the continuation store, below, so it can neither delete
   nor hide its own floor, and to the next three rules.
   The host lists the new session's id only seconds after the session starts working, so before the gate starts it,
-  it files a pending mark, `pending.<the gate's session id>.json` in the same folder, naming the start folder. While
-  that mark is under 5 minutes old, every session whose call runs in that folder, or below it, and has no mark of its
-  own, but the one that ran the gate, is held as unattended; the gate removes it once the new session's own mark is
-  written, or nothing started. A pending mark the hook cannot read holds every session.
+  it files a pending mark, `pending.<the gate's session id>.json` in the same folder, naming the start folder and the
+  ids of the sessions the host lists then. While that mark is under 5 minutes old, every session with no mark of its
+  own, wherever its call runs, but the one that ran the gate and those the host listed, is held as unattended, since the
+  new session may change folder before its id is listed; the gate removes it once the new session's own mark is
+  written, or when nothing started, and a start whose outcome is unknown leaves it to lapse. A pending mark the hook
+  cannot read, or one that names no listing, holds every session but the gate's.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.

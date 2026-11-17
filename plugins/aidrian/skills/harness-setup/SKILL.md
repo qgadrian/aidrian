@@ -51,8 +51,8 @@ AskUserQuestion in Claude Code, one question in the reply in Codex. Skip a quest
 | Q2 Review bot | R4 ok | Does the Codex GitHub connector review this repository's pull requests? Default yes | No: `github.reviewer: null`. Yes: nothing written; R4 counts as confirmed. |
 | Q3 Docs folder | R2 ok | A folder of Markdown docs; default `docs` when it holds `.md` files; or none | `aidrian-knowledge init <folder>`. None: new docs go to `docs/knowledge/`. Never a config key. |
 | Q4 Names | config.json or `.aidrian.local.json` sets `names` | Two names and a scope, asked as written below; default `the Human` and the host's name | Team: config.json `names`. One developer: the git-ignored `.aidrian.local.json`. Default: nothing written. |
-| Q5 Main-checkout guard | config.json has `git.mainCheckout.guard: true`, or Q7 is hands-on (yes) | Turn it on? Default no | `git.mainCheckout.guard: true`, the last write of the run. |
 | Q7 Working style | config.json sets `decisions.maxMode` | As `references/recipes.md` asks it; default none | That file |
+| Q5 Main-checkout guard | config.json has `git.mainCheckout.guard: true`, or Q7 is hands-on (yes) | Turn it on? Default no | `git.mainCheckout.guard: true`, the last write of the run. |
 | Q6 Team install, Claude Code only | `.claude/settings.json` has both keys of the setup block | Commit `.claude/settings.json` so Claude Code offers the plugin to everyone? Default yes | The settings block of `references/setup-files.md`. In Codex, not asked: the report prints that file's Codex install link. |
 
 Never show a question's `Q` label. Ask Q4 as `references/names-question.md` writes it.

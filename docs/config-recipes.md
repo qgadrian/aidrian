@@ -7,7 +7,7 @@ The `harness-setup` skill offers them as its working-style question.
 
 | Recipe | The Human | Sessions stop for |
 | --- | --- | --- |
-| [Full autonomy](#full-autonomy) | Is not there | Floor classes only: security, critical flows, money, data loss |
+| [Full autonomy](#full-autonomy) | Is not there | A security verdict or a critical-flow sign-off; every other call takes a safe default |
 | [Autopilot](#autopilot) | Supervises several sessions from above | Product calls, extra review rounds, the floor classes |
 | [Hands-on](#hands-on) | Works beside each session | Every decision, the ready mark, the review loop, the handoff |
 

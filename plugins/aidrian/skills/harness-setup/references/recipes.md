@@ -6,7 +6,7 @@ explains each key they set.
 
 ## The question
 
-Ask it as one question, with these choices, in this order:
+Ask it before the main-checkout guard question, whose answer hands-on sets, as one question with these choices, in this order:
 
 1. **Keep the defaults** (recommended until the team has used the harness): every decision asks, pull requests are
    marked ready and reviewed alone, and nothing merges unasked.
@@ -14,8 +14,9 @@ Ask it as one question, with these choices, in this order:
    the ready mark, and a handoff. The most interrupting.
 3. **Autopilot** (`autopilot`): the Human supervises several sessions from above. Sessions merge, decide reversible
    non-product calls, and hand off alone, and stop for product calls and extra review rounds.
-4. **Full autonomy** (`full-autonomy`): no one watches. Sessions merge, decide, and continue alone; only security,
-   critical-flow, money, and data-loss calls wait.
+4. **Full autonomy** (`full-autonomy`): no one watches. Sessions merge, decide, and continue alone, and an unattended
+   run takes a safe default even on a security, critical-flow, money, or data-loss call. Only a security verdict and a
+   critical-flow sign-off wait.
 
 ## Applying it, in the step 3 brief
 

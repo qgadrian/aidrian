@@ -91,12 +91,14 @@ test('no usage, or a context no bigger than a fresh session, never fires the cos
   assert.equal(stopReminder('', anyRatio, null), null);
 });
 
-test('the cost trigger fires first at costRatio, then at twice the ratio of its last firing, and the ceiling doubles', () => {
+test('the cost trigger fires first at costRatio, then at twice its last ratio in ask or a step above it in auto; the ceiling doubles', () => {
   assert.deepEqual([0, 2, 2.5].map((last) => nextRatio(2, last)), [2, 4, 5]);
   assert.deepEqual([0, 1.51].map((last) => nextRatio(1.5, last)), [1.5, 3.02]);
   assert.equal(nextRatio(3, 1.2), 3, 'a costRatio raised above twice the last firing holds');
   assert.deepEqual([0, 2, 4.15].map((last) => nextRatio(2, last, 'auto')), [2, 3, 5.15], 'auto comes back in steps');
-  assert.equal(nextRatio(1.5, 1.6, 'auto'), 2.1);
+  assert.equal(nextRatio(3, 2.5, 'auto'), 4.5, 'the step is costRatio − 1');
+  assert.equal(nextRatio(1.1, 1.2, 'auto'), 2.2, 'a step of at least one fresh session');
+  assert.equal(nextRatio(1.5, 1.6, 'auto'), 2.6, 'a step of at least one fresh session');
   assert.deepEqual([0, 2].map((fired) => tokenCeiling(150_000, fired)), [150_000, 600_000]);
   assert.equal(tokenCeiling(0, 3), 0);
 });
@@ -258,6 +260,35 @@ test('auto mode, and a legacy "auto" string, send the agent back to write the br
     assert.equal(status, 2);
     assert.match(stderr, /^This session is long: each call costs 2\.0 times.*Otherwise run the session-handoff skill now/s);
   }
+});
+
+test('auto mode comes back one step above its last firing, 2, 3, 4 by default, not at double', (t) => {
+  const { stop, reach, counts } = setup(t, { handoff: { mode: 'auto' } });
+  reach(205_352);
+  const first = stop();
+  assert.equal(first.status, 2);
+  assert.match(first.stderr, /comes back once each call costs 3 times/);
+  assert.deepEqual(counts(), { lastRatio: 2, tokens: 0, compactions: 0 });
+  reach(308_000);
+  assert.deepEqual(stop(), QUIET, 'r 2.9997 is under one step above 2');
+  reach(308_028);
+  const again = stop();
+  assert.equal(again.status, 2, 'r 3.0, under twice 2 but one step above it');
+  assert.match(again.stderr, /each call costs 3\.0 times.*comes back once each call costs 4 times/s);
+  assert.ok(Math.abs(counts().lastRatio - 3) < 1e-9);
+});
+
+test('auto mode at a costRatio of 1.1 steps by one fresh session, so a stop shortly after a firing stays quiet', (t) => {
+  const { stop, reach, counts } = setup(t, { handoff: { mode: 'auto', costRatio: 1.1 } });
+  reach(REVIEW_LOOP.last);
+  assert.match(stop().stderr, /each call costs 1\.5 times.*comes back once each call costs 2\.51 times/s);
+  assert.equal(counts().lastRatio, REVIEW_LOOP.last / 102_676);
+  reach(170_000);
+  assert.deepEqual(stop(), QUIET, 'r 1.66 is past a step of 0.1 but under a step of 1');
+  reach(250_000);
+  assert.deepEqual(stop(), QUIET, 'r 2.43');
+  reach(257_700);
+  assert.match(stop().stderr, /each call costs 2\.5 times.*comes back once each call costs 3\.51 times/s);
 });
 
 test('nothing happens when off, under costRatio, on the stop it caused, on another host, or outside a project', (t) => {

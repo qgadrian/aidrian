@@ -59,15 +59,17 @@ export function handoffCost({ calls, first, last, model, oneHourCache }, { brief
 }
 
 // The ratio at which the cost trigger fires next: costRatio while it has not fired since the last reset (`lastRatio` 0),
-// then twice the ratio of its last firing, and never below costRatio, which config.json may raise mid-session.
-// Anchored on the ratio the session actually reached, so a session that keeps going is reminded a few times at most,
-// and a jump far past costRatio comes back at twice where it landed.
-// In `auto` mode a skipped firing costs the Human nothing, so the reminder comes back in steps of costRatio − 1 (2, 3, 4
-// by default) rather than at double: a session that skipped while an agent was running is offered the handoff again soon
-// after, not once its calls cost twice as much.
+// then, in `ask` mode, twice the ratio of its last firing, and never below costRatio, which config.json may raise
+// mid-session. Anchored on the ratio the session actually reached, so a session that keeps going is asked a few times at
+// most, and a jump far past costRatio comes back at twice where it landed.
+// In `auto` mode a skipped firing costs the Human nothing, so the reminder comes back a step above its last firing, not
+// at double: the step is costRatio − 1, at least 1, so 2, 3, 4 by default. A step of 1 is one more fresh session's worth
+// of context, about 74,000 more tokens at a 30,000-token baseline, so even a costRatio of 1.1 does not fire at nearly
+// every stop.
 export const nextRatio = (costRatio, lastRatio, mode = 'ask') => {
   if (!(lastRatio > 0)) return costRatio;
-  return Math.max(costRatio, mode === 'auto' ? lastRatio + (costRatio - 1) : 2 * lastRatio);
+  const next = mode === 'auto' ? lastRatio + Math.max(costRatio - 1, 1) : 2 * lastRatio;
+  return Math.max(costRatio, next);
 };
 
 // The context at which the token ceiling fires after `fired` firings; 0 is off.
@@ -89,7 +91,8 @@ const tokensPassed = (context, maxTokens, fired) =>
 // A mode word or one count is one firing of each trigger, the cost one at `costRatio`, at the session's current
 // `compactions`. A JSON marker from v0.28.0 to v0.47.0 keeps its own `tokens` and `compactions`, and its `ratio`
 // count reads as a cost firing at `costRatio` when above 0, or as no cost firing at 0. So an old marker that recorded a
-// cost firing never brings the cost reminder back sooner than twice costRatio.
+// cost firing brings the cost reminder back at the next firing after costRatio in the current mode (nextRatio): twice
+// costRatio in `ask`, a step above it in `auto`.
 export function readMarker(text, compactions, costRatio) {
   if (text === null || text === undefined) return { lastRatio: 0, tokens: 0, compactions: 0 };
   let marker;

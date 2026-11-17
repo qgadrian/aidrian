@@ -65,6 +65,10 @@ export const TYPES = {
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   positiveOrNull: [(value) => value === null || (Number.isInteger(value) && value > 0), 'a whole number above 0, or null'],
+  // A project run's bounds (docs/config.md#project-run): how many issues run at once, sessions one run starts, and hours one issue runs.
+  parallelCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 4, 'a whole number from 1 to 4'],
+  startCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 1000, 'a whole number from 1 to 1000'],
+  hourCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 24, 'a whole number from 1 to 24'],
   budgetEnforce: [(value) => ['warn', 'fail'].includes(value), '"warn" or "fail"'],
   docBytes: [
     (value) => isObject(value) && Object.entries(value).every(([doc, bytes]) => isText(doc) && Number.isInteger(bytes) && bytes > 0),

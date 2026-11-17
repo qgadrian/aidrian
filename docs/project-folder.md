@@ -152,6 +152,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── audits/               persona-audit reports, each with its JSON sidecar and the screenshots it cites,
 │                         and triage.json, the decision on each finding (personas.md#triage)
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
+├── runs/                 project runs, one folder per run: snapshot.json, ledger.jsonl, summary.md (config.md#project-run)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
 ├── dispatch-log.jsonl    the dispatch log

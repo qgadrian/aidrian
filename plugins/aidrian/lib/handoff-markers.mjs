@@ -111,7 +111,8 @@ const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 // Both checks hold only where the system has user ids: Windows has none, and Node reports its writable folders with the
 // other-write bit set, so there the mode tells nothing.
 // A folder that is not there, or cannot be read, gives null: the store's own checks then refuse what they cannot read.
-function looseFolder(dir, uid) {
+// lib/project-run.mjs runPlace holds a project run's folders to it too.
+export function looseFolder(dir, uid) {
   if (!Number.isInteger(uid)) return null;
   let stat;
   try {

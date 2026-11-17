@@ -56,7 +56,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, review.productFeedback.maxPersonas, product feedback items and diff, PR body, gate.",
+      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback items/diff, PR body, gate, project run, aidrian project init/next/summary",
       "tags": []
     },
     "dispatch-log.md": {

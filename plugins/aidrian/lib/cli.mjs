@@ -22,6 +22,7 @@ const COMMANDS = {
   quorum: './quorum.mjs',
   decisions: './decisions-cli.mjs',
   report: './report.mjs',
+  project: './project-run-cli.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

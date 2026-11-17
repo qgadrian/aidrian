@@ -125,7 +125,8 @@ In a group such as `github`, set only the keys you change; the others keep their
   "audits": {
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
-  "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null }
+  "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision" }
 }
 ```
 
@@ -224,6 +225,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
 | `audits.triage.labels` | The labels every issue from the persona-audit triage gets: [Audit triage](#audit-triage). |
 | `tracker` | The workspace, team, and project MCP tracker writes belong to, off by default: [Tracker](#tracker). |
+| `projectRun` | The keys of a run that works through a tracker project one issue at a time: [Project run](#project-run). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 A state folder inside the repository's checkouts keeps the plans, lessons, and audits, and `aidrian check` warns about it,
@@ -347,7 +349,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
 | `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`), unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base. This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
-| `paths` | gh lists every changed file with its `changeType`: `gh pr view` lists at most 100, so past that the gate reads the whole list through the paged files route, which GitHub caps at 3000, maps each REST `status` to its `changeType` (`unchanged` reads as `MODIFIED`), and reads the head again after it. A list whose count is not `changedFiles`, that fails, holds an entry with no path or no known status, lists a path twice, leaves out a file the view gave, or was read while the head moved keeps it off, with that reason. None is `RENAMED`, since gh does not give the old path, and none is on this fixed list, unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base (see the end of this row): `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, `.aidrian.local.json`, and `.banned-terms.local` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. Every AI host's instruction files are on it too, not one host's: by name at any depth and in any case, `AGENT`, `AGENTS`, `CLAUDE`, `GEMINI`, `QWEN`, `WARP`, `CRUSH`, or `CONVENTIONS` then `.md`, with any infix, such as `AGENTS.override.md` or `CLAUDE.local.md`; `.cursor/`, `.windsurf/`, and `.clinerules`, a file or a folder, and `.cursorrules` and `.windsurfrules`, at any depth; and `.github/copilot-instructions.md` and `.github/instructions/` at the repository root or the project root. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. So do the knowledge docs the start hook loads into every session, which differ per project: the gate reads the default branch's knowledge folder beside the `config.json` it located, and each `.json` index in it, by the knowledge reader's own rules. It refuses each bucket's `always` docs, compared ignoring case, and any file in that knowledge folder, since its indexes decide what loads. A bucket's other docs are not refused, since the start hook does not load them. No knowledge folder on the default branch means no docs; a folder or index the gate cannot read, or an index the reader rejects, keeps it off, naming it. The plugin's own code that decides auto-merge is on the list too, so with that key off the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). With `github.autoMerge.includeGuardedPaths` true on both the default branch and the base, read from GitHub like `allow`, the fixed-list refusal and the start hook's knowledge refusal are skipped, but never for a policy file: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay off, with their own reason. The count, rename, change-type, and project-folder refusals of this row stay too. With the key on or off, no file is one of the files the gate reads its policy from, including a folder `.aidrian.json` names: the pointer file and the `config.json` it located, on the default branch and on the base, compared ignoring case. |
+| `paths` | gh lists every changed file with its `changeType`: `gh pr view` lists at most 100, so past that the gate reads the whole list through the paged files route, which GitHub caps at 3000, maps each REST `status` to its `changeType` (`unchanged` reads as `MODIFIED`), and reads the head again after it. A list whose count is not `changedFiles`, that fails, holds an entry with no path or no known status, lists a path twice, leaves out a file the view gave, or was read while the head moved keeps it off, with that reason. None is `RENAMED`, since gh does not give the old path, and none is on this fixed list, unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base (see the end of this row): `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, `.aidrian.local.json`, and `.banned-terms.local` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. Every AI host's instruction files are on it too, not one host's: by name at any depth and in any case, `AGENT`, `AGENTS`, `CLAUDE`, `GEMINI`, `QWEN`, `WARP`, `CRUSH`, or `CONVENTIONS` then `.md`, with any infix, such as `AGENTS.override.md` or `CLAUDE.local.md`; `.cursor/`, `.windsurf/`, and `.clinerules`, a file or a folder, and `.cursorrules` and `.windsurfrules`, at any depth; and `.github/copilot-instructions.md` and `.github/instructions/` at the repository root or the project root. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. So do the knowledge docs the start hook loads into every session, which differ per project: the gate reads the default branch's knowledge folder beside the `config.json` it located, and each `.json` index in it, by the knowledge reader's own rules. It refuses each bucket's `always` docs, compared ignoring case, and any file in that knowledge folder, since its indexes decide what loads. A bucket's other docs are not refused, since the start hook does not load them. No knowledge folder on the default branch means no docs; a folder or index the gate cannot read, or an index the reader rejects, keeps it off, naming it. The plugin's own code that decides auto-merge is on the list too, so with that key off the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list, but `project-run.mjs` and `project-run-cli.mjs` are: they decide which session may start a [project run](#project-run) and which issue it starts, so a pull request that auto-merged itself cannot change them. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). With `github.autoMerge.includeGuardedPaths` true on both the default branch and the base, read from GitHub like `allow`, the fixed-list refusal and the start hook's knowledge refusal are skipped, but never for a policy file: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay off, with their own reason. The count, rename, change-type, and project-folder refusals of this row stay too. With the key on or off, no file is one of the files the gate reads its policy from, including a folder `.aidrian.json` names: the pointer file and the `config.json` it located, on the default branch and on the base, compared ignoring case. |
 | `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
@@ -1708,6 +1710,72 @@ though the agent still sees each refusal.
 A session with any recorded read writes none, even when the read was on another server than the refused write.
 Every other refusal is recorded when it happens, including rule 1's two that no read clears, which need the key corrected.
 This depends on the session-end hook: on a host with no SessionEnd, and in a session that crashes, the refusal stays uncounted.
+
+## Project run
+
+`aidrian project` keeps the record of a project run, which a driver session uses to work through a tracker project.
+The driver reads the tracker with its own tools and writes a snapshot input; `init RUN --file PATH` validates it and starts the run.
+`next RUN` names the issue to start, and `summary RUN` writes the run's `summary.md` from its ledger.
+The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `projectRun.allow` | `false` | Whether the team allows project runs. |
+| `projectRun.maxParallel` | `1` | The most issues that run at once, from 1 to 4. |
+| `projectRun.maxStarts` | `300` | The most sessions one run starts, from 1 to 1000. |
+| `projectRun.issueHours` | `6` | How long one issue may run, in hours, from 1 to 24. |
+| `projectRun.blockedStatus` | `null` | The tracker status a blocked issue moves to; `null` moves none. |
+| `projectRun.decisionLabel` | `"needs-decision"` | The label an issue parked on a decision gets. |
+
+`aidrian project` reads none of these keys: `init` does not check `allow`, and `next` names one issue at a time.
+
+The snapshot input is one JSON object, at most 1 MiB, read as a regular file and never through a symlink:
+
+```json
+{
+  "issues": [
+    { "key": "ENG-12", "branch": "feat/eng-12-export", "status": "unstarted", "blockedBy": ["ENG-10"], "priority": 2 }
+  ],
+  "outside": [{ "key": "ENG-3", "status": "completed" }]
+}
+```
+
+- `issues` holds 1 to 500 issues, each with at most 50 `blockedBy` keys; `outside` holds at most 1000 blockers.
+- `key` is a team key and a number, such as `ENG-12`, or a number alone. A run id is lower-case letters, digits, and dashes.
+- `branch` is the one text from the tracker the run keeps. It passes `git check-ref-format --branch`, is at most 120 characters
+  of letters, digits, `.`, `_`, `-`, and `/`, and starts with no dash. Compared in any case, it is not under `refs/`,
+  not the default branch (`git.defaultBranch` in the working copy or on the base branch, or the branch origin's HEAD
+  points to), does not start with the name of a remote, and has no part that is a HEAD name, such as `HEAD` or `FETCH_HEAD`.
+  No part is 40 or 64 hex digits, as a commit id is.
+- `status` is a status type: `triage`, `backlog`, `unstarted`, `started`, `completed`, or `canceled`.
+  A run starts only a `backlog` or `unstarted` issue.
+- `priority` is 1, the most urgent, to 4, or 0 for none, which comes last.
+- `outside` lists the status of each blocker outside the project. A blocker that is not `completed`, or not listed, blocks.
+- Every other field, such as a title or a description, is dropped: no other tracker text enters the run's state.
+
+The state folder is held as the [background route](handoff.md#the-background-route) holds its continuation store.
+The working copy's `state.dir` must be the base branch's, and the folder the command resolves must be the one the base branch's
+config names under the host's own environment, so an `XDG_STATE_HOME` or `HOME` set for the command cannot move it.
+The state folder and its `runs/` folder may not be a symlink, lie inside a checkout, be another user's, or be writable by every user.
+`init`, `next`, and `summary` each refuse a folder that fails a check, a base branch git cannot read,
+and a project whose `config.json` the base branch does not commit.
+A shell that exports `XDG_STATE_HOME` for every command moves the folder away from the one the host's own environment names,
+so the commands refuse it: commit a `state.dir` in `config.json`, which both read the same.
+
+`init` runs only from an attended main session. It refuses a subagent, a session the host names no id for,
+and a session the background route started or is about to start; when the continuation store cannot be read, it refuses too.
+The [project-init rule](hooks.md#bash-rules) denies the command to a subagent, whose shell carries the main session's id.
+`--project` on `init` must name the project of the current folder's main checkout.
+It pins the repository from the origin remote, refusing an owner or name of `.` or `..`, and records it in the ledger's first row
+with the driver's session id and the sha256 and issue count of `snapshot.json`; `next` and `summary` refuse a snapshot that no
+longer matches. Both files are read with no symlink followed, as regular files, under a size cap.
+One run per project is active at a time.
+
+`next` orders the issues by `blockedBy`, then by priority, then by key. It prints `next KEY BRANCH` for the issue to start,
+`wait N running` when none may start while some run, or `done` when nothing may start and nothing runs.
+Lines for the issues that run, are blocked, or are skipped follow. An issue in a cycle of blockers is blocked.
+An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
+is skipped and names it. `--json` prints the whole plan.
 
 ## Checking
 

@@ -25,6 +25,7 @@ import * as reviewSignoff from '../lib/rules/review-signoff.mjs';
 import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
+import * as projectInit from '../lib/rules/project-init.mjs';
 
 // Which rules start a process. Every rule first reads the command alone, and most stop there. A rule that needs the
 // project finds it (findProject), which runs git once inside a project folder. Past that, only these start one, and only
@@ -55,6 +56,7 @@ const RULES = [
   ['review-rounds', reviewRounds],
   ['review-signoff', reviewSignoff],
   ['decisions-set', decisionsSet],
+  ['project-init', projectInit],
   ['review-extend', reviewExtend],
   ['review-fallback', reviewFallback],
   ['product-feedback-answer', productFeedbackAnswer],

@@ -161,6 +161,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none: on the Human's answer or typed grant, the exact raise runs ([review.md](review.md#unattended-rulings)) |
 | Review sign-off | `aidrian pr signoff`, `--last` included, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
 | Decision answer | `aidrian decisions set` or `undo` from a subagent, which carry out the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs them on the Human's word |
+| Project run start | `aidrian project init` from a subagent, which would make it the driver of a [project run](config.md#project-run) | none: the main session runs it |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
 | Product feedback answer | `--by human` on a [product feedback](config.md#product-feedback) item without the Human's answer in the session | none: the Human answers, or runs it in their own shell |
@@ -288,6 +289,7 @@ What each rule matches:
   and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
   The rule stops accidents and is no security boundary: a form it does not read, such as `xargs` or `npx`, runs.
+- Project run start: `aidrian project init`, read the same way as the decision answer, in a call with an `agent_id`. The same limit holds.
 - Extra round approval: `aidrian pr extend <PR> --human approve`, also as `node …/cli.mjs` or `--human=approve`, while the
   pull request's check at the cap waits for the Human. It runs when the session transcript holds an AskUserQuestion
   answer, given after the judge's verdict, to a question naming `<owner>/<name>#<PR>` of the repository the call acts on
@@ -459,7 +461,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
 `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
-`decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
+`decisions-set`, `project-init`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.

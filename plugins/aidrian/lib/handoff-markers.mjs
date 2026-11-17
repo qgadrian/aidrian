@@ -49,8 +49,10 @@ const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
 // How long a session's request to end itself holds: the turn that ran the gate ends well inside it.
 export const ENDING_WINDOW = 30 * 60 * 1000;
+// How long a record that a terminal follows a background session holds: a hop's session rarely runs longer.
+export const FOLLOW_AGE = 12 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: DAY };
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE };
 const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued|ending|follow)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
@@ -69,7 +71,7 @@ const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\
 const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
-export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 const TEMPORARY = /^\.(.+)\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // No read follows a symlink, and none waits on a FIFO or a device that has no writer.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -190,7 +192,8 @@ function sameFolder(real, dir) {
 // Whether `t` is a time no later than `now` and at most `window` before it.
 export const fresh = (t, now, window) => Number.isFinite(t) && now - t >= 0 && now - t <= window;
 const whole = (value, min, max) => Number.isInteger(value) && value >= min && value <= max;
-const isPid = (value) => Number.isInteger(value) && value > 1;
+// A process id the plugin may name: never 0 or 1, and within the range a pid takes.
+export const isPid = (value) => Number.isInteger(value) && value > 1 && value < 2 ** 31;
 const sessionFile = (kind, session) => (typeof session === 'string' && SESSION_ID.test(session) ? `${kind}-${session}.json` : null);
 
 // Whether `brief` is an absolute path to a brief of `slug`.
@@ -421,7 +424,7 @@ export function noteFollow(store, session, { shell }, { now = Date.now() } = {})
   return isFollow(value) ? writeMarker(store, sessionFile('follow', session), value) : null;
 }
 
-// The shell whose terminal follows `session`, from the last day, under its own id or a short one it starts with, the
+// The shell whose terminal follows `session`, from the last FOLLOW_AGE, under its own id or a short one it starts with, the
 // latest if several: { shell, id }, where `id` is the id it was filed under; or null.
 export function readFollow(store, session, { now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;

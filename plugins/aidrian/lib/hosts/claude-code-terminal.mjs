@@ -42,6 +42,18 @@ export function isWrappedHost({ pid, shell, run = runPs }) {
 // Whether a Human attends the session whose environment is `env`: an interactive session, not a background one.
 export const attended = (env) => env.CLAUDE_CODE_SESSION_ATTENDED === '1';
 
+// Whether the shell `shell` is alive and the parent of a `claude` process, as a terminal the shell function attached to a
+// background session is. A process may set its title after the program's name, as `claude bg-spare`.
+export function hasClient({ shell, run = runPs }) {
+  if (!isPid(shell)) return false;
+  const result = run(PS, ['-A', '-o', 'pid=,ppid=,comm='], { timeout: PS_TIMEOUT });
+  if (result.error || result.status !== 0) return false;
+  const rows = String(result.stdout ?? '').split('\n').map((line) => LINE.exec(line)).filter(Boolean)
+    .map(([, pid, ppid, comm]) => ({ pid: Number(pid), ppid: Number(ppid), comm }));
+  const isClient = (row) => row.ppid === shell && new RegExp(`^${PROGRAM}(?:\\s|$)`, 'u').test(path.basename(row.comm));
+  return rows.some((row) => row.pid === shell) && rows.some(isClient);
+}
+
 // The `claude` process of the session whose environment is `env`, when a Human attends it and the shell `shell` started
 // it: its pid, or null.
 export function hostProcess({ env, shell, run = runPs }) {

@@ -158,6 +158,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Git amend | `git commit --amend`; the deny names a follow-up commit, which a squash merge folds in, and `aidrian lint` fails a skill or agent that asks for an amend | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
+| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)) | none: the deny says to hand the Human the command with the `!` prefix |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny names a copy with its own offline install from the lockfile | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
@@ -464,7 +465,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
+`shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
@@ -904,7 +905,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   cannot read, or one that names no listing, holds every session but the gate's.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
-  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
+  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds
+  for the shell records' folder, `handoff-terminals/` beside it, which names the session a shell opens in its terminal
+  next ([Replacing the terminal](handoff.md#replacing-the-terminal)).
 - With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
   a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
   `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,

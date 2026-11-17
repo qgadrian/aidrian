@@ -6,12 +6,12 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { BEGIN, END, rcBlock } from '../plugins/aidrian/lib/shell-init.mjs';
+import { BEGIN, END, install, rcBlock } from '../plugins/aidrian/lib/shell-init.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
@@ -47,8 +47,13 @@ test('--install appends the block to ~/.zshrc once, keeps every other byte, and 
 
   const again = shellInit(home, 'zsh', '--install');
   assert.equal(again.status, 0);
-  assert.match(again.stdout, /already holds the aidrian shell-init block; nothing changed\./u);
+  assert.match(again.stdout, /already holds the current aidrian shell-init block; nothing changed\./u);
   assert.equal(readFileSync(rc, 'utf8'), after, 'a second install changes nothing');
+
+  writeFileSync(rc, after.replace('  rc=$?', '  rc=$?\n  echo old').replace('|| rc=$?', '; rc=$?'));
+  const replaced = shellInit(home, 'zsh', '--install');
+  assert.match(replaced.stdout, /^Replaced the aidrian shell-init block in .* with the current one; no other line changed\.$/mu);
+  assert.equal(readFileSync(rc, 'utf8'), after, 'an older block is replaced by the current one, in place');
 
   const gone = shellInit(home, 'zsh', '--uninstall');
   assert.equal(gone.status, 0, gone.stderr);
@@ -61,7 +66,7 @@ test('--install appends the block to ~/.zshrc once, keeps every other byte, and 
 test('--install creates a missing startup file, writes ~/.bashrc for bash, and follows ZDOTDIR for zsh', (t) => {
   const home = folder(t, 'aidrian-home-');
   assert.equal(shellInit(home, 'bash', '--install').status, 0);
-  assert.match(readFileSync(path.join(home, '.bashrc'), 'utf8'), /^# >>> aidrian shell-init >>>\n[\s\S]*eval "\$\(aidrian shell-init bash 2>\/dev\/null\)"/u);
+  assert.match(readFileSync(path.join(home, '.bashrc'), 'utf8'), /^# >>> aidrian shell-init >>>\n[\s\S]*^function claude \{$/mu);
   const zdot = folder(t, 'aidrian-zdot-');
   const result = spawnSync(CLI, ['shell-init', 'zsh', '--install'], { env: { ...process.env, HOME: home, ZDOTDIR: zdot }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
@@ -105,44 +110,91 @@ test('--uninstall refuses a start marker with no end, and keeps a startup file t
   assert.equal(statSync(target).mode & 0o777, 0o640, 'its mode stays');
 });
 
-// A fake `aidrian` that answers `shell-init <shell>` with a line naming `who`.
-function fakeAidrian(dir, who) {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, 'aidrian'), `#!/bin/sh\n[ "$1" = shell-init ] && echo 'echo picked=${who}'\n`, { mode: 0o755 });
+// Runs `script` in `shell` with HOME and the state root in `root`, a fake `claude` and a fake `aidrian` first on PATH that
+// log their arguments and AIDRIAN_SHELL_PID, and bash told to expand aliases as an interactive bash does.
+function inShell(t, shell, script) {
+  const root = folder(t, 'aidrian-block-');
+  const bin = path.join(root, 'bin');
+  mkdirSync(bin);
+  const log = path.join(root, 'log');
+  for (const name of ['claude', 'aidrian']) {
+    writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $AIDRIAN_SHELL_PID $*" >> '${log}'\nexit 0\n`, { mode: 0o755 });
+  }
+  const rc = path.join(root, 'rc');
+  writeFileSync(rc, `${rcBlock(shell)}\n`);
+  const prelude = shell === 'bash' ? 'shopt -s expand_aliases\n' : '';
+  const result = spawnSync(shell, [...SHELL_ARGS[shell], `${prelude}${script.replaceAll('RC', `'${rc}'`)}`], {
+    env: { PATH: `${bin}:${SYSTEM_PATH}`, HOME: root, XDG_STATE_HOME: path.join(root, 'state') }, encoding: 'utf8',
+  });
+  const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+  return { result, calls, root };
 }
 
 for (const shell of ['zsh', 'bash']) {
-  test(`in ${shell}, the block runs the aidrian on PATH, else the highest installed version, else a checkout's own`, { skip: !HAS(shell) }, (t) => {
-    const root = folder(t, 'aidrian-versions-');
-    const versions = path.join(root, 'cache', 'aidrian');
-    for (const version of ['0.9.0', '0.10.0', '0.66.2']) fakeAidrian(path.join(versions, version, 'bin'), version);
-    fakeAidrian(path.join(versions, 'not-a-version', 'bin'), 'stray');
-    const run = (block, PATH) => {
-      const rc = path.join(root, `rc-${shell}`);
-      writeFileSync(rc, `${block}\n`);
-      return spawnSync(shell, [...SHELL_ARGS[shell], `. '${rc}'`], { env: { PATH, HOME: root }, encoding: 'utf8' }).stdout.trim();
-    };
-    const installed = rcBlock(shell, path.join(versions, '0.9.0'));
-    assert.equal(run(installed, SYSTEM_PATH), 'picked=0.66.2', 'the highest version, compared as numbers, not the copy that installed it');
-    const onPath = path.join(root, 'on-path');
-    fakeAidrian(onPath, 'path');
-    assert.equal(run(installed, `${onPath}:${SYSTEM_PATH}`), 'picked=path');
-    const checkout = path.join(root, 'checkout', 'plugins', 'aidrian');
-    fakeAidrian(path.join(checkout, 'bin'), 'checkout');
-    assert.equal(run(rcBlock(shell, checkout), SYSTEM_PATH), 'picked=checkout');
-    rmSync(versions, { recursive: true });
-    assert.equal(run(installed, SYSTEM_PATH), '', 'with no copy left, it does nothing and breaks nothing');
+  test(`in ${shell}, the installed block runs no plugin code and looks nothing up on PATH`, { skip: !HAS(shell) }, (t) => {
+    const { result, calls } = inShell(t, shell, '. RC\ntype claude');
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(calls, [], 'sourcing the block runs neither aidrian nor claude');
+    assert.match(result.stdout, /function/u);
+    assert.doesNotMatch(rcBlock(shell), /^[^#]*\baidrian shell-init\b(?! *:)/mu, 'no line but a comment or a message runs aidrian');
+  });
+
+  test(`in ${shell}, an alias that adds a flag reaches the function, and one to another path is named on stderr`, { skip: !HAS(shell) }, (t) => {
+    const flag = inShell(t, shell, "alias claude='claude --dangerously-skip-permissions'\n. RC\neval 'claude --resume x'\necho done");
+    assert.equal(flag.result.status, 0, flag.result.stderr);
+    assert.equal(flag.result.stderr, '', 'an alias that starts with claude says nothing');
+    assert.equal(flag.calls.length, 1, 'sourcing ran nothing; the one call is the typed one');
+    assert.match(flag.calls[0], /^claude \d+ --dangerously-skip-permissions --resume x$/u, 'the alias reached the function, which set the shell pid');
+    const other = inShell(t, shell, "alias claude=/opt/elsewhere/claude\n. RC\necho done");
+    assert.equal(other.result.status, 0, other.result.stderr);
+    assert.match(other.result.stdout, /done/u, 'the block parses with the alias in place');
+    assert.match(other.result.stderr, /^aidrian shell-init: the alias claude runs past the shell function, so a handoff will not replace this terminal$/mu);
+    assert.deepEqual(other.calls, [], 'sourcing the block started nothing');
+  });
+
+  test(`in ${shell}, the function reaches the record under set -e and set -u, and refuses an expiry too far ahead`, { skip: !HAS(shell) }, (t) => {
+    const record = (expires) => `mkdir -p "$XDG_STATE_HOME/aidrian/handoff-terminals"; echo "abcd1234 ${expires}" > "$XDG_STATE_HOME/aidrian/handoff-terminals/$$"`;
+    const soon = Math.floor(Date.now() / 1000) + 30;
+    const strict = inShell(t, shell, `. RC\nset -eu\nunset XDG_STATE_HOME\nmkdir -p "$HOME/.local/state/aidrian/handoff-terminals"; echo "abcd1234 ${soon}" > "$HOME/.local/state/aidrian/handoff-terminals/$$"\nclaude --resume x`);
+    assert.equal(strict.calls.length, 2, `${strict.result.stderr}: the record is read and opened with set -eu and no XDG_STATE_HOME`);
+    assert.match(strict.calls[1], /^claude \d+ attach abcd1234$/u);
+    const far = inShell(t, shell, `. RC\n${record(Math.floor(Date.now() / 1000) + 3600)}\nclaude --resume x\nls "$XDG_STATE_HOME/aidrian/handoff-terminals" | wc -l`);
+    assert.equal(far.calls.length, 1, 'an expiry an hour ahead is refused');
+    assert.match(far.result.stdout.trim(), /^0$/u, 'and the record is deleted all the same');
   });
 }
 
-test('a path the block cannot quote gets no fallback', () => {
-  assert.doesNotMatch(rcBlock('zsh', "/tmp/it's/aidrian/0.1.0"), /it's/u);
-  assert.match(rcBlock('zsh', "/tmp/it's/aidrian/0.1.0"), /^ {2}:$/mu);
+test('under set -e, a program that exits non-zero still lets the function read the record', { skip: !HAS('bash') }, (t) => {
+  const root = folder(t, 'aidrian-errexit-');
+  const bin = path.join(root, 'bin');
+  mkdirSync(bin);
+  const log = path.join(root, 'log');
+  writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\necho "$*" >> '${log}'\n[ "$1" = attach ] && exit 5\nexit 143\n`, { mode: 0o755 });
+  const rc = path.join(root, 'rc');
+  writeFileSync(rc, `${rcBlock('bash')}\n`);
+  const soon = Math.floor(Date.now() / 1000) + 30;
+  const script = `. '${rc}'\nset -e\nmkdir -p "$XDG_STATE_HOME/aidrian/handoff-terminals"; echo "abcd1234 ${soon}" > "$XDG_STATE_HOME/aidrian/handoff-terminals/$$"\nclaude --resume x\necho unreachable`;
+  const result = spawnSync('bash', ['--norc', '--noprofile', '-c', script], { env: { PATH: `${bin}:${SYSTEM_PATH}`, HOME: root, XDG_STATE_HOME: path.join(root, 'state') }, encoding: 'utf8' });
+  assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), ['--resume x', 'attach abcd1234'], 'the exit 143 did not abort the function before the record');
+  assert.equal(result.status, 5, 'the function returns the last exit, which set -e then acts on');
+  assert.doesNotMatch(result.stdout, /unreachable/u);
+});
+
+test('--install for bash on macOS warns when ~/.bash_profile does not source ~/.bashrc', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const env = { HOME: home };
+  const warned = install('bash', { env, platform: 'darwin' });
+  assert.match(warned.out.join('\n'), /^On macOS a new terminal starts bash as a login shell, which reads ~\/\.bash_profile, and it does not source ~\/\.bashrc/mu);
+  writeFileSync(path.join(home, '.bash_profile'), '[ -f ~/.bashrc ] && . ~/.bashrc\n');
+  assert.doesNotMatch(install('bash', { env, platform: 'darwin' }).out.join('\n'), /login shell/u);
+  rmSync(path.join(home, '.bash_profile'));
+  assert.doesNotMatch(install('bash', { env, platform: 'linux' }).out.join('\n'), /login shell/u);
+  assert.doesNotMatch(install('zsh', { env, platform: 'darwin' }).out.join('\n'), /login shell/u);
 });
 
 // A project whose machine switch and config turn the background route on in auto mode, and the session start's output
 // for a Claude Code session with `env`.
-function sessionStart(t, env, { local = { handoff: { background: 'on' } }, handoff = { mode: 'auto' } } = {}) {
+function sessionStart(t, env, { local = { handoff: { background: 'on' } }, handoff = { mode: 'auto' }, home = folder(t, 'aidrian-home-') } = {}) {
   const dir = folder(t, 'aidrian-start-');
   // The machine switch reads "on" only in a file git can say it does not track.
   spawnSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
@@ -150,13 +202,13 @@ function sessionStart(t, env, { local = { handoff: { background: 'on' } }, hando
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, session: { handoff } }));
   if (local) writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(local));
   const input = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'start-1', cwd: dir, source: 'startup' });
-  const result = spawnSync(process.execPath, [START], { input, env: { ...process.env, CLAUDECODE: '1', ...env }, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [START], { input, env: { ...process.env, CLAUDECODE: '1', HOME: home, ZDOTDIR: '', ...env }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout;
 }
 
 test('the session start tells an attended session the shell function did not start that its terminal will not follow a handoff', (t) => {
-  const line = /^Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's `claude`, .* runs `aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal\. A copy of the plugin older than this one answers `unknown command: shell-init`: the plugin is updated first, with `claude plugin update aidrian@aidrian-harness`\.$/mu;
+  const line = /^Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's `claude`, .* this session hands "the Human" `! aidrian shell-init zsh --install`, or `! aidrian shell-init bash --install` for bash, to run once before opening a new terminal, and never runs it itself, since it writes "the Human"'s shell startup file\. A copy of the plugin older than this one answers `unknown command: shell-init`: the plugin is updated first, with `claude plugin update aidrian@aidrian-harness`\.$/mu;
   assert.match(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }), line);
   for (const [name, env, options] of [
     ['the shell function started it', { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' }, {}],
@@ -168,3 +220,19 @@ test('the session start tells an attended session the shell function did not sta
     assert.doesNotMatch(sessionStart(t, env, options), /Handoff terminal/u, name);
   }
 });
+
+test('the session start names a startup file whose block differs from the current one, and never rewrites it', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const rc = path.join(home, '.zshrc');
+  const old = `alias g=git\n${rcBlock('zsh').replace('|| rc=$?', '; rc=$?')}\n`;
+  writeFileSync(rc, old);
+  const env = { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' };
+  const stale = /^Handoff terminal: the aidrian shell function block in .*\.zshrc differs from this plugin's, so a handoff may not replace the terminal as this version does\. This session hands "the Human" the command `! aidrian shell-init zsh --install`, which replaces the block, and never runs it or edits the file itself\.$/mu;
+  assert.match(sessionStart(t, env, { home }), stale);
+  assert.equal(readFileSync(rc, 'utf8'), old, 'the file is left as it was');
+  writeFileSync(rc, `alias g=git\n${rcBlock('zsh')}\n`);
+  assert.doesNotMatch(sessionStart(t, env, { home }), /Handoff terminal/u, 'the current block');
+  writeFileSync(rc, old);
+  assert.doesNotMatch(sessionStart(t, env, { home, local: null }), /Handoff terminal/u, 'the machine switch is off');
+});
+

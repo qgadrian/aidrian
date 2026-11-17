@@ -162,8 +162,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
   each session started with ([hooks.md](hooks.md#agent-gates)), and `unattended/`, the marks of the sessions the
   [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, and
-  `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, kept
-  60 seconds ([Replacing the terminal](handoff.md#replacing-the-terminal)).
+  `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
+  60 seconds, deleted when the shell reads it ([Replacing the terminal](handoff.md#replacing-the-terminal)).
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

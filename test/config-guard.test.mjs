@@ -100,6 +100,8 @@ test('a subagent may still read those files and write anything else, and the mai
       `cp notes.md ${dir}`,
       'cd src && echo x > notes.md',
       'cd "$TMPDIR" && echo x > notes.md',
+      // A file named like a handoff store record outside the store: `follow-` and `ending-` are common words.
+      'cd "$OUT" && echo {} > follow-up.json',
       "bash -c 'echo x > notes.md'",
       'python3 -c "print(1)"',
       "node -e \"require('fs').writeFileSync('tsconfig.json', '{}')\"",

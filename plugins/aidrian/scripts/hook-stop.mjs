@@ -43,7 +43,8 @@ await runHook(async (input) => {
   const { config } = loadConfig(project);
   const { names, session } = config;
   const host = detectHost({ input });
-  const text = typeof input.transcript_path === 'string' ? readText(input.transcript_path) : null;
+  // Only a stop no hook sent back reads the transcript: the checks and the reminder are its only readers.
+  const text = settled && typeof input.transcript_path === 'string' ? readText(input.transcript_path) : null;
   if (settled) {
     const transcriptText = host.capabilities.transcripts === false ? null : text;
     const announced = announcedWork(input, transcriptText, {
@@ -70,7 +71,12 @@ await runHook(async (input) => {
 // Whether this stop ends the session `id` so its terminal opens the background session it handed off to. The modules
 // load only on a host that can replace a terminal.
 async function endsTerminal(host, project, config, id) {
-  if (!host.capabilities.handoffContinue?.replaceTerminal) return false;
+  const replace = host.capabilities.handoffContinue?.replaceTerminal;
+  if (!replace) return false;
+  // An attended session the shell function did not start has nothing to end, and pays for no import: the gate notes a
+  // request only for one it started, as AIDRIAN_SHELL_PID (lib/terminal-replace.mjs SHELL_VAR) tells, or for a session
+  // no Human attends.
+  if (replace.attended(process.env) && !process.env.AIDRIAN_SHELL_PID) return false;
   const { endAfterTurn } = await import('../lib/terminal-replace.mjs');
   const { projectStore, unattendedHere } = await import('../lib/handoff-continue.mjs');
   const { noteFollow, takeEnding } = await import('../lib/handoff-markers.mjs');

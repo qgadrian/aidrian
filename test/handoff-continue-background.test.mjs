@@ -786,16 +786,17 @@ test('a session ends itself only in auto mode, from the shell function\'s own cl
 });
 
 test('a background session the terminal follows asks to end its own session once its turn ends, in auto mode only', (t) => {
-  for (const [name, handoff, follows, ends] of [
+  for (const [name, handoff, follows, ends, attended = {}] of [
     ['followed, auto mode', { mode: 'auto' }, true, true],
     ['no terminal follows it', { mode: 'auto' }, false, false],
     ['ask mode', { mode: 'ask', continue: 'background' }, true, false],
+    ['a Human attends it, as a former background session resumed', { mode: 'auto' }, true, false, { CLAUDE_CODE_SESSION_ATTENDED: '1' }],
   ]) {
     const setting = setup(t, { handoff });
     passCheck(setting);
     const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
     t.after(() => rmSync(xdg, { recursive: true, force: true }));
-    const env = { ...setting.env, XDG_STATE_HOME: xdg };
+    const env = { ...setting.env, XDG_STATE_HOME: xdg, ...attended };
     assert.ok(markUnattended(SESSION, { root: setting.dir, env }), name);
     if (follows) assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
     const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });

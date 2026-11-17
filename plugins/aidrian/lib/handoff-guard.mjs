@@ -29,6 +29,7 @@ import { DETECT_VARS, HOSTS, IDENTITY_VARS, opaqueShellCommand } from './hosts/i
 import { defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { aidrianArgs, changesVariable, walkCommands } from './shell-lex.mjs';
+import { TERMINAL_FOLDER, terminalFolders } from './terminal-replace.mjs';
 import { MARK_FOLDER, markFolders } from './unattended-mark.mjs';
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
@@ -180,7 +181,7 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
 // record (`from-`, `tasks-`) is not one: their names are common words, and the path rules cover them.
 const MARKER_NAME = new RegExp(ARMING_FILE.source, 'iu');
 // An unsure glob's part whose plain start names such a file, as `armed-*`.
-const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|continued|ending|follow)-/iu;
+const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|continued)-/iu;
 // A word of a command no lexer reads that names the store's folder by its own name.
 const STORE_FOLDER = /^\.continue$/iu;
 // A text that names the store's folder, or a marker in it.
@@ -299,10 +300,6 @@ function reaches({ files, known, placed, linksTo }, folder, shields, roots) {
 }
 
 // A path part that names the unattended marks' folder, in any case.
-const MARK_PART = new RegExp(String.raw`^${MARK_FOLDER}$`, 'iu');
-// The folder as a glob from any folder may name it: by its own name, or with the state root's above it.
-const MARK_TAIL = path.join('aidrian', MARK_FOLDER);
-
 // Why the call in `input` may not run because it changes the unattended marks (lib/unattended-mark.mjs), or null:
 // { match, reason }. It holds for a subagent, and for a main session `unattended()` says no Human attends, asked last,
 // once a call reaches the marks: a session that deletes its own mark would lift what the mark holds it to wherever it
@@ -313,32 +310,56 @@ const MARK_TAIL = path.join('aidrian', MARK_FOLDER);
 // in a folder no path gives, and a word of a command in a shell the lexer cannot read, count when a part of it is named
 // `unattended`, or, for a glob, may name it (globNamesFile). With `links` false it skips the link walk.
 export function unattendedMarkWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, folders = markFolders() } = {}) {
+  return stateFolderWriteDenial(input, human, {
+    name: MARK_FOLDER, folders, project, links, unattended,
+    what: 'the unattended marks', tells: 'which tell the hooks a session no Human attends wherever it runs', writer: 'the handoff gate',
+  });
+}
+
+// Why the call in `input` may not run because it changes the shell records of lib/terminal-replace.mjs, or null, read
+// as unattendedMarkWriteDenial reads the marks, in `folders` (terminalFolders), by the folder name `handoff-terminals`:
+// a record names the session a shell opens in its terminal next, which only a session's own Stop hook writes.
+export function terminalRecordWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, folders = terminalFolders() } = {}) {
+  return stateFolderWriteDenial(input, human, {
+    name: TERMINAL_FOLDER, folders, project, links, unattended,
+    what: 'the shell records', tells: 'which name the session a shell opens in its terminal next', writer: 'a session\'s own Stop hook',
+  });
+}
+
+// The guard of a folder `name` under the state root, found in `folders`, which only `writer` writes and which `tells`:
+// { match, reason } for a subagent's call, and an unattended session's, that reaches it, else null.
+function stateFolderWriteDenial(input, human, { name, folders, project, links, unattended, what, tells, writer }) {
   const subagent = isSubagent(input);
   const { files, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
   if (files.length === 0 && names.length === 0 && globs.length === 0 && modes.length === 0) return null;
-  const named = (text) => text.split(/[\\/]/u).some((part) => MARK_PART.test(part));
+  const part = new RegExp(String.raw`^${name}$`, 'iu');
+  // The folder as a glob from any folder may name it: by its own name, or with the state root's above it.
+  const tail = path.join('aidrian', name);
+  const named = (text) => text.split(/[\\/]/u).some((each) => part.test(each));
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   const byName = names.some(named) || unplaced.some(({ text }) => named(text))
-    || globs.some((glob) => (glob.unsure || glob.opaque) && (named(glob.text) || globNamesFile(glob.text, MARK_TAIL, { folderParts: 0 })));
-  let hit = byName;
-  if (!hit) {
-    const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
-    const sure = globs.filter((glob) => !glob.unsure);
-    const known = sure.flatMap(globPaths);
-    const targets = files.map(real);
-    const marks = folders.map((folder) => ({ mark: real(folder), root: real(path.dirname(folder)) }));
-    const near = (target) => marks.some(({ root }) => isWithin(root, target) || isWithin(target, root));
-    const seen = links ? linkWalk(input) : null;
-    const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
-    if (![...targets, ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !marks.some(({ root }) => linksTo(root))) return null;
-    const roots = (project?.checkouts ?? []).map(real);
-    hit = marks.some(({ mark, root }) => reaches({ files: targets, known, placed, linksTo }, mark, [root], roots));
-  }
+    || globs.some((glob) => (glob.unsure || glob.opaque) && (named(glob.text) || globNamesFile(glob.text, tail, { folderParts: 0 })));
+  const hit = byName || reachesFolders({ input, files, globs, modes, unplaced, folders, project, links });
   if (!hit || !(subagent || unattended())) return null;
   const opaque = opaqueShellCommand(input) !== null;
   const verb = opaque || byName ? 'may change' : 'changes';
-  const writer = subagent ? 'which only the handoff gate writes' : `which only the handoff gate writes, ${UNATTENDED}`;
-  const why = `it ${verb} the unattended marks, ${MARK_TAIL}, which tell the hooks a session no Human attends wherever it runs, and ${writer}`;
-  return { match: `${verb} the unattended marks`, reason: projectRuleReason(input, why, human) };
+  const writes = subagent ? `which only ${writer} writes` : `which only ${writer} writes, ${UNATTENDED}`;
+  const why = `it ${verb} ${what}, ${tail}, ${tells}, and ${writes}`;
+  return { match: `${verb} ${what}`, reason: projectRuleReason(input, why, human) };
+}
+
+// Whether the placed write targets of a call reach one of `folders`, as reaches reads them.
+function reachesFolders({ input, files, globs, modes, unplaced, folders, project, links }) {
+  const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
+  const sure = globs.filter((glob) => !glob.unsure);
+  const known = sure.flatMap(globPaths);
+  const targets = files.map(real);
+  const guarded = folders.map((folder) => ({ mark: real(folder), root: real(path.dirname(folder)) }));
+  const near = (target) => guarded.some(({ root }) => isWithin(root, target) || isWithin(target, root));
+  const seen = links ? linkWalk(input) : null;
+  const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+  if (![...targets, ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !guarded.some(({ root }) => linksTo(root))) return false;
+  const roots = (project?.checkouts ?? []).map(real);
+  return guarded.some(({ mark, root }) => reaches({ files: targets, known, placed, linksTo }, mark, [root], roots));
 }

@@ -138,9 +138,12 @@ aidrian shell-init zsh --install    # for bash: aidrian shell-init bash --instal
 `shell-init` ships in the release after aidrian 0.67.0. An older copy, such as 0.66.0, answers
 `unknown command: shell-init`, so update the plugin first, `claude plugin update aidrian@aidrian-harness` for Claude Code
 ([Update](docs/providers/claude-code.md#update)), and check that the `aidrian` the terminal runs is the new one.
-It appends a marked block to `~/.zshrc` (or `~/.bashrc`), and changes no other line; run again, it changes nothing.
-The block defines a `claude` function that runs `claude` as before. When a handoff ends the session, it opens the new
-one with `claude attach`. The block finds `aidrian` at each shell start, so a plugin update needs no new install.
+It writes a marked block to `~/.zshrc` (or `~/.bashrc`), and changes no other line. The block is the shell function
+itself, `function claude`, which runs `claude` as before; when a handoff ends the session, it opens the new one with
+`claude attach`. No plugin code runs when a terminal starts. Run again after a plugin update, it replaces the block
+with the current one; a session says when the block is older than the plugin. An alias for `claude` that points
+elsewhere, such as `alias claude=~/.claude/local/claude`, runs past the function, and the block says so on stderr.
+Sessions never run it for the Human: the agent gate refuses it, and a session hands over the command with `!` instead.
 Open a new terminal for it to take effect. To undo it:
 
 ```sh

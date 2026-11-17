@@ -310,14 +310,16 @@ function startInBackground(ready) {
 // It notes the request in the store for the Stop hook. A request it cannot note is none: the session stays open.
 function handTerminal({ host, store, session, env, run, now, mode, id, next }) {
   if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id) || !replacer(host)) return false;
-  const way = unattendedHere(session, { store, env, now }) ? followed(host, store, session, now) : safely(() => terminalOf(host, { env, run }));
+  const way = unattendedHere(session, { store, env, now }) ? followed({ host, store, session, env, now }) : safely(() => terminalOf(host, { env, run }));
   return way !== null && safely(() => noteEnding(store, session, { ...way, id, next }, { now })) !== null;
 }
 
-// For a background session a terminal follows, on a host that can end its own session: { own, shell }, where `own` is
-// the id the store recorded it under; else null.
-function followed(host, store, session, now) {
-  if (typeof replacer(host).endOwn !== 'function') return null;
+// For a background session a terminal follows, on a host that can end its own session, which no Human attends as the
+// host tells it, so a former background session a Human resumed never names itself: { own, shell }, where `own` is the
+// id the store recorded it under; else null.
+function followed({ host, store, session, env, now }) {
+  const replace = replacer(host);
+  if (typeof replace.endOwn !== 'function' || replace.attended(env)) return null;
   const follow = safely(() => readFollow(store, session, { now }));
   return follow && { own: follow.id, shell: follow.shell };
 }

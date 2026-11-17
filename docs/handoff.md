@@ -366,33 +366,45 @@ Limits:
 
 With a block in the shell's startup file, a background handoff also replaces the old session in its terminal: the
 old session ends itself once its turn ends, and the same terminal opens the new one, with nothing typed. A host's
-plugins have no install step, so the Human adds the block once, in a terminal:
+plugins have no install step, and the startup file is the Human's, so the Human writes the block once, in a terminal,
+or in a session with the `!` prefix:
 
 ```sh
 aidrian shell-init zsh --install    # or bash, into ~/.bashrc
 aidrian shell-init zsh --uninstall  # removes it
 ```
 
-`--install` appends the block to `~/.zshrc`, `$ZDOTDIR/.zshrc` when `ZDOTDIR` is set, or `~/.bashrc`, creating the
-file when it is missing, between the lines `# >>> aidrian shell-init >>>` and `# <<< aidrian shell-init <<<`, and
-changes no other line. A file that already holds the block, or a line of its own outside one that runs
-`aidrian shell-init`, is left as it is, and the command says so. `--uninstall` removes every block, from its start
-marker to its end marker, and nothing else; a start marker with no end after it changes nothing and exits 1. A
-startup file that is a link stays one, and keeps its mode. Each prints what it did.
+No agent runs either: the [Bash rule](hooks.md#bash-rules) `shell-init-install` refuses both to every agent call, the
+main session's too, and says to hand the Human the command with `!`. The session start's lines word it the same way.
 
-At each shell start, the block finds `aidrian` again, so a plugin update that moves the installed copy needs no new
-install. It runs the `aidrian` on PATH, a shell function included. Without one, it runs the copy with the highest
-version, compared as numbers, among the folders named `<major>.<minor>.<patch>` beside the copy that installed it,
-where the host keeps the plugin's versions. A copy that is not one of those versions, such as a checkout, runs its
-own `bin/aidrian`. With none left, the block does nothing.
-The block evals `aidrian shell-init zsh` (or `bash`), which prints a function named for each host program that can do
-it, today `claude`, and exits 2 for any other shell. The function runs the program as `command claude "$@"`, with `AIDRIAN_SHELL_PID` set to the shell's
-own pid. Once the program exits, it reads and deletes this shell's record,
-`$XDG_STATE_HOME/aidrian/handoff-terminals/<shell pid>`, a line `<id> <expiry in epoch seconds>`. When the record is a
-regular file this user owns, not a symlink, its expiry has not passed, and the id is letters, digits, dashes, and
-underscores, 4 to 128 of them, starting with a letter or digit, it runs the host's command that opens that session,
-`command claude attach <id>`, and reads the record again once that exits. With no record, or one it refuses, it returns
-the exit code of the last program it ran. It runs nothing from the record but that id.
+`--install` writes the block to `~/.zshrc`, `$ZDOTDIR/.zshrc` when `ZDOTDIR` is set, or `~/.bashrc`, creating the file
+when it is missing, between the lines `# >>> aidrian shell-init >>>` and `# <<< aidrian shell-init <<<`, and changes no
+other line. The block holds the shell function itself, so no plugin code runs when a terminal starts and nothing is
+looked up on PATH. A file that already holds a block gets the current text in its place, or is left as it is when the
+block is current; a file with a line of its own outside a block that runs `aidrian shell-init` is left as it is. The
+command says which. On macOS, `--install` for bash also warns when `~/.bash_profile`, which a new terminal reads, does
+not source `~/.bashrc`. `--uninstall` removes every block, from its start marker to its end marker, and nothing else;
+a start marker with no end after it changes nothing and exits 1. A startup file that is a link stays one, and keeps its
+mode. Each prints what it did. When a block differs from the current text, as after a plugin update that changed it,
+the session start adds a `Handoff terminal:` line that names the file and the command to hand the Human; it never
+rewrites the block itself.
+
+`aidrian shell-init zsh` (or `bash`) prints the same function, for a startup file that evals it, and exits 2 for any
+other shell. The function is named for each host program that can do it, today `claude`, and is declared as
+`function claude`, so neither shell expands an alias of that name in its definition. It runs the program as
+`command claude "$@"`, with `AIDRIAN_SHELL_PID` set to the shell's own pid. Once the program exits, it reads and deletes
+this shell's record, `$XDG_STATE_HOME/aidrian/handoff-terminals/<shell pid>`, a line `<id> <expiry in epoch seconds>`.
+When the record is a regular file this user owns, not a symlink, its expiry is neither past nor more than 65 seconds
+away, and the id is letters, digits, dashes, and underscores, 4 to 128 of them, starting with a letter or digit, it runs
+the host's command that opens that session, `command claude attach <id>`, and reads the record again once that exits.
+With no record, or one it refuses, it returns the exit code of the last program it ran. It runs nothing from the record
+but that id. Each exit is caught, and every variable is set before it is read, so a shell with `set -e` or `set -u`
+still reaches the record.
+
+An alias for `claude` takes the place of the function when typed. One whose value starts with `claude`, such as
+`alias claude='claude --dangerously-skip-permissions'`, still reaches the function, flag and all. One that points
+elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
+the block prints one line on stderr that says so when the shell reads it.
 
 It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
 `"auto"`, on a host whose adapter declares `replaceTerminal` ([Adding a host](providers/adding-a-host.md)):
@@ -408,7 +420,7 @@ It runs only where every switch of the background route is on, and `session.hand
 2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
    shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
-   follows the new session, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
+   follows the new session, for 12 hours, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
    hooks and shows the last message. It checks the process is still the host's program that shell started, and sends
    the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
    A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
@@ -419,8 +431,11 @@ The next hops chain the same way, so the terminal follows each session of the ch
 background session: no Human attends it as far as the hooks know, and it carries no `AIDRIAN_SHELL_PID`. When it hands
 off in turn, with every switch above on and its launch confirmed, the gate notes a request only when the store holds a
 `follow-` record for it, under its full id or the short one the host printed. That request names the session's own id
-in place of a host process. Its Stop hook takes it once, checks that the session's own id is that id or starts with it,
-writes the shell's record, passes the `follow-` record on to the next session, and starts the helper. The helper ends
+in place of a host process; a session the host says a Human attends, as a former background session a Human resumed,
+never gets one. Its Stop hook takes it once, checks that the session's own id is that id or starts with it, that no
+Human attends it, and, through the host adapter (`replaceTerminal.hasClient`, pid, parent, and program name alone), that
+the shell is alive and the parent of a `claude` process, as a terminal attached to the session is. Then it writes the
+shell's record, passes the `follow-` record on to the next session, and starts the helper. The helper ends
 that session alone, through the host's own stop command, `replaceTerminal.endOwn`. It stops nothing unless the host's
 listing names exactly one background session that is this very session under that id. On Claude Code that is
 `claude stop <id>`, and `claude attach` in the shell then exits 0, so the shell function opens the next session. The
@@ -437,8 +452,9 @@ Limits:
 - When the Human leaves an attached session, the `follow-` record still says the terminal follows it. At its handoff it
   still ends itself, and the shell's record waits a minute for a program the shell function ran to exit.
 - The shell's record lies outside the continuation store, in a folder that is the user's alone (0700), each record 0600.
-  The hooks do not refuse a write there. A record another session of the same user wrote can only make the terminal open
-  a session by a plain id, within its minute, the next time a program the shell function ran exits.
+  The [agent gates](hooks.md#agent-gates) hook refuses a write there to a subagent and to a session no Human attends, as
+  it refuses the unattended marks. Another process of the same user can still write one: it can only make the terminal
+  open a session by a plain id, within its minute, the next time a program the shell function ran exits.
 - A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
   mid-turn. Its transcript is kept, and the work goes on in the new session.
 

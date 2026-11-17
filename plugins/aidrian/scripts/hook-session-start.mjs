@@ -4,7 +4,8 @@
 // ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
 // the main session only, a format line for chat replies, a handoff line while config.json `session.handoff.mode` is
 // "auto" (handoffLine), a line when this machine runs the background handoff route but the shell function that lets the
-// terminal follow a handoff did not start the session (lib/terminal-replace.mjs unwrappedLine), a line when the lesson inbox holds open lessons, which escalates when the inbox needs triage,
+// terminal follow a handoff did not start the session (lib/shell-init.mjs unwrappedLine), a line for each block of that
+// function in a shell startup file that differs from the current one (staleBlockLines), a line when the lesson inbox holds open lessons, which escalates when the inbox needs triage,
 // a line while persona audits in the state folder hold untriaged findings (lib/audits.mjs auditNudge), a line when the
 // plugin copy running is older than the version the project requires (`requires` in config.json), and a line when the indexed docs hold
 // unconfirmed decisions and config.json `decisions.unreviewed.remind` says so. Last, in the main session while
@@ -32,7 +33,7 @@ import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject, stateDir } from '../lib/project.mjs';
-import { unwrappedLine } from '../lib/terminal-replace.mjs';
+import { staleBlockLines, unwrappedLine } from '../lib/shell-init.mjs';
 
 const BIN = path.resolve(import.meta.dirname, '../bin');
 // The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
@@ -79,8 +80,10 @@ async function mainSessionOutput(input, project, { lines, config, buckets }) {
   try {
     const handoff = handoffLine(config);
     if (handoff) out.push(handoff);
-    const unwrapped = unwrappedLine({ host: detectHost({ input }), background: project.localHandoffBackground, handoff: config.session.handoff, env: process.env, human: JSON.stringify(config.names.human) });
+    const host = detectHost({ input });
+    const unwrapped = unwrappedLine({ host, background: project.localHandoffBackground, handoff: config.session.handoff, env: process.env, human: JSON.stringify(config.names.human) });
     if (unwrapped) out.push(unwrapped);
+    out.push(...staleBlockLines({ host, background: project.localHandoffBackground, env: process.env, human: JSON.stringify(config.names.human) }));
     const floor = versionFloorProblem(config);
     if (floor) out.push(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });

@@ -16,9 +16,11 @@ import { projectStore } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { ENDING_WINDOW, noteEnding, noteFollow, openStore, readFollow, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { END_DELAY, endAfterTurn, endHost, NEXT_WINDOW, shellInit, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
+import { shellInit } from '../plugins/aidrian/lib/shell-init.mjs';
+import { END_DELAY, endAfterTurn, endHost, NEXT_WINDOW, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
@@ -28,6 +30,9 @@ const SESSION = 'session-1';
 const WRAPPED = { AIDRIAN_SHELL_PID: '4242', CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' };
 const psSays = (line) => (command, args) => (command === '/bin/ps' && args.at(-1) === '4343' ? { status: 0, stdout: `${line}\n` } : { status: 1, stdout: '' });
 const OWN = psSays('4343 4242 claude');
+// A stand-in for `ps -A`, listing `rows`, each `pid ppid comm`.
+const psAll = (rows) => (command, args) => (command === '/bin/ps' && args[0] === '-A' ? { status: 0, stdout: `${rows.join('\n')}\n` } : { status: 1, stdout: '' });
+const ATTACHED = psAll(['1 0 launchd', '4242 900 -zsh', '5000 4242 claude', '6000 1 claude bg-spare']);
 const ZSH = spawnSync('zsh', ['-f', '-c', 'exit 0']).status === 0;
 const BASH = spawnSync('bash', ['--norc', '--noprofile', '-c', 'exit 0']).status === 0;
 const SHELL_ARGS = { zsh: ['-f', '-c'], bash: ['--norc', '--noprofile', '-c'] };
@@ -142,6 +147,10 @@ test('the Stop hook ends the session its gate asked to end, after the turn, and 
   assert.equal(await withTimeout(exited, END_DELAY + 1000), 'timeout');
 
   assert.ok(noteEnding(store, SESSION, { hostPid: child.pid, shell: process.pid, id: 'abcd1234' }));
+  const { AIDRIAN_SHELL_PID: _, ...unwrapped } = env;
+  const plain = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: 'Stop', session_id: SESSION, cwd: dir, stop_hook_active: true }), env: unwrapped, encoding: 'utf8' });
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.ok(existsSync(path.join(store.dir, `ending-${SESSION}.json`)), 'an attended session the shell function did not start opens no store, so the request stays');
   const result = stop({ stop_hook_active: true });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '', 'it sends nothing back');
@@ -222,8 +231,8 @@ test('aidrian shell-init prints the function for zsh and bash, for each host tha
     const printed = spawnSync(CLI, ['shell-init', shell], { encoding: 'utf8' });
     assert.equal(printed.status, 0, printed.stderr);
     assert.equal(printed.stdout, shellInit(shell));
-    assert.match(printed.stdout, /^claude\(\) \{$/mu);
-    assert.doesNotMatch(printed.stdout, /^codex\(\)/mu, 'a host with no route has no function');
+    assert.match(printed.stdout, /^function claude \{$/mu);
+    assert.doesNotMatch(printed.stdout, /^function codex\b/mu, 'a host with no route has no function');
   }
   assert.match(shellInit('zsh'), /^ {2}emulate -L zsh$/mu);
   assert.doesNotMatch(shellInit('bash'), /emulate/u);
@@ -278,7 +287,7 @@ test('a background session the terminal follows ends only its own session, and p
   const started = [];
   const follows = [];
   const step = (overrides = {}) => endAfterTurn({
-    host: claudeCode, session: BG_SESSION, take: () => request, unattended: () => true, env,
+    host: claudeCode, session: BG_SESSION, take: () => request, unattended: () => true, env, run: ATTACHED,
     follow: (each) => follows.push(each), start: (each) => started.push(each), ...overrides,
   });
   assert.equal(step(), true);
@@ -291,6 +300,10 @@ test('a background session the terminal follows ends only its own session, and p
     ['another session asked', { session: 'zzzz0000-0000' }],
     ['a session a Human attends ends by its process alone', { unattended: () => false }],
     ['a host that cannot end its own session', { host: noEndOwn }],
+    ['a session the host says a Human attends, as a resumed one', { env: { ...env, CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
+    ['the shell is gone', { run: psAll(['1 0 launchd', '5000 1 claude']) }],
+    ['the shell runs no claude client', { run: psAll(['1 0 launchd', '4242 900 -zsh', '5000 4242 vim']) }],
+    ['ps cannot list', { run: () => ({ status: 1, stdout: '' }) }],
   ]) {
     started.length = 0;
     follows.length = 0;
@@ -347,13 +360,67 @@ test('the Stop hook of a background session the terminal follows stops that sess
   writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nif [ "$1" = agents ]; then echo '${listing}'; exit 0; fi\necho "$*" >> '${log}'\n`, { mode: 0o755 });
   const env = { ...process.env, CLAUDECODE: '1', PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   assert.ok(markUnattended(BG_SESSION, { root: dir, env }));
-  assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION }));
+  // This process stands for the shell, and a `sleep` named `claude` it started for the client attached to the session.
+  fakeClaude(t);
+  const shell = process.pid;
+  assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell, id: 'efgh5678', next: NEXT_SESSION }));
   const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: 'Stop', session_id: BG_SESSION, cwd: dir, stop_hook_active: false }), env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(readFileSync(path.join(terminalFolder(env), '4242'), 'utf8'), /^efgh5678 \d+\n$/u);
-  assert.deepEqual(readFollow(store, NEXT_SESSION), { shell: 4242, id: NEXT_SESSION });
+  assert.match(readFileSync(path.join(terminalFolder(env), String(shell)), 'utf8'), /^efgh5678 \d+\n$/u);
+  assert.deepEqual(readFollow(store, NEXT_SESSION), { shell, id: NEXT_SESSION });
   const deadline = Date.now() + END_DELAY + 5000;
   while (!existsSync(log) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(readFileSync(log, 'utf8'), 'stop abcd1234\n');
+});
+
+test('a stop the hand-back check sends back ends nothing and keeps the request; the stop after it ends the session', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = folder(t, 'aidrian-stop-back-');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: 'Adrian', ai: 'HAL9K' } }));
+  const project = findProject(dir);
+  const store = projectStore(project, loadConfig(project).config);
+  const { child, exited } = fakeClaude(t);
+  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_PID: String(child.pid), AIDRIAN_SHELL_PID: String(process.pid), CLAUDE_CODE_SESSION_ATTENDED: '1' };
+  const stop = (payload) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: 'Stop', session_id: SESSION, cwd: dir, ...payload }), env, encoding: 'utf8' });
+  const record = path.join(terminalFolder(env), String(process.pid));
+  // An earlier test of this file may have left this process's record; the shell would have taken it.
+  rmSync(record, { force: true });
+  const handedBack = '**For Adrian**\n- The advisory on the parser dependency.\n- The edit history of the plan doc.';
+  assert.ok(noteEnding(store, SESSION, { hostPid: child.pid, shell: process.pid, id: 'abcd1234' }));
+
+  const sentBack = stop({ stop_hook_active: false, last_assistant_message: handedBack });
+  assert.equal(sentBack.status, 2, 'the hand-back check sends the turn back');
+  assert.equal(existsSync(record), false, 'no shell record while the turn goes on');
+  assert.equal(await withTimeout(exited, END_DELAY + 1000), 'timeout', 'the session runs on');
+
+  const after = stop({ stop_hook_active: true, last_assistant_message: handedBack });
+  assert.equal(after.status, 0, after.stderr);
+  assert.match(readFileSync(record, 'utf8'), /^abcd1234 \d+\n$/u, 'the request was kept for the next stop');
+  assert.deepEqual(await withTimeout(exited, END_DELAY + 5000), { code: null, signal: 'SIGTERM' });
+});
+
+test('a subagent and a session no Human attends may not write the shell records; an attended session and other writes may', (t) => {
+  const root = folder(t, 'aidrian-guard-');
+  const records = path.join(root, 'aidrian', 'handoff-terminals');
+  mkdirSync(records, { recursive: true });
+  const config = { names: { human: 'Adrian' } };
+  const guard = (input, unattended = () => false) => terminalRecordWriteDenial({ cwd: root, ...input }, config, { folders: [records], unattended });
+  const subagent = { agent_id: 'a1', agent_type: 'aidrian:explorer' };
+  const bash = (command, extra = {}) => ({ tool_name: 'Bash', tool_input: { command }, ...extra });
+  const write = (file, extra = {}) => ({ tool_name: 'Write', tool_input: { file_path: file, content: 'x' }, ...extra });
+
+  for (const [name, input] of [
+    ['a Bash write of a record', bash(`echo "abcd1234 9999999999" > ${records}/4242`, subagent)],
+    ['a Write of a record', write(path.join(records, '4242'), subagent)],
+    ['a delete of the folder', bash(`rm -rf ${records}`, subagent)],
+    ['a write by the folder name alone, from a folder no path gives', bash('cd "$X" && echo x > handoff-terminals/4242', subagent)],
+  ]) {
+    const denied = guard(input);
+    assert.ok(denied, name);
+    assert.match(denied.reason, /the shell records, aidrian\/handoff-terminals, which name the session a shell opens in its terminal next/u, name);
+  }
+  assert.ok(guard(write(path.join(records, '4242')), () => true), 'a session no Human attends');
+  assert.equal(guard(write(path.join(records, '4242'))), null, 'an attended main session');
+  assert.equal(guard(write(path.join(root, 'notes.md'), subagent)), null, 'a write elsewhere');
 });
 

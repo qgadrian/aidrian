@@ -1,8 +1,8 @@
 // Replacing the terminal after a background handoff (docs/handoff.md#replacing-the-terminal). A session that handed
 // its work to a background session ends itself once its turn ends, and the shell that ran it opens the new session in
-// the same terminal, with nothing typed. It needs the shell function `aidrian shell-init <shell>` prints, which the
-// Human evals in the shell's startup file: the function runs the host's program with SHELL_VAR set to the shell's pid,
-// and once the program exits it reads and deletes this shell's record, and opens the session the record names.
+// the same terminal, with nothing typed. It needs the shell function of lib/shell-init.mjs, which the Human writes into
+// the shell's startup file: the function runs the host's program with SHELL_VAR set to the shell's pid, and once the
+// program exits it reads and deletes this shell's record, and opens the session the record names.
 //   1. The gate (lib/handoff-continue.mjs), once the background session started, asks terminalOf whether the host
 //      process was started by that function's shell and a Human attends it, and notes the request in the continuation
 //      store (handoff-markers.mjs noteEnding), which no subagent or unattended session may write.
@@ -25,26 +25,27 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { isPid } from './handoff-markers.mjs';
 import { HOSTS } from './hosts/index.mjs';
 import { stateRoot } from './project.mjs';
 
 export const TERMINAL_FOLDER = 'handoff-terminals';
 // The variable the shell function sets for the host's program: the shell's own pid.
 export const SHELL_VAR = 'AIDRIAN_SHELL_PID';
-// How long a shell's record holds: the shell reads it the moment the host's program exits.
+// How long a shell's record holds: the shell reads it the moment the host's program exits. The shell function refuses an
+// expiry later than this, plus NEXT_MARGIN for a clock that moved, from the time it reads the record.
 export const NEXT_WINDOW = 60 * 1000;
+export const NEXT_MARGIN = 5 * 1000;
 // How long the helper waits after the Stop hook, so the host finishes its other Stop hooks and shows the last message.
 export const END_DELAY = 2000;
 // An id the shell function opens; the shell function holds it to the same pattern.
 export const OPEN_ID = /^[0-9A-Za-z][-_0-9A-Za-z]{3,127}$/u;
-const WORD = /^[a-z][a-z0-9-]{0,31}$/u;
-export const SHELLS = ['zsh', 'bash'];
 const HELPER = path.resolve(import.meta.dirname, '../scripts/end-host.mjs');
 
-const isPid = (value) => Number.isInteger(value) && value > 1 && value < 2 ** 31;
 export const replacer = (host) => host.capabilities.handoffContinue?.replaceTerminal ?? null;
 
 // The pid of the shell whose function started this session's host program, from `env`, or null.
@@ -63,22 +64,25 @@ export function terminalOf(host, { env, run }) {
   return isPid(hostPid) ? { hostPid, shell } : null;
 }
 
-// The session start's line for an attended session the shell function did not start, on a host that can replace a
-// terminal, while this machine's switch `background` is on and the working config's `handoff` resolves to the
-// background route in `auto` mode: after a handoff its terminal would stay on the old session. Else null.
-export function unwrappedLine({ host, background, handoff, env, human }) {
-  const replace = replacer(host);
-  if (!replace || background !== 'on' || handoff?.mode !== 'auto' || handoff?.continue !== 'background') return null;
-  if (shellPid(env) !== null || !replace.attended(env)) return null;
-  const update = typeof replace.updateCommand === 'string' ? `, with \`${replace.updateCommand}\`` : '';
-  return `Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's \`${replace.program}\`, ` +
-    `so after a background handoff this terminal stays on the old session beside the new one. For it to follow, ${human} runs ` +
-    '`aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal. ' +
-    `A copy of the plugin older than this one answers \`unknown command: shell-init\`: the plugin is updated first${update}.`;
-}
-
 // The folder shell records live in, under the state root `env` names.
 export const terminalFolder = (env = process.env) => path.join(stateRoot(env), TERMINAL_FOLDER);
+
+// Every folder a shell record may be written in, for the guard that keeps a subagent and an unattended session out of
+// them: the state root's, as `env` names it, and the user's own, under `home`, as lib/unattended-mark.mjs markFolders.
+export function terminalFolders({ env = process.env, home } = {}) {
+  const folders = [];
+  try {
+    folders.push(terminalFolder(env));
+  } catch {
+    // A state root the environment cannot give: the user's own still holds.
+  }
+  try {
+    folders.push(path.join(home ?? userInfo().homedir, '.local/state', 'aidrian', TERMINAL_FOLDER));
+  } catch {
+    // No user record: the environment's root alone.
+  }
+  return [...new Set(folders.map((folder) => path.resolve(folder)))];
+}
 
 // Writes the record of the shell `shell`: open the session `id` before the end of NEXT_WINDOW. Owner-only, through a
 // temporary file and a rename, in a folder that is the user's alone. Returns the file, or null. Never throws.
@@ -116,7 +120,7 @@ export function endAfterTurn({ host, session, take, unattended, follow = () => n
   if (!replace) return false;
   const request = take();
   if (!request) return false;
-  const ending = request.own === undefined ? ownProcess({ host, request, unattended, env, run }) : ownSession({ replace, request, session, unattended });
+  const ending = request.own === undefined ? ownProcess({ host, request, unattended, env, run }) : ownSession({ replace, request, session, unattended, env, run });
   if (!ending || !writeNext({ shell: request.shell, id: request.id, env, now })) return false;
   follow({ session: request.next ?? request.id, shell: request.shell });
   start({ host: host.id, ...ending, delay: END_DELAY });
@@ -130,10 +134,13 @@ function ownProcess({ host, request, unattended, env, run }) {
   return own && own.shell === request.shell && own.hostPid === request.hostPid ? { pid: own.hostPid, shell: own.shell } : null;
 }
 
-// The helper's arguments for a background session whose own id `session` is the request's, or starts with it.
-function ownSession({ replace, request, session, unattended }) {
-  if (typeof replace.endOwn !== 'function' || typeof session !== 'string' || !unattended()) return null;
-  return session === request.own || session.startsWith(request.own) ? { own: request.own, session } : null;
+// The helper's arguments for a background session whose own id `session` is the request's, or starts with it, which no
+// Human attends, while the shell it names is alive and the parent of the host's client, as a terminal attached to the
+// session is (replaceTerminal.hasClient).
+function ownSession({ replace, request, session, unattended, env, run }) {
+  if (typeof replace.endOwn !== 'function' || typeof session !== 'string' || replace.attended(env) || !unattended()) return null;
+  if (session !== request.own && !session.startsWith(request.own)) return null;
+  return replace.hasClient?.({ shell: request.shell, run }) === true ? { own: request.own, session } : null;
 }
 
 // Starts scripts/end-host.mjs detached, so it outlives the hook and the session it ends: `pid <pid> <shell>` for a host
@@ -163,46 +170,3 @@ export async function endHost({ host, pid, shell, own, session, delay, env = pro
 
 const canEndOwn = (replace, own, session) => typeof replace.endOwn === 'function' && typeof own === 'string' && OPEN_ID.test(own)
   && typeof session === 'string' && /^[\w-]{1,128}$/u.test(session);
-
-// The shell function for `shell`, one of SHELLS, that wraps each host program `hosts` can replace a terminal for, or null
-// for another shell.
-export function shellInit(shell, hosts = HOSTS) {
-  if (!SHELLS.includes(shell)) return null;
-  const replacers = hosts.map(replacer).filter(Boolean);
-  for (const { program, attach } of replacers) {
-    if (!WORD.test(program) || !WORD.test(attach)) throw new Error(`a host's program or attach word is not a plain word: ${program} ${attach}`);
-  }
-  const lines = [
-    `# aidrian shell-init ${shell}: once a session that handed off ends itself, open the new one in this terminal.`,
-    '# docs/handoff.md#replacing-the-terminal',
-  ];
-  for (const { program, attach } of replacers) lines.push(...shellFunction(shell, program, attach));
-  return `${lines.join('\n')}\n`;
-}
-
-// A function named `program` that runs it with SHELL_VAR set, then, while this shell's record is a regular file this
-// user owns, deletes it and opens the session it names when its id is plain and its expiry has not passed. It keeps the
-// exit code of the last program it ran, and runs nothing from the record but that id. zsh and bash read the same body;
-// zsh first resets its options for the function, so a setting such as RE_MATCH_PCRE cannot change the patterns.
-function shellFunction(shell, program, attach) {
-  return [
-    `${program}() {`,
-    ...(shell === 'zsh' ? ['  emulate -L zsh'] : []),
-    `  local rc id expires base=$HOME/.local/state pattern='${OPEN_ID.source}' digits='^[0-9]{1,12}$'`,
-    '  [[ $XDG_STATE_HOME == /* ]] && base=$XDG_STATE_HOME',
-    `  local next=$base/aidrian/${TERMINAL_FOLDER}/$$`,
-    `  ${SHELL_VAR}=$$ command ${program} "$@"`,
-    '  rc=$?',
-    '  while [[ -f $next && ! -L $next && -O $next ]]; do',
-    '    id= expires=',
-    "    IFS=' ' read -r id expires < \"$next\"",
-    '    command rm -f -- "$next"',
-    '    [[ $id =~ $pattern && $expires =~ $digits ]] || break',
-    '    (( expires >= $(command date +%s) )) || break',
-    `    ${SHELL_VAR}=$$ command ${program} ${attach} "$id"`,
-    '    rc=$?',
-    '  done',
-    '  return $rc',
-    '}',
-  ];
-}

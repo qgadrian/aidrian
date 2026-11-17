@@ -4,7 +4,7 @@
 import { spawnSync } from 'node:child_process';
 
 import { DEFAULTS, deepFreeze } from './config-defaults.mjs';
-import { legacyHandoff, merge } from './config-merge.mjs';
+import { handoffContinueDefault, legacyHandoff, merge } from './config-merge.mjs';
 import { NO_REVIEWER, SCHEMA } from './config-schema.mjs';
 import { versionProblem } from './config-version.mjs';
 import { isObject } from './fs.mjs';
@@ -36,6 +36,23 @@ export function firstTip(root, refs, git) {
 // branch name on origin, never the `git.defaultBranch` a working copy's config names. Null and throws as firstTip does.
 export const originDefaultTip = (root, git = () => undefined) => firstTip(root, ['refs/remotes/origin/HEAD', `refs/remotes/origin/${DEFAULTS.git.defaultBranch}`], git);
 
+// The commit of the base branch, from names the working copy cannot set (originDefaultTip). A branch that names itself in
+// config.json `git.defaultBranch` is not its own base. With no remote at all, a local branch of the plugin's default name
+// is the only record of the base; with any remote, whatever its name, a local branch can hold commits no one reviewed, so
+// it never stands in. null when none resolves, or when git fails on one.
+export function baseBranchTip(root) {
+  try {
+    const origin = originDefaultTip(root);
+    if (origin) return origin;
+  } catch {
+    return null;
+  }
+  const remotes = runGit(['remote'], root);
+  if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
+  const local = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${DEFAULTS.git.defaultBranch}^{commit}`], root);
+  return local.status === 0 ? local.stdout.trim() : null;
+}
+
 // Why a record read through the working copy's `state.dir` is not the one the committed config names, or null. `working`
 // and `committed` are configs, `where` names the commit's branch in the message, and `record` the record the reader reads.
 // Every command that holds does it through this one check.
@@ -57,7 +74,9 @@ export function configFromText(text, file, errors = []) {
   }
   if (!isObject(raw) || versionProblem(file, raw.version)) return DEFAULTS;
   const { version, ...rest } = raw;
-  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, file, errors), '', file, errors, []);
+  const values = legacyHandoff(rest, file, errors);
+  const config = merge(SCHEMA, DEFAULTS, values, '', file, errors, []);
+  config.session = { ...config.session, handoff: handoffContinueDefault(config.session.handoff, values) };
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   return deepFreeze(config);
 }

@@ -90,6 +90,10 @@ export PATH="${aidrian_dir}bin:$PATH"
   Those hooks run, write nothing they cannot read, and never send a Codex agent back.
 - No [handoff continuation](../handoff.md#continue) route runs here: the adapter lists none, so every
   `session.handoff.continue` falls back to `none`, and the reminder and the plan offer keep their text.
+  Its `sessionStart` still names `codex` as a command that starts a session, so a subagent, or a Claude Code session
+  the background route started, may not run `codex`, `codex exec`, `codex resume`, or any subcommand but `login`,
+  `logout`, `mcp`, `completion`, `features`, `help`, `--version`, and `--help` ([agent gates](../hooks.md#agent-gates)).
+  That list has not been checked against a live Codex; a subcommand it does not name counts as a start.
 
 To check that the hooks run, open a session, run `git commit --amend --dry-run`, and check that the Bash hook blocks it.
 

@@ -18,7 +18,7 @@ the tracker write guard, and the question names check also record each block: se
 | --- | --- | --- | --- |
 | A session or subagent starts | The [start lines](#start-lines); in a main session the clear command started, the [handoff continuation](handoff.md#the-clear-route) the cleared session armed, as a banner and start context | Claude Code, Codex; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
-| A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command, and one line naming the [background session](handoff.md#the-background-route) that owns the work when the session handed it off in the last 24 hours; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
@@ -60,6 +60,9 @@ At the start of every session and subagent, the hook prints:
   release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
+- in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
+  the session never asks the Human whether to hand off or keep going; it judges by itself and runs the
+  `session-handoff` skill when a handoff is worth it. `"ask"` and `"off"` print nothing;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
@@ -876,12 +879,43 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's.
+- A main session the [background handoff route](handoff.md#the-background-route) started is refused every machine
+  switch in that file the same way, as a subagent is: no Human attends it. The hook knows it by the unattended mark the
+  gate files, `$XDG_STATE_HOME/aidrian/unattended/<session id>.json`, or the one in `~/.local/state/aidrian/unattended/`
+  of the user it runs as, read on every call before it runs, wherever it runs: with no project at the call's folder,
+  the project the mark names is guarded, and from another project, that project's store and switches are guarded too.
+  A session started before the marks is known by its chain floor of route `background`, under its full id or a short
+  one, in the continuation store of the working copy's `state.dir` or the base branch's, where the hook's environment
+  and the user's own put it, and the hook reads that floor, and git, at most once a call, only for a call one of these
+  guards would refuse it. It is held as a subagent is to the continuation store, below, so it can neither delete
+  nor hide its own floor, and to the next three rules.
+  The host lists the new session's id only seconds after the session starts working, so before the gate starts it,
+  it files a pending mark, `pending.<the gate's session id>.json` in the same folder, naming the start folder and the
+  ids of the sessions the host lists then. While that mark is under 5 minutes old, every session with no mark of its
+  own, wherever its call runs, but the one that ran the gate and those the host listed, is held as unattended, since the
+  new session may change folder before its id is listed; the gate removes it once the new session's own mark is
+  written, or when nothing started, and a start whose outcome is unknown leaves it to lapse. A pending mark the hook
+  cannot read, or one that names no listing, holds every session but the gate's.
+- With or without gates or a project, a subagent, and a main session the background handoff route started, may not
+  write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
+  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
+- With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
+  a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
+  `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,
+  [Adding a host](providers/adding-a-host.md)), every host's whatever host runs the session; a shell it cannot read
+  that names such a program counts. A command that only manages sessions, such as `claude agents` or `claude stop`, runs.
+- With or without gates, the same two may not run `aidrian handoff continue` or `aidrian handoff route` with a
+  variable the command line sets or unsets that moves the gate's store, session, agent, or host command: `XDG_STATE_HOME`, `HOME`,
+  `PATH`, and each variable a host names or tells itself by, set by a prefix assignment, `env`, or `export`, or
+  unset by `env -u`, `env -i`, `sudo`, or `unset`, anywhere in the command. The gate also holds its store to the base branch's under the host's own environment
+  ([handoff.md](handoff.md#the-background-route)).
 - With or without gates, a subagent may not run `aidrian handoff continue`, the [handoff gate](handoff.md#the-gate),
   which arms a continuation of the main session: its shell carries the main session's id, so the command cannot tell it
   from the main session. It reads the command wherever it runs in the line, as the [decision answer rule](#bash-rules) does,
   and refuses a command word built from a variable or a substitution, as in `$AIDRIAN handoff continue x.md`,
   when its later plain words read `handoff`, then `continue`.
-- With or without gates, a subagent may not write in the continuation store, `<state>/handoffs/.continue/`, by a
+- With or without gates, a subagent may not write in the continuation store, `<state>/handoffs/.continue/`, nor
+  change the mode or owner of the store, a file in it, its handoffs folder, or the state folder, by a
   literal path to it, in any letter case on a disk that folds case, through a glob that may reach it, or after a `cd`
   the guard can follow, nor a file named as a marker that arms or delivers a continuation where the path is unknown,
   such as after a `cd` it cannot follow. Otherwise a subagent could write the marker it may not arm.
@@ -929,16 +963,16 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   reaches a file that sets them. Outside a read-only pipeline, each counts whether the command reads or writes, since the
   guard cannot tell, so the block
   says it may change the file, or, for a glob, that it may reach it; Read still reads the file
-  ([provider page](providers/claude-code.md#powershell-commands)). A subagent's command of more than 512 words, counting
-  each case, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
+  ([provider page](providers/claude-code.md#powershell-commands)). A command of more than 512 words, counting
+  each case, of a subagent or of a session the background route started, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
   such a call, and the gates are asked before any guard ([config](config.md#agents)).
 - The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
-  a subagent's call is refused, as the guards could not finish reading the command in time, and the main session's runs,
-  as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
+  a call of a subagent, or of a main session the background handoff route started, is refused, as the guards could not
+  finish reading the command in time, and an attended main session's runs, as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
   the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it
-  does not match. A subagent's Bash call of more than 1024 write targets, counting each folder a path may
-  be in, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
+  does not match. A Bash call of more than 1024 write targets, counting each folder a path may
+  be in, of a subagent or of a session the background route started, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
   reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
   so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.
   A link a glob passes is resolved from the spelling of its folder that reached it, and its target is compared with a
@@ -1151,7 +1185,11 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   before its first build step, from halfway to `costRatio`: a cost ratio of 1.5 by default.
 - Both word the handoff for the [continue route](handoff.md#continue) the session's host can do. With `clear`, `auto`
   runs the `session-handoff` skill, whose continue step arms the continuation, and ends the turn, and `ask` names what a
-  handoff then takes from the Human. With `none`, or a route the host does not list, the text is as above.
+  handoff then takes from the Human. With `background`, `auto` does the same and says a new session goes on in the
+  background while this one does nothing more, and a Human who is not watching is no reason to skip it; `ask` says
+  nothing is typed, and still counts a Human who is not watching. A background route this machine or the base branch
+  has not turned on is worded as the clear route the gate falls back to, read only on a stop that fires.
+  With `none`, or a route the host does not list, the text is as above.
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.

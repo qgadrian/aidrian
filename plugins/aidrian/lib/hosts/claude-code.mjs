@@ -5,8 +5,13 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { attachLine, findLine, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
+
+const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
+const agentName = (env) => env.CLAUDE_CODE_AGENT || null;
+const effort = (env) => env.CLAUDE_EFFORT || null;
 
 // CLAUDECODE=1 marks its hooks and its Bash tool; the others say the same for a process that lost that one.
 const MARKERS = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_AGENT', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_EFFORT'];
@@ -50,6 +55,21 @@ const shellWatch = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof in
 // docs/providers/claude-code.md#powershell-commands.
 const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 
+// Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
+// subagent and a session the background handoff route started, so no session starts outside the handoff gate.
+// `claude` with no subcommand starts one, as do `-p`, `--bg`, `--resume`, `--continue`, and a prompt; so does any word
+// this list does not name, and any option before the subcommand, so a subcommand added later is read as a start.
+// These manage the sessions and install that are there and start none (code.claude.com/docs/en/cli-reference);
+// `claude mcp serve` runs Claude Code as a server whose tools a client calls, so it counts as a start.
+const NO_SESSION = new Set(['agents', 'attach', 'stop', 'kill', 'logs', 'doctor', 'update', 'install', 'config', 'mcp', 'plugin', 'plugins', 'setup-token', 'auth', 'migrate-installer']);
+const INFO = new Set(['-v', '-V', '--version', '-h', '--help']);
+const startsSession = (args) => {
+  const [first, second] = args.map((token) => (token.dynamic ? null : token.text));
+  if (first === undefined) return true;
+  if (INFO.has(first)) return false;
+  return !NO_SESSION.has(first) || (first === 'mcp' && second === 'serve');
+};
+
 export default {
   id: 'claude-code',
   name: 'Claude Code',
@@ -58,15 +78,15 @@ export default {
   delivery: 'hooks-json',
   // The `models` key of config.json, and what the Agent tool takes for it. docs/config.md#models cites both.
   modelsKey: 'claude',
-  modelChoices: { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  modelChoices: MODEL_CHOICES,
   // Its models' prices, for the cost of the transcripts it writes (lib/model-prices.mjs).
   modelPrices,
   identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID'],
   detectVars: ['CLAUDECODE', ...MARKERS],
   detect: ({ env }) => env.CLAUDECODE === '1' || MARKERS.some((name) => Boolean(env[name])),
   sessionId: (env) => env.CLAUDE_CODE_SESSION_ID || null,
-  agentName: (env) => env.CLAUDE_CODE_AGENT || null,
-  effort: (env) => env.CLAUDE_EFFORT || null,
+  agentName,
+  effort,
   runEnv: (env) => (env.CLAUDE_CODE_REMOTE === 'true' ? 'cloud' : null),
   // `aidrian:<agent>` for this plugin's agents, and `<plugin>:<agent>` for another's.
   pluginAgentPrefix: 'aidrian:',
@@ -86,6 +106,7 @@ export default {
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
+  sessionStart: { programs: ['claude'], starts: startsSession },
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];
@@ -107,10 +128,24 @@ export default {
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
-    // the claude process, names the session before and after it.
+    // the claude process, names the session before and after it. The background route starts a new session with
+    // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
+    // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
+    // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, and `attachLine`
+    // says how to open one.
     handoffContinue: {
-      routes: ['clear'],
-      steps: { clear: 'type /clear, then any message' },
+      routes: ['clear', 'background'],
+      steps: {
+        clear: 'type /clear, then any message',
+        background: 'nothing to type, since a new session starts in the background and resumes from the brief by itself',
+      },
+      startBackground: ({ session, slug, chain, env, prompt, hold, run, wait }) => startBackground({
+        session, slug, chain, env, prompt, hold, run, wait, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
+      }),
+      stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
+      stopLine,
+      findLine,
+      attachLine,
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),

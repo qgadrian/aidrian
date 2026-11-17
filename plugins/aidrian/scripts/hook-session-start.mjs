@@ -2,10 +2,10 @@
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
 // ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
-// the main session only, a format line for chat replies, a line when the
-// lesson inbox holds open lessons, which escalates when the inbox needs triage, a line while persona audits in the
-// state folder hold untriaged findings (lib/audits.mjs auditNudge), a line when the plugin copy running
-// is older than the version the project requires (`requires` in config.json), and a line when the indexed docs hold
+// the main session only, a format line for chat replies, a handoff line while config.json `session.handoff.mode` is
+// "auto" (handoffLine), a line when the lesson inbox holds open lessons, which escalates when the inbox needs triage,
+// a line while persona audits in the state folder hold untriaged findings (lib/audits.mjs auditNudge), a line when the
+// plugin copy running is older than the version the project requires (`requires` in config.json), and a line when the indexed docs hold
 // unconfirmed decisions and config.json `decisions.unreviewed.remind` says so. Last, in the main session while
 // config.json `git.mainCheckout.guard` is on (lib/main-commits.mjs): a line when the session inherited the commit
 // guard's override, and up to three lines about the main checkout: local commits not on origin, a branch other than
@@ -75,6 +75,8 @@ async function mainSessionOutput(input, project, { lines, config, buckets }) {
   const out = [`${lines}\n${FORMAT}`];
   let delivery = null;
   try {
+    const handoff = handoffLine(config);
+    if (handoff) out.push(handoff);
     const floor = versionFloorProblem(config);
     if (floor) out.push(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
@@ -115,6 +117,16 @@ async function clearDelivery(input, project, config) {
   } catch {
     return null;
   }
+}
+
+// In "auto" mode the Human has already decided: the session judges when a handoff is worth it and hands off by itself.
+// Said up front, since a session asked the Human "hand off now or keep going?" on its own, outside any reminder. "ask"
+// and "off" print nothing: the reminders and the session-handoff skill say what each asks.
+function handoffLine(config) {
+  if (config.session?.handoff?.mode !== 'auto') return null;
+  const human = JSON.stringify(config.names.human);
+  return `Handoff: config.json session.handoff.mode is "auto", so this session never asks ${human} whether to hand off or ` +
+    'keep going. It judges that by itself and, when a handoff is worth it, runs the session-handoff skill; otherwise it keeps working.';
 }
 
 // The reminder of the decisions an agent made alone that the Human has not answered, from the indexed docs of the working

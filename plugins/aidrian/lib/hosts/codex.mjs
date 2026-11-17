@@ -67,6 +67,18 @@ function patchFiles(text) {
   return files.filter(({ file }) => file);
 }
 
+// Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
+// subagent and a session the background handoff route started. `codex` with no subcommand, `exec`, `resume`, `cloud`,
+// a prompt, and any word this list does not name start one; these manage its login, servers, and features, and start
+// none, a list not checked against a live Codex. `codex mcp-server` and `app-server` serve a client, so they count.
+const NO_SESSION = new Set(['login', 'logout', 'mcp', 'completion', 'features', 'help']);
+const INFO = new Set(['-V', '--version', '-h', '--help']);
+const startsSession = (args) => {
+  const first = args[0]?.dynamic ? null : args[0]?.text;
+  if (first === undefined) return true;
+  return !INFO.has(first) && !NO_SESSION.has(first);
+};
+
 const configFile = (env) => path.join(env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml');
 
 // The lines of the first section whose header `matches`, without the header, or null when there is none.
@@ -170,6 +182,7 @@ export default {
     const name = toolName(input.tool_name);
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },
+  sessionStart: { programs: ['codex'], starts: startsSession },
   fileEditTools: ['apply_patch'],
   fileEdit(_tool, given) {
     const text = String(given.command ?? given.input ?? '');

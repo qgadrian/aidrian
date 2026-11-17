@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "git": { "mainCheckout": { "guard": true } },
+  "github": {
+    "markReady": "ask",
+    "reviewLoop": "ask",
+    "extraRounds": "ask",
+    "reviewGate": { "enabled": true, "checklist": null }
+  },
+  "decisions": { "mode": "ask", "maxMode": "ask", "secondLook": { "agent": "critic", "minSeverity": "medium" } },
+  "session": { "handoff": { "mode": "ask", "continue": "none" } },
+  "audits": { "triage": { "issueCreation": "confirm" } }
+}

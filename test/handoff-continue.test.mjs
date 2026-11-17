@@ -150,9 +150,12 @@ test('every read refuses a symlink, a wrong shape, and a time outside its window
   write('ready-session-1.json', { ...armed, ended_at: Date.now(), host_pid: 1 });
   assert.equal(takeReady(store, { hostPid: 1 }), null, 'a host process id of 1');
   assert.ok(existsSync(path.join(store.dir, 'ready-session-1.json')), 'a refused marker is not claimed');
-  assert.equal(noteFrom(store, 'session-1', { slug: 'widget', chain: 4, brief: setting.file, route: 'clear' }), null, 'no write of a wrong shape');
+  assert.equal(noteFrom(store, 'session-1', { slug: 'widget', chain: 1.5, brief: setting.file, route: 'clear' }), null, 'no write of a wrong shape');
   assert.ok(noteFrom(store, 'session-1', { slug: 'widget', chain: 3, brief: setting.file, route: 'clear' }));
   assert.equal(readFrom(store, 'session-1').chain, 3);
+  // A floor above the maxChain of the config that reads it is stricter, never void: a lower maxChain cannot drop it.
+  assert.ok(noteFrom(store, 'session-1', { slug: 'widget', chain: 4, brief: setting.file, route: 'background' }));
+  assert.equal(readFrom(store, 'session-1').chain, 4);
 });
 
 test('the sweep removes markers past a day and floors past thirty days, and leaves other files', (t) => {
@@ -186,7 +189,13 @@ test('effectiveRoute: --route picks none, clear, or compact whatever the config 
   for (const configured of ['none', 'clear', 'compact', 'background']) {
     for (const override of ['none', 'clear', 'compact']) assert.deepEqual(effectiveRoute(configured, every, override), { route: override, fallback: null });
   }
-  assert.deepEqual(effectiveRoute('background', every, 'background'), { route: 'background', fallback: null });
+  // The background route asks its gate: this machine's switch and the base branch's config.
+  const open = () => ({ ok: true, maxChain: 2 });
+  assert.deepEqual(effectiveRoute('background', every, 'background', open), { route: 'background', fallback: null, maxChain: 2 });
+  assert.deepEqual(effectiveRoute('background', every, undefined, () => ({ ok: false, why: 'shut' })), { route: 'clear', fallback: 'shut; this handoff goes on by the clear route' });
+  const backgroundOnly = { name: 'bg', capabilities: { handoffContinue: { routes: ['background'] } } };
+  assert.deepEqual(effectiveRoute('background', backgroundOnly, undefined, () => ({ ok: false, why: 'shut' })), { route: 'none', fallback: 'shut; a person resumes the brief' });
+  assert.equal(effectiveRoute('background', every).route, 'clear', 'no gate given is a gate that says no');
   for (const configured of ['none', 'clear', 'compact']) {
     const { route, fallback } = effectiveRoute(configured, every, 'background');
     assert.equal(route, 'none');

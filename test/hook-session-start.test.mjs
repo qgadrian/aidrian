@@ -448,3 +448,19 @@ test('a git that hangs costs the main-checkout lines it stops and nothing else: 
     assert.ok(Date.now() - started < GIT_TIMEOUT_MS + 1500, `${word}: ${Date.now() - started} ms`);
   }
 });
+
+test('in handoff mode auto the main session hears it never asks whether to hand off; in ask and off, and in a subagent, nothing', (t) => {
+  const AUTO = 'Handoff: config.json session.handoff.mode is "auto", so this session never asks "the Human" whether to hand off or ' +
+    'keep going. It judges that by itself and, when a handoff is worth it, runs the session-handoff skill; otherwise it keeps working.';
+  const start = (handoff, args = []) => {
+    const project = decisionsProject(t, { 'a.md': 'Rule.\n' }, handoff ? { session: { handoff } } : {});
+    const result = hook({ input: JSON.stringify({ cwd: project }), args });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  const auto = start({ mode: 'auto' }).split('\n');
+  assert.equal(auto[auto.indexOf(FORMAT) + 1], AUTO, 'right after the format line');
+  assert.ok(start({ mode: 'auto', continue: 'clear' }).includes(AUTO), 'whatever the route');
+  for (const handoff of [{ mode: 'ask' }, { mode: 'off' }, null]) assert.doesNotMatch(start(handoff), /^Handoff:/mu, JSON.stringify(handoff));
+  assert.doesNotMatch(start({ mode: 'auto' }, ['--subagent']), /Handoff:/u, 'a subagent hands nothing off');
+});

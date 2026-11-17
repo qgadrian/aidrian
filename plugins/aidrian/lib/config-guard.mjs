@@ -86,12 +86,13 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'unattendedWaiver', valueIn: (parsed) => parsed?.github?.unattendedWaiver, name: 'github.unattendedWaiver', why: 'only the main session may let a recorded judge verdict waive the merge guard', patched: /^[+-].*(?:unattendedWaiver|"enabled"\s*:)/mu }),
   Object.freeze({ key: 'reviewApprovals', valueIn: (parsed) => parsed?.reviewApprovals, name: 'reviewApprovals', why: 'only the main session may let a named approver\'s review close a flow invariant, or stop it', patched: /^[+-].*reviewApprovals/mu }),
   Object.freeze({ key: 'unattendedSignoff', valueIn: (parsed) => parsed?.unattendedSignoff, name: 'unattendedSignoff', why: 'only the main session may let a judge\'s ruling close a flow invariant in place of the Human', patched: /^[+-].*unattendedSignoff/mu }),
+  Object.freeze({ key: 'background', valueIn: (parsed) => parsed?.handoff?.background, name: 'handoff.background', why: 'only the main session may let a handoff start sessions in the background with no Human', patched: /^[+-].*"background"\s*:/mu }),
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
 ]);
 
-// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, or
-// the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
+// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals,
+// the background handoff, or the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that names its key. It targets the file by its name, in any folder and
 // case, by a Bash glob whose last part matches that name, such as its name with a `*` for its end, or by a Bash glob from
 // a folder the lexer knows that passes a link to the file already on disk (globLinksTo), as `tee out/alias*` does
@@ -100,8 +101,10 @@ const SWITCHES = Object.freeze([
 // A command in a shell the lexer cannot read that names the local file, or has a glob that may reach it
 // (opaqueGlobReaches), is refused whether or not it names a key: it may set a switch by a key it builds, and the guard
 // cannot tell.
-export function machineSwitchWriteDenial(input, project, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+// A main session that `unattended()` says no Human attends, such as one the background handoff route started
+// (lib/handoff-guard.mjs startedUnattended), is refused as a subagent is. It is asked only for a call that sets a switch.
+export function machineSwitchWriteDenial(input, project, { names: { human } }, { unattended = () => false } = {}) {
+  const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
   const opaque = opaqueShellCommand(input) !== null;
   const isBash = bashCall(input);
   const named = SWITCHES.filter(({ key }) => !isBash || String(input.tool_input?.command).includes(key));
@@ -117,14 +120,16 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached) return null;
+  const hit = opaque || isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
+  if (!hit || (!subagent && !unattended())) return null;
+  // A session no Human attends is a main session, so the reason names the Human, not the main session.
+  const only = (text) => (subagent ? text : `${text.replace(/^only the main session/u, 'only a main session a Human attends')}, and the background handoff route started this one, with no Human`);
   if (opaque) {
     const how = aimed ? 'names' : 'has a glob that may reach';
-    const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which only the main session may set`;
+    const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which ${only('only the main session may set')}`;
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
   }
-  const hit = isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
-  if (!hit) return null;
-  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${hit.why}`, human) };
+  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}`, human) };
 }
 
 // Whether `input` is a Bash call; lib/handoff-guard.mjs asks it too.
@@ -223,46 +228,59 @@ const STEP = String.raw`(?:${READERS.map((name) => name.replace('?', '\\?')).joi
 const READ_ONLY = new RegExp(String.raw`^[ \t]*${STEP}(?:[ \t]*\|[ \t]*${STEP})*[ \t]*$`, 'iu');
 const BRACKET = /\[[^/]*\]/u;
 
-// The most words of a command in a shell the lexer cannot read that the guards resolve as paths and globs. A subagent's
-// command with more is refused (opaqueLimitDenial): a guarded file may hide in the rest. What the guards still cannot
+// The most words of a command in a shell the lexer cannot read that the guards resolve as paths and globs. A command
+// with more, of a subagent or a session no Human attends, is refused (opaqueLimitDenial): a guarded file may hide in the rest. What the guards still cannot
 // finish in time, the agent gate hook's time budget answers (deadlineDenial).
 export const OPAQUE_WORDS = 512;
 
-// The most targets of a Bash call the guards resolve: its paths, its globs, and the texts that may name a file. A
-// subagent's call with more is refused (writeLimitDenial), as the guards resolve no more.
+// The most targets of a Bash call the guards resolve: its paths, its globs, and the texts that may name a file. A call
+// with more, of a subagent or a session no Human attends, is refused (writeLimitDenial), as the guards resolve no more.
 export const WRITE_TARGETS = 1024;
 
 // A word as such a shell reads a leading `~`: `~` and `~/x` (`~\x`, its backslash read as a `/`) are in the home folder.
 const fromHome = (word) => (word === '~' || word.startsWith('~/') ? path.join(homedir(), word.slice(1)) : word);
 
-// Why the subagent call in `input` may not run because its command, in a shell the lexer cannot read, has more words than
-// the guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest.
-export function opaqueLimitDenial(input, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
+
+// Who alone may change the files the guards keep, as a reason says it to a subagent, and to a main session no Human
+// attends, which `unattended()` says it is.
+const onlyMain = (subagent) => (subagent ? 'only the main session may change'
+  : 'only a main session a Human attends may change, and the background handoff route started this one, with no Human');
+
+// Why the call in `input` may not run because its command, in a shell the lexer cannot read, has more words than the
+// guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds
+// for a subagent, and for a main session `unattended()` says no Human attends, asked last.
+export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false } = {}) {
   const opaque = opaqueShellCommand(input);
   if (opaque === null) return null;
   const count = opaqueWords(opaque).length;
   if (count <= OPAQUE_WORDS) return null;
-  const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file only the main session may change`;
+  const subagent = isSubagent(input);
+  if (!subagent && !unattended()) return null;
+  const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file ${onlyMain(subagent)}`;
   return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands') };
 }
 
-// Why the subagent's Bash call in `input` may not run because it writes more targets than the guards resolve
-// (WRITE_TARGETS), or null: { match, reason }. Past that many, a guarded file may hide in the rest.
-export function writeLimitDenial(input, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '' || !bashCall(input)) return null;
+// Why the Bash call in `input` may not run because it writes more targets than the guards resolve (WRITE_TARGETS), or
+// null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds as opaqueLimitDenial does.
+export function writeLimitDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+  if (!bashCall(input)) return null;
   const { files, names, globs } = writeTargets(input);
   const count = files.length + names.length + globs.length;
   if (count <= WRITE_TARGETS) return null;
-  const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file only the main session may change`;
+  const subagent = isSubagent(input);
+  if (!subagent && !unattended()) return null;
+  const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file ${onlyMain(subagent)}`;
   return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands') };
 }
 
-// Why the subagent call in `input` may not run because the guards could not finish reading it within the agent gate
-// hook's time budget (lib/deadline.mjs), or null for the main session, whose call runs: { match, reason }.
-export function deadlineDenial(input, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
-  const why = 'the guards could not finish reading this command in time, so it may change a file only the main session may change';
+// Why the call in `input` may not run because the guards could not finish reading it within the agent gate hook's time
+// budget (lib/deadline.mjs), or null for a main session a Human attends, whose call runs: { match, reason }. It holds
+// for a subagent, and for a main session `unattended()` says no Human attends.
+export function deadlineDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+  const subagent = isSubagent(input);
+  if (!subagent && !unattended()) return null;
+  const why = `the guards could not finish reading this command in time, so it may change a file ${onlyMain(subagent)}`;
   return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands') };
 }
 

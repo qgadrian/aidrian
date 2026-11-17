@@ -23,6 +23,15 @@ export function legacyHandoff(values, file, errors) {
   return { ...values, session: { ...values.session, handoff: { mode: handoff } } };
 }
 
+// `session.handoff` of the merged config with its `continue` default by mode: a file that sets `mode: "auto"` and no
+// `continue` hands off fully automatically, on the background route, which a host without it falls back from to none.
+// Any other mode keeps the default, none. A `continue` the file sets, valid or not, is merge's to judge.
+export function handoffContinueDefault(handoff, values) {
+  const given = isObject(values.session) && isObject(values.session.handoff) ? values.session.handoff : {};
+  if (handoff.mode !== 'auto' || Object.hasOwn(given, 'continue')) return handoff;
+  return { ...handoff, continue: 'background' };
+}
+
 export function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) {
   for (const key of Object.keys(values)) {
     const name = `${prefix}${key}`;

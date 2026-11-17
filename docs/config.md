@@ -7,7 +7,8 @@ It prints the errors and exits with its error code instead, such as 3 for `aidri
 The hooks keep working, with the default in place of each bad value.
 Without a `config.json`, the commands use the defaults.
 
-[`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example.
+[`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example,
+and [config-recipes.md](config-recipes.md) gives three checked starting configs by how much the Human steers.
 
 ## Keys
 
@@ -188,8 +189,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `session.handoff.mode` | What the [session-length reminder](handoff.md#the-reminder) and the plan handoff offer do: `"ask"`, `"auto"`, or `"off"`. |
 | `session.handoff.costRatio` | How many times a fresh session's cost each call must cost before the reminder fires, a number of 1.1 or more; it comes back once the ratio doubles since its last firing in `ask` mode, or climbs a step of `max(costRatio − 1, 1)` in `auto`, never below `costRatio`: [Handoff](handoff.md). |
 | `session.handoff.maxTokens` | An optional ceiling on the main session's context, in tokens, that fires the reminder on its own and doubles after each firing; `0`, the default, is off. |
-| `session.handoff.continue` | How the session goes on after its handoff: `"none"`, the default, `"clear"`, `"compact"`, or `"background"`. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
-| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. |
+| `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). `"background"` is read from the base branch, never a worktree's copy, and each machine turns it on too, with `"handoff": { "background": "on" }` in `.aidrian.local.json`; without both it falls back to `"clear"` where the host has it: [The background route](handoff.md#the-background-route). |
+| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. On the background route it is the base branch's, and at most 5 whatever it says. |
 | `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
 | `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
@@ -927,6 +928,11 @@ A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxToke
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 `session.handoff.continue` and `session.handoff.maxChain` came in a later release, so a project that sets either
 sets `requires.aidrian` to that release: an older plugin rejects them as unknown keys.
+Since the release with the [background route](handoff.md#the-background-route), an existing `mode: "auto"` config
+with no `continue` hands off fully automatically: the brief, then a new session started in the background, with
+nothing typed, on a host that runs that route, once the base branch has that config and the machine sets
+`"handoff": { "background": "on" }` in `.aidrian.local.json`. Until the machine does, the handoff goes on by the
+clear route, and the gate's `fallback:` line names that edit. `continue: "none"` keeps the earlier behaviour, a brief and the resume line.
 [handoff.md](handoff.md#config) lists the old keys and where each went.
 A project that adopts [`github.autoMerge`](#auto-merge), [`github.unattendedWaiver`](#unattended-waiver), or [`tracker`](#tracker) does the same,
 since an older plugin rejects the key.

@@ -115,22 +115,52 @@ const costLine = ({ ratio, breakEven }) =>
   `each call costs ${ratio.toFixed(1)} times what it would in a fresh session started from a handoff brief, ` +
   `and a handoff pays back after about ${Math.round(breakEven)} more model calls, an estimate`;
 
-// What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
-// marker's text or null. A compaction since the marker resets both triggers, so the session is reminded from costRatio
-// again. A firing changes only what the trigger that fired holds: the cost one records its ratio, the ceiling raises its
-// count past every doubling it reached. `continuation` is the hooks' { route, how }.
-export function stopReminder(text, handoff, markerText, continuation = {}) {
-  const usage = sessionUsage(text);
-  if (!usage.calls) return null;
+// Whether the plan offer's threshold holds: { byCost, byTokens }. Halfway from a fresh session's 1 to costRatio,
+// r ≥ 1 + (costRatio − 1) / 2, with a break-even, or half of maxTokens when the ceiling is set. `cost` is handoffCost's.
+function offerReached(handoff, usage, cost) {
+  return {
+    byCost: cost.breakEven !== null && cost.ratio >= 1 + (handoff.costRatio - 1) / 2,
+    byTokens: handoff.maxTokens > 0 && usage.last >= Math.ceil(handoff.maxTokens / 2),
+  };
+}
+
+// The one trigger decision the Stop hook and any reader share, from sessionUsage's `usage`, config.json
+// `session.handoff`, and the marker's text or null: { ratio, breakEven, level, nextRatio, context, ceiling, byCost,
+// byTokens, counts }. `counts` is the marker after the compaction reset: a compaction since the marker resets both
+// triggers. `byCost` and `byTokens` say whether each trigger fires on its own; `nextRatio` is the ratio the cost trigger
+// fires at, `ceiling` the context the token one fires at, or null when it is off. It reads `mode` only for the step of
+// nextRatio, as the Stop hook does, so `off` is the caller's to honour. `level` names the first that holds of:
+// - `ceiling`: the token trigger fires; `due`: the cost trigger fires.
+// - `reminded`: the marker records a firing, and the trigger that fired still holds at its first threshold, the ratio at
+//   or past costRatio with a break-even, or the context at or past maxTokens.
+// - `offer`: the plan offer's threshold holds; `quiet`: none does.
+export function handoffStatus(usage, handoff, markerText) {
   let counts = readMarker(markerText, usage.compactions, handoff.costRatio);
   if (usage.compactions > counts.compactions) counts = { lastRatio: 0, tokens: 0, compactions: usage.compactions };
   const cost = handoffCost(usage);
-  const ceiling = tokenCeiling(handoff.maxTokens, counts.tokens);
-  const byCost = cost.breakEven !== null && cost.ratio >= nextRatio(handoff.costRatio, counts.lastRatio, handoff.mode);
-  const byTokens = handoff.maxTokens > 0 && usage.last >= ceiling;
+  const next = nextRatio(handoff.costRatio, counts.lastRatio, handoff.mode);
+  const ceiling = handoff.maxTokens > 0 ? tokenCeiling(handoff.maxTokens, counts.tokens) : null;
+  const byCost = cost.breakEven !== null && cost.ratio >= next;
+  const byTokens = ceiling !== null && usage.last >= ceiling;
+  const held = (counts.lastRatio > 0 && cost.breakEven !== null && cost.ratio >= handoff.costRatio) ||
+    (counts.tokens > 0 && handoff.maxTokens > 0 && usage.last >= handoff.maxTokens);
+  const offer = offerReached(handoff, usage, cost);
+  const level = [[byTokens, 'ceiling'], [byCost, 'due'], [held, 'reminded'], [offer.byCost || offer.byTokens, 'offer']]
+    .find(([holds]) => holds)?.[1] ?? 'quiet';
+  return { ...cost, level, nextRatio: next, context: usage.last, ceiling, byCost, byTokens, counts };
+}
+
+// What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
+// marker's text or null; handoffStatus decides whether a trigger fires. A firing changes only what the trigger that fired
+// holds: the cost one records its ratio, the ceiling raises its count past every doubling it reached. `continuation` is
+// the hooks' { route, how }.
+export function stopReminder(text, handoff, markerText, continuation = {}) {
+  const usage = sessionUsage(text);
+  if (!usage.calls) return null;
+  const { ratio, breakEven, byCost, byTokens, counts } = handoffStatus(usage, handoff, markerText);
   if (!byCost && !byTokens) return null;
   const marker = {
-    lastRatio: byCost ? cost.ratio : counts.lastRatio,
+    lastRatio: byCost ? ratio : counts.lastRatio,
     tokens: byTokens ? tokensPassed(usage.last, handoff.maxTokens, counts.tokens) : counts.tokens,
     compactions: usage.compactions,
   };
@@ -138,7 +168,7 @@ export function stopReminder(text, handoff, markerText, continuation = {}) {
   if (byTokens) next.push(`the context reaches ${Math.round(tokenCeiling(handoff.maxTokens, marker.tokens) / 1000)}k tokens`);
   if (byCost) next.push(`each call costs ${round(nextRatio(handoff.costRatio, marker.lastRatio, handoff.mode))} times what a fresh session's would`);
   return {
-    reason: handoffReason(handoff.mode, { cost: byCost ? cost : null, tokens: byTokens ? usage.last : null, next, ...continuation }),
+    reason: handoffReason(handoff.mode, { cost: byCost ? { ratio, breakEven } : null, tokens: byTokens ? usage.last : null, next, ...continuation }),
     marker,
   };
 }
@@ -191,13 +221,12 @@ export function handoffReason(mode, { cost = null, tokens = null, next, route = 
 // What the plan hook adds once the Human approves a plan, or null. Halfway to costRatio is enough here: the plan is on
 // disk and nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning
 // context. It fires at r ≥ 1 + (costRatio − 1) / 2, halfway from a fresh session's 1 to costRatio, or at half of
-// maxTokens when the ceiling is set. `continuation` is the hooks' { route, how }: with the clear route the build starts in
-// the session the clear begins, never here.
+// maxTokens when the ceiling is set (offerReached, which handoffStatus's `offer` reads too). `continuation` is the hooks'
+// { route, how }: with the clear route the build starts in the session the clear begins, never here.
 export function planApprovedContext(handoff, usage, { route = 'none', how = null } = {}) {
   if (handoff.mode === 'off' || !usage.calls) return null;
   const cost = handoffCost(usage);
-  const byCost = cost.breakEven !== null && cost.ratio >= 1 + (handoff.costRatio - 1) / 2;
-  const byTokens = handoff.maxTokens > 0 && usage.last >= Math.ceil(handoff.maxTokens / 2);
+  const { byCost, byTokens } = offerReached(handoff, usage, cost);
   if (!byCost && !byTokens) return null;
   const found = [byTokens && `this session already carries ${kTokens(usage.last)}`, byCost && costLine(cost)].filter(Boolean).join(', and ');
   const head = `The plan is approved, and ${found}. ` +

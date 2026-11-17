@@ -60,6 +60,13 @@ When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks th
 - Claude Code validates the plugin and loads every agent, skill, and hook event.
 - Codex installs the plugin and shows every skill and agent in a project session.
 
+## Model prices
+
+The costs in the dispatch log come from price rows each host adapter owns ([Model prices](dispatch-log.md#model-prices)).
+The `model-prices` skill, `.claude/skills/model-prices/SKILL.md`, says how to refresh them from each vendor's page
+and open the pull request. It is a skill of this repository only, never shipped in the plugin.
+`aidrian report health` names a model with no row of its own, and a table read over 60 days ago.
+
 ## Trying a branch
 
 To try a branch in a real session before it merges, install the plugin from your checkout:

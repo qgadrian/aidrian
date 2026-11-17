@@ -8,9 +8,10 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { awaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
+import { priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -58,15 +59,30 @@ test('a request found in two transcripts folded into one result counts once', ()
   assert.equal(aggregateUsage(line, once).perModel['claude-opus-5-5'].calls, 1);
 });
 
-test('cost follows the price map: cache reads and writes at their multipliers, unknown models listed', () => {
+test('cost follows the price map: cache reads and writes at their multipliers, unknown and fallback models listed', () => {
   assert.equal(priceFor('claude-opus-5-5').input, 4);
-  assert.equal(priceFor('claude-sonnet-4-6').input, 3, 'the family fallback');
+  assert.equal(priceFor('claude-sonnet-4-6').input, 3, 'a row of its own');
   const perModel = {
     'claude-opus-5-5': { calls: 1, input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite5m: 1_000_000, cacheWrite1h: 1_000_000 },
     'gpt-x': { calls: 1, input: 5, output: 5, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
   };
   // 4 input + 20 output + 4 * 0.05 cache read + 4 * 1.25 + 4 * 2 cache writes.
-  assert.deepEqual(estimateCostUsd(perModel), { total: 37.2, unknownModels: ['gpt-x'], byModel: { 'claude-opus-5-5': 37.2 } });
+  assert.deepEqual(estimateCostUsd(perModel), { total: 37.2, unknownModels: ['gpt-x'], fallbackModels: [], byModel: { 'claude-opus-5-5': 37.2 } });
+  const future = { 'claude-sonnet-9-9': { calls: 1, input: 1_000_000, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 } };
+  assert.deepEqual(estimateCostUsd(future).fallbackModels, ['claude-sonnet-9-9'], 'a model only a family row prices is named');
+});
+
+test('a Haiku 5.5 request over 100,000 prompt tokens is billed at the higher price, and counted once in the tokens', () => {
+  const big = usageLine('big', 'claude-haiku-5-5', { input_tokens: 10, cache_read_input_tokens: 150_000, output_tokens: 1000 });
+  const small = usageLine('small', 'claude-haiku-5-5', { input_tokens: 1000, cache_read_input_tokens: 50_000, output_tokens: 1000 });
+  const { perModel } = aggregateUsage([big, small].join('\n'));
+  const usage = perModel['claude-haiku-5-5'];
+  assert.equal(usage.calls, 2);
+  assert.equal(usage.over.calls, 1);
+  assert.equal(sumTokens(perModel).cache_read, 200_000);
+  // Small: 1000 * 0.1 + 50,000 * 0.01 + 1000 * 0.5. Big: 10 * 0.5 + 150,000 * 0.05 + 1000 * 2.5. Per million tokens.
+  const expected = (1000 * 0.1 + 50_000 * 0.01 + 1000 * 0.5 + 10 * 0.5 + 150_000 * 0.05 + 1000 * 2.5) / 1_000_000;
+  assert.equal(estimateCostUsd(perModel).total, Math.round(expected * 10000) / 10000);
 });
 
 test('sessionActions: the skills a session ran, the drafts it opened, and its review runs, each call counted once', () => {

@@ -33,7 +33,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | --- | --- |
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's API requests, each request counted once. |
-| `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
+| `models`, `cost_usd` | The models it used, and the cost estimated from list prices (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written ([delivery check](hooks.md#delivery-check)), `chat` for none. |
@@ -252,7 +252,7 @@ Most costly sessions, top 3:
 - **tool calls per request that made one**: 1.00 means every turn made one tool call at a time;
   a higher number means the agent batched independent calls into one turn, which saves a round trip each.
 - **Cache writes**: a 1-hour write costs 2x the input price, a 5-minute write 1.25x. A large 1-hour share explains a cost that tokens alone do not.
-- **Unpriced models**: a model the price map in `lib/transcript.mjs` does not know counts as $0 in every figure; this line names it.
+- **Unpriced models**: a model no [price table](#model-prices) knows counts as $0 in every figure; this line names it.
   `--json` lists them in `unknown_models`.
 - **Per effort**: `-` is a session whose main conversation recorded no level, such as one logged before the field existed.
 - A session logged before the main and subagent split counts in the total, per day, and per effort; a `Partial:` line says how many.
@@ -410,6 +410,7 @@ Signals; n is the sample, and a signal under 5 (telemetry.health.minSample) is n
   Hook denies: problem (n=10 sessions); 6 blocks: git-amend 6 (5 or more by one rule is a hot spot)
   Decisions: not enough data (n=2, needs 5 reviewed); 4 made alone, 7 escalated (20% overridden or more is a problem)
   Session cost: ok (n=5 sessions a half); 10 sessions, $22.50; $2.50 a session in the newer half against $2.00, up 25% (threshold 50%)
+  Model prices: ok; 4 models in the window, 0 without a price row of its own; every table read within 60 days
   Lessons: problem; 2 open, 1 P1, the oldest 6 days; 0 fixes in the window, 0 recurred
 ```
 
@@ -434,6 +435,9 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
   The line also counts the decisions made alone and escalated. Fix: `decision-authority`.
 - **Session cost**, over each half of the window's sessions, in the order they ended: a problem when the newer half costs
   over `costRisePercent` more a session than the older half. Fix: `cost`.
+- **Model prices**, over the models the window's `session` and `stop` rows ran, priced by the tables as they are now:
+  a problem when a model has no [price row](#model-prices) of its own, so a family's fallback row priced it or none did,
+  or when a table holds a row read over 60 days ago. Its lessons target the plugin. Fix: `prices`.
 - **Lessons**, over the open lessons in the project's inbox: a problem when a P1 is open, a fix resolved in the window recurred,
   or the inbox passes `lessons.maxOpen` or `lessons.maxAgeDays`. Fix: `lesson-triage`.
 
@@ -445,7 +449,7 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
   the agent's line counts it as `N unknown`, and a `Partial:` line under the title counts them all.
 - **unavailable**: the reviews when `gh` cannot answer, and the hook denies while `telemetry.hookDenies` is off.
 - **Problems** are ranked by kind: a P1 lesson; a draft no review round saw; the knowledge budget; an agent re-dispatched, then sent back;
-  review rounds, then late findings; decisions the Human overrides; a hook-deny hot spot; a fix that recurred; rising cost;
+  review rounds, then late findings; decisions the Human overrides; a hook-deny hot spot; a fix that recurred; rising cost; a model without its own price row, then a stale price table;
   the doc with the most bytes read; tagged docs nobody read; the lesson backlog. Within a kind, the one furthest over its threshold comes first.
 - **Fix** names a row of the `harness-health` skill's fix table, which says what to do and who does it. A test holds the two lists equal.
 
@@ -463,6 +467,24 @@ when no resolved lesson holds the key.
 Every verdict compares unrounded numbers; the page rounds only what it prints, to a tenth of a percent where a whole one
 would read as the threshold, and a cost under ten cents to two significant digits.
 
+## Model prices
+
+Each host adapter owns its models' prices as data, `modelPrices` in `lib/hosts/<host>.mjs`; Claude Code's are in
+`lib/hosts/claude-code-prices.mjs`. `lib/model-prices.mjs` reads every host's table and does the lookup and the math,
+assuming no host. A table has:
+
+- `models`: the model ids the host's model choices name today. A test fails when one has no row of its own,
+  or when a model choice names none of them.
+- `rows`: `{ match, input, output, cacheRead?, over?, source, readOn }`, USD per million tokens from the page `source`, read on `readOn`.
+  `match` is a version, such as `opus-4-1`, and matches a model id where that version ends, so `opus-4` never prices `opus-4-5`.
+  `cacheRead` is a cache hit's multiple of the input rate, 0.1 unless set; cache writes cost 1.25x (5 minutes) and 2x (1 hour).
+  `over` is the price of a request whose prompt, cache reads and writes included, is over `over.prompt` tokens.
+  A row with `fallback: true` prices a family's model that no row of its own names, at the family's newest price, and
+  flags it, so `aidrian report health` names the model. A row with `unconfirmed` is a retired price the page no longer lists.
+
+Codex has no prices yet: nothing reads its transcripts, so its sessions have no cost. A model no table prices costs $0
+and is named as unpriced. The repository's `model-prices` skill says how a maintainer reads the price pages and updates the rows.
+
 ## Limits
 
 - **Claude Code only**, except `hook_deny` rows. Codex has no Agent tool, and its stop and session payloads are not verified.
@@ -474,8 +496,8 @@ would read as the threshold, and a cost under ten cents to two significant digit
 - **Decisions on this machine.** The rows sit in this machine's log, so a decision another machine reviewed counts there,
   and a marker edited by hand counts nowhere.
 - **Only the plugin's own blocks.** A block by Claude Code's permissions, or by another plugin's or the project's hook, writes no row.
-- **Costs are estimates** from list prices, read on the date in `lib/transcript.mjs`. A model missing from the price
-  map counts as zero.
+- **Costs are estimates** from list prices, read on the date each [price row](#model-prices) records. A model no table
+  prices counts as zero.
 - **A background dispatch** writes its `dispatch` row at launch, without time or tool counts; its `stop` row has the rest.
   The report counts `stop` rows with no `dispatch` row, so a host change that breaks the join is visible.
 - **The delivery check reads the last message only, line by line.** It cannot know a path the dispatcher expected but

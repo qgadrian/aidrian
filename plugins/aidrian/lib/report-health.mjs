@@ -1,5 +1,5 @@
-// `aidrian report health`: one page over the other views. Nine signals (the knowledge budget, doc reads, agents, review
-// rounds, unreviewed drafts, hook denies, overridden decisions, session cost, and the lesson inbox), each with its sample size and its
+// `aidrian report health`: one page over the other views. Ten signals (the knowledge budget, doc reads, agents, review
+// rounds, unreviewed drafts, hook denies, overridden decisions, session cost, model prices, and the lesson inbox), each with its sample size and its
 // threshold, mostly from config.json `telemetry.health`; then the problems, worst first, each naming the row of the
 // harness-health skill's fix table that answers it. A signal with fewer than `minSample` samples says "not enough data"
 // and is never a problem. Every verdict compares unrounded numbers; only what the view prints is rounded.
@@ -9,8 +9,10 @@ import { summarize, summarizeDenies } from './report-agents.mjs';
 import { summarizeDocs } from './report-docs.mjs';
 import { NO_BOT } from './report-reviews.mjs';
 import { endedSessions, latestRows } from './jsonl.mjs';
+import { priceTables } from './hosts/index.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
+import { priceFor, STALE_DAYS, staleTables } from './model-prices.mjs';
 import { summarizeSessions } from './report-sessions.mjs';
 
 // Each kind of problem, worst first, and its fix: the row of the harness-health skill's fix table that answers it.
@@ -28,6 +30,8 @@ export const FIXES = {
   'deny-hot-spot': 'deny-rule',
   'fix-recurred': 'lesson-triage',
   'cost-rise': 'cost',
+  'price-fallback': 'prices',
+  'price-stale': 'prices',
   'top-doc': 'split-doc',
   'never-read': 'split-doc',
   'lesson-backlog': 'lesson-triage',
@@ -43,7 +47,7 @@ const labels = ({ tier, kind, target, key }) => ({ tier, kind, target, key });
 const SIGNAL_OF = {
   'always-budget': 'budget', 'tagged-doc': 'budget', redispatch: 'agents', 'sent-back': 'agents', 'review-rounds': 'reviews',
   'late-findings': 'reviews', 'unreviewed-draft': 'drafts', 'deny-hot-spot': 'denies', 'decision-override': 'decisions', 'cost-rise': 'cost', 'top-doc': 'docs',
-  'never-read': 'docs',
+  'never-read': 'docs', 'price-fallback': 'prices', 'price-stale': 'prices',
 };
 
 const OK = 'ok';
@@ -76,7 +80,7 @@ export function summarizeHealth(input) {
 }
 
 // Every signal over the rows since `sinceMs`, and the problems they found, unranked.
-function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lessons = [], config }) {
+function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lessons = [], config, prices = priceTables() }) {
   const limits = config.telemetry.health;
   const problems = [];
   const add = (kind, fields) => problems.push({ kind, fix: FIXES[kind], subject: null, lesson: null, ...fields });
@@ -89,6 +93,7 @@ function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lesson
     denies: deniesSignal(rows, sinceMs, limits, config.telemetry.hookDenies, add),
     decisions: decisionsSignal(rows, sinceMs, limits, add),
     cost: costSignal(rows, sinceMs, limits, add),
+    prices: pricesSignal(rows, sinceMs, now, prices, add),
     lessons: lessonsSignal(lessons, sinceMs, now, config.lessons, add),
   };
   return { problems, signals };
@@ -368,6 +373,37 @@ function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
   return { status: PROBLEM, ...base };
 }
 
+// The models the window's session and stop rows ran that no price row of their own prices, from the host adapters' tables
+// (lib/model-prices.mjs) as they are now, and the tables read more than STALE_DAYS ago. Counts and dates, so no minimum
+// sample applies. The tables are the plugin's, so each problem's lesson targets the plugin.
+function pricesSignal(rows, sinceMs, now, tables, add) {
+  const ran = rows.filter((row) => (row.event === 'session' || row.event === 'stop') && Date.parse(row.ts) >= sinceMs);
+  const models = [...new Set(ran.flatMap((row) => (Array.isArray(row.models) ? row.models : [])))].sort();
+  const priced = models.map((model) => [model, priceFor(model, tables)]);
+  const fallback = priced.filter(([, price]) => price?.fallback).map(([model]) => model);
+  const unpriced = priced.filter(([, price]) => !price).map(([model]) => model);
+  const stale = staleTables(now, tables);
+  const sample = { n: models.length, of: 'models' };
+  if (fallback.length || unpriced.length) {
+    const named = [...fallback.map((model) => `${model} (at its family's price)`), ...unpriced.map((model) => `${model} (unpriced, $0)`)];
+    const verb = named.length === 1 ? 'has no price row of its own' : 'have no price row of their own';
+    add('price-fallback', {
+      value: named.length, threshold: 0, sample,
+      summary: `${plural(named.length, 'model')} in the window ${verb}, so the cost is an estimate: ${named.join(', ')}.`,
+      lesson: { tier: 'P3', kind: 'improvement', target: 'plugin', key: 'health:price-fallback' },
+    });
+  }
+  if (stale.length) {
+    add('price-stale', {
+      value: stale[0].days, threshold: STALE_DAYS, sample: { n: stale.length, of: 'price tables' },
+      summary: `The model prices were last read over ${STALE_DAYS} days ago: ${stale.map((table) => `${table.host} on ${table.read_on}, ${table.days} days`).join('; ')}.`,
+      lesson: { tier: 'P3', kind: 'improvement', target: 'plugin', key: 'health:price-stale' },
+    });
+  }
+  const status = fallback.length || unpriced.length || stale.length ? PROBLEM : OK;
+  return { status, sample, fallback, unpriced, stale };
+}
+
 // The lesson inbox: P1 lessons, the backlog against lessons.maxOpen and lessons.maxAgeDays, and fixes since `sinceMs`
 // that recurred. These are counts, not rates, so no minimum sample applies; each is already a lesson.
 function lessonsSignal(lessons, sinceMs, now, { maxOpen, maxAgeDays }, add) {
@@ -416,7 +452,7 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
     lines.push('Problems: none at these thresholds.');
   }
   lines.push(`Signals; n is the sample, and a signal under ${minSample} (telemetry.health.minSample) is not judged:`);
-  const { budget, docs, agents, reviews, drafts, denies, decisions, cost, lessons } = signals;
+  const { budget, docs, agents, reviews, drafts, denies, decisions, cost, prices, lessons } = signals;
   const head = (name, signal) => `  ${name}: ${LABELS[signal.status]}`;
   lines.push(`${head('Knowledge budget', budget)}; always docs ${budget.always_bytes} of ${thresholds.budgets.alwaysBytes} bytes, ` +
     `${budget.oversized.length} of ${budget.sample.n} indexed docs tagged and over ${thresholds.budgets.taggedDocBytes} bytes`);
@@ -456,6 +492,11 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
   const trend = cost.change_percent === null ? '' : `; ${money(cost.newer.avg_usd)} a session in the newer half against ${money(cost.older.avg_usd)}, ` +
     `${cost.change_percent >= 0 ? 'up' : 'down'} ${Math.abs(cost.change_percent)}% (threshold ${thresholds.health.costRisePercent}%)`;
   lines.push(`${head('Session cost', cost)} (${n(cost.older.n, minSample)} sessions a half); ${plural(cost.sample.n, 'session')}, ${money(cost.cost_usd)}${trend}`);
+  const without = [...prices.fallback, ...prices.unpriced];
+  const listed = without.length ? `: ${without.join(', ')}` : '';
+  const read = prices.stale.length ? `tables read over ${STALE_DAYS} days ago: ${prices.stale.map((table) => table.host).join(', ')}`
+    : `every table read within ${STALE_DAYS} days`;
+  lines.push(`${head('Model prices', prices)}; ${plural(prices.sample.n, 'model')} in the window, ${without.length} without a price row of its own${listed}; ${read}`);
   const oldest = lessons.oldest_days === null ? '' : `, the oldest ${lessons.oldest_days} days`;
   lines.push(`${head('Lessons', lessons)}; ${lessons.sample.n} open, ${lessons.p1} P1${oldest}; ` +
     `${plural(lessons.fixes, 'fix', 'fixes')} in the window, ${lessons.recurred.length} recurred`);

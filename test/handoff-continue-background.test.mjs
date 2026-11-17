@@ -232,7 +232,8 @@ test('no pending mark, no start: the handoff goes on by the clear route, and a s
   assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since the gate could not record the pending mark that holds the new session as unattended until its own mark is written; this handoff goes on by the clear route']);
   assert.equal(bgCalls(calls).length, 0, 'the host started nothing');
 
-  // `claude --bg` exited 1, and the listing holds no new background session: nothing started.
+  // `claude --bg` refused the start with `Workspace not trusted`, and the listing holds no new background session:
+  // nothing started. Any other non-zero exit is uncertain (the next test).
   const other = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
   t.after(() => rmSync(other, { recursive: true, force: true }));
   const refused = fakeRun({ own: setting.dir, lag: Infinity, start: () => ({ status: 1, stdout: '', stderr: 'Workspace not trusted' }) });
@@ -246,6 +247,8 @@ test('a launch whose outcome is unknown keeps its pending mark, arms nothing, an
     ['an exit 0 with no id', { printId: false }, /since `claude --bg` printed no session id, and `claude agents` lists no session it started\./u],
     ['a timeout', { start: () => ({ error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), status: null, stdout: '' }) }, /since `claude --bg` did not finish \(ETIMEDOUT\)/u],
     ['a signal', { start: () => ({ status: null, signal: 'SIGKILL', stdout: '' }) }, /since `claude --bg` was stopped \(SIGKILL\)/u],
+    // The supervisor took the start, then `claude --bg` exited 1, and the listing names the session only after the window.
+    ['a non-zero exit', { lag: 20, start: () => ({ status: 1, stdout: '', stderr: 'Error: the supervisor stopped answering' }) }, /since `claude --bg` exited 1: Error: the supervisor stopped answering\./u],
   ];
   for (const [label, options, reason] of cases) {
     const setting = setup(t);
@@ -253,7 +256,9 @@ test('a launch whose outcome is unknown keeps its pending mark, arms nothing, an
     const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
     t.after(() => rmSync(xdg, { recursive: true, force: true }));
     const env = { ...setting.env, XDG_STATE_HOME: xdg };
-    const result = gate(setting, { run: fakeRun({ own: setting.dir, lag: Infinity, ...options }).run, env });
+    const { run, calls } = fakeRun({ own: setting.dir, lag: Infinity, ...options });
+    const result = gate(setting, { run, env });
+    assert.equal(bgCalls(calls).length, 1, `${label}: the start was submitted`);
     assert.deepEqual([result.exitCode, result.out[0], result.out.length], [0, 'continue: none', 2], label);
     assert.match(result.out[1], /^fallback: a background session may have started though the gate cannot name it, since /u, label);
     assert.match(result.out[1], reason, label);
@@ -425,7 +430,8 @@ test('a start that fails goes on by the clear route with the reason and records 
   const setting = setup(t);
   passCheck(setting);
   const cases = [
-    [{ error: Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }), status: null }, /^fallback: no background session started, since `claude` is not on PATH; this handoff goes on by the clear route$/u],
+    [{ error: Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }), status: null }, /^fallback: no background session started, since `claude` could not be run \(ENOENT\); this handoff goes on by the clear route$/u],
+    [{ error: Object.assign(new Error('spawn claude EACCES'), { code: 'EACCES' }), status: null }, /^fallback: no background session started, since `claude` could not be run \(EACCES\); this handoff goes on by the clear route$/u],
     [{ status: 1, stdout: '', stderr: 'Workspace not trusted. Run `claude` in /x\u001b[31m once.\nmore' }, /^fallback: no background session started, since `claude --bg` exited 1: Workspace not trusted\. Run `claude` in \/x \[31m once\.; this handoff/u],
   ];
   for (const [answer, pattern] of cases) {
@@ -688,7 +694,7 @@ test('aidrian handoff verify passes the kept copy as the gate kept it, and refus
   assert.equal(verify(kept).status, 2, 'usage without the sha256');
 });
 
-test('the new session starts in the permission mode of the handing-off session, never with checks bypassed, and in the host\'s default when it is unknown', (t) => {
+test('the new session starts in the permission mode of the handing-off session, and none starts when that is bypassed or unknown', (t) => {
   const start = (mode, write) => {
     const setting = setup(t, { mode });
     if (write) write(setting);
@@ -707,24 +713,20 @@ test('the new session starts in the permission mode of the handing-off session, 
   assert.equal(bypass.args, null, 'no session started');
   assert.deepEqual(bypass.result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since this session runs with permission checks bypassed, and a session no Human attends never starts that way; this handoff goes on by the clear route']);
 
-  // No transcript, an entry of another session, or a mode the host does not list: the default, said in the say line.
-  const unknownSay = / It runs in the host's default permission mode, since this session's own could not be read, so it may stop at a permission prompt\. It resumes from /u;
+  // No transcript, an entry of another session, or a mode the host does not list: the host's default may bypass
+  // permission checks, so none starts, and the handoff goes on by the clear route.
   const cases = [
     ['no transcript', null, null],
     ['another session\'s entry', null, (setting) => writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId: 'someone-else' })}\n`)],
     ['a mode it does not list', 'everything', null],
   ];
   for (const [label, mode, write] of cases) {
-    const { result, args, flag } = start(mode, write);
-    assert.equal(result.out[0], 'continue: background', label);
-    assert.ok(args && flag === null, `${label}: no --permission-mode`);
-    assert.match(result.out[1], unknownSay, label);
+    const { result, args } = start(mode, write);
+    assert.equal(args, null, `${label}: no session started`);
+    assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since the permission mode of this session could not be read, and the host\'s default may bypass permission checks; this handoff goes on by the clear route'], label);
   }
-  // A known mode says nothing of it, and a second run on the same bytes says the same as the first.
-  const known = start('auto');
-  assert.doesNotMatch(known.result.out[1], /permission mode/u);
-  const silent = start(null);
-  assert.match(gate(silent.setting, { run: fakeRun({ own: silent.setting.dir }).run }).out[1], unknownSay, 'the start record keeps the unknown mode');
+  // A known mode says nothing of it.
+  assert.doesNotMatch(start('auto').result.out[1], /permission mode/u);
   // The transcript is found in another project folder when the start folder's is not there.
   const moved = start('dontAsk', (setting) => {
     const other = path.join(path.dirname(setting.transcripts), '-elsewhere');

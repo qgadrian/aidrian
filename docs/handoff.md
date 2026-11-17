@@ -275,8 +275,8 @@ to another folder falls back to the clear route with that reason; committing `st
    session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent,
    effort, and permission mode when the host tells them; with no usable name, the brief's slug. A handing-off session
    that runs with permission checks bypassed starts none, and the handoff goes on by the clear route: a session no
-   Human attends never runs that way. When the host cannot tell the mode, the new session starts in the host's
-   default, and the `say:` line says it may stop at a permission prompt.
+   Human attends never runs that way. When the host cannot tell the mode, none starts either, since the host's default
+   may bypass permission checks, and the `fallback:` line says the mode could not be read.
 4. Its first message is the continuation: the brief's path, the kept copy to read and its sha256, its slug, and the
    continuation's number, never the brief's text. It first runs `aidrian handoff verify <copy> <sha256>`, which exits 0
    only when the copy is a regular file of the session's user, named for that sha256, whose bytes still hash to it, and
@@ -291,9 +291,10 @@ to another folder falls back to the clear route with that reason; committing `st
    listing lags, it files the floor under the short id the start printed, and every session id that starts with it
    reads that floor. Under the same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`,
    which names the project's main checkout, so the hooks know the session wherever its calls run (Limits, below).
-   A start that surely made nothing, such as one whose host command exited non-zero while the listing shows no new
-   session, falls back to the clear route. A start whose outcome is unknown, such as one that timed out, was stopped by a
-   signal, or exited 0 with no id that the listing then names, may have started a session the gate cannot name: the gate
+   A start that surely made nothing, one whose host command never ran or refused the start in a way the host adapter
+   knows, such as an untrusted folder, while the listing shows no new session, falls back to the clear route. A start
+   whose outcome is unknown, such as one that exited non-zero for any other reason, timed out, was stopped by a signal,
+   or exited 0 with no id that the listing then names, may have started a session the gate cannot name: the gate
    keeps the pending mark until it lapses, arms no clear beside it, and prints `continue: none` and a `fallback:` line
    that says so and how to find and stop it through the host. A session that runs past the pending mark's 5 minutes
    is no longer held and has no chain floor, so the line asks the Human to stop it before anything resumes the brief.

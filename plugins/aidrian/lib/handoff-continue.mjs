@@ -332,7 +332,7 @@ function safely(act) {
 function startedLines(host, marker) {
   const look = host.capabilities.handoffContinue.attachLine?.({ id: marker.id, name: marker.name }) ?? `its id is ${marker.id}`;
   const named = marker.name ? ` '${marker.name}'` : '';
-  // A mode the adapter could not read: the session starts in the host's default, which may stop at a permission prompt.
+  // A start record an earlier version wrote, whose session started in the host's default mode: it may stop at a prompt.
   const mode = marker.mode === null ? ' It runs in the host\'s default permission mode, since this session\'s own could not be read, so it may stop at a permission prompt.' : '';
   return {
     exitCode: 0,

@@ -228,10 +228,11 @@ the absolute folders of PATH alone, so an empty or relative entry never runs a `
    The gate records the chain floor under its `sessionId`, else under the short id.
 
 A start that printed no id and that the listing does not show returns a problem. It is certain that nothing started
-only when `claude` never ran, or exited non-zero while the last listing holds no background session the first did not:
-then the gate falls back to the clear route. Anything else, such as no exit within 60 seconds, a signal, or exit 0
-with no id the listing names, is an uncertain launch, which keeps the pending mark (`uncertain: true`), and `findLine`
-names `claude agents` and `claude stop <id>` for the Human. A started session the gate cannot write a floor, mark, or start record
+only when `claude` never ran (`ENOENT` or `EACCES`), or exited non-zero with `Workspace not trusted` while the last
+listing holds no background session the first did not: then the gate falls back to the clear route. Anything else,
+such as any other non-zero exit, no exit within 60 seconds, a signal, or exit 0 with no id the listing names, is an
+uncertain launch, since the supervisor may have taken the start and list its session later: it keeps the pending
+mark (`uncertain: true`), and `findLine` names `claude agents` and `claude stop <id>` for the Human. A started session the gate cannot write a floor, mark, or start record
 for is stopped with `claude stop <id>`. The `say:` line leads with `claude attach <id>`, adds `claude attach '<name>'` only when the
 name is plain words, digits, spaces, and `.@:·-`, and no other listed session has it, and names `claude agents`.
 
@@ -245,8 +246,8 @@ Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rath
 - The background session ran the plugin's SessionStart hook, whose project knowledge line reached its context, and its
   UserPromptSubmit and Stop hooks. Its Bash tool's `CLAUDE_CODE_SESSION_ID` was its own id, not the starting
   session's, and `CLAUDE_CODE_AGENT` was unset: the variables of the shell that ran `claude --bg` do not reach it.
-- In a folder the host has not trusted, with no terminal to ask, `claude --bg` exits 1 with `Workspace not trusted`,
-  which the gate turns into a fallback.
+- In a folder the host has not trusted, with no terminal to ask, `claude --bg` exits 1 with `Workspace not trusted`
+  before it starts anything, which the gate turns into a fallback. It is the one refusal the adapter knows.
 - The background session started on the model and effort of the user's settings, not the starting session's.
   `CLAUDE_EFFORT` carries the effort; the model is not passed on.
 - Neither the shell of the session's Bash tool nor `claude agents --json` gives the session's permission mode: the
@@ -261,8 +262,9 @@ not stop at a prompt the old session would not have shown. It reads the last `pe
 transcript, in the start folder's project folder, else in any project folder, from its last 16 MB, and passes it only
 when it is `acceptEdits`, `auto`, `dontAsk`, `manual`, or `plan`; a transcript's `default` is passed as `manual`.
 A session that runs in `bypassPermissions` starts nothing, and the handoff goes on by the clear route: a session no
-Human attends never runs without permission checks. With no mode it can read, the session starts in the host's
-default mode, and the `say:` line says so. Not verified live: a background start with `--permission-mode`.
+Human attends never runs without permission checks. With no mode it can read, none starts either, since the host's
+default may be `bypassPermissions`, and the fallback line says the mode could not be read.
+Not verified live: a background start with `--permission-mode`.
 - `claude agents --json` also lists interactive sessions, with `sessionId`, `name`, `kind: "interactive"`, and `cwd`,
   the folder the session was started in; `claude --help` lists `stop|kill <id>` and `attach <id|name>`.
 

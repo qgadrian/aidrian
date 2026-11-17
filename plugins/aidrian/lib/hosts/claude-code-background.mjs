@@ -35,6 +35,10 @@ const BYPASS = 'bypassPermissions';
 // How much of a transcript's end is read for its last permission mode entry.
 const MODE_TAIL = 16 * 1024 * 1024;
 const MODE_ENTRY = /^\{"type":"permission-mode".*$/gmu;
+// A spawn that failed before `claude` ran, and the output of a `claude --bg` that refused the start before the supervisor
+// took it, checked on 2.1.326: no other failure proves that nothing started.
+const NOT_RUN = new Set(['ENOENT', 'EACCES']);
+const REFUSED = /\bWorkspace not trusted\b/u;
 
 export const runCommand = (command, args, { cwd, timeout }) => spawnSync(command, args, { cwd, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -163,8 +167,8 @@ export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
 // timed out or failed still counts when the listing then shows it. `uncertain` is true when `claude --bg` ran and what
 // it did is unknown: it may have started a session the listing never named (startProblem). `agent` and `effort` are the
 // handing-off session's, passed on when known, and so is its permission mode (`readMode`, sessionMode by default), when
-// it is one of PERMISSION_MODES: `mode` in the result is the mode passed, or null when it was unknown and the session
-// starts in the host's default. A session that runs with permission checks bypassed starts nothing. `hold({ cwd, known })`, the gate's, files the pending mark that holds
+// it is one of PERMISSION_MODES: `mode` in the result is the mode passed. A session whose mode is bypassPermissions, or
+// cannot be read, starts nothing: the host's default may bypass permission checks. `hold({ cwd, known })`, the gate's, files the pending mark that holds
 // every session the host had not listed, `known` being the ids it had, until the new session's own mark is written; it
 // runs before `claude --bg`, and a start it does not confirm is none. `run` and `wait` are a test's stand-ins, and
 // `resolve` finds `claude` from `env`.
@@ -181,8 +185,10 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
   if (read === BYPASS) {
     return { problem: 'this session runs with permission checks bypassed, and a session no Human attends never starts that way' };
   }
-  const named = MODE_NAMES.get(read) ?? read;
-  const mode = PERMISSION_MODES.has(named) ? named : null;
+  const mode = MODE_NAMES.get(read) ?? read;
+  if (!PERMISSION_MODES.has(mode)) {
+    return { problem: 'the permission mode of this session could not be read, and the host\'s default may bypass permission checks' };
+  }
   const known = before.map((each) => each.sessionId).filter((id) => typeof id === 'string' && ID.test(id));
   if (typeof hold !== 'function' || !hold({ cwd: own.cwd, known })) {
     return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
@@ -191,7 +197,7 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
   const args = ['--bg', '--name', name];
   if (typeof agent === 'string' && AGENT.test(agent)) args.push('--agent', agent);
   if (efforts.includes(effort)) args.push('--effort', effort);
-  if (mode) args.push('--permission-mode', mode);
+  args.push('--permission-mode', mode);
   const result = run(claude, [...args, prompt], { cwd: own.cwd, timeout: START_TIMEOUT });
   const printed = STARTED.exec(String(result.stdout ?? ''))?.[1] ?? null;
   const want = { before: new Set(before.map((each) => each.sessionId)), cwd: own.cwd, id: printed, name };
@@ -203,16 +209,17 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
 }
 
 // Why a start that printed no id and that the listing does not show made no session it can name: { problem, uncertain }.
-// It is certain that none started only when `claude` never ran, or when it exited non-zero and the last listing it read,
-// `list`, holds no background session that the listing before the start, `before`, did not. A timeout, a signal, an exit
-// 0 with no id, a listing that never answered, or any new background session leaves it uncertain: the supervisor may
-// have taken the start.
+// It is certain that none started only when `claude` never ran (NOT_RUN), or when its output is a known refusal (REFUSED)
+// and the last listing it read, `list`, holds no background session that the listing before the start, `before`, did
+// not. Any other exit, a timeout, a signal, a listing that never answered, or any new background session leaves it
+// uncertain: the supervisor may have taken the start, and its session may be listed later.
 function startProblem(result, list, before) {
-  if (result.error?.code === 'ENOENT') return { problem: '`claude` is not on PATH', uncertain: false };
+  if (NOT_RUN.has(result.error?.code)) return { problem: `\`claude\` could not be run (${result.error.code})`, uncertain: false };
   const unknown = list === null || list.some((each) => each.kind === 'background' && !before.has(each.sessionId));
   if (result.error) return { problem: `\`claude --bg\` did not finish (${result.error.code ?? 'no code'}), and \`claude agents\` lists no session it started`, uncertain: true };
   if (Number.isInteger(result.status) && result.status !== 0) {
-    return { problem: `\`claude --bg\` exited ${result.status}: ${firstLine(result.stderr || result.stdout) || 'no message'}`, uncertain: unknown };
+    const refused = REFUSED.test(`${result.stderr ?? ''}\n${result.stdout ?? ''}`);
+    return { problem: `\`claude --bg\` exited ${result.status}: ${firstLine(result.stderr || result.stdout) || 'no message'}`, uncertain: unknown || !refused };
   }
   if (result.status !== 0) return { problem: `\`claude --bg\` was stopped (${result.signal ?? 'no signal'}), and \`claude agents\` lists no session it started`, uncertain: true };
   return { problem: '`claude --bg` printed no session id, and `claude agents` lists no session it started', uncertain: true };

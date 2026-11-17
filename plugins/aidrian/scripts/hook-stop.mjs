@@ -36,7 +36,8 @@ await runHook(async (input) => {
   if (input.stop_hook_active !== false) return;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
-  const { names, session } = loadConfig(project).config;
+  const { config } = loadConfig(project);
+  const { names, session } = config;
   const host = detectHost({ input });
   const text = typeof input.transcript_path === 'string' ? readText(input.transcript_path) : null;
   const transcriptText = host.capabilities.transcripts === false ? null : text;
@@ -53,7 +54,7 @@ await runHook(async (input) => {
   const earlier = readText(marker);
   // The route is read only on a stop that fires: on the background route it asks git for the base branch's config.
   if (!stopReminder(text, handoff, earlier)) return;
-  const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project));
+  const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config));
   writeFileSync(marker, `${JSON.stringify(reminder.marker)}\n`);
   deny(reminder.reason);
 });

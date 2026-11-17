@@ -9,6 +9,7 @@ import test, { after } from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { globParts } from '../plugins/aidrian/lib/fs.mjs';
+import { noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { configFiles, findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
@@ -459,6 +460,48 @@ test('a subagent may not turn on the background handoff; other local writes and 
   assert.equal(run(main).status, 0, 'the main session may');
 });
 
+test('a main session the background handoff route started may not set any machine switch; an ordinary main session may', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const state = stateDir(findProject(dir));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const store = openStore(state, { checkouts: [dir], maxChain: 3 });
+  const floor = (session, route) => assert.ok(noteFrom(store, session, { slug: 'widget', chain: 1, brief: path.join(state, 'handoffs/2026-11-15-widget.md'), route }));
+  // One floor under the full id, one under the short id the start printed before the listing named the session.
+  const full = 'abcd1234-0000-4000-8000-000000000001';
+  const short = 'beef5678-0000-4000-8000-000000000002';
+  floor(full, 'background');
+  floor('beef5678', 'background');
+  floor('cleared-session', 'clear');
+  const run = (session, tool, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: session, tool_name: tool, tool_input: toolInput, cwd: dir }), cwd: dir, encoding: 'utf8' });
+  const writes = [
+    ['github.autoMerge', { github: { autoMerge: { enabled: true } } }],
+    ['github.unattendedWaiver', { github: { unattendedWaiver: { enabled: true } } }],
+    ['reviewApprovals', { reviewApprovals: 'on' }],
+    ['unattendedSignoff', { unattendedSignoff: 'on' }],
+    ['handoff.background', { handoff: { background: 'on' } }],
+    ['review.productFeedback', { review: { productFeedback: { auto: true } } }],
+  ];
+  for (const session of [full, short]) {
+    for (const [name, value] of writes) {
+      const written = run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify(value) });
+      assert.equal(written.status, 2, `${session}: ${name}`);
+      assert.ok(written.stderr.includes(`sets ${name} in .aidrian.local.json, and only a main session a Human attends may`), written.stderr);
+      assert.match(written.stderr, /the background handoff route started this one, with no Human/u);
+    }
+    const shell = run(session, 'Bash', { command: `echo '${JSON.stringify(writes[0][1])}' > .aidrian.local.json` });
+    assert.equal(shell.status, 2, `${session}: a Bash write`);
+    // Other writes to the local file, and anything else, stay its own.
+    assert.equal(run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify({ names: { human: 'x' } }) }).status, 0, session);
+    assert.equal(run(session, 'Write', { file_path: 'src/app.js', content: 'export {};\n' }).status, 0, session);
+  }
+  // A main session with no floor, or one a clear started, has a Human: it may set them.
+  for (const session of ['plain-session', 'cleared-session', undefined]) {
+    for (const [name, value] of writes) {
+      assert.equal(run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify(value) }).status, 0, `${session}: ${name}`);
+    }
+  }
+});
+
 test('a subagent may not change the machine\'s product feedback choice, by any spelling; other local writes and the main session stay allowed', (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');
@@ -657,6 +700,11 @@ test('a subagent may not write in the handoff continuation store, with or withou
         `cp /tmp/x.json ${root}/**/.continue/`,
         `rm ${root}/**/.continue/armed-*.json`,
         'cd "$X/handoffs/.continue" && rm -f armed-*',
+        // The background route's start record and kept copy, by a glob of each.
+        'cd "$X" && tee started-*',
+        'cd "$X" && cp /tmp/x.md continued-*',
+        'cd "$X" && echo {} > .continue/started-s1.json',
+        'cd "$X" && cp /tmp/x.md .continue/continued-x.md',
         // A glob in the first path part, right below the root.
         'rm -rf /*',
         `rm -rf /${state.split('/')[1].slice(0, 2)}*/${state.split('/').slice(2).join('/')}/handoffs/.continue`,

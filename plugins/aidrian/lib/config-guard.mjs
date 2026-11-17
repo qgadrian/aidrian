@@ -101,8 +101,10 @@ const SWITCHES = Object.freeze([
 // A command in a shell the lexer cannot read that names the local file, or has a glob that may reach it
 // (opaqueGlobReaches), is refused whether or not it names a key: it may set a switch by a key it builds, and the guard
 // cannot tell.
-export function machineSwitchWriteDenial(input, project, { names: { human } }) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+// A main session that `unattended()` says no Human attends, such as one the background handoff route started
+// (lib/handoff-guard.mjs startedUnattended), is refused as a subagent is. It is asked only for a call that sets a switch.
+export function machineSwitchWriteDenial(input, project, { names: { human } }, { unattended = () => false } = {}) {
+  const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
   const opaque = opaqueShellCommand(input) !== null;
   const isBash = bashCall(input);
   const named = SWITCHES.filter(({ key }) => !isBash || String(input.tool_input?.command).includes(key));
@@ -118,14 +120,16 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }) {
   const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached) return null;
+  const hit = opaque || isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
+  if (!hit || (!subagent && !unattended())) return null;
+  // A session no Human attends is a main session, so the reason names the Human, not the main session.
+  const only = (text) => (subagent ? text : `${text.replace(/^only the main session/u, 'only a main session a Human attends')}, and the background handoff route started this one, with no Human`);
   if (opaque) {
     const how = aimed ? 'names' : 'has a glob that may reach';
-    const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which only the main session may set`;
+    const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which ${only('only the main session may set')}`;
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
   }
-  const hit = isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
-  if (!hit) return null;
-  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${hit.why}`, human) };
+  return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}`, human) };
 }
 
 // Whether `input` is a Bash call; lib/handoff-guard.mjs asks it too.

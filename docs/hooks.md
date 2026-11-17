@@ -876,6 +876,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's.
+- A main session the [background handoff route](handoff.md#the-background-route) started is refused every machine
+  switch in that file the same way, as a subagent is: no Human attends it. The hook knows it by its chain floor of
+  route `background`, under its full id or a short one, in the continuation store of the working copy's `state.dir`
+  or the base branch's, and reads that floor, and git, only for a call that sets a switch.
 - With or without gates, a subagent may not run `aidrian handoff continue`, the [handoff gate](handoff.md#the-gate),
   which arms a continuation of the main session: its shell carries the main session's id, so the command cannot tell it
   from the main session. It reads the command wherever it runs in the line, as the [decision answer rule](#bash-rules) does,

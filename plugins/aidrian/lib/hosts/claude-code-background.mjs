@@ -95,6 +95,9 @@ export function attachLine({ id, name }) {
   return `\`claude attach ${id}\` opens it${byName}, and \`claude agents\` lists it`;
 }
 
+// How the Human stops the session `id` by hand, when stopBackground could not.
+export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
+
 // Starts the session that resumes a brief, in the background, in the folder of the handing-off session `session` as the
 // host lists it: { id, session, name, cwd }, or { problem } when none started. `id` is the id to name it by, the short
 // one when the output printed it; `session` its full id, or null when the listing did not name it within about 5

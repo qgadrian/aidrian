@@ -202,7 +202,8 @@ A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbo
 and that it holds the sections a resume needs ([handoff.md](handoff.md#the-skills)).
 `aidrian handoff continue` arms the continuation of a checked brief, for the route `session.handoff.continue` or its `--route` names
 ([handoff.md](handoff.md#the-gate)); `aidrian handoff route` prints that route as this host runs it, and writes nothing
-([handoff.md](handoff.md#the-route-the-host-runs)).
+([handoff.md](handoff.md#the-route-the-host-runs)); `aidrian handoff verify <copy> <sha256>` holds the copy a background
+continuation reads to the sha256 its first message names ([handoff.md](handoff.md#the-background-route)).
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
 The `quorum` skill runs in one of three modes, and its ledger records which in `mode`.

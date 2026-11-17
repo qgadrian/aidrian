@@ -1,6 +1,7 @@
 // PreToolUse hook for every tool: the project's per-agent tool gates, `agents` in config.json and the local file.
 // lib/agent-gates.mjs decides, then lib/config-guard.mjs keeps a subagent from changing the files that set the gates,
-// and, with or without gates, from setting the machine's auto-merge switch; lib/handoff-guard.mjs, with or without
+// and, with or without gates, from setting the machine's switches, as it keeps a session the background handoff route
+// started (lib/handoff-guard.mjs startedUnattended); lib/handoff-guard.mjs, with or without
 // gates, from running `aidrian handoff continue` or writing in the handoff continuation store.
 // It runs before every tool call, so without gates it stops as soon as it has read the config and run the guards that hold
 // without gates; a call a gate blocks exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook
@@ -26,7 +27,7 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { continueStoreWriteDenial, handoffContinueDenial } from '../lib/handoff-guard.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial, startedUnattended } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
 
@@ -94,7 +95,7 @@ function guards(input, project, config, gated, snapshot) {
     ?? writeLimitDenial(input, config)
     ?? handoffContinueDenial(input, config)
     ?? continueStoreWriteDenial(input, project, config, state, { links: false })
-    ?? machineSwitchWriteDenial(input, project, config)
+    ?? machineSwitchWriteDenial(input, project, config, { unattended: () => startedUnattended(project, config, input.session_id) })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state);
 }

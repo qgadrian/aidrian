@@ -18,13 +18,38 @@ import { checkDeadline } from './deadline.mjs';
 import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-guard.mjs';
 import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
-import { ARMING_FILE, storePath } from './handoff-markers.mjs';
+import { baseBranchConfig } from './handoff-continue.mjs';
+import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
 import { opaqueShellCommand } from './hosts/index.mjs';
-import { stateRoot } from './project.mjs';
+import { stateDir, stateRoot } from './project.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
+
+// Whether the session `session` of `project`, whose loaded config is `config`, is one the background handoff route
+// started, so no Human attends it: its chain floor, under its full id or a short one, has route `background`
+// (handoff-markers.mjs startedInBackground). The floor is looked for in the store of the working copy's state.dir and in
+// the store of the base branch's, so a session that moves state.dir in its working copy is still found. lib/config-guard.mjs
+// machineSwitchWriteDenial refuses such a session the machine's switches, as it does a subagent. It reads git only when
+// asked, which that guard does only for a call that sets a switch. A store it cannot read finds nothing.
+export function startedUnattended(project, config, session) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  const found = (read) => {
+    try {
+      const state = read();
+      return typeof state === 'string' && startedInBackground(openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain }), session);
+    } catch {
+      return false;
+    }
+  };
+  const working = () => stateDir(project, { config });
+  const base = () => {
+    const committed = baseBranchConfig(project).config;
+    return committed && committed.state.dir !== config.state.dir ? stateDir(project, { config: committed }) : null;
+  };
+  return found(working) || found(base);
+}
 
 // Why the subagent's Bash call in `input` may not run because it runs `aidrian handoff continue`, or null:
 // { match, reason }. The gate cannot tell a subagent by itself, since a subagent's shell carries the main session's id.
@@ -69,11 +94,11 @@ function runsContinue({ invocation, unread }) {
 // record (`from-`, `tasks-`) is not one: their names are common words, and the path rules cover them.
 const MARKER_NAME = new RegExp(ARMING_FILE.source, 'iu');
 // An unsure glob's part whose plain start names such a file, as `armed-*`.
-const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked)-/iu;
+const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|continued)-/iu;
 // A word of a command no lexer reads that names the store's folder by its own name.
 const STORE_FOLDER = /^\.continue$/iu;
 // A text that names the store's folder, or a marker in it.
-const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:armed|ready|from|checked|gone|tasks|taken)-)/iu;
+const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:armed|ready|from|checked|gone|tasks|taken|started|continued)-)/iu;
 // A disk that folds case reaches the store by any spelling of its path.
 const fold = foldCase;
 const FOLD_FLAG = foldCase('A') === 'a' ? 'i' : '';

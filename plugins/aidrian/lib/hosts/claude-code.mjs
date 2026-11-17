@@ -5,7 +5,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, startBackground, stopBackground } from './claude-code-background.mjs';
+import { attachLine, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -111,7 +111,8 @@ export default {
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
     // the claude process, names the session before and after it. The background route starts a new session with
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
-    // effort; `stopBackground` stops one the gate cannot hold to a chain floor, and `attachLine` says how to open one.
+    // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
+    // that failed, and `attachLine` says how to open one.
     handoffContinue: {
       routes: ['clear', 'background'],
       steps: {
@@ -122,6 +123,7 @@ export default {
         session, slug, chain, env, prompt, run, wait, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
+      stopLine,
       attachLine,
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.

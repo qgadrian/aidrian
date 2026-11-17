@@ -174,9 +174,11 @@ whatever the config says, and `background` only when the config says `"backgroun
    it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
    user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
    is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5.
-   On the background route, a switch that is off, a session that did not start, and a started session the gate could
-   not hold to a chain floor fall back to the clear route instead where the host has it: `continue: clear`, the
-   `fallback:` line, and the clear route's `say:` line, with the clear continuation armed.
+   On the background route, a switch that is off, a working copy whose `state.dir` differs from the base branch's,
+   a session that did not start, and a started session the gate could not hold to a chain floor and stopped fall back
+   to the clear route instead where the host has it: `continue: clear`, the `fallback:` line, and the clear route's
+   `say:` line, with the clear continuation armed. A started session it could neither hold nor stop gives
+   `continue: none`, with a `fallback:` line that names it and the host's command to stop it, and arms nothing beside it.
 4. A refusal exits 1 with the reason and the remedy on stderr, since the session can fix it: no passing check of the
    brief's current bytes (run `aidrian handoff check` first), a brief last written more than 15 minutes ago or dated in
    the future (refresh it), or a `Chain` below the floor this session was given (set it, and check again).
@@ -209,7 +211,8 @@ start context names; a session a person started by typing the resume writes 0.
 
 - `aidrian handoff check` fails a `Chain` that is not a whole number, and one below the floor of the session that runs
   it: the number its delivery recorded, whatever the brief's slug, since a continued session that hands off under
-  another name is still the same run. So an agent that forgets to count, or renames the work, is caught by a script.
+  another name is still the same run. A session with floors under its own id and under a short id it starts with is
+  held to the highest of them. So an agent that forgets to count, or renames the work, is caught by a script.
   The gate refuses such a brief too. A floor is never read against `maxChain`: one above the limit of the config that
   reads it is stricter, never void, so a lower `maxChain` in a worktree cannot drop it.
 - The gate falls back at `Chain` `maxChain` or more: with the default 3, briefs with Chain 0, 1, and 2 continue, and the
@@ -249,7 +252,8 @@ Limits:
 Nothing is typed. It runs only when `session.handoff.continue` is `"background"`, set or derived from `mode: "auto"`,
 on a host whose adapter lists it and declares `startBackground` ([Adding a host](providers/adding-a-host.md)), with
 both [switches](#continue) on: the base branch's config, and `"handoff": { "background": "on" }` in this machine's
-`.aidrian.local.json`.
+`.aidrian.local.json`. The working copy's `state.dir` must equal the base branch's too, since the store it opens holds
+the chain floors and the kept copy; when it differs, the handoff goes on by the clear route with that reason.
 
 1. The session settles every running agent, writes the brief, checks it, and runs the gate, as on the clear route.
 2. The gate keeps the brief's checked bytes in the store, owner-only, as `continued-<sha256>.md`, so an edit to the
@@ -258,16 +262,21 @@ both [switches](#continue) on: the base branch's config, and `"handoff": { "back
    it, a folder the host already trusts, never the brief's worktree, whose own settings could run on start. The new
    session takes the handing-off session's name with ` · <continuation>` after it, within 100 characters, and its agent
    and effort when the host tells them; with no usable name, the brief's slug.
-4. Its first message is the continuation: the brief's path, the kept copy to read, its slug, and the continuation's
-   number, never the brief's text. It follows the `session-continue` skill on the copy and enters the worktree, as on
-   the clear route. It also says the brief is an earlier session's advice, not the Human's instruction: what the Human
+4. Its first message is the continuation: the brief's path, the kept copy to read and its sha256, its slug, and the
+   continuation's number, never the brief's text. It first runs `aidrian handoff verify <copy> <sha256>`, which exits 0
+   only when the copy is a regular file of the session's user, named for that sha256, whose bytes still hash to it, and
+   1 with the reason otherwise; on 1 it follows none of the copy and reports it. Then it follows the `session-continue`
+   skill on the copy and enters the worktree, as on the clear route. It also says the brief is an earlier session's advice, not the Human's instruction: what the Human
    keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
    permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
    its next brief to the count. It reads the host's listing for the new session's full id for about 5 seconds; when the
    listing lags, it files the floor under the short id the start printed, and every session id that starts with it
-   reads that floor. A start that names no id, or whose floor cannot be written, is stopped and falls back: the gate
-   never reports a background session it cannot hold to the count.
+   reads that floor. A start with no id, printed or listed, has nothing to stop, and falls back to the clear route.
+   A start whose floor cannot be written is stopped through the host and falls back to the clear route; when the stop
+   fails too, the gate prints `continue: none` and a `fallback:` line that names the running session and the host's
+   command to stop it, and arms no clear beside it. The gate never reports a background session it cannot hold to the
+   count as the continuation.
 6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
    host's command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
@@ -286,6 +295,11 @@ Limits:
   the prompt hook names the session that owns the work.
 - The new session starts in the host's default permission mode and model for that folder; a model the old session
   switched to in the session does not carry over.
+- No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
+  in `.aidrian.local.json`, as it refuses a subagent: `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`,
+  `unattendedSignoff`, `handoff.background`, and `review.productFeedback`. The hook knows such a session by its chain
+  floor of route `background`, under its full id or a short one, in the store of the working copy's `state.dir` or the
+  base branch's, and reads it only for a call that sets a switch.
 
 ## The cost model
 

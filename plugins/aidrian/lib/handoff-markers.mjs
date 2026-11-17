@@ -8,7 +8,8 @@
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
-// takes it for every session id that starts with it.
+// takes it for every session id that starts with it, and the highest of those and the session's own wins. A floor of
+// route `background` marks a session no Human attends (startedInBackground).
 // A subagent may write none of them (lib/handoff-guard.mjs), so the store's own rules keep a stray file harmless:
 // every write is a temporary file and a rename; every read refuses a symlink, a file another user owns, a wrong shape,
 // and a time outside its window, on the recorded field and on the file's own modification time, in the past or the
@@ -16,7 +17,7 @@
 // whose state, handoffs, or store folder another user owns or every user may write, is never written or read.
 // No function throws on a missing folder; a read returns null for anything it cannot use.
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -334,21 +335,26 @@ export function noteFrom(store, session, { slug, chain, brief, route }, { now = 
   return isFrom(value) ? writeMarker(store, sessionFile('from', session), value) : null;
 }
 
-// The chain floor `session` was given, or null: its own, or the highest one filed under a short id it starts with, as
-// a background start files one when the host had not listed the new session's full id yet.
+// The chain floor `session` was given, or null: the highest of its own and every one filed under a short id it starts
+// with, as a background start files one when the host had not listed the new session's full id yet. A lower floor under
+// its own id never hides a higher one under a short id.
 export function readFrom(store, session, { now = Date.now() } = {}) {
+  return floorsOf(store, session, now).reduce((high, each) => (high && high.chain >= each.chain ? high : each), null);
+}
+
+// Whether the background route started `session`, so no Human attends it: a chain floor of route `background` is filed
+// for it, under its own id or a short one it starts with. lib/handoff-guard.mjs startedUnattended asks it.
+export const startedInBackground = (store, session, { now = Date.now() } = {}) => floorsOf(store, session, now).some((floor) => floor.route === 'background');
+
+// Every chain floor filed for `session`: its own, then those under a short id it starts with.
+function floorsOf(store, session, now) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return [];
   const read = (name) => readMarker(store, name, { now, field: 'at', shape: isFrom });
-  const own = read(sessionFile('from', session));
-  if (own || typeof session !== 'string' || !SESSION_ID.test(session)) return own;
   const prefixOf = (name) => {
     const short = SHORT_FROM.exec(name)?.[1];
     return short !== undefined && short !== session && session.startsWith(short);
   };
-  return listStore(store)
-    .filter(prefixOf)
-    .map(read)
-    .filter(Boolean)
-    .reduce((high, each) => (high && high.chain >= each.chain ? high : each), null);
+  return [read(sessionFile('from', session)), ...listStore(store).filter(prefixOf).map(read)].filter(Boolean);
 }
 
 // Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
@@ -368,6 +374,30 @@ export function readStarted(store, session, { now = Date.now() } = {}) {
 // background start begins reads the very bytes the gate checked. Returns its path, or null when the store is refused.
 export function keepBrief(store, bytes, sha256) {
   return SHA256.test(sha256) ? writeStoreFile(store, `continued-${sha256}.md`, bytes) : null;
+}
+
+// Whether the kept copy at `file` still holds the bytes whose sha256 is `sha256`: { path } when it is a regular file, no
+// symlink, owned by this process's user `uid`, under BRIEF_CAP, named `continued-<sha256>.md`, and its bytes hash to
+// `sha256`; else { problem }. `aidrian handoff verify` runs it for the session a background start began, before that
+// session follows the copy, so a copy changed after the gate kept it is never followed.
+export function verifyKept(file, sha256, { uid = processUid() } = {}) {
+  if (typeof sha256 !== 'string' || !SHA256.test(sha256)) return { problem: 'the sha256 is not 64 lowercase hexadecimal digits' };
+  if (path.basename(String(file)) !== `continued-${sha256}.md`) return { problem: `is not named continued-${sha256}.md` };
+  let fd;
+  try {
+    if (lstatSync(file).isSymbolicLink()) return { problem: 'is a symlink' };
+    fd = openSync(file, NO_FOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return { problem: 'is not a regular file' };
+    if (foreign(stat, uid)) return { problem: `is owned by another user (uid ${stat.uid})` };
+    if (stat.size >= BRIEF_CAP) return { problem: `is ${stat.size} bytes, larger than any brief the gate keeps` };
+    const actual = createHash('sha256').update(readFileSync(fd)).digest('hex');
+    return actual === sha256 ? { path: file } : { problem: `changed since the gate kept it: its bytes hash to ${actual}` };
+  } catch (error) {
+    return { problem: error.code === 'ENOENT' ? 'does not exist' : `cannot be read (${error.code ?? 'unreadable'})` };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 const checkedFile = (name) => (BRIEF_FILE.test(name) && SLUG.test(slugOf(name)) ? `checked-${name}.json` : null);

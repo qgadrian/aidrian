@@ -16,8 +16,9 @@ await runHook(async (input) => {
   if (input.tool_name !== 'ExitPlanMode' || input.agent_id || typeof input.transcript_path !== 'string') return;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
-  const { handoff } = loadConfig(project).config.session;
+  const { config } = loadConfig(project);
+  const { handoff } = config.session;
   const text = readText(input.transcript_path);
-  const context = text ? planApprovedContext(handoff, sessionUsage(text), await continuation(handoff, detectHost({ input }), project)) : null;
+  const context = text ? planApprovedContext(handoff, sessionUsage(text), await continuation(handoff, detectHost({ input }), project, config)) : null;
   if (context) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } }));
 });

@@ -35,6 +35,7 @@ import { foldCase, resolvedPath } from './fs.mjs';
 import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteFrom, noteStarted, openStore, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
+import { markUnattended } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
 export const BRIEF_WINDOW = 15 * 60 * 1000;
@@ -169,7 +170,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
     if (known) cancelArmed(store, session, { now });
     const host = detectHost({ env });
     const routed = effectiveRoute(configured, host, override, () => backgroundGate(project, config, env));
-    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait });
+    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, root: project.checkouts.at(-1) });
   } catch (error) {
     if (typeof error?.code !== 'string') throw error;
     return { exitCode: 2, out: [], err: [`could not arm the continuation of ${found.path} (${error.code})`] };
@@ -178,7 +179,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
 
 // The gate's steps 2 to 5 on a brief that resolved, once any earlier marker of `session` is gone. `routed` is
 // effectiveRoute's answer.
-function decide({ found, store, session, routed, host, chainOf, env, now, run, wait }) {
+function decide({ found, store, session, routed, host, chainOf, env, now, run, wait, root }) {
   const { route, fallback } = routed;
   if (route === 'none') return none(fallback);
   // First: every later line may print the path, and the delivery refuses such a brief anyway.
@@ -217,7 +218,7 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
 
   sweep(store, now);
   const ready = { host, found, slug, chain, hash, store, session, now };
-  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, env, run, wait });
+  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, env, run, wait, root });
   return armed({ ...ready, route, fallback });
 }
 
@@ -241,13 +242,15 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 
 // The background route, once the brief passed every check: the store keeps the checked bytes, the host starts a new
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
-// records the new session's chain floor, under its full id or the short one the host printed, then the start itself.
-// No floor, no success: a session the gate cannot hold to the count is stopped, and the handoff goes on by the clear
-// route. One that cannot be stopped either runs on with no floor: the gate arms nothing beside it, and prints
+// records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
+// under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start
+// itself. `root` is the main checkout of the project the gate ran in. No floor and mark, no success: a session the gate
+// cannot hold to the count is stopped, and the handoff goes on by the clear route. One that cannot be stopped either
+// runs on with no floor: the gate arms nothing beside it, and prints
 // `continue: none` with a fallback line that names it and the host's command to stop it (`stopLine`). Whatever does not
 // start goes on by the clear route where the host has it (byClear).
 function startInBackground(ready) {
-  const { host, found, slug, chain, hash, store, session, now, maxChain, env, run, wait } = ready;
+  const { host, found, slug, chain, hash, store, session, now, maxChain, env, run, wait, root } = ready;
   const handoff = host.capabilities.handoffContinue;
   const fallBack = (why) => {
     const routed = byClear(host, why);
@@ -264,8 +267,9 @@ function startInBackground(ready) {
   }
   if (started.problem) return fallBack(`no background session started, since ${started.problem}`);
   const record = { slug, chain: chain + 1, brief: found.path, route: 'background' };
-  if (!safely(() => noteFrom(store, started.session ?? started.id, record, { now }))) {
-    const unheld = `the background session ${started.id} started, but no chain floor could be recorded for it`;
+  const id = started.session ?? started.id;
+  if (!safely(() => noteFrom(store, id, record, { now })) || !safely(() => markUnattended(id, { root, env, now }))) {
+    const unheld = `the background session ${started.id} started, but no chain floor and unattended mark could be recorded for it`;
     if (safely(() => handoff.stopBackground?.({ id: started.id, env, run }))) return fallBack(`${unheld}, so it was stopped`);
     // It runs on: a clear armed beside it would put a second session on the same work.
     const stop = handoff.stopLine?.({ id: started.id }) ?? 'the host\'s own command stops it';

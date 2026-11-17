@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { aidrianArgs, assignsVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { aidrianArgs, assignsVariable, changesVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -286,6 +286,18 @@ test('assignsVariable: a prefix assignment, env, or a declaring builtin sets the
     assert.equal(sets(line), false, `expected not set: ${line}`);
   }
   assert.equal(assignsVariable({ program: 'export' }, 'NAME'), false, 'an invocation without args or environment reads as none');
+});
+
+test('changesVariable: a set, an env -u or --unset, an emptied environment, or an unset changes the name; another name does not', () => {
+  const changes = (line) => walkCommands(line, null).some(({ invocation }) => changesVariable(invocation, 'NAME'));
+  for (const line of ['NAME=1 cmd', 'export NAME=1', 'env -u NAME cmd', 'env --unset=NAME cmd', 'env --un=NAME cmd', 'env -i cmd', 'env - cmd',
+    'sudo cmd', 'unset NAME; cmd', 'unset -v NAME', 'builtin unset NAME', 'unset OTHER NAME', 'unset "$WHICH"', 'env -u "$WHICH" cmd']) {
+    assert.equal(changes(line), true, `expected changed: ${line}`);
+  }
+  for (const line of ['cmd', 'env -u OTHER cmd', 'unset OTHER', 'echo unset NAME', 'sudo -E cmd', 'sudo --preserve-env=NAME cmd', 'builtin echo NAME',
+    'echo "env -u NAME"']) {
+    assert.equal(changes(line), false, `expected unchanged: ${line}`);
+  }
 });
 
 test('only an unquoted fd prefix right against < or > is a descriptor; a quoted one is an argument word', () => {

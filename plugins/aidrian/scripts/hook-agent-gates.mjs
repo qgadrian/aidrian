@@ -3,9 +3,12 @@
 // and, with or without gates, from setting the machine's switches, as it keeps a session the background handoff route
 // started (lib/handoff-guard.mjs startedUnattended); lib/handoff-guard.mjs, with or without
 // gates, from running `aidrian handoff continue` or writing in the handoff continuation store, and keeps a subagent
-// and such a session from writing there, from starting a host session outside the gate, and from running the gate with
-// a variable of their own that moves its store or session. Whether the session is such a one is read at most once a
-// call, before it runs, and only when a guard would refuse the call to it.
+// and such a session from writing there or in the unattended marks, from starting a host session outside the gate, and
+// from running the gate with a variable of their own that moves its store or session. Whether the session is such a
+// one is read from its unattended mark (lib/unattended-mark.mjs) on every call, before it runs, wherever it runs, with
+// no project at its folder too: the mark names the project the gate started it in, whose guards then hold the call.
+// Its chain floor, which a session the gate started before the marks still has, is read at most once a call, and only
+// when a guard would refuse the call to it.
 // It runs before every tool call, so without gates it stops as soon as it has read the config and run the guards that hold
 // without gates; a call a gate blocks exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook
 // records its blocks (lib/hook-deny.mjs). The gates are asked before any guard, so a call they deny never waits on one.
@@ -30,9 +33,11 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended } from '../lib/handoff-guard.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended, unattendedMarkWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
+import { canonical } from '../lib/rules/main-checkout.mjs';
+import { readUnattendedMark } from '../lib/unattended-mark.mjs';
 
 // The milliseconds from the hook's start the guards may take. AIDRIAN_GUARD_BUDGET_MS may only lower it, as a test does.
 const GUARD_BUDGET_MS = 2500;
@@ -52,8 +57,12 @@ await runHook(async (input) => {
 
 async function gate(input) {
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;
-  // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started in.
-  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? (snapshot?.root ? openProject(snapshot.root) : null);
+  // Read before any guard, wherever the call runs: a session the background route started stays held outside its project.
+  const mark = readUnattendedMark(input.session_id);
+  const marked = mark?.root ? findProject(mark.root) : null;
+  // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started
+  // in, and the mark the one the gate ran in.
+  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? (snapshot?.root ? openProject(snapshot.root) : null) ?? marked;
   if (snapshot?.problem) {
     const settings = project ? loadConfig(project).config : DEFAULTS;
     const denial = unreadableConfigDenial(input, snapshot.file, snapshot.problem, settings, 'to start a new session, which takes the gates from the config again');
@@ -61,7 +70,15 @@ async function gate(input) {
   }
   if (!project) {
     // The gate command runs outside a project too, with the defaults.
-    const outside = handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS) ?? hostSessionStartDenial(input, DEFAULTS);
+    const unattended = () => mark !== null;
+    let outside;
+    try {
+      outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended })
+        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended }));
+    } catch (error) {
+      if (!(error instanceof PastDeadline)) throw error;
+      outside = deadlineDenial(input, DEFAULTS);
+    }
     if (outside) await block(input, 'config-guard', outside.reason, { match: outside.match });
     return;
   }
@@ -80,7 +97,7 @@ async function gate(input) {
   if (gate) await block(input, 'agent-gates', gate.reason, { match: gate.match, project, config });
   let denial;
   try {
-    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot));
+    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, mark, marked));
   } catch (error) {
     if (!(error instanceof PastDeadline)) throw error;
     denial = deadlineDenial(input, config);
@@ -90,22 +107,37 @@ async function gate(input) {
 
 // The first guard's denial of the call, or null. The store guard runs first without its link walk, which reads folders
 // on disk, and with it last, so a call the other guards refuse by the paths and names it gives is refused before any walk.
-function guards(input, project, config, gated, snapshot) {
+// `mark` is the session's unattended mark, or null, and `marked` the project it names, or null: when that is another
+// project than the call's, its store and its machine's switches are guarded too.
+function guards(input, project, config, gated, snapshot, mark, marked) {
   let dir;
   const state = () => (dir ??= stateDir(project, { config }));
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
   // Read once, before the call runs, so a call that deletes the session's floor is judged while the floor is there.
   let alone;
-  const unattended = () => (alone ??= startedUnattended(project, config, input.session_id));
+  const unattended = () => mark !== null || (alone ??= startedUnattended(project, config, input.session_id));
   return opaqueLimitDenial(input, config)
     ?? writeLimitDenial(input, config)
     ?? handoffContinueDenial(input, config)
     ?? handoffEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended })
+    ?? unattendedMarkWriteDenial(input, config, { project, links: false, unattended })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
-    ?? continueStoreWriteDenial(input, project, config, state, { unattended });
+    ?? continueStoreWriteDenial(input, project, config, state, { unattended })
+    ?? unattendedMarkWriteDenial(input, config, { project, unattended })
+    ?? otherProject(input, project, marked, unattended);
+}
+
+// The denial of the guards of `marked`, the project a session's unattended mark names, when it is another project than
+// the call's, as when the session works in another repository: its continuation store and its machine's switches.
+function otherProject(input, project, marked, unattended) {
+  if (!marked || canonical(marked.checkouts.at(-1)) === canonical(project.checkouts.at(-1))) return null;
+  const { config } = loadConfig(marked);
+  let dir;
+  const state = () => (dir ??= stateDir(marked, { config }));
+  return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended });
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

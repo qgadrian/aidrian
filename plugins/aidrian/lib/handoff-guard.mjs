@@ -1,9 +1,10 @@
 // The guard that keeps a subagent out of the handoff continuation (docs/handoff.md#continue), with or without gates:
 // it may not run `aidrian handoff continue`, which arms a continuation of the main session, nor write in the
 // continuation store, `<state>/handoffs/.continue/` (lib/handoff-markers.mjs). A main session the background route
-// started (startedUnattended) is held as a subagent is to the store, and both may neither start a host session outside
-// the gate (hostSessionStartDenial) nor run the gate with a variable of their own that moves its store, its session, or
-// its host command (handoffEnvDenial). scripts/hook-agent-gates.mjs asks it before every tool call. A host's other
+// started (startedUnattended, or its mark in lib/unattended-mark.mjs) is held as a subagent is to the store, and both
+// may neither change the unattended marks (unattendedMarkWriteDenial), nor start a host session outside the gate
+// (hostSessionStartDenial), nor run the gate with a variable of their own that moves its store, its session, or its
+// host command (handoffEnvDenial). scripts/hook-agent-gates.mjs asks it before every tool call. A host's other
 // tools that run a shell command, such as Claude Code's Monitor, reach it as Bash calls (lib/hosts/claude-code.mjs
 // hookInput); a command in a shell the shared lexer cannot read (lib/hosts/index.mjs opaqueShellCommand) is read as
 // opaque text, and refused when its words may run the gate, or name or reach the store.
@@ -25,9 +26,10 @@ import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, opaqueShellCommand } from './hosts/index.mjs';
-import { stateDir, stateRoot } from './project.mjs';
+import { defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { canonical } from './rules/main-checkout.mjs';
-import { aidrianArgs, assignsVariable, walkCommands } from './shell-lex.mjs';
+import { aidrianArgs, changesVariable, walkCommands } from './shell-lex.mjs';
+import { MARK_FOLDER, markFolders } from './unattended-mark.mjs';
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 // How a denial names who may do what it refuses, for a subagent and for a session no Human attends.
@@ -36,25 +38,31 @@ const UNATTENDED = 'and the background handoff route started this session, with 
 // Whether the session `session` of `project`, whose loaded config is `config`, is one the background handoff route
 // started, so no Human attends it: its chain floor, under its full id or a short one, has route `background`
 // (handoff-markers.mjs startedInBackground). The floor is looked for in the store of the working copy's state.dir and in
-// the store of the base branch's, so a session that moves state.dir in its working copy is still found. lib/config-guard.mjs
-// machineSwitchWriteDenial refuses such a session the machine's switches, as it does a subagent. It reads git only when
-// asked, which that guard does only for a call that sets a switch. A store it cannot read finds nothing.
-export function startedUnattended(project, config, session) {
+// the store of the base branch's, each where the hook's environment puts it (project.mjs stateDir) and where the user's
+// own does (defaultStateDir), which is where the gate keeps it (handoff-continue.mjs backgroundGate). So a session that
+// moves state.dir in its working copy is still found, and so is one whose gate ran with an environment other than the
+// hook's, as with `XDG_STATE_HOME` unset. lib/config-guard.mjs machineSwitchWriteDenial refuses such a session the
+// machine's switches, as it does a subagent. It reads git only when the working copy's stores hold no such floor, and is
+// asked only for a call a guard would refuse. A store it cannot read finds nothing. `home` is for a test, as in
+// defaultStateDir; lib/unattended-mark.mjs keeps the mark that finds such a session outside its project.
+export function startedUnattended(project, config, session, { home } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  const seen = new Set();
   const found = (read) => {
     try {
       const state = read();
-      return typeof state === 'string' && startedInBackground(openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain }), session);
+      if (typeof state !== 'string' || seen.has(state)) return false;
+      seen.add(state);
+      return startedInBackground(openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain }), session);
     } catch {
       return false;
     }
   };
-  const working = () => stateDir(project, { config });
-  const base = () => {
-    const committed = baseBranchConfig(project).config;
-    return committed && committed.state.dir !== config.state.dir ? stateDir(project, { config: committed }) : null;
-  };
-  return found(working) || found(base);
+  const own = (settings) => defaultStateDir(project, { config: settings, ...(home ? { home } : {}) });
+  let committed;
+  const base = () => (committed ??= baseBranchConfig(project).config ?? null);
+  return found(() => stateDir(project, { config })) || found(() => own(config))
+    || found(() => base() && stateDir(project, { config: base() })) || found(() => base() && own(base()));
 }
 
 // Why the subagent's Bash call in `input` may not run because it runs `aidrian handoff continue`, or null:
@@ -106,12 +114,13 @@ const runsGate = (actions) => ({ invocation, unread }) => {
 const GATE_ENV = Object.freeze([...new Set(['XDG_STATE_HOME', 'HOME', 'PATH', ...IDENTITY_VARS, ...DETECT_VARS])]);
 
 // Why the call in `input` may not run because it runs `aidrian handoff continue` or `aidrian handoff route` with one of
-// GATE_ENV set by the command line itself, or null: { match, reason }. It holds for a subagent and for a session
+// GATE_ENV set or unset by the command line itself, or null: { match, reason }. It holds for a subagent and for a session
 // `unattended()` says the background route started, asked only for such a command: a store the session moves, or a
 // session id it chooses, reads no floor, so its next background start would be held to no count, and the hooks, which
-// read the host's own store and session, would not know the session it starts. A variable is set when a prefix
-// assignment, `env`, or a declaring builtin, such as `export`, gives it a value anywhere in the command
-// (shell-lex.mjs assignsVariable); a command in a shell the lexer cannot read counts when its text names one. A
+// read the host's own store and session, would not know the session it starts. A variable is changed when a prefix
+// assignment, `env`, or a declaring builtin, such as `export`, gives it a value anywhere in the command, or `env -u`,
+// `env -i`, `sudo`, or `unset` removes it (shell-lex.mjs changesVariable): with `XDG_STATE_HOME` unset, the store moves
+// to the user's own, which the hooks may not read. A command in a shell the lexer cannot read counts when its text names one. A
 // variable set in an earlier call, or by a file the command sources, is not seen: the gate's own comparison of its store
 // with the host's (handoff-continue.mjs backgroundGate) holds the store there.
 export function handoffEnvDenial(input, { names: { human } }, { unattended = () => false } = {}) {
@@ -126,13 +135,13 @@ export function handoffEnvDenial(input, { names: { human } }, { unattended = () 
   } else {
     const commands = walkCommands(command, null);
     if (!commands.some(runsGate(['continue', 'route']))) return null;
-    named = GATE_ENV.find((name) => commands.some(({ invocation }) => assignsVariable(invocation, name)));
+    named = GATE_ENV.find((name) => commands.some(({ invocation }) => changesVariable(invocation, name)));
   }
   const subagent = isSubagent(input);
   if (!named || (!subagent && !unattended())) return null;
   const who = subagent ? 'only the main session runs the gate, with the environment its host gave it' : `the gate runs only with the environment the host gave this session, ${UNATTENDED}`;
-  const why = `it runs \`aidrian handoff\` with ${named} set by the command itself, which would move the continuation store, the session, or the host command the gate reads, and ${who}`;
-  return { match: `sets ${named} for aidrian handoff`, reason: projectRuleReason(input, why, human, 'that the handoff runs with the environment the host gave the session') };
+  const why = `it runs \`aidrian handoff\` with ${named} set or unset by the command itself, which would move the continuation store, the session, or the host command the gate reads, and ${who}`;
+  return { match: `changes ${named} for aidrian handoff`, reason: projectRuleReason(input, why, human, 'that the handoff runs with the environment the host gave the session') };
 }
 
 // The hosts that declare their command that starts a session (docs/providers/adding-a-host.md `sessionStart`).
@@ -272,12 +281,64 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   const folder = state();
   const store = real(storePath(folder));
   const shields = [real(folder), real(path.join(folder, 'handoffs'))];
-  const roots = project.checkouts.map(real);
-  const holds = (target) => target !== store && isWithin(target, store);
-  const hit = files.map(real).some((target) => isWithin(store, target) || (holds(target) && !roots.some((each) => isWithin(target, each))))
-    || known.some((glob) => globReaches(glob, store)) || linksTo(store)
-    || placed.some(({ target, recursive }) => isWithin(store, target) || shields.includes(target) || (recursive && holds(target)));
+  const hit = reaches({ files: files.map(real), known, placed, linksTo }, store, shields, project.checkouts.map(real));
   if (!hit || !held()) return null;
   const verb = opaque ? 'may change' : 'changes';
   return { match: `${verb} the continuation store`, reason: why(verb, store) };
+}
+
+// Whether the write targets of a call reach `folder`, a real, case-folded path: a file target lies in it, or holds it
+// and none of `roots`, the project's checkouts; a glob may reach it by the path it spells (globReaches) or through a
+// link (`linksTo`); or a change of mode or owner lies in it, is one of `shields`, the folders whose mode hides it, or is
+// recursive and holds it. `files` are real paths, `known` globPaths' spellings, `placed` modeTargets' placed ones.
+function reaches({ files, known, placed, linksTo }, folder, shields, roots) {
+  const holds = (target) => target !== folder && isWithin(target, folder);
+  return files.some((target) => isWithin(folder, target) || (holds(target) && !roots.some((each) => isWithin(target, each))))
+    || known.some((glob) => globReaches(glob, folder)) || linksTo(folder)
+    || placed.some(({ target, recursive }) => isWithin(folder, target) || shields.includes(target) || (recursive && holds(target)));
+}
+
+// A path part that names the unattended marks' folder, in any case.
+const MARK_PART = new RegExp(String.raw`^${MARK_FOLDER}$`, 'iu');
+// The folder as a glob from any folder may name it: by its own name, or with the state root's above it.
+const MARK_TAIL = path.join('aidrian', MARK_FOLDER);
+
+// Why the call in `input` may not run because it changes the unattended marks (lib/unattended-mark.mjs), or null:
+// { match, reason }. It holds for a subagent, and for a main session `unattended()` says no Human attends, asked last,
+// once a call reaches the marks: a session that deletes its own mark would lift what the mark holds it to wherever it
+// runs. It holds with or without a project; `project`, when there is one, keeps a write to a folder that holds both
+// the marks and its checkouts, such as the home folder, its own, as the store guard does. A call reaches the marks when
+// a target lies in one of `folders` (markFolders), or holds it, or a glob may reach it by its path or through a link
+// already on disk; a change of mode or owner counts there too, and on the state root that holds the folder. A target
+// in a folder no path gives, and a word of a command in a shell the lexer cannot read, count when a part of it is named
+// `unattended`, or, for a glob, may name it (globNamesFile). With `links` false it skips the link walk.
+export function unattendedMarkWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, folders = markFolders() } = {}) {
+  const subagent = isSubagent(input);
+  const { files, names, globs } = writeTargets(input);
+  const modes = modeTargets(input);
+  if (files.length === 0 && names.length === 0 && globs.length === 0 && modes.length === 0) return null;
+  const named = (text) => text.split(/[\\/]/u).some((part) => MARK_PART.test(part));
+  const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
+  const byName = names.some(named) || unplaced.some(({ text }) => named(text))
+    || globs.some((glob) => (glob.unsure || glob.opaque) && (named(glob.text) || globNamesFile(glob.text, MARK_TAIL, { folderParts: 0 })));
+  let hit = byName;
+  if (!hit) {
+    const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
+    const sure = globs.filter((glob) => !glob.unsure);
+    const known = sure.flatMap(globPaths);
+    const targets = files.map(real);
+    const marks = folders.map((folder) => ({ mark: real(folder), root: real(path.dirname(folder)) }));
+    const near = (target) => marks.some(({ root }) => isWithin(root, target) || isWithin(target, root));
+    const seen = links ? linkWalk(input) : null;
+    const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+    if (![...targets, ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !marks.some(({ root }) => linksTo(root))) return null;
+    const roots = (project?.checkouts ?? []).map(real);
+    hit = marks.some(({ mark, root }) => reaches({ files: targets, known, placed, linksTo }, mark, [root], roots));
+  }
+  if (!hit || !(subagent || unattended())) return null;
+  const opaque = opaqueShellCommand(input) !== null;
+  const verb = opaque || byName ? 'may change' : 'changes';
+  const writer = subagent ? 'which only the handoff gate writes' : `which only the handoff gate writes, ${UNATTENDED}`;
+  const why = `it ${verb} the unattended marks, ${MARK_TAIL}, which tell the hooks a session no Human attends wherever it runs, and ${writer}`;
+  return { match: `${verb} the unattended marks`, reason: projectRuleReason(input, why, human) };
 }

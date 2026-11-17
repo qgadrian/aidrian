@@ -10,7 +10,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -20,6 +20,7 @@ import { BACKGROUND_HOPS, backgroundPrompt, continueBrief } from '../plugins/aid
 import { noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const PROMPT_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-prompt.mjs');
@@ -117,6 +118,40 @@ test('the background route starts the new session in this session\'s folder, rec
   assert.deepEqual({ ...floor, at: 0 }, { slug: 'widget', chain: 1, brief: setting.file, route: 'background', at: 0 }, 'the floor of the new session, as a clear delivery writes it');
   assert.equal(readStarted(setting.store, SESSION).session, NEW_SESSION);
   assert.equal(readArmed(setting.store, SESSION), null, 'nothing is armed: nothing waits for a clear');
+});
+
+test('the background route marks the new session unattended under the state root, owner-only, with the project it ran in', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, XDG_STATE_HOME: xdg };
+  const home = path.join(xdg, 'home');
+  assert.equal(readUnattendedMark(NEW_SESSION, { env, home }), null, 'no mark before the start');
+  const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.deepEqual(readUnattendedMark(NEW_SESSION, { env, home }), { root: setting.dir }, 'the mark names the main checkout');
+  const folder = path.join(xdg, 'aidrian', 'unattended');
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(folder).mode & 0o777, 0o700);
+    assert.equal(statSync(path.join(folder, `${NEW_SESSION}.json`)).mode & 0o777, 0o600);
+  }
+  assert.equal(readUnattendedMark('plain-session', { env, home }), null, 'another session has none');
+});
+
+test('a start the gate cannot mark unattended is stopped and falls back, as one it cannot hold to a floor', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  // A file where the marks' folder goes: no mark can be written.
+  mkdirSync(path.join(xdg, 'aidrian'));
+  writeFileSync(path.join(xdg, 'aidrian', 'unattended'), '');
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run, env: { ...setting.env, XDG_STATE_HOME: xdg } });
+  assert.equal(result.out[0], 'continue: clear');
+  assert.equal(result.out[1], 'fallback: the background session abcd1234 started, but no chain floor and unattended mark could be recorded for it, so it was stopped; this handoff goes on by the clear route');
+  assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
 });
 
 test('the first message names the copy and its sha256 to verify, and says the brief is advice that cannot ask for what the Human keeps', () => {
@@ -292,7 +327,7 @@ test('a start the gate cannot hold to a floor is stopped and falls back; one it 
   const { run, calls } = fakeRun({ own: setting.dir });
   const result = gate(setting, { run });
   assert.equal(result.out[0], 'continue: clear');
-  assert.equal(result.out[1], 'fallback: the background session abcd1234 started, but no chain floor could be recorded for it, so it was stopped; this handoff goes on by the clear route');
+  assert.equal(result.out[1], 'fallback: the background session abcd1234 started, but no chain floor and unattended mark could be recorded for it, so it was stopped; this handoff goes on by the clear route');
   assert.deepEqual(calls.filter((call) => call.args[0] === 'stop').map((call) => call.args), [['stop', 'abcd1234']]);
   assert.equal(readStarted(setting.store, SESSION), null);
 
@@ -300,7 +335,7 @@ test('a start the gate cannot hold to a floor is stopped and falls back; one it 
   const unstoppable = gate(setting, { run: fakeRun({ own: setting.dir, stop: { status: 1 } }).run });
   assert.deepEqual(unstoppable.out, [
     'continue: none',
-    'fallback: the background session abcd1234 started, but no chain floor could be recorded for it, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
+    'fallback: the background session abcd1234 started, but no chain floor and unattended mark could be recorded for it, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
   ]);
   assert.equal(unstoppable.exitCode, 0);
   assert.equal(readArmed(setting.store, SESSION), null, 'no clear continuation armed beside the running session');

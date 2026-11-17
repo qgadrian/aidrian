@@ -38,7 +38,7 @@ const GUARDED_LIB = [
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
   'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-length', 'shell-lex',
-  'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
+  'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
@@ -499,9 +499,10 @@ export function stateDir(project, { config = loadConfig(project).config, env = p
 // The state folder of `project` under `config` as the host's own environment resolves it: stateDir with no
 // XDG_STATE_HOME, and with the home folder of the user this process runs as, which no HOME of a command's own moves.
 // It only names the folder, for a comparison, and reads none of it: lib/handoff-continue.mjs backgroundGate holds the
-// continuation store it opens to this one, so a variable set on the command line alone cannot move the store.
-export function defaultStateDir(project, { config = loadConfig(project).config, read = defaultRead } = {}) {
-  const home = userInfo().homedir;
+// continuation store it opens to this one, so a variable set on the command line alone cannot move the store, and
+// lib/handoff-guard.mjs startedUnattended reads a chain floor there too. `home` is for a test, which may not reach the
+// user's own home folder.
+export function defaultStateDir(project, { config = loadConfig(project).config, read = defaultRead, home = userInfo().homedir } = {}) {
   if (config.state.dir) return localPath(project, config.state.dir, read, home);
   return path.join(home, '.local/state', 'aidrian', 'projects', projectId(project, read));
 }

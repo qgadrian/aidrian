@@ -278,8 +278,10 @@ to another folder falls back to the clear route with that reason; committing `st
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
    its next brief to the count. It reads the host's listing for the new session's full id for about 5 seconds; when the
    listing lags, it files the floor under the short id the start printed, and every session id that starts with it
-   reads that floor. A start with no id, printed or listed, has nothing to stop, and falls back to the clear route.
-   A start whose floor cannot be written is stopped through the host and falls back to the clear route; when the stop
+   reads that floor. Under the same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`,
+   which names the project's main checkout, so the hooks know the session wherever its calls run (Limits, below).
+   A start with no id, printed or listed, has nothing to stop, and falls back to the clear route.
+   A start whose floor or mark cannot be written is stopped through the host and falls back to the clear route; when the stop
    fails too, the gate prints `continue: none` and a `fallback:` line that names the running session and the host's
    command to stop it, and arms no clear beside it. The gate never reports a background session it cannot hold to the
    count as the continuation.
@@ -303,17 +305,26 @@ Limits:
   switched to in the session does not carry over.
 - No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
   in `.aidrian.local.json`, as it refuses a subagent: `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`,
-  `unattendedSignoff`, `handoff.background`, and `review.productFeedback`. The hook knows such a session by its chain
-  floor of route `background`, under its full id or a short one, in the store of the working copy's `state.dir` or the
-  base branch's, and reads it only for a call the guards below would refuse, before the call runs, so a call that
-  deletes the floor is judged while the floor is still there. It refuses such a session, as a subagent:
+  `unattendedSignoff`, `handoff.background`, and `review.productFeedback`. The hook knows such a session by its
+  unattended mark, read on every call before it runs, wherever the call runs: with no project at the call's folder,
+  the mark's project is the one guarded, and from another project, the mark's project's store and switches are guarded
+  beside that project's. The folder `$XDG_STATE_HOME/aidrian/unattended/` is the user's alone (0700), each mark too
+  (0600); the hook also reads `~/.local/state/aidrian/unattended/` of the user it runs as, which no variable moves.
+  A mark lasts 30 days, as a floor does, and each write sweeps older ones; an entry the hook cannot check counts.
+  A session the gate started before the marks is known by its chain floor of route `background`, under its full id or
+  a short one, in the store of the working copy's `state.dir` or the base branch's, each where the hook's environment
+  puts it and where the user's own puts it, as the gate does; the hook reads it only for a call the guards below would
+  refuse, before the call runs, so a call that deletes the floor is judged while the floor is still there. It refuses
+  such a session, as a subagent:
   - a write in the continuation store, such as a delete or an overwrite of its own floor, and a `chmod`, `chown`, or
     `chgrp` of the store, a file in it, its handoffs folder, or the state folder, which would hide the floor;
+  - a write in the unattended marks' folder, or a change of its mode or owner, or of the state root's, which would
+    lift its own mark, with or without a project, as a subagent is refused it too;
   - a host session started outside the gate, such as `claude -p`, `claude --bg`, or `claude --resume`, by the matcher
     each host adapter declares (`sessionStart`, [Adding a host](providers/adding-a-host.md));
-  - an `aidrian handoff continue` or `aidrian handoff route` whose command line sets `XDG_STATE_HOME`, `HOME`, `PATH`,
-    or a variable a host names a session or an agent by, which would move the store, the session the gate reads
-    floors for, or the host command it runs.
+  - an `aidrian handoff continue` or `aidrian handoff route` whose command line sets or unsets `XDG_STATE_HOME`, `HOME`,
+    `PATH`, or a variable a host names a session or an agent by, as `env -u`, `env -i`, `sudo`, and `unset` do, which
+    would move the store, the session the gate reads floors for, or the host command it runs.
   A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
   closed.
 

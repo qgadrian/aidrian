@@ -877,20 +877,27 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's.
 - A main session the [background handoff route](handoff.md#the-background-route) started is refused every machine
-  switch in that file the same way, as a subagent is: no Human attends it. The hook knows it by its chain floor of
-  route `background`, under its full id or a short one, in the continuation store of the working copy's `state.dir`
-  or the base branch's, and reads that floor, and git, at most once a call, before it runs, and only for a call one of
-  these guards would refuse it. It is held as a subagent is to the continuation store, below, so it can neither delete
-  nor hide its own floor, and to the next two rules.
+  switch in that file the same way, as a subagent is: no Human attends it. The hook knows it by the unattended mark the
+  gate files, `$XDG_STATE_HOME/aidrian/unattended/<session id>.json`, or the one in `~/.local/state/aidrian/unattended/`
+  of the user it runs as, read on every call before it runs, wherever it runs: with no project at the call's folder,
+  the project the mark names is guarded, and from another project, that project's store and switches are guarded too.
+  A session started before the marks is known by its chain floor of route `background`, under its full id or a short
+  one, in the continuation store of the working copy's `state.dir` or the base branch's, where the hook's environment
+  and the user's own put it, and the hook reads that floor, and git, at most once a call, only for a call one of these
+  guards would refuse it. It is held as a subagent is to the continuation store, below, so it can neither delete
+  nor hide its own floor, and to the next three rules.
+- With or without gates or a project, a subagent, and a main session the background handoff route started, may not
+  write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
+  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
 - With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
   a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
   `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,
   [Adding a host](providers/adding-a-host.md)), every host's whatever host runs the session; a shell it cannot read
   that names such a program counts. A command that only manages sessions, such as `claude agents` or `claude stop`, runs.
 - With or without gates, the same two may not run `aidrian handoff continue` or `aidrian handoff route` with a
-  variable the command line sets that moves the gate's store, session, agent, or host command: `XDG_STATE_HOME`, `HOME`,
-  `PATH`, and each variable a host names or tells itself by, set by a prefix assignment, `env`, or `export` anywhere in
-  the command. The gate also holds its store to the base branch's under the host's own environment
+  variable the command line sets or unsets that moves the gate's store, session, agent, or host command: `XDG_STATE_HOME`, `HOME`,
+  `PATH`, and each variable a host names or tells itself by, set by a prefix assignment, `env`, or `export`, or
+  unset by `env -u`, `env -i`, `sudo`, or `unset`, anywhere in the command. The gate also holds its store to the base branch's under the host's own environment
   ([handoff.md](handoff.md#the-background-route)).
 - With or without gates, a subagent may not run `aidrian handoff continue`, the [handoff gate](handoff.md#the-gate),
   which arms a continuation of the main session: its shell carries the main session's id, so the command cannot tell it

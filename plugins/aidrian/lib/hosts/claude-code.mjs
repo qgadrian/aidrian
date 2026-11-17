@@ -5,7 +5,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
+import { attachLine, findLine, sessionEnded, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -131,8 +131,8 @@ export default {
     // the claude process, names the session before and after it. The background route starts a new session with
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
     // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
-    // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, and `attachLine`
-    // says how to open one.
+    // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, `attachLine`
+    // says how to open one, and `sessionEnded` whether `claude agents --json --all` lists a started one as done.
     handoffContinue: {
       routes: ['clear', 'background'],
       steps: {
@@ -143,6 +143,7 @@ export default {
         session, slug, chain, env, prompt, hold, run, wait, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
+      sessionEnded: ({ id, session, env, run }) => sessionEnded({ id, session, env, run }),
       stopLine,
       findLine,
       attachLine,

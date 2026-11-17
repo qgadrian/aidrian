@@ -10,17 +10,18 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundPrompt, continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { claudeOnPath, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { CLAIM_AGE, claimStart, keepClaim, noteFrom, noteStarted, openStore, readArmed, readFrom, readStarted, startedInBackground } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { claudeOnPath, sessionEnded, startBackground, startIn } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
-import { readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
+import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const PROMPT_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-prompt.mjs');
@@ -422,8 +423,10 @@ test('the new session never starts in the brief\'s worktree, whatever config and
   passCheck(setting);
   const unplaced = fakeRun({ own: undefined });
   const result = gate(setting, { run: unplaced.run });
-  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since `claude agents --json` does not list the folder of this session; this handoff goes on by the clear route']);
+  // This session's first start still owns the work, so no clear is armed beside it.
+  assert.deepEqual(result.out.slice(0, 2), ['continue: none', `fallback: no background session started, since \`claude agents --json\` does not list the folder of this session; ${busyLine()}`]);
   assert.deepEqual(bgCalls(unplaced.calls), []);
+  assert.equal(readArmed(setting.store, SESSION), null);
 });
 
 test('a start that fails goes on by the clear route with the reason and records no floor; one the listing shows after a timeout counts', (t) => {
@@ -441,10 +444,14 @@ test('a start that fails goes on by the clear route with the reason and records 
     assert.match(result.out[1], pattern);
   }
   assert.deepEqual(readdirSync(setting.store.dir).filter((name) => name.startsWith('from-') || name.startsWith('started-')), [], 'no floor and no start');
+  // With no start of this session on record, each goes on by the clear route.
   const thrown = gate(setting, { run: () => { throw new Error('boom'); } });
-  assert.match(thrown.out[1], /^fallback: no background session started, since the host's start failed \(boom\)/u);
+  assert.deepEqual(thrown.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since the host\'s start failed (boom); this handoff goes on by the clear route']);
   const missing = gate(setting, { run: fakeRun({ own: setting.dir }).run, env: { ...setting.env, PATH: `relative/bin${path.delimiter}${path.delimiter}.` } });
-  assert.match(missing.out[1], /^fallback: no background session started, since `claude` is not on PATH, in an absolute folder;/u);
+  assert.deepEqual(missing.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since `claude` is not on PATH, in an absolute folder; this handoff goes on by the clear route']);
+  const unplaced = fakeRun({ own: undefined });
+  assert.deepEqual(gate(setting, { run: unplaced.run }).out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since `claude agents --json` does not list the folder of this session; this handoff goes on by the clear route']);
+  assert.deepEqual(bgCalls(unplaced.calls), []);
 
   // A start that timed out but did start: the listing shows it, so it is held to its floor and reported.
   const late = fakeRun({ own: setting.dir, start: () => ({ error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), status: null, stdout: '' }) });
@@ -517,11 +524,96 @@ test('a second run on the same bytes starts nothing and says the same, and the o
   const other = spawnSync(process.execPath, [PROMPT_HOOK], { input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'session-2', cwd: setting.dir, prompt: 'hi' }), encoding: 'utf8', env: { ...setting.env, CLAUDE_CONFIG_DIR: settings } });
   assert.equal(other.stdout, '', 'another session gets nothing');
 
-  // Changed bytes are a new handoff, checked and started again.
+  // Changed bytes from the same session, while the session it started is still listed, start nothing: one session
+  // starts one background session until the host lists that one as ended.
   writeFileSync(setting.file, brief(0).replace('Ship it.', 'Ship it now.'));
   passCheck(setting);
+  const changed = gate(setting, { run });
+  assert.equal(changed.exitCode, 0);
+  assert.deepEqual(changed.out, ['continue: none', `fallback: ${busyLine(false)}`]);
+  assert.equal(bgCalls(calls).length, 1, 'still one start');
+  assert.equal(readArmed(setting.store, SESSION), null, 'no clear armed beside the session that owns the work');
+});
+
+// The line that names abcd1234, the session the first start made, as fakeRun names it, as the owner of the work, with
+// what the host's listing said of it: false, null for no answer, or undefined when it was not read.
+const busyLine = (answer, name = 'harness-handoff · 1') => {
+  const listing = { null: ": the host's listing gave no answer, so the gate counts that session as running", false: ": the host's listing does not show that session as done, so the gate counts it as running" }[String(answer)] ?? '';
+  return `this session already started the background session abcd1234 for the brief widget, which owns the work, so no other starts and no clear is armed beside it${listing}. ` +
+    `It lifts once the host lists that session as done, or 24 hours after its start, when the gate's record of it lapses: \`claude attach abcd1234\` opens it, or \`claude attach '${name}'\` by its name, and \`claude agents\` lists it. A person can resume the brief widget by hand`;
+};
+
+// fakeRun, whose `claude agents --json --all` gives the started session the state `stateOf()` returns, and answers
+// as `allAnswer()` says when it returns one.
+function listingRun(setting, { stateOf, allAnswer = () => null }) {
+  const fake = fakeRun({ own: setting.dir });
+  const run = (command, args, options) => {
+    const answer = fake.run(command, args, options);
+    if (args[0] !== 'agents' || !args.includes('--all')) return answer;
+    const given = allAnswer();
+    if (given) return given;
+    const list = JSON.parse(answer.stdout).map((each) => (each.sessionId === NEW_SESSION ? { ...each, state: stateOf() } : each));
+    return { ...answer, stdout: JSON.stringify(list) };
+  };
+  return { run, calls: fake.calls };
+}
+
+const rerun = (setting, text) => {
+  writeFileSync(setting.file, text);
+  passCheck(setting);
+};
+
+test('a session starts another background session only once the host lists the one it started as done', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  let state = 'working';
+  const { run, calls } = listingRun(setting, { stateOf: () => state });
   assert.equal(gate(setting, { run }).out[0], 'continue: background');
-  assert.equal(bgCalls(calls).length, 2);
+  rerun(setting, brief(0).replace('Ship it.', 'Ship it now.'));
+  assert.deepEqual(gate(setting, { run }).out, ['continue: none', `fallback: ${busyLine(false)}`], 'listed as working: refused');
+  assert.equal(bgCalls(calls).length, 1);
+  assert.ok(calls.some((call) => call.args.join(' ') === 'agents --json --all'), 'the gate read the listing with the completed sessions');
+
+  state = 'done';
+  const second = gate(setting, { run });
+  assert.equal(second.out[0], 'continue: background', second.out.join('\n'));
+  assert.equal(bgCalls(calls).length, 2, 'listed as done: a second start');
+  assert.equal(readStarted(setting.store, SESSION, {}).sha256, sha(brief(0).replace('Ship it.', 'Ship it now.')), 'the second start is the one recorded');
+});
+
+test('a second start fails closed: a listing that gives no answer, or does not name the started session, refuses it', (t) => {
+  const answers = [
+    [() => ({ status: 1, stdout: '', stderr: 'supervisor down' }), null],
+    [() => ({ error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }) }), null],
+    [() => ({ status: 0, stdout: 'not json', stderr: '' }), null],
+    [() => ({ status: 0, stdout: '[]', stderr: '' }), false],
+  ];
+  for (const [allAnswer, said] of answers) {
+    const setting = setup(t);
+    passCheck(setting);
+    let answering = false;
+    const { run, calls } = listingRun(setting, { stateOf: () => 'done', allAnswer: () => (answering ? allAnswer() : null) });
+    assert.equal(gate(setting, { run }).out[0], 'continue: background');
+    answering = true;
+    rerun(setting, brief(0).replace('Ship it.', 'Ship it now.'));
+    assert.deepEqual(gate(setting, { run }).out, ['continue: none', `fallback: ${busyLine(said)}`]);
+    assert.equal(bgCalls(calls).length, 1, 'one start');
+  }
+});
+
+test('the host reads a started session as ended only when every row that names it is a background session marked done', () => {
+  const answer = (rows) => () => ({ status: 0, stdout: JSON.stringify(rows), stderr: '' });
+  const ended = (rows, record) => sessionEnded({ ...record, env: {}, run: answer(rows), resolve: () => '/bin/claude' });
+  const done = { id: 'abcd1234', sessionId: NEW_SESSION, kind: 'background', state: 'done' };
+  assert.equal(ended([done], { id: 'abcd1234', session: NEW_SESSION }), true);
+  assert.equal(ended([done], { id: 'abcd1234', session: null }), true, 'by the short id the start printed');
+  assert.equal(ended([{ ...done, state: 'working' }], { id: 'abcd1234', session: NEW_SESSION }), false);
+  assert.equal(ended([{ ...done, state: undefined }], { id: 'abcd1234', session: NEW_SESSION }), false, 'no state is no end');
+  assert.equal(ended([done, { ...done, sessionId: `${NEW_SESSION.slice(0, 8)}-other`, id: undefined, state: 'working' }], { id: 'abcd1234', session: null }), false, 'a short id that names a running session too');
+  assert.equal(ended([{ ...done, kind: 'interactive' }], { id: 'abcd1234', session: NEW_SESSION }), false);
+  assert.equal(ended([], { id: 'abcd1234', session: NEW_SESSION }), false, 'not listed');
+  assert.equal(sessionEnded({ id: 'abcd1234', session: NEW_SESSION, env: {}, run: () => ({ status: 1 }), resolve: () => '/bin/claude' }), null, 'no answer');
+  assert.equal(sessionEnded({ id: 'abcd1234', session: NEW_SESSION, env: {}, resolve: () => null }), null, 'no claude');
 });
 
 test('the background route keeps the gate: no check, maxChain, a route the config did not opt into, and another host', (t) => {
@@ -592,7 +684,9 @@ else console.log('backgrounded · abcd1234 · ' + args[args.indexOf('--name') + 
   assert.equal(run('check', setting.file).status, 0);
   const missing = spawnSync(CLI, ['handoff', 'continue', setting.file], { cwd: setting.dir, encoding: 'utf8', env: { ...setting.env, PATH: [nodeOnly, ...system].join(path.delimiter) } });
   assert.equal(missing.status, 0, missing.stderr);
-  assert.match(missing.stdout, /^continue: clear\nfallback: no background session started, since `claude` is not on PATH, in an absolute folder; this handoff goes on by the clear route\n/u);
+  // This session's first start still owns the work, so no clear is armed beside it.
+  assert.equal(missing.stdout, `continue: none\nfallback: no background session started, since \`claude\` is not on PATH, in an absolute folder; ${busyLine(undefined, 'widget · 1')}\n`);
+  assert.equal(readArmed(setting.store, SESSION), null);
 });
 
 test('a working copy whose state.dir differs from the base branch\'s goes on by the clear route with the reason, and starts nothing', (t) => {
@@ -735,4 +829,281 @@ test('the new session starts in the permission mode of the handing-off session, 
     rmSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
   });
   assert.equal(moved.flag, 'dontAsk');
+});
+
+// The claim file of SESSION in the store of `setting`.
+const claimFile = (setting) => path.join(setting.store.dir, `claim-${SESSION}.json`);
+
+// A state root of the test's own, so the marks it files hold no session of another test.
+function ownMarks(t, setting) {
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  return { xdg, env: { ...setting.env, XDG_STATE_HOME: xdg } };
+}
+
+// startHeld's arguments for SESSION in `setting`, with a stop that works, under the state root of `env`.
+const heldArgs = (setting, env, more = {}) => ({
+  session: SESSION, store: setting.store, root: setting.dir, env, now: Date.now(), stop: () => true,
+  floor: { slug: 'widget', chain: 1, brief: setting.file, route: 'background' },
+  record: { sha256: sha(brief()), slug: 'widget', brief: setting.file, chain: 1 },
+  ...more,
+});
+
+// A launch that starts `made` only when the hold lets it, and logs each start in `starts`.
+const holdingLaunch = (setting, starts, made = { id: 'abcd1234', session: NEW_SESSION, name: null, cwd: setting.dir, mode: 'auto' }) => (hold) => {
+  if (!hold({ cwd: setting.dir, known: [] })) return { problem: 'the hold refused' };
+  starts.push(made.id);
+  return made;
+};
+
+// The start record SESSION keeps of abcd1234, dated `now`.
+const recordStart = (setting, now = Date.now()) => noteStarted(setting.store, SESSION, {
+  sha256: sha('earlier'), slug: 'widget', brief: setting.file, chain: 1, id: 'abcd1234', session: NEW_SESSION, name: null, cwd: setting.dir,
+}, { now });
+
+test('one run of a session at a time: a run that starts while another holds the claim is refused and starts nothing', (t) => {
+  const setting = setup(t);
+  const { env } = ownMarks(t, setting);
+  const starts = [];
+  let inner = null;
+  const outer = startHeld(heldArgs(setting, env, {
+    launch: (hold) => {
+      assert.equal(hold({ cwd: setting.dir, known: [] }), true);
+      // Kept from the hold on, so a gate killed from here fails closed for a day.
+      assert.equal(JSON.parse(readFileSync(claimFile(setting), 'utf8')).kept, true);
+      // A second run of the same session reaches its hold before the first recorded its start.
+      inner = startHeld(heldArgs(setting, env, { launch: holdingLaunch(setting, starts, { id: 'feed0000', session: null, name: null, cwd: setting.dir, mode: 'auto' }), ended: () => true }));
+      assert.equal(JSON.parse(readFileSync(claimFile(setting), 'utf8')).kept, true, 'the refused run leaves the holder\'s claim in place');
+      starts.push('abcd1234');
+      return { id: 'abcd1234', session: NEW_SESSION, name: null, cwd: setting.dir, mode: 'auto' };
+    },
+    ended: () => true,
+  }));
+  assert.equal(outer.outcome, 'started');
+  assert.deepEqual(inner, { outcome: 'refused', busy: 'running' });
+  assert.deepEqual(starts, ['abcd1234'], 'the second run started nothing');
+  assert.equal(readdirSync(setting.store.dir).filter((name) => name.startsWith('claim-')).length, 0, 'the claim is gone once the start is recorded');
+});
+
+test('the start record is read at the hold\'s own time: one written after the gate\'s time still refuses', (t) => {
+  const setting = setup(t);
+  const { env } = ownMarks(t, setting);
+  recordStart(setting, Date.now());
+  const starts = [];
+  const held = startHeld(heldArgs(setting, env, { now: Date.now() - 60_000, launch: holdingLaunch(setting, starts), ended: () => false }));
+  assert.equal(held.outcome, 'refused');
+  assert.equal(held.earlier.id, 'abcd1234');
+  assert.equal(held.answer, false);
+  assert.deepEqual(starts, []);
+});
+
+test('a host with no reading of its listing fails closed: a live start record refuses every later start', (t) => {
+  const setting = setup(t);
+  const { env } = ownMarks(t, setting);
+  recordStart(setting);
+  const starts = [];
+  const held = startHeld(heldArgs(setting, env, { record: { sha256: sha('changed'), slug: 'widget', brief: setting.file, chain: 1 }, launch: holdingLaunch(setting, starts) }));
+  assert.deepEqual([held.outcome, held.earlier?.id, held.answer], ['refused', 'abcd1234', null]);
+  assert.deepEqual(starts, []);
+});
+
+test('an adapter that starts a session though the hold refused has it stopped; one it cannot stop keeps the claim', (t) => {
+  const setting = setup(t);
+  const { env } = ownMarks(t, setting);
+  recordStart(setting);
+  const made = { id: 'beef0000', session: null, name: null, cwd: setting.dir, mode: 'auto' };
+  const stops = [];
+  const ignoring = (hold) => {
+    hold({ cwd: setting.dir, known: [] });
+    return made;
+  };
+  const stopped = startHeld(heldArgs(setting, env, { launch: ignoring, ended: () => false, stop: (id) => stops.push(id) > 0 }));
+  assert.deepEqual(stopped, { outcome: 'unheld', started: made, stopped: true });
+  assert.deepEqual(stops, ['beef0000']);
+  assert.equal(readStarted(setting.store, SESSION).id, 'abcd1234', 'the start record is untouched');
+
+  const running = startHeld(heldArgs(setting, env, { launch: ignoring, ended: () => false, stop: () => false }));
+  assert.deepEqual(running, { outcome: 'unheld', started: made, stopped: false });
+  const starts = [];
+  assert.deepEqual(startHeld(heldArgs(setting, env, { launch: holdingLaunch(setting, starts), ended: () => true })), { outcome: 'refused', busy: 'kept' }, 'the session it could not stop holds the claim for a day');
+  assert.deepEqual(starts, []);
+});
+
+test('after a start whose outcome is unknown, a run on new bytes is refused for the day and starts nothing', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const { env } = ownMarks(t, setting);
+  assert.equal(gate(setting, { run: fakeRun({ own: setting.dir, lag: Infinity, printId: false }).run, env }).out[0], 'continue: none');
+  rerun(setting, brief(0).replace('Ship it.', 'Ship it now.'));
+  const later = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run: later.run, env });
+  assert.deepEqual(result.out, ['continue: none', 'fallback: an earlier start from this session may have made a background session the gate could not name or hold, so for 24 hours after it no other starts: `claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one. A person can resume the brief widget by hand']);
+  assert.deepEqual(bgCalls(later.calls), []);
+  assert.equal(readArmed(setting.store, SESSION), null, 'no clear armed beside what may run');
+});
+
+test('a session a gate of another project started, or whose mark names no project, starts nothing here; one of this project does', (t) => {
+  const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-other-project-')));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  const marked = (setting, env) => markUnattended(SESSION, { root: elsewhere, env });
+  const unnamed = (setting, env, xdg) => writeFileSync(path.join(xdg, 'aidrian', 'unattended', `${SESSION}.json`), 'not json');
+  for (const [file, expected] of [[marked, `this session was started by a handoff gate of the project in ${elsewhere}`], [unnamed, 'this session was started by a handoff gate whose project its unattended mark does not name']]) {
+    const setting = setup(t);
+    passCheck(setting);
+    const { xdg, env } = ownMarks(t, setting);
+    markUnattended('someone-else', { root: setting.dir, env });
+    file(setting, env, xdg);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    const result = gate(setting, { run, env });
+    assert.deepEqual(result.out, ['continue: none', `fallback: ${expected}, and its chain floor lives in that project's store, so it starts no background session here; a person resumes the brief widget`]);
+    assert.deepEqual(bgCalls(calls), []);
+    assert.equal(readArmed(setting.store, SESSION), null);
+  }
+  // A mark that names this project's main checkout, by any spelling of it: the chain goes on.
+  const setting = setup(t);
+  passCheck(setting);
+  const { env } = ownMarks(t, setting);
+  const link = path.join(setting.root, 'link-to-project');
+  symlinkSync(setting.dir, link);
+  markUnattended(SESSION, { root: link, env });
+  const { run, calls } = fakeRun({ own: setting.dir });
+  assert.equal(gate(setting, { run, env }).out[0], 'continue: background');
+  assert.equal(bgCalls(calls).length, 1);
+});
+
+test('a start that fails before its hold arms no clear while this session\'s earlier background session owns the work', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const { run } = fakeRun({ own: setting.dir });
+  assert.equal(gate(setting, { run }).out[0], 'continue: background');
+  rerun(setting, brief(0).replace('Ship it.', 'Ship it now.'));
+  const empty = path.join(setting.root, 'no-claude');
+  mkdirSync(empty);
+  const result = gate(setting, { run, env: { ...setting.env, PATH: empty } });
+  assert.deepEqual(result.out, ['continue: none', `fallback: no background session started, since \`claude\` is not on PATH, in an absolute folder; ${busyLine()}`]);
+  assert.equal(readArmed(setting.store, SESSION), null);
+});
+
+// A stand-in for spawnSync that logs each call in `log` and answers the start with `stdout`, and every listing with
+// `listing`.
+const startInRun = (log, { stdout = 'backgrounded · abcd1234 · proj · 1\n', listing = [] } = {}) => (command, args, options) => {
+  log.push({ args, cwd: options.cwd });
+  return args[0] === 'agents' ? { status: 0, stdout: JSON.stringify(listing), stderr: '' } : { status: 0, stdout, stderr: '' };
+};
+
+// A real folder for startIn, by its real path.
+function startFolder(t) {
+  const folder = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-in-')));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  return folder;
+}
+
+test('startIn starts a session in a folder with a first message and a name, and refuses what could read as a flag or a command', (t) => {
+  const folder = startFolder(t);
+  const log = [];
+  const base = { cwd: folder, prompt: 'Go on with the work.', name: 'proj · 1', mode: 'auto', agent: 'aidrian:orchestrator', effort: 'high', efforts: ['high'], env: {}, wait: noWait, resolve: () => '/bin/claude', run: startInRun(log) };
+  const hold = (seen) => {
+    log.push({ hold: seen });
+    return true;
+  };
+  const started = startIn({ ...base, hold });
+  assert.deepEqual(started, { id: 'abcd1234', session: null, name: null, cwd: folder, mode: 'auto' });
+  const steps = log.map((each) => (each.hold ? 'hold' : each.args[0]));
+  assert.equal(steps.indexOf('hold'), 1, 'the hold runs after the first listing');
+  assert.ok(steps.indexOf('hold') < steps.indexOf('--bg'), 'and before the start');
+  assert.deepEqual(log.find((each) => each.args?.[0] === '--bg'), { args: ['--bg', '--name', 'proj · 1', '--agent', 'aidrian:orchestrator', '--effort', 'high', '--permission-mode', 'auto', 'Go on with the work.'], cwd: folder });
+
+  const refusals = [
+    { cwd: 'relative/folder' },
+    { cwd: path.join(folder, 'missing') },
+    { name: '-x' },
+    { prompt: '-p' },
+    { prompt: '/clear' },
+    { prompt: '  /compact now' },
+    { prompt: '' },
+    { mode: 'bypassPermissions' },
+    { mode: undefined },
+    { resolve: () => null },
+  ];
+  for (const change of refusals) {
+    const calls = [];
+    const result = startIn({ ...base, run: startInRun(calls), hold: () => true, ...change });
+    assert.equal(typeof result.problem, 'string', JSON.stringify(change));
+    assert.equal(result.uncertain, undefined, JSON.stringify(change));
+    assert.deepEqual(calls.filter((call) => call.args[0] === '--bg'), [], `${JSON.stringify(change)}: no start`);
+  }
+});
+
+test('the start\'s id is read from the start of a line, never from text echoed before it', (t) => {
+  const stdout = 'echo: backgrounded · evil0000 · bait\nbackgrounded · abcd1234 · proj · 1\n  claude agents   list sessions\n';
+  const result = startIn({ cwd: startFolder(t), prompt: 'Go on.', name: 'proj · 1', mode: 'auto', env: {}, wait: noWait, resolve: () => '/bin/claude', run: startInRun([], { stdout }), hold: () => true });
+  assert.equal(result.id, 'abcd1234');
+});
+
+test('startIn starts the session in the real folder a link names', (t) => {
+  const folder = startFolder(t);
+  const link = path.join(path.dirname(folder), `${path.basename(folder)}-link`);
+  symlinkSync(folder, link);
+  t.after(() => rmSync(link, { force: true }));
+  const log = [];
+  const held = [];
+  const result = startIn({ cwd: link, prompt: 'Go on.', name: 'proj · 1', mode: 'auto', env: {}, wait: noWait, resolve: () => '/bin/claude', run: startInRun(log), hold: (seen) => held.push(seen) > 0 });
+  assert.equal(result.cwd, folder);
+  assert.equal(log.find((each) => each.args[0] === '--bg').cwd, folder);
+  assert.equal(held[0].cwd, folder, 'the pending mark names the real folder too');
+});
+
+test('a claim holds 10 minutes while a run starts a session, a kept one a day, and one no read can check is kept once it is not being written', (t) => {
+  const setting = setup(t);
+  const file = claimFile(setting);
+  const age = (ms) => {
+    const when = (Date.now() - ms) / 1000;
+    utimesSync(file, when, when);
+  };
+  assert.deepEqual(claimStart(setting.store, SESSION), { claimed: true });
+  assert.deepEqual(claimStart(setting.store, SESSION), { busy: 'running' });
+  age(CLAIM_AGE + 1000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { claimed: true }, 'a run\'s claim past CLAIM_AGE is taken again');
+
+  keepClaim(setting.store, SESSION);
+  age(CLAIM_AGE + 1000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { busy: 'kept' }, 'a kept claim outlives CLAIM_AGE');
+  age(24 * 60 * 60 * 1000 + 1000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { claimed: true }, 'a kept claim past a day is taken again');
+
+  // The claim a hold keeps as its start begins: a run's for CLAIM_AGE, then kept, so a gate killed mid-start holds.
+  keepClaim(setting.store, SESSION, { starting: true });
+  assert.deepEqual(claimStart(setting.store, SESSION), { busy: 'running' });
+  age(CLAIM_AGE + 1000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { busy: 'kept' });
+  age(24 * 60 * 60 * 1000 + 1000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { claimed: true });
+
+  writeFileSync(file, '{"at":');
+  assert.deepEqual(claimStart(setting.store, SESSION), { busy: 'running' }, 'one being written');
+  age(6000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { busy: 'kept' }, 'one that cannot be read, past the write, holds as kept');
+  age(CLAIM_AGE + 1000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { busy: 'kept' });
+  age(24 * 60 * 60 * 1000 + 1000);
+  assert.deepEqual(claimStart(setting.store, SESSION), { claimed: true });
+});
+
+test('a start the host made nothing of, after the host listed the earlier session as done, goes on by the clear route', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  assert.equal(gate(setting, { run: fakeRun({ own: setting.dir }).run }).out[0], 'continue: background');
+  rerun(setting, brief(0).replace('Ship it.', 'Ship it now.'));
+  const calls = [];
+  const run = (command, args) => {
+    calls.push(args);
+    if (args[0] === 'agents' && args.includes('--all')) return { status: 0, stdout: JSON.stringify([{ id: 'abcd1234', sessionId: NEW_SESSION, kind: 'background', state: 'done' }]), stderr: '' };
+    if (args[0] === 'agents') return { status: 0, stdout: JSON.stringify([{ sessionId: SESSION, name: 'harness-handoff', kind: 'interactive', cwd: setting.dir }]), stderr: '' };
+    return { error: Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }), status: null };
+  };
+  const result = gate(setting, { run });
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since `claude` could not be run (ENOENT); this handoff goes on by the clear route']);
+  assert.ok(calls.some((args) => args[0] === '--bg'), 'the hold passed and the start ran');
+  assert.equal(readArmed(setting.store, SESSION)?.route, 'clear');
+  assert.equal(existsSync(claimFile(setting)), false, 'nothing runs, so no claim is kept');
 });

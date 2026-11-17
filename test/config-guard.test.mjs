@@ -539,6 +539,9 @@ test('a main session the background route started may not delete, overwrite, or 
     `chmod -R go+w ${path.dirname(state)}`,
     `chown other ${store}`,
     'cd "$X" && chmod 777 handoffs/.continue',
+    // The claim of a session on a start, which a removal would lift.
+    'cd "$X" && rm claim-*',
+    'cd "$X" && rm .continue/claim-*',
   ];
   for (const session of [full, short]) {
     for (const command of blocked) {
@@ -822,6 +825,9 @@ test('a subagent may not write in the handoff continuation store, with or withou
         'cd "$X" && cp /tmp/x.md continued-*',
         'cd "$X" && echo {} > .continue/started-s1.json',
         'cd "$X" && cp /tmp/x.md .continue/continued-x.md',
+        // The claim of a session on a start, which a removal would lift.
+        'cd "$X" && rm claim-*',
+        'cd "$X" && rm .continue/claim-*',
         // A glob in the first path part, right below the root.
         'rm -rf /*',
         `rm -rf /${state.split('/')[1].slice(0, 2)}*/${state.split('/').slice(2).join('/')}/handoffs/.continue`,

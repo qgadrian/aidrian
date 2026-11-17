@@ -236,6 +236,16 @@ mark (`uncertain: true`), and `findLine` names `claude agents` and `claude stop 
 for is stopped with `claude stop <id>`. The `say:` line leads with `claude attach <id>`, adds `claude attach '<name>'` only when the
 name is plain words, digits, spaces, and `.@:·-`, and no other listed session has it, and names `claude agents`.
 
+`sessionEnded` reads `claude agents --json --all`, which `claude agents --help` says also lists the completed background
+sessions. It reads a session that a start record names, by its `sessionId`, else by the short id the start printed,
+as ended only when every row that names it is `kind: "background"` with `state: "done"`. On 2.1.326, on 2026-11-17,
+a completed session's row had `state: "done"` and no `pid` or `status`, and a running one had `state: "working"` and
+`status: "busy"`. Any other state, no row, or a listing that gives no answer counts as running, so the session that
+started it starts no other. On 2.1.326, `failed` and `stopped` are states of their own, not `done`, so a session that
+failed or that `claude stop` stopped holds the gate too: this comes from a reading of the host's source, and was not
+run live. The adapter reads the `backgrounded · <id>` line only at the start of a line, so text echoed before it,
+such as part of the prompt, cannot name another session.
+
 Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rather than a real brief:
 
 - `claude --bg` started from the Bash tool of a running session returns at once, prints

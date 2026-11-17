@@ -192,6 +192,26 @@ whatever the config says, and `background` only when the config says `"backgroun
    On the background route it arms nothing: it starts the new session, as [The background route](#the-background-route)
    says, and its `say:` line names that session and how to open it. A second run on the same bytes, in the same
    session, prints the same lines again and starts nothing, before any other check.
+   One background start per session: while the gate's record of a session's last start lives, 24 hours, a run on any
+   other bytes, an edit of the same brief or another brief, starts nothing until the host's own listing shows the
+   started session as done. It prints `continue: none` and a `fallback:` line that names that session, what the listing
+   said, and how to open it, and arms no clear beside it. A listing that gives no answer, or does not name that session,
+   counts as still running, as does a session the host lists as failed or stopped. The refusal lifts once the host
+   lists the session as done, or when the record lapses; a person can resume the brief by hand at any time.
+   The gate checks this at its hold, just before the host would start a session, so a start that cannot run for
+   another reason, such as no host command on PATH, still names that reason, and arms no clear while the record lives.
+   Two runs of one session never start two sessions at once: the hold first takes the session's claim in the
+   continuation store, `claim-<session>.json`, a file made only when none is there, and a run that finds another's
+   claim starts nothing. A run's claim lapses after 10 minutes. Once the hold files its pending mark, it keeps the
+   claim for 24 hours before the host starts anything, so a gate killed mid-start still holds the session; the gate
+   drops it again once it knows no session runs unheld. After a start whose outcome is unknown, or a started session
+   the gate could neither hold nor stop, the kept claim stays, so no later run starts a second session beside one that
+   may still run. A claim whose content no read can check counts as kept once it is more than 5 seconds old. A
+   subagent, and a session the background route started, may not remove a claim.
+   When the host listed the earlier session as done and the new start then made nothing, the handoff goes on by the
+   clear route, as with no earlier start.
+   A session whose unattended mark names another project's main checkout, or none the gate can read, starts no
+   background session: its chain floor lives in that project's store.
 
 The latest run decides: once the brief resolves and the session is known, any continuation the session armed before is
 gone, whatever the exit, so a clear never delivers an earlier brief.
@@ -302,7 +322,8 @@ to another folder falls back to the clear route with that reason; committing `st
    the clear route; when the stop fails too, the gate prints `continue: none` and a `fallback:` line that names the
    running session and the host's command to stop it, arms no clear beside it, and leaves the pending mark to lapse. The gate never reports a background session it cannot hold to the
    count as the continuation.
-6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
+6. It records the start for this session, which stops the session from starting another until the host lists the
+   started one as ended, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
    host's command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the

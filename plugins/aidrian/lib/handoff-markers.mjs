@@ -6,6 +6,7 @@
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
 //   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
+//   claim-<session>.json       { at, kept }       a gate run's claim on starting a session for it (claimStart)
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
 // takes it for every session id that starts with it, and the highest of those and the session's own wins. A floor of
@@ -43,8 +44,8 @@ export const MARKER_CAP = 64 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY };
-const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued)-/u;
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY };
+const KIND = /^(armed|ready|checked|tasks|taken|started|claim|from|gone|continued)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
 const CHAIN_CEILING = 10_000;
@@ -58,10 +59,10 @@ const MODE = /^[A-Za-z]{1,32}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
-const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|claim|from|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
-export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started|claim)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 const TEMPORARY = /^\.(.+)\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // No read follows a symlink, and none waits on a FIFO or a device that has no writer.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -372,6 +373,77 @@ export function noteStarted(store, session, started, { now = Date.now() } = {}) 
 // The background start `session` made in the last day, or null.
 export function readStarted(store, session, { now = Date.now() } = {}) {
   return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted });
+}
+
+// How long a claim of a gate run that is starting a session holds: past the host's longest start and listing, so a run
+// that died lets the next one start once it lapses.
+export const CLAIM_AGE = 10 * 60 * 1000;
+// How long a claim whose content cannot be read yet counts as one being written; older, it counts as kept.
+const CLAIM_WRITE = 5 * 1000;
+
+// Takes the claim of `session` on starting a session, as one file made only when none is there: { claimed: true }, or
+// { busy } when it cannot: `running` while another run's claim holds, `kept` while a claim kept after a start whose
+// outcome is unknown holds (keepClaim), and `unknown` when the store is refused or the claim cannot be made or read.
+// A claim holds CLAIM_AGE from its file's modification time, a kept one a day, and one dated in the future holds too;
+// a lapsed one is removed and the claim taken again once. The caller removes it with dropClaim.
+// Removing a lapsed claim is not atomic: two runs that find the same lapsed claim in the same instant may each remove
+// the other's new one. That is accepted: it needs a run that died 10 minutes ago, and the start record still holds.
+export function claimStart(store, session, { now = Date.now() } = {}) {
+  const name = sessionFile('claim', session);
+  if (store.refused || !name) return { busy: 'unknown' };
+  const file = path.join(store.dir, name);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(store.dir, { recursive: true, mode: 0o700 });
+      writeFileSync(file, `${JSON.stringify({ at: now, kept: false })}\n`, { flag: 'wx', mode: 0o600 });
+      return { claimed: true };
+    } catch (error) {
+      if (error.code !== 'EEXIST') return { busy: 'unknown' };
+    }
+    const held = claimHeld(store, file, now);
+    if (held) return { busy: held };
+    rmSync(file, { force: true });
+  }
+  return { busy: 'running' };
+}
+
+// Whether the claim file `file` still holds: 'kept', 'running', 'unknown' for one that is no regular file of this user,
+// or null when it lapsed. Content it cannot read counts as a run's claim being written for CLAIM_WRITE, and as a kept
+// one after that, so a claim no read can check fails closed for a day.
+function claimHeld(store, file, now) {
+  let stat;
+  try {
+    stat = lstatSync(file);
+  } catch (error) {
+    return error.code === 'ENOENT' ? null : 'unknown';
+  }
+  if (!stat.isFile() || foreign(stat, store.uid)) return 'unknown';
+  const age = now - Math.floor(stat.mtimeMs);
+  let value;
+  try {
+    value = stat.size < MARKER_CAP ? JSON.parse(readFileSync(file, 'utf8')) : null;
+  } catch {
+    value = age > CLAIM_WRITE ? { kept: true } : {};
+  }
+  if (value?.kept !== true) return age <= CLAIM_AGE ? 'running' : null;
+  if (value.starting === true && age <= CLAIM_AGE) return 'running';
+  return age <= DAY ? 'kept' : null;
+}
+
+// Keeps the claim of `session` for a day: after a start whose outcome is unknown, or a session that started and could not
+// be held or stopped, so no later run of `session` starts another beside it. `starting` marks one kept as the start
+// begins, which reads as a run's claim for CLAIM_AGE and as kept after it. Returns the file, or null.
+export function keepClaim(store, session, { now = Date.now(), starting = false } = {}) {
+  return writeMarker(store, sessionFile('claim', session), { at: now, kept: true, ...(starting ? { starting: true } : {}) });
+}
+
+// Removes the claim of `session`. Never throws.
+export function dropClaim(store, session) {
+  try {
+    remove(store, sessionFile('claim', session));
+  } catch {
+    // Gone already: the claim lapses with its age.
+  }
 }
 
 // Keeps `bytes`, a brief that passed the check, as `continued-<sha256>.md` in the store, owner-only, so the session a

@@ -15,7 +15,8 @@
 // The background route runs only when this machine's git-ignored local file turns it on and the base branch's config
 // resolves session.handoff.continue to it (backgroundGate). It arms no marker: the gate starts the new session itself,
 // through the host adapter's `startBackground` and the injectable `run`, records its chain floor, and records the start,
-// so a second run on the same bytes starts nothing (startInBackground).
+// so a second run on the same bytes starts nothing (startInBackground, which holds the start with
+// lib/session-start-gate.mjs startHeld).
 // A session another gate's pending mark still holds (lib/unattended-mark.mjs), which may be the session that gate is
 // starting before its chain floor exists, is refused: it could otherwise start the count again.
 // The main session alone runs it: the agent-gates hook refuses it to a subagent, whose shell carries the main session's
@@ -34,10 +35,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { baseBranchTip, commandConfig, committedConfig, machineSwitch, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
-import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteFrom, noteStarted, openStore, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, storePath, sweep, takeReady } from './handoff-markers.mjs';
+import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteFrom, openStore, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
-import { dropPending, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
+import { safely, startHeld } from './session-start-gate.mjs';
+import { PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
 export const BRIEF_WINDOW = 15 * 60 * 1000;
@@ -83,10 +85,7 @@ function switchOff(project) {
 }
 
 // Whether the state folders `one` and `other` hold one continuation store: their real paths, in the case the disk folds to.
-function sameStore(one, other) {
-  const [a, b] = [one, other].map((dir) => resolvedPath(storePath(dir)) ?? storePath(dir));
-  return foldCase(a) === foldCase(b);
-}
+const sameStore = (one, other) => sameFolder(storePath(one), storePath(other));
 
 // The team's session.handoff, from the config.json the base branch commits: { handoff, config } or { why }.
 function teamHandoff(project) {
@@ -189,12 +188,13 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
   const known = typeof session === 'string' && SESSION_ID.test(session);
   try {
     if (known) cancelArmed(store, session, { now });
-    if (known && safely(() => readUnattendedMark(session, { env, now }))?.pending) {
+    const mark = known ? safely(() => readUnattendedMark(session, { env, now })) : null;
+    if (mark?.pending) {
       return refuse('another session\'s handoff gate is starting a background session, and until the host lists that session\'s id, this one cannot be told apart from it and has no chain floor to hold a brief to; run this again in a few minutes, after the start, or a person resumes the brief');
     }
     const host = detectHost({ env });
     const routed = effectiveRoute(configured, host, override, () => backgroundGate(project, config, env, { forgeSolo }));
-    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, root: project.checkouts.at(-1) });
+    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, root: project.checkouts.at(-1), mark });
   } catch (error) {
     if (typeof error?.code !== 'string') throw error;
     return { exitCode: 2, out: [], err: [`could not arm the continuation of ${found.path} (${error.code})`] };
@@ -203,7 +203,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
 
 // The gate's steps 2 to 5 on a brief that resolved, once any earlier marker of `session` is gone. `routed` is
 // effectiveRoute's answer.
-function decide({ found, store, session, routed, host, chainOf, env, now, run, wait, root }) {
+function decide({ found, store, session, routed, host, chainOf, env, now, run, wait, root, mark }) {
   const { route, fallback } = routed;
   if (route === 'none') return none(fallback);
   // First: every later line may print the path, and the delivery refuses such a brief anyway.
@@ -242,7 +242,7 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
 
   sweep(store, now);
   const ready = { host, found, slug, chain, hash, store, session, now };
-  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, env, run, wait, root });
+  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, env, run, wait, root, mark });
   return armed({ ...ready, route, fallback });
 }
 
@@ -264,24 +264,27 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
   };
 }
 
-// The background route, once the brief passed every check: the store keeps the checked bytes, the host starts a new
-// session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
-// records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
-// under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start
-// itself. `root` is the main checkout of the project the gate ran in. Before the host starts anything, the adapter calls
-// `hold` with the start folder and the ids of the sessions the host lists, and the gate files a pending mark, so the
-// hooks hold every other session from its first call, wherever it runs, while the host has not yet listed the new id;
-// the gate removes it once the session's own mark is written, or when nothing started. No pending mark, no start.
-// No floor, mark, and start record, no success: a session the gate cannot hold to the count is stopped, and the handoff
-// goes on by the clear route. One that cannot be stopped either runs on: the gate arms nothing beside it, leaves its
-// pending mark to hold it until it lapses, and prints `continue: none` with a fallback line that names it and the host's
+// The background route, once the brief passed every check: a session whose earlier start the store still records starts
+// no other until the host lists that one as ended (busy). Otherwise the store keeps the checked bytes, the host starts a new
+// session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, held by
+// startHeld (lib/session-start-gate.mjs), which records the new session's chain floor, under its full id or the short
+// one the host printed, and its unattended mark under the same id, which the hooks read wherever the session's calls run
+// (lib/unattended-mark.mjs), then the start itself, behind a pending mark it files before the host starts anything.
+// `root` is the main checkout of the project the gate ran in. No floor, mark, and start record, no success: a session the
+// gate cannot hold to the count is stopped, and the handoff goes on by the clear route. One that cannot be stopped either
+// runs on: the gate arms nothing beside it, and prints `continue: none` with a fallback line that names it and the host's
 // command to stop it (`stopLine`). A launch whose outcome the adapter cannot know, such as a start that timed out, or
 // exited 0 with no id the listing then names, may have started a session the gate cannot name, so it ends the same way:
-// the pending mark stays until it lapses, nothing is armed, and the line says how to find and stop it (`findLine`).
-// Whatever surely did not start goes on by the clear route where the host has it (byClear).
+// nothing is armed, and the line says how to find and stop it (`findLine`). Whatever surely did not start goes on by
+// the clear route where the host has it (byClear).
 function startInBackground(ready) {
-  const { host, found, slug, chain, hash, store, session, now, maxChain, env, run, wait, root } = ready;
+  const { host, found, slug, chain, hash, store, session, now, maxChain, env, run, wait, root, mark } = ready;
   const handoff = host.capabilities.handoffContinue;
+  // A session a gate of another project started: this project's store holds no floor of it, so it starts nothing here.
+  if (mark && !sameFolder(mark.root, root)) {
+    const named = typeof mark.root === 'string' && !hasControl(mark.root) ? ` of the project in ${mark.root}` : ' whose project its unattended mark does not name';
+    return none(`this session was started by a handoff gate${named}, and its chain floor lives in that project's store, so it starts no background session here; a person resumes the brief ${slug}`);
+  }
   const fallBack = (why) => {
     const routed = byClear(host, why);
     return routed.route === 'clear' ? armed({ ...ready, ...routed }) : none(routed.fallback);
@@ -289,33 +292,64 @@ function startInBackground(ready) {
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
-  let pending = null;
-  const hold = ({ cwd, known } = {}) => {
-    pending = safely(() => markPending(session, { cwd, root, known, env, now: Date.now() }));
-    return pending !== null;
-  };
-  const release = () => pending && safely(() => dropPending(pending));
-  let started;
-  try {
-    started = handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait });
-  } catch (error) {
-    // Thrown after the hold, the start may have run.
-    started = { problem: `the host's start failed (${error?.code ?? error?.message ?? 'no message'})`, uncertain: true };
+  const held = startHeld({
+    session,
+    launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait }),
+    stop: (id) => handoff.stopBackground?.({ id, env, run }),
+    ended: (earlier) => handoff.sessionEnded?.({ id: earlier.id, session: earlier.session, env, run }),
+    store,
+    root,
+    floor: { slug, chain: chain + 1, brief: found.path, route: 'background' },
+    record: { sha256: hash, slug, brief: found.path, chain: chain + 1 },
+    env,
+    now,
+  });
+  if (held.outcome === 'started') return startedLines(host, held.marker);
+  if (held.outcome === 'refused') return refusedLines({ handoff, held, slug });
+  if (held.outcome === 'uncertain') return uncertain({ handoff, slug, problem: held.problem });
+  if (held.outcome === 'none') {
+    // A start that failed before its hold never read the start record: a session it names still owns the work, unless
+    // the hold passed it because the host listed that session as ended.
+    const live = held.ended ? null : safely(() => readStarted(store, session, { now: Date.now() }));
+    if (live) return none(`no background session started, since ${held.problem}; ${owner(handoff, live, slug)}`);
+    return fallBack(`no background session started, since ${held.problem}`);
   }
-  // No pending mark, no start: the adapter calls nothing that starts a session before the hold.
-  if (started.problem && started.uncertain && pending !== null) return uncertain({ handoff, slug, problem: started.problem });
-  if (started.problem) {
-    release();
-    return fallBack(`no background session started, since ${started.problem}`);
+  return unheld({ handoff, ...held, slug, fallBack });
+}
+
+// Whether the folders `one` and `other` are one, by their real paths in the case the disk folds to.
+function sameFolder(one, other) {
+  if (typeof one !== 'string' || typeof other !== 'string') return false;
+  const [a, b] = [one, other].map((dir) => resolvedPath(dir) ?? dir);
+  return foldCase(a) === foldCase(b);
+}
+
+// A start startHeld refused at its hold: no session starts, and no clear is armed beside one that may own the work.
+// `held.busy` names a claim it could not take; else `held.earlier` is the live start record and `held.answer` what the
+// host's listing said of it.
+function refusedLines({ handoff, held, slug }) {
+  if (held.busy === 'running') {
+    return none(`another run of the handoff gate in this session is starting a background session right now, so this one starts none; run it again once that run ends, or a person resumes the brief ${slug} by hand`);
   }
-  const record = { slug, chain: chain + 1, brief: found.path, route: 'background' };
-  const id = started.session ?? started.id;
-  const marker = { sha256: hash, slug, brief: found.path, chain: chain + 1, id: started.id, session: started.session, name: started.name, cwd: started.cwd, mode: started.mode };
-  const held = pending !== null && safely(() => noteFrom(store, id, record, { now })) && safely(() => markUnattended(id, { root, env, now }))
-    && safely(() => noteStarted(store, session, marker, { now }));
-  if (!held) return unheld({ handoff, started, env, run, slug, release, fallBack });
-  release();
-  return startedLines(host, marker);
+  if (held.busy) {
+    const look = handoff.findLine?.() ?? 'the host\'s list of sessions names it';
+    const why = held.busy === 'kept'
+      ? 'an earlier start from this session may have made a background session the gate could not name or hold, so for 24 hours after it no other starts'
+      : 'the gate could not take this session\'s claim on a start in the continuation store, so it starts none';
+    return none(`${why}: ${look}. A person can resume the brief ${slug} by hand`);
+  }
+  return none(owner(handoff, held.earlier, slug, held.answer));
+}
+
+// The line that names the background session `earlier`, a live start record, which owns the work: no other starts until
+// the host lists it as done, or the record lapses. `answer` is what the host's listing said of it: false, or null when it
+// gave none, or undefined when it was not read. On Claude Code 2.1.326 a session that failed or was stopped is listed as
+// neither done nor ended, so it holds too.
+function owner(handoff, earlier, slug, answer) {
+  const look = handoff.attachLine?.({ id: earlier.id, name: earlier.name }) ?? `its id is ${earlier.id}`;
+  const listing = { null: ': the host\'s listing gave no answer, so the gate counts that session as running', false: ': the host\'s listing does not show that session as done, so the gate counts it as running' }[String(answer)] ?? '';
+  return `this session already started the background session ${earlier.id} for the brief ${earlier.slug}, which owns the work, so no other starts and no clear is armed beside it${listing}. ` +
+    `It lifts once the host lists that session as done, or 24 hours after its start, when the gate's record of it lapses: ${look}. A person can resume the brief ${slug} by hand`;
 }
 
 // A launch whose outcome is unknown: its pending mark stays to hold whatever it started until the mark lapses, and no
@@ -325,26 +359,14 @@ function uncertain({ handoff, slug, problem }) {
   return none(`a background session may have started though the gate cannot name it, since ${problem}. Until the gate's pending mark lapses, in ${PENDING_AGE / 60000} minutes, every session the host had not listed before is held as unattended: ${look}. Stop any session this start made before anything else resumes the brief ${slug}; then a person resumes the brief`);
 }
 
-// A session `started` that the gate could not hold to the count: stopped, with its pending mark removed, and the handoff
-// goes on by `fallBack`; or, when it cannot be stopped, left held by its pending mark until that lapses, with nothing
-// armed beside it, since a clear would put a second session on the same work.
-function unheld({ handoff, started, env, run, slug, release, fallBack }) {
+// A session `started` that the gate could not hold to the count: `stopped`, with its pending mark removed, and the
+// handoff goes on by `fallBack`; or, when it could not be stopped, left held by its pending mark until that lapses, with
+// nothing armed beside it, since a clear would put a second session on the same work.
+function unheld({ handoff, started, stopped, slug, fallBack }) {
   const why = `the background session ${started.id} started, but its chain floor, unattended mark, and start record could not all be recorded`;
-  if (safely(() => handoff.stopBackground?.({ id: started.id, env, run }))) {
-    release();
-    return fallBack(`${why}, so it was stopped`);
-  }
+  if (stopped) return fallBack(`${why}, so it was stopped`);
   const stop = handoff.stopLine?.({ id: started.id }) ?? 'the host\'s own command stops it';
   return none(`${why}, and it could not be stopped, so it is still running: ${stop}. Stop it before anything else resumes the brief ${slug}; then a person resumes the brief`);
-}
-
-// What `act` returns, or null when it throws: a store write the disk refuses.
-function safely(act) {
-  try {
-    return act() ?? null;
-  } catch {
-    return null;
-  }
 }
 
 // The lines of a background start, `marker` as noteStarted records it.

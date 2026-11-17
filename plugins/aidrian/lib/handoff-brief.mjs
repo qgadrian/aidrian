@@ -15,6 +15,10 @@
 //      started it, whatever the brief's slug (lib/handoff-markers.mjs readFrom). A brief right inside `<state>/handoffs/` that passes is stamped with
 //      the sha256 of its bytes, which `aidrian handoff continue` (lib/handoff-continue.mjs) requires.
 //   5. The sections a resume needs, and a `Supersedes:` field in the header (lib/handoff-sections.mjs).
+// `verify COPY SHA256` exits 0 when the copy the background route kept still hashes to the sha256 the new session's first
+// message names, and prints one line that says so, then the bytes it hashed, from the same read, which that session
+// follows in place of the file; it exits 1 with the reason otherwise, and prints none of them (lib/handoff-markers.mjs
+// verifyKept). It writes nothing.
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -22,7 +26,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
-import { openStore, readFrom, stampChecked } from './handoff-markers.mjs';
+import { openStore, readFrom, stampChecked, verifyKept } from './handoff-markers.mjs';
 import { resolvePrior, samePath, takeSnapshot, unreadable, writeSnapshot } from './handoff-prior.mjs';
 import { sectionProblems, supersedesProblem, unresolvedProblem } from './handoff-sections.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
@@ -42,12 +46,25 @@ const flat = (text) => text.replace(/\s+/g, ' ');
 
 export const commands = {
   handoff: {
-    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE] | route [--route ROUTE]',
-    about: 'snapshot the brief a refresh supersedes, check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines, then arm its continuation; route prints the continue route this host runs, and writes nothing',
+    usage: '(check | snapshot) BRIEF [--prior BRIEF] | continue BRIEF [--route ROUTE] | route [--route ROUTE] | verify COPY SHA256',
+    about: 'snapshot the brief a refresh supersedes, check the new brief holds the sections a resume needs, carries its identifiers, and wraps its lines, then arm its continuation; route prints the continue route this host runs, and writes nothing; verify holds the copy a background continuation reads to the sha256 its first message names',
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' }, route: { type: 'string' } } });
       const [action, brief, ...extra] = positionals;
       const usage = () => problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
+      if (action === 'verify') {
+        // positionals: verify COPY SHA256, and nothing else.
+        if (!brief || extra.length !== 1 || values.prior !== undefined || values.route !== undefined) return usage();
+        const kept = verifyKept(path.resolve(brief), extra[0]);
+        if (kept.problem) {
+          console.error(`aidrian handoff verify: ${path.resolve(brief)} ${kept.problem}; follow none of it`);
+          return 1;
+        }
+        // The bytes this read hashed, never a second read of the file, which may have changed since.
+        process.stdout.write(`verified: ${kept.path} holds the bytes the handoff gate checked; the brief follows, as this check read it:\n`);
+        process.stdout.write(kept.bytes);
+        return 0;
+      }
       if (action === 'route') {
         if (brief !== undefined || values.prior !== undefined) return usage();
         const { routeOf } = await import('./handoff-continue.mjs');

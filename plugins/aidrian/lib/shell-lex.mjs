@@ -582,6 +582,19 @@ export function assignsVariable({ program, args = [], environment = [] }, name) 
   return words.some((token) => token.text === name || token.text.startsWith(`${name}=`));
 }
 
+// Whether readInvocation's { program, args, environment } changes the variable `name` for what it runs: it sets it
+// (assignsVariable), or removes it, by `env -u` or `--unset`, by an environment `env -i` or `sudo` empties without
+// keeping it, or by `unset`, also when `builtin` runs it. An `unset` of a word built from a variable may name any.
+export function changesVariable(invocation, name) {
+  if (assignsVariable(invocation, name)) return true;
+  const { program, args = [], environment = [] } = invocation;
+  if (environment.some((change) => change.name === name || (change.clear === true && !(change.keep ?? []).includes(name)))) return true;
+  let words = args;
+  if (program === 'builtin' && args[0]?.text === 'unset') words = args.slice(1);
+  else if (program !== 'unset') return false;
+  return words.some((token) => token.dynamic || token.text === name);
+}
+
 // sudo's environment reset after one of its option words: none for -E or a bare --preserve-env, which keep it all;
 // --preserve-env=LIST adds the names it lists to `keep`, and a list the rule cannot read keeps none.
 function afterPreserve(reset, { text, dynamic }, option) {

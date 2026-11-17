@@ -170,6 +170,9 @@ for (const host of HOSTS) {
       assert.equal(typeof host.capabilities.handoffContinue.hookHostPid, 'function', 'clear needs the host process a hook runs under');
       assert.equal(typeof host.capabilities.handoffContinue.keepsArmed, 'function', 'clear needs to know its own command cancels nothing');
     }
+    if (routes.includes('background')) {
+      assert.equal(typeof host.capabilities.handoffContinue.startBackground, 'function', 'background needs a way to start the new session');
+    }
   });
 }
 
@@ -179,12 +182,13 @@ test('a host without the handoff continue capability has no route, the unknown o
   assert.deepEqual(continueRoutes({ ...fakeHost, capabilities: { ...fakeHost.capabilities, handoffContinue: {} } }), []);
 });
 
-test('Claude Code continues by clear: its own clear and compact commands keep a continue armed, and a hook\'s parent is its process', () => {
+test('Claude Code continues by clear and in the background: its own clear and compact commands keep a continue armed, and a hook\'s parent is its process', () => {
   const claudeCode = HOSTS.find((host) => host.id === 'claude-code');
   const codex = HOSTS.find((host) => host.id === 'codex');
   const { routes, steps, keepsArmed, hookHostPid } = claudeCode.capabilities.handoffContinue;
-  assert.deepEqual(routes, ['clear']);
+  assert.deepEqual(routes, ['clear', 'background']);
   assert.match(steps.clear, /\/clear, then any message/u);
+  assert.match(steps.background, /^nothing to type\b/u);
   for (const prompt of ['/clear', ' /clear\n', '/clear old-work', '/new', '/reset', '/reset x', '/compact', '/compact keep the test output']) {
     assert.equal(keepsArmed(prompt), true, prompt);
   }

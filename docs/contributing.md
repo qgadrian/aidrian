@@ -107,18 +107,38 @@ A case earns its place when it passes with the plugin and fails without it. Resu
 
 ## Versions
 
-Users receive a change only after the version changes on main: both hosts install from main and cache by version.
-A version change is a release, and only the release workflow, `.github/workflows/release.yml`, makes one.
+Users receive a change only after its plugin's version changes on main: both hosts install from main and cache by
+version. A version change is a release, and only the release workflow, `.github/workflows/release.yml`, makes one.
+Each plugin of the marketplace versions, tags, and releases on its own: the `PLUGINS` table in `scripts/version.mjs`
+names each plugin's folder, its tag prefix, and the files that carry its version.
 
-A pull request never changes the version, so two open pull requests never conflict on it.
-`npm run check` fails when the version files disagree, and when the branch holds a version other than its merge base
-with `origin/main` in any of them. Main may release while a branch is open: the branch takes the new version when it
-merges main, and need not before. Without `origin/main`, or on `main` itself, that comparison is skipped.
+| Plugin | Folder | Tags | Version files |
+| --- | --- | --- | --- |
+| `aidrian` | `plugins/aidrian/` | `vX.Y.Z` | both plugin manifests, `package.json`, `package-lock.json` |
+| `aidrian-claude-mod` | `plugins/aidrian-claude-mod/` | `aidrian-claude-mod-vX.Y.Z` | `.claude-plugin/plugin.json` |
 
-After each merge to main, the workflow runs `node scripts/version.mjs release`. It counts the commits since the latest
-`v*` tag that change `plugins/aidrian/`; with none, it releases nothing. Otherwise it raises the version in every file
-that carries it, runs `npm run check`, commits `chore(release): aidrian vX.Y.Z`, tags `vX.Y.Z`, pushes both at once,
-and publishes the release notes.
+A marketplace entry that sets a version is one more version file, for the plugin its name matches; an entry that sets
+a version under a name no plugin has fails `npm run check`. A table plugin whose folder does not exist yet is skipped.
+
+A pull request never changes a version, so two open pull requests never conflict on it.
+`npm run check` fails when a plugin's version files disagree, and when the branch holds a version other than its merge
+base with `origin/main` in any of them. A plugin new on the branch, with no version file at the merge base, is not a
+version change: its files need only agree. Main may release while a branch is open: the branch takes the new version
+when it merges main, and need not before. Without `origin/main`, or on `main` itself, that comparison is skipped.
+
+After each merge to main, the workflow runs `node scripts/version.mjs release`. For each plugin, it counts the commits
+since that plugin's latest tag that change its folder; with none, that plugin releases nothing. Otherwise it raises
+the version in every file that carries it, and prints one result line for the plugin. A first job, with no write token,
+runs `release` and writes its commit and result lines as outputs, then installs with `npm ci --ignore-scripts` and runs
+`npm run check`. A second job, the only one with the write token, first fails unless that commit is a full sha that
+is on `origin/main`. It installs nothing, caches nothing, and runs no repository code but `scripts/version.mjs`, one call
+per step: `release --expect` runs `release` again on that commit and fails, before it writes, unless its result lines
+are the first job's; `commit-and-tag --results` commits the version files once as
+`chore(release): aidrian vX.Y.Z, aidrian-claude-mod vX.Y.Z` and tags each released plugin, deciding by each place a
+version is written, so a marketplace that versions both plugins serves one plugin's release and another's first.
+The job then pushes the commit and the tags at once, with no git hook, and publishes each tag's release notes; only
+aidrian's release is marked the repository's latest. A plugin's notes list every pull request merged since that
+plugin's previous tag, the other plugin's too, since both share one history.
 
 The commit subjects pick the level. Main takes squash merges, so each subject is a pull request's title, and the
 `PR title` workflow fails a title that is not a Conventional Commit subject, such as `fix(hooks): let a hook pass`.
@@ -129,22 +149,32 @@ The commit subjects pick the level. Main takes squash merges, so each subject is
 | `feat` | minor | `feat(review): cite focus` |
 | Any other type, or no Conventional Commit at all | patch | `fix(pr-body): name the allowed path` |
 
-The highest level among the subjects wins. While the version is `0.x`, a breaking change raises minor:
+The highest level among a plugin's subjects wins. While a version is `0.x`, a breaking change raises minor:
 `1.0.0`, and any major release, comes only from running the workflow by hand with `level` set to `major`.
-The same input forces any level, and releases even when no plugin commit is waiting.
+That input reaches `aidrian` alone: it forces aidrian's level, and releases it even when no aidrian commit is waiting.
+Every other plugin releases in the same run at the level its own commits call for.
 
 When a project's `requires.aidrian` should name a new version ([Plugin version](config.md#plugin-version)),
 raise it after that release ships, in a later pull request: before the release, no plugin satisfies it.
 
-To try a change in a local install, `npm run bump` raises the version in the working tree (`minor` or `major` as an
-argument; patch by default), so the host sees a new version. Set it back before you commit: `npm run check` fails until
-you do.
+To try a change in a local install, `npm run bump` raises aidrian's version in the working tree (`minor` or `major` as
+an argument; patch by default), so the host sees a new version. Set it back before you commit: `npm run check` fails
+until you do.
 
-The release counts from the latest `v*` tag, and fails when that tag is missing or is not the version in the files.
-A repository that starts releasing this way tags the commit that set the current version once, by hand:
-`git tag vX.Y.Z <commit> && git push origin vX.Y.Z`.
+A plugin's first release happens when no tag of its prefix exists anywhere in the repository. It takes the version in
+the plugin's manifest, with no bump, changes no file, and tags the commit that added the manifest, which is already on
+main. When a later commit changes the plugin's folder before that first tag exists, the first release is refused, since
+the tag would name a version whose installs got later content: the release log names the tag and the commit, the other
+plugins still release, and the run fails at its last step, `tag-check`, until a person pushes that tag by hand:
+`git tag -a aidrian-claude-mod-vX.Y.Z <commit> -m "aidrian-claude-mod vX.Y.Z" && git push origin refs/tags/aidrian-claude-mod-vX.Y.Z`.
+The next run releases the later commits from it.
+
+The release fails, changing no file, when a plugin's tag exists but none is reachable from main, or its latest tag is
+not the version in its files. It fails the same way when a plugin has no tag of its prefix and the history cannot
+show a first release: the clone is shallow, or the commit that added the manifest holds another version than the files,
+as `aidrian`'s does in a clone with no tags. Tag the commit that set the version by hand, as the message says.
 
 ## Not included
 
 - OpenCode support, or a tracker other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
-- The optional cockpit pane. It lives on the `parked/cockpit` branch and is not reviewed.
+- The optional Claude mod, `aidrian-claude-mod`, a Claude Code plugin: its row is in the `PLUGINS` table, and `release` skips it while `plugins/aidrian-claude-mod/` does not exist.

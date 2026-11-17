@@ -162,7 +162,8 @@ Bash tool's field, and on test fixtures of that shape. It has not run live: no s
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
 types `/clear` and then any message, which is the adapter's `steps.clear`, and the new session resumes from the brief.
-`compact` and `background` fall back to `none` until their release, and `aidrian handoff route` prints `route: none` for them.
+It also does the `background` route, below, where nothing is typed.
+`compact` falls back to `none` until its release, and `aidrian handoff route` prints `route: none` for it.
 The route is verified on Claude Code 2.1.325: the host behavior it rests on on 2026-11-15, with a throwaway plugin, and
 the route from end to end on 2026-11-16, with the plugin loaded from a branch. That live run found:
 
@@ -206,6 +207,77 @@ background ([its hooks reference](https://code.claude.com/docs/en/hooks#userprom
 gate cancels the continuation, so the `session-handoff` skill's first step settles them all, Code Mode code running
 in the background among its background jobs, before it writes the brief and runs the gate.
 The SessionEnd hook promotes the continuation before it hands the session row to its worker, within the host's 1.5 seconds.
+
+### The background route
+
+The adapter's `startBackground` (`lib/hosts/claude-code-background.mjs`) runs `claude` by its absolute path, found on
+the absolute folders of PATH alone, so an empty or relative entry never runs a `claude` the folder holds:
+
+1. `claude agents --json`, for the handing-off session's `name` and `cwd`, by its `sessionId`. That folder, where the
+   host already runs a session, is where the new one starts, never the brief's worktree; a session the listing does
+   not place starts nothing. The adapter then calls the gate's `hold` with that folder and the `sessionId` of every
+   listed session, which files the pending mark that holds every other session until the new one's id is listed;
+   when that fails, nothing starts.
+2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] <prompt>` there,
+   where the name is that session's, else the brief's slug, `<n>` the continuation's number, the agent
+   `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter accepts, the mode the
+   handing-off session's (below), and the prompt the continuation. It reads the short id from its
+   `backgrounded · <id> · <name>` line.
+3. `claude agents --json` again, every half second for about 5 seconds, for the one background session in that folder
+   whose `sessionId` the first listing did not hold, by that short id, or by the name when the output printed none.
+   The gate records the chain floor under its `sessionId`, else under the short id.
+
+A start that printed no id and that the listing does not show returns a problem. It is certain that nothing started
+only when `claude` never ran (`ENOENT` or `EACCES`), or exited non-zero with `Workspace not trusted` while the last
+listing holds no background session the first did not: then the gate falls back to the clear route. Anything else,
+such as any other non-zero exit, no exit within 60 seconds, a signal, or exit 0 with no id the listing names, is an
+uncertain launch, since the supervisor may have taken the start and list its session later: it keeps the pending
+mark (`uncertain: true`), and `findLine` names `claude agents` and `claude stop <id>` for the Human. A started session the gate cannot write a floor, mark, or start record
+for is stopped with `claude stop <id>`. The `say:` line leads with `claude attach <id>`, adds `claude attach '<name>'` only when the
+name is plain words, digits, spaces, and `.@:·-`, and no other listed session has it, and names `claude agents`.
+
+Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rather than a real brief:
+
+- `claude --bg` started from the Bash tool of a running session returns at once, prints
+  `backgrounded · <id> · <name>` and the commands that manage it, and exits 0; `claude agents --json` then lists the
+  session with `id`, `sessionId`, `name`, `kind: "background"`, and `cwd`, and the short id is the first part of the
+  session id.
+- `--bg` ignores `--session-id` with a warning, so the session id is read back from the listing.
+- The background session ran the plugin's SessionStart hook, whose project knowledge line reached its context, and its
+  UserPromptSubmit and Stop hooks. Its Bash tool's `CLAUDE_CODE_SESSION_ID` was its own id, not the starting
+  session's, and `CLAUDE_CODE_AGENT` was unset: the variables of the shell that ran `claude --bg` do not reach it.
+- In a folder the host has not trusted, with no terminal to ask, `claude --bg` exits 1 with `Workspace not trusted`
+  before it starts anything, which the gate turns into a fallback. It is the one refusal the adapter knows.
+- The background session started on the model and effort of the user's settings, not the starting session's.
+  `CLAUDE_EFFORT` carries the effort; the model is not passed on.
+- Neither the shell of the session's Bash tool nor `claude agents --json` gives the session's permission mode: the
+  listing's rows hold `pid`, `cwd`, `kind`, `startedAt`, `sessionId`, `name`, `status`, `id`, and `state`. The
+  transcript does, `~/.claude/projects/<start folder, each character but a letter or digit as ->/<session id>.jsonl`
+  (under `CLAUDE_CONFIG_DIR` when set), with a `{"type":"permission-mode","permissionMode":"<mode>","sessionId":"<id>"}`
+  entry; `claude --help` lists `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, and `plan` for
+  `--permission-mode`.
+
+So the adapter passes the handing-off session's permission mode with `--permission-mode`, so an unattended chain does
+not stop at a prompt the old session would not have shown. It reads the last `permission-mode` entry of that session's
+transcript, in the start folder's project folder, else in any project folder, from its last 16 MB, and passes it only
+when it is `acceptEdits`, `auto`, `dontAsk`, `manual`, or `plan`; a transcript's `default` is passed as `manual`.
+A session that runs in `bypassPermissions` starts nothing, and the handoff goes on by the clear route: a session no
+Human attends never runs without permission checks. With no mode it can read, none starts either, since the host's
+default may be `bypassPermissions`, and the fallback line says the mode could not be read.
+Not verified live: a background start with `--permission-mode`.
+- `claude agents --json` also lists interactive sessions, with `sessionId`, `name`, `kind: "interactive"`, and `cwd`,
+  the folder the session was started in; `claude --help` lists `stop|kill <id>` and `attach <id|name>`.
+
+The adapter's `sessionStart` names `claude` as the command that starts a session, for the
+[agent gates](../hooks.md#agent-gates) hook, which refuses one to a subagent and to a session the background route
+started: `claude` with no subcommand, with `-p`, `--bg`, `--resume`, or `--continue`, with a prompt, with
+`mcp serve`, and with any subcommand it does not list, counts; `agents`, `attach`, `stop`, `kill`, `logs`, `doctor`,
+`update`, `install`, `config`, `mcp`, `plugin`, `setup-token`, `auth`, `migrate-installer`, `--version`, and `--help`
+do not. The list comes from the CLI reference and the `claude --help` output above; no live run of the hook checked it.
+
+Not verified: a background continuation from a real brief, end to end, with the plugin loaded from this branch:
+whether the session-continue skill runs from the first message as intended, and whether a second continuation in a
+row reads the floor the gate wrote.
 
 ## Limits
 

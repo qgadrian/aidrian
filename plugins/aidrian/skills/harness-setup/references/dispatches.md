@@ -17,9 +17,10 @@ Write config.json `github.reviewer: null` and nothing else, then run `aidrian ch
 
 Also give the librarian:
 
-- the answers to Q1 to Q6, and the readiness items that were missing at step 1;
+- the answers to Q1 to Q7, and the readiness items that were missing at step 1;
 - knowledge tags `docs` and `harness_engineering`;
 - the absolute path of `references/setup-files.md`, which it reads for the `AGENTS.md`, `CLAUDE.md`, and settings text;
+- with Q7 not the defaults, the absolute path of `references/recipes.md`, and the plugin root's `recipes/` folder;
 - the folder new docs go to: Q3's folder, or `docs/knowledge/` with Q3 none;
 - with Q1 Linear, the absolute path of this file, which it reads for [the tracker key](#the-tracker-key-linear-only).
 
@@ -30,7 +31,7 @@ It follows its "A new project" procedure, in this order, skipping what holds:
    drafted one (its first heading and first sentence, or its file name) or that has no tags.
 2. Q4 team names to config.json `names`, a developer's own names to `.aidrian.local.json`, Q2 no to
    config.json `github.reviewer: null`, and Q1 Linear to config.json `tracker` and `requires.aidrian`,
-   as [The tracker key](#the-tracker-key-linear-only) says. No other config key.
+   as [The tracker key](#the-tracker-key-linear-only) says, and the Q7 recipe as `references/recipes.md` says. No other config key.
 3. The `AGENTS.md` and `CLAUDE.md` lines; in Claude Code with Q6 yes, `.claude/settings.json`.
 4. On every onboarding, whatever R2 was: the `knowledge-update` skill on the topics `working-agreement`, `testing`,
    `architecture`, and `issue-tracker` when Q1 is not none. Each topic carries an area hint for the explorer brief:

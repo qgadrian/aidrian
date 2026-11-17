@@ -9,7 +9,6 @@ disable-model-invocation: true
 Before you start, follow the `knowledge` skill.
 
 Take a project from no aidrian setup to a checked one in one session, or, on a set-up project, say what to fix.
-It asks its questions before any write, and shows the docs before they are written.
 It writes no project file itself: `harness-librarian` makes every setup write; in step 6, the owner the fix table names.
 It never commits, pushes, opens a pull request, or files an issue, in the project's tracker or the plugin's repository.
 It never sets `AIDRIAN_ALLOW_MAIN_WRITE` or adds a `git.mainCheckout.allowWrites` entry. No dispatch passes a model or effort.
@@ -52,7 +51,8 @@ AskUserQuestion in Claude Code, one question in the reply in Codex. Skip a quest
 | Q2 Review bot | R4 ok | Does the Codex GitHub connector review this repository's pull requests? Default yes | No: `github.reviewer: null`. Yes: nothing written; R4 counts as confirmed. |
 | Q3 Docs folder | R2 ok | A folder of Markdown docs; default `docs` when it holds `.md` files; or none | `aidrian-knowledge init <folder>`. None: new docs go to `docs/knowledge/`. Never a config key. |
 | Q4 Names | config.json or `.aidrian.local.json` sets `names` | Two names and a scope, asked as written below; default `the Human` and the host's name | Team: config.json `names`. One developer: the git-ignored `.aidrian.local.json`. Default: nothing written. |
-| Q5 Main-checkout guard | config.json has `git.mainCheckout.guard: true` | Turn it on? Default no | `git.mainCheckout.guard: true`, the last write of the run. |
+| Q7 Working style | config.json sets `decisions.maxMode` | As `references/recipes.md` asks it; default none | That file |
+| Q5 Main-checkout guard | config.json has `git.mainCheckout.guard: true`, or Q7 is hands-on (yes) | Turn it on? Default no | `git.mainCheckout.guard: true`, the last write of the run. |
 | Q6 Team install, Claude Code only | `.claude/settings.json` has both keys of the setup block | Commit `.claude/settings.json` so Claude Code offers the plugin to everyone? Default yes | The settings block of `references/setup-files.md`. In Codex, not asked: the report prints that file's Codex install link. |
 
 Never show a question's `Q` label. Ask Q4 as `references/names-question.md` writes it.
@@ -63,8 +63,7 @@ Never show a question's `Q` label. Ask Q4 as `references/names-question.md` writ
 
 Dispatch `harness-librarian` once with the step 3 brief. It runs `aidrian init` and `aidrian-knowledge init`,
 writes config.json, `AGENTS.md`, `CLAUDE.md`, and the settings file, skipping what holds.
-Then it runs `knowledge-update` on the topics `working-agreement`, `testing`, `architecture`,
-and `issue-tracker` when Q1 is not none, and returns the proposal as `needs_input`.
+It applies the Q7 recipe, runs `knowledge-update` on the brief's topics, and returns the proposal as `needs_input`.
 
 **Done when** the librarian returned its `pending_commit` and the proposal.
 

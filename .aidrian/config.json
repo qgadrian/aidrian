@@ -12,5 +12,6 @@
     "requiredChecks": ["Check (Node 22)", "Check (Node 24)", "Check (Node 26)", "Conventional Commit title"],
     "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true }
   },
-  "review": { "engine": "codex-local", "record": "local" }
+  "review": { "engine": "codex-local", "record": "local" },
+  "session": { "handoff": { "mode": "auto" } }
 }

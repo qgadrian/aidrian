@@ -33,7 +33,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFil
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions, originDefaultTip } from './config.mjs';
+import { baseBranchTip, commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { ageDays, blockOf, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
@@ -731,7 +731,7 @@ function decisionsInForce(project) {
   const config = commandConfig(project);
   // With no base, no team has accepted merging without a person, whatever the working copy says.
   if (!insideGit(project.root)) return { decisions: config.decisions, base: null, autoMergeAllow: false };
-  const base = baseTip(project);
+  const base = baseBranchTip(project.root);
   if (base === null) return { decisions: null, base, autoMergeAllow: false };
   try {
     const { decisions, autoMergeAllow } = committedAuthority(project, base, committedConfigFile(project, base));
@@ -749,23 +749,6 @@ function insideGit(root) {
     if (existsSync(path.join(dir, '.git'))) return true;
     if (path.dirname(dir) === dir) return false;
   }
-}
-
-// The commit of the base branch, from names the working copy cannot set (originDefaultTip). A branch that names itself in
-// config.json `git.defaultBranch` is not its own base. With no remote at all, a local branch of the plugin's default name
-// is the only record of the base; with any remote, whatever its name, a local branch can hold commits no one reviewed, so
-// it never stands in. null when none resolves, or when git fails on one.
-function baseTip(project) {
-  try {
-    const origin = originDefaultTip(project.root);
-    if (origin) return origin;
-  } catch {
-    return null;
-  }
-  const remotes = runGit(['remote'], project.root);
-  if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
-  const local = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${DEFAULTS.git.defaultBranch}^{commit}`], project.root);
-  return local.status === 0 ? local.stdout.trim() : null;
 }
 
 function fail(problem) {

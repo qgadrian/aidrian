@@ -12,7 +12,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
-.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, agent gates, decisions, and the auto-merge, review-approvals, and product feedback choices on one machine (optional, git-ignored)
+.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, agent gates, decisions, and the auto-merge, review-approvals, background handoff, and product feedback choices on one machine (optional, git-ignored)
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
@@ -89,8 +89,10 @@ It writes nothing at all when a symlink would take a write outside the project, 
   These two are the only `github` keys the file takes; an error in that group reads both `"off"`.
   `reviewApprovals`, the machine's [review approvals](review.md#sign-off-by-the-human) choice, must be `"on"` or `"off"`;
   anything else is an error, and it reads `"off"`.
+  `handoff`, the machine's [background handoff](handoff.md#the-background-route) choice, takes only `background`,
+  `"on"` or `"off"`; anything else is an error, and it reads `"off"`. Unset is off.
   When git tracks `.aidrian.local.json`, in any case, a branch could carry it,
-  so `github.autoMerge`, `github.unattendedWaiver`, and `reviewApprovals` read `"off"` and check names the
+  so `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`, and `handoff.background` read `"off"` and check names the
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.
   `review.productFeedback` takes only `auto`, true or false. In the main checkout's file, a tracked copy, or a checkout where git
   cannot say, has its value ignored and the same error: [Product feedback](config.md#product-feedback).
@@ -160,8 +162,11 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
-- `sessions/<session id>/` holds the caches of [`aidrian session snapshot`](handoff.md#the-snapshot), display data no
-  hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
+- Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
+  each session started with ([hooks.md](hooks.md#agent-gates)), and `unattended/`, the marks of the sessions the
+  [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days.
+- The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of
+  [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
   mode 0700, no bit for the group or others, checked before every write, read, and sweep; each file is written as a
   temporary file, mode 0600, renamed over it, under the cache names alone. A state folder inside a checkout gets no
@@ -211,7 +216,9 @@ A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbo
 and that it holds the sections a resume needs ([handoff.md](handoff.md#the-skills)).
 `aidrian handoff continue` arms the continuation of a checked brief, for the route `session.handoff.continue` or its `--route` names
 ([handoff.md](handoff.md#the-gate)); `aidrian handoff route` prints that route as this host runs it, and writes nothing
-([handoff.md](handoff.md#the-route-the-host-runs)).
+([handoff.md](handoff.md#the-route-the-host-runs)); `aidrian handoff verify <copy> <sha256>` holds the copy a background
+continuation reads to the sha256 its first message names, and prints the bytes it checked for that session to follow
+([handoff.md](handoff.md#the-background-route)).
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
 The `quorum` skill runs in one of three modes, and its ledger records which in `mode`.

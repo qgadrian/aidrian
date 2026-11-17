@@ -2,7 +2,7 @@
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
 // docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
 // personal model choices, personal names, personal telemetry settings, personal decision settings, and the machine's
-// auto-merge and product feedback choices, and the machine-local state folder outside the repository.
+// auto-merge, background handoff, and product feedback choices, and the machine-local state folder outside the repository.
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -30,15 +30,16 @@ const defaultRead = () => undefined;
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
 // file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
 // subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded.
-// At the repository root: the marketplace manifests that install the plugin.
+// At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-claude-mod`
+// plugin's folder, whole, since it picks and runs the aidrian binary.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
   'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
-  'handoff-continue', 'handoff-guard', 'handoff-markers', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
+  'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
   'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-length', 'shell-lex',
-  'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
+  'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
@@ -54,9 +55,14 @@ export const GUARDED_PATHS = new RegExp(
     `|${HOST_PATHS}` +
     String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
     String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +
-    `|^plugins/aidrian/(?:${GUARDED_PLUGIN})`,
+    `|^plugins/aidrian/(?:${GUARDED_PLUGIN})` +
+    String.raw`|^plugins/aidrian-claude-mod/`,
   'iu',
 );
+
+// Guarded only in the plugin's own repository (isPluginRepository), from its root: the release script, which runs in the
+// release job that holds the write token. Another project's file at that path is its own, and stays unguarded.
+export const PLUGIN_REPOSITORY_PATHS = /^scripts\/version\.mjs$/iu;
 
 // The knowledge index folder beside a config.json path, such as one configPathIn located: `<folder>/knowledge`, with the
 // same prefix, as openProject's `paths.knowledge` is.
@@ -136,7 +142,7 @@ export function projectAt(start) {
 
 // The project rooted at `root`, whether or not its folder exists yet:
 // { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
-// localAutoMerge, localUnattendedWaiver, localReviewApprovals, localFeedbackAuto, errors, unreadable }.
+// localAutoMerge, localUnattendedWaiver, localReviewApprovals, localHandoffBackground, localFeedbackAuto, errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
@@ -147,6 +153,8 @@ export function projectAt(start) {
 // where "unset" is off: the team's `github.unattendedWaiver.allow` still decides (resolveUnattendedWaiver).
 // `localReviewApprovals` is its `reviewApprovals`, read the same way: "on" or
 // "off", "unset" when no file sets it; the team's `review.approvals.allow` still decides (lib/review/approvals.mjs).
+// `localHandoffBackground` is its `handoff.background`, read the same way; the base branch's session.handoff still
+// decides (lib/handoff-continue.mjs backgroundGate).
 // `localFeedbackAuto` is the main checkout's `review.productFeedback.auto`: true or false, or undefined when unset or
 // unusable (mainFeedbackAuto), so the team's value holds. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
@@ -177,6 +185,7 @@ export function openProject(root, roots) {
     localUnattendedWaiver: local.unattendedWaiver,
     localReviewApprovals: local.reviewApprovals,
     localUnattendedSignoff: local.unattendedSignoff,
+    localHandoffBackground: local.handoffBackground,
     localFeedbackAuto: local.feedbackAuto,
     errors,
     unreadable,
@@ -276,7 +285,7 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff'];
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff', 'handoff'];
 
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, unattendedWaiver, reviewApprovals, feedbackAuto }. A git worktree has no copy of that git-ignored
 // file, so it is read from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with
@@ -286,7 +295,7 @@ const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review
 // Behind such a copy, the main checkout's file gets every check it gets when it is the one loaded, and its errors are
 // reported, so a worktree's copy hides none of them.
 function readLocal(checkouts, errors, unreadable) {
-  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...UNSET_SWITCHES };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const main = checkouts.at(-1);
@@ -314,7 +323,8 @@ function checkedLocal(raw, dir) {
   const unattendedWaiver = localUnattendedWaiver(raw);
   const reviewApprovals = localReviewApprovals(raw, problems);
   const unattendedSignoff = localUnattendedSignoff(raw, problems);
-  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, problems };
+  const handoffBackground = localHandoffBackground(raw, problems);
+  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, handoffBackground, problems };
 }
 
 // The main checkout's local file behind a worktree's own copy, through checkedLocal: undefined when there is none, null
@@ -328,21 +338,30 @@ function mainLocal(main, errors) {
   return file;
 }
 
+const UNSET_SWITCHES = Object.freeze({ autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset', handoffBackground: 'unset' });
+
 // This machine's switches, from the main checkout's file as checkedLocal read it: each "unset" when there is no file,
 // and "off" when it cannot be read. An error anywhere in the file, a tracked-file one too, reads an unset auto-merge
 // "off", so it never follows a team default of "on", and the waiver "off" though it says "on": a wrong local file never
 // turns merging on, nor lets a verdict stand in for the Human.
 function machineSwitches(file, main, errors) {
-  if (file === undefined) return { autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset' };
-  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off' };
+  if (file === undefined) return UNSET_SWITCHES;
+  if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off', handoffBackground: 'off' };
   const tracked = [];
   const autoMerge = untrackedSwitch(file.autoMerge, 'github.autoMerge', main, tracked);
   const unattendedWaiver = untrackedSwitch(file.unattendedWaiver, 'github.unattendedWaiver', main, tracked);
   const reviewApprovals = untrackedSwitch(file.reviewApprovals, 'reviewApprovals', main, tracked);
   const unattendedSignoff = untrackedSwitch(file.unattendedSignoff, 'unattendedSignoff', main, tracked);
+  const handoffBackground = untrackedSwitch(file.handoffBackground, 'handoff.background', main, tracked);
   errors.push(...tracked);
   const broken = file.problems.length > 0 || tracked.length > 0;
-  return { autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge, unattendedWaiver: broken ? 'off' : unattendedWaiver, reviewApprovals, unattendedSignoff: broken ? 'off' : unattendedSignoff };
+  return {
+    autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge,
+    unattendedWaiver: broken ? 'off' : unattendedWaiver,
+    reviewApprovals,
+    unattendedSignoff: broken ? 'off' : unattendedSignoff,
+    handoffBackground: broken ? 'off' : handoffBackground,
+  };
 }
 
 // A switch `value` the local file in `main` sets, named `key` in its errors. A local file git tracks travels with a
@@ -441,6 +460,18 @@ function localUnattendedSignoff(raw, errors) {
   return 'off';
 }
 
+// The local file's `handoff.background` as "on", "off", or "unset": whether this machine lets a handoff start a new
+// session in the background with no Human, when the team's base branch resolves session.handoff.continue to
+// "background" (docs/handoff.md#the-background-route). `handoff` takes that one key; anything else is an error and reads "off".
+function localHandoffBackground(raw, errors) {
+  if (!Object.hasOwn(raw, 'handoff')) return 'unset';
+  const given = raw.handoff;
+  const keys = isObject(given) ? Object.keys(given) : [];
+  if (isObject(given) && keys.every((key) => key === 'background') && ['on', 'off', undefined].includes(given.background)) return given.background ?? 'unset';
+  errors.push(`${LOCAL}: "handoff" must be { "background": "on" } or { "background": "off" }`);
+  return 'off';
+}
+
 function localSources(holder, raw, errors) {
   if (!Object.hasOwn(raw, 'sources')) return [];
   if (!Array.isArray(raw.sources) || !raw.sources.every((each) => typeof each === 'string' && each.trim() !== '')) {
@@ -469,6 +500,17 @@ function inMainCheckout(root, roots = checkoutRoots(root)) {
 export function stateDir(project, { config = loadConfig(project).config, env = process.env, read = defaultRead } = {}) {
   if (config.state.dir) return localPath(project, config.state.dir, read);
   return path.join(stateRoot(env), 'projects', projectId(project, read));
+}
+
+// The state folder of `project` under `config` as the host's own environment resolves it: stateDir with no
+// XDG_STATE_HOME, and with the home folder of the user this process runs as, which no HOME of a command's own moves.
+// It only names the folder, for a comparison, and reads none of it: lib/handoff-continue.mjs backgroundGate holds the
+// continuation store it opens to this one, so a variable set on the command line alone cannot move the store, and
+// lib/handoff-guard.mjs startedUnattended reads a chain floor there too. `home` is for a test, which may not reach the
+// user's own home folder.
+export function defaultStateDir(project, { config = loadConfig(project).config, read = defaultRead, home = userInfo().homedir } = {}) {
+  if (config.state.dir) return localPath(project, config.state.dir, read, home);
+  return path.join(home, '.local/state', 'aidrian', 'projects', projectId(project, read));
 }
 
 // The folder under the state folder `state` that review records go in: the record's readers and writers and the check that
@@ -574,8 +616,8 @@ export function normalizeRemote(url) {
 }
 
 // A configured local path: a leading `~` is the home folder, and a relative path starts at the repository root.
-function localPath(project, value, read = defaultRead) {
-  if (/^~(?=$|\/)/.test(value)) return path.join(homedir(), value.slice(1));
+function localPath(project, value, read = defaultRead, home = homedir()) {
+  if (/^~(?=$|\/)/.test(value)) return path.join(home, value.slice(1));
   return path.resolve(repoRoot(project, read()), value);
 }
 

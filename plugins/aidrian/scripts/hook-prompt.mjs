@@ -2,8 +2,9 @@
 // "you", or "your" outside code and quotes, the next turn starts with one line that names the words and both names.
 // The human has already read that reply, so a block could not undo it and would only show the reply twice; a nudge on
 // the next turn stops the drift without a retry loop. lib/names.mjs finds the words.
-// First, on a host with a continuation route, a prompt in a session that armed a `clear` handoff continuation cancels
-// it with one line, unless the prompt is the host's own clear or compact command (lib/handoff-continue.mjs cancelOnPrompt).
+// First, on a host with a continuation route, the handoff lines (lib/handoff-continue.mjs promptLines): a prompt in a
+// session that armed a `clear` handoff continuation cancels it with one line, unless the prompt is the host's own clear
+// or compact command, and a prompt in a session that handed its work to a background session gets one line naming it.
 
 import { loadConfig } from '../lib/config.mjs';
 import { runHook } from '../lib/hook-io.mjs';
@@ -18,8 +19,7 @@ await runHook(async (input) => {
   if (!project) return;
   const host = detectHost({ input });
   const out = [];
-  const cancelled = await cancelLine(input, project, host);
-  if (cancelled) out.push(cancelled);
+  out.push(...await handoffLines(input, project, host));
   const text = typeof input.transcript_path !== 'string' || host.capabilities.transcripts === false ? null : readText(input.transcript_path);
   const words = text ? [...new Set(replyWords(lastReply(text)))] : [];
   if (words.length) {
@@ -31,13 +31,13 @@ await runHook(async (input) => {
   if (out.length) console.log(out.join('\n'));
 });
 
-// The cancel line, or null. Never throws: a store it cannot read leaves the prompt as it is.
-async function cancelLine(input, project, host) {
+// The handoff lines, or none. Never throws: a store it cannot read leaves the prompt as it is.
+async function handoffLines(input, project, host) {
   try {
-    if (!continueRoutes(host).includes('clear')) return null;
-    const { cancelOnPrompt, projectStore } = await import('../lib/handoff-continue.mjs');
-    return cancelOnPrompt(projectStore(project, loadConfig(project).config), host, { session: input.session_id, prompt: input.prompt });
+    if (!continueRoutes(host).length) return [];
+    const { promptLines, projectStore } = await import('../lib/handoff-continue.mjs');
+    return promptLines(projectStore(project, loadConfig(project).config), host, { session: input.session_id, prompt: input.prompt });
   } catch {
-    return null;
+    return [];
   }
 }

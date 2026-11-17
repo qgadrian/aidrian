@@ -758,6 +758,19 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
   assert.match(run(t, r, ['7'], over).out[0], /gh listed 2 of its 1 changed files/u, 'a longer list than the count is off too');
 });
 
+test("the plugin repository's release script is off there, and another project's scripts/version.mjs is not (paths)", (t) => {
+  const changed = { view: { files: [{ path: 'scripts/version.mjs', changeType: 'MODIFIED' }], changedFiles: 1 } };
+  const other = repo(t);
+  other.record((state) => finished(state));
+  assert.deepEqual(reasonOf(t, other, changed), [0, null], 'a project that is not the plugin repository');
+  // The plugin's own repository, as its manifest names it.
+  const origin = JSON.parse(readFileSync(path.join(import.meta.dirname, '..', 'plugins/aidrian/plugin.json'), 'utf8')).repository;
+  const plugin = repo(t, { origin });
+  plugin.record((state) => finished(state));
+  assert.deepEqual(reasonOf(t, plugin, changed), [1, 'paths']);
+  assert.match(run(t, plugin, ['7'], changed).out[0], /it changes "scripts\/version\.mjs", the plugin repository's release script/u);
+});
+
 // github.autoMerge.includeGuardedPaths: the plain line of today's guarded-path refusal, and a view whose base is a
 // feature branch, so the default branch and the base are two configs.
 const GUARDED_LINE = /it changes "\.github\/workflows\/ci\.yml", which instructs AI sessions, or decides CI's verdict or auto-merge/u;

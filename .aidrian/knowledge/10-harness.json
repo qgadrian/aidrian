@@ -23,6 +23,10 @@
       "summary": "The catalog of every agent and skill the plugin ships, grouped, with pr-product-feedback; tests hold it in sync with agents-src folders.",
       "tags": ["docs"]
     },
+    "config-recipes.md": {
+      "summary": "Config recipes: full autonomy, autopilot, and hands-on starting configs and local files, checked by aidrian check; harness-setup offers them.",
+      "tags": []
+    },
     "hooks.md": {
       "summary": "Bash rules: pr-body, main-checkout, commit messages, amend, terms, gates, merge guard, product feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce check.",
       "tags": []
@@ -48,7 +52,7 @@
       "tags": []
     },
     "handoff.md": {
-      "summary": "Reminder, plan offer, break-even, continuation, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, route, brief sections, snapshot.",
+      "summary": "Reminder,plan offer,break-even,continuation,maxChain,session-handoff,aidrian handoff check,aidrian handoff continue,background route,brief sections,snapshot.",
       "tags": []
     },
     "config.md": {

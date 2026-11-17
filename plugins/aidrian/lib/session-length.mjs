@@ -212,31 +212,39 @@ export function stopReminder(text, handoff, markerText, continuation = {}) {
   };
 }
 
-// What the user said that makes a handoff not worth it: a fresh session needs someone to start it.
-const USER_SAID = 'the user already said to finish here or that they are not watching';
+// What the user said that makes a handoff not worth it: a fresh session needs someone to start it. With mode "auto" on
+// the background route it starts itself, so only a word to finish here counts; `ask` still asks someone who is there.
+const userSaid = (route, mode) => (mode === 'auto' && route === 'background'
+  ? 'the user already said to finish here'
+  : 'the user already said to finish here or that they are not watching');
 
 // When a handoff costs more than it saves, and what the agent does then: nothing. The agent judges these; the hook cannot
 // see them.
-const notWorthIt = (cost, next) => 'Judge first whether a handoff is worth it. It is not when the task is done or nearly done, ' +
+const notWorthIt = (cost, next, said) => 'Judge first whether a handoff is worth it. It is not when the task is done or nearly done, ' +
   (cost ? 'or the work left takes fewer model calls than the handoff needs to pay back, ' : '') +
   'when a subagent or background job is still running and its result comes back to this session, ' +
-  `or when ${USER_SAID}: then end this turn without mentioning this reminder, ` +
+  `or when ${said}: then end this turn without mentioning this reminder, ` +
   `which comes back once ${next.join(' or ')}. `;
 
 // The route the hooks word a handoff for, from config.json `session.handoff` and the session's host: { route, how },
 // where `how` is the host's phrase for what the route takes from the Human (its adapter's `steps[route]`). The gate's
-// module, which decides the route for the command too, loads only when the config asks for a route the host has.
-export async function continuation(handoff, host) {
+// module, which decides the route for the command too, loads only when the config asks for a route the host has. The
+// background route reads `project`'s switches, and the state.dir of `working`, its loaded config, as the gate does, so a
+// handoff it would send by the clear route is worded so.
+export async function continuation(handoff, host, project, working) {
   if ((handoff.continue ?? 'none') === 'none' || !continueRoutes(host).length) return { route: 'none', how: null };
-  const { effectiveRoute } = await import('./handoff-continue.mjs');
-  const { route } = effectiveRoute(handoff.continue, host);
+  const { backgroundGate, effectiveRoute } = await import('./handoff-continue.mjs');
+  const { route } = effectiveRoute(handoff.continue, host, undefined, () => backgroundGate(project, working));
   return { route, how: route === 'none' ? null : host.capabilities.handoffContinue.steps?.[route] ?? null };
 }
 
 // With the clear route, the session-handoff skill's continue step arms the continuation after the brief and prints the
-// line for the Human, who then clears the session: this one does nothing more.
-const continues = ({ route, how }) => route === 'clear' && typeof how === 'string';
+// line for the Human, who then clears the session; with the background route it starts the new session itself, and
+// prints where the work goes on. Either way this one does nothing more.
+const continues = ({ route, how }) => ['clear', 'background'].includes(route) && typeof how === 'string';
 const SET_UP = 'to write the brief and set up the continuation: its continue step prints what to tell the user. Say that in one line';
+// What the auto reminder adds on the background route, where nothing the Human types follows the turn's end.
+const goesOn = (route) => (route === 'background' ? ': a new session goes on with the work in the background, and this one does nothing more' : '');
 const askHow = (how) => `Say in it what a handoff takes from them: ${how}. `;
 
 // The message that sends the agent back for one more turn, in `ask` or `auto` mode. Doing nothing is a valid answer.
@@ -245,10 +253,10 @@ const askHow = (how) => `Say in it what a handoff takes from them: ${how}. `;
 export function handoffReason(mode, { cost = null, tokens = null, next, route = 'none', how = null }) {
   const found = [tokens !== null && kTokens(tokens), cost && costLine(cost)].filter(Boolean).join(', and ');
   const why = cost ? '' : 'A fresh session started from a handoff brief works from a smaller context. ';
-  const head = `This session is long: ${found}. ${why}${notWorthIt(cost, next)}`;
+  const head = `This session is long: ${found}. ${why}${notWorthIt(cost, next, userSaid(route, mode))}`;
   const clear = continues({ route, how });
   if (mode === 'auto') {
-    if (clear) return `${head}Otherwise run the session-handoff skill now ${SET_UP}, then end this turn.`;
+    if (clear) return `${head}Otherwise run the session-handoff skill now ${SET_UP}, then end this turn${goesOn(route)}.`;
     return `${head}Otherwise run the session-handoff skill now to write the brief, ` +
       'then tell the user in one line that you wrote it, its path, and that the session-continue skill resumes it.';
   }
@@ -261,7 +269,8 @@ export function handoffReason(mode, { cost = null, tokens = null, next, route = 
 // disk and nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning
 // context. It fires at r ≥ 1 + (costRatio − 1) / 2, halfway from a fresh session's 1 to costRatio, or at half of
 // maxTokens when the ceiling is set (offerReached, which handoffStatus's `offer` reads too). `continuation` is the hooks'
-// { route, how }: with the clear route the build starts in the session the clear begins, never here.
+// { route, how }: with the clear route the build starts in the session the clear begins, and with the background route in
+// the session the gate starts, never here.
 export function planApprovedContext(handoff, usage, { route = 'none', how = null } = {}) {
   if (handoff.mode === 'off' || !usage.calls) return null;
   const cost = handoffCost(usage);
@@ -271,15 +280,16 @@ export function planApprovedContext(handoff, usage, { route = 'none', how = null
   const head = `The plan is approved, and ${found}. ` +
     'Building in a fresh session that reads the plan costs less per turn, and now no worktree, branch, or running agent needs a brief. ';
   const clear = continues({ route, how });
+  const said = userSaid(route, handoff.mode);
   if (handoff.mode === 'auto') {
     if (clear) {
-      return `${head}Build here when the rest takes a few calls, or when ${USER_SAID}. ` +
-        `Otherwise, before the first build step, run the session-handoff skill ${SET_UP}, end this turn, and do not start the build here.`;
+      return `${head}Build here when the rest takes a few calls, or when ${said}. ` +
+        `Otherwise, before the first build step, run the session-handoff skill ${SET_UP}, end this turn, and do not start the build here${goesOn(route)}.`;
     }
     return `${head}Before the first build step, run the session-handoff skill to write the brief, then tell the user its path and that ` +
-      `the session-continue skill resumes it. Build here instead when the rest takes a few calls, or when ${USER_SAID}.`;
+      `the session-continue skill resumes it. Build here instead when the rest takes a few calls, or when ${said}.`;
   }
   return `${head}Before the first build step, ask the user one short question: hand off now, or build here? ` +
     (clear ? askHow(how) : '') +
-    `Skip the question when the rest takes a few calls, or when ${USER_SAID}.`;
+    `Skip the question when the rest takes a few calls, or when ${said}.`;
 }

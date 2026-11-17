@@ -54,6 +54,21 @@ const shellWatch = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof in
 // docs/providers/claude-code.md#powershell-commands.
 const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 
+// Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
+// subagent and a session the background handoff route started, so no session starts outside the handoff gate.
+// `claude` with no subcommand starts one, as do `-p`, `--bg`, `--resume`, `--continue`, and a prompt; so does any word
+// this list does not name, and any option before the subcommand, so a subcommand added later is read as a start.
+// These manage the sessions and install that are there and start none (code.claude.com/docs/en/cli-reference);
+// `claude mcp serve` runs Claude Code as a server whose tools a client calls, so it counts as a start.
+const NO_SESSION = new Set(['agents', 'attach', 'stop', 'kill', 'logs', 'doctor', 'update', 'install', 'config', 'mcp', 'plugin', 'plugins', 'setup-token', 'auth', 'migrate-installer']);
+const INFO = new Set(['-v', '-V', '--version', '-h', '--help']);
+const startsSession = (args) => {
+  const [first, second] = args.map((token) => (token.dynamic ? null : token.text));
+  if (first === undefined) return true;
+  if (INFO.has(first)) return false;
+  return !NO_SESSION.has(first) || (first === 'mcp' && second === 'serve');
+};
+
 export default {
   id: 'claude-code',
   name: 'Claude Code',
@@ -88,6 +103,7 @@ export default {
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
+  sessionStart: { programs: ['claude'], starts: startsSession },
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];

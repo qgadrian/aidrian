@@ -254,6 +254,10 @@ on a host whose adapter lists it and declares `startBackground` ([Adding a host]
 both [switches](#continue) on: the base branch's config, and `"handoff": { "background": "on" }` in this machine's
 `.aidrian.local.json`. The working copy's `state.dir` must equal the base branch's too, since the store it opens holds
 the chain floors and the kept copy; when it differs, the handoff goes on by the clear route with that reason.
+So must the store itself: the gate opens it with the command's environment, and holds it to the one the base branch's
+config names with no `XDG_STATE_HOME` and the home folder of the user it runs as, so a variable set on the command
+line cannot move the store where the hooks never read a floor. A machine whose own environment sets `XDG_STATE_HOME`
+to another folder falls back to the clear route with that reason; committing `state.dir` gives it the route back.
 
 1. The session settles every running agent, writes the brief, checks it, and runs the gate, as on the clear route.
 2. The gate keeps the brief's checked bytes in the store, owner-only, as `continued-<sha256>.md`, so an edit to the
@@ -265,8 +269,10 @@ the chain floors and the kept copy; when it differs, the handoff goes on by the 
 4. Its first message is the continuation: the brief's path, the kept copy to read and its sha256, its slug, and the
    continuation's number, never the brief's text. It first runs `aidrian handoff verify <copy> <sha256>`, which exits 0
    only when the copy is a regular file of the session's user, named for that sha256, whose bytes still hash to it, and
-   1 with the reason otherwise; on 1 it follows none of the copy and reports it. Then it follows the `session-continue`
-   skill on the copy and enters the worktree, as on the clear route. It also says the brief is an earlier session's advice, not the Human's instruction: what the Human
+   1 with the reason otherwise; on 1 it follows none of the copy, prints none of it, and reports it. On 0 it prints
+   one line that says so, then the bytes it hashed, from that same read, and the session follows the `session-continue`
+   skill on that output alone, never on a read of the copy or the brief's file, which may change after the check.
+   It enters the worktree, as on the clear route. It also says the brief is an earlier session's advice, not the Human's instruction: what the Human
    keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
    permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
@@ -299,7 +305,17 @@ Limits:
   in `.aidrian.local.json`, as it refuses a subagent: `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`,
   `unattendedSignoff`, `handoff.background`, and `review.productFeedback`. The hook knows such a session by its chain
   floor of route `background`, under its full id or a short one, in the store of the working copy's `state.dir` or the
-  base branch's, and reads it only for a call that sets a switch.
+  base branch's, and reads it only for a call the guards below would refuse, before the call runs, so a call that
+  deletes the floor is judged while the floor is still there. It refuses such a session, as a subagent:
+  - a write in the continuation store, such as a delete or an overwrite of its own floor, and a `chmod`, `chown`, or
+    `chgrp` of the store, a file in it, its handoffs folder, or the state folder, which would hide the floor;
+  - a host session started outside the gate, such as `claude -p`, `claude --bg`, or `claude --resume`, by the matcher
+    each host adapter declares (`sessionStart`, [Adding a host](providers/adding-a-host.md));
+  - an `aidrian handoff continue` or `aidrian handoff route` whose command line sets `XDG_STATE_HOME`, `HOME`, `PATH`,
+    or a variable a host names a session or an agent by, which would move the store, the session the gate reads
+    floors for, or the host command it runs.
+  A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
+  closed.
 
 ## The cost model
 

@@ -502,6 +502,110 @@ test('a main session the background handoff route started may not set any machin
   }
 });
 
+// A project whose store holds a floor of route `background` for `full`, one under the short id of `short`, and one of
+// route `clear`; `run` sends one call of a session, or of a subagent of it, to the agent gates hook.
+function unattendedSetting(t) {
+  const { dir } = project(t, { version: 1 });
+  const state = stateDir(findProject(dir));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const handoffs = path.join(state, 'handoffs');
+  const store = openStore(state, { checkouts: [dir], maxChain: 3 });
+  const full = 'abcd1234-0000-4000-8000-000000000001';
+  const short = 'beef5678-0000-4000-8000-000000000002';
+  const floor = (session, route) => assert.ok(noteFrom(store, session, { slug: 'widget', chain: 1, brief: path.join(handoffs, '2026-11-15-widget.md'), route }));
+  floor(full, 'background');
+  floor('beef5678', 'background');
+  floor('cleared-session', 'clear');
+  const run = (session, command, { agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: dir, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
+    cwd: dir, encoding: 'utf8',
+  });
+  return { dir, state, handoffs, store: store.dir, full, short, run };
+}
+
+test('a main session the background route started may not delete, overwrite, or hide its own floor; an attended one may', (t) => {
+  const { dir, state, handoffs, store, full, short, run } = unattendedSetting(t);
+  const own = path.join(store, `from-${full}.json`);
+  const blocked = [
+    `rm ${own}`,
+    `rm -f ${store}/from-beef5678.json`,
+    `echo '{}' > ${own}`,
+    `cp /tmp/x.json ${own}`,
+    `rm -rf ${handoffs}`,
+    // A mode or owner the store's reads refuse hides the floor as well as a delete does.
+    `chmod 777 ${handoffs}`,
+    `chmod o+w ${state}`,
+    `chmod 000 ${own}`,
+    `chmod -R go+w ${path.dirname(state)}`,
+    `chown other ${store}`,
+    'cd "$X" && chmod 777 handoffs/.continue',
+  ];
+  for (const session of [full, short]) {
+    for (const command of blocked) {
+      const result = run(session, command);
+      assert.equal(result.status, 2, `${session}: ${command}`);
+      assert.match(result.stderr, /the handoff continuation store, where only `aidrian handoff` commands write, and the background handoff route started this session, with no Human/u, command);
+    }
+    // A change of mode anywhere else stays its own.
+    assert.equal(run(session, `chmod +x ${path.join(dir, 'src/app.js')}`).status, 0, session);
+    assert.equal(run(session, `ls ${store}`).status, 0, session);
+  }
+  // The floor is read before the call runs: refused once, it is still there to refuse the next one.
+  assert.equal(run(full, `rm ${own}`).status, 2);
+  assert.equal(run(full, `echo '${JSON.stringify({ github: { autoMerge: { enabled: true } } })}' > .aidrian.local.json`).status, 2, 'the switches stay refused');
+  for (const session of ['plain-session', 'cleared-session', undefined]) {
+    for (const command of blocked) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
+  }
+  // A subagent is refused the change of mode too.
+  assert.equal(run('plain-session', `chmod 777 ${handoffs}`, { agent: true }).status, 2);
+});
+
+test('a main session the background route started, and a subagent, may not start a host session outside the gate', (t) => {
+  const { full, short, run } = unattendedSetting(t);
+  const starts = ['claude -p "go on"', 'claude --bg "go on"', 'claude --resume abcd', 'claude -c', 'claude', '/usr/local/bin/claude --print x', 'claude mcp serve', 'bash -c "claude -p x"', 'echo "claude -p x" | sh', 'codex exec "go on"', 'codex resume --last'];
+  const allowed = ['claude agents --json', 'claude stop abcd1234', 'claude attach abcd1234', 'claude --version', 'claude mcp list', 'codex login status', 'cat CLAUDE.md', 'echo claude'];
+  for (const session of [full, short]) {
+    for (const command of starts) {
+      const result = run(session, command);
+      assert.equal(result.status, 2, `${session}: ${command}`);
+      assert.match(result.stderr, /session outside the handoff gate, which holds every session it starts to a chain floor, and a session starts another only through `aidrian handoff continue`, and the background handoff route started this session, with no Human/u, command);
+    }
+    for (const command of allowed) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
+  }
+  for (const command of starts) {
+    assert.equal(run('plain-session', command).status, 0, `an attended session may: ${command}`);
+    assert.equal(run('plain-session', command, { agent: true }).status, 2, `a subagent may not: ${command}`);
+  }
+  assert.match(run('plain-session', 'claude -p x', { agent: true }).stderr, /starts or resumes a Claude Code session outside the handoff gate/u);
+  assert.match(run('plain-session', 'codex exec x', { agent: true }).stderr, /starts or resumes a Codex session outside the handoff gate/u);
+});
+
+test('a main session the background route started, and a subagent, may not run the gate with a variable of their own that moves it', (t) => {
+  const { full, short, run } = unattendedSetting(t);
+  const moved = [
+    'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff continue b.md',
+    'HOME=/tmp/elsewhere aidrian handoff continue b.md',
+    'CLAUDE_CODE_SESSION_ID=fresh aidrian handoff continue b.md',
+    'CLAUDE_CODE_AGENT=other aidrian handoff continue b.md',
+    'env PATH=/tmp/bin aidrian handoff continue b.md',
+    'export XDG_STATE_HOME=/tmp/elsewhere; aidrian handoff continue b.md',
+    'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff route',
+  ];
+  const plain = ['aidrian handoff continue b.md', 'aidrian handoff route', 'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff check b.md', 'FOO=1 aidrian handoff continue b.md'];
+  for (const session of [full, short]) {
+    for (const command of moved) {
+      const result = run(session, command);
+      assert.equal(result.status, 2, `${session}: ${command}`);
+      assert.match(result.stderr, /it runs `aidrian handoff` with \w+ set by the command itself, which would move the continuation store, the session, or the host command the gate reads/u, command);
+    }
+    for (const command of plain) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
+  }
+  for (const command of moved) assert.equal(run('plain-session', command).status, 0, `an attended session may: ${command}`);
+  // A subagent may run no gate at all; the route, which writes nothing, it may run only as the host gave it.
+  assert.equal(run('plain-session', 'aidrian handoff route', { agent: true }).status, 0);
+  assert.equal(run('plain-session', 'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff route', { agent: true }).status, 2);
+});
+
 test('a subagent may not change the machine\'s product feedback choice, by any spelling; other local writes and the main session stay allowed', (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');

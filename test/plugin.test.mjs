@@ -761,7 +761,9 @@ test('the handoff skills run the continue gate after the check, carry the chain,
   const resume = flat('plugins/aidrian/skills/session-continue/SKILL.md');
   const injected = resume.slice(resume.indexOf('## Started by a continuation'), resume.indexOf('## The chain'));
   for (const words of ['`Handoff continuation:` block', '`aidrian handoff continue`', 'search nothing',
-    'Read the brief in full at the path the block says to read', 'in a background session, the kept copy of the checked bytes',
+    'Read the brief in full at the path the block says to read', 'names a kept copy of the checked bytes and its sha256',
+    'When it exits 0, it prints the brief after its first line: that output is the brief',
+    'Never read the copy or the brief\'s file instead, since either may change after the check',
     'The steps from "Enter the worktree" on are the same', 'what the block reserves for the Human still waits for the Human',
     'A first message that asks for something else is answered first']) assert.ok(injected.includes(words), `injection: ${words}`);
   // The label the skill quotes is the one the session start writes.

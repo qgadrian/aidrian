@@ -473,7 +473,17 @@ test('the Stop hook and the plan hook word the route of the session host, and a 
   const fellBack = unswitched.stop({}, CLAUDE).stderr;
   assert.match(fellBack, /its continue step prints what to tell the user\. Say that in one line, then end this turn\.\n$/u);
   assert.match(fellBack, /or that they are not watching/u, 'the clear route still needs someone to type');
+  // With no state.dir, the store is under the XDG_STATE_HOME this run sets, which is not the one the host's own
+  // environment names, so the route falls back to the clear one; a committed state.dir holds the store in place.
+  const moved = setup(t, { handoff: { mode: 'auto' } });
+  moved.git('init', '-q', '-b', 'main');
+  moved.git('add', '.aidrian/config.json');
+  moved.git('commit', '-q', '-m', 'config');
+  writeFileSync(path.join(moved.dir, '.aidrian.local.json'), JSON.stringify({ handoff: { background: 'on' } }));
+  moved.reach(205_352);
+  assert.match(moved.stop({}, CLAUDE).stderr, /its continue step prints what to tell the user\. Say that in one line, then end this turn\.\n$/u);
   const background = setup(t, { handoff: { mode: 'auto' } });
+  writeFileSync(path.join(background.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: path.join(path.dirname(background.dir), 'state') }, session: { handoff: { mode: 'auto' } } }));
   background.git('init', '-q', '-b', 'main');
   background.git('add', '.aidrian/config.json');
   background.git('commit', '-q', '-m', 'config');

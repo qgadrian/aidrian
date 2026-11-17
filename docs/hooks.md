@@ -879,13 +879,26 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A main session the [background handoff route](handoff.md#the-background-route) started is refused every machine
   switch in that file the same way, as a subagent is: no Human attends it. The hook knows it by its chain floor of
   route `background`, under its full id or a short one, in the continuation store of the working copy's `state.dir`
-  or the base branch's, and reads that floor, and git, only for a call that sets a switch.
+  or the base branch's, and reads that floor, and git, at most once a call, before it runs, and only for a call one of
+  these guards would refuse it. It is held as a subagent is to the continuation store, below, so it can neither delete
+  nor hide its own floor, and to the next two rules.
+- With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
+  a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
+  `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,
+  [Adding a host](providers/adding-a-host.md)), every host's whatever host runs the session; a shell it cannot read
+  that names such a program counts. A command that only manages sessions, such as `claude agents` or `claude stop`, runs.
+- With or without gates, the same two may not run `aidrian handoff continue` or `aidrian handoff route` with a
+  variable the command line sets that moves the gate's store, session, agent, or host command: `XDG_STATE_HOME`, `HOME`,
+  `PATH`, and each variable a host names or tells itself by, set by a prefix assignment, `env`, or `export` anywhere in
+  the command. The gate also holds its store to the base branch's under the host's own environment
+  ([handoff.md](handoff.md#the-background-route)).
 - With or without gates, a subagent may not run `aidrian handoff continue`, the [handoff gate](handoff.md#the-gate),
   which arms a continuation of the main session: its shell carries the main session's id, so the command cannot tell it
   from the main session. It reads the command wherever it runs in the line, as the [decision answer rule](#bash-rules) does,
   and refuses a command word built from a variable or a substitution, as in `$AIDRIAN handoff continue x.md`,
   when its later plain words read `handoff`, then `continue`.
-- With or without gates, a subagent may not write in the continuation store, `<state>/handoffs/.continue/`, by a
+- With or without gates, a subagent may not write in the continuation store, `<state>/handoffs/.continue/`, nor
+  change the mode or owner of the store, a file in it, its handoffs folder, or the state folder, by a
   literal path to it, in any letter case on a disk that folds case, through a glob that may reach it, or after a `cd`
   the guard can follow, nor a file named as a marker that arms or delivers a continuation where the path is unknown,
   such as after a `cd` it cannot follow. Otherwise a subagent could write the marker it may not arm.

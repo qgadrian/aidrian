@@ -376,10 +376,11 @@ export function keepBrief(store, bytes, sha256) {
   return SHA256.test(sha256) ? writeStoreFile(store, `continued-${sha256}.md`, bytes) : null;
 }
 
-// Whether the kept copy at `file` still holds the bytes whose sha256 is `sha256`: { path } when it is a regular file, no
-// symlink, owned by this process's user `uid`, under BRIEF_CAP, named `continued-<sha256>.md`, and its bytes hash to
-// `sha256`; else { problem }. `aidrian handoff verify` runs it for the session a background start began, before that
-// session follows the copy, so a copy changed after the gate kept it is never followed.
+// Whether the kept copy at `file` still holds the bytes whose sha256 is `sha256`: { path, bytes } when it is a regular
+// file, no symlink, owned by this process's user `uid`, under BRIEF_CAP, named `continued-<sha256>.md`, and its bytes hash
+// to `sha256`, where `bytes` are the very bytes that were hashed, from one read; else { problem }. `aidrian handoff verify`
+// runs it for the session a background start began and prints those bytes, which that session follows in place of the
+// file, so a copy changed after the gate kept it, or after the check, is never followed.
 export function verifyKept(file, sha256, { uid = processUid() } = {}) {
   if (typeof sha256 !== 'string' || !SHA256.test(sha256)) return { problem: 'the sha256 is not 64 lowercase hexadecimal digits' };
   if (path.basename(String(file)) !== `continued-${sha256}.md`) return { problem: `is not named continued-${sha256}.md` };
@@ -391,8 +392,9 @@ export function verifyKept(file, sha256, { uid = processUid() } = {}) {
     if (!stat.isFile()) return { problem: 'is not a regular file' };
     if (foreign(stat, uid)) return { problem: `is owned by another user (uid ${stat.uid})` };
     if (stat.size >= BRIEF_CAP) return { problem: `is ${stat.size} bytes, larger than any brief the gate keeps` };
-    const actual = createHash('sha256').update(readFileSync(fd)).digest('hex');
-    return actual === sha256 ? { path: file } : { problem: `changed since the gate kept it: its bytes hash to ${actual}` };
+    const bytes = readFileSync(fd);
+    const actual = createHash('sha256').update(bytes).digest('hex');
+    return actual === sha256 ? { path: file, bytes } : { problem: `changed since the gate kept it: its bytes hash to ${actual}` };
   } catch (error) {
     return { problem: error.code === 'ENOENT' ? 'does not exist' : `cannot be read (${error.code ?? 'unreadable'})` };
   } finally {

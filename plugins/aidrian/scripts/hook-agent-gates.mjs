@@ -2,7 +2,10 @@
 // lib/agent-gates.mjs decides, then lib/config-guard.mjs keeps a subagent from changing the files that set the gates,
 // and, with or without gates, from setting the machine's switches, as it keeps a session the background handoff route
 // started (lib/handoff-guard.mjs startedUnattended); lib/handoff-guard.mjs, with or without
-// gates, from running `aidrian handoff continue` or writing in the handoff continuation store.
+// gates, from running `aidrian handoff continue` or writing in the handoff continuation store, and keeps a subagent
+// and such a session from writing there, from starting a host session outside the gate, and from running the gate with
+// a variable of their own that moves its store or session. Whether the session is such a one is read at most once a
+// call, before it runs, and only when a guard would refuse the call to it.
 // It runs before every tool call, so without gates it stops as soon as it has read the config and run the guards that hold
 // without gates; a call a gate blocks exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook
 // records its blocks (lib/hook-deny.mjs). The gates are asked before any guard, so a call they deny never waits on one.
@@ -27,7 +30,7 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { continueStoreWriteDenial, handoffContinueDenial, startedUnattended } from '../lib/handoff-guard.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
 
@@ -58,7 +61,7 @@ async function gate(input) {
   }
   if (!project) {
     // The gate command runs outside a project too, with the defaults.
-    const outside = handoffContinueDenial(input, DEFAULTS);
+    const outside = handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS) ?? hostSessionStartDenial(input, DEFAULTS);
     if (outside) await block(input, 'config-guard', outside.reason, { match: outside.match });
     return;
   }
@@ -91,13 +94,18 @@ function guards(input, project, config, gated, snapshot) {
   let dir;
   const state = () => (dir ??= stateDir(project, { config }));
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
+  // Read once, before the call runs, so a call that deletes the session's floor is judged while the floor is there.
+  let alone;
+  const unattended = () => (alone ??= startedUnattended(project, config, input.session_id));
   return opaqueLimitDenial(input, config)
     ?? writeLimitDenial(input, config)
     ?? handoffContinueDenial(input, config)
-    ?? continueStoreWriteDenial(input, project, config, state, { links: false })
-    ?? machineSwitchWriteDenial(input, project, config, { unattended: () => startedUnattended(project, config, input.session_id) })
+    ?? handoffEnvDenial(input, config, { unattended })
+    ?? hostSessionStartDenial(input, config, { unattended })
+    ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended })
+    ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
-    ?? continueStoreWriteDenial(input, project, config, state);
+    ?? continueStoreWriteDenial(input, project, config, state, { unattended });
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

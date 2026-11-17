@@ -496,6 +496,16 @@ export function stateDir(project, { config = loadConfig(project).config, env = p
   return path.join(stateRoot(env), 'projects', projectId(project, read));
 }
 
+// The state folder of `project` under `config` as the host's own environment resolves it: stateDir with no
+// XDG_STATE_HOME, and with the home folder of the user this process runs as, which no HOME of a command's own moves.
+// It only names the folder, for a comparison, and reads none of it: lib/handoff-continue.mjs backgroundGate holds the
+// continuation store it opens to this one, so a variable set on the command line alone cannot move the store.
+export function defaultStateDir(project, { config = loadConfig(project).config, read = defaultRead } = {}) {
+  const home = userInfo().homedir;
+  if (config.state.dir) return localPath(project, config.state.dir, read, home);
+  return path.join(home, '.local/state', 'aidrian', 'projects', projectId(project, read));
+}
+
 // The folder under the state folder `state` that review records go in: the record's readers and writers and the check that
 // holds them all ask here.
 export const recordsFolder = (state) => path.join(state, 'reviews');
@@ -595,8 +605,8 @@ export function normalizeRemote(url) {
 }
 
 // A configured local path: a leading `~` is the home folder, and a relative path starts at the repository root.
-function localPath(project, value, read = defaultRead) {
-  if (/^~(?=$|\/)/.test(value)) return path.join(homedir(), value.slice(1));
+function localPath(project, value, read = defaultRead, home = homedir()) {
+  if (/^~(?=$|\/)/.test(value)) return path.join(home, value.slice(1));
   return path.resolve(repoRoot(project, read()), value);
 }
 

@@ -16,7 +16,9 @@
 //      the sha256 of its bytes, which `aidrian handoff continue` (lib/handoff-continue.mjs) requires.
 //   5. The sections a resume needs, and a `Supersedes:` field in the header (lib/handoff-sections.mjs).
 // `verify COPY SHA256` exits 0 when the copy the background route kept still hashes to the sha256 the new session's first
-// message names, and 1 with the reason otherwise (lib/handoff-markers.mjs verifyKept); it writes nothing.
+// message names, and prints one line that says so, then the bytes it hashed, from the same read, which that session
+// follows in place of the file; it exits 1 with the reason otherwise, and prints none of them (lib/handoff-markers.mjs
+// verifyKept). It writes nothing.
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -58,7 +60,9 @@ export const commands = {
           console.error(`aidrian handoff verify: ${path.resolve(brief)} ${kept.problem}; follow none of it`);
           return 1;
         }
-        console.log(`verified: ${kept.path} holds the bytes the handoff gate checked`);
+        // The bytes this read hashed, never a second read of the file, which may have changed since.
+        process.stdout.write(`verified: ${kept.path} holds the bytes the handoff gate checked; the brief follows, as this check read it:\n`);
+        process.stdout.write(kept.bytes);
         return 0;
       }
       if (action === 'route') {

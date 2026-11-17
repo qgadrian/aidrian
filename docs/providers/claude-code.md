@@ -246,6 +246,13 @@ Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rath
 - `claude agents --json` also lists interactive sessions, with `sessionId`, `name`, `kind: "interactive"`, and `cwd`,
   the folder the session was started in; `claude --help` lists `stop|kill <id>` and `attach <id|name>`.
 
+The adapter's `sessionStart` names `claude` as the command that starts a session, for the
+[agent gates](../hooks.md#agent-gates) hook, which refuses one to a subagent and to a session the background route
+started: `claude` with no subcommand, with `-p`, `--bg`, `--resume`, or `--continue`, with a prompt, with
+`mcp serve`, and with any subcommand it does not list, counts; `agents`, `attach`, `stop`, `kill`, `logs`, `doctor`,
+`update`, `install`, `config`, `mcp`, `plugin`, `setup-token`, `auth`, `migrate-installer`, `--version`, and `--help`
+do not. The list comes from the CLI reference and the `claude --help` output above; no live run of the hook checked it.
+
 Not verified: a background continuation from a real brief, end to end, with the plugin loaded from this branch:
 whether the session-continue skill runs from the first message as intended, and whether a second continuation in a
 row reads the floor the gate wrote.

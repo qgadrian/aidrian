@@ -11,6 +11,14 @@
 //      sends the host's signal to the host process (endHost), when it is still the one that shell started.
 //   3. The shell function reads `<state root>/handoff-terminals/<shell pid>`, `<id> <expiry in epoch seconds>`, deletes
 //      it, and opens the session `id` when it is fresh and `id` is plain, again after that session's program exits.
+// The next hops chain the same way. When a session ends itself, the Stop hook also notes in the store that the shell's
+// terminal now follows the new session (handoff-markers.mjs noteFollow). That session runs in the background, so no
+// Human attends it as the hooks know it, and it carries no SHELL_VAR; when it hands off in turn, the gate notes a
+// request that names its own id instead of a host process, only when the store says a terminal follows it, and its Stop
+// hook ends that session alone, through the host's own stop command (replaceTerminal.endOwn), never another process.
+// Its `claude attach` in the shell then exits, and the shell function opens the next one. The chain floor and its cap
+// bound the hops. This is a provisional decision of the harness: dropping the second way of ending, `own`, puts the
+// later hops back on the plain line the Human acts on.
 // Which host process, which signal, and which program and words open a session are the host adapter's
 // `capabilities.handoffContinue.replaceTerminal`; this file names no host.
 
@@ -64,7 +72,8 @@ export function unwrappedLine({ host, background, handoff, env, human }) {
   if (shellPid(env) !== null || !replace.attended(env)) return null;
   return `Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's \`${replace.program}\`, ` +
     `so after a background handoff this terminal stays on the old session beside the new one. For it to follow, ${human} runs ` +
-    '`aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal.';
+    '`aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal. ' +
+    'A copy of the plugin older than this one answers `unknown command: shell-init`: the plugin is updated first.';
 }
 
 // The folder shell records live in, under the state root `env` names.
@@ -95,38 +104,64 @@ export function writeNext({ shell, id, env = process.env, now = Date.now() }) {
   }
 }
 
-// The Stop hook's step: takes the request `take()` returns, { hostPid, shell, id } or null, and when this session's own
-// environment confirms it, the shell's pid and the host process the shell started, writes the shell's record and starts
-// the helper. `unattended()` says no Human attends this session. Returns whether the session is ending.
-export function endAfterTurn({ host, take, unattended, env = process.env, now = Date.now(), run, start = startHelper }) {
+// The Stop hook's step, in the session `session`: takes the request `take()` returns, as handoff-markers.mjs takeEnding,
+// or null, and when this session's own facts confirm it, writes the shell's record, notes through `follow` that the
+// shell's terminal follows the next session, and starts the helper. `unattended()` says no Human attends this session.
+// An attended session's request names its host process, which its own environment must name as the shell's child; a
+// background session's names its own id, which `session` must start with, on a host that can end its own session.
+// Returns whether the session is ending.
+export function endAfterTurn({ host, session, take, unattended, follow = () => null, env = process.env, now = Date.now(), run, start = startHelper }) {
   const replace = replacer(host);
   if (!replace) return false;
   const request = take();
-  if (!request || unattended()) return false;
-  const own = terminalOf(host, { env, run });
-  if (!own || own.shell !== request.shell || own.hostPid !== request.hostPid) return false;
-  if (!writeNext({ shell: own.shell, id: request.id, env, now })) return false;
-  start({ host: host.id, pid: own.hostPid, shell: own.shell, delay: END_DELAY });
+  if (!request) return false;
+  const ending = request.own === undefined ? ownProcess({ host, request, unattended, env, run }) : ownSession({ replace, request, session, unattended });
+  if (!ending || !writeNext({ shell: request.shell, id: request.id, env, now })) return false;
+  follow({ session: request.next ?? request.id, shell: request.shell });
+  start({ host: host.id, ...ending, delay: END_DELAY });
   return true;
 }
 
-// Starts scripts/end-host.mjs detached, so it outlives the hook and the host process it ends.
-function startHelper({ host, pid, shell, delay }) {
-  const child = spawn(process.execPath, [HELPER, host, String(pid), String(shell), String(delay)], { detached: true, stdio: 'ignore' });
+// The helper's arguments for an attended session whose own environment names the request's shell and host process.
+function ownProcess({ host, request, unattended, env, run }) {
+  if (unattended()) return null;
+  const own = terminalOf(host, { env, run });
+  return own && own.shell === request.shell && own.hostPid === request.hostPid ? { pid: own.hostPid, shell: own.shell } : null;
+}
+
+// The helper's arguments for a background session whose own id `session` is the request's, or starts with it.
+function ownSession({ replace, request, session, unattended }) {
+  if (typeof replace.endOwn !== 'function' || typeof session !== 'string' || !unattended()) return null;
+  return session === request.own || session.startsWith(request.own) ? { own: request.own, session } : null;
+}
+
+// Starts scripts/end-host.mjs detached, so it outlives the hook and the session it ends: `pid <pid> <shell>` for a host
+// process, `own <id> <session>` for a background session's own.
+function startHelper({ host, pid, shell, own, session, delay }) {
+  const way = own === undefined ? ['pid', String(pid), String(shell)] : ['own', own, session];
+  const child = spawn(process.execPath, [HELPER, host, ...way, String(delay)], { detached: true, stdio: 'ignore' });
   child.unref();
 }
 
-// The helper's step: after `delay` milliseconds, sends the signal of the host whose id is `host` to `pid`, when `pid`
-// is still a host process the shell `shell` started, which a pid the system gave to another process since is not.
-// Returns whether it sent it.
-export async function endHost({ host, pid, shell, delay, hosts = HOSTS, kill = process.kill.bind(process), wait = sleep, run }) {
+// The helper's step, after `delay` milliseconds, for the host whose id is `host`. With `pid`, it sends the host's signal
+// to `pid` when it is still a host process the shell `shell` started, which a pid the system gave to another process
+// since is not. With `own`, it ends the background session `session`, listed under `own`, through the host
+// (replaceTerminal.endOwn), which ends nothing the host does not list as that very session. Returns whether it ended it.
+export async function endHost({ host, pid, shell, own, session, delay, env = process.env, hosts = HOSTS, kill = process.kill.bind(process), wait = sleep, run }) {
   const replace = replacer(hosts.find((each) => each.id === host) ?? { capabilities: {} });
-  if (!replace || !isPid(pid) || !isPid(shell)) return false;
+  if (!replace) return false;
+  const byId = own !== undefined;
+  const named = byId ? canEndOwn(replace, own, session) : isPid(pid) && isPid(shell);
+  if (!named) return false;
   if (Number.isInteger(delay) && delay > 0) await wait(delay);
+  if (byId) return replace.endOwn({ id: own, session, env, run }) === true;
   if (!replace.isHost({ pid, shell, run })) return false;
   kill(pid, replace.signal);
   return true;
 }
+
+const canEndOwn = (replace, own, session) => typeof replace.endOwn === 'function' && typeof own === 'string' && OPEN_ID.test(own)
+  && typeof session === 'string' && /^[\w-]{1,128}$/u.test(session);
 
 // The shell function for `shell`, one of SHELLS, that wraps each host program `hosts` can replace a terminal for, or null
 // for another shell.

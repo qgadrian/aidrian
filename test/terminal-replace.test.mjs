@@ -13,9 +13,11 @@ import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectStore } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { ENDING_WINDOW, noteEnding, openStore, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { ENDING_WINDOW, noteEnding, noteFollow, openStore, readFollow, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { END_DELAY, endAfterTurn, endHost, NEXT_WINDOW, shellInit, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -55,7 +57,7 @@ test('a request to end acts once, holds for its window, and refuses a wrong shap
   assert.equal(takeEnding(store, SESSION, { now: now + ENDING_WINDOW + 1 }), null, 'past its window it is none, and goes');
   assert.equal(takeEnding(store, SESSION, { now }), null, 'and it is gone');
   noteEnding(store, SESSION, { hostPid: 4343, shell: 4242, id: 'abcd1234' });
-  assert.deepEqual(takeEnding(store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234' });
+  assert.deepEqual(takeEnding(store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: null });
   assert.equal(takeEnding(store, SESSION), null, 'taken once');
   for (const bad of [{ hostPid: 1, shell: 4242, id: 'abcd1234' }, { hostPid: 4343, shell: 0, id: 'abcd1234' }, { hostPid: 4343, shell: 4242, id: 'a b' }, { hostPid: '4343', shell: 4242, id: 'abcd1234' }]) {
     assert.equal(noteEnding(store, SESSION, bad, { now }), null, JSON.stringify(bad));
@@ -250,3 +252,108 @@ test('a shell record is written only for a pid and a plain id, in a folder that 
   assert.equal(writeNext({ shell: 4242, id: 'abcd1234', env }), null, 'a folder that is a symlink is refused');
   assert.equal(existsSync(path.join(elsewhere, '4242')), false);
 });
+
+// The next hops: a background session the terminal follows ends its own session, through the host's stop command.
+const BG_SESSION = 'abcd1234-0000-4000-8000-000000000001';
+const NEXT_SESSION = 'efgh5678-0000-4000-8000-000000000002';
+
+test('a request names one way to end, and the store says which shell follows a session, under its id or a short one', (t) => {
+  const store = openStore(folder(t, 'aidrian-store-'), { maxChain: 3 });
+  assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION }));
+  assert.deepEqual(takeEnding(store, BG_SESSION), { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION });
+  assert.equal(noteEnding(store, BG_SESSION, { own: 'abcd1234', hostPid: 4343, shell: 4242, id: 'efgh5678' }), null, 'never both');
+  assert.equal(noteEnding(store, BG_SESSION, { shell: 4242, id: 'efgh5678' }), null, 'never neither');
+  assert.equal(noteEnding(store, BG_SESSION, { own: 'a b', shell: 4242, id: 'efgh5678' }), null);
+
+  assert.equal(readFollow(store, BG_SESSION), null);
+  assert.ok(noteFollow(store, 'abcd1234', { shell: 4242 }));
+  assert.deepEqual(readFollow(store, BG_SESSION), { shell: 4242, id: 'abcd1234' }, 'a short id the session starts with');
+  assert.equal(readFollow(store, 'abcd9999-0000'), null, 'another session');
+  assert.equal(noteFollow(store, BG_SESSION, { shell: 1 }), null);
+});
+
+test('a background session the terminal follows ends only its own session, and passes the terminal on to the next', (t) => {
+  const env = { ...process.env, XDG_STATE_HOME: folder(t, 'aidrian-xdg-') };
+  const request = { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION };
+  const started = [];
+  const follows = [];
+  const step = (overrides = {}) => endAfterTurn({
+    host: claudeCode, session: BG_SESSION, take: () => request, unattended: () => true, env,
+    follow: (each) => follows.push(each), start: (each) => started.push(each), ...overrides,
+  });
+  assert.equal(step(), true);
+  assert.deepEqual(started, [{ host: 'claude-code', own: 'abcd1234', session: BG_SESSION, delay: END_DELAY }]);
+  assert.deepEqual(follows, [{ session: NEXT_SESSION, shell: 4242 }], 'the terminal follows the next session');
+  assert.match(readFileSync(path.join(terminalFolder(env), '4242'), 'utf8'), /^efgh5678 \d+\n$/u);
+
+  const noEndOwn = { ...claudeCode, capabilities: { ...claudeCode.capabilities, handoffContinue: { ...claudeCode.capabilities.handoffContinue, replaceTerminal: { ...claudeCode.capabilities.handoffContinue.replaceTerminal, endOwn: undefined } } } };
+  for (const [name, overrides] of [
+    ['another session asked', { session: 'zzzz0000-0000' }],
+    ['a session a Human attends ends by its process alone', { unattended: () => false }],
+    ['a host that cannot end its own session', { host: noEndOwn }],
+  ]) {
+    started.length = 0;
+    follows.length = 0;
+    assert.equal(step(overrides), false, name);
+    assert.deepEqual([started, follows], [[], []], name);
+  }
+  started.length = 0;
+  follows.length = 0;
+  const attended = { ...process.env, ...WRAPPED, XDG_STATE_HOME: env.XDG_STATE_HOME };
+  assert.equal(endAfterTurn({ host: claudeCode, session: SESSION, take: () => ({ hostPid: 4343, shell: 4242, id: 'abcd1234', next: null }), unattended: () => false, env: attended, run: OWN, follow: (each) => follows.push(each), start: (each) => started.push(each) }), true);
+  assert.deepEqual(follows, [{ session: 'abcd1234', shell: 4242 }], 'the first hop passes the terminal on too, under the short id while the full one is unknown');
+});
+
+test('the helper ends a background session through the host\'s own stop, and the adapter stops only the session it runs in', async () => {
+  const calls = [];
+  const fake = { id: 'fake', capabilities: { handoffContinue: { replaceTerminal: { endOwn: (args) => { calls.push(args); return true; } } } } };
+  assert.equal(await endHost({ host: 'fake', own: 'abcd1234', session: BG_SESSION, delay: 0, hosts: [fake], env: {} }), true);
+  assert.deepEqual(calls, [{ id: 'abcd1234', session: BG_SESSION, env: {}, run: undefined }]);
+  assert.equal(await endHost({ host: 'fake', own: 'a;b', session: BG_SESSION, delay: 0, hosts: [fake] }), false);
+  assert.equal(await endHost({ host: 'fake', own: 'abcd1234', session: '../x', delay: 0, hosts: [fake] }), false);
+  assert.equal(calls.length, 1);
+
+  const listing = [
+    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION },
+    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION },
+    { kind: 'interactive', sessionId: 'session-1' },
+  ];
+  const fakeRun = (list) => {
+    const ran = [];
+    return { ran, run: (command, args) => { ran.push(args); return args[0] === 'agents' ? { status: 0, stdout: JSON.stringify(list) } : { status: 0, stdout: '' }; } };
+  };
+  const stop = (id, session, list = listing) => {
+    const { ran, run } = fakeRun(list);
+    const ok = stopOwnBackground({ id, session, env: {}, run, resolve: () => '/bin/claude' });
+    return { ok, stops: ran.filter((args) => args[0] === 'stop') };
+  };
+  assert.deepEqual(stop('abcd1234', BG_SESSION), { ok: true, stops: [['stop', 'abcd1234']] });
+  assert.deepEqual(stop('efgh5678', BG_SESSION), { ok: false, stops: [] }, 'an id the listing gives another session');
+  assert.deepEqual(stop('abcd1234', NEXT_SESSION), { ok: false, stops: [] }, 'a session that is not the id\'s');
+  assert.deepEqual(stop('session-1', 'session-1'), { ok: false, stops: [] }, 'an interactive session is never stopped this way');
+  assert.deepEqual(stop('abcd1234', BG_SESSION, [...listing, { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION }]), { ok: false, stops: [] }, 'two that fit are none');
+});
+
+test('the Stop hook of a background session the terminal follows stops that session itself, and leaves the shell its record', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = folder(t, 'aidrian-stop-bg-');
+  spawnSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const project = findProject(dir);
+  const store = projectStore(project, loadConfig(project).config);
+  const bin = folder(t, 'aidrian-fake-bin-');
+  const log = path.join(bin, 'log');
+  const listing = JSON.stringify([{ kind: 'background', id: 'abcd1234', sessionId: BG_SESSION }]);
+  writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nif [ "$1" = agents ]; then echo '${listing}'; exit 0; fi\necho "$*" >> '${log}'\n`, { mode: 0o755 });
+  const env = { ...process.env, CLAUDECODE: '1', PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  assert.ok(markUnattended(BG_SESSION, { root: dir, env }));
+  assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell: 4242, id: 'efgh5678', next: NEXT_SESSION }));
+  const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: 'Stop', session_id: BG_SESSION, cwd: dir, stop_hook_active: false }), env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(path.join(terminalFolder(env), '4242'), 'utf8'), /^efgh5678 \d+\n$/u);
+  assert.deepEqual(readFollow(store, NEXT_SESSION), { shell: 4242, id: NEXT_SESSION });
+  const deadline = Date.now() + END_DELAY + 5000;
+  while (!existsSync(log) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(readFileSync(log, 'utf8'), 'stop abcd1234\n');
+});
+

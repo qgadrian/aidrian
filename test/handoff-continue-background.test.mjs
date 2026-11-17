@@ -17,7 +17,7 @@ import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundPrompt, continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { noteFollow, noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -752,7 +752,7 @@ test('in auto mode, a session the shell function started asks to end once its tu
   const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env: { ...setting.env, ...WRAPPED } });
   assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
   assert.ok(result.out[1].endsWith(SWITCHES), result.out[1]);
-  assert.deepEqual(takeEnding(setting.store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234' });
+  assert.deepEqual(takeEnding(setting.store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: NEW_SESSION });
   assert.equal(takeEnding(setting.store, SESSION), null, 'the request acts once');
 });
 
@@ -783,5 +783,26 @@ test('a session ends itself only in auto mode, from the shell function\'s own cl
   const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env });
   assert.ok(result.out[1].endsWith(PLAIN), `a session no Human attends: ${result.out[1]}`);
   assert.equal(takeEnding(setting.store, SESSION), null, 'a session no Human attends never ends a process');
+});
+
+test('a background session the terminal follows asks to end its own session once its turn ends, in auto mode only', (t) => {
+  for (const [name, handoff, follows, ends] of [
+    ['followed, auto mode', { mode: 'auto' }, true, true],
+    ['no terminal follows it', { mode: 'auto' }, false, false],
+    ['ask mode', { mode: 'ask', continue: 'background' }, true, false],
+  ]) {
+    const setting = setup(t, { handoff });
+    passCheck(setting);
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    t.after(() => rmSync(xdg, { recursive: true, force: true }));
+    const env = { ...setting.env, XDG_STATE_HOME: xdg };
+    assert.ok(markUnattended(SESSION, { root: setting.dir, env }), name);
+    if (follows) assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
+    const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(ends ? SWITCHES : PLAIN), `${name}: ${result.out[1]}`);
+    const request = takeEnding(setting.store, SESSION);
+    assert.deepEqual(request, ends ? { own: SESSION, shell: 4242, id: 'abcd1234', next: NEW_SESSION } : null, name);
+  }
 });
 

@@ -399,29 +399,43 @@ It runs only where every switch of the background route is on, and `session.hand
 
 1. Once the background session started and the gate recorded it, the gate asks the host adapter for this session's host
    process. It must be a child of the shell `AIDRIAN_SHELL_PID` names, of the host's program, and attended by a Human,
-   as the host tells it. A session a Human attends that the shell function did not start, while this machine's switch
-   and the working config turn the route on in `auto` mode, gets a `Handoff terminal:` line at its start that says its
-   terminal will not follow, and names the install command ([Start lines](hooks.md#start-lines)). The gate then notes in the continuation store, `ending-<session>.json`, the host process, the
-   shell, and the new session's id. It notes nothing for a session no Human attends, known by its unattended mark or
-   its chain floor of route `background`, or when anything above is missing, and the say line ends with the plain line
-   on how to open the new session instead.
+   as the host tells it. The gate then notes in the continuation store, `ending-<session>.json`, the host process, the
+   shell, and the new session's id and full id. When anything above is missing, it notes nothing, and the say line ends
+   with the plain line on how to open the new session instead. A session a Human attends that the shell function did
+   not start, while this machine's switch and the working config turn the route on in `auto` mode, gets a
+   `Handoff terminal:` line at its start that says its terminal will not follow, and names the install command
+   ([Start lines](hooks.md#start-lines)).
 2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
-   shell's record, valid for 60 seconds, and starts a detached helper. The helper waits 2 seconds, so the host runs its
-   other Stop hooks and shows the last message. It checks the process is still the host's program that shell started,
-   and sends the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
+   shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
+   follows the new session, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
+   hooks and shows the last message. It checks the process is still the host's program that shell started, and sends
+   the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
    A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
    skips the session-length reminder.
 3. The host's program exits, and the shell function opens the new session in the same terminal.
 
+The next hops chain the same way, so the terminal follows each session of the chain. The session the terminal opens is a
+background session: no Human attends it as far as the hooks know, and it carries no `AIDRIAN_SHELL_PID`. When it hands
+off in turn, with every switch above on and its launch confirmed, the gate notes a request only when the store holds a
+`follow-` record for it, under its full id or the short one the host printed. That request names the session's own id
+in place of a host process. Its Stop hook takes it once, checks that the session's own id is that id or starts with it,
+writes the shell's record, passes the `follow-` record on to the next session, and starts the helper. The helper ends
+that session alone, through the host's own stop command, `replaceTerminal.endOwn`. It stops nothing unless the host's
+listing names exactly one background session that is this very session under that id. On Claude Code that is
+`claude stop <id>`, and `claude attach` in the shell then exits 0, so the shell function opens the next session. The
+chain floor and its cap of 5 continuations in a row bound the hops: at the cap the gate goes on by none, and the session
+stays open. This is a provisional decision of the harness, which lets a session no Human attends end its own session
+and nothing else. Dropping the request that names a session's own id puts the later hops back on the plain line.
+
 Limits:
 
-- A subagent cannot run the gate, and its stop is not the Stop hook's, so no subagent ends a process. A session no Human
-  attends never notes a request, and the Stop hook refuses one for it; the store, where the request lives, is closed to
-  both, as for a chain floor.
-- The next hop chains only through a session the shell function started. The session the terminal opens next is a
-  background session, which no Human attends as far as the hooks know, so when it hands off in turn, it ends nothing:
-  its say line names the next session and the command that opens it, which the Human runs after leaving this one.
+- A subagent cannot run the gate, and its stop is not the Stop hook's, so no subagent ends a process or a session. A
+  session no Human attends ends only itself, through the host, and only when a terminal follows it; it never names a
+  process. Every other refusal of such a session stays, such as starting a session from a shell. The store, where the
+  request and the `follow-` record live, is closed to both, as for a chain floor.
+- When the Human leaves an attached session, the `follow-` record still says the terminal follows it. At its handoff it
+  still ends itself, and the shell's record waits a minute for a program the shell function ran to exit.
 - The shell's record lies outside the continuation store, in a folder that is the user's alone (0700), each record 0600.
   The hooks do not refuse a write there. A record another session of the same user wrote can only make the terminal open
   a session by a plain id, within its minute, the next time a program the shell function ran exits.

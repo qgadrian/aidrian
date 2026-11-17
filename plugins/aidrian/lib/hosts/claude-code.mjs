@@ -5,7 +5,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
+import { attachLine, findLine, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { attended, END_SIGNAL, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
@@ -155,6 +155,9 @@ export default {
         attended,
         hostProcess: ({ env, shell, run }) => hostProcess({ env, shell, run }),
         isHost: ({ pid, shell, run }) => isWrappedHost({ pid, shell, run }),
+        // A background session the terminal follows ends itself with `claude stop`, which the supervisor owns, and
+        // `claude attach` then exits 0 about a second later (probed on 2.1.326), so the shell function goes on.
+        endOwn: ({ id, session, env, run }) => stopOwnBackground({ id, session, env, run }),
         signal: END_SIGNAL,
       },
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference

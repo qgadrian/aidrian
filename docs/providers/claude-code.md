@@ -303,9 +303,16 @@ folder and a trivial prompt:
 - The interactive `claude` shows as `claude` in `ps -o comm=`, a child of the program that started it. A background
   session's process shows as `claude bg-spare` under `claude bg-pty-host`, so it never passes the check.
 
+A background session the terminal follows ends itself with `replaceTerminal.endOwn` (`stopOwnBackground` in
+`lib/hosts/claude-code-background.mjs`). It reads `claude agents --json` and runs `claude stop <id>` only when exactly
+one background row has that `id`, or a `sessionId` that starts with it, and its `sessionId` is the session's own.
+It never signals a process: the supervisor owns the background session's process.
+
+Checked by hand on Claude Code 2.1.326, in a pseudo-terminal: `claude attach <id>` on a live background session exits 0
+about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the next session.
+
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
-function. A session's own agent gates refuse it `claude --bg`, so the probe started no background session.
-Whether `claude attach` exits once the session it shows ends is not known, so the next hop is left to the Human.
+function.
 
 ## Limits
 

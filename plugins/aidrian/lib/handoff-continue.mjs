@@ -34,10 +34,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { baseBranchTip, commandConfig, committedConfig, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
-import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
+import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
-import { OPEN_ID, terminalOf } from './terminal-replace.mjs';
+import { OPEN_ID, replacer, terminalOf } from './terminal-replace.mjs';
 import { dropPending, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
@@ -298,18 +298,28 @@ function startInBackground(ready) {
     && safely(() => noteStarted(store, session, marker, { now }));
   if (!held) return unheld({ handoff, started, env, run, slug, release, fallBack });
   release();
-  return startedLines(host, marker, { ending: handTerminal({ host, store, session, env, run, now, mode, id: marker.id }) });
+  const ending = handTerminal({ host, store, session, env, run, now, mode, id: marker.id, next: marker.session ?? null });
+  return startedLines(host, marker, { ending });
 }
 
 // Whether the session `session`, whose base branch's session.handoff.mode is `mode`, ends itself once this turn ends, so
-// the terminal that ran it opens the background session `id` (lib/terminal-replace.mjs): only in `auto` mode, on a host
-// that can, from a host process the shell function started and a Human attends, and never in a session no Human attends.
+// the terminal that ran it opens the background session `id`, whose full id is `next` or null (lib/terminal-replace.mjs).
+// Only in `auto` mode, on a host that can. A session a Human attends needs a host process the shell function started.
+// A session no Human attends, which the background route started, needs a terminal that follows it, as the store records
+// once the session before it ended itself, and a host that can end its own session: it names itself, never a process.
 // It notes the request in the store for the Stop hook. A request it cannot note is none: the session stays open.
-function handTerminal({ host, store, session, env, run, now, mode, id }) {
-  if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id)) return false;
-  if (unattendedHere(session, { store, env, now })) return false;
-  const terminal = safely(() => terminalOf(host, { env, run }));
-  return terminal !== null && safely(() => noteEnding(store, session, { ...terminal, id }, { now })) !== null;
+function handTerminal({ host, store, session, env, run, now, mode, id, next }) {
+  if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id) || !replacer(host)) return false;
+  const way = unattendedHere(session, { store, env, now }) ? followed(host, store, session, now) : safely(() => terminalOf(host, { env, run }));
+  return way !== null && safely(() => noteEnding(store, session, { ...way, id, next }, { now })) !== null;
+}
+
+// For a background session a terminal follows, on a host that can end its own session: { own, shell }, where `own` is
+// the id the store recorded it under; else null.
+function followed(host, store, session, now) {
+  if (typeof replacer(host).endOwn !== 'function') return null;
+  const follow = safely(() => readFollow(store, session, { now }));
+  return follow && { own: follow.id, shell: follow.shell };
 }
 
 // Whether no Human attends `session`: its unattended mark, or a chain floor of the background route, holds it. A mark

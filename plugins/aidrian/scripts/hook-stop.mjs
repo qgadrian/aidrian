@@ -71,11 +71,15 @@ await runHook(async (input) => {
 // load only on a host that can replace a terminal.
 async function endsTerminal(host, project, config, id) {
   if (!host.capabilities.handoffContinue?.replaceTerminal) return false;
-  const { endAfterTurn, shellPid } = await import('../lib/terminal-replace.mjs');
-  // A session no shell function started has nothing to end: no store is opened on its stops.
-  if (shellPid(process.env) === null) return false;
+  const { endAfterTurn } = await import('../lib/terminal-replace.mjs');
   const { projectStore, unattendedHere } = await import('../lib/handoff-continue.mjs');
-  const { takeEnding } = await import('../lib/handoff-markers.mjs');
+  const { noteFollow, takeEnding } = await import('../lib/handoff-markers.mjs');
   const store = projectStore(project, config);
-  return endAfterTurn({ host, take: () => takeEnding(store, id), unattended: () => unattendedHere(id, { store, env: process.env, now: Date.now() }) });
+  return endAfterTurn({
+    host,
+    session: id,
+    take: () => takeEnding(store, id),
+    unattended: () => unattendedHere(id, { store, env: process.env, now: Date.now() }),
+    follow: ({ session, shell }) => noteFollow(store, session, { shell }),
+  });
 }

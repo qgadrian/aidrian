@@ -67,7 +67,8 @@ At the start of every session and subagent, the hook prints:
   `Handoff terminal:` line while this machine's `handoff.background` is `"on"` and config.json resolves
   `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
   not start: after a background handoff its terminal stays on the old session, and the line names
-  `aidrian shell-init zsh --install`, or bash's, for the Human to run once;
+  `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older copy of the plugin,
+  which answers `unknown command: shell-init`;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.

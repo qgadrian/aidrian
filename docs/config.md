@@ -7,7 +7,8 @@ It prints the errors and exits with its error code instead, such as 3 for `aidri
 The hooks keep working, with the default in place of each bad value.
 Without a `config.json`, the commands use the defaults.
 
-[`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example.
+[`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example,
+and [config-recipes.md](config-recipes.md) gives three checked starting configs by how much the Human steers.
 
 ## Keys
 

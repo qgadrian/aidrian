@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "github": {
+    "requiredChecks": ["test"],
+    "markReady": "auto",
+    "reviewLoop": "auto",
+    "extraRounds": "auto",
+    "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true },
+    "unattendedWaiver": { "allow": true }
+  },
+  "review": { "unattendedSignoff": { "allow": true } },
+  "decisions": {
+    "mode": "decide-reversible",
+    "maxMode": "decide-reversible",
+    "unattended": { "safeDefaults": "all" }
+  },
+  "quorum": { "product": { "autoStart": true, "approval": "review-later" } },
+  "session": { "handoff": { "mode": "auto", "continue": "background", "maxChain": 5 } },
+  "audits": { "triage": { "issueCreation": "auto" } }
+}

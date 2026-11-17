@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "github": {
+    "requiredChecks": ["test"],
+    "markReady": "auto",
+    "reviewLoop": "auto",
+    "extraRounds": "ask",
+    "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
+  },
+  "decisions": {
+    "mode": "decide-reversible",
+    "maxMode": "decide-reversible",
+    "domains": { "product": "ask" }
+  },
+  "quorum": { "product": { "autoStart": true, "approval": "first" } },
+  "session": { "handoff": { "mode": "auto", "continue": "background", "maxChain": 3 } }
+}

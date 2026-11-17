@@ -66,7 +66,7 @@ test('a brief with the five sections has no section finding; each missing one is
     assert.deepEqual(named(problems), [name], part);
     assert.match(problems[0], new RegExp(`no \`## ${name}\` section: add it, with \\S`, 'u'));
   }
-  assert.match(sectionProblems(brief({ state: '' }))[0], /`Worktree: <path, or none yet> \| Branch: <name>`/u);
+  assert.match(sectionProblems(brief({ state: '' }))[0], /`Worktree: <path, or none yet>` and `Branch: <name>`, each on its own line/u);
   for (const part of ['objective', 'running', 'risks']) {
     const heading = PARTS[part].split('\n')[0];
     assert.match(sectionProblems(brief({ [part]: `${heading}\n\n` }))[0], /: the section holds no line of text: add /u, `an empty ${part}`);

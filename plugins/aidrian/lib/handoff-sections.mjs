@@ -25,7 +25,7 @@ const labelValues = (lines, label) => {
 // Each required section, with the test of what it must hold and what a finding asks to add.
 const REQUIRED = [
   { name: 'Objective', holds: hasText, missing: 'holds no line of text', add: 'a line on the task and what done means' },
-  { name: 'Current state', labels: ['Worktree', 'Branch'], add: '`Worktree: <path, or none yet> | Branch: <name>`' },
+  { name: 'Current state', labels: ['Worktree', 'Branch'], add: '`Worktree: <path, or none yet>` and `Branch: <name>`, each on its own line' },
   { name: 'Still running', holds: hasText, missing: 'holds no line of text', add: 'one item per agent or job left running, or `None.`' },
   { name: 'Next steps', holds: numbered, missing: 'has no numbered item at the start of a line', add: '`1. <the smallest next action>`' },
   { name: 'Open risks and questions', holds: hasText, missing: 'holds no line of text', add: 'each open risk or question, or `None.`' },

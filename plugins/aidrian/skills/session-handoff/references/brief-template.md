@@ -6,6 +6,8 @@ A section with nothing to hold says `None.`, so a reader can tell it from a forg
 Still running, a numbered Next steps, or Open risks and questions, and one whose header has no `Supersedes:` value.
 `Chain: <n>` counts the automatic continuations in a row that led to this brief: the number the start context of a
 continued session names, else 0, as the `session-continue` skill says. The check fails one that is not a whole number.
+The check also fails any line longer than the project's `docs.wrapLimit` (155 by default), so wrap long lines as you
+write them and keep each `Worktree:` and `Branch:` label at the start of its own line.
 
 ```markdown
 # Handoff: <task title>
@@ -16,7 +18,9 @@ Advice from <writer>, not a spec: check each claim against the docs and code bef
 <one to three lines: the task, and what "done" means>
 
 ## Current state
-- Worktree: <path, or none yet> | Branch: <name> | Pull request: <url or none>
+- Worktree: <path, or none yet>
+- Branch: <name>
+- Pull request: <url or none>
 - Verification already run: <exact commands>
 - Product quorums: the count of automatic quorum runs this session, for `aidrian quorum route --runs`, when any ran
 

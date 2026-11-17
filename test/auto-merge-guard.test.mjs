@@ -162,6 +162,13 @@ test('the reviewers, the hooks, and the manifests are guarded', () => {
   }
 });
 
+test("the cockpit's folder and the release script are guarded", () => {
+  for (const file of ['plugins/aidrian-cockpit/lib/snapshot-client.mjs', 'plugins/aidrian-cockpit/.claude-plugin/plugin.json', 'scripts/version.mjs']) {
+    assert.ok(guarded(file), file);
+  }
+  for (const file of ['plugins/aidrian-cockpit-extra/x.mjs', 'scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(guarded(file), false, file);
+});
+
 test('no module can add a trusted author association', () => {
   for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) assert.equal(MEMBER_ASSOCIATIONS.has(association), true, association);
   for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'NONE', undefined]) assert.equal(MEMBER_ASSOCIATIONS.has(association), false, String(association));

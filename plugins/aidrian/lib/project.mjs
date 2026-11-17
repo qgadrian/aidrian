@@ -30,7 +30,8 @@ const defaultRead = () => undefined;
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
 // file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
 // subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded.
-// At the repository root: the marketplace manifests that install the plugin.
+// At the repository root: the marketplace manifests that install the plugin, the optional `aidrian-cockpit` plugin's
+// folder, and `scripts/version.mjs`, which runs in the release job that holds the write token.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
   'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
@@ -54,7 +55,10 @@ export const GUARDED_PATHS = new RegExp(
     `|${HOST_PATHS}` +
     String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
     String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +
-    `|^plugins/aidrian/(?:${GUARDED_PLUGIN})`,
+    `|^plugins/aidrian/(?:${GUARDED_PLUGIN})` +
+    // This repository's optional cockpit plugin, whole: it picks and runs the aidrian binary. And the release script,
+    // which runs in the release job that holds the write token.
+    String.raw`|^plugins/aidrian-cockpit/|^scripts/version\.mjs$`,
   'iu',
 );
 

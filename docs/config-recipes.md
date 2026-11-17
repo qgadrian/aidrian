@@ -1,8 +1,8 @@
 # Config recipes
 
-Three starting configs, from the most autonomous to the most hands-on. Pick the one closest to how the Human works,
-copy its two files, and change what the project needs. Each is checked by `test/config-recipes.test.mjs`:
-`aidrian check` passes on it, and this page shows the files in [`plugins/aidrian/recipes/`](../plugins/aidrian/recipes) exactly.
+Three starting configs for a project, from the most autonomous to the most hands-on, written for a developer working
+alone. Pick the one closest to how the Human works, copy it, and change what the project needs. Each is checked by `test/config-recipes.test.mjs`:
+`aidrian check` passes on it, and this page shows each file in [`plugins/aidrian/recipes/`](../plugins/aidrian/recipes) exactly.
 The `harness-setup` skill offers them as its working-style question.
 
 | Recipe | The Human | Sessions stop for |
@@ -13,11 +13,11 @@ The `harness-setup` skill offers them as its working-style question.
 
 How to apply one:
 
-1. Merge the recipe's `config.json` into `.aidrian/config.json` and commit it on the default branch.
-   The team switches (`autoMerge.allow`, `unattendedWaiver.allow`, the handoff route) are read from the base branch,
-   never from the working copy, so they count only once merged.
-2. Copy its `local.json` to `.aidrian.local.json` in the main checkout, on each machine that takes part.
-   That file is git-ignored, and a subagent may not write its switches: the Human, or the main session, does.
+1. Merge the recipe into `.aidrian/config.json` and commit it on the default branch.
+   Its switches, such as `autoMerge.allow`, are read from the base branch, never from the working copy,
+   so they count only once merged.
+2. Add the machine switches the recipe names, if any, to `.aidrian.local.json` in the main checkout.
+   A few switches live only there, so that a pull request can never turn them on; a subagent may not write them.
 3. Replace `"test"` in `github.requiredChecks` with the names of the project's CI checks. Auto-merge stays off without one.
 4. Set [`requires.aidrian`](config.md#plugin-version) to the plugin release the project runs, since an older plugin
    rejects keys it does not know.
@@ -32,7 +32,7 @@ No one is watching. A session takes a task to a merged pull request and continue
 context grows, and the Human reads the results afterwards: the merged pull requests, the decisions queued in their
 bodies, and the lesson inbox.
 
-Team, `.aidrian/config.json`:
+`.aidrian/config.json`:
 
 ```json
 {
@@ -57,20 +57,16 @@ Team, `.aidrian/config.json`:
 }
 ```
 
-Machine, `.aidrian.local.json`:
+Machine switches, in `.aidrian.local.json`:
 
 ```json
-{
-  "github": { "autoMerge": { "enabled": true }, "unattendedWaiver": { "enabled": true } },
-  "unattendedSignoff": "on",
-  "handoff": { "background": "on" }
-}
+{ "github": { "unattendedWaiver": { "enabled": true } }, "unattendedSignoff": "on", "handoff": { "background": "on" } }
 ```
 
 What it turns on:
 
 - Pull requests are marked ready and merged with no one asking, once `aidrian pr checks` and the review pass
-  ([Auto-merge](config.md#auto-merge)). `default: "on"` makes every machine with no local setting take part.
+  ([Auto-merge](config.md#auto-merge)). `default: "on"` needs no machine switch.
 - At the review round cap, a judge grants one more round (`extraRounds: "auto"`), and a judge's recorded verdict can
   stand in for the Human's answer to the merge guard ([Unattended waiver](config.md#unattended-waiver)) and close a
   disputed invariant ([unattended rulings](review.md#unattended-rulings)).
@@ -84,16 +80,15 @@ What it turns on:
 
 What it still keeps for a person: a security verdict and a critical-flow sign-off, which no setting hands to an agent;
 a hard product call in a floor class, after its quorum; on Codex, resuming a handoff;
-a pull request that edits what steers the harness, such as `AGENTS.md`, a skill, or `.claude/`, unless the team also sets
+a pull request that edits what steers the harness, such as `AGENTS.md`, a skill, or `.claude/`, unless the project also sets
 `github.autoMerge.includeGuardedPaths` after reading its risk; and a merge that branch protection forbids.
 
 ## Autopilot
 
 The Human runs several sessions at once and looks in now and then. Sessions do the routine work alone and stop at a
-few points that keep them from drifting: a product call, a review that needs a round past the cap, and a merge on a
-machine that has not opted in.
+few points that keep them from drifting: a product call and a review that needs a round past the cap.
 
-Team, `.aidrian/config.json`:
+`.aidrian/config.json`:
 
 ```json
 {
@@ -103,7 +98,7 @@ Team, `.aidrian/config.json`:
     "markReady": "auto",
     "reviewLoop": "auto",
     "extraRounds": "ask",
-    "autoMerge": { "allow": true, "default": "off", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
+    "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
   },
   "decisions": {
     "mode": "decide-reversible",
@@ -115,19 +110,15 @@ Team, `.aidrian/config.json`:
 }
 ```
 
-Machine, `.aidrian.local.json`:
+Machine switch, in `.aidrian.local.json`:
 
 ```json
-{
-  "github": { "autoMerge": { "enabled": true } },
-  "handoff": { "background": "on" }
-}
+{ "handoff": { "background": "on" } }
 ```
 
 What it turns on, and where it stops:
 
-- Ready marks and the review loop run alone. Auto-merge is allowed, but `default: "off"` lets each machine choose;
-  the local file above opts this one in. A machine without it gets a ready pull request to merge by hand.
+- Ready marks, the review loop, and the merge run alone, once `aidrian pr checks` and the review pass.
 - Agents settle reversible UX, architecture, and backlog decisions. Product decisions ask (`domains.product: "ask"`),
   and a hard product call first runs a quorum, so the question the Human gets comes with a recommendation.
 - An extra review round past the cap needs the Human's yes (`extraRounds: "ask"`), and so does a waiver: it is left off.
@@ -141,7 +132,7 @@ The Human works beside each session and wants the harness's checks without its a
 interrupting recipe: sessions ask before each decision, before the review loop, before marking a pull request ready,
 and before a handoff.
 
-Team, `.aidrian/config.json`:
+`.aidrian/config.json`:
 
 ```json
 {
@@ -159,11 +150,7 @@ Team, `.aidrian/config.json`:
 }
 ```
 
-Machine, `.aidrian.local.json`: none needed. Its file is empty:
-
-```json
-{}
-```
+No machine switch.
 
 What it turns on:
 

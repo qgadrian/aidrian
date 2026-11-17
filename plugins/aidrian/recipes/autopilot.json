@@ -5,7 +5,7 @@
     "markReady": "auto",
     "reviewLoop": "auto",
     "extraRounds": "ask",
-    "autoMerge": { "allow": true, "default": "off", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
+    "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
   },
   "decisions": {
     "mode": "decide-reversible",

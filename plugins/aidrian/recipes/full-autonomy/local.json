@@ -1,5 +1,0 @@
-{
-  "github": { "autoMerge": { "enabled": true }, "unattendedWaiver": { "enabled": true } },
-  "unattendedSignoff": "on",
-  "handoff": { "background": "on" }
-}

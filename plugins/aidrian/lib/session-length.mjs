@@ -62,7 +62,13 @@ export function handoffCost({ calls, first, last, model, oneHourCache }, { brief
 // then twice the ratio of its last firing, and never below costRatio, which config.json may raise mid-session.
 // Anchored on the ratio the session actually reached, so a session that keeps going is reminded a few times at most,
 // and a jump far past costRatio comes back at twice where it landed.
-export const nextRatio = (costRatio, lastRatio) => (lastRatio > 0 ? Math.max(costRatio, 2 * lastRatio) : costRatio);
+// In `auto` mode a skipped firing costs the Human nothing, so the reminder comes back in steps of costRatio − 1 (2, 3, 4
+// by default) rather than at double: a session that skipped while an agent was running is offered the handoff again soon
+// after, not once its calls cost twice as much.
+export const nextRatio = (costRatio, lastRatio, mode = 'ask') => {
+  if (!(lastRatio > 0)) return costRatio;
+  return Math.max(costRatio, mode === 'auto' ? lastRatio + (costRatio - 1) : 2 * lastRatio);
+};
 
 // The context at which the token ceiling fires after `fired` firings; 0 is off.
 export const tokenCeiling = (maxTokens, fired) => maxTokens * 2 ** fired;
@@ -116,7 +122,7 @@ export function stopReminder(text, handoff, markerText, continuation = {}) {
   if (usage.compactions > counts.compactions) counts = { lastRatio: 0, tokens: 0, compactions: usage.compactions };
   const cost = handoffCost(usage);
   const ceiling = tokenCeiling(handoff.maxTokens, counts.tokens);
-  const byCost = cost.breakEven !== null && cost.ratio >= nextRatio(handoff.costRatio, counts.lastRatio);
+  const byCost = cost.breakEven !== null && cost.ratio >= nextRatio(handoff.costRatio, counts.lastRatio, handoff.mode);
   const byTokens = handoff.maxTokens > 0 && usage.last >= ceiling;
   if (!byCost && !byTokens) return null;
   const marker = {
@@ -126,7 +132,7 @@ export function stopReminder(text, handoff, markerText, continuation = {}) {
   };
   const next = [];
   if (byTokens) next.push(`the context reaches ${Math.round(tokenCeiling(handoff.maxTokens, marker.tokens) / 1000)}k tokens`);
-  if (byCost) next.push(`each call costs ${round(nextRatio(handoff.costRatio, marker.lastRatio))} times what a fresh session's would`);
+  if (byCost) next.push(`each call costs ${round(nextRatio(handoff.costRatio, marker.lastRatio, handoff.mode))} times what a fresh session's would`);
   return {
     reason: handoffReason(handoff.mode, { cost: byCost ? cost : null, tokens: byTokens ? usage.last : null, next, ...continuation }),
     marker,

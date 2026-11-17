@@ -46,6 +46,9 @@ reaches twice the ratio at its last firing: 2, 4, 8 by default, or 1.5, 3, 6 at 
 firing at 2.5 comes back at 5. It never comes back below `costRatio`, so a `costRatio` raised mid-session holds
 even where twice the last firing is lower. So neither a "keep going" nor a quiet skip turns the reminder off for the rest of the
 session, and a session that keeps going is nudged a few times at most.
+In `auto` mode a skipped reminder costs the Human nothing, so it comes back in steps of `costRatio − 1` instead:
+2, 3, 4, 5 by default. A session that skipped because an agent was still running is offered the handoff again soon
+after, not once each call costs twice as much.
 The thresholds scale with the session's own baseline: with a 30,000-token baseline the first fires near 148,000 tokens of
 context, with a 60,000-token baseline near 208,000.
 

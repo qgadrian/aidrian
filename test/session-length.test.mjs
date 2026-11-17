@@ -95,6 +95,8 @@ test('the cost trigger fires first at costRatio, then at twice the ratio of its 
   assert.deepEqual([0, 2, 2.5].map((last) => nextRatio(2, last)), [2, 4, 5]);
   assert.deepEqual([0, 1.51].map((last) => nextRatio(1.5, last)), [1.5, 3.02]);
   assert.equal(nextRatio(3, 1.2), 3, 'a costRatio raised above twice the last firing holds');
+  assert.deepEqual([0, 2, 4.15].map((last) => nextRatio(2, last, 'auto')), [2, 3, 5.15], 'auto comes back in steps');
+  assert.equal(nextRatio(1.5, 1.6, 'auto'), 2.1);
   assert.deepEqual([0, 2].map((fired) => tokenCeiling(150_000, fired)), [150_000, 600_000]);
   assert.equal(tokenCeiling(0, 3), 0);
 });

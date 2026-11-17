@@ -156,7 +156,7 @@ function sessionStart(t, env, { local = { handoff: { background: 'on' } }, hando
 }
 
 test('the session start tells an attended session the shell function did not start that its terminal will not follow a handoff', (t) => {
-  const line = /^Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's `claude`, .* runs `aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal\. A copy of the plugin older than this one answers `unknown command: shell-init`: the plugin is updated first\.$/mu;
+  const line = /^Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's `claude`, .* runs `aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal\. A copy of the plugin older than this one answers `unknown command: shell-init`: the plugin is updated first, with `claude plugin update aidrian@aidrian-harness`\.$/mu;
   assert.match(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }), line);
   for (const [name, env, options] of [
     ['the shell function started it', { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' }, {}],

@@ -70,10 +70,11 @@ export function unwrappedLine({ host, background, handoff, env, human }) {
   const replace = replacer(host);
   if (!replace || background !== 'on' || handoff?.mode !== 'auto' || handoff?.continue !== 'background') return null;
   if (shellPid(env) !== null || !replace.attended(env)) return null;
+  const update = typeof replace.updateCommand === 'string' ? `, with \`${replace.updateCommand}\`` : '';
   return `Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's \`${replace.program}\`, ` +
     `so after a background handoff this terminal stays on the old session beside the new one. For it to follow, ${human} runs ` +
     '`aidrian shell-init zsh --install` once, or `aidrian shell-init bash --install` for bash, and opens a new terminal. ' +
-    'A copy of the plugin older than this one answers `unknown command: shell-init`: the plugin is updated first.';
+    `A copy of the plugin older than this one answers \`unknown command: shell-init\`: the plugin is updated first${update}.`;
 }
 
 // The folder shell records live in, under the state root `env` names.

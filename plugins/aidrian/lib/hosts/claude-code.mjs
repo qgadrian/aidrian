@@ -153,6 +153,8 @@ export default {
         program: PROGRAM,
         attach: 'attach',
         attended,
+        // The command that updates the plugin, for a terminal whose copy is older than `shell-init`.
+        updateCommand: 'claude plugin update aidrian@aidrian-harness',
         hostProcess: ({ env, shell, run }) => hostProcess({ env, shell, run }),
         isHost: ({ pid, shell, run }) => isWrappedHost({ pid, shell, run }),
         // A background session the terminal follows ends itself with `claude stop`, which the supervisor owns, and

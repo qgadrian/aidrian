@@ -68,7 +68,7 @@ At the start of every session and subagent, the hook prints:
   `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
   not start: after a background handoff its terminal stays on the old session, and the line names
   `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older copy of the plugin,
-  which answers `unknown command: shell-init`;
+  which answers `unknown command: shell-init`, with the host's update command (`claude plugin update aidrian@aidrian-harness`);
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.

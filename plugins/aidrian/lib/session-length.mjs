@@ -18,31 +18,61 @@ const OUTPUT_MULT = 5;
 
 const contextOf = (usage = {}) =>
   (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+const oneHourOf = (usage) => usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
 
-// What the cost model reads from a main-session transcript: { calls, first, last, model, oneHourCache, compactions }.
-// `first` and `last` are the context of the first and the last model call; `model` is the last call's model;
-// `oneHourCache` is whether any call wrote 1-hour cache; `compactions` counts the compact_boundary entries.
-export function sessionUsage(text) {
-  const requests = [...aggregateUsage(text).requests.values()];
-  let compactions = 0;
+// The fold sessionUsage reads a transcript with, and the usage cache (lib/session-usage-cache.mjs) keeps between reads:
+// { requests, compactions }. `requests` is aggregateUsage's Map of each request's { model, usage } in first-seen order,
+// keyed by its id, or by a Symbol for a line with no id; `compactions` counts the compact_boundary entries.
+export const newUsageFold = () => ({ requests: new Map(), compactions: 0 });
+
+// Folds the whole lines of `text` into `fold`, and returns it. Text split at a line feed folds as the whole would.
+export function foldUsage(fold, text) {
+  aggregateUsage(text, { firstTs: null, lastTs: null, requests: fold.requests, tools: new Map(), effort: null, efforts: new Set() });
   for (const line of text.split('\n')) {
     if (!line.includes('compact_boundary')) continue;
     try {
       const entry = JSON.parse(line);
-      if (entry?.type === 'system' && entry.subtype === 'compact_boundary') compactions += 1;
+      if (entry?.type === 'system' && entry.subtype === 'compact_boundary') fold.compactions += 1;
     } catch {
       // A line that is not JSON is no compaction.
     }
   }
+  return fold;
+}
+
+// The usage numbers of one request the fold reads, flat, as the usage cache stores them.
+export const USAGE_FIELDS = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'ephemeral_1h_input_tokens'];
+export const storedUsage = (usage) => ({
+  input_tokens: usage.input_tokens ?? 0,
+  cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+  cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
+  ephemeral_1h_input_tokens: oneHourOf(usage),
+});
+// A stored request's usage as the fold reads it: storedUsage's inverse on every number the fold reads.
+export const usageFromStored = (stored) => ({
+  input_tokens: stored.input_tokens,
+  cache_read_input_tokens: stored.cache_read_input_tokens,
+  cache_creation_input_tokens: stored.cache_creation_input_tokens,
+  cache_creation: { ephemeral_1h_input_tokens: stored.ephemeral_1h_input_tokens },
+});
+
+// What the cost model reads from a fold: { calls, first, last, model, oneHourCache, compactions }.
+// `first` and `last` are the context of the first and the last model call; `model` is the last call's model;
+// `oneHourCache` is whether any call wrote 1-hour cache; `compactions` counts the compact_boundary entries.
+export function foldedUsage({ requests: byKey, compactions }) {
+  const requests = [...byKey.values()];
   return {
     calls: requests.length,
     first: contextOf(requests[0]?.usage),
     last: contextOf(requests.at(-1)?.usage),
     model: requests.at(-1)?.model ?? null,
-    oneHourCache: requests.some(({ usage }) => (usage.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0),
+    oneHourCache: requests.some(({ usage }) => oneHourOf(usage) > 0),
     compactions,
   };
 }
+
+// foldedUsage of a main-session transcript's text.
+export const sessionUsage = (text) => foldedUsage(foldUsage(newUsageFold(), text));
 
 // The cost of continuing against handing off, in input tokens of the last call's model: { ratio, breakEven }.
 // `ratio` is r = C / (W + B), what each call here costs against one in a fresh session; 0 with no calls.

@@ -13,11 +13,11 @@
 // No function throws on a missing folder; a read returns null for anything it cannot use.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { CONTINUE_ROUTES } from './config-schema.mjs';
-import { foldCase, isObject, isWithin, resolvedPath } from './fs.mjs';
+import { checkoutHolding, foldCase, isObject, processUid, resolvedPath } from './fs.mjs';
 
 // A session id that may name a file.
 export const SESSION_ID = /^[\w-]{1,128}$/u;
@@ -71,10 +71,7 @@ export function slugOf(name) {
 export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
   const real = resolvedPath(storePath(state));
-  const checkout = real && checkouts.find((each) => {
-    const root = resolvedPath(each);
-    return root !== null && isWithin(foldCase(root), foldCase(real));
-  });
+  const checkout = real && checkoutHolding(real, checkouts);
   let refused = null;
   if (real === null) refused = `the continuation store ${storePath(state)} is behind a broken symlink`;
   else if (isLink(storePath(state))) refused = `the continuation store ${storePath(state)} is a symlink, and no continuation marker is kept behind one`;
@@ -86,8 +83,6 @@ export function openStore(state, { checkouts = [], maxChain, uid = processUid() 
   return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain, uid, refused });
 }
 
-const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
-
 // Whether a stat names a file of another user than `uid`; never where the system has no user ids.
 const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 
@@ -95,7 +90,8 @@ const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 // Both checks hold only where the system has user ids: Windows has none, and Node reports its writable folders with the
 // other-write bit set, so there the mode tells nothing.
 // A folder that is not there, or cannot be read, gives null: the store's own checks then refuse what they cannot read.
-function looseFolder(dir, uid) {
+// lib/session-folder.mjs holds its folders to the same rule.
+export function looseFolder(dir, uid) {
   if (!Number.isInteger(uid)) return null;
   let stat;
   try {
@@ -192,15 +188,30 @@ const isChecked = (value) => isObject(value) && typeof value.sha256 === 'string'
 // `window`, or `shape` refuses it.
 function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1]] ?? DAY, shape }) {
   if (store.refused || !name) return null;
+  const read = readOwnFile(path.join(store.dir, name), { cap: MARKER_CAP, uid: store.uid });
+  if (!read || !fresh(Math.floor(read.stat.mtimeMs), now, window)) return null;
+  try {
+    const value = JSON.parse(read.text);
+    return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// The text of `file` and its stat, { text, stat }, or null when it is missing, a symlink, no regular file, owned by
+// another user than `uid`, or larger than `cap` bytes. It is opened no-follow and non-blocking, so no read follows a
+// symlink or waits on a FIFO, and at most the size fstat gave is read, so a file that grows meanwhile stays under the cap.
+export function readOwnFile(file, { cap, uid = processUid() }) {
   let fd;
   try {
-    const file = path.join(store.dir, name);
     if (!lstatSync(file).isFile()) return null;
     fd = openSync(file, NO_FOLLOW);
     const stat = fstatSync(fd);
-    if (!stat.isFile() || foreign(stat, store.uid) || stat.size > MARKER_CAP || !fresh(Math.floor(stat.mtimeMs), now, window)) return null;
-    const value = JSON.parse(readFileSync(fd, 'utf8'));
-    return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
+    if (!stat.isFile() || foreign(stat, uid) || stat.size > cap) return null;
+    const bytes = Buffer.alloc(stat.size);
+    let read = 0;
+    for (let n = 1; n > 0 && read < bytes.length; read += n) n = readSync(fd, bytes, read, bytes.length - read, read);
+    return { text: bytes.subarray(0, read).toString('utf8'), stat };
   } catch {
     return null;
   } finally {

@@ -9,7 +9,7 @@ import test from 'node:test';
 import { arm, noteFrom, noteStarted, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { cachedValue } from '../plugins/aidrian/lib/session-cached-value.mjs';
-import { reservationName, reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { DISPLAY_CAPS, displayText, MERGED_HEADS, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -650,16 +650,16 @@ function expiredCache(value) {
   return { folder, options: { folder, name: MERGED_HEADS.name, windowMs: 60_000, cap: 1024, isValue: Array.isArray } };
 }
 
-test('cachedValue starts no refresh while another process holds the reservation, and takes over a stale one', () => {
+test('cachedValue starts no refresh while another process holds this window`s reservation, and one from an earlier window blocks nothing', () => {
   const { folder, options } = expiredCache(['old']);
-  const held = reserveSessionFile(folder, MERGED_HEADS.name, { staleMs: 60_000 });
-  assert.deepEqual(cachedValue({ ...options, refresh: () => assert.fail('another process is recording its attempt') }), { value: ['old'], stale: true });
-  assert.equal(JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8')).attemptAt < Date.now() - 60_000, true, 'no attempt recorded');
-  const then = new Date(Date.now() - 61_000);
-  utimesSync(path.join(folder, reservationName(MERGED_HEADS.name)), then, then);
-  assert.deepEqual(cachedValue({ ...options, refresh: () => ['new'] }), { value: ['new'], stale: false }, 'a reservation a killed process left goes stale');
+  const now = Date.now();
+  const held = reserveSessionFile(folder, MERGED_HEADS.name, { windowMs: 60_000, now });
+  assert.deepEqual(cachedValue({ ...options, now, refresh: () => assert.fail('another process is recording its attempt') }), { value: ['old'], stale: true });
+  assert.equal(JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8')).attemptAt < now - 60_000, true, 'no attempt recorded');
+  const next = now + 60_000;
+  assert.deepEqual(cachedValue({ ...options, now: next, refresh: () => ['new'] }), { value: ['new'], stale: false }, 'a killed process blocks only its own window');
   held();
-  assert.deepEqual(readdirSync(folder), [MERGED_HEADS.name], 'released, and the old holder`s release took nothing');
+  assert.deepEqual(readdirSync(folder), [MERGED_HEADS.name], 'each reservation removed by its creator');
   const { attemptAt } = JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8'));
   const earlier = cachedValue({ ...options, now: attemptAt - 1000, refresh: () => assert.fail('a process whose clock read came first') });
   assert.deepEqual(earlier, { value: ['new'], stale: false }, 'an attempt just after `now` is inside the window');
@@ -670,11 +670,13 @@ test('processes that start together on an expired cache start one refresh betwee
   const { folder } = expiredCache(['old']);
   const go = path.join(folder, 'go');
   const log = path.join(folder, 'refreshes.log');
+  // One clock read for all, inside one fixed window: readers either side of a boundary may each refresh, as documented.
+  const now = Math.floor(Date.now() / 60_000) * 60_000 + 30_000;
   const script = `
     import { appendFileSync, existsSync } from 'node:fs';
     import { cachedValue } from ${JSON.stringify(path.join(LIB, 'session-cached-value.mjs'))};
     while (!existsSync(${JSON.stringify(go)}));
-    const result = cachedValue({ folder: ${JSON.stringify(folder)}, name: ${JSON.stringify(MERGED_HEADS.name)}, windowMs: 60_000, cap: 1024,
+    const result = cachedValue({ folder: ${JSON.stringify(folder)}, name: ${JSON.stringify(MERGED_HEADS.name)}, windowMs: 60_000, cap: 1024, now: ${now},
       isValue: Array.isArray, refresh: () => { appendFileSync(${JSON.stringify(log)}, 'x'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300); return ['new']; } });
     process.stdout.write(JSON.stringify(result));`;
   const children = Array.from({ length: 8 }, () => spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] }));

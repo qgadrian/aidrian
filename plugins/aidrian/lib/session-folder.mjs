@@ -5,13 +5,14 @@
 // sweep: the state folder resolves inside no checkout of the repository, and no other user owns it or may write it; the
 // sessions folder and the session folder are each a real folder, no symlink, owned by this process's user, that no other
 // user may read or write; and the session folder's real path is `<real state>/sessions/<id>`. Its files are written as a
-// temporary file and a rename, mode 0600, under the names in SESSION_FILES alone; a file's reservation, which makes a
-// read-check-write of it exclusive, is `<name>.lock`, created the same way. Creating a session folder sweeps the ones
+// temporary file and a rename, mode 0600, under the names in SESSION_FILES alone; a file's reservation for one fixed
+// window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
+// where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
 // untouched for SWEEP_DAYS, and the sweep deletes only those names, their temporary files, and their reservations, then
 // the folder, which it never empties of anything else.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
@@ -27,9 +28,10 @@ const TOKEN = /^[0-9a-f]{12}$/u;
 const newToken = () => randomBytes(6).toString('hex');
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 export const SESSION_TEMPORARY = new RegExp(String.raw`^\.(?:${SESSION_FILES.map(escaped).join('|')})\.\d+\.[0-9a-f]{12}\.tmp$`, 'u');
-// The reservation of the file `name`, which reserveSessionFile takes and the sweep deletes with the file.
-export const reservationName = (name) => `${name}.lock`;
-const SESSION_RESERVATIONS = Object.freeze(SESSION_FILES.map(reservationName));
+// The reservation of the file `name` for the fixed window `index`, floor(now / windowMs), which reserveSessionFile takes and
+// the sweep deletes with the file.
+export const reservationName = (name, index) => `${name}.${index}.lock`;
+export const SESSION_RESERVATION = new RegExp(String.raw`^(?:${SESSION_FILES.map(escaped).join('|')})\.\d+\.lock$`, 'u');
 // A temporary file or a reservation is created only where nothing is, and never through a symlink.
 const CREATE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
 
@@ -123,23 +125,16 @@ export function writeSessionFile(folder, name, text, { token = newToken(), uid =
   }
 }
 
-// Reserves the file `name`, one of SESSION_FILES, in `folder`, which sessionFolder gave, so that one process alone reads,
-// checks, and writes it until it releases: creates `<name>.lock` only where nothing is, never through a symlink, mode
-// 0600. A reservation whose last change is `staleMs` or more from `now`, before it, as one a killed process left, or after
-// it, as after the clock went back, is taken over: renamed to a temporary name, which only one process can do, deleted
-// when the renamed file is still that stale reservation (else put back), then created afresh. Returns the function that releases it, deleting the
-// reservation only while it is still this one, or null when the name is not one of SESSION_FILES, `folder` fails
-// privateFolder, another process holds a reservation that is not stale, or it cannot be made. Never throws.
-export function reserveSessionFile(folder, name, { staleMs, now = Date.now(), token = newToken(), uid = processUid() } = {}) {
-  if (!SESSION_FILES.includes(name) || !TOKEN.test(token) || !Number.isFinite(staleMs) || !isPrivateFolder(folder, uid)) return null;
-  const reservation = path.join(folder, reservationName(name));
-  const taken = createReservation(reservation);
-  if (taken || !tookStale(reservation, temporaryName(folder, name, token), { staleMs, now, uid })) return taken;
-  return createReservation(reservation);
-}
-
-// The release of a new reservation at `file`, or null when one is there or it cannot be made.
-function createReservation(file) {
+// Reserves the file `name`, one of SESSION_FILES, in `folder`, which sessionFolder gave, for the fixed window of `windowMs`
+// that holds `now`, so that one process alone reads, checks, and writes it in that window: creates `<name>.<window>.lock`
+// only where nothing is, never through a symlink, mode 0600. Nothing is ever taken over: a reservation a killed process
+// left blocks only its own window. Returns the function that releases it, deleting the reservation while it is still the
+// one this call made, or null when the name is not one of SESSION_FILES, `folder` fails privateFolder, any entry holds the
+// name, or it cannot be made. Never throws.
+export function reserveSessionFile(folder, name, { windowMs, now = Date.now(), uid = processUid() } = {}) {
+  const index = Math.floor(now / windowMs);
+  if (!SESSION_FILES.includes(name) || !Number.isSafeInteger(index) || index < 0 || !isPrivateFolder(folder, uid)) return null;
+  const file = path.join(folder, reservationName(name, index));
   let fd;
   try {
     fd = openSync(file, CREATE, 0o600);
@@ -157,41 +152,13 @@ function releaseReservation(file, dev, ino) {
     const stat = lstatSync(file);
     if (stat.dev === dev && stat.ino === ino) unlinkSync(file);
   } catch {
-    // Gone already: a later process took it over as stale.
-  }
-}
-
-// Whether this call removed the stale reservation at `file`, a regular file `uid` owns, by renaming it to `moved`. When
-// the rename took a reservation another process made meanwhile, it is put back and the answer is false.
-function tookStale(file, moved, { staleMs, now, uid }) {
-  try {
-    const before = lstatSync(file);
-    const owned = !Number.isInteger(uid) || before.uid === uid;
-    if (!before.isFile() || !owned || Math.abs(now - before.mtimeMs) < staleMs) return false;
-    renameSync(file, moved);
-    const after = lstatSync(moved);
-    const same = after.dev === before.dev && after.ino === before.ino;
-    if (!same) putBack(moved, file);
-    unlinkSync(moved);
-    return same;
-  } catch {
-    return false;
-  }
-}
-
-// SHORTCUT: a link back fails when a third process made a reservation in the moment it was gone; both then hold one.
-// That needs a stale reservation and three processes starting within a millisecond, and only costs one extra refresh.
-function putBack(moved, file) {
-  try {
-    linkSync(moved, file);
-  } catch {
-    // Another reservation is there now.
+    // Gone already; the sweep removes what is left.
   }
 }
 
 // Removes each session folder under `sessions`, the real path sessionFolder checked, but `current`, whose folder and
 // files were all last changed more than SWEEP_DAYS before `now`: it deletes the files named in SESSION_FILES, their
-// temporary files, and their reservations, then removes the folder only when that left it empty. An entry whose name
+// temporary files, and their reservations that are regular files, then removes the folder only when that left it empty. An entry whose name
 // fails SESSION_ID, or that fails privateFolder, a symlink among them, is left alone.
 function sweepSessions(sessions, { current, uid, now }) {
   let names;
@@ -216,7 +183,9 @@ function sweepFolder(dir, uid, now) {
   const newest = Math.max(lstatSync(dir).mtimeMs, ...names.map((name) => lstatSync(path.join(dir, name)).mtimeMs));
   if (now - newest <= SWEEP_DAYS * DAY) return;
   for (const name of names) {
-    if (SESSION_FILES.includes(name) || SESSION_RESERVATIONS.includes(name) || SESSION_TEMPORARY.test(name)) unlinkSync(path.join(dir, name));
+    const file = path.join(dir, name);
+    const reservation = SESSION_RESERVATION.test(name) && lstatSync(file).isFile();
+    if (SESSION_FILES.includes(name) || reservation || SESSION_TEMPORARY.test(name)) unlinkSync(file);
   }
   rmdirSync(dir);
 }

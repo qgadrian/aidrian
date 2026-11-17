@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { reservationName, reserveSessionFile, SESSION_FILES, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
@@ -111,8 +111,8 @@ test('a session or sessions folder any other user may read or write gives no fol
 test('creating a folder sweeps session folders untouched for 30 days, deleting only the helper\'s own files', () => {
   const { state, sessions } = stateWithSessions();
   const temporaries = SESSION_FILES.map((name) => path.basename(temporaryName(path.join(sessions, 'gone'), name)));
-  oldFolder(sessions, 'gone', 31, [...SESSION_FILES, ...temporaries, ...SESSION_FILES.map(reservationName)]);
-  const kept = oldFolder(sessions, 'kept', 31, ['usage.json', 'notes.txt']);
+  oldFolder(sessions, 'gone', 31, [...SESSION_FILES, ...temporaries, ...SESSION_FILES.map((name) => reservationName(name, 29_000_000))]);
+  const kept = oldFolder(sessions, 'kept', 31, ['usage.json', 'notes.txt', 'usage.json.lock', 'notes.txt.1.lock']);
   oldFolder(sessions, 'recent', 29);
   const touched = oldFolder(sessions, 'touched', 31, ['usage.json', 'prs.jsonl']);
   utimesSync(path.join(touched, 'prs.jsonl'), new Date(), new Date());
@@ -121,7 +121,7 @@ test('creating a folder sweeps session folders untouched for 30 days, deleting o
   writeFileSync(path.join(sessions, 'stray.json'), '{}');
   assert.notEqual(sessionFolder(state, 'new', NONE), null);
   assert.deepEqual(readdirSync(sessions).sort(), ['kept', 'new', 'not.a-session', 'recent', 'stray.json', 'touched']);
-  assert.deepEqual(readdirSync(kept), ['notes.txt']);
+  assert.deepEqual(readdirSync(kept).sort(), ['notes.txt', 'notes.txt.1.lock', 'usage.json.lock'], 'only the exact reservation pattern goes');
   assert.deepEqual(readdirSync(touched).sort(), ['prs.jsonl', 'usage.json']);
 });
 
@@ -204,54 +204,60 @@ test('a session file is not written into a folder another user may read, or thro
   assert.equal(writeSessionFile(path.join(root, 'missing'), 'usage.json', '{}'), null);
 });
 
-test('a reservation is one process`s alone until released, mode 0600, and only under a name the folder holds', () => {
+const WINDOW = 60_000;
+
+test('a reservation for the current window is one process`s alone, mode 0600, and only under a name the folder holds', () => {
   const folder = sessionFolder(path.join(scratch(), 'state'), 'abc', NONE);
   const name = 'merged-heads-cache.json';
-  const reservation = path.join(folder, reservationName(name));
-  for (const other of ['notes.txt', '../usage.json', '']) assert.equal(reserveSessionFile(folder, other, { staleMs: 60_000 }), null, other);
-  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000, token: 'not-hex' }), null);
+  const now = Math.floor(Date.now() / WINDOW) * WINDOW;
+  const reservation = path.join(folder, reservationName(name, Math.floor(now / WINDOW)));
+  for (const other of ['notes.txt', '../usage.json', '']) assert.equal(reserveSessionFile(folder, other, { windowMs: WINDOW, now }), null, other);
+  for (const windowMs of [0, -1, Number.NaN, undefined]) assert.equal(reserveSessionFile(folder, name, { windowMs, now }), null, String(windowMs));
   assert.deepEqual(readdirSync(folder), []);
-  const release = reserveSessionFile(folder, name, { staleMs: 60_000 });
+  const release = reserveSessionFile(folder, name, { windowMs: WINDOW, now });
   assert.equal(typeof release, 'function');
+  assert.equal(SESSION_RESERVATION.test(path.basename(reservation)), true);
   if (POSIX) assert.equal(statSync(reservation).mode & 0o777, 0o600);
-  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000 }), null, 'held by another');
-  assert.equal(typeof reserveSessionFile(folder, 'usage.json', { staleMs: 60_000 }), 'function', 'each file has its own');
+  assert.equal(reserveSessionFile(folder, name, { windowMs: WINDOW, now: now + 1 }), null, 'held for this window');
+  assert.equal(typeof reserveSessionFile(folder, 'usage.json', { windowMs: WINDOW, now }), 'function', 'each file has its own');
   release();
-  assert.equal(existsSync(reservation), false);
-  const again = reserveSessionFile(folder, name, { staleMs: 60_000 });
-  assert.equal(typeof again, 'function', 'free once released');
-  again();
+  assert.equal(existsSync(reservation), false, 'the creator removes its own');
 });
 
-test('a reservation older than staleMs, or from the future, is taken over, and the old holder`s release leaves the new one', () => {
+test('a reservation from an earlier window, as a killed process leaves, blocks nothing and is left in place', () => {
   const folder = sessionFolder(path.join(scratch(), 'state'), 'abc', NONE);
   const name = 'merged-heads-cache.json';
-  const reservation = path.join(folder, reservationName(name));
-  const killed = reserveSessionFile(folder, name, { staleMs: 60_000 });
-  const then = new Date(Date.now() - 61_000);
-  utimesSync(reservation, then, then);
-  const taken = reserveSessionFile(folder, name, { staleMs: 60_000 });
-  assert.equal(typeof taken, 'function', 'a reservation a killed process left goes stale');
-  killed();
-  assert.equal(existsSync(reservation), true, 'the old holder releases only its own');
-  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000 }), null);
-  const later = new Date(Date.now() + 3_600_000);
-  utimesSync(reservation, later, later);
-  assert.equal(typeof reserveSessionFile(folder, name, { staleMs: 60_000 }), 'function', 'a clock that went back frees it');
-  assert.deepEqual(readdirSync(folder), [reservationName(name)], 'no temporary file is left');
+  const now = Date.now();
+  const killed = reserveSessionFile(folder, name, { windowMs: WINDOW, now: now - WINDOW });
+  assert.equal(typeof killed, 'function');
+  const release = reserveSessionFile(folder, name, { windowMs: WINDOW, now });
+  assert.equal(typeof release, 'function', 'the next window has its own');
+  release();
+  assert.deepEqual(readdirSync(folder), [reservationName(name, Math.floor((now - WINDOW) / WINDOW))], 'nobody but its creator removes it');
 });
 
-test('a symlink or a folder at the reservation is never followed, removed, or taken', { skip: !POSIX }, () => {
+test('a symlink at the reservation is never followed or removed', { skip: !POSIX }, () => {
   const root = scratch();
   const folder = sessionFolder(path.join(root, 'state'), 'abc', NONE);
   const name = 'merged-heads-cache.json';
-  const reservation = path.join(folder, reservationName(name));
+  const now = Date.now();
+  const reservation = path.join(folder, reservationName(name, Math.floor(now / WINDOW)));
   const target = path.join(root, 'target');
   writeFileSync(target, 'keep');
   symlinkSync(target, reservation);
-  const then = new Date(Date.now() - 61_000);
-  lutimesSync(reservation, then, then);
-  assert.equal(reserveSessionFile(folder, name, { staleMs: 60_000 }), null);
+  assert.equal(reserveSessionFile(folder, name, { windowMs: WINDOW, now }), null);
   assert.equal(lstatSync(reservation).isSymbolicLink(), true);
   assert.equal(readFileSync(target, 'utf8'), 'keep');
+});
+
+test('the sweep deletes a reservation only when it is a regular file', { skip: !POSIX }, () => {
+  const { state, sessions } = stateWithSessions();
+  const old = oldFolder(sessions, 'old', 31, []);
+  const linked = path.join(old, reservationName('usage.json', 1));
+  symlinkSync(path.join(sessions, 'elsewhere'), linked);
+  const then = new Date(Date.now() - 31 * DAY);
+  lutimesSync(linked, then, then);
+  utimesSync(old, then, then);
+  assert.notEqual(sessionFolder(state, 'new', NONE), null);
+  assert.equal(lstatSync(linked).isSymbolicLink(), true);
 });

@@ -11,14 +11,16 @@ const EMPTY = Object.freeze({ value: null, valueAt: null, attemptAt: null });
 
 // A value a session keeps in the file `name` of its folder, refreshed at most once a window: { value, stale }, or null
 // when none is stored and none can be read now. The file holds { value, valueAt, attemptAt }. When the last attempt is
-// less than `windowMs` from `now`, before or after it, it starts none, and gives the stored value, stale unless that attempt stored it. Otherwise it records
-// the attempt as one exclusive step: it reserves the file (reserveSessionFile, which takes over a reservation older than
-// the window), reads it again, writes the attempt by writeSessionFile's temporary file and rename unless another process
-// recorded one since the first read, and releases. Only then does it call `refresh`, whose null or throw keeps the stored
-// value, stale. An attempt another process recorded meanwhile counts as inside the window. With no folder, a reservation
-// another process holds, or an attempt it cannot record, it calls nothing and gives the stored value, stale. So a session starts at most one refresh a window, whether
-// the last succeeded, failed, ran out of time, or was killed, and however many readers start at once. `cap` bounds the
-// file's read, and `isValue` checks the value's shape.
+// less than `windowMs` from `now`, before or after it, it starts none, and gives the stored value, stale unless that
+// attempt stored it. Otherwise it records the attempt as one exclusive step: it takes the file's reservation for the fixed
+// window that holds `now` (reserveSessionFile), reads the file again, writes the attempt by writeSessionFile's temporary
+// file and rename unless another process recorded one since the first read, and releases. Only then does it call
+// `refresh`, whose null or throw keeps the stored value, stale. An attempt another process recorded meanwhile counts as
+// inside the window. With no folder, a reservation another process holds, or an attempt it cannot record, it calls nothing
+// and gives the stored value, stale. So a session starts at most one refresh a fixed window, however many readers start at
+// once, whether the last succeeded, failed, ran out of time, or was killed; a killed process's reservation blocks only its
+// own window. Two readers that start together either side of a window boundary take different reservations, so two
+// refreshes can fall either side of it. `cap` bounds the file's read, and `isValue` checks the value's shape.
 export function cachedValue({ folder, name, windowMs, cap, isValue, refresh, now = Date.now() }) {
   const file = folder ? path.join(folder, name) : null;
   const stored = file ? readCached(file, cap, isValue) : EMPTY;
@@ -48,7 +50,7 @@ const kept = (stored, stale) => (stored.valueAt === null ? null : { value: store
 // Records the attempt at `now` under the file's reservation: RECORDED when this call recorded it, the cache as read again
 // when another process recorded one after `seen` was read, or null when the reservation or the write failed.
 function recordAttempt({ folder, name, file, cap, isValue, windowMs, now, seen }) {
-  const release = reserveSessionFile(folder, name, { staleMs: windowMs, now });
+  const release = reserveSessionFile(folder, name, { windowMs, now });
   if (!release) return null;
   try {
     const current = readCached(file, cap, isValue);

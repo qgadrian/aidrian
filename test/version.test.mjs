@@ -627,7 +627,8 @@ async function releaseWorkflow() {
 
 const isCheckout = (step) => /^actions\/checkout@/u.test(step.uses ?? '');
 const isSetupNode = (step) => /^actions\/setup-node@/u.test(step.uses ?? '');
-const VERIFY = /git merge-base --is-ancestor "\$SHA" origin\/main/u;
+// By its full ref: a tag named origin/main would shadow the short name, since git resolves refs/tags first.
+const VERIFY = /git merge-base --is-ancestor "\$SHA" refs\/remotes\/origin\/main/u;
 // One call of the release script, whose every argument is a word or one double-quoted variable.
 const VERSION_CALL = /^node scripts\/version\.mjs(?: (?:[a-z-]+|"\$[A-Z_]+"))+$/u;
 
@@ -718,6 +719,9 @@ test("the token job's first step fails unless the check job's commit is a full s
   const result = runStep(t, body, { cwd: dir, env: { SHA: off } });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /the check job's commit is not on main/u);
+  git('tag', 'origin/main', off);
+  assert.equal(runStep(t, body, { cwd: dir, env: { SHA: off } }).status, 1, 'a tag named origin/main does not stand for main');
+  git('tag', '-d', 'origin/main');
   assert.equal(runStep(t, body, { cwd: dir, env: { SHA: main } }).status, 1, 'the checkout is another commit');
 });
 

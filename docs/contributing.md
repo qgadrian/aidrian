@@ -177,4 +177,4 @@ as `aidrian`'s does in a clone with no tags. Tag the commit that set the version
 ## Not included
 
 - OpenCode support, or a tracker other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
-- The optional Claude mod, `aidrian-claude-mod`, a Claude Code plugin. The release already versions it (above), and its folder lands in a later pull request.
+- The optional Claude mod, `aidrian-claude-mod`, a Claude Code plugin: its row is in the `PLUGINS` table, and `release` skips it while `plugins/aidrian-claude-mod/` does not exist.

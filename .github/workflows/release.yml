@@ -112,7 +112,7 @@ jobs:
             echo "the checkout is not the check job's commit" >&2
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+          if ! git merge-base --is-ancestor "$SHA" refs/remotes/origin/main; then
             echo "the check job's commit is not on main" >&2
             exit 1
           fi

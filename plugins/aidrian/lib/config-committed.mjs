@@ -39,18 +39,18 @@ export const originDefaultTip = (root, git = () => undefined) => firstTip(root, 
 // The commit of the base branch, from names the working copy cannot set (originDefaultTip). A branch that names itself in
 // config.json `git.defaultBranch` is not its own base. With no remote at all, a local branch of the plugin's default name
 // is the only record of the base; with any remote, whatever its name, a local branch can hold commits no one reviewed, so
-// it never stands in. null when none resolves, or when git fails on one.
-export function baseBranchTip(root) {
+// it never stands in. null when none resolves, or when git fails on one. `git` gives each read's options, as firstTip's.
+export function baseBranchTip(root, git = () => undefined) {
   try {
-    const origin = originDefaultTip(root);
+    const origin = originDefaultTip(root, git);
     if (origin) return origin;
+    const remotes = runGit(['remote'], root, git());
+    if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
+    const local = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${DEFAULTS.git.defaultBranch}^{commit}`], root, git());
+    return local.status === 0 ? local.stdout.trim() : null;
   } catch {
     return null;
   }
-  const remotes = runGit(['remote'], root);
-  if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
-  const local = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${DEFAULTS.git.defaultBranch}^{commit}`], root);
-  return local.status === 0 ? local.stdout.trim() : null;
 }
 
 // Why a record read through the working copy's `state.dir` is not the one the committed config names, or null. `working`

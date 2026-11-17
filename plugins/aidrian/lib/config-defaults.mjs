@@ -18,6 +18,11 @@ export const DEFAULTS = deepFreeze({
     commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
   },
   state: { dir: null },
+  // A project one person runs alone. Committed true on the default branch and the base, it turns on each unattended
+  // machine switch the local file leaves unset: the waiver, the judge's sign-off, and the background route, still under
+  // the team's own keys for each (config-local.mjs machineSwitch). Read from the base branch only, never the working copy
+  // (lib/solo.mjs).
+  solo: false,
   github: {
     requiredSections: ['Summary', 'Tests run'],
     reviewer: 'chatgpt-codex-connector[bot]',
@@ -50,7 +55,8 @@ export const DEFAULTS = deepFreeze({
     // still auto-merge, on both branches (pr-auto-merge-docs.mjs); empty, no such pull request auto-merges.
     autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false, includeGuardedPaths: false, unreviewedPaths: [] },
     // The team's ceiling on a recorded judge verdict standing in for the Human's answer to the merge guard's question
-    // (lib/review/waiver.mjs). A machine opts in under it from the local file (resolveUnattendedWaiver); no team default.
+    // (lib/review/waiver.mjs). A machine opts in under it from the local file (resolveUnattendedWaiver), or, with the
+    // switch unset there, follows the base branch's `solo` (config-local.mjs machineSwitch).
     unattendedWaiver: { allow: false },
   },
   // How a pull request is reviewed (lib/review/, docs/review.md).

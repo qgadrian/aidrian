@@ -550,8 +550,11 @@ can still run on it. Every other denial keeps its reason. A verdict counts only 
 a merge that names its head, `--match-head-commit <sha>`, `sha=` in a `gh api` merge, or the merge tool's `sha`; for
 any other, the denial says to name it. The waiver is for a session the Human told to merge: `aidrian pr auto-merge`'s
 review gate does not read waivers. The guard reads the waiver only when the denial is that one and this
-machine's `github.unattendedWaiver` switch is on, so with the switch off it makes no network call it did not make
-before. It then reads `github.unattendedWaiver.allow` at the default branch and the pull request's base on GitHub,
+machine's `github.unattendedWaiver` switch is on, or unset under the team's [`solo`](config.md#solo), so with the
+switch off it makes no network call it did not make before. With the switch unset it reads git first, once, each
+read held to the deadline below: the default branch's local ref, and whether git tracks the local file. It reads the
+network only when the local ref says solo and git tracks no local file.
+It then reads `github.unattendedWaiver.allow`, and `solo` with it, at the default branch and the pull request's base on GitHub,
 after the pull request's view: its own when it made one with the base, else one more, and git's project folder.
 Every one of these calls shares one deadline for the whole command, counted from when the hook's process started:
 none begins once 4 seconds have gone, and each is stopped with SIGKILL after 1 second (3 for the view), or at the
@@ -875,7 +878,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
   that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
   the [auto-merge](config.md#auto-merge), [unattended waiver](config.md#unattended-waiver), and review-approvals switches
-  are the main session's. Other writes to that file follow the rules above.
+  are the main session's. Any other Bash write, move, remove, truncate, or copy over that file counts as changing every
+  switch, since erasing a local `off` lets [`solo`](config.md#solo) turn it on: `rm`, `mv`, `: >`, or `cp` over it is
+  refused too, however its name is quoted. So is a link made from it (`ln`, `ln -s`, `cp -l`, `cp -s`); `git clean -x`
+  or `-X`, and `git stash -a` or `--all`, run in the main checkout or a folder the guard cannot know; and a command that
+  names the file and writes to a word built from a variable or a bracket glob. A read, such as `cat`, or a plain copy
+  from it, runs. Its known limits: a link already on disk under another name, and a program that deletes what it
+  finds, such as `find -delete`.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's.
@@ -904,10 +913,22 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,
   [Adding a host](providers/adding-a-host.md)), every host's whatever host runs the session; a shell it cannot read
   that names such a program counts. A command that only manages sessions, such as `claude agents` or `claude stop`, runs.
-- With or without gates, the same two may not run `aidrian handoff continue` or `aidrian handoff route` with a
-  variable the command line sets or unsets that moves the gate's store, session, agent, or host command: `XDG_STATE_HOME`, `HOME`,
-  `PATH`, and each variable a host names or tells itself by, set by a prefix assignment, `env`, or `export`, or
-  unset by `env -u`, `env -i`, `sudo`, or `unset`, anywhere in the command. The gate also holds its store to the base branch's under the host's own environment
+- With or without gates or a project, the same two may not repoint a git remote or gh's default repository, nor
+  change how git reads them: `git remote add`, `set-url`, or `rename`; a `git config` write of a `remote.*`,
+  `include.path`, `includeIf.*`, `url.*`, or `alias.*` key, or any `--edit`, `--rename-section`, or `--remove-section`;
+  an alias given by `git -c alias.*` or `--config-env`; `gh repo set-default`; and `gh alias set` or `import`.
+  The plugin reads the team's policy, such as [`solo`](config.md#solo), from the repository a remote names on GitHub.
+  A read, such as `git remote -v`, `git config --get remote.origin.url`, or `gh repo set-default --view`, runs;
+  a shell it cannot read that names such an action counts. Its known limits: a write by its path to `.git/config`,
+  a file it includes, or `~/.config/gh`; a program that runs its arguments, such as `xargs git ...`; a git
+  subcommand held in a variable, as in `git $ACTION ...`; and a git or gh word built by an expansion, such as
+  ANSI-C quoting (`$'...'`) or a command substitution inside the subcommand (#340).
+- With or without gates, the same two may not run `aidrian handoff continue` or `aidrian handoff route` with any
+  variable the command line sets, exports, or unsets, anywhere in the command: by a prefix assignment, `env`, or
+  `export`, or by `env -u`, `env -i`, `sudo`, or `unset`. The gate needs none. The reason names the ones that move its
+  store, session, agent, host command, or the policy it reads: `XDG_STATE_HOME`, `HOME`, `PATH`, the variables that move
+  the repository git reads, such as `GIT_DIR` and `GIT_CONFIG_PARAMETERS`, `GH_CONFIG_DIR`, and each variable a host
+  names or tells itself by. The gate also holds its store to the base branch's under the host's own environment
   ([handoff.md](handoff.md#the-background-route)).
 - With or without gates, a subagent may not run `aidrian handoff continue`, the [handoff gate](handoff.md#the-gate),
   which arms a continuation of the main session: its shell carries the main session's id, so the command cannot tell it

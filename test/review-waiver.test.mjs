@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -546,6 +546,61 @@ test('the hook budget: one clock from the hook\'s start for the whole command, a
   assert.match(reason ?? '', /pull request #6 at 1234567, and the review of head 1234567 is `round_limit`.*could not be read in time/su);
   assert.equal(forge.calls.length, 4, 'only the first merge read anything');
   assert.ok(shared.now <= WAIVER_DEADLINE_MS);
+});
+
+test('the hook budget under solo: an unset switch reads git once, before any forge read, and a stalled git read refuses the merge', (t) => {
+  const team = { solo: true, github: { unattendedWaiver: { allow: true } } };
+  const r = repo(t, { config: team });
+  r.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  r.record(5, (state) => (roundLimit(state), waiver(state)));
+  const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
+  const branches = { main: { version: 1, ...team } };
+  // Solo on the default branch, as the local ref and GitHub both commit it: the verdict stands with no machine switch.
+  assert.equal(r.project().localUnattendedWaiver, 'unset');
+  assert.equal(merge(r, command, { forge: teamForge(branches) }), null, 'solo turns the unset switch on');
+  // A git that stalls on its read of the local file: each such read takes 2 s on the test clock. A git on PATH logs it
+  // and runs the real one; the clock counts the log.
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-slow-git-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const log = path.join(bin, 'ls-files.log');
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" ls-files "*) echo x >> '${log}';; esac\nexec '${real}' "$@"\n`, { mode: 0o755 });
+  const path0 = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${path0}`;
+  t.after(() => (process.env.PATH = path0));
+  const reads = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).length : 0);
+  const start = 1_000_000;
+  const forge = teamForge(branches);
+  const reason = merge(r, command, { forge, startedAt: start, now: () => start + 2000 * reads() });
+  assert.match(reason ?? '', /the review of head abcdef1 is `round_limit`/u, 'the merge is refused');
+  assert.doesNotMatch(reason, /could not be read in time/u, 'an unset switch says nothing of an unread team value');
+  assert.deepEqual(forge.calls, [], 'no forge read once the git reads spent the start budget');
+  assert.equal(reads(), 1, 'the local file was read once, before the start check');
+});
+
+test('the hook budget under solo, in real time: a git that hangs on the local file is stopped at its read limit, and the merge refused', (t) => {
+  const team = { solo: true, github: { unattendedWaiver: { allow: true } } };
+  const r = repo(t, { config: team });
+  r.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  r.record(5, (state) => (roundLimit(state), waiver(state)));
+  const project = r.project();
+  const state = readLocalState(project, 5);
+  // A git on PATH that sleeps 10 s when asked whether git tracks the local file, and runs the real one otherwise.
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-hung-git-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" ls-files "*) exec sleep 10;; esac\nexec '${real}' "$@"\n`, { mode: 0o755 });
+  const path0 = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${path0}`;
+  t.after(() => (process.env.PATH = path0));
+  const forge = teamForge({ main: { version: 1, ...team } });
+  // The hook started 3.5 s ago, so 0.5 s is left: each read is held to that, below git's own 2 s limit (lib/git.mjs).
+  const started = Date.now();
+  const out = guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge, startedAt: started - (WAIVER_DEADLINE_MS - 500) });
+  const took = Date.now() - started;
+  assert.deepEqual(out, { allow: false, note: '', route: '' }, 'the merge is refused');
+  assert.ok(took < 1500, `the guard answered in ${took} ms: the hung read was stopped at the time left, not at git's 2 s or the hung git's 10 s`);
+  assert.deepEqual(forge.calls, [], 'no forge read past the stopped git read');
 });
 
 test('the guard\'s own head lookup shares the deadline: past it, a merge that names no head is refused with no lookup', (t) => {

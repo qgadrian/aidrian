@@ -15,6 +15,7 @@
 // this machine's `reviewApprovals: "on"` in the git-ignored local file (project.mjs). A forge read that fails reads as
 // no approval: the invariant stays unverified, and the review step still runs. docs/review.md#sign-off-by-the-human.
 
+import { machineSwitch } from '../config.mjs';
 import { isLogin } from '../forges/index.mjs';
 import { sameCommit } from './state.mjs';
 
@@ -35,10 +36,13 @@ export const JUDGE_PREFIX = 'judge:';
 export const isJudgeRuling = (entry) => String(entry?.by ?? '').startsWith(JUDGE_PREFIX);
 
 // Whether a judge's ruling counts here: { on, off }, as approvalsSwitch. The review step reads the base branch's config,
-// so a branch cannot raise it for itself.
-export function settleSwitch(review, project) {
+// so a branch cannot raise it for itself. A machine whose local file leaves `unattendedSignoff` unset follows the team's
+// `solo` (config-local.mjs machineSwitch): `solo` is lib/solo.mjs's read of it from the base branch, a boolean or a
+// function called only then.
+export function settleSwitch(review, project, solo = false) {
   if (review?.unattendedSignoff?.allow !== true) return { on: false, off: 'the team does not allow it: review.unattendedSignoff.allow is not true on the base branch' };
-  if (project?.localUnattendedSignoff !== 'on') return { on: false, off: `this machine has not turned it on: unattendedSignoff is not "on" in ${project?.paths?.local ?? 'the local settings file'}` };
+  const local = project?.localUnattendedSignoff;
+  if (local === undefined || machineSwitch(local, solo, project) !== 'on') return { on: false, off: `this machine has not turned it on: unattendedSignoff is not "on" in ${project?.paths?.local ?? 'the local settings file'}` };
   return { on: true, off: null };
 }
 

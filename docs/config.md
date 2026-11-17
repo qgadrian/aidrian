@@ -29,6 +29,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] }
   },
   "state": { "dir": null },
+  "solo": false,
   "github": {
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
@@ -139,6 +140,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `git.mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `git.commits.types` | The Conventional Commits types a commit subject may use; at least one. |
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
+| `solo` | `true` says one person runs the project: each unattended machine switch the local file leaves unset follows the team's keys ([Solo](#solo)). `false`, the default, keeps them to the local file. Read from the base branch on GitHub, never the working copy. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, as the remote naming its repository has it ([The record](review.md#the-record)), so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, and runs at exactly that count; a higher cap an earlier bot request recorded in its comment carries over only to a run with the variable set and no `--max-rounds`. The Human sets it in their own shell, or an agent sets it inline on the exact raise the Human approved by an answer or a typed grant ([review.md](review.md#unattended-rulings)); a Bash rule refuses it on any other ground, and any bot request made outside `aidrian pr`. |
@@ -162,9 +164,9 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.includeGuardedPaths` | `true` lets a pull request that changes a guarded path (the fixed list under `paths` in [Auto-merge](#auto-merge), and the knowledge docs the start hook loads) pass the `paths` check, but never a policy file: the files the gate reads its policy from, including a folder `.aidrian.json` names, and `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay refused. `false`, the default, keeps a guarded path off. It counts only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout. Every other check stays. Read the risk under [Auto-merge](#auto-merge) before setting it. |
 | `github.autoMerge.unreviewedPaths` | The files a pull request whose review was `none_needed` may change and still auto-merge, as globs or `re:` entries in the syntax of the review's lists, from the project root. Each entry matches the whole path: `README.md` is the top-level file only, not `prompts/README.md`, and a `re:` entry is anchored at both ends. `[]`, the default, keeps every such pull request for the Human. It counts only when the repository's default branch and the pull request's base both list the file, read from GitHub as `allow` is, never from the checkout, so a branch cannot list its own files. A bad entry, such as a `re:` that does not compile or an empty `re:`, is a config error, and the gate refuses on it. The gate cannot know how a file is read, so list only files that no AI session reads as instructions, through an import, a link, a command, or a plugin, and that no build, docs site, or test reads as code or as an expected result. Common cases that do not qualify: Markdown a docs site parses as MDX, such as Docusaurus, or as pages with script, such as VitePress; a README whose code blocks run as doctests, such as cargo's or pytest's `--doctest-glob`; and an end-to-end test's expected files. A top-level `README.md` that nothing builds or runs is the usual case. The rest of the `review` row under [When it is on](#when-it-is-on) still applies to a listed file. An older plugin rejects the key as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
-| `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`. |
+| `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`; unset follows [`solo`](#solo). |
 | `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
-| `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
+| `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off, unless the team runs the project [`solo`](#solo). |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. The record commands read it as the pull request's base branch commits it, not from the working copy; only a command the forge names no base for reads no comment, keeps this machine's record, and publishes nothing. Another machine builds on the comment's copy only on a private repository; on one that is not private it restarts from its own record, with the copy's round count and id counter as floors, so the round cap still holds, or holds and names the machine that wrote the copy while that copy has an open, blocking finding it holds no text for ([A second machine](review.md#the-posted-copy)). |
 | `review.publish.summary` | What the summary comment shows of the findings: `"counts"`, the default, each pass's counts; `"findings"` adds a table of each finding's id, location, severity, disposition, and outcome, with no finding text: [Publishing](review.md#publishing). Read from the base branch, as `review.record` is; under `review.record: "local"` nothing is posted, whatever this group says. An unknown key or value is a config error. |
@@ -412,7 +414,8 @@ and on the pull request's base branch:
 { "version": 1, "github": { "unattendedWaiver": { "allow": true } } }
 ```
 
-Each machine that takes part opts in with `.aidrian.local.json` in its main checkout:
+Each machine that takes part opts in with `.aidrian.local.json` in its main checkout, or, with the switch unset there,
+follows the team's [`solo`](#solo):
 
 ```json
 { "github": { "unattendedWaiver": { "enabled": true } } }
@@ -460,6 +463,26 @@ A verdict is the session's word, not proof: a session with a shell can record on
 Only the team switch, read from GitHub, is out of a session's reach.
 For proof, protect the default and base branches with a required review from a second account,
 as [Sign-off by the Human](review.md#sign-off-by-the-human) says.
+
+## Solo
+
+`solo: true` says one person runs the project. It turns on each unattended machine switch that `.aidrian.local.json`
+leaves unset: the [unattended waiver](#unattended-waiver), `unattendedSignoff`, and `handoff.background`.
+The team's own key for each still decides: `github.unattendedWaiver.allow`, `review.unattendedSignoff.allow`,
+and `session.handoff.continue` resolving to `background`. So a solo project needs no local file.
+
+It is policy, read only from the base branch. A command reads it from GitHub, as each branch commits it now:
+on the default branch and, for a pull request, on its base too. The local ref of the default branch must say it too;
+it may only refuse. A working copy that alone says `solo: true` turns nothing on, and a pull request that adds it
+changes a policy file, which [auto-merge](#auto-merge) never lets through. With no pull request, as for the background
+route, GitHub is read at the repository the `origin` remote names, so a subagent and an unattended session may not
+change a remote or the local file ([agent gates](hooks.md#agent-gates)). Origin is read from the repository's own git
+config alone, and must name one URL. A read that fails turns nothing on.
+A local `off`, or a local file that git tracks or that has an error, always wins.
+
+`solo` makes the default branch's content the switch: whoever can push to it turns the three switches on for every
+machine that sets none. A solo owner protects the default branch with no bypass, so only a reviewed pull request
+changes it. Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an older plugin rejects it.
 
 ## Pull request contract
 

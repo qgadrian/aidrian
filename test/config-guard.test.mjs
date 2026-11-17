@@ -597,12 +597,19 @@ test('a main session the background route started, and a subagent, may not run t
     'builtin unset PATH && aidrian handoff route',
     'env -i aidrian handoff continue b.md',
   ];
-  const plain = ['aidrian handoff continue b.md', 'aidrian handoff route', 'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff check b.md', 'FOO=1 aidrian handoff continue b.md', 'env -u FOO aidrian handoff continue b.md', 'unset FOO; aidrian handoff route'];
+  const plain = ['aidrian handoff continue b.md', 'aidrian handoff route', 'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff check b.md'];
+  // Any other variable is refused too: the gate needs none.
+  const other = ['FOO=1 aidrian handoff continue b.md', 'env -u FOO aidrian handoff continue b.md', 'unset FOO; aidrian handoff route'];
   for (const session of [full, short]) {
     for (const command of moved) {
       const result = run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
       assert.match(result.stderr, /it runs `aidrian handoff` with \w+ set or unset by the command itself, which would move the continuation store, the session, or the host command the gate reads/u, command);
+    }
+    for (const command of other) {
+      const result = run(session, command);
+      assert.equal(result.status, 2, `${session}: ${command}`);
+      assert.match(result.stderr, /it runs `aidrian handoff` with FOO set or unset by the command itself, and the gate runs with no variable a command sets/u, command);
     }
     for (const command of plain) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
   }

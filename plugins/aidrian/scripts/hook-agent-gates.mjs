@@ -3,8 +3,9 @@
 // and, with or without gates, from setting the machine's switches, as it keeps a session the background handoff route
 // started (lib/handoff-guard.mjs startedUnattended); lib/handoff-guard.mjs, with or without
 // gates, from running `aidrian handoff continue` or writing in the handoff continuation store, and keeps a subagent
-// and such a session from writing there or in the unattended marks, from starting a host session outside the gate, and
-// from running the gate with a variable of their own that moves its store or session. Whether the session is such a
+// and such a session from writing there or in the unattended marks, from starting a host session outside the gate,
+// from running the gate with a variable of their own that moves its store or session, and from repointing a git remote
+// or gh's default repository, through which the plugin reads the team's policy on the forge. Whether the session is such a
 // one is read from its unattended mark (lib/unattended-mark.mjs) on every call, before it runs, wherever it runs, with
 // no project at its folder too: the mark names the project the gate started it in, whose guards then hold the call.
 // Its chain floor, which a session the gate started before the marks still has, is read at most once a call, and only
@@ -37,7 +38,7 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended, unattendedMarkWriteDenial } from '../lib/handoff-guard.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, remoteChangeDenial, startedUnattended, unattendedMarkWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
@@ -78,7 +79,8 @@ async function gate(input) {
     let outside;
     try {
       outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended })
-        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended }));
+        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended })
+        ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended }));
     } catch (error) {
       if (!(error instanceof PastDeadline)) throw error;
       outside = deadlineDenial(input, DEFAULTS, { unattended });
@@ -125,6 +127,7 @@ function guards(input, project, config, gated, snapshot, marked, unattended) {
     ?? handoffContinueDenial(input, config)
     ?? handoffEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
+    ?? remoteChangeDenial(input, config, { unattended })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended })
     ?? unattendedMarkWriteDenial(input, config, { project, links: false, unattended })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })

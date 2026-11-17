@@ -37,7 +37,7 @@ const GUARDED_LIB = [
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-length', 'shell-lex',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-length', 'shell-lex', 'solo',
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
@@ -144,7 +144,9 @@ export function projectAt(start) {
 // `.aidrian.local.json`, as written; config.mjs checks them. `localAutoMerge`
 // is its `github.autoMerge`: "on" or "off", checked here, "unset" when no file sets it, and "off" for a file with an error; the team's
 // ceiling still decides (resolveAutoMerge). `localUnattendedWaiver` is its `github.unattendedWaiver`, read the same way,
-// where "unset" is off: the team's `github.unattendedWaiver.allow` still decides (resolveUnattendedWaiver).
+// where "unset" is off unless the base branch's `solo` turns it on (config-local.mjs machineSwitch): the team's
+// `github.unattendedWaiver.allow` still decides (resolveUnattendedWaiver). `localUnattendedSignoff` and
+// `localHandoffBackground` follow `solo` the same way when unset.
 // `localReviewApprovals` is its `reviewApprovals`, read the same way: "on" or
 // "off", "unset" when no file sets it; the team's `review.approvals.allow` still decides (lib/review/approvals.mjs).
 // `localHandoffBackground` is its `handoff.background`, read the same way; the base branch's session.handoff still
@@ -387,10 +389,10 @@ function mainFeedbackAuto(raw, main, errors) {
 
 // Whether a machine with no setting may follow a team default of "on": git says it tracks no local file in the main
 // checkout, under any case, present on disk or not. Asked only when the default applies, so a hook pays no git call. A tracked file, or a git that fails
-// or stalls, is no machine's own, as machineSwitch reads it.
-export function mayFollowTeamDefault(project) {
+// or stalls, is no machine's own, as machineSwitch reads it. `options` are runGit's, such as a hook's bounded `timeout`.
+export function mayFollowTeamDefault(project, options) {
   const main = project.checkouts.at(-1);
-  return runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main).status === 1;
+  return runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main, options).status === 1;
 }
 
 // The machine settings of the local file's `github` group, the only keys it takes: { autoMerge, unattendedWaiver, problems }.

@@ -478,7 +478,9 @@ export async function runSettle(args, project, config = null, { forge } = {}) {
   const { HARNESS_FLOW } = await import('./review/plan.mjs');
   if (passed[passed.indexOf('--flow') + 1] === HARNESS_FLOW) throw new Error(`flow ${HARNESS_FLOW} guards how the project is reviewed: only the Human settles it`);
   const { JUDGE_PREFIX, settleSwitch } = await import('./review/approvals.mjs');
-  const { on, off } = settleSwitch(config?.review, project);
+  const { prSolo } = await import('./solo.mjs');
+  const repoAt = passed.indexOf('--repo');
+  const { on, off } = settleSwitch(config?.review, project, () => prSolo(project, prNumber(ref), { forge, repo: repoAt === -1 ? null : passed[repoAt + 1] }));
   if (!on) throw new Error(`a judge's ruling does not count here: ${off}. Ask the Human instead`);
   return runSignoff([ref, ...passed], project, config, { forge, by: `${JUDGE_PREFIX}${judge}` });
 }

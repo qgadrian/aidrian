@@ -161,11 +161,13 @@ const notWorthIt = (cost, next, said) => 'Judge first whether a handoff is worth
 // where `how` is the host's phrase for what the route takes from the Human (its adapter's `steps[route]`). The gate's
 // module, which decides the route for the command too, loads only when the config asks for a route the host has. The
 // background route reads `project`'s switches, and the state.dir of `working`, its loaded config, as the gate does, so a
-// handoff it would send by the clear route is worded so.
+// handoff it would send by the clear route is worded so. A hook reads no forge: for a machine that follows the team's
+// `solo`, it words the reminder by the base branch's local ref alone, and the gate reads the forge before it starts
+// anything.
 export async function continuation(handoff, host, project, working) {
   if ((handoff.continue ?? 'none') === 'none' || !continueRoutes(host).length) return { route: 'none', how: null };
   const { backgroundGate, effectiveRoute } = await import('./handoff-continue.mjs');
-  const { route } = effectiveRoute(handoff.continue, host, undefined, () => backgroundGate(project, working));
+  const { route } = effectiveRoute(handoff.continue, host, undefined, () => backgroundGate(project, working, undefined, { forgeSolo: () => true }));
   return { route, how: route === 'none' ? null : host.capabilities.handoffContinue.steps?.[route] ?? null };
 }
 

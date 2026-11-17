@@ -40,6 +40,12 @@ export function showPrefix(cwd) {
   return firstLine(['rev-parse', '--show-prefix'], cwd) ?? '';
 }
 
+// `cwd` from the top of its checkout, with a trailing slash, or null when git cannot answer, so a reader of policy at a
+// path from the top never takes a failed read for the top itself. `options` are runGit's, such as a hook's `timeout`.
+export function knownPrefix(cwd, options) {
+  return firstLine(['rev-parse', '--show-prefix'], cwd, options);
+}
+
 // Both at once, in one git call: { main, current }, or null. They differ inside a linked worktree.
 // In the main checkout, its own git folder is the common one, so the main checkout is the current one, wherever
 // `git init --separate-git-dir` put that folder. A linked worktree has only the common folder's place to go by: the

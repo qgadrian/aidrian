@@ -66,6 +66,7 @@ export const LOCAL_DECISIONS_SCHEMA = { mode: 'decisionMode', domains: DECISIONS
 export const SCHEMA = {
   git: GIT_SCHEMA,
   state: { dir: 'textOrNull' },
+  solo: 'boolean',
   github: {
     requiredSections: 'texts',
     reviewer: 'textOrNull',

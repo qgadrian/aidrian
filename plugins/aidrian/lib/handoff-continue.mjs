@@ -31,7 +31,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { baseBranchTip, commandConfig, committedConfig, stateDirProblem } from './config.mjs';
+import { baseBranchTip, commandConfig, committedConfig, machineSwitch, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
 import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteFrom, noteStarted, openStore, promote, readContainedBrief, readFrom, readStarted, SESSION_ID, SLUG, slugOf, storePath, sweep, takeReady } from './handoff-markers.mjs';
@@ -48,29 +48,38 @@ export const BACKGROUND_HOPS = 5;
 // Whether the background route may run for `project`: { ok: true, maxChain } or { ok: false, why }. This machine turns it
 // on in the main checkout's local file (`handoff.background`, project.mjs localHandoffBackground), and the team in the config.json of
 // the base branch, which resolves session.handoff.continue to "background", as `mode: "auto"` with no `continue` does:
-// a worktree's own config cannot. `maxChain` is the base branch's, at most BACKGROUND_HOPS. `working`, the config the
+// a worktree's own config cannot. A machine whose file leaves the switch unset follows the team's `solo`
+// (config-local.mjs machineSwitch) only when the base branch's local ref commits it true and `forgeSolo(project)`, the
+// forge's read of it (lib/solo.mjs forgeSolo), says so too: a local ref may only refuse. Without that reader it is
+// false, so a caller that may start a session passes it; the session-length hook, which only words the reminder, passes
+// one that trusts the local ref. `maxChain` is the base branch's, at most BACKGROUND_HOPS. `working`, the config the
 // gate opens the continuation store with, must name the base branch's state.dir (config.mjs stateDirProblem): the store
 // holds the chain floors and the kept copy, so a working copy that moves it could start a session held to no floor.
 // The store as the command resolves it, with `env`, must also be the one the base branch's config names under the host's
 // own environment (project.mjs defaultStateDir), so an XDG_STATE_HOME or HOME the command line sets cannot move it where
 // the hooks never read a floor. A machine whose own environment sets XDG_STATE_HOME elsewhere commits state.dir instead.
-export function backgroundGate(project, working, env = process.env) {
-  if (project?.localHandoffBackground !== 'on') {
-    const main = project?.checkouts?.at(-1);
-    const file = main && !hasControl(main) ? path.join(main, project.paths.local) : 'the machine\'s local file in the main checkout';
-    return { ok: false, why: `this machine has not turned the background route on: add "handoff": { "background": "on" } to ${file}, the machine's git-ignored file` };
-  }
+export function backgroundGate(project, working, env = process.env, { forgeSolo = () => false } = {}) {
+  const local = project?.localHandoffBackground;
+  if (local !== 'on' && local !== 'unset') return { ok: false, why: switchOff(project) };
   const team = teamHandoff(project);
   if (team.why) return { ok: false, why: team.why };
   if (team.handoff.continue !== 'background') {
     return { ok: false, why: 'the base branch\'s config.json does not resolve session.handoff.continue to "background", and a worktree\'s own config cannot turn the background route on' };
   }
+  if (machineSwitch(local, () => team.config.solo === true && forgeSolo(project) === true, project) !== 'on') return { ok: false, why: switchOff(project) };
   const moved = working && stateDirProblem(working, team.config, 'the base branch\'s config.json', 'the continuation store');
   if (moved) return { ok: false, why: moved };
   if (working && !sameStore(stateDir(project, { config: working, env }), defaultStateDir(project, { config: team.config }))) {
     return { ok: false, why: 'the continuation store this command opens is not the one the base branch\'s config.json names under the host\'s own environment, as an XDG_STATE_HOME or HOME set for this command would move it, so the hooks would never read the chain floor it records' };
   }
   return { ok: true, maxChain: Math.min(team.handoff.maxChain, BACKGROUND_HOPS) };
+}
+
+// Why the background route is off on this machine's side.
+function switchOff(project) {
+  const main = project?.checkouts?.at(-1);
+  const file = main && !hasControl(main) ? path.join(main, project.paths.local) : 'the machine\'s local file in the main checkout';
+  return `this machine has not turned the background route on: add "handoff": { "background": "on" } to ${file}, the machine's git-ignored file`;
 }
 
 // Whether the state folders `one` and `other` hold one continuation store: their real paths, in the case the disk folds to.
@@ -88,19 +97,28 @@ function teamHandoff(project) {
 }
 
 // The config.json the base branch commits, with no machine settings: { config, errors } or { why }, where `what` names
-// what the reader wanted from it. lib/handoff-guard.mjs startedUnattended reads its state.dir.
-export function baseBranchConfig(project, what = 'the team\'s config') {
-  const base = baseBranchTip(project.root);
+// what the reader wanted from it. lib/handoff-guard.mjs startedUnattended reads its state.dir. `git` gives each git read's
+// options, as config.mjs firstTip's, such as a hook's bounded timeout; one that throws, out of time, is a `why`.
+export function baseBranchConfig(project, what = 'the team\'s config', git = () => undefined) {
+  const base = baseBranchTip(project.root, git);
   if (!base) return { why: `git names no base branch commit to read ${what} from` };
   try {
-    const file = committedConfigFile(project, base);
+    const file = committedConfigFile(project, base, git());
     if (!file) return { why: 'the base branch\'s folder override names no usable project folder' };
     const errors = [];
-    const config = committedConfig({ ...project, paths: { ...project.paths, config: file } }, base, errors);
+    const config = committedConfig({ ...project, paths: { ...project.paths, config: file } }, base, errors, git() ?? {});
     return { config, errors };
   } catch {
     return { why: 'git could not read the base branch\'s config.json' };
   }
+}
+
+// Whether the base branch's config.json, as this checkout's git holds it (baseBranchConfig), commits `solo: true`. A local
+// ref only refuses: a caller that may turn a switch on with it also reads the forge (lib/solo.mjs). The session-length
+// hook words a handoff by it alone. `git` is baseBranchConfig's; a read that fails or runs out of time is false.
+export function localRefSolo(project, git) {
+  const base = baseBranchConfig(project, 'solo', git);
+  return !base.why && base.config.solo === true;
 }
 
 const NO_GATE = Object.freeze({ ok: false, why: 'no project was given to read the background route\'s switches from' });
@@ -141,21 +159,22 @@ const routeProblem = (override) => (override !== undefined && !CONTINUE_ROUTES.i
 // decides, so the session-handoff skill knows before it writes the brief whether to settle every running agent.
 // It prints `route: <route>`, and the `fallback:` line when the route asked for cannot run, exit 0; exit 2 on an unknown
 // --route or a config with errors (CONFIG_ERROR). It opens no store and writes nothing. The gate may still fall back for
-// what only a brief or the store tells, such as its chain or a store it refuses.
-export function routeOf({ override, env = process.env, cwd = process.cwd() } = {}) {
+// what only a brief or the store tells, such as its chain or a store it refuses. `forgeSolo` is backgroundGate's.
+export function routeOf({ override, env = process.env, cwd = process.cwd(), forgeSolo } = {}) {
   const bad = routeProblem(override);
   if (bad) return bad;
   const project = projectAt(cwd);
   const config = commandConfig(project, { exitCode: 2 });
-  const { route, fallback } = effectiveRoute(config.session.handoff.continue, detectHost({ env }), override, () => backgroundGate(project, config, env));
+  const { route, fallback } = effectiveRoute(config.session.handoff.continue, detectHost({ env }), override, () => backgroundGate(project, config, env, { forgeSolo }));
   return { exitCode: 0, out: [`route: ${route}`, ...(fallback ? [`fallback: ${fallback}`] : [])], err: [] };
 }
 
 // Runs the gate on `brief`, a path from `cwd`, and returns { exitCode, out, err }: the lines for stdout and stderr.
 // `chainOf` reads a brief's chain count (lib/handoff-brief.mjs). Throws config.mjs's CONFIG_ERROR, exit 2, on a config
 // with errors. `run`, spawnSync's shape, and `wait`, a pause in milliseconds, are what the background route starts and
-// polls with: the host's own when omitted, and a test's stand-ins, so no test starts a real session.
-export function continueBrief(brief, { override, chainOf, env = process.env, cwd = process.cwd(), now = Date.now(), run, wait }) {
+// polls with: the host's own when omitted, and a test's stand-ins, so no test starts a real session. `forgeSolo` is
+// backgroundGate's.
+export function continueBrief(brief, { override, chainOf, env = process.env, cwd = process.cwd(), now = Date.now(), run, wait, forgeSolo }) {
   const bad = routeProblem(override);
   if (bad) return bad;
   const project = projectAt(cwd);
@@ -174,7 +193,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
       return refuse('another session\'s handoff gate is starting a background session, and until the host lists that session\'s id, this one cannot be told apart from it and has no chain floor to hold a brief to; run this again in a few minutes, after the start, or a person resumes the brief');
     }
     const host = detectHost({ env });
-    const routed = effectiveRoute(configured, host, override, () => backgroundGate(project, config, env));
+    const routed = effectiveRoute(configured, host, override, () => backgroundGate(project, config, env, { forgeSolo }));
     return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, root: project.checkouts.at(-1) });
   } catch (error) {
     if (typeof error?.code !== 'string') throw error;

@@ -14,8 +14,10 @@
 // The guard honors a verdict only while both switches are on: `github.unattendedWaiver.allow` true in config.json on both
 // the repository's default branch and the pull request's base, read from GitHub as each branch commits it now, never
 // from the working copy (as auto-merge's team gate, pr-auto-merge.mjs branchPolicies), and `github.unattendedWaiver` "on"
-// in the main checkout's untracked local file (project.localUnattendedWaiver). Any read that fails, or would
-// start too late for the hook's 5 s, keeps the denial.
+// in the main checkout's untracked local file (project.localUnattendedWaiver), or, with that switch unset, the team's
+// `solo` committed true on both branches, read with the team's value (config-local.mjs machineSwitch) after the default
+// branch's local ref says so (lib/solo.mjs). Any read that fails, or would start too late for the hook's 5 s, keeps the
+// denial.
 //
 // The trust limit: a verdict an agent records is the session's word, not proof. A session with a shell can record one and
 // merge under both switches, and the machine switch is the main session's to set, as auto-merge's is. Only the team's
@@ -23,15 +25,18 @@
 // `review.record` is "comment" and the post succeeds (`summary_error` says when it did not). For proof, protect the
 // default and base branches with a required review from a second account.
 
-import { resolveUnattendedWaiver } from '../config.mjs';
+import { machineSwitch, resolveUnattendedWaiver } from '../config.mjs';
 import { forgeFor } from '../forges/index.mjs';
-import { runGit } from '../git.mjs';
+import { knownPrefix } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 // A cycle: pr-auto-merge.mjs imports merge-review.mjs, which imports this file. It is benign while each module uses the
 // other's exports only inside functions, never while it loads: keep it that way.
-import { branchPolicies, refusingBranches } from '../pr-auto-merge.mjs';
+import { branchPolicies, refusingBranches, soloOn } from '../pr-auto-merge.mjs';
+import { mayFollowTeamDefault } from '../project.mjs';
+import { hostOf } from '../remotes.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
-import { holdToBase } from './in-force.mjs';
+import { localRefSolo, viewSolo } from '../solo.mjs';
+import { boundedReads, holdToBase } from './in-force.mjs';
 import { postContext, readReading } from './dispatch.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
@@ -120,10 +125,14 @@ export function budgetedForge(make, deadline, now = Date.now) {
 
 // Whether both switches let a verdict stand: { on, reason: null | 'local' | 'team' | 'unread', refusing, why }. The team
 // value is read at the default branch and at `base` on GitHub, through `forge`; `prefix` is the project's folder from the
-// top of the repository (null: unknown, so unread). Any failed read is `unread`, and keeps it off.
-export function waiverGate({ project, forge, repo, host, base, prefix }) {
+// top of the repository (null: unknown, so unread). Any failed read is `unread`, and keeps it off. A machine switch left
+// unset follows the team's `solo` from the same reads, once the default branch's local ref says so too and the local
+// file is no tracked one (config-local.mjs machineSwitch). `localSolo` is that local answer when the caller read it
+// already, inside its own deadline, as the merge guard does (readWaiver); null reads it here, for a command.
+export function waiverGate({ project, forge, repo, host, base, prefix, localSolo = null }) {
   const local = project.localUnattendedWaiver;
-  if (local !== 'on') return { on: false, reason: 'local', refusing: [], why: `this machine has not opted in (github.unattendedWaiver in ${project.paths.local})` };
+  const notIn = { on: false, reason: 'local', refusing: [], why: `this machine has not opted in (github.unattendedWaiver in ${project.paths.local})` };
+  if (local !== 'on' && local !== 'unset') return notIn;
   if (!repo || !host || !base || prefix === null) return { on: false, reason: 'unread', refusing: [], why: 'the pull request\'s repository, host, base, or the project\'s folder could not be read' };
   let policies;
   try {
@@ -132,28 +141,19 @@ export function waiverGate({ project, forge, repo, host, base, prefix }) {
     return { on: false, reason: 'unread', refusing: [], why: error.message };
   }
   const refusing = refusingBranches(policies, base, 'unattendedWaiver');
-  const { effective, reason } = resolveUnattendedWaiver({ unattendedWaiver: { allow: refusing.length === 0 } }, local);
+  const allow = refusing.length === 0;
+  const machine = allow ? machineSwitch(local, () => soloOn(policies) && (localSolo ?? localRefSolo(project)), project, localSolo ?? undefined) : local;
+  const { effective, reason } = resolveUnattendedWaiver({ unattendedWaiver: { allow } }, machine);
   return { on: effective, reason, refusing, why: reason === 'team' ? `the team does not allow it (github.unattendedWaiver.allow on ${repo} ${refusing.join(' and ')})` : null };
 }
-
-const hostOf = (url) => {
-  try {
-    return new URL(url).hostname || null;
-  } catch {
-    return null;
-  }
-};
-
-const showPrefix = (root, timeout) => {
-  const shown = runGit(['rev-parse', '--show-prefix'], root, { timeout });
-  return shown.status === 0 ? shown.stdout.trim() : null;
-};
 
 const UNREAD_NOTE = ', and the team\'s github.unattendedWaiver could not be read in time';
 
 // What the merge guard makes of a verdict for a denial it is about to give: { allow, note, route }. Asked only after the
-// Human's answer did not waive it. Nothing is read, from the network or git, unless this machine's switch is on and the
-// record holds an outcome with nothing owed. `named`: the merge names its head (`--match-head-commit`, `sha=`, the MCP
+// Human's answer did not waive it. Nothing is read, from the network or git, unless the record holds an outcome with
+// nothing owed and this machine's switch is on, or is unset and may follow the team's `solo`: then git is read first,
+// once, every read bounded to the time left (in-force.mjs boundedReads), and the network only when the default branch's
+// local ref commits solo and the local file is untracked; a read that fails or runs out of time is no solo. `named`: the merge names its head (`--match-head-commit`, `sha=`, the MCP
 // `sha`), the only merge a verdict counts for, since gh would otherwise merge whatever head the branch has by then.
 // `view` is the guard's earlier view, null when it made none. `forge` is budgetedForge's `make`, the test seam;
 // `startedAt` when the hook's process started, by `now`, the one clock for every merge of one command.
@@ -168,13 +168,27 @@ export function guardWaiver(args) {
 
 function readWaiver({ project, state, pr, head, named = false, repo = null, view = null, forge = null, startedAt, now = Date.now }) {
   const none = { allow: false, note: '', route: '' };
-  if (project.localUnattendedWaiver !== 'on' || !state?.outcome || owed(state).length) return none;
+  const local = project.localUnattendedWaiver;
+  if ((local !== 'on' && local !== 'unset') || !state?.outcome || owed(state).length) return none;
   const kind = waiverKind(state, head);
   if (kind === null) return none;
-  const unread = { ...none, note: UNREAD_NOTE };
-  // The one start check, before the first read: every waiver read follows it.
-  if (now() - startedAt > GATE_START_MS) return unread;
   const deadline = startedAt + WAIVER_DEADLINE_MS;
+  // An unset switch may follow the team's `solo` only when the default branch's local ref commits it and git tracks no
+  // local file: every git read that needs, done once here, before the start check, and each held to the deadline. Else
+  // nothing is read from the network, and a read that fails says nothing of a switch this machine never turned on.
+  let localSolo = null;
+  if (local === 'unset') {
+    const git = boundedReads(deadline, now);
+    try {
+      localSolo = localRefSolo(project, git) && mayFollowTeamDefault(project, git());
+    } catch {
+      localSolo = false;
+    }
+    if (!localSolo) return none;
+  }
+  const unread = local === 'on' ? { ...none, note: UNREAD_NOTE } : none;
+  // The one start check, before the first forge read: every one follows it.
+  if (now() - startedAt > GATE_START_MS) return unread;
   const reads = budgetedForge(forge ?? ((options) => forgeFor(project.root, options)), deadline, now);
   let seen = view?.baseRefName && view?.url ? view : null;
   if (!seen) {
@@ -189,7 +203,7 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   const home = typeof seen?.url === 'string' ? repoName(seen.url) : null;
   if (!base || !host || !home) return unread;
   const rest = Math.floor(deadline - now());
-  const gate = waiverGate({ project, forge: reads, repo: home, host, base, prefix: rest > 0 ? showPrefix(project.root, Math.min(READ_TIMEOUT_MS, rest)) : null });
+  const gate = waiverGate({ project, forge: reads, repo: home, host, base, prefix: rest > 0 ? knownPrefix(project.root, { timeout: Math.min(READ_TIMEOUT_MS, rest) }) : null, localSolo });
   if (gate.reason === 'unread') return unread;
   if (!gate.on) return none;
   const verdict = waiverFor(state, head, kind);
@@ -215,9 +229,9 @@ const nextStep = (entry, pr, local) => (entry.verdict === 'waive'
 // postComment, editComment, viewer), `deps.repo` the origin, and `deps.env` the environment, in tests.
 export async function runWaive(args, project, config, deps = {}) {
   const opts = parseWaive(args);
-  if (opts.verdict === 'waive' && project.localUnattendedWaiver !== 'on') {
-    throw new Error(`this machine's github.unattendedWaiver is not on in ${project.paths.local}, so the merge guard would not take a waive verdict; --verdict refuse is still recorded`);
-  }
+  const machine = project.localUnattendedWaiver;
+  const switchOff = () => new Error(`this machine's github.unattendedWaiver is not on in ${project.paths.local}, so the merge guard would not take a waive verdict; --verdict refuse is still recorded`);
+  if (opts.verdict === 'waive' && machine !== 'on' && machine !== 'unset') throw switchOff();
   const forge = deps.forge ?? forgeFor(project.root);
   const repo = deps.repo ?? originRepo(project);
   // The record is read only from the state.dir the pull request's base branch commits, so a verdict needs that base.
@@ -240,12 +254,16 @@ export async function runWaive(args, project, config, deps = {}) {
   const { state } = record;
   state.pending = mergePending(local?.pending, state.pending);
   let current = null;
+  let viewed = null;
   try {
-    current = forge.change(String(opts.pr), 'number,headRefOid,url')?.headRefOid ?? null;
+    viewed = forge.change(String(opts.pr), 'number,headRefOid,url');
+    current = viewed?.headRefOid ?? null;
   } catch {}
   if (typeof current !== 'string' || !SHA_REF.test(current)) throw new Error('cannot read the pull request\'s head: a verdict binds to one head');
   const head = opts.head ?? current;
   if (!sameCommit(head, current)) throw new Error(`the pull request's head is ${current.slice(0, 7)}, not ${head.slice(0, 7)}: the verdict binds to the current head`);
+  // An unset switch follows the team's `solo`, read at the base on the forge as the guard reads it.
+  if (opts.verdict === 'waive' && machineSwitch(machine, () => viewSolo(project, { baseRefName: base, url: viewed?.url }, { forge }), project) !== 'on') throw switchOff();
   const kind = waiverKind(state, current);
   if (kind === null) throw new Error(notWaivable(state, current, opts.pr));
   const env = deps.env ?? process.env;

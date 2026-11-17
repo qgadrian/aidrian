@@ -376,7 +376,8 @@ or `--overrule <invariant> --reason "<why>"` in place of the accept. Each flow's
 ```
 
 The team switch is read from the base branch; this machine's is `"unattendedSignoff": "on"` in `.aidrian.local.json`,
-which only the main session sets. A ruling takes the same refusals as the matching sign-off, holds for one head, and
+which only the main session sets, or, unset there, the team's [`solo`](config.md#solo), read at the pull request's base
+on GitHub. A ruling takes the same refusals as the matching sign-off, holds for one head, and
 shows in the summary as `judge:<agent>`. It never clears an undisputed violated invariant, signs a whole flow or stage,
 or touches `harness-config`, so a `signoff: "human"` flow and a change to the review's own config still ask the Human.
 Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.

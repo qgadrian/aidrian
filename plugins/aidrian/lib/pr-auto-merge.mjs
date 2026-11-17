@@ -59,10 +59,11 @@
 
 import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
-import { runGit } from './git.mjs';
+import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { noneNeededProblem, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
 import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
+import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { heldWaiver } from './review/settled.mjs';
@@ -96,10 +97,7 @@ export function parseArgs(argv) {
 export function readView(view) {
   const { number, headRefOid: head, baseRefName: base, url, files, changedFiles, reviewDecision, latestReviews } = view ?? {};
   const author = view?.author?.login;
-  let host = null;
-  try {
-    host = new URL(url).hostname || null;
-  } catch {}
+  const host = hostOf(url);
   const repo = typeof url === 'string' ? repoName(url) : null;
   if (!Number.isInteger(number) || typeof base !== 'string' || base === '' || typeof author !== 'string' || author === '' || !host || !repo) {
     return 'gh returned no number, base branch, author, or URL for the pull request';
@@ -194,16 +192,18 @@ export function startDocs(forge, pr, branch, configFile, prefix = '') {
 // folder the pointer file names; and each config's errors, one line each, whose keys then hold their defaults (the
 // same list when the base is the default branch), and the config.json path the default branch's read located, from the
 // top of the repository. Read in this order: the default branch, its config, then the base's
-// config, each config by branchConfig's reads. `pr` is { repo, host, base }. Throws as defaultBranch and branchConfig do.
+// config, each config by branchConfig's reads. `pr` is { repo, host, base }; a null `base` is the default branch, for a
+// reader with no pull request (lib/solo.mjs). Throws as defaultBranch and branchConfig do.
 export function branchPolicies(forge, pr, prefix = '') {
   const seen = [];
   const policyErrors = [];
   const main = defaultBranch(forge, pr);
+  const base = pr.base ?? main;
   const policy = branchConfig(forge, pr, main, prefix, { seen, parse: (text, file) => configFromText(text, file, policyErrors) });
   // branchConfig reads the located config.json last.
   const configFile = seen.at(-1);
-  const baseErrors = pr.base === main ? policyErrors : [];
-  const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix, { seen, parse: (text, file) => configFromText(text, file, baseErrors) });
+  const baseErrors = base === main ? policyErrors : [];
+  const basePolicy = base === main ? policy : branchConfig(forge, pr, base, prefix, { seen, parse: (text, file) => configFromText(text, file, baseErrors) });
   return { main, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors, configFile };
 }
 
@@ -222,6 +222,10 @@ function unreviewedLists({ main, policy, basePolicy, policyErrors, baseErrors },
 // The branches whose `github.<key>.allow` is not true, the default branch first, each once: empty when both allow it.
 export const refusingBranches = ({ main, policy, basePolicy }, base, key) =>
   [...new Set([[main, policy.github[key]], [base, basePolicy.github[key]]].filter(([, each]) => each?.allow !== true).map(([name]) => name))];
+
+// Whether the team runs the project solo (config.json `solo`): true only when the default branch and the base both commit
+// it true, read as `allow` is, never from the working copy. A value that fails its check reads as the default, false.
+export const soloOn = ({ policy, basePolicy }) => policy.solo === true && basePolicy.solo === true;
 
 // Whether the team lets a guarded path through the paths gate: true only when the default branch and the base both
 // commit `github.autoMerge.includeGuardedPaths` true, read as `allow` is, never from the working copy.
@@ -393,8 +397,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   if (typeof pr === 'string') return fail(pr);
   let team;
   // An empty prefix is the repository root, so a failed lookup is null, which the paths check refuses, never the root.
-  const shown = runGit(['rev-parse', '--show-prefix'], project.root);
-  const prefix = shown.status === 0 ? shown.stdout.trim() : null;
+  const prefix = knownPrefix(project.root);
   let refusing;
   let main;
   let policy;

@@ -4,7 +4,7 @@
 // started (startedUnattended, or its mark in lib/unattended-mark.mjs) is held as a subagent is to the store, and both
 // may neither change the unattended marks (unattendedMarkWriteDenial), nor start a host session outside the gate
 // (hostSessionStartDenial), nor run the gate with a variable of their own that moves its store, its session, or its
-// host command (handoffEnvDenial). scripts/hook-agent-gates.mjs asks it before every tool call. A host's other
+// host command (handoffEnvDenial), nor repoint a remote the plugin reads the team's policy through (remoteChangeDenial). scripts/hook-agent-gates.mjs asks it before every tool call. A host's other
 // tools that run a shell command, such as Claude Code's Monitor, reach it as Bash calls (lib/hosts/claude-code.mjs
 // hookInput); a command in a shell the shared lexer cannot read (lib/hosts/index.mjs opaqueShellCommand) is read as
 // opaque text, and refused when its words may run the gate, or name or reach the store.
@@ -20,15 +20,16 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { checkDeadline } from './deadline.mjs';
-import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-guard.mjs';
+import { bashCall, globNamesFile, opaqueTexts, unquoted, writeTargets } from './config-guard.mjs';
 import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, opaqueShellCommand } from './hosts/index.mjs';
 import { defaultStateDir, stateDir, stateRoot } from './project.mjs';
+import { GIT_VARS } from './review/env.mjs';
 import { canonical } from './rules/main-checkout.mjs';
-import { aidrianArgs, changesVariable, walkCommands } from './shell-lex.mjs';
+import { aidrianArgs, changedVariables, changesVariable, readGit, walkCommands } from './shell-lex.mjs';
 import { MARK_FOLDER, markFolders } from './unattended-mark.mjs';
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
@@ -108,13 +109,17 @@ const runsGate = (actions) => ({ invocation, unread }) => {
   return action?.dynamic === true || rest.some((token) => actions.includes(token.text));
 };
 
-// The variables the gate reads its store, its session, its agent, and the host command it runs from: the state root and
-// the home folder (project.mjs stateDir), PATH, which finds the host's command, and every variable a host names a
-// session or an agent by, or tells itself by (lib/hosts/index.mjs).
-const GATE_ENV = Object.freeze([...new Set(['XDG_STATE_HOME', 'HOME', 'PATH', ...IDENTITY_VARS, ...DETECT_VARS])]);
+// The variables the gate reads its store, its session, its agent, the host command it runs, and the team's policy from:
+// the state root and the home folder (project.mjs stateDir), PATH, which finds the host's command, every variable that
+// moves the repository git reads (review/env.mjs GIT_VARS) or gh's config (GH_CONFIG_DIR), where `solo` is read from
+// (lib/solo.mjs), and every variable a host names a session or an agent by, or tells itself by (lib/hosts/index.mjs).
+// How a shell no lexer reads sets or removes a variable: `$env:NAME`, `NAME=`, or a command that does.
+const OPAQUE_SETS = /\$env:|(?<![\w$.-])[A-Za-z_]\w*\s*=|\b(?:set|setx|export|unset|env|remove-item\s+env:)\b/iu;
+const GATE_ENV = Object.freeze([...new Set(['XDG_STATE_HOME', 'HOME', 'PATH', 'GH_CONFIG_DIR', ...GIT_VARS, ...IDENTITY_VARS, ...DETECT_VARS])]);
 
-// Why the call in `input` may not run because it runs `aidrian handoff continue` or `aidrian handoff route` with one of
-// GATE_ENV set or unset by the command line itself, or null: { match, reason }. It holds for a subagent and for a session
+// Why the call in `input` may not run because it runs `aidrian handoff continue` or `aidrian handoff route` with any
+// variable set, exported, or unset by the command line itself, or null: { match, reason }. GATE_ENV names the ones that
+// move what the gate reads, for the reason's wording; every other one is refused too, as the gate needs none. It holds for a subagent and for a session
 // `unattended()` says the background route started, asked only for such a command: a store the session moves, or a
 // session id it chooses, reads no floor, so its next background start would be held to no count, and the hooks, which
 // read the host's own store and session, would not know the session it starts. A variable is changed when a prefix
@@ -131,16 +136,21 @@ export function handoffEnvDenial(input, { names: { human } }, { unattended = () 
   if (opaque !== null) {
     const texts = opaqueTexts(opaque);
     if (!opaqueRuns(texts, ['continue', 'route'])) return null;
-    named = GATE_ENV.find((name) => texts.some((text) => new RegExp(String.raw`(?<![\w])${name}(?![\w])`, 'iu').test(text)));
+    named = GATE_ENV.find((name) => texts.some((text) => new RegExp(String.raw`(?<![\w])${name}(?![\w])`, 'iu').test(text)))
+      ?? (texts.some((text) => OPAQUE_SETS.test(text)) ? 'a variable' : null);
   } else {
     const commands = walkCommands(command, null);
     if (!commands.some(runsGate(['continue', 'route']))) return null;
-    named = GATE_ENV.find((name) => commands.some(({ invocation }) => changesVariable(invocation, name)));
+    // Any variable: the gate runs only with the environment the host gave the session. GATE_ENV names the one it moves.
+    const changed = commands.flatMap(({ invocation }) => changedVariables(invocation));
+    named = GATE_ENV.find((name) => commands.some(({ invocation }) => changesVariable(invocation, name)))
+      ?? changed.find((name) => name !== '*') ?? (changed.length ? 'a variable' : null);
   }
   const subagent = isSubagent(input);
   if (!named || (!subagent && !unattended())) return null;
   const who = subagent ? 'only the main session runs the gate, with the environment its host gave it' : `the gate runs only with the environment the host gave this session, ${UNATTENDED}`;
-  const why = `it runs \`aidrian handoff\` with ${named} set or unset by the command itself, which would move the continuation store, the session, or the host command the gate reads, and ${who}`;
+  const moves = GATE_ENV.includes(named) ? 'which would move the continuation store, the session, or the host command the gate reads, or the policy it reads' : 'and the gate runs with no variable a command sets';
+  const why = `it runs \`aidrian handoff\` with ${named} set or unset by the command itself, ${moves}, and ${who}`;
   return { match: `changes ${named} for aidrian handoff`, reason: projectRuleReason(input, why, human, 'that the handoff runs with the environment the host gave the session') };
 }
 
@@ -174,6 +184,109 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
   const who = subagent ? 'only the main session hands off, through `aidrian handoff continue`' : `a session starts another only through \`aidrian handoff continue\`, ${UNATTENDED}`;
   const why = `it starts or resumes a ${host.name} session outside the handoff gate, which holds every session it starts to a chain floor, and ${who}`;
   return { match: `starts a ${host.name} session`, reason: projectRuleReason(input, why, human, 'to start or resume that session') };
+}
+
+// The `git remote` actions that point a remote at another repository.
+const REMOTE_ACTIONS = new Set(['add', 'set-url', 'rename']);
+// The git config keys that decide which repository a remote names, or what a git command runs, in any case: every key of
+// a remote (its URLs, and `gh-resolved`, gh's default repository), an included file, a URL rewrite, and an alias.
+const POLICY_KEY = /^(?:remote\..+|include\.path|includeif\..+|url\..+|alias\..+)$/iu;
+// The `git config` forms that only read: the options of the older form, and the actions of the newer one.
+const CONFIG_READS = new Set(['--get', '--get-all', '--get-regexp', '--get-urlmatch', '-l', '--list', 'get', 'list']);
+// The forms that write a key they name.
+const CONFIG_WRITES = new Set(['--unset', '--unset-all', '--add', '--replace-all', 'set', 'unset']);
+// The forms that write keys they do not name: an editor, and a whole section renamed or removed.
+const CONFIG_ANY = new Set(['-e', '--edit', '--rename-section', '--remove-section', 'edit', 'rename-section', 'remove-section']);
+// The `git config` options that take the next word as their value.
+const CONFIG_VALUES = new Set(['-f', '--file', '--blob', '--type', '--default', '--comment', '--value']);
+// The text of a command no lexer reads that may change a remote: the words of such a git or gh call, in any order.
+const REMOTE_TEXTS = [
+  [/\bremote\b/iu, /(?<![\w-])(?:add|set-url|rename)(?![\w-])/iu],
+  [/\bconfig\b/iu, /\b(?:remote\.\S+|include\.path|includeif\.\S+|url\.\S+|alias\.\S+)/iu],
+  [/\bconfig\b/iu, /(?<![\w-])(?:--edit|--rename-section|--remove-section|rename-section|remove-section)(?![\w-])/iu],
+  [/\brepo\b/iu, /\bset-default\b/iu],
+  [/\balias\b/iu, /(?<![\w-])(?:set|import)(?![\w-])/iu],
+];
+
+// Whether the words after `git config` write: any form in CONFIG_ANY; else, when they name a POLICY_KEY, a form in
+// CONFIG_WRITES, or no read form and a value after the key.
+function configWrites(words) {
+  if (words.some((text) => CONFIG_ANY.has(text))) return true;
+  const named = [];
+  let reads = false;
+  for (let i = 0; i < words.length; i += 1) {
+    const text = words[i];
+    // git config stops reading options at its first word that is none: a later `--get` or `-l` is a value pattern, and
+    // `get` or `list` is an action only as that first word.
+    if (named.length === 0 && text.startsWith('-') && CONFIG_READS.has(text)) reads = true;
+    if (CONFIG_VALUES.has(text)) i += 1;
+    else if (!text.startsWith('-')) {
+      if (named.length === 0 && (text === 'get' || text === 'list')) reads = true;
+      named.push(text);
+    }
+  }
+  if (!named.some((text) => POLICY_KEY.test(text))) return false;
+  if (words.some((text) => CONFIG_WRITES.has(text))) return true;
+  return !reads && named.length >= 2;
+}
+
+// Whether git's global options set an alias for the one command: `-c alias.<name>=...`, attached or not, or
+// `--config-env alias.<name>=<variable>`.
+const aliasGlobal = (globals) => globals.some((token, i) => {
+  const value = ['-c', '--config-env'].includes(token.text) ? globals[i + 1]?.text : /^(?:-c|--config-env=)(.*)$/su.exec(token.text)?.[1];
+  return typeof value === 'string' && /^alias\./iu.test(value);
+});
+
+// Whether one command the walk read changes a remote, gh's default repository, or how git reads either: `git remote
+// add`, `set-url`, or `rename`; a `git config` write of a remote, include, URL, or alias key (configWrites), or an edit,
+// rename, or removal of a section; an alias given by `-c` or `--config-env`; `gh repo set-default` without `--view`;
+// or `gh alias set` or `import`. A command whose program is a variable or a substitution, and a git or gh call whose
+// words the lexer cannot all read, count when their plain words name such an action.
+function changesRemote({ segment, invocation, unread }) {
+  if (unread !== undefined && REMOTE_TEXTS.some((words) => words.every((word) => word.test(unread)))) return true;
+  const plain = invocation.args.filter((token) => !token.dynamic).map((token) => token.text);
+  const ours = invocation.dynamic || invocation.program === 'git' || invocation.program === 'gh';
+  if (ours && (invocation.dynamic || invocation.args.some((token) => token.dynamic))) {
+    if (REMOTE_TEXTS.some((words) => words.every((word) => plain.some((text) => word.test(text))))) return true;
+  }
+  if (invocation.program === 'gh') {
+    const after = (first, then) => {
+      const at = plain.indexOf(first);
+      return at !== -1 && plain.slice(at + 1).some((text) => then.includes(text));
+    };
+    if (after('alias', ['set', 'import'])) return true;
+    return after('repo', ['set-default']) && !plain.some((text) => text === '--view' || text === '-v');
+  }
+  const git = invocation.program === 'git' ? readGit(segment) : null;
+  if (!git) return false;
+  if (aliasGlobal(git.globals)) return true;
+  const words = git.rest.filter((token) => !token.dynamic).map((token) => token.text);
+  if (git.subcommand === 'remote') return REMOTE_ACTIONS.has(words.find((text) => !text.startsWith('-')));
+  if (git.subcommand === 'config') return configWrites(words);
+  return false;
+}
+
+// Why the call in `input` may not run because it changes which repository the checkout's remotes or gh's default
+// name, or null: { match, reason }. The plugin reads the team's policy from that repository on the forge, such as
+// `solo` (lib/solo.mjs) and the auto-merge and waiver ceilings, so a session that repoints origin could read its own.
+// It holds for a subagent and for a session `unattended()` says the background route started, asked only for such a
+// command. A command in a shell the lexer cannot read counts when its text names such an action. Known limits, as for
+// the other guards here: a write by its path to `.git/config`, a file it includes, or gh's own config folder; a program
+// that runs its arguments as a command, such as `xargs git ...`; and a git subcommand held in a variable, as in
+// `git $ACTION ...`, whose later words name no such action.
+export function remoteChangeDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+  const opaque = opaqueShellCommand(input);
+  const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
+  // Every form it refuses names one of these words, however quoted, so a call with none of them is not walked.
+  if (typeof command !== 'string' || !/remote|config|repo|alias/iu.test(unquoted(command))) return null;
+  const hit = opaque !== null
+    ? REMOTE_TEXTS.some((words) => words.every((word) => opaqueTexts(opaque).some((text) => word.test(text))))
+    : walkCommands(command, null).some(changesRemote);
+  const subagent = isSubagent(input);
+  if (!hit || (!subagent && !unattended())) return null;
+  const who = subagent ? 'only the main session changes them' : `only a session the Human attends changes them, ${UNATTENDED}`;
+  const why = `it changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo, and ${who}`;
+  return { match: 'changes a git remote', reason: projectRuleReason(input, why, human, 'to change the remote') };
 }
 
 // A path part named as a file whose forgery would arm or deliver a continuation, in any case. A chain floor or a task

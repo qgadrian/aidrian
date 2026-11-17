@@ -68,13 +68,16 @@ export const commands = {
       if (action === 'route') {
         if (brief !== undefined || values.prior !== undefined) return usage();
         const { routeOf } = await import('./handoff-continue.mjs');
-        return printed(routeOf({ override: values.route }));
+        const { forgeSolo } = await import('./solo.mjs');
+        return printed(routeOf({ override: values.route, forgeSolo }));
       }
       const shaped = action === 'continue' ? values.prior === undefined : ['check', 'snapshot'].includes(action) && values.route === undefined;
       if (!shaped || !brief || extra.length) return usage();
       if (action === 'continue') {
         const { continueBrief } = await import('./handoff-continue.mjs');
-        return printed(continueBrief(brief, { override: values.route, chainOf }));
+        // The team's `solo` read from the forge, for a machine whose local file leaves the background switch unset.
+        const { forgeSolo } = await import('./solo.mjs');
+        return printed(continueBrief(brief, { override: values.route, chainOf, forgeSolo }));
       }
       const briefPath = path.resolve(brief);
       const prior = values.prior && path.resolve(values.prior);

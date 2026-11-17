@@ -219,7 +219,8 @@ the absolute folders of PATH alone, so an empty or relative entry never runs a `
    listed session, which files the pending mark that holds every other session until the new one's id is listed;
    when that fails, nothing starts.
 2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] <prompt>` there,
-   where the name is that session's, else the brief's slug, `<n>` the continuation's number, the agent
+   where the name is that session's, with any ` · <n>` counts it ends with removed, so a second hop names
+   `widget-work · 2` and not `widget-work · 1 · 2`, else the brief's slug, `<n>` the continuation's number, the agent
    `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter accepts, the mode the
    handing-off session's (below), and the prompt the continuation. It reads the short id from its
    `backgrounded · <id> · <name>` line.
@@ -253,13 +254,16 @@ Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rath
 - Neither the shell of the session's Bash tool nor `claude agents --json` gives the session's permission mode: the
   listing's rows hold `pid`, `cwd`, `kind`, `startedAt`, `sessionId`, `name`, `status`, `id`, and `state`. The
   transcript does, `~/.claude/projects/<start folder, each character but a letter or digit as ->/<session id>.jsonl`
-  (under `CLAUDE_CONFIG_DIR` when set), with a `{"type":"permission-mode","permissionMode":"<mode>","sessionId":"<id>"}`
-  entry; `claude --help` lists `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, and `plan` for
-  `--permission-mode`.
+  (under `CLAUDE_CONFIG_DIR` when set). It may hold `{"type":"permission-mode","permissionMode":"<mode>","sessionId":"<id>"}`
+  entries, and its `user` entries carry the mode as a top-level `"permissionMode":"<mode>"` field beside `sessionId`;
+  some transcripts, checked on 2026-11-17, hold only the latter. `claude --help` lists `acceptEdits`, `auto`,
+  `bypassPermissions`, `manual`, `dontAsk`, and `plan` for `--permission-mode`.
 
 So the adapter passes the handing-off session's permission mode with `--permission-mode`, so an unattended chain does
-not stop at a prompt the old session would not have shown. It reads the last `permission-mode` entry of that session's
-transcript, in the start folder's project folder, else in any project folder, from its last 16 MB, and passes it only
+not stop at a prompt the old session would not have shown. It reads the last entry of that session's transcript with
+a top-level `permissionMode` string, of either shape, in the start folder's project folder, else in any project folder.
+It reads backwards from the end in 1 MB chunks until one names the mode, so it finds one however far back it is;
+it skips a subagent's sidechain entry, an entry of another session, and any line over 32 MB. It passes the mode only
 when it is `acceptEdits`, `auto`, `dontAsk`, `manual`, or `plan`; a transcript's `default` is passed as `manual`.
 A session that runs in `bypassPermissions` starts nothing, and the handoff goes on by the clear route: a session no
 Human attends never runs without permission checks. With no mode it can read, none starts either, since the host's

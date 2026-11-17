@@ -18,7 +18,7 @@ import test from 'node:test';
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundPrompt, continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { claudeOnPath, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
@@ -735,4 +735,73 @@ test('the new session starts in the permission mode of the handing-off session, 
     rmSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
   });
   assert.equal(moved.flag, 'dontAsk');
+});
+
+// Entries shaped like a Claude Code 2.1.326 transcript that holds no `permission-mode` entry: each `user` entry carries
+// the session's mode as a top-level `permissionMode` field, between its `message` and its `sessionId`, and long
+// `assistant` entries carry none.
+const userEntry = (mode, extra = {}) => ({ parentUuid: null, isSidechain: false, promptId: 'p', type: 'user', message: { role: 'user', content: 'go on' }, uuid: 'u', timestamp: '2026-11-17T20:00:00.000Z', permissionMode: mode, origin: 'cli', userType: 'external', entrypoint: 'cli', cwd: '/w', sessionId: SESSION, version: '2.1.326', gitBranch: 'main', ...extra });
+const assistantEntry = (size) => ({ parentUuid: 'u', isSidechain: false, type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(size) }] }, uuid: 'a', sessionId: SESSION });
+const transcript = (setting, entries) => writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${entries.map((each) => (typeof each === 'string' ? each : JSON.stringify(each))).join('\n')}\n`);
+
+test('a transcript with no permission-mode entry gives the mode of its last user entry, however far back it is', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The last entry that names the mode wins, more than 3 MB before the end, behind a line longer than a read chunk.
+  transcript(setting, [userEntry('manual'), userEntry('auto'), assistantEntry(1_500_000), ...Array.from({ length: 40 }, () => assistantEntry(50_000))]);
+  assert.equal(read(), 'auto');
+  // Only a top-level field counts: one nested in a message, quoted in its text, or on a subagent's or another session's
+  // entry does not.
+  transcript(setting, [
+    userEntry('plan'),
+    { type: 'user', message: { content: [{ type: 'tool_result', content: { permissionMode: 'bypassPermissions' } }] }, sessionId: SESSION },
+    { ...assistantEntry(0), message: { content: '{"permissionMode":"bypassPermissions"}' } },
+    userEntry('bypassPermissions', { isSidechain: true }),
+    userEntry('bypassPermissions', { sessionId: 'someone-else' }),
+    '{"permissionMode":"bypassPermissions", not json',
+  ]);
+  assert.equal(read(), 'plan');
+  // The last entry wins over an earlier one of either shape, and a bypassed mode is read as it is.
+  transcript(setting, [{ type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }, userEntry('bypassPermissions')]);
+  assert.equal(read(), 'bypassPermissions');
+  transcript(setting, [userEntry('bypassPermissions'), { type: 'permission-mode', permissionMode: 'dontAsk', sessionId: SESSION }]);
+  assert.equal(read(), 'dontAsk');
+  // No entry names a mode: none is read. A last line with no newline is read too.
+  transcript(setting, [assistantEntry(10), assistantEntry(2_100_000)]);
+  assert.equal(read(), null);
+  writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(assistantEntry(10))}\n${JSON.stringify(userEntry('acceptEdits'))}`);
+  assert.equal(read(), 'acceptEdits');
+});
+
+test('a line too long to hold is skipped, and the entry before it still gives the mode', (t) => {
+  const setting = setup(t, { mode: null });
+  transcript(setting, [userEntry('auto'), { ...assistantEntry(33 * 1024 * 1024), permissionMode: 'bypassPermissions' }, assistantEntry(10)]);
+  assert.equal(sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env }), 'auto');
+});
+
+test('the gate passes on the mode a transcript gives only on its user entries, and refuses when that mode is bypassed', (t) => {
+  const start = (mode) => {
+    const setting = setup(t, { mode: null });
+    transcript(setting, [userEntry(mode), ...Array.from({ length: 30 }, () => assistantEntry(100_000))]);
+    passCheck(setting);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    return { result: gate(setting, { run }), args: bgCalls(calls)[0]?.args ?? null };
+  };
+  const auto = start('auto');
+  assert.equal(auto.result.out[0], 'continue: background');
+  assert.equal(auto.args[auto.args.indexOf('--permission-mode') + 1], 'auto');
+  const bypass = start('bypassPermissions');
+  assert.equal(bypass.args, null, 'no session started');
+  assert.match(bypass.result.out[1], /this session runs with permission checks bypassed/u);
+});
+
+test('a session a hop started and named is named again by its base name and the new count, never a second count', (t) => {
+  const setting = setup(t);
+  const named = (own, chain) => startBackground({ session: SESSION, slug: 'widget', chain, efforts: [], prompt: 'p', env: setting.env, hold: () => true, wait: noWait, run: fakeRun({ name: own, own: setting.dir }).run }).name;
+  assert.equal(named('widget-work · 1', 2), 'widget-work · 2');
+  assert.equal(named('widget-work · 1 · 2', 3), 'widget-work · 3');
+  assert.equal(named('widget-work ·  4', 5), 'widget-work · 5');
+  // A count inside the name stays, and so does the first word of a name that ends in a count.
+  assert.equal(named('v · 2 docs', 1), 'v · 2 docs · 1');
+  assert.equal(named('7 · 1', 2), '7 · 2');
 });

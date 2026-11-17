@@ -32,9 +32,14 @@ const ID = /^[0-9A-Za-z][\w-]{3,127}$/u;
 const PERMISSION_MODES = new Set(['acceptEdits', 'auto', 'dontAsk', 'manual', 'plan']);
 const MODE_NAMES = new Map([['default', 'manual']]);
 const BYPASS = 'bypassPermissions';
-// How much of a transcript's end is read for its last permission mode entry.
-const MODE_TAIL = 16 * 1024 * 1024;
-const MODE_ENTRY = /^\{"type":"permission-mode".*$/gmu;
+// A transcript is read from its end in chunks of MODE_CHUNK bytes until an entry names the mode, so a long session
+// costs no more memory than a short one. A line longer than MODE_LINE is skipped unread, so one huge entry cannot
+// exhaust memory. MODE_KEY picks the lines worth parsing.
+const MODE_CHUNK = 1024 * 1024;
+const MODE_LINE = 32 * 1024 * 1024;
+const MODE_KEY = Buffer.from('"permissionMode"');
+// The count a name ends with, ` · <n>`, once or more: a session a hop started already carries one.
+const CHAIN_SUFFIX = /(?:\s+\u00b7\s*\d+)+$/u;
 // A spawn that failed before `claude` ran, and the output of a `claude --bg` that refused the start before the supervisor
 // took it, checked on 2.1.326: no other failure proves that nothing started.
 const NOT_RUN = new Set(['ENOENT', 'EACCES']);
@@ -95,11 +100,12 @@ function awaitSession({ run, claude, wait, ...want }) {
   return { entry: null, list };
 }
 
-// The permission mode the session `session` runs in, from the last `permission-mode` entry of its transcript,
+// The permission mode the session `session` runs in, from the last entry of its transcript with a `permissionMode`,
 // `<config folder>/projects/<start folder, each character but a letter or digit as ->/<session>.jsonl`, else that file
 // in any project folder there: the mode's name, or null when none can be read. `env.CLAUDE_CONFIG_DIR` moves the config
 // folder, as it does for Claude Code. On 2.1.326 neither the gate's shell nor `claude agents --json` gives the mode; the
-// transcript holds `{"type":"permission-mode","permissionMode":<mode>,"sessionId":<id>}` from the start and each change.
+// transcript may hold `{"type":"permission-mode","permissionMode":<mode>,"sessionId":<id>}` entries, and its `user`
+// entries carry the mode as a top-level `permissionMode` field, which is all some transcripts have.
 export function sessionMode({ session, cwd, env }) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
   const projects = path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'projects');
@@ -112,42 +118,75 @@ export function sessionMode({ session, cwd, env }) {
     return null;
   }
   for (const file of [first, ...folders.map((folder) => path.join(projects, folder, name))]) {
-    const tail = readTail(file);
-    if (tail === null) continue;
-    const entry = [...tail.matchAll(MODE_ENTRY)].map(([line]) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    }).filter((each) => each !== null && (each.sessionId === undefined || each.sessionId === session)).at(-1);
-    return typeof entry?.permissionMode === 'string' ? entry.permissionMode : null;
+    const mode = lastMode(file, session);
+    if (mode !== undefined) return mode;
   }
   return null;
 }
 
-// The last MODE_TAIL bytes of the regular file `file`, as text, or null.
-function readTail(file) {
+// The mode a transcript line names: its top-level `permissionMode` string when the entry is the session's own, else
+// null. A sidechain entry is a subagent's, which may run in another mode.
+function lineMode(line, session) {
+  if (line.indexOf(MODE_KEY) === -1) return null;
+  try {
+    const entry = JSON.parse(line.toString('utf8'));
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry) || entry.isSidechain === true) return null;
+    if (entry.sessionId !== undefined && entry.sessionId !== session) return null;
+    return typeof entry.permissionMode === 'string' ? entry.permissionMode : null;
+  } catch {
+    return null;
+  }
+}
+
+// The mode the last line of the regular file `file` to name one names, read backwards in MODE_CHUNK chunks: the mode,
+// null when no line names one, or undefined when the file cannot be read.
+function lastMode(file, session) {
   let fd;
   try {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const stat = fstatSync(fd);
-    if (!stat.isFile()) return null;
-    const length = Math.min(stat.size, MODE_TAIL);
-    const buffer = Buffer.alloc(length);
-    readSync(fd, buffer, 0, length, stat.size - length);
-    return buffer.toString('utf8');
+    if (!stat.isFile()) return undefined;
+    // `rest`: the start of the text read so far, up to its first newline, the end of a line that starts further back;
+    // `skip`: that line is longer than MODE_LINE, and its bytes are dropped.
+    let end = stat.size;
+    let rest = Buffer.alloc(0);
+    let skip = false;
+    while (end > 0) {
+      const start = Math.max(0, end - MODE_CHUNK);
+      const chunk = Buffer.alloc(end - start);
+      readSync(fd, chunk, 0, chunk.length, start);
+      end = start;
+      let text = Buffer.concat([chunk, rest]);
+      for (let cut = text.lastIndexOf(0x0a, text.length - rest.length - 1); cut !== -1; cut = text.lastIndexOf(0x0a, cut - 1)) {
+        const line = text.subarray(cut + 1);
+        if (!skip) {
+          const mode = lineMode(line, session);
+          if (mode !== null) return mode;
+        }
+        skip = false;
+        text = text.subarray(0, cut);
+        if (cut === 0) break;
+      }
+      rest = text;
+      if (rest.length > MODE_LINE) {
+        rest = Buffer.alloc(0);
+        skip = true;
+      }
+    }
+    return skip ? null : lineMode(rest, session);
   } catch {
-    return null;
+    return undefined;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
 }
 
-// The new session's name: the handing-off session's, else the slug, then ` · <chain>`, within 100 characters.
+// The new session's name: the handing-off session's, without the count a hop gave it, else the slug, then
+// ` · <chain>`, within 100 characters.
 function sessionName(own, slug, chain) {
   const suffix = ` · ${chain}`;
-  const base = typeof own === 'string' && NAME.test(own) ? own : slug;
+  const bare = typeof own === 'string' && NAME.test(own) ? own.replace(CHAIN_SUFFIX, '') : '';
+  const base = NAME.test(bare) ? bare : slug;
   return `${base.slice(0, 100 - suffix.length).trimEnd()}${suffix}`;
 }
 

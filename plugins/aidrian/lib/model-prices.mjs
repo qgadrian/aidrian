@@ -13,12 +13,13 @@ const DAY_MS = 86_400_000;
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 // A row's `match` is a model id's version, such as `opus-4-1`. It matches where the version ends: at the end of the id,
-// before a date (`-20250805`), or before any other character but a hyphen or a digit, such as `[1m]` or `@`.
-// So `opus-4` matches `claude-opus-4-20250514` and never `claude-opus-4-5`. A fallback row matches its family word anywhere.
+// before a date (`-20250805`), before a hyphen and a non-digit (`-latest`, `-v1`), or before any other character but a
+// hyphen or a digit, such as `[1m]` or `@`. So `opus-4` matches `claude-opus-4-20250514` and never `claude-opus-4-5`,
+// whose `-0` alias (`claude-opus-4-0`) needs a row of its own. A fallback row matches its family word anywhere.
 const patterns = new Map();
 function matches(row, model) {
   if (row.fallback) return model.includes(row.match);
-  if (!patterns.has(row.match)) patterns.set(row.match, new RegExp(`${escape(row.match)}(?=$|-\\d{8}(?!\\d)|[^-\\d])`, 'u'));
+  if (!patterns.has(row.match)) patterns.set(row.match, new RegExp(`${escape(row.match)}(?=$|-\\d{8}(?!\\d)|-\\D|[^-\\d])`, 'u'));
   return patterns.get(row.match).test(model);
 }
 

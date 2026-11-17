@@ -61,7 +61,7 @@ Agents are named as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Code
 | `review-loop` | An orchestrator or autopilot session that opened a draft pull request and ran no review round | `harness-mechanic` checks what runs after the implementing skill's draft: the `orchestrator` routing and the `autopilot` phases. A project's own orchestrator goes to the agent that owns its file. |
 | `decision-authority` | The Human overriding too many of the decisions agents made alone | Show the Human the class its `summary` names. The Human chooses: list the class in `decisions.escalate` or the doc in `decisions.escalateDocs`, lower that domain's mode, or have `harness-librarian` write the missing rule. |
 | `cost` | The cost a session rising | Name the costly sessions with `aidrian report sessions`, with their main conversation against subagent split, and capture a lesson. |
-| `prices` | A model with no price row of its own, or model prices read over 60 days ago | The prices are the plugin's: capture the problem's lesson, which targets the plugin. Costs stay estimates until it is fixed. |
+| `prices` | A model with no price row of its own, or, in the plugin's own repository only, model prices read over 60 days ago | The prices are the plugin's: capture the problem's lesson, which targets the plugin. Costs stay estimates until it is fixed. |
 
 ## 4. Capture lessons
 

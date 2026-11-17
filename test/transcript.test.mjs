@@ -59,7 +59,7 @@ test('a request found in two transcripts folded into one result counts once', ()
   assert.equal(aggregateUsage(line, once).perModel['claude-opus-5-5'].calls, 1);
 });
 
-test('cost follows the price map: cache reads and writes at their multipliers, unknown and fallback models listed', () => {
+test('cost follows the price map: cache reads and writes at their multipliers, unknown models listed', () => {
   assert.equal(priceFor('claude-opus-5-5').input, 4);
   assert.equal(priceFor('claude-sonnet-4-6').input, 3, 'a row of its own');
   const perModel = {
@@ -67,9 +67,7 @@ test('cost follows the price map: cache reads and writes at their multipliers, u
     'gpt-x': { calls: 1, input: 5, output: 5, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
   };
   // 4 input + 20 output + 4 * 0.05 cache read + 4 * 1.25 + 4 * 2 cache writes.
-  assert.deepEqual(estimateCostUsd(perModel), { total: 37.2, unknownModels: ['gpt-x'], fallbackModels: [], byModel: { 'claude-opus-5-5': 37.2 } });
-  const future = { 'claude-sonnet-9-9': { calls: 1, input: 1_000_000, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 } };
-  assert.deepEqual(estimateCostUsd(future).fallbackModels, ['claude-sonnet-9-9'], 'a model only a family row prices is named');
+  assert.deepEqual(estimateCostUsd(perModel), { total: 37.2, unknownModels: ['gpt-x'], byModel: { 'claude-opus-5-5': 37.2 } });
 });
 
 test('a Haiku 5.5 request over 100,000 prompt tokens is billed at the higher price, and counted once in the tokens', () => {

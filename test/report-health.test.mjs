@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { DEFAULTS, pluginRepository } from '../plugins/aidrian/lib/config.mjs';
 import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { staleTables } from '../plugins/aidrian/lib/model-prices.mjs';
@@ -338,7 +338,7 @@ test('summarizeHealth names a model priced by its family or not at all, and a pr
     { event: 'stop', ts: at(10), session_id: 'p1', agent_type: 'x', models: ['gpt-x'] },
     { event: 'session', ts: at(24 * 40), session_id: 'p0', models: ['claude-opus-8'] },
   ];
-  const health = summarizeHealth({ rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith(), prices });
+  const health = summarizeHealth({ rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith(), prices, pluginRepository: true });
   const { prices: signal } = health.signals;
   assert.deepEqual([signal.status, signal.sample.n, signal.fallback, signal.unpriced], ['problem', 3, ['claude-opus-9'], ['gpt-x']], 'the old row is out of the window');
   assert.deepEqual(signal.stale, [{ host: 'fake', read_on: '2026-08-01', days: 89 }]);
@@ -348,7 +348,21 @@ test('summarizeHealth names a model priced by its family or not at all, and a pr
   assert.equal(byKind['price-stale'].summary, 'The model prices were last read over 60 days ago: fake on 2026-08-01, 89 days.');
   assert.deepEqual([byKind['price-fallback'].fix, byKind['price-stale'].lesson.target], ['prices', 'plugin']);
   assert.match(formatHealth(health, { file: 'f', since: '30d' }),
-    /\n {2}Model prices: problem; 3 models in the window, 2 without a price row of its own: claude-opus-9, gpt-x; tables read over 60 days ago: fake\n/);
+    /\n {2}Model prices: problem; 3 models in the window, 2 without a price row of its own: claude-opus-9, gpt-x; tables read over 60 days ago: fake on 2026-08-01\n/);
+});
+
+test('summarizeHealth ranks a stale price table only in the plugin`s own repository; elsewhere the line shows its date', () => {
+  const prices = [{ host: 'fake', models: [], rows: [{ match: 'opus-5-5', input: 4, output: 20, source: 'https://example.test', readOn: '2026-08-01' }] }];
+  const rows = [{ event: 'session', ts: at(10), session_id: 'p1', models: ['claude-opus-5-5'] }];
+  const input = { rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith(), prices };
+  const project = summarizeHealth(input);
+  assert.deepEqual(project.problems.map((item) => item.kind), []);
+  assert.deepEqual([project.signals.prices.status, project.signals.prices.stale], ['ok', [{ host: 'fake', read_on: '2026-08-01', days: 89 }]]);
+  assert.match(formatHealth(project, { file: 'f', since: '30d' }),
+    /\n {2}Model prices: ok; 1 model in the window, 0 without a price row of its own; tables read over 60 days ago: fake on 2026-08-01 \(the plugin's to update; not a problem here\)\n/);
+  const plugin = summarizeHealth({ ...input, pluginRepository: true });
+  assert.deepEqual([plugin.signals.prices.status, plugin.problems.map((item) => item.kind)], ['problem', ['price-stale']]);
+  assert.equal(plugin.problems[0].lesson.target, 'plugin');
 });
 
 test('formatHealth prints the problems worst first, then each signal with its sample and threshold', () => {
@@ -505,9 +519,8 @@ test('aidrian report health prints the page since 30d, --json all of it, takes -
   const report = (args) => spawnSync(CLI, ['report', 'health', ...args, '--project', dir], { cwd: base, env, encoding: 'utf8' });
   const empty = report([]);
   assert.equal(empty.status, 0, empty.stderr);
-  // The shipped price tables age with the clock: once one is stale, that is the one problem an empty log has.
-  const problems = staleTables().length ? 'Problems, worst first: 1\n {2}1\\. The model prices were last read' : 'Problems: none at these thresholds\\.\n';
-  assert.match(empty.stdout, new RegExp(`^Harness health, from .*dispatch-log\\.jsonl, since 30d\\n${problems}`, 'u'));
+  // The shipped price tables age with the clock, but a stale one is a problem only in the plugin's own repository.
+  assert.match(empty.stdout, /^Harness health, from .*dispatch-log\.jsonl, since 30d\nProblems: none at these thresholds\.\n/u);
   assert.match(empty.stdout, /\n {2}Reviews: not enough data; rounds not enough data \(n=0, needs 5 reviewed\)/);
   const state = spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   mkdirSync(state, { recursive: true });
@@ -525,4 +538,11 @@ test('aidrian report health prints the page since 30d, --json all of it, takes -
   assert.equal(json.since, '7d');
   assert.deepEqual(Object.keys(json.signals), ['budget', 'docs', 'agents', 'reviews', 'drafts', 'denies', 'decisions', 'cost', 'prices', 'lessons']);
   assert.equal(json.signals.reviews.rounds.n, 0);
+  assert.equal(json.signals.prices.stale_ranked, false, 'a project other than the plugin\'s repository never ranks a stale price table');
+  // The same folder as a checkout of the plugin's own repository: the project id its lessons inbox matches on.
+  spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', pluginRepository()]);
+  const own = report(['--json']);
+  assert.equal(own.status, 0, own.stderr);
+  assert.equal(JSON.parse(own.stdout).signals.prices.stale_ranked, true);
+  assert.equal(JSON.parse(own.stdout).problems.some((item) => item.kind === 'price-stale'), staleTables().length > 0);
 });

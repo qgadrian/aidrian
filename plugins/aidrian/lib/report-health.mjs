@@ -67,7 +67,8 @@ const shown = (percent, threshold) => {
 
 // { thresholds, problems, signals }. `knowledge` is knowledgeOf's { indexed, always, tags }; `reviews` is reviewRounds'
 // result, or its { error }; `lessons` is the project's folded inbox, and `pluginLessons` the plugin's, when it is another
-// file: a problem whose lesson targets the plugin finds its lesson there.
+// file: a problem whose lesson targets the plugin finds its lesson there. `pluginRepository` is true in a checkout of the
+// plugin's own repository, the one place a stale price table is a problem: only its maintainer can read the pages again.
 export function summarizeHealth(input) {
   const { config } = input;
   const { problems, signals } = judge(input);
@@ -80,7 +81,7 @@ export function summarizeHealth(input) {
 }
 
 // Every signal over the rows since `sinceMs`, and the problems they found, unranked.
-function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lessons = [], config, prices = priceTables() }) {
+function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lessons = [], config, prices = priceTables(), pluginRepository = false }) {
   const limits = config.telemetry.health;
   const problems = [];
   const add = (kind, fields) => problems.push({ kind, fix: FIXES[kind], subject: null, lesson: null, ...fields });
@@ -93,7 +94,7 @@ function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lesson
     denies: deniesSignal(rows, sinceMs, limits, config.telemetry.hookDenies, add),
     decisions: decisionsSignal(rows, sinceMs, limits, add),
     cost: costSignal(rows, sinceMs, limits, add),
-    prices: pricesSignal(rows, sinceMs, now, prices, add),
+    prices: pricesSignal(rows, sinceMs, now, { tables: prices, pluginRepository }, add),
     lessons: lessonsSignal(lessons, sinceMs, now, config.lessons, add),
   };
   return { problems, signals };
@@ -375,8 +376,9 @@ function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
 
 // The models the window's session and stop rows ran that no price row of their own prices, from the host adapters' tables
 // (lib/model-prices.mjs) as they are now, and the tables read more than STALE_DAYS ago. Counts and dates, so no minimum
-// sample applies. The tables are the plugin's, so each problem's lesson targets the plugin.
-function pricesSignal(rows, sinceMs, now, tables, add) {
+// sample applies. The tables are the plugin's, so each problem's lesson targets the plugin. A stale table is a problem
+// only in the plugin's own repository, whose maintainer reads the pages again; elsewhere the line shows its date, unranked.
+function pricesSignal(rows, sinceMs, now, { tables, pluginRepository }, add) {
   const ran = rows.filter((row) => (row.event === 'session' || row.event === 'stop') && Date.parse(row.ts) >= sinceMs);
   const models = [...new Set(ran.flatMap((row) => (Array.isArray(row.models) ? row.models : [])))].sort();
   const priced = models.map((model) => [model, priceFor(model, tables)]);
@@ -393,15 +395,15 @@ function pricesSignal(rows, sinceMs, now, tables, add) {
       lesson: { tier: 'P3', kind: 'improvement', target: 'plugin', key: 'health:price-fallback' },
     });
   }
-  if (stale.length) {
+  if (stale.length && pluginRepository) {
     add('price-stale', {
       value: stale[0].days, threshold: STALE_DAYS, sample: { n: stale.length, of: 'price tables' },
       summary: `The model prices were last read over ${STALE_DAYS} days ago: ${stale.map((table) => `${table.host} on ${table.read_on}, ${table.days} days`).join('; ')}.`,
       lesson: { tier: 'P3', kind: 'improvement', target: 'plugin', key: 'health:price-stale' },
     });
   }
-  const status = fallback.length || unpriced.length || stale.length ? PROBLEM : OK;
-  return { status, sample, fallback, unpriced, stale };
+  const status = fallback.length || unpriced.length || (stale.length && pluginRepository) ? PROBLEM : OK;
+  return { status, sample, fallback, unpriced, stale, stale_ranked: pluginRepository };
 }
 
 // The lesson inbox: P1 lessons, the backlog against lessons.maxOpen and lessons.maxAgeDays, and fixes since `sinceMs`
@@ -494,8 +496,9 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
   lines.push(`${head('Session cost', cost)} (${n(cost.older.n, minSample)} sessions a half); ${plural(cost.sample.n, 'session')}, ${money(cost.cost_usd)}${trend}`);
   const without = [...prices.fallback, ...prices.unpriced];
   const listed = without.length ? `: ${without.join(', ')}` : '';
-  const read = prices.stale.length ? `tables read over ${STALE_DAYS} days ago: ${prices.stale.map((table) => table.host).join(', ')}`
-    : `every table read within ${STALE_DAYS} days`;
+  const dates = prices.stale.map((table) => `${table.host} on ${table.read_on}`).join(', ');
+  const owner = prices.stale_ranked ? '' : " (the plugin's to update; not a problem here)";
+  const read = prices.stale.length ? `tables read over ${STALE_DAYS} days ago: ${dates}${owner}` : `every table read within ${STALE_DAYS} days`;
   lines.push(`${head('Model prices', prices)}; ${plural(prices.sample.n, 'model')} in the window, ${without.length} without a price row of its own${listed}; ${read}`);
   const oldest = lessons.oldest_days === null ? '' : `, the oldest ${lessons.oldest_days} days`;
   lines.push(`${head('Lessons', lessons)}; ${lessons.sample.n} open, ${lessons.p1} P1${oldest}; ` +

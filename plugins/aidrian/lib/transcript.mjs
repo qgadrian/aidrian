@@ -96,11 +96,10 @@ export function partOf(acc, keep = () => true) {
 }
 
 // Estimated USD in total and per model, at the host adapters' prices (lib/model-prices.mjs). A model no table prices is
-// listed in `unknownModels` and costs nothing here; one only a family's fallback row prices is listed in `fallbackModels`.
+// listed in `unknownModels` and costs nothing here. `aidrian report health` names a model only a fallback row prices.
 export function estimateCostUsd(perModel) {
   let total = 0;
   const unknownModels = [];
-  const fallbackModels = [];
   const byModel = {};
   for (const [model, usage] of Object.entries(perModel)) {
     const price = priceFor(model);
@@ -108,12 +107,11 @@ export function estimateCostUsd(perModel) {
       unknownModels.push(model);
       continue;
     }
-    if (price.fallback) fallbackModels.push(model);
     const cost = costUsd(usage, price);
     byModel[model] = Math.round(cost * 10000) / 10000;
     total += cost;
   }
-  return { total: Math.round(total * 10000) / 10000, unknownModels, fallbackModels, byModel };
+  return { total: Math.round(total * 10000) / 10000, unknownModels, byModel };
 }
 
 // One token total over every model: { input, output, cache_read, cache_write, cache_write_5m, cache_write_1h }.

@@ -88,8 +88,8 @@ npm run check
 ```
 
 A test that pins a price you changed, such as the rates in `test/transcript.test.mjs`, changes with the price; name each in the pull request.
-Then `plugins/aidrian/bin/aidrian report health --project <a project that uses the plugin>`: its "Model prices" line says `ok`,
-or names only models the page does not list.
+Then `plugins/aidrian/bin/aidrian report health --project .` in this repository, the one project where a stale table ranks:
+its "Model prices" line says `ok`, or names only models the page does not list.
 
 Fix what failed and run both again.
 

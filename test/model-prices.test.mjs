@@ -22,15 +22,29 @@ test('a row matches its own version: never a later version, and through a date o
   assert.deepEqual(rates('claude-opus-4-6[1m]'), [5, 25, false]);
   assert.deepEqual(rates('anthropic.claude-sonnet-4-5-20250929-v1:0'), [3, 15, false]);
   assert.deepEqual(rates('claude-opus-4-1@20250805'), [15, 75, false]);
+  assert.deepEqual(rates('claude-opus-4-0'), [15, 75, false], 'the -0 alias of Opus 4');
+  assert.deepEqual(rates('claude-sonnet-4-0'), [3, 15, false], 'the -0 alias of Sonnet 4');
+  assert.deepEqual(rates('anthropic.claude-opus-4-6-v1'), [5, 25, false], 'a hyphen and a letter end the version');
+  assert.deepEqual(rates('claude-3-5-haiku-latest'), [0.8, 4, false]);
+  assert.deepEqual(rates('claude-3-opus-latest'), [15, 75, false]);
   assert.equal(priceFor('claude-sonnet-5').cacheRead, undefined, 'Sonnet 5 hits the cache at the standard multiple');
   assert.equal(priceFor('claude-sonnet-5-5').cacheRead, 0.05);
+});
+
+test('a retired Sonnet keeps its own price, never the newer family fallback', () => {
+  const rates = (model) => [priceFor(model)?.input, priceFor(model)?.output, priceFor(model)?.cacheRead, priceFor(model)?.fallback];
+  for (const model of ['claude-3-7-sonnet-20250219', 'us.anthropic.claude-3-7-sonnet-20250219-v1:0', 'claude-3-7-sonnet-latest',
+    'claude-3-5-sonnet-20241022', 'claude-3-sonnet-20240229']) {
+    assert.deepEqual(rates(model), [3, 15, undefined, false], model);
+    assert.match(priceFor(model).unconfirmed, /^retired/u, model);
+  }
 });
 
 test('a model no row of its own names is priced by its family, flagged as a fallback; an unknown family is null', () => {
   const future = priceFor('claude-sonnet-9-9');
   assert.equal(future.fallback, true);
   assert.equal(future.host, 'claude-code');
-  assert.equal(priceFor('claude-3-7-sonnet-20250219').fallback, true, 'a retired model the page no longer lists');
+  assert.deepEqual([future.input, future.output, future.cacheRead], [2, 10, 0.05], 'the family\'s newest price');
   assert.equal(priceFor('gpt-x'), null);
   assert.equal(priceFor(''), null);
   assert.equal(priceFor(undefined), null);

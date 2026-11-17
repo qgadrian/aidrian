@@ -436,8 +436,11 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 - **Session cost**, over each half of the window's sessions, in the order they ended: a problem when the newer half costs
   over `costRisePercent` more a session than the older half. Fix: `cost`.
 - **Model prices**, over the models the window's `session` and `stop` rows ran, priced by the tables as they are now:
-  a problem when a model has no [price row](#model-prices) of its own, so a family's fallback row priced it or none did,
-  or when a table holds a row read over 60 days ago. Its lessons target the plugin. Fix: `prices`.
+  a problem when a model has no [price row](#model-prices) of its own, so a family's fallback row priced it or none did.
+  A table that holds a row read over 60 days ago is a problem only in a checkout of the plugin's own repository,
+  the project id that receives the [plugin's lessons](lessons.md#the-plugins-inbox), since only its maintainer reads the pages again.
+  In any other project the line names the table and its read date, `(the plugin's to update; not a problem here)`,
+  and `--json` shows `stale_ranked: false`. Its lessons target the plugin. Fix: `prices`.
 - **Lessons**, over the open lessons in the project's inbox: a problem when a P1 is open, a fix resolved in the window recurred,
   or the inbox passes `lessons.maxOpen` or `lessons.maxAgeDays`. Fix: `lesson-triage`.
 
@@ -476,11 +479,14 @@ assuming no host. A table has:
 - `models`: the model ids the host's model choices name today. A test fails when one has no row of its own,
   or when a model choice names none of them.
 - `rows`: `{ match, input, output, cacheRead?, over?, source, readOn }`, USD per million tokens from the page `source`, read on `readOn`.
-  `match` is a version, such as `opus-4-1`, and matches a model id where that version ends, so `opus-4` never prices `opus-4-5`.
+  `match` is a version, such as `opus-4-1`, and matches a model id where that version ends: at its end, before a date
+  (`-20250805`), before a hyphen and a non-digit (`-latest`, `-v1`), or before any character but a hyphen or a digit (`[1m]`, `@`).
+  So `opus-4` never prices `opus-4-5`, and an alias that adds a digit, such as `claude-opus-4-0`, needs a row of its own.
   `cacheRead` is a cache hit's multiple of the input rate, 0.1 unless set; cache writes cost 1.25x (5 minutes) and 2x (1 hour).
   `over` is the price of a request whose prompt, cache reads and writes included, is over `over.prompt` tokens.
   A row with `fallback: true` prices a family's model that no row of its own names, at the family's newest price, and
   flags it, so `aidrian report health` names the model. A row with `unconfirmed` is a retired price the page no longer lists.
+  A retired model keeps such a row, so the newer family price of a fallback row never re-prices it.
 
 Codex has no prices yet: nothing reads its transcripts, so its sessions have no cost. A model no table prices costs $0
 and is named as unpriced. The repository's `model-prices` skill says how a maintainer reads the price pages and updates the rows.

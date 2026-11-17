@@ -557,6 +557,10 @@ export function pluginProjectId() {
   return pluginId;
 }
 
+// Whether `project` is a checkout of the plugin's own repository: its project id is the plugin's, the match that sends
+// plugin lessons to this checkout's inbox (lib/lesson-inbox.mjs). False when the manifest names no repository.
+export const isPluginRepository = (project) => Boolean(pluginProjectId()) && projectId(project) === pluginProjectId();
+
 // One spelling per remote: `git@host:owner/repo.git`, `ssh://git@host:22/owner/repo`, and `https://host/owner/repo/`
 // all become `host/owner/repo`.
 export function normalizeRemote(url) {

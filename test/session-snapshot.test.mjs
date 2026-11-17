@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { arm, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { arm, noteFrom, noteStarted, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { cachedValue } from '../plugins/aidrian/lib/session-cached-value.mjs';
 import { DISPLAY_CAPS, displayText, MERGED_HEADS, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
@@ -149,6 +149,32 @@ test('an armed continuation adds its chain to the line; the store is read and le
   assert.deepEqual(listing(), before, 'no store file is added, removed, or touched');
   const other = env.run(['--session', 'another', '--transcript', transcript]).json.handoff;
   assert.deepEqual([other.chain, other.continueArmed, other.lastBrief], [0, false, 'snapshot-task'], 'the latest brief is any session`s');
+});
+
+test('a session the background route started shows the floor filed under its short id, above the working copy`s maxChain', (t) => {
+  const env = setup(t);
+  const transcript = path.join(env.base, 'session.jsonl');
+  writeFileSync(transcript, turnsOf('handoff-cost')[0]);
+  const store = openStore(env.projectState(), { checkouts: [], maxChain: 3 });
+  const brief = path.join(store.handoffs, '2026-11-17-snapshot-task.md');
+  // The base branch allows up to 5, so a background start may give a floor the working copy's maxChain of 3 is below.
+  assert.ok(noteFrom(store, 'bg12', { slug: 'snapshot-task', chain: 4, brief, route: 'background' }));
+  const { json } = env.run(['--session', 'bg12-started-session', '--transcript', transcript]);
+  assert.deepEqual([json.handoff.chain, json.handoff.maxChain, json.handoff.continueArmed], [4, 3, false]);
+  assert.doesNotMatch(env.run(['--session', 'bg12-started-session', '--transcript', transcript, '--line']).stdout, /armed/u);
+});
+
+test('a background start arms nothing: the session that handed off keeps continueArmed false and its level', (t) => {
+  const env = setup(t);
+  const transcript = path.join(env.base, 'session.jsonl');
+  writeFileSync(transcript, turnsOf('handoff-cost')[4]);
+  const store = openStore(env.projectState(), { checkouts: [], maxChain: 3 });
+  const brief = path.join(store.handoffs, '2026-11-17-snapshot-task.md');
+  const started = { sha256: 'b'.repeat(64), slug: 'snapshot-task', brief, chain: 1, id: 'bg12', session: null, name: null, cwd: env.dir };
+  assert.ok(noteStarted(store, ID, started));
+  const { json } = env.run(['--session', ID, '--transcript', transcript]);
+  assert.deepEqual([json.handoff.level, json.handoff.chain, json.handoff.continueArmed], ['due', 0, false]);
+  assert.doesNotMatch(env.run(['--session', ID, '--transcript', transcript, '--line']).stdout, /armed/u);
 });
 
 test('a refused continuation store leaves chain, continueArmed, and lastBrief null; the snapshot calls no store writer', (t) => {

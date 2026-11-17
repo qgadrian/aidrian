@@ -80,9 +80,9 @@ export function slugOf(name) {
 // symlink; it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the
 // case it was spelled in; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
 // writable by every user, where the system has user ids. A folder its group may write passes: a umask of 002 is common. A folder not made yet passes,
-// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds every
-// chain a marker holds. `uid` is this process's user, null where the system has none, and every read refuses a marker
-// or a brief another user owns.
+// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds the
+// chain of an armed or ready marker; a chain floor or a start record is bounded by CHAIN_CEILING alone. `uid` is
+// this process's user, null where the system has none, and every read refuses a marker or a brief another user owns.
 export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
   const real = resolvedPath(storePath(state));

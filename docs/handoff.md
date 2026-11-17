@@ -412,10 +412,14 @@ transcripts only. It needs the session's folder in the state folder, so when the
 as with `state.dir` set to a folder in the repository, the snapshot gives no handoff, lessons, or audits section, and
 names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
 gives no handoff section either, and names `handoff` and `worktrees`.
-`chain`, `maxChain`, and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the
-session armed a continuation, its chain, or the chain the session was started with. `lastBrief` is the slug of the
-newest brief in the handoffs folder, whichever session wrote it: a regular file this user owns, never a symlink or a
-folder. A store the gate refuses leaves `chain`, `continueArmed`, and `lastBrief` null; `maxChain` still shows.
+`chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
+armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
+from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's
+`maxChain`, at most 5, so the `chain` of a session the [background route](#the-background-route) started may be above
+`maxChain`: a floor is read whatever the limit. A background start arms nothing, so in the session that handed off
+`continueArmed` stays false and its level stands; the prompt hook names the session that owns the work now.
+`lastBrief` is the slug of the newest brief in the handoffs folder, whichever session wrote it: a regular file this
+user owns, never a symlink or a folder. A store the gate refuses leaves `chain`, `continueArmed`, and `lastBrief` null; `maxChain` still shows.
 
 **Worktrees.** `owned` counts the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is
 the head commit of a merged pull request of their branch, before [worktree cleanup](project-folder.md#task-worktrees)'s own tree and age

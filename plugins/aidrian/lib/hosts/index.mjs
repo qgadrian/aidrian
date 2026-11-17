@@ -124,6 +124,9 @@ export const projectFolders = (kind) => HOSTS.flatMap((host) => host.projectFold
 // `models` in config.json, per host: { <key>: { model, effort } }.
 export const modelChoices = () => Object.fromEntries(HOSTS.map((host) => [host.modelsKey, host.modelChoices]));
 
+// Every host's model prices, as { host, models, rows }: the data lib/model-prices.mjs reads. A host with none has no rows.
+export const priceTables = (hosts = HOSTS) => hosts.map((host) => ({ host: host.id, models: host.modelPrices?.models ?? [], rows: host.modelPrices?.rows ?? [] }));
+
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];
 

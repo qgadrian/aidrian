@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { coverage, coverageLines, readLog } from './dispatch-log.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { projectAt, recordsFolder, stateDir } from './project.mjs';
+import { isPluginRepository, projectAt, recordsFolder, stateDir } from './project.mjs';
 import { formatReport, summarize } from './report-agents.mjs';
 import { formatDocs, knowledgeOf, summarizeDocs } from './report-docs.mjs';
 import { formatSessions, summarizeSessions } from './report-sessions.mjs';
@@ -104,6 +104,7 @@ export const commands = {
           reviews: reviewRounds(prs, config.github.reviewer, forgeFor(project.root), { sinceMs }),
           lessons: lessons(own),
           pluginLessons: plugin === own ? null : lessons(plugin),
+          pluginRepository: isPluginRepository(project),
           config,
         });
         const notes = coverageLines(cover, { hookDenies: true, sendBacks: true });

@@ -5,64 +5,45 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { costUsd, priceFor, promptTokens } from './model-prices.mjs';
 import { readPrCall } from './rules/github/pr-body.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
-// USD per million tokens, matched by substring (or a RegExp) in this order (more specific first). List prices from
-// https://platform.claude.com/docs/en/about-claude/pricing, read 2026-10-28. `cacheRead` is the cache-hit multiplier
-// of the input rate where a model sets one below the standard 0.1x. Cache writes cost 1.25x (5 minutes) and 2x (1 hour).
-export const PRICE_MAP = [
-  { match: 'fable-5-1', input: 10, output: 50, cacheRead: 0.025 },
-  { match: 'mythos-5-1', input: 10, output: 50, cacheRead: 0.025 },
-  { match: 'fable-5', input: 10, output: 50 },
-  { match: 'mythos-5', input: 10, output: 50 },
-  { match: 'opus-5-5', input: 4, output: 20, cacheRead: 0.05 },
-  { match: 'opus-5', input: 5, output: 25 },
-  // Opus 4 and 4.1 kept the old $15/$75; from 4.5 on, $5/$25. A date suffix follows the version: opus-4-20250514.
-  { match: 'opus-4-1', input: 15, output: 75 },
-  { match: /opus-4(?:-\d{8}|$)/, input: 15, output: 75 },
-  { match: 'opus-4', input: 5, output: 25 },
-  { match: 'claude-3-opus', input: 15, output: 75 },
-  { match: 'sonnet-5-5', input: 2, output: 10, cacheRead: 0.05 },
-  { match: 'sonnet-5', input: 2, output: 10 },
-  { match: 'sonnet', input: 3, output: 15 },
-  { match: 'haiku-5-5', input: 0.1, output: 0.5 },
-  { match: 'claude-3-5-haiku', input: 0.8, output: 4 },
-  { match: 'claude-3-haiku', input: 0.25, output: 1.25 },
-  { match: 'haiku', input: 1, output: 5 },
-];
-// The multiples of the input rate: a cache hit where the model sets none, and the two cache writes.
-export const CACHE_READ_MULT = 0.1;
-export const CACHE_WRITE_5M_MULT = 1.25;
-export const CACHE_WRITE_1H_MULT = 2;
-
-export const priceFor = (model) =>
-  PRICE_MAP.find((price) => typeof model === 'string' && (price.match instanceof RegExp ? price.match.test(model) : model.includes(price.match)));
-
+const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'];
 const emptyUsage = () => ({ calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
+
+// Adds one request's tokens to its model's usage. A request whose prompt is over its price row's `over.prompt` is also
+// added to the usage's `over`, the part billed at the higher price (lib/model-prices.mjs costUsd); sumTokens reads the whole.
+function addTokens(perModel, model, tokens) {
+  const m = (perModel[model] ??= emptyUsage());
+  const tier = priceFor(model)?.over;
+  const parts = tier && promptTokens(tokens) > tier.prompt ? [m, (m.over ??= emptyUsage())] : [m];
+  for (const part of parts) {
+    part.calls += 1;
+    for (const key of TOKEN_KEYS) part[key] += tokens[key];
+  }
+}
 
 // Folds one API request's usage, and any advisor sub-inference in `usage.iterations`, into a per-model map.
 function addRequest(perModel, model, usage) {
-  const m = (perModel[model] ??= emptyUsage());
-  m.calls += 1;
-  m.input += usage.input_tokens ?? 0;
-  m.output += usage.output_tokens ?? 0;
-  m.cacheRead += usage.cache_read_input_tokens ?? 0;
   const created = usage.cache_creation;
-  if (created && (created.ephemeral_5m_input_tokens || created.ephemeral_1h_input_tokens)) {
-    m.cacheWrite5m += created.ephemeral_5m_input_tokens ?? 0;
-    m.cacheWrite1h += created.ephemeral_1h_input_tokens ?? 0;
-  } else {
-    m.cacheWrite5m += usage.cache_creation_input_tokens ?? 0;
-  }
+  const split = created && (created.ephemeral_5m_input_tokens || created.ephemeral_1h_input_tokens);
+  addTokens(perModel, model, {
+    input: usage.input_tokens ?? 0,
+    output: usage.output_tokens ?? 0,
+    cacheRead: usage.cache_read_input_tokens ?? 0,
+    cacheWrite5m: (split ? created.ephemeral_5m_input_tokens : usage.cache_creation_input_tokens) ?? 0,
+    cacheWrite1h: (split ? created.ephemeral_1h_input_tokens : 0) ?? 0,
+  });
   for (const step of Array.isArray(usage.iterations) ? usage.iterations : []) {
     if (step?.type !== 'advisor_message' || !step.model) continue;
-    const a = (perModel[step.model] ??= emptyUsage());
-    a.calls += 1;
-    a.input += step.input_tokens ?? 0;
-    a.output += step.output_tokens ?? 0;
-    a.cacheRead += step.cache_read_input_tokens ?? 0;
-    a.cacheWrite5m += step.cache_creation_input_tokens ?? 0;
+    addTokens(perModel, step.model, {
+      input: step.input_tokens ?? 0,
+      output: step.output_tokens ?? 0,
+      cacheRead: step.cache_read_input_tokens ?? 0,
+      cacheWrite5m: step.cache_creation_input_tokens ?? 0,
+      cacheWrite1h: 0,
+    });
   }
 }
 
@@ -114,20 +95,19 @@ export function partOf(acc, keep = () => true) {
   return out;
 }
 
-// Estimated USD in total and per model; a model the price map does not know is listed and costs nothing here.
+// Estimated USD in total and per model, at the host adapters' prices (lib/model-prices.mjs). A model no table prices is
+// listed in `unknownModels` and costs nothing here. `aidrian report health` names a model only a fallback row prices.
 export function estimateCostUsd(perModel) {
   let total = 0;
   const unknownModels = [];
   const byModel = {};
-  for (const [model, u] of Object.entries(perModel)) {
+  for (const [model, usage] of Object.entries(perModel)) {
     const price = priceFor(model);
     if (!price) {
       unknownModels.push(model);
       continue;
     }
-    const inputRate = price.input / 1_000_000;
-    const cost = u.input * inputRate + u.cacheRead * inputRate * (price.cacheRead ?? CACHE_READ_MULT) +
-      u.cacheWrite5m * inputRate * CACHE_WRITE_5M_MULT + u.cacheWrite1h * inputRate * CACHE_WRITE_1H_MULT + (u.output * price.output) / 1_000_000;
+    const cost = costUsd(usage, price);
     byModel[model] = Math.round(cost * 10000) / 10000;
     total += cost;
   }

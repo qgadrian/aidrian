@@ -84,6 +84,8 @@ export PATH="${aidrian_dir}bin:$PATH"
   So the [announce check](../hooks.md#announced-work) sends a Codex main session back once, naming `request_user_input`
   as its question tool, and the [hand-back check](../hooks.md#hand-back-check) reads the same message;
   the session-length reminder reads Claude Code transcripts only and stays quiet.
+- The adapter lists no [model prices](../dispatch-log.md#model-prices): no Codex transcript is read, so no cost is estimated.
+  OpenAI's price page is `https://developers.openai.com/api/docs/pricing`; rows come with a transcript reader.
 - The subagent-stop and session-end inputs are not verified.
   Those hooks run, write nothing they cannot read, and never send a Codex agent back.
 - No [handoff continuation](../handoff.md#continue) route runs here: the adapter lists none, so every

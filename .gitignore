@@ -4,7 +4,9 @@ node_modules/
 dist/
 .claude/runs/
 .claude/session-artifacts/
-/.claude/
+# This repository's own maintainer skills are tracked; the rest of .claude/, such as worktrees and settings, is not.
+/.claude/*
+!/.claude/skills/
 .banned-terms.local
 .aidrian.local.json
 plugins/aidrian/evals/**/results/

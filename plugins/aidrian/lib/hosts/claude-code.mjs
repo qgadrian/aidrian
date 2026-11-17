@@ -5,6 +5,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
 
 // CLAUDECODE=1 marks its hooks and its Bash tool; the others say the same for a process that lost that one.
@@ -58,6 +59,8 @@ export default {
   // The `models` key of config.json, and what the Agent tool takes for it. docs/config.md#models cites both.
   modelsKey: 'claude',
   modelChoices: { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  // Its models' prices, for the cost of the transcripts it writes (lib/model-prices.mjs).
+  modelPrices,
   identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID'],
   detectVars: ['CLAUDECODE', ...MARKERS],
   detect: ({ env }) => env.CLAUDECODE === '1' || MARKERS.some((name) => Boolean(env[name])),

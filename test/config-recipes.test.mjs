@@ -12,6 +12,8 @@ const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 const XDG = path.join(tmpdir(), 'aidrian-recipes-state');
 const DOC = readFileSync(path.join(ROOT, 'docs/config-recipes.md'), 'utf8');
+// The setup skill's reference ships with the plugin; the doc does not, so the switches must be in both.
+const SETUP = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/harness-setup/references/recipes.md'), 'utf8');
 
 const names = readdirSync(RECIPES).map((file) => file.replace(/\.json$/u, '')).sort();
 // The machine switches each recipe needs, as the doc shows them: the ones that only .aidrian.local.json may hold.
@@ -42,5 +44,7 @@ for (const name of names) {
     const text = readFileSync(path.join(RECIPES, `${name}.json`), 'utf8').trim();
     assert.ok(DOC.includes(text), `docs/config-recipes.md lacks plugins/aidrian/recipes/${name}.json as written`);
     if (MACHINE[name]) assert.ok(DOC.includes(MACHINE[name]), `docs/config-recipes.md lacks the ${name} machine switches`);
+    if (MACHINE[name]) assert.ok(SETUP.includes(`\`${name}\`: \`${MACHINE[name]}\``), `the setup reference lacks the ${name} machine switches`);
+    else assert.ok(SETUP.includes(`\`${name}\`: none.`), `the setup reference does not say ${name} needs no switch`);
   });
 }

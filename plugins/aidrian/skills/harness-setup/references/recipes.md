@@ -1,8 +1,7 @@
 # Working-style recipes
 
 Q7 of the `harness-setup` skill, and how the step 3 brief applies its answer.
-The recipes are `<plugin root>/recipes/<name>.json`; the plugin's `docs/config-recipes.md` explains each key they set,
-and names the machine switches each needs.
+The recipes are `<plugin root>/recipes/<name>.json`. The plugin repository's `docs/config-recipes.md` explains each key.
 
 ## The question
 
@@ -27,5 +26,13 @@ Ask it before the main-checkout guard question, whose answer hands-on sets, as o
   With none found, leave the key out, and the report says auto-merge stays off until it names one.
 - Set `requires.aidrian` to the running plugin's version when the recipe sets any `github.autoMerge`,
   `unattendedWaiver`, `review.unattendedSignoff`, or `session.handoff.continue` key.
-- Never write `.aidrian.local.json`: the config guard refuses a subagent's write of its switches. Return the machine
-  switches the doc names for the recipe, for the Human to add in the main checkout. The report prints them.
+- Never write `.aidrian.local.json`: the config guard refuses a subagent's write of its switches. Return the recipe's
+  machine switches below, for the Human to add in the main checkout. The report prints them.
+
+## Machine switches
+
+Switches only `.aidrian.local.json` holds, so a pull request can never turn them on.
+
+- `full-autonomy`: `{ "github": { "unattendedWaiver": { "enabled": true } }, "unattendedSignoff": "on", "handoff": { "background": "on" } }`
+- `autopilot`: `{ "handoff": { "background": "on" } }`
+- `hands-on`: none.

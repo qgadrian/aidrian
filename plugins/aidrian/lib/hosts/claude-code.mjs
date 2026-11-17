@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
+import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -78,6 +79,8 @@ export default {
   // The `models` key of config.json, and what the Agent tool takes for it. docs/config.md#models cites both.
   modelsKey: 'claude',
   modelChoices: MODEL_CHOICES,
+  // Its models' prices, for the cost of the transcripts it writes (lib/model-prices.mjs).
+  modelPrices,
   identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID'],
   detectVars: ['CLAUDECODE', ...MARKERS],
   detect: ({ env }) => env.CLAUDECODE === '1' || MARKERS.some((name) => Boolean(env[name])),

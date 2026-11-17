@@ -5,7 +5,8 @@
 // (continuation); with `none` they are what they were before the routes existed.
 
 import { continueRoutes } from './hosts/index.mjs';
-import { aggregateUsage, CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './transcript.mjs';
+import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './model-prices.mjs';
+import { aggregateUsage } from './transcript.mjs';
 
 // B: the tokens a fresh session reads to resume from a brief, the measured median before its first edit or dispatch.
 export const RESUME_TOKENS = 44_000;

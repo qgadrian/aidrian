@@ -11,7 +11,7 @@ import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import {
   BRIEF_CALLS, handoffCost, handoffReason, nextRatio, planApprovedContext, readMarker, RESUME_TOKENS, sessionUsage, stopReminder, tokenCeiling,
 } from '../plugins/aidrian/lib/session-length.mjs';
-import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from '../plugins/aidrian/lib/transcript.mjs';
+import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
 const PLAN_HOOK = path.join(path.dirname(HOOK), 'hook-plan-exit.mjs');

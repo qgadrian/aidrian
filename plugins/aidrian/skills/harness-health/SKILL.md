@@ -25,7 +25,7 @@ and `--project <dir>` reads another project than the current folder. The output 
   `sample`, its `n` and what it counts; `summary`, one sentence with the numbers; `fix`, a row of the table in step 3;
   `lesson`, the labels for a lesson, or null when the problem is a lesson already;
   and `resolved` and `since_resolution`, null unless a resolved lesson holds `lesson.key` (step 4).
-- `signals`: the knowledge budget, doc reads, agents, reviews, unreviewed drafts, hook denies, decisions, session cost, and lessons,
+- `signals`: the knowledge budget, doc reads, agents, reviews, unreviewed drafts, hook denies, decisions, session cost, model prices, and lessons,
   each with its `status` (`ok`, `problem`, `not_enough_data`, or `unavailable`) and its sample.
 - `thresholds`: the limits used. `thresholds.health.minSample` is the smallest sample a signal is judged on;
   config.json `telemetry.health` sets them.
@@ -61,6 +61,7 @@ Agents are named as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Code
 | `review-loop` | An orchestrator or autopilot session that opened a draft pull request and ran no review round | `harness-mechanic` checks what runs after the implementing skill's draft: the `orchestrator` routing and the `autopilot` phases. A project's own orchestrator goes to the agent that owns its file. |
 | `decision-authority` | The Human overriding too many of the decisions agents made alone | Show the Human the class its `summary` names. The Human chooses: list the class in `decisions.escalate` or the doc in `decisions.escalateDocs`, lower that domain's mode, or have `harness-librarian` write the missing rule. |
 | `cost` | The cost a session rising | Name the costly sessions with `aidrian report sessions`, with their main conversation against subagent split, and capture a lesson. |
+| `prices` | A model with no price row of its own, or, in the plugin's own repository only, model prices read over 60 days ago | The prices are the plugin's: capture the problem's lesson, which targets the plugin. Costs stay estimates until it is fixed. |
 
 ## 4. Capture lessons
 

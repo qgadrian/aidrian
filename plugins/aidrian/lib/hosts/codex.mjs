@@ -136,6 +136,10 @@ export default {
   modelsKey: 'codex',
   // Codex reads any model name and names these efforts. docs/config.md#models cites both.
   modelChoices: { model: null, effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'] },
+  // No prices: nothing reads its transcripts (capabilities.transcripts), so no cost is computed for its sessions, and a model
+  // no table prices is reported as unpriced, at $0. Its price page is https://developers.openai.com/api/docs/pricing;
+  // rows come with a transcript reader, as the model-prices skill of this repository says.
+  modelPrices: { models: [], rows: [] },
   identityVars: ['CODEX_THREAD_ID'],
   detectVars: ['CODEX_THREAD_ID', 'PLUGIN_ROOT'],
   // A tool hook's payload holds `turn_id`, a plugin hook has PLUGIN_ROOT equal to CLAUDE_PLUGIN_ROOT, and a shell Codex runs

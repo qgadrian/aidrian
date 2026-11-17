@@ -338,7 +338,7 @@ All costs are in input tokens of the model of the session's last main-session ca
 | `W` | The context of the first main-session call: the system prompt, tools, and project instructions a fresh session reads too. |
 | `B` | What a fresh session reads to resume, 44,000 tokens. |
 | `H` | The calls the long session spends writing the brief, 8. |
-| `m` | The model's cache-read multiple of its input price, from `priceFor` in `lib/transcript.mjs`; 0.1 when the model sets none or is unknown. |
+| `m` | The model's cache-read multiple of its input price, from `priceFor` in `lib/model-prices.mjs`; 0.1 when the model sets none or is unknown. |
 | `k` | The cache-write multiple: 2 when the session writes 1-hour cache, else 1.25 for 5-minute cache. |
 
 - Cost ratio `r = C / (W + B)`. The multiples cancel out, so `r` does not depend on the model.

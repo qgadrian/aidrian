@@ -491,11 +491,34 @@ test('the state folder read is killed at git`s limit, even by a git that ignores
   const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
   const bin = path.join(env.base, 'stubborn');
   mkdirSync(bin);
-  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" remote get-url origin "*) trap '' TERM; exec sleep 20;; esac\nexec ${real} "$@"\n`);
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" --get remote.origin.url "*) trap '' TERM; exec sleep 20;; esac\nexec ${real} "$@"\n`);
   chmodSync(path.join(bin, 'git'), 0o755);
   const { status, ms } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
   assert.equal(status, 0);
   assert.ok(ms < 10_000, `${ms} ms`);
+});
+
+test('an origin read that fails keeps the owned count and names worktrees in errors; no origin is no failure', { skip: !POSIX }, (t) => {
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  // A read killed at git's limit, even by a git that ignores SIGTERM, and one that exits with an error of its own.
+  for (const [kind, act] of [['timeout', "trap '' TERM; exec sleep 20"], ['exit', 'echo broken >&2; exit 1']]) {
+    const env = withWorktree(t);
+    const bin = path.join(env.base, 'stub');
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" remote get-url origin "*) ${act};; esac\nexec ${real} "$@"\n`);
+    chmodSync(path.join(bin, 'git'), 0o755);
+    const { status, ms, json } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
+    assert.equal(status, 0, kind);
+    assert.ok(ms < 10_000, `${kind}: ${ms} ms`);
+    assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: null }, kind);
+    assert.ok(json.errors.includes('worktrees'), `${kind}: a failed read is no absent origin`);
+    assert.deepEqual(ghCalls(env.log), [], kind);
+  }
+  // No origin at all: git says there is no such remote, and the section is unsupported, not failed.
+  const none = withWorktree(t, { origin: null });
+  const { json } = none.run(['--session', ID]);
+  assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: null });
+  assert.equal(json.errors.includes('worktrees'), false);
 });
 
 test('a config.json with a bad value still gives the decisions count', (t) => {
@@ -772,6 +795,16 @@ test('worktrees reads origin as git fetches from it: its first URL, after an ins
   git(rewritten.dir, 'config', 'url.https://github.com/acme/real.git.insteadOf', 'https://github.com/acme/notes.git');
   assert.equal(rewritten.run(['--session', ID]).json.worktrees.mergedNotCleaned, 1);
   assert.deepEqual(ghCalls(rewritten.log).at(-1).slice(-2), ['--repo', 'github.com/acme/real'], 'the rewritten URL');
+});
+
+test('worktrees reads origin in the checkout that asks, where that checkout`s own config applies', (t) => {
+  const env = withWorktree(t);
+  // A rewrite in the linked worktree's own config: git fetches there from acme/tree, and from acme/notes in main.
+  git(env.dir, 'config', 'extensions.worktreeConfig', 'true');
+  git(env.tree, 'config', '--worktree', 'url.https://github.com/acme/tree.git.insteadOf', 'https://github.com/acme/notes.git');
+  const { json } = env.run(['--session', ID], { cwd: env.tree });
+  assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: 1 });
+  assert.deepEqual(ghCalls(env.log).at(-1).slice(-2), ['--repo', 'github.com/acme/tree'], 'the worktree`s origin, not main`s');
 });
 
 test('the merged-heads cache is bound to origin`s repository: once origin moves, the heads it holds are none', (t) => {

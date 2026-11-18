@@ -35,6 +35,8 @@ export const PRS_CACHE = Object.freeze({ name: 'prs-cache.json', windowMs: 60_00
 // Ticket prefixes: at most 32, each a letter and up to 15 letters or digits.
 const PREFIX = /^[A-Za-z][A-Za-z0-9]{0,15}$/u;
 const MAX_PREFIXES = 32;
+// `git remote get-url`'s exit status when the remote is not configured.
+const NO_SUCH_REMOTE = 2;
 
 // The longest text displayText keeps, in code points: a title, a name (a branch, an owner, a repository, a check, a
 // slug, or a ticket key), and a path or URL.
@@ -170,16 +172,23 @@ const shownChange = (row) => Object.fromEntries(SHOWN.filter(([key]) => Object.h
 
 // { owned, mergedNotCleaned }, and `stale: true` when the merged count is a cached value past its window. `owned` counts
 // the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is the head commit of a merged
-// pull request of their branch, without cleanup's tree and age checks; null without a session or for an origin the
-// forge does not serve, and null, naming the section in `errors`, when the read fails with no cached value.
+// pull request of their branch, without cleanup's tree and age checks; null without a session, with no origin, or for
+// an origin the forge does not serve, and null, naming the section in `errors`, when origin cannot be read or the
+// merged heads' read fails with no cached value.
 function worktreesSection({ project, folder }, validId, forge, errors) {
   const main = needed(mainRoot(project.root, KILL));
   const worktrees = listWorktrees(main, { timeoutMs: GIT_TIMEOUT_MS, ...KILL }).filter((each) => !each.main);
   const out = { owned: worktrees.length, mergedNotCleaned: null };
-  // As git fetches: the first URL, after any `url.<base>.insteadOf` rewrite.
-  const origin = runGit(['remote', 'get-url', 'origin'], main, KILL);
+  if (!validId) return out;
+  // As git fetches in the checkout that asks: the first URL, after any `url.<base>.insteadOf` rewrite, with that
+  // checkout's own config, such as a worktree's or an `includeIf "onbranch:"` one. Exit 2 is git's "No such remote".
+  const origin = runGit(['remote', 'get-url', 'origin'], project.root, KILL);
+  if (origin.status !== 0 && origin.status !== NO_SUCH_REMOTE) {
+    errors.add('worktrees');
+    return out;
+  }
   const repo = origin.status === 0 ? servedRepository(remoteIdentity(origin.stdout.trim())) : null;
-  if (!validId || repo === null) return out;
+  if (repo === null) return out;
   const heads = mergedHeadsOf(main, repo, folder, forge);
   if (heads === null) {
     errors.add('worktrees');

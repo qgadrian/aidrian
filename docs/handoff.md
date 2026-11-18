@@ -575,11 +575,14 @@ user owns, never a symlink or a folder. A store the gate refuses leaves `chain`,
 **Worktrees.** `owned` counts the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is
 the head commit of a merged pull request of their branch, before [worktree cleanup](project-folder.md#task-worktrees)'s own tree and age
 checks: a worktree it counts may still hold work that cleanup asks about. The merged heads come from the forge for
-origin's repository alone, read as git fetches from it (its first URL, after any `url.<base>.insteadOf` rewrite),
-when origin is a network remote and the forge adapter serves it (github.com today), and are
+origin's repository alone, read as git fetches from it in the checkout the snapshot runs in (its first URL, after any
+`url.<base>.insteadOf` rewrite, with that checkout's own config, such as a worktree's), when origin is a network remote
+and the forge adapter serves it (github.com today), and are
 cached for a minute in the session's folder, with the repository they were read for. With no origin, one git reads as a
 folder on disk, such as `vendor/mirror.git`, or one on a host the adapter does not serve, `mergedNotCleaned` is null and
-`errors` does not name `worktrees`: that repository is unsupported, not failed. A cache of another repository, as after
+`errors` does not name `worktrees`: that repository is unsupported, not failed. An origin git cannot read, as when it
+times out or fails for another reason than no such remote, leaves `mergedNotCleaned` null with `worktrees` in `errors`,
+and `owned` still shows. A cache of another repository, as after
 origin moved under a fixed `state.dir`, counts as none, so its heads are never shown for the new one. One session starts at most one forge call a
 minute, whatever became of the last and however many snapshots start at once: a snapshot records its attempt under the
 cache's reservation for the current fixed minute, a lock file only one process can create, and one that finds the

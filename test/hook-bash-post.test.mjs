@@ -99,12 +99,21 @@ test('gh pr create records the pull request its stdout links, with the forge id,
 });
 
 test('a created row comes only from a line that is exactly a pull request URL of a remote of the call`s folder', () => {
-  const echoed = rows(`gh pr create --fill && echo ${URL_OF('other/repo', 9)}`, { stdout: `${URL_OF('acme/widgets', 12)}\n${URL_OF('other/repo', 9)}\n` });
-  assert.deepEqual(echoed, [created('acme/widgets', 12)], 'other/repo is no remote of the folder');
+  assert.deepEqual(rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n${URL_OF('other/repo', 9)}\n` }), [created('acme/widgets', 12)], 'other/repo is no remote of the folder');
   assert.deepEqual(rows('gh pr create --fill', { stdout: `see ${URL_OF('acme/widgets', 12)}\n${URL_OF('acme/widgets', 13)}/files\n` }), []);
   assert.deepEqual(rows('gh pr create --fill', { stdout: 'https://gitlab.com/acme/widgets/pull/4\nhttps://git.example.test/acme/widgets/pull/5\n' }), []);
   assert.deepEqual(rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\r\n` }), [created('acme/widgets', 12)]);
   assert.deepEqual(rows(`echo ${URL_OF('acme/widgets', 12)}`, { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'output is read only for gh pr create');
+});
+
+test('a created row comes only from a line whose one printing command is gh pr create, after a cd or variable assignments', () => {
+  const link = `${URL_OF('acme/widgets', 9)}\n`;
+  assert.deepEqual(rows(`gh pr create --fill && echo ${URL_OF('acme/widgets', 9)}`, { stdout: link }), [], 'an echoed link of an allowed repository');
+  assert.deepEqual(rows(`echo ${URL_OF('acme/widgets', 9)}; gh pr create --fill`, { stdout: link }), [], 'a command before it');
+  assert.deepEqual(rows('gh pr create --fill | tee log', { stdout: link }), [], 'a pipe');
+  assert.deepEqual(rows(`gh pr create --body "$(echo ${URL_OF('acme/widgets', 9)} >&2)" --fill`, { stdout: link }), [], 'a substitution that prints');
+  assert.deepEqual(rows('X=1; gh pr create --fill', { stdout: link }), [created('acme/widgets', 9)], 'a bare assignment');
+  assert.deepEqual(rows(`cd ${OWN} && GH_REPO=acme/widgets gh pr create --body "$(cat <<'EOF'\nWhy\nEOF\n)" --fill`, { stdout: link }), [created('acme/widgets', 9)], 'a cd and a heredoc body');
 });
 
 test('in a fork checkout, gh pr create printing the parent`s URL records the parent', () => {

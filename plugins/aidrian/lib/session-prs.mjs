@@ -19,7 +19,7 @@ import { changesGitTarget, CURRENT, readPush } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { hasHidden } from './hidden-text.mjs';
 import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
-import { changesVariable, commandLines, lexCommand, readInvocation, walkCommands } from './shell-lex.mjs';
+import { changesVariable, commandLines, lexCommand, readInvocation, shellRedirections, walkCommands } from './shell-lex.mjs';
 
 // The ledger's name in the session folder (lib/session-folder.mjs APPENDED_FILES).
 export const LEDGER = 'prs.jsonl';
@@ -185,6 +185,17 @@ function knownFolders(command, cwd, fromCwd) {
   });
 }
 
+// Whether the output of the line `command`, its walked `entries`, is the create `entry`'s alone: the line's own commands
+// are bare variable assignments and then `entry`, last (a `cd` the walk leaves out), and every other command the walk
+// found runs inside a substitution, whose output the shell captures, as a `cat` with no redirection, such as the heredoc
+// of a `--body "$(cat <<'EOF' … EOF)"`. Any other command on the line could print a link.
+function printsAlone(entries, entry, command) {
+  const own = entries.filter(({ line }) => line === command);
+  const assigns = ({ invocation }) => !invocation.program && (invocation.args ?? []).length === 0;
+  return own.at(-1) === entry && own.slice(0, -1).every(assigns)
+    && entries.every((each) => each.line === command || (each.invocation.program === 'cat' && shellRedirections(each.segment).length === 0));
+}
+
 const validCwd = (cwd) => typeof cwd === 'string' && path.isAbsolute(cwd) && Buffer.byteLength(cwd) <= CWD_MAX_BYTES && !hasHidden(cwd);
 
 // The rows of one walked command, before their checks.
@@ -194,7 +205,7 @@ function entryRows(entry, folder, context) {
   if (push) return pushedRows(push, folder, folders);
   if (changers.some((other) => other !== entry)) return [];
   const call = reader.readCall(entry.invocation, env);
-  if (call?.kind === 'created') return createdRows(call, folder, folders, forge.hosts, links);
+  if (call?.kind === 'created') return printsAlone(context.entries, entry, context.command) ? createdRows(call, folder, folders, forge.hosts, links) : [];
   if (call?.kind === 'touched') return touchedRows(call, folder, folders, forge.hosts, reader);
   return [];
 }
@@ -216,7 +227,7 @@ export function ledgerRows({ command, cwd, output = null, env = {}, forge, reade
   // The commands that may change a variable the reader's command reads: one pass, so a long line costs linear time.
   const variables = reader.variables ?? [];
   const changers = entries.filter(({ invocation }) => variables.some((name) => changesVariable(invocation, name)));
-  const context = { folders, forge, reader, env, changers, links: () => (links ??= typeof output === 'string' ? reader.createdChanges(outputTail(output)) : []) };
+  const context = { folders, forge, reader, env, changers, entries, command, links: () => (links ??= typeof output === 'string' ? reader.createdChanges(outputTail(output)) : []) };
   const known = knownFolders(command, cwd, entries);
   const found = entries.flatMap((entry, index) => (known[index] ? entryRows(entry, known[index], context) : []));
   const agent = typeof agentId === 'string' && SESSION_ID.test(agentId) ? agentId : null;

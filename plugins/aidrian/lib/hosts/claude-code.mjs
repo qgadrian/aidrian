@@ -5,7 +5,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, sessionEnded, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
+import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -63,6 +63,30 @@ const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 // `claude mcp serve` runs Claude Code as a server whose tools a client calls, so it counts as a start.
 const NO_SESSION = new Set(['agents', 'attach', 'stop', 'kill', 'logs', 'doctor', 'update', 'install', 'config', 'mcp', 'plugin', 'plugins', 'setup-token', 'auth', 'migrate-installer']);
 const INFO = new Set(['-v', '-V', '--version', '-h', '--help']);
+// The keys a main checkout's settings.local.json may hold for a project run to start a session beside it: `$schema`, and
+// `permissions` with only `allow`, `ask`, and `deny` as lists of plain strings and `disableBypassPermissionsMode` as
+// "disable". It is what the host writes when the Human answers "don't ask again", and no such entry lifts a hook, which
+// runs before the permission rules. Every other key, such as hooks, disableAllHooks, env, apiKeyHelper, statusLine,
+// enabledPlugins, sandbox, model, permissions.defaultMode, or permissions.additionalDirectories, changes what an
+// unattended session runs or reads, and refuses the start. Returns the key or entry that refuses, or null.
+const PERMISSION_LISTS = new Set(['allow', 'ask', 'deny']);
+function localSettingsProblem(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'it is not a JSON object';
+  const top = Object.keys(value).find((key) => key !== '$schema' && key !== 'permissions');
+  if (top !== undefined) return `it sets "${top}"`;
+  if (value.$schema !== undefined && typeof value.$schema !== 'string') return 'its "$schema" is not text';
+  const { permissions } = value;
+  if (permissions === undefined) return null;
+  if (permissions === null || typeof permissions !== 'object' || Array.isArray(permissions)) return 'its "permissions" is not an object';
+  for (const [key, entry] of Object.entries(permissions)) {
+    if (key === 'disableBypassPermissionsMode') {
+      if (entry !== 'disable') return 'it sets "permissions.disableBypassPermissionsMode" to something other than "disable"';
+    } else if (!PERMISSION_LISTS.has(key)) return `it sets "permissions.${key}"`;
+    else if (!Array.isArray(entry) || entry.some((rule) => typeof rule !== 'string' || /[\u0000-\u001f\u007f]/u.test(rule))) return `its "permissions.${key}" is not a list of plain strings`;
+  }
+  return null;
+}
+
 const startsSession = (args) => {
   const [first, second] = args.map((token) => (token.dynamic ? null : token.text));
   if (first === undefined) return true;
@@ -115,6 +139,23 @@ export default {
     return { shape: 'notebook', file: given.notebook_path, targets };
   },
   projectFolders: { skills: '.claude/skills', agents: '.claude/agents' },
+  // The instruction files and folder it loads from the folder a session starts in and from each folder above it
+  // (code.claude.com/docs/en/memory), and its own user folder, which it reads for every session wherever it starts. A
+  // project run refuses a start under any other such file a review did not see (lib/project-run-gate.mjs).
+  instructionFiles: {
+    files: ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md'],
+    folders: ['.claude'],
+    userFolder: (env) => env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'),
+  },
+  // What a session in a linked worktree reads from the main checkout, wherever the worktree lies: the main checkout's
+  // .claude/settings.local.json (code.claude.com/docs/en/settings), and, from 2.1.277, its .claude skills, agents, and
+  // commands when the worktree has none (code.claude.com/docs/en/common-workflows, worktrees). A project run refuses a
+  // start under any file in those folders a review did not see, and under a settings file `problem` refuses
+  // (lib/project-run-gate.mjs mainCheckoutProblem); the agent gate hook refuses their writes to a session no Human attends.
+  mainCheckoutPaths: {
+    folders: ['.claude/skills', '.claude/agents', '.claude/commands'],
+    settings: [{ file: '.claude/settings.local.json', problem: localSettingsProblem }],
+  },
   capabilities: {
     // Reads Claude Code's transcripts (lib/transcript.mjs): cost, names reminder, session length, and attribution's model.
     // Also opts it into the review-rounds rule's reading of the Human's answers and typed grants of review rounds.
@@ -151,6 +192,24 @@ export default {
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),
       hookHostPid: (pid = process.ppid) => (Number.isInteger(pid) && pid > 1 ? pid : null),
+    },
+    // How `aidrian project start` starts the session of one issue (lib/project-run-gate.mjs): `claude --bg` in the issue's
+    // worktree, under the name `<run> · <issue> · <attempt>`, with no agent and the driver session's permission mode and
+    // effort, through the launch the background route uses; `stop` is that route's. `ended` counts a session the host
+    // lists as stopped or failed as ended too, where the handoff route's counts only done (sessionFinished). `find` lists the
+    // background sessions in a folder under an exact name, for a start whose outcome was unknown.
+    // `verified`: the launch, listing, and stop are the background route's, checked live on 2.1.326; the project prompt
+    // and the run's own flow are checked on fixtures only.
+    projectStart: {
+      verified: 'fixtures',
+      start: ({ session, cwd, name, prompt, env, hold, run, wait }) => startProject({
+        session, cwd, name, prompt, env, hold, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      }),
+      stop: ({ id, env, run }) => stopBackground({ id, env, run }),
+      ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),
+      find: ({ cwd, name, env, run }) => findSessions({ cwd, name, env, run }),
+      attachLine,
+      stopLine,
     },
   },
 };

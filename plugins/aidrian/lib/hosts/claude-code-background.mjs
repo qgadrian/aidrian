@@ -3,7 +3,8 @@
 // the listing its docs name as the stable interface, gives each session's `id`, `sessionId`, `name`, `kind`, and `cwd`.
 // `--bg` ignores `--session-id`, so the new session's id is read back from that listing, which may lag the start.
 // `startIn` starts a session in a given folder with a given first message and name, for any gate; `startBackground` is
-// the handoff's wrapper of the same launch, which takes the folder, name, and mode from the handing-off session.
+// the handoff's wrapper of the same launch, which takes the folder, name, and mode from the handing-off session, and
+// `startProject` a project run's, which starts in the issue's worktree under the driver session's permission mode.
 // Every call goes through `run`, spawnSync's shape, which a test replaces, so no test starts a real session. `claude` is
 // found on the absolute folders of PATH alone: an empty or relative entry would run whatever `claude` the folder holds.
 
@@ -11,6 +12,8 @@ import { spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants, fstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { pauseSync } from '../fs.mjs';
 
 // `claude --bg` may first start the supervisor, which takes a few seconds.
 const START_TIMEOUT = 60_000;
@@ -45,7 +48,7 @@ const REFUSED = /\bWorkspace not trusted\b/u;
 const NO_CLAUDE = '`claude` is not on PATH, in an absolute folder';
 
 export const runCommand = (command, args, { cwd, timeout }) => spawnSync(command, args, { cwd, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const pause = pauseSync;
 
 // The first line of a command's message, on one line and at most 200 characters, for a fallback line.
 const firstLine = (text) => String(text ?? '').trim().split('\n')[0].replace(new RegExp(CONTROL, 'gu'), ' ').slice(0, 200);
@@ -192,6 +195,47 @@ export function startIn({ cwd, prompt, name, mode, agent, effort, efforts = [], 
   return launch({ claude, before, cwd: real, prompt, name, mode, agent, effort, efforts, hold, run, wait });
 }
 
+// The permission mode the session `session`, as `list` names it, runs in: { mode } or { problem }. A session whose mode is
+// bypassPermissions, or cannot be read, gives a problem: the host's default may bypass permission checks.
+function ownMode({ session, list, env, readMode }) {
+  const own = list.find((each) => each.sessionId === session);
+  if (typeof own?.cwd !== 'string' || !path.isAbsolute(own.cwd) || CONTROL.test(own.cwd)) {
+    return { problem: '`claude agents --json` does not list the folder of this session' };
+  }
+  const read = readMode({ session, cwd: own.cwd, env });
+  if (read === BYPASS) return { problem: 'this session runs with permission checks bypassed, and a session no Human attends never starts that way' };
+  const mode = MODE_NAMES.get(read) ?? read;
+  if (!PERMISSION_MODES.has(mode)) return { problem: 'the permission mode of this session could not be read, and the host\'s default may bypass permission checks' };
+  return { mode, own };
+}
+
+// Starts the session of one issue of a project run, in the background, in the issue's worktree `cwd`, under the name
+// `name`, whose first message is `prompt`, as startIn does, in the permission mode the driver session `session` runs in
+// (`readMode`, sessionMode by default; never bypassPermissions). No agent is passed, so the session runs as the host's
+// main agent and no agent's own permission mode can stand in for the one passed; the driver's effort is passed on.
+// Returns startIn's answer. `hold`, `run`, `wait`, and `resolve` are startBackground's.
+export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+  const claude = resolve(env);
+  if (!claude) return { problem: NO_CLAUDE };
+  const before = listed(run, claude, undefined);
+  if (!before) return { problem: '`claude agents --json` did not answer, so the permission mode of the driver session is unknown' };
+  const read = ownMode({ session, list: before, env, readMode });
+  if (read.problem) return { problem: read.problem.replace('this session', 'the driver session') };
+  return startIn({ cwd, prompt, name, mode: read.mode, effort, efforts, env, hold, run, wait, resolve: () => claude });
+}
+
+// The background sessions `claude agents --json --all` lists in the folder `cwd` under the exact name `name`, as [{ id,
+// session, state }], or null when the listing gives no answer: how a project run finds a session an uncertain start may
+// have made.
+export function findSessions({ cwd, name, env, run = runCommand, resolve = claudeOnPath }) {
+  const claude = resolve(env);
+  if (!claude || typeof cwd !== 'string' || typeof name !== 'string') return null;
+  const list = listed(run, claude, undefined, ['--all']);
+  if (!list) return null;
+  return list.filter((each) => each.kind === 'background' && each.cwd === cwd && each.name === name && typeof each.sessionId === 'string' && ID.test(each.sessionId))
+    .map((each) => ({ id: typeof each.id === 'string' && ID.test(each.id) ? each.id : each.sessionId, session: each.sessionId, state: typeof each.state === 'string' ? each.state : null }));
+}
+
 // Starts the session that resumes a brief, in the background, in the folder of the handing-off session `session` as the
 // host lists it: { id, session, name, cwd }, or { problem, uncertain } when none it can name started. `id` is the id to
 // name it by, the short one when the output printed it; `session` its full id, or null when the listing did not name it
@@ -209,18 +253,9 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
   if (!claude) return { problem: NO_CLAUDE };
   const before = listed(run, claude, undefined);
   if (!before) return { problem: '`claude agents --json` did not answer, so the folder of this session is unknown' };
-  const own = before.find((each) => each.sessionId === session);
-  if (typeof own?.cwd !== 'string' || !path.isAbsolute(own.cwd) || CONTROL.test(own.cwd)) {
-    return { problem: '`claude agents --json` does not list the folder of this session' };
-  }
-  const read = readMode({ session, cwd: own.cwd, env });
-  if (read === BYPASS) {
-    return { problem: 'this session runs with permission checks bypassed, and a session no Human attends never starts that way' };
-  }
-  const mode = MODE_NAMES.get(read) ?? read;
-  if (!PERMISSION_MODES.has(mode)) {
-    return { problem: 'the permission mode of this session could not be read, and the host\'s default may bypass permission checks' };
-  }
+  const read = ownMode({ session, list: before, env, readMode });
+  if (read.problem) return { problem: read.problem };
+  const { mode, own } = read;
   const name = sessionName(own.name, slug, chain);
   return launch({ claude, before, cwd: own.cwd, prompt, name, mode, agent, effort, efforts, hold, run, wait });
 }
@@ -270,6 +305,25 @@ function startProblem(result, list, before) {
 // false when a row that names it has any other state, or none names it; null when the listing gives no answer or
 // `claude` cannot be found. Only true lets a gate start another session for the same starting session.
 export function sessionEnded({ id, session, env, run = runCommand, resolve = claudeOnPath }) {
+  return listedIn({ id, session, env, run, resolve, states: DONE });
+}
+
+// The states of a background session that runs no more: completed (`done`), stopped by `claude stop` (`stopped`), or
+// ended by an error (`failed`), as 2.1.326 names them (docs/providers/claude-code.md).
+const DONE = new Set(['done']);
+const FINISHED = new Set(['done', 'stopped', 'failed']);
+
+// Whether the host lists the background session a project run started as one that runs no more: sessionEnded's read,
+// with `stopped` and `failed` counted as ended too. A project run's driver stops an issue's session past its hours and
+// starts the next issue; a session that failed records no result, and the issue opens again. The handoff route keeps
+// sessionEnded, where only `done` lets a session start another.
+export function sessionFinished({ id, session, env, run = runCommand, resolve = claudeOnPath }) {
+  return listedIn({ id, session, env, run, resolve, states: FINISHED });
+}
+
+// Whether every row of `claude agents --json --all` that names the session is a background session in one of `states`;
+// sessionEnded says how it is named, and when it answers false or null.
+function listedIn({ id, session, env, run, resolve, states }) {
   const claude = resolve(env);
   if (!claude) return null;
   const list = listed(run, claude, undefined, ['--all']);
@@ -279,7 +333,7 @@ export function sessionEnded({ id, session, env, run = runCommand, resolve = cla
   const names = (each) => typeof each.sessionId === 'string'
     && (full ? each.sessionId === session : each.id === id || each.sessionId === id || each.sessionId.startsWith(id));
   const rows = list.filter(names);
-  return rows.length > 0 && rows.every((each) => each.kind === 'background' && each.state === 'done');
+  return rows.length > 0 && rows.every((each) => each.kind === 'background' && states.has(each.state));
 }
 
 // How the Human finds and stops a session a start may have made, when the gate cannot name it.

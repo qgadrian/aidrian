@@ -260,6 +260,11 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
     // The repository itself, such as its `default_branch`.
     repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
+    // The commit the branch `branch` of `repo` points to now, as a full SHA, or null when the answer names none.
+    branchHead: (repo, branch, { host } = {}) => {
+      const sha = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.commit?.sha;
+      return typeof sha === 'string' && /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
+    },
     // One file of `repo` at `ref`, such as `refs/heads/main`: `{ type, encoding, content }`, its content base64.
     contents: (repo, file, ref, { host } = {}) => rest(`repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { host }),
     // One folder of a commit's tree, not recursive: `{ sha, tree: [{ path, mode, type, sha }], truncated }`, each entry's

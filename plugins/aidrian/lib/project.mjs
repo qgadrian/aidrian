@@ -29,9 +29,10 @@ const defaultRead = () => undefined;
 // hooks.json runs, and every module and data file those load (test/auto-merge-guard.test.mjs walks them and fails on a
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
 // file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
-// subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded, except project-run.mjs and
-// project-run-cli.mjs: they decide which session may start a project run and which issue it starts, so a pull request
-// that auto-merged itself cannot change them.
+// subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded, except project-run.mjs,
+// project-run-cli.mjs, project-run-gate.mjs, and project-run-guard.mjs: they decide which session may start a project
+// run, which issue it starts, and which session records its result, so a pull request that auto-merged itself cannot
+// change them.
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
@@ -39,7 +40,7 @@ const GUARDED_LIB = [
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-run', 'project-run-cli', 'remotes', 'review-gate', 'session-length',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'remotes', 'review-gate', 'session-length',
   'session-start-gate', 'shell-lex', 'solo',
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage',
 ].join('|');

@@ -116,6 +116,12 @@ export function isEntry(file) {
   }
 }
 
+// Blocks this thread for `ms` milliseconds, at least 0: a pause between reads in code that runs synchronously, such as a
+// lock's poll, a host listing's retry, or a project run's wait.
+export const pauseSync = (ms) => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+};
+
 export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

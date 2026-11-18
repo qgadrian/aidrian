@@ -5,7 +5,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync
 import { hostname } from 'node:os';
 import path from 'node:path';
 
-import { resolvedPath } from './fs.mjs';
+import { pauseSync, resolvedPath } from './fs.mjs';
 
 // Appends one row. A single write in append mode: rows from concurrent processes never interleave.
 // A write cut short leaves the file without its last newline; the next row then starts on a line of its own, so the
@@ -122,7 +122,7 @@ function lock(file, waitMs) {
       const who = holder ? ` (pid ${holder.pid ?? 'unknown'}${holder.host && holder.host !== hostname() ? ` on ${holder.host}` : ''}, ${lockName(file, top)})` : '';
       throw Object.assign(new Error(`${file} is locked by another process${who}; try again`), { code: LOCKED });
     }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_POLL_MS);
+    pauseSync(LOCK_POLL_MS);
   }
 }
 

@@ -189,6 +189,17 @@ export default {
     return { shape: 'patch', text, files: patchFiles(text), targets: [...text.matchAll(PATCH_TARGET)].map((match) => match[1].trim()) };
   },
   projectFolders: {},
+  // The instruction files and folder it loads from the folders between the project root and the folder a session
+  // starts in, and its own user folder, CODEX_HOME. A project run refuses a start under any other such file a review did
+  // not see (lib/project-run-gate.mjs).
+  instructionFiles: {
+    files: ['AGENTS.md', 'AGENTS.override.md'],
+    folders: ['.codex'],
+    userFolder: (env) => env.CODEX_HOME || path.join(homedir(), '.codex'),
+  },
+  // What a session in a linked worktree reads from the main checkout: nothing its docs name. Its instructions load from
+  // the worktree's own folders up to the project root, which instructionFiles covers.
+  mainCheckoutPaths: { folders: [], settings: [] },
   capabilities: {
     // Codex keeps its own transcript format, which lib/transcript.mjs does not read.
     transcripts: false,

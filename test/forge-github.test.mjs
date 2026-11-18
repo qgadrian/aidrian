@@ -18,7 +18,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -363,6 +363,15 @@ test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints w
   const missing = createGithubForge({ run: () => { throw new Error('gh: not found'); } });
   assert.throws(() => missing.checks('7'), /gh: not found/u, 'no rows on stdout: gh\'s own error');
   assert.throws(() => recorded(() => 'not json').forge.checks('7'), SyntaxError, 'a success that prints no JSON throws');
+});
+
+test('branchHead reads the commit a branch points to on its host, and gives null for an answer that names none', () => {
+  const sha = 'abcdef1234567890abcdef1234567890abcdef12';
+  const { forge, args } = recorded(() => JSON.stringify({ name: 'main', commit: { sha } }));
+  assert.equal(forge.branchHead('acme/notes', 'release/1.0', { host: 'ghe.acme.io' }), sha);
+  assert.deepEqual(args(), [['api', '--hostname', 'ghe.acme.io', 'repos/acme/notes/branches/release%2F1.0']]);
+  assert.equal(recorded(() => JSON.stringify({ commit: { sha: 'short' } })).forge.branchHead('acme/notes', 'main'), null);
+  assert.equal(recorded(() => '{}').forge.branchHead('acme/notes', 'main'), null);
 });
 
 test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents route encoded, and every page of the lists', () => {

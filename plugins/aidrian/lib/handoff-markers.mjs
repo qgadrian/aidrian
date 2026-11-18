@@ -6,6 +6,8 @@
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
 //   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
+// A project run's start (lib/project-run-gate.mjs) starts a session from no brief: its floor's `brief` is null, and its
+// start record has `sha256` and `brief` null and `project`, { run, issue, attempt }, in their place.
 //   claim-<session>.json       { at, kept }       a gate run's claim on starting a session for it (claimStart)
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
@@ -199,11 +201,25 @@ function isArmed(value, maxChain) {
 
 const isReady = (value, maxChain) => isArmed(value, maxChain) && Number.isFinite(value.ended_at) && isPid(value.host_pid);
 
+// A floor's brief: the absolute path of a brief of its slug, or null for a session a project run started from no brief.
 const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
-  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at);
+  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && (value.brief === null || briefOf(value.brief, value.slug)) && Number.isFinite(value.at);
 
-const isStarted = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
-  && typeof value.slug === 'string' && SLUG.test(value.slug) && briefOf(value.brief, value.slug) && whole(value.chain, 0, CHAIN_CEILING)
+// The run, issue key, and attempt of a project run's start, as lib/project-run.mjs holds them. Kept here, since that
+// file imports this one; test/project-start-guard.test.mjs holds the copies equal.
+export const RUN_PART = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+export const ISSUE_PART = /^(?:[A-Z][A-Z0-9]{0,15}-)?[1-9][0-9]{0,8}$/u;
+const isProjectStart = (value) => isObject(value) && Object.keys(value).length === 3 && typeof value.run === 'string' && RUN_PART.test(value.run)
+  && typeof value.issue === 'string' && ISSUE_PART.test(value.issue) && whole(value.attempt, 1, 100);
+
+// What a start record holds of what it started from: a checked brief, by its sha256 and path; or, for a project run's
+// start, no brief and the run, issue, and attempt.
+const startedFrom = (value) => (value.project === undefined
+  ? typeof value.sha256 === 'string' && SHA256.test(value.sha256) && briefOf(value.brief, value.slug)
+  : value.sha256 === null && value.brief === null && isProjectStart(value.project));
+
+const isStarted = (value) => isObject(value) && typeof value.slug === 'string' && SLUG.test(value.slug) && startedFrom(value)
+  && whole(value.chain, 0, CHAIN_CEILING)
   && typeof value.id === 'string' && SESSION_ID.test(value.id) && (value.session === null || (typeof value.session === 'string' && SESSION_ID.test(value.session)))
   && (value.name === null || (typeof value.name === 'string' && PLAIN_NAME.test(value.name)))
   && typeof value.cwd === 'string' && path.isAbsolute(value.cwd) && !hasControl(value.cwd) && Number.isFinite(value.at)
@@ -365,15 +381,33 @@ function floorsOf(store, session, now) {
 // Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
 // brief, chain, id, session, name, cwd, mode }, where `id` is the id the gate names it by, `session` its full id or null,
 // `name` a plain name or null, and `mode` the permission mode it started in, null when the host's default, or left out
-// when the host does not say. Returns the file, or null when the store is refused or the value has a wrong shape.
+// when the host does not say. A project run's start passes `sha256` and `brief` null and `project`, { run, issue,
+// attempt }. Returns the file, or null when the store is refused or the value has a wrong shape.
 export function noteStarted(store, session, started, { now = Date.now() } = {}) {
-  const value = { sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, ...(started.mode === undefined ? {} : { mode: started.mode }), at: now };
+  const value = {
+    sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, ...(started.project === undefined ? {} : { project: started.project }),
+    id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, ...(started.mode === undefined ? {} : { mode: started.mode }), at: now,
+  };
   return isStarted(value) ? writeMarker(store, sessionFile('started', session), value) : null;
 }
 
-// The background start `session` made in the last day, or null.
-export function readStarted(store, session, { now = Date.now() } = {}) {
-  return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted });
+// The background start `session` made in the last day, or null. `window` reads one made longer ago, while the sweep has
+// not removed it, as a project run walks the chain of an issue's sessions.
+export function readStarted(store, session, { now = Date.now(), window } = {}) {
+  return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted, ...(window ? { window } : {}) });
+}
+
+// readStarted's record with the modification time of its file: { record, mtimeMs }, or null. A project run moves its
+// driver's custody on a start record dated, by both, after the row that made that session the driver.
+export function readStartedDated(store, session, { now = Date.now() } = {}) {
+  const record = readStarted(store, session, { now });
+  if (!record) return null;
+  try {
+    const stat = lstatSync(path.join(store.dir, sessionFile('started', session)));
+    return stat.isFile() ? { record, mtimeMs: stat.mtimeMs } : null;
+  } catch {
+    return null;
+  }
 }
 
 // How long a claim of a gate run that is starting a session holds: past the host's longest start and listing, so a run
@@ -408,9 +442,19 @@ export function claimStart(store, session, { now = Date.now() } = {}) {
   return { busy: 'running' };
 }
 
+// Whether the claim of `session` holds now, without taking it: 'kept', 'running', or 'unknown', as claimStart's `busy`,
+// or null when no claim holds. A gate asks it before work a refused start would leave behind, such as a worktree.
+export function claimBusy(store, session, { now = Date.now() } = {}) {
+  const name = sessionFile('claim', session);
+  if (store.refused || !name) return 'unknown';
+  return claimHeld(store, path.join(store.dir, name), now);
+}
+
 // Whether the claim file `file` still holds: 'kept', 'running', 'unknown' for one that is no regular file of this user,
-// or null when it lapsed. Content it cannot read counts as a run's claim being written for CLAIM_WRITE, and as a kept
-// one after that, so a claim no read can check fails closed for a day.
+// or null when it lapsed. Content it cannot read or check counts as a run's claim being written for CLAIM_WRITE, and as
+// a kept one after that, so a claim no read can check fails closed for a day: a file of MARKER_CAP bytes or more, text
+// that is no JSON, and a value that is not a plain object whose `kept` is a boolean, and whose `starting`, when there,
+// is one too, such as `null` or a list.
 function claimHeld(store, file, now) {
   let stat;
   try {
@@ -422,14 +466,18 @@ function claimHeld(store, file, now) {
   const age = now - Math.floor(stat.mtimeMs);
   let value;
   try {
-    value = stat.size < MARKER_CAP ? JSON.parse(readFileSync(file, 'utf8')) : null;
+    value = stat.size < MARKER_CAP ? JSON.parse(readFileSync(file, 'utf8')) : undefined;
   } catch {
-    value = age > CLAIM_WRITE ? { kept: true } : {};
+    value = undefined;
   }
-  if (value?.kept !== true) return age <= CLAIM_AGE ? 'running' : null;
+  if (!isClaim(value)) value = age > CLAIM_WRITE ? { kept: true } : {};
+  if (value.kept !== true) return age <= CLAIM_AGE ? 'running' : null;
   if (value.starting === true && age <= CLAIM_AGE) return 'running';
   return age <= DAY ? 'kept' : null;
 }
+
+// Whether `value` is a claim as claimStart and keepClaim write it.
+const isClaim = (value) => isObject(value) && typeof value.kept === 'boolean' && (value.starting === undefined || typeof value.starting === 'boolean');
 
 // Keeps the claim of `session` for a day: after a start whose outcome is unknown, or a session that started and could not
 // be held or stopped, so no later run of `session` starts another beside it. `starting` marks one kept as the start

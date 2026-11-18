@@ -276,7 +276,9 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // command to stop it (`stopLine`). A launch whose outcome the adapter cannot know, such as a start that timed out, or
 // exited 0 with no id the listing then names, may have started a session the gate cannot name, so it ends the same way:
 // nothing is armed, and the line says how to find and stop it (`findLine`). Whatever surely did not start goes on by
-// the clear route where the host has it (byClear).
+// the clear route where the host has it (byClear). A session a project run started for an issue passes the run and the
+// issue its own mark carries on to the new session's mark, so the issue's later sessions stay held as that issue's
+// (lib/project-run-gate.mjs); a mark whose tags cannot be read starts nothing.
 function startInBackground(ready) {
   const { host, found, slug, chain, hash, store, session, now, maxChain, env, run, wait, root, mark } = ready;
   const handoff = host.capabilities.handoffContinue;
@@ -285,6 +287,10 @@ function startInBackground(ready) {
     const named = typeof mark.root === 'string' && !hasControl(mark.root) ? ` of the project in ${mark.root}` : ' whose project its unattended mark does not name';
     return none(`this session was started by a handoff gate${named}, and its chain floor lives in that project's store, so it starts no background session here; a person resumes the brief ${slug}`);
   }
+  if (mark && (mark.issue === null || mark.project === null)) {
+    return none(`this session's unattended mark names a project run's issue in a shape the gate cannot read, so it starts no background session that would lose it; a person resumes the brief ${slug}`);
+  }
+  const tags = mark?.issue ? { project: mark.project, issue: mark.issue } : null;
   const fallBack = (why) => {
     const routed = byClear(host, why);
     return routed.route === 'clear' ? armed({ ...ready, ...routed }) : none(routed.fallback);
@@ -301,6 +307,7 @@ function startInBackground(ready) {
     root,
     floor: { slug, chain: chain + 1, brief: found.path, route: 'background' },
     record: { sha256: hash, slug, brief: found.path, chain: chain + 1 },
+    tags,
     env,
     now,
   });
@@ -348,7 +355,9 @@ function refusedLines({ handoff, held, slug }) {
 function owner(handoff, earlier, slug, answer) {
   const look = handoff.attachLine?.({ id: earlier.id, name: earlier.name }) ?? `its id is ${earlier.id}`;
   const listing = { null: ': the host\'s listing gave no answer, so the gate counts that session as running', false: ': the host\'s listing does not show that session as done, so the gate counts it as running' }[String(answer)] ?? '';
-  return `this session already started the background session ${earlier.id} for the brief ${earlier.slug}, which owns the work, so no other starts and no clear is armed beside it${listing}. ` +
+  // A project run's start names no brief: the issue it started the session for.
+  const what = earlier.project ? `the issue ${earlier.project.issue} of the project run ${earlier.project.run}` : `the brief ${earlier.slug}`;
+  return `this session already started the background session ${earlier.id} for ${what}, which owns the work, so no other starts and no clear is armed beside it${listing}. ` +
     `It lifts once the host lists that session as done, or 24 hours after its start, when the gate's record of it lapses: ${look}. A person can resume the brief ${slug} by hand`;
 }
 
@@ -424,6 +433,11 @@ export function backgroundNotice(store, host, session, { now = Date.now() } = {}
   const started = readStarted(store, session, { now });
   if (!started) return null;
   const look = host.capabilities.handoffContinue.attachLine?.({ id: started.id, name: started.name }) ?? `its id is ${started.id}`;
+  // A project run's start: the driver session started it for one issue, and owns the run still.
+  if (started.project) {
+    return `Project run: this session started the background session ${started.id} for the issue ${started.project.issue} of the run ${started.project.run}, attempt ${started.project.attempt}: ${look}. ` +
+      'That session owns the issue\'s work; `aidrian project wait` reads how it ends.';
+  }
   return `Handoff: this session handed the work of the brief ${started.slug} to the background session ${started.id}, which owns it now: ${look}. ` +
     'Before doing any of that work here, tell the Human, so the two sessions do not work on it at once.';
 }

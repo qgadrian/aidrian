@@ -20,6 +20,9 @@
 // the session's own mark is written, or when it knows nothing started; a launch whose outcome it cannot know keeps it
 // until it lapses. A pending file it cannot read holds every session but none: the session it names cannot be told
 // apart from another.
+// A session a project run starts for an issue (lib/project-run-gate.mjs) carries the run and the issue in its mark,
+// { root, at, project, issue }, and the background route copies them into the mark of each continuation it starts, so
+// the issue's whole chain of sessions is known as that issue's wherever it runs.
 
 import { randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -48,6 +51,10 @@ export const PENDING_AGE = 5 * 60 * 1000;
 const KNOWN_CAP = 1000;
 // A mark this size or larger is never read for its root; it still counts as a mark.
 const MARK_CAP = 64 * 1024;
+// The tags a mark may carry: a project run's id and an issue key, as lib/project-run.mjs holds them, which imports this
+// file through others; test/project-start-guard.test.mjs holds the copies equal.
+export const RUN_TAG = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+export const ISSUE_TAG = /^(?:[A-Z][A-Z0-9]{0,15}-)?[1-9][0-9]{0,8}$/u;
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
@@ -96,12 +103,15 @@ function writeMark(folder, name, value) {
 }
 
 // Files the mark of `session`, { root, at }, in markFolder(env), where `root` is the main checkout of the project the gate
-// ran in, after sweeping marks past MARK_AGE. Returns the file, or null when the session id cannot name a file, or the
-// folder is a symlink, not a folder, or another user's, or the write fails. Never throws.
-export function markUnattended(session, { root, env = process.env, now = Date.now() } = {}) {
+// ran in, after sweeping marks past MARK_AGE. `tags`, { project, issue }, adds a project run's id and an issue key; a tag
+// of a wrong shape writes nothing. Returns the file, or null when the session id cannot name a file, or the folder is a
+// symlink, not a folder, or another user's, or the write fails. Never throws.
+export function markUnattended(session, { root, env = process.env, now = Date.now(), tags = null } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof root !== 'string' || !path.isAbsolute(root)) return null;
+  const tagged = tags === null ? {} : tagsOf(tags);
+  if (tagged === null) return null;
   try {
-    return writeMark(ownFolder(env, now), `${session}.json`, { root, at: now });
+    return writeMark(ownFolder(env, now), `${session}.json`, { root, at: now, ...tagged });
   } catch {
     return null;
   }
@@ -131,8 +141,16 @@ export function dropPending(file) {
   }
 }
 
+// The tags of a mark, { project, issue } with both or neither, or null when they have a wrong shape.
+function tagsOf(value) {
+  if (value?.project === undefined && value?.issue === undefined) return {};
+  const ok = typeof value.project === 'string' && RUN_TAG.test(value.project) && typeof value.issue === 'string' && ISSUE_TAG.test(value.issue);
+  return ok ? { project: value.project, issue: value.issue } : null;
+}
+
 // The mark of `session`, { root } where `root` is the main checkout the gate named, or null when it named none that can
-// be read; null when no mark holds. It reads each of markFolders the session's own mark and every mark under a short id
+// be read; null when no mark holds. A mark that carries a project run's tags adds `project` and `issue`; one whose tags
+// have a wrong shape adds `issue: null` and `project: null`, so a reader that refuses any session with an issue refuses it. It reads each of markFolders the session's own mark and every mark under a short id
 // it starts with. A mark of another user, or one past MARK_AGE, does not hold; an entry or a folder it cannot check does.
 // With no mark of its own, a pending mark holds the session, wherever its call runs, as { root, pending: true }, unless it
 // ran the gate or the host listed it before the start.
@@ -203,13 +221,17 @@ function readMark(file, uid, now) {
   }
   if (Number.isInteger(uid) && stat.uid !== uid) return null;
   if (now - Math.floor(stat.mtimeMs) > MARK_AGE) return null;
-  return { root: stat.isFile() && stat.size < MARK_CAP ? rootOf(file) : null };
+  if (!stat.isFile() || stat.size >= MARK_CAP) return { root: null };
+  return markOf(readJson(file));
 }
 
-// The main checkout a mark names, or null.
-function rootOf(file) {
-  const value = readJson(file);
-  return isObject(value) && typeof value.root === 'string' && path.isAbsolute(value.root) ? value.root : null;
+// What a mark's value names: { root } with the main checkout or null, plus its tags when it carries any. A reader that
+// must know whether the session works an issue counts `root: null` as one it cannot tell.
+function markOf(value) {
+  if (!isObject(value)) return { root: null };
+  const root = typeof value.root === 'string' && path.isAbsolute(value.root) ? value.root : null;
+  const tags = tagsOf(value);
+  return { root, ...(tags ?? { project: null, issue: null }) };
 }
 
 // The JSON value of the regular file `file`, read without following a link, or null.

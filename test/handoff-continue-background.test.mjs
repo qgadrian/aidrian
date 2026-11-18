@@ -149,6 +149,32 @@ test('the background route marks the new session unattended under the state root
   assert.equal(readUnattendedMark('plain-session', { env, home }), null, 'another session has none');
 });
 
+test('the background route copies an issue session\'s run and issue into its continuation\'s mark, and starts nothing from tags it cannot read', (t) => {
+  const marks = (setting) => {
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    t.after(() => rmSync(xdg, { recursive: true, force: true }));
+    return { env: { ...setting.env, XDG_STATE_HOME: xdg }, home: path.join(xdg, 'home'), folder: path.join(xdg, 'aidrian', 'unattended') };
+  };
+  const tagged = setup(t);
+  passCheck(tagged);
+  const one = marks(tagged);
+  assert.ok(markUnattended(SESSION, { root: tagged.dir, env: one.env, tags: { project: 'launch', issue: 'ENG-1' } }));
+  const result = gate(tagged, { run: fakeRun({ own: tagged.dir }).run, env: one.env });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.deepEqual(readUnattendedMark(NEW_SESSION, { env: one.env, home: one.home }), { root: tagged.dir, project: 'launch', issue: 'ENG-1' }, 'the continuation is the same issue\'s session');
+
+  const broken = setup(t);
+  passCheck(broken);
+  const two = marks(broken);
+  mkdirSync(two.folder, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(two.folder, `${SESSION}.json`), JSON.stringify({ root: broken.dir, at: Date.now(), project: 'launch', issue: 'not a key' }), { mode: 0o600 });
+  const { run, calls } = fakeRun({ own: broken.dir });
+  const refused = gate(broken, { run, env: two.env });
+  assert.equal(refused.out[0], 'continue: none');
+  assert.match(refused.out[1], /^fallback: this session's unattended mark names a project run's issue in a shape the gate cannot read, so it starts no background session that would lose it/u);
+  assert.deepEqual(bgCalls(calls), [], 'nothing started');
+});
+
 test('a start the gate cannot mark unattended is stopped and falls back, as one it cannot hold to a floor', (t) => {
   const setting = setup(t);
   passCheck(setting);

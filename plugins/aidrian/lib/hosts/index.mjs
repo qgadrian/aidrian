@@ -127,6 +127,27 @@ export const modelChoices = () => Object.fromEntries(HOSTS.map((host) => [host.m
 // Every host's model prices, as { host, models, rows }: the data lib/model-prices.mjs reads. A host with none has no rows.
 export const priceTables = (hosts = HOSTS) => hosts.map((host) => ({ host: host.id, models: host.modelPrices?.models ?? [], rows: host.modelPrices?.rows ?? [] }));
 
+// The host instruction files and folders every host loads from the folders above where a session starts, as { files,
+// folders, userFolders }: the names of each, and each host's own user folder under `env`, which it reads for every session.
+export function instructionNames(env = process.env, hosts = HOSTS) {
+  const declared = hosts.map((host) => host.instructionFiles).filter(Boolean);
+  return {
+    files: [...new Set(declared.flatMap((each) => each.files ?? []))],
+    folders: [...new Set(declared.flatMap((each) => each.folders ?? []))],
+    userFolders: declared.map((each) => each.userFolder?.(env)).filter((each) => typeof each === 'string' && each !== ''),
+  };
+}
+
+// The main checkout's paths every host reads from a session in a linked worktree, as { folders, settings }: the
+// folders, from the checkout's root, and the settings files, each { file, problem(value) }, the host's check of its JSON.
+export function mainCheckoutPaths(hosts = HOSTS) {
+  const declared = hosts.map((host) => host.mainCheckoutPaths).filter(Boolean);
+  return {
+    folders: [...new Set(declared.flatMap((each) => each.folders ?? []))],
+    settings: declared.flatMap((each) => each.settings ?? []).filter((each) => typeof each?.file === 'string' && typeof each.problem === 'function'),
+  };
+}
+
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];
 

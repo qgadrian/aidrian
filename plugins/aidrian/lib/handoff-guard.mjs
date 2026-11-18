@@ -4,7 +4,9 @@
 // started (startedUnattended, or its mark in lib/unattended-mark.mjs) is held as a subagent is to the store, and both
 // may neither change the unattended marks (unattendedMarkWriteDenial), nor start a host session outside the gate
 // (hostSessionStartDenial), nor run the gate with a variable of their own that moves its store, its session, or its
-// host command (handoffEnvDenial), nor repoint a remote the plugin reads the team's policy through (remoteChangeDenial). scripts/hook-agent-gates.mjs asks it before every tool call. A host's other
+// host command (handoffEnvDenial), nor repoint a remote the plugin reads the team's policy through (remoteChangeDenial),
+// nor write in the folder of the project runs, `<state>/runs/` (projectRunWriteDenial), whose ledger says which session
+// drives a run and which works each issue. scripts/hook-agent-gates.mjs asks it before every tool call. A host's other
 // tools that run a shell command, such as Claude Code's Monitor, reach it as Bash calls (lib/hosts/claude-code.mjs
 // hookInput); a command in a shell the shared lexer cannot read (lib/hosts/index.mjs opaqueShellCommand) is read as
 // opaque text, and refused when its words may run the gate, or name or reach the store.
@@ -19,14 +21,16 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { checkDeadline } from './deadline.mjs';
+import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
+import { loadConfig } from './config.mjs';
+import { runGit } from './git.mjs';
 import { bashCall, globNamesFile, opaqueTexts, unquoted, writeTargets } from './config-guard.mjs';
 import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
-import { DETECT_VARS, HOSTS, IDENTITY_VARS, opaqueShellCommand } from './hosts/index.mjs';
-import { defaultStateDir, stateDir, stateRoot } from './project.mjs';
+import { DETECT_VARS, HOSTS, IDENTITY_VARS, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
+import { defaultStateDir, findProject, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { aidrianArgs, changedVariables, changesVariable, readGit, walkCommands } from './shell-lex.mjs';
@@ -44,26 +48,84 @@ const UNATTENDED = 'and the background handoff route started this session, with 
 // moves state.dir in its working copy is still found, and so is one whose gate ran with an environment other than the
 // hook's, as with `XDG_STATE_HOME` unset. lib/config-guard.mjs machineSwitchWriteDenial refuses such a session the
 // machine's switches, as it does a subagent. It reads git only when the working copy's stores hold no such floor, and is
-// asked only for a call a guard would refuse. A store it cannot read finds nothing. `home` is for a test, as in
-// defaultStateDir; lib/unattended-mark.mjs keeps the mark that finds such a session outside its project.
-export function startedUnattended(project, config, session, { home } = {}) {
+// asked only for a call a guard would refuse. A store it cannot read finds nothing. `base` is a baseReader the caller
+// shares, so a hook call reads the base branch's config once. `home` is for a test, as in defaultStateDir;
+// lib/unattended-mark.mjs keeps the mark that finds such a session outside its project.
+export function startedUnattended(project, config, session, { home, base } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
-  const seen = new Set();
-  const found = (read) => {
+  const found = (state) => {
     try {
-      const state = read();
-      if (typeof state !== 'string' || seen.has(state)) return false;
-      seen.add(state);
       return startedInBackground(openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain }), session);
     } catch {
       return false;
     }
   };
+  // Lazily, so the working copy's folders are read first, and git only when they hold no floor.
+  for (const state of stateFolders(project, config, { home, lazy: true, ...(base ? { base } : {}) })) if (found(state)) return true;
+  return false;
+}
+
+// The base branch's config of `project`, read once however often it is asked: a function that gives { config },
+// { why, failed }, where `failed` is true when the read failed in a repository with a remote, as when a remote-tracking
+// ref was deleted or git ran out of time, and false when no base exists to read, as outside git. The agent gate hook
+// makes one per call and hands it to every guard and pass. Inside a guard's budget (lib/deadline.mjs) it checks the
+// deadline before it reads, and gives each git read the time left as its timeout.
+export function baseReader(project) {
+  let read;
+  return () => (read ??= readBase(project));
+}
+
+function readBase(project) {
+  checkDeadline();
+  const git = () => (Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : undefined);
+  const base = baseBranchConfig(project, 'state.dir', git);
+  if (!base.why) return { config: base.config };
+  const remotes = runGit(['remote'], project.root, git() ?? {});
+  return { why: base.why, failed: remotes.status !== 0 ? remotes.status === null : remotes.stdout.trim() !== '' };
+}
+
+// The config of the project folder at the main checkout of `project`, where the agent gate hook keeps worktree sessions
+// from writing, or null: no main checkout apart from the project's own, or none there.
+function mainConfig(project) {
+  const main = project.checkouts?.at(-1);
+  const current = project.checkouts?.[0];
+  if (typeof main !== 'string' || typeof current !== 'string' || main === current) return null;
+  const found = findProject(path.join(main, path.relative(current, project.root)));
+  return found ? loadConfig(found).config : null;
+}
+
+// Every state folder of `project`, whose loaded config is `config`, that a session's handoff store or project runs may
+// be kept in: the working copy's state.dir, the main checkout's, and the base branch's, each where the hook's environment
+// puts it (project.mjs stateDir) and where the user's own does (defaultStateDir), each once. A working copy that moves
+// state.dir still leaves the other folders guarded. A folder that cannot be resolved is left out. With `lazy`, an
+// iterator that reads the base branch's config, which runs git, only once the other folders are taken. `base` is a
+// baseReader to share; `home` is for a test.
+export function stateFolders(project, config, { home, lazy = false, base = baseReader(project) } = {}) {
   const own = (settings) => defaultStateDir(project, { config: settings, ...(home ? { home } : {}) });
-  let committed;
-  const base = () => (committed ??= baseBranchConfig(project).config ?? null);
-  return found(() => stateDir(project, { config })) || found(() => own(config))
-    || found(() => base() && stateDir(project, { config: base() })) || found(() => base() && own(base()));
+  let main;
+  const atMain = () => (main ??= mainConfig(project) ?? false);
+  const committed = () => base().config ?? null;
+  const reads = [
+    () => stateDir(project, { config }), () => own(config),
+    () => atMain() && stateDir(project, { config: atMain() }), () => atMain() && own(atMain()),
+    () => committed() && stateDir(project, { config: committed() }), () => committed() && own(committed()),
+  ];
+  function* each() {
+    const seen = new Set();
+    for (const read of reads) {
+      let state;
+      try {
+        state = read();
+      } catch (error) {
+        if (error instanceof PastDeadline) throw error;
+        state = null;
+      }
+      if (typeof state !== 'string' || seen.has(state)) continue;
+      seen.add(state);
+      yield state;
+    }
+  }
+  return lazy ? each() : [...each()];
 }
 
 // Why the subagent's Bash call in `input` may not run because it runs `aidrian handoff continue`, or null:
@@ -109,6 +171,23 @@ const runsGate = (actions) => ({ invocation, unread }) => {
   return action?.dynamic === true || rest.some((token) => actions.includes(token.text));
 };
 
+// Every `aidrian project` subcommand, today's and those a later step adds (lib/project-run-guard.mjs).
+export const PROJECT_SUBCOMMANDS = Object.freeze(['init', 'next', 'start', 'wait', 'result', 'handoff', 'summary', 'report', 'recorded', 'stop-action']);
+// A subcommand word, and the word `project`, in any case, as a text no lexer reads names them; lib/project-run-guard.mjs
+// reads them too.
+export const PROJECT_SUB = new RegExp(String.raw`(?<![\w-])(?:${PROJECT_SUBCOMMANDS.join('|')})(?![\w-])`, 'iu');
+export const PROJECT_WORD = /(?<![\w-])project(?![\w-])/iu;
+
+// Whether a command walkCommands read runs `aidrian project`, with any subcommand: as aidrian, or as a command word
+// built from a variable, or a shell fed text the lexer cannot read, whose plain words name `project` and a subcommand.
+const runsProject = ({ invocation, unread }) => {
+  if (unread !== undefined && PROJECT_WORD.test(unread) && PROJECT_SUB.test(unread)) return true;
+  const plain = invocation.args.filter((token) => !token.dynamic).map((token) => token.text);
+  if (invocation.dynamic && plain.includes('project') && plain.some((word) => PROJECT_SUB.test(word))) return true;
+  const [first] = aidrianArgs(invocation) ?? [];
+  return first !== undefined && !first.dynamic && first.text === 'project';
+};
+
 // The variables the gate reads its store, its session, its agent, the host command it runs, and the team's policy from:
 // the state root and the home folder (project.mjs stateDir), PATH, which finds the host's command, every variable that
 // moves the repository git reads (review/env.mjs GIT_VARS) or gh's config (GH_CONFIG_DIR), where `solo` is read from
@@ -117,8 +196,10 @@ const runsGate = (actions) => ({ invocation, unread }) => {
 const OPAQUE_SETS = /\$env:|(?<![\w$.-])[A-Za-z_]\w*\s*=|\b(?:set|setx|export|unset|env|remove-item\s+env:)\b/iu;
 const GATE_ENV = Object.freeze([...new Set(['XDG_STATE_HOME', 'HOME', 'PATH', 'GH_CONFIG_DIR', ...GIT_VARS, ...IDENTITY_VARS, ...DETECT_VARS])]);
 
-// Why the call in `input` may not run because it runs `aidrian handoff continue` or `aidrian handoff route` with any
-// variable set, exported, or unset by the command line itself, or null: { match, reason }. GATE_ENV names the ones that
+// Why the call in `input` may not run because it runs `aidrian handoff continue`, `aidrian handoff route`, or any
+// `aidrian project` subcommand, with any variable set, exported, or unset by the command line itself, or null:
+// { match, reason }. A project run's commands read the session id from the environment, as the gate does, and the run's
+// driver and issue sessions are known by it (lib/project-run-guard.mjs). GATE_ENV names the ones that
 // move what the gate reads, for the reason's wording; every other one is refused too, as the gate needs none. It holds for a subagent and for a session
 // `unattended()` says the background route started, asked only for such a command: a store the session moves, or a
 // session id it chooses, reads no floor, so its next background start would be held to no count, and the hooks, which
@@ -135,12 +216,13 @@ export function handoffEnvDenial(input, { names: { human } }, { unattended = () 
   let named;
   if (opaque !== null) {
     const texts = opaqueTexts(opaque);
-    if (!opaqueRuns(texts, ['continue', 'route'])) return null;
+    const project = texts.some((text) => PROJECT_WORD.test(text) && PROJECT_SUB.test(text));
+    if (!opaqueRuns(texts, ['continue', 'route']) && !project) return null;
     named = GATE_ENV.find((name) => texts.some((text) => new RegExp(String.raw`(?<![\w])${name}(?![\w])`, 'iu').test(text)))
       ?? (texts.some((text) => OPAQUE_SETS.test(text)) ? 'a variable' : null);
   } else {
     const commands = walkCommands(command, null);
-    if (!commands.some(runsGate(['continue', 'route']))) return null;
+    if (!commands.some(runsGate(['continue', 'route'])) && !commands.some(runsProject)) return null;
     // Any variable: the gate runs only with the environment the host gave the session. GATE_ENV names the one it moves.
     const changed = commands.flatMap(({ invocation }) => changedVariables(invocation));
     named = GATE_ENV.find((name) => commands.some(({ invocation }) => changesVariable(invocation, name)))
@@ -150,8 +232,8 @@ export function handoffEnvDenial(input, { names: { human } }, { unattended = () 
   if (!named || (!subagent && !unattended())) return null;
   const who = subagent ? 'only the main session runs the gate, with the environment its host gave it' : `the gate runs only with the environment the host gave this session, ${UNATTENDED}`;
   const moves = GATE_ENV.includes(named) ? 'which would move the continuation store, the session, or the host command the gate reads, or the policy it reads' : 'and the gate runs with no variable a command sets';
-  const why = `it runs \`aidrian handoff\` with ${named} set or unset by the command itself, ${moves}, and ${who}`;
-  return { match: `changes ${named} for aidrian handoff`, reason: projectRuleReason(input, why, human, 'that the handoff runs with the environment the host gave the session') };
+  const why = `it runs \`aidrian handoff\` or \`aidrian project\` with ${named} set or unset by the command itself, ${moves}, and ${who}`;
+  return { match: `changes ${named} for aidrian handoff or project`, reason: projectRuleReason(input, why, human, 'that the handoff runs with the environment the host gave the session') };
 }
 
 // The hosts that declare their command that starts a session (docs/providers/adding-a-host.md `sessionStart`).
@@ -186,8 +268,10 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
   return { match: `starts a ${host.name} session`, reason: projectRuleReason(input, why, human, 'to start or resume that session') };
 }
 
-// The `git remote` actions that point a remote at another repository.
-const REMOTE_ACTIONS = new Set(['add', 'set-url', 'rename']);
+// The `git remote` actions that point a remote at another repository, or move the ref of its default branch.
+const REMOTE_ACTIONS = new Set(['add', 'set-url', 'rename', 'set-head']);
+// A remote-tracking ref: a project run cuts and checks each issue's worktree against origin's default branch.
+const TRACKING_REF = /^refs\/remotes\//u;
 // The git config keys that decide which repository a remote names, or what a git command runs, in any case: every key of
 // a remote (its URLs, and `gh-resolved`, gh's default repository), an included file, a URL rewrite, and an alias.
 const POLICY_KEY = /^(?:remote\..+|include\.path|includeif\..+|url\..+|alias\..+)$/iu;
@@ -201,7 +285,10 @@ const CONFIG_ANY = new Set(['-e', '--edit', '--rename-section', '--remove-sectio
 const CONFIG_VALUES = new Set(['-f', '--file', '--blob', '--type', '--default', '--comment', '--value']);
 // The text of a command no lexer reads that may change a remote: the words of such a git or gh call, in any order.
 const REMOTE_TEXTS = [
-  [/\bremote\b/iu, /(?<![\w-])(?:add|set-url|rename)(?![\w-])/iu],
+  [/\bremote\b/iu, /(?<![\w-])(?:add|set-url|rename|set-head)(?![\w-])/iu],
+  [/\b(?:update-ref|symbolic-ref)\b/iu, /refs\/remotes\/|--stdin/iu],
+  [/\b(?:fetch|push)\b/iu, /:refs\/remotes\//iu],
+  [/\bbranch\b/iu, /(?<![\w-])(?:-[a-z]*r[a-z]*|--remotes)(?![\w-])/iu, /(?<![\w-])(?:-[a-z]*[dD][a-z]*|--delete)(?![\w-])/u],
   [/\bconfig\b/iu, /\b(?:remote\.\S+|include\.path|includeif\.\S+|url\.\S+|alias\.\S+)/iu],
   [/\bconfig\b/iu, /(?<![\w-])(?:--edit|--rename-section|--remove-section|rename-section|remove-section)(?![\w-])/iu],
   [/\brepo\b/iu, /\bset-default\b/iu],
@@ -239,7 +326,10 @@ const aliasGlobal = (globals) => globals.some((token, i) => {
 
 // Whether one command the walk read changes a remote, gh's default repository, or how git reads either: `git remote
 // add`, `set-url`, or `rename`; a `git config` write of a remote, include, URL, or alias key (configWrites), or an edit,
-// rename, or removal of a section; an alias given by `-c` or `--config-env`; `gh repo set-default` without `--view`;
+// rename, or removal of a section; an alias given by `-c` or `--config-env`; `git update-ref` of a remote-tracking ref,
+// or with `--stdin`, whose refs it cannot see; `git symbolic-ref` that writes or deletes one; `git remote set-head`;
+// `git branch` deleting remote-tracking branches; a fetch or push refspec whose destination is under refs/remotes/;
+// `gh repo set-default` without `--view`;
 // or `gh alias set` or `import`. A command whose program is a variable or a substitution, and a git or gh call whose
 // words the lexer cannot all read, count when their plain words name such an action.
 function changesRemote({ segment, invocation, unread }) {
@@ -263,6 +353,21 @@ function changesRemote({ segment, invocation, unread }) {
   const words = git.rest.filter((token) => !token.dynamic).map((token) => token.text);
   if (git.subcommand === 'remote') return REMOTE_ACTIONS.has(words.find((text) => !text.startsWith('-')));
   if (git.subcommand === 'config') return configWrites(words);
+  if (git.subcommand === 'update-ref') return words.includes('--stdin') || words.some((text) => TRACKING_REF.test(text));
+  // `git branch -d -r origin/main`: a deletion of remote-tracking branches, in any spelling of the flags.
+  if (git.subcommand === 'branch') {
+    const short = words.filter((text) => /^-[A-Za-z]+$/u.test(text)).join('');
+    const remotes = words.includes('--remotes') || short.includes('r');
+    return remotes && (words.includes('--delete') || /[dD]/u.test(short));
+  }
+  // A refspec whose destination is a remote-tracking ref, as `git fetch . +HEAD:refs/remotes/origin/main` or
+  // `git push . :refs/remotes/origin/main` writes.
+  if (git.subcommand === 'fetch' || git.subcommand === 'push') return words.some((text) => !text.startsWith('-') && text.includes(':') && TRACKING_REF.test(text.slice(text.lastIndexOf(':') + 1)));
+  // symbolic-ref writes with a second operand, or deletes; with one, it reads.
+  if (git.subcommand === 'symbolic-ref') {
+    const operands = words.filter((text) => !text.startsWith('-'));
+    return TRACKING_REF.test(operands[0] ?? '') && (operands.length > 1 || words.some((text) => ['-d', '--delete'].includes(text)));
+  }
   return false;
 }
 
@@ -278,14 +383,14 @@ export function remoteChangeDenial(input, { names: { human } }, { unattended = (
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
   // Every form it refuses names one of these words, however quoted, so a call with none of them is not walked.
-  if (typeof command !== 'string' || !/remote|config|repo|alias/iu.test(unquoted(command))) return null;
+  if (typeof command !== 'string' || !/remote|config|repo|alias|update-ref|symbolic-ref|branch/iu.test(unquoted(command))) return null;
   const hit = opaque !== null
     ? REMOTE_TEXTS.some((words) => words.every((word) => opaqueTexts(opaque).some((text) => word.test(text))))
     : walkCommands(command, null).some(changesRemote);
   const subagent = isSubagent(input);
   if (!hit || (!subagent && !unattended())) return null;
   const who = subagent ? 'only the main session changes them' : `only a session the Human attends changes them, ${UNATTENDED}`;
-  const why = `it changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo, and ${who}`;
+  const why = `it changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo, or a remote-tracking ref, which names the commit a project run cuts each issue from, and ${who}`;
   return { match: 'changes a git remote', reason: projectRuleReason(input, why, human, 'to change the remote') };
 }
 
@@ -357,14 +462,14 @@ function globReaches({ prefix, rest }, store) {
 // lie in the store, so a call that writes nowhere near the state root runs no git. It writes there when a target lies in the store, or is a folder that holds
 // it and no checkout, or a glob may reach the store, by the path it spells or through a link already on disk in any part
 // it expands (globLinksTo), as `tee /tmp/alias*` does when `/tmp/alias` links to a marker, and `/va*/...` through
-// macOS's `/var`; a target in a folder no path names, or code an interpreter runs,
+// macOS's `/var`; `state` may give one folder or a list (stateFolders), each guarded; a target in a folder no path names, or code an interpreter runs,
 // counts when it names `handoffs/.continue`, a marker below `.continue/`, or a path part named as a file that arms or
 // delivers (MARKER_NAME), or, for a glob, starts as one (MARKER_GLOB). A glob word of a command in a shell the lexer
 // cannot read counts by those names, and when it names the store by its name, as `.con*`, `han*`, or `handoffs/*` do, from any folder
 // (globNamesFile), since such a shell may change its folder first. Such a command may only read what it names, so its
 // block says it may change the store. With `links` false it skips the link walk, which reads folders on disk, so the
 // agent gate hook asks it so first, and again with the walk after the other guards' cheaper checks.
-export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false } = {}) {
+export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false, base = baseReader(project) } = {}) {
   const subagent = isSubagent(input);
   const opaque = opaqueShellCommand(input) !== null;
   const { files, names, globs } = writeTargets(input);
@@ -390,15 +495,32 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   // A glob anywhere may pass a link into the state root; the walk reads each folder once a call (linkWalk).
   const seen = linkWalk(input);
   const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
-  if (!dir && ![...files.map(real), ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !linksTo(root)) return null;
-  const folder = state();
-  const store = real(storePath(folder));
-  const shields = [real(folder), real(path.join(folder, 'handoffs'))];
-  const hit = reaches({ files: files.map(real), known, placed, linksTo }, store, shields, project.checkouts.map(real));
-  if (!hit || !held()) return null;
-  const verb = opaque ? 'may change' : 'changes';
-  return { match: `${verb} the continuation store`, reason: why(verb, store) };
+  const roots = project.checkouts.map(real);
+  const targets = [...files.map(real), ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)];
+  if (inCheckouts(targets, roots, root) && !linksTo(root)) return null;
+  if (base().failed) return held() ? { match: 'may change the continuation store', reason: why('may change', `${storePath('<state>')}, wherever the base branch's config, which cannot be read, keeps it`) } : null;
+  if (!dir && !targets.some(near) && !linksTo(root) && !movesState(base)) return null;
+  for (const folder of folders(state)) {
+    const store = real(storePath(folder));
+    const shields = [real(folder), real(path.join(folder, 'handoffs'))];
+    if (!reaches({ files: files.map(real), known, placed, linksTo }, store, shields, roots)) continue;
+    if (!held()) return null;
+    const verb = opaque ? 'may change' : 'changes';
+    return { match: `${verb} the continuation store`, reason: why(verb, store) };
+  }
+  return null;
 }
+
+// The state folders `state` gives: one folder, or a list (stateFolders).
+const folders = (state) => [].concat(state() ?? []).filter((each) => typeof each === 'string');
+
+// Whether every target lies inside one of the project's checkouts and none holds the state root `root`: a state folder
+// is never kept inside a checkout (project-run.mjs runPlace, handoff-markers.mjs openStore), so such a write reaches none.
+const inCheckouts = (targets, roots, root) => targets.length > 0 && targets.every((target) => roots.some((each) => isWithin(each, target)) && !isWithin(target, root));
+
+// Whether the base branch's config may keep the state folder elsewhere than the working copy says: it commits a
+// state.dir, or cannot be read. `base` is the hook call's baseReader, read only for a write outside every checkout.
+const movesState = (base) => base().config?.state?.dir != null || Boolean(base().why);
 
 // Whether the write targets of a call reach `folder`, a real, case-folded path: a file target lies in it, or holds it
 // and none of `roots`, the project's checkouts; a glob may reach it by the path it spells (globReaches) or through a
@@ -454,4 +576,100 @@ export function unattendedMarkWriteDenial(input, { names: { human } }, { project
   const writer = subagent ? 'which only the handoff gate writes' : `which only the handoff gate writes, ${UNATTENDED}`;
   const why = `it ${verb} the unattended marks, ${MARK_TAIL}, which tell the hooks a session no Human attends wherever it runs, and ${writer}`;
   return { match: `${verb} the unattended marks`, reason: projectRuleReason(input, why, human) };
+}
+
+// The folder of every project run under a state folder, as lib/project-run.mjs runsFolder names it; that file imports
+// this one, so the name is kept here too, and test/project-start-guard.test.mjs holds the two equal.
+export const RUNS_FOLDER = 'runs';
+// A text from a folder no path gives that names a run's folder or its ledger: `runs/<run id>`, or `ledger.jsonl`.
+const RUN_NAME = /(?:^|\/)runs\/[a-z0-9*?[][a-z0-9*?[\]-]{0,63}(?:\/|$)|(?:^|\/)ledger\.jsonl$/iu;
+
+// Why the call in `input` may not run because it writes in the folder of the project runs, `<state>/runs/`, of the state
+// folder `state` gives, or null: { match, reason }. A run's ledger says which session drives the run and which works each
+// issue, its snapshot which issues there are, and its results what each issue's session recorded, and only `aidrian
+// project` writes them. It holds for a subagent, and for a main session `unattended()` says no Human attends, such as an
+// issue's own session, asked once a call reaches the folder. A call reaches it as continueStoreWriteDenial's reaches the
+// continuation store: a target in it, or a folder that holds it and no checkout, a glob that may reach it by its path or
+// through a link (with `links`), or a change of mode or owner of it, a file in it, or the state folder. A target in a
+// folder no path gives, and a word of a command in a shell the lexer cannot read, count when they name `runs/<run id>`
+// or a `ledger.jsonl` (RUN_NAME). `state` gives one folder or a list (stateFolders): the base branch's state.dir is
+// guarded whatever the working copy's config says. When the base branch's config cannot be read in a repository with a
+// remote (`base`, a baseReader), a held session's write outside every checkout is refused: the folder is unknown.
+export function projectRunWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false, base = baseReader(project) } = {}) {
+  const subagent = isSubagent(input);
+  const opaque = opaqueShellCommand(input) !== null;
+  const { files, names, globs } = writeTargets(input);
+  const modes = modeTargets(input);
+  const writer = subagent ? 'only the main session\'s `aidrian project` commands write' : `only \`aidrian project\` commands write, ${UNATTENDED}`;
+  const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the folder of the project runs, whose ledger names the session that drives each run and the session that works each issue, where ${writer}`, human);
+  const held = () => subagent || unattended();
+  const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
+  if (names.some((name) => RUN_NAME.test(name)) || globs.some((glob) => (glob.unsure || glob.opaque) && RUN_NAME.test(glob.text)) || unplaced.some(({ text }) => RUN_NAME.test(text))) {
+    return held() ? { match: 'may change the project runs', reason: why('may change', `${RUNS_FOLDER}/`) } : null;
+  }
+  const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
+  const sure = globs.filter((glob) => !glob.unsure);
+  const known = sure.flatMap(globPaths);
+  if (files.length === 0 && known.length === 0 && placed.length === 0) return null;
+  const root = real(stateRoot());
+  const near = (target) => isWithin(root, target) || isWithin(target, root);
+  const seen = linkWalk(input);
+  const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+  const roots = project.checkouts.map(real);
+  const targets = [...files.map(real), ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)];
+  if (inCheckouts(targets, roots, root) && !linksTo(root)) return null;
+  if (base().failed) return held() ? { match: 'may change the project runs', reason: why('may change', `<state>/${RUNS_FOLDER}/, wherever the base branch's config, which cannot be read, keeps it`) } : null;
+  if (!dir && !targets.some(near) && !linksTo(root) && !movesState(base)) return null;
+  for (const folder of folders(state)) {
+    const runs = real(path.join(folder, RUNS_FOLDER));
+    if (!reaches({ files: files.map(real), known, placed, linksTo }, runs, [real(folder)], roots)) continue;
+    if (!held()) return null;
+    const verb = opaque ? 'may change' : 'changes';
+    return { match: `${verb} the project runs`, reason: why(verb, runs) };
+  }
+  return null;
+}
+
+// Why the call in `input` may not run because it writes a main-checkout path a session in a linked worktree reads, or
+// null: { match, reason }. Each host declares those paths (lib/hosts/index.mjs mainCheckoutPaths), such as Claude Code's
+// .claude/settings.local.json and its skills, agents, and commands folders, under the main checkout of `project`. A
+// project run starts an issue's session only under files there a review saw or a settings file its host's check takes
+// (lib/project-run-gate.mjs mainCheckoutProblem), so a subagent, and a session `unattended()` says no Human attends, may
+// not write them: entries there come from a session the Human attends. A call reaches them as the store guard's reaches
+// the store: a target in one or a folder that holds one, a glob that may reach one, or a change of mode or owner. A
+// target in a folder no path gives, and a word of a shell the lexer cannot read, count when they name such a path from
+// the checkout's root. With `links` false it skips the link walk.
+export function mainCheckoutWriteDenial(input, project, { names: { human } }, { links = true, unattended = () => false } = {}) {
+  const main = project?.checkouts?.at(-1);
+  if (typeof main !== 'string') return null;
+  const { folders, settings } = mainCheckoutPaths();
+  const declared = [...folders, ...settings.map((each) => each.file)];
+  if (declared.length === 0) return null;
+  const { files, names, globs } = writeTargets(input);
+  const modes = modeTargets(input);
+  if (files.length === 0 && names.length === 0 && globs.length === 0 && modes.length === 0) return null;
+  const subagent = isSubagent(input);
+  const held = () => subagent || unattended();
+  const writer = subagent ? 'which only the main session writes' : `which only a session the Human attends writes, ${UNATTENDED}`;
+  const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, which the host reads from the main checkout in every worktree session, ${writer}`, human);
+  const spelled = (text) => declared.some((each) => text === each || text.startsWith(`${each}/`) || text.endsWith(`/${each}`) || text.includes(`/${each}/`));
+  const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
+  if (names.some(spelled) || globs.some((glob) => (glob.unsure || glob.opaque) && spelled(glob.text)) || unplaced.some(({ text }) => spelled(text))) {
+    return held() ? { match: 'may change the main checkout\'s host files', reason: why('may change', declared.join(', ')) } : null;
+  }
+  const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
+  const sure = globs.filter((glob) => !glob.unsure);
+  const known = sure.flatMap(globPaths);
+  const seen = links ? linkWalk(input) : null;
+  const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+  const roots = project.checkouts.map(real);
+  const root = real(main);
+  for (const each of declared) {
+    const target = real(path.join(main, each));
+    if (!reaches({ files: files.map(real), known, placed, linksTo }, target, [], roots.filter((one) => one !== root))) continue;
+    if (!held()) return null;
+    const verb = opaqueShellCommand(input) !== null ? 'may change' : 'changes';
+    return { match: `${verb} the main checkout's host files`, reason: why(verb, target) };
+  }
+  return null;
 }

@@ -9,7 +9,10 @@
 //                  these fields, each checked, and drops every other one. The branch is the one tracker-derived text kept.
 //   ledger.jsonl   append-only, each row written under the file's lock (lib/jsonl.mjs withLocks). Its first row, `init`,
 //                  pins the repository, records the driver's session id, and ties the run to snapshot.json by its
-//                  sha256 and issue count; later rows record what happened to an issue. It holds no projectRun value.
+//                  sha256 and issue count; later rows record what happened to an issue, and the rows of the start gate
+//                  (lib/project-run-gate.mjs): each start, result, end, and move of the driver's custody. It holds no
+//                  projectRun value.
+//   results/       each issue's result as its session recorded it (lib/project-run-gate.mjs).
 //   summary.md     what `aidrian project summary` writes from the ledger.
 // One run per project is active at a time: one whose order is not done.
 
@@ -22,7 +25,7 @@ import { foldCase, isObject, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
-import { startedUnattended } from './handoff-guard.mjs';
+import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir } from './project.mjs';
@@ -38,8 +41,9 @@ export const DECISION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 export const STATUS_TYPES = Object.freeze(['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']);
 // The status types a run may start an issue from. `triage` is not accepted yet, and `started` is someone's work already.
 const STARTABLE = new Set(['backlog', 'unstarted']);
-// What the ledger records of an issue, the latest row per key deciding.
-export const ISSUE_STATES = Object.freeze(['running', 'done', 'parked']);
+// What the ledger records of an issue, the latest row per key deciding. `open` is an issue back to be started again, as
+// after an attempt that failed (lib/project-run-gate.mjs).
+export const ISSUE_STATES = Object.freeze(['running', 'done', 'parked', 'open']);
 // The largest snapshot input read, and the most issues, blockers of one issue, and outside blockers it may hold.
 export const INPUT_CAP = 1024 * 1024;
 export const MAX_ISSUES = 500;
@@ -62,7 +66,7 @@ const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
 // The folder that holds every run of the project whose state folder is `state`, and the folder of run `run`.
-export const runsFolder = (state) => path.join(state, 'runs');
+export const runsFolder = (state) => path.join(state, RUNS_FOLDER);
 export const runFolder = (state, run) => path.join(runsFolder(state), run);
 const ledgerFile = (state, run) => path.join(runFolder(state, run), 'ledger.jsonl');
 const snapshotFile = (state, run) => path.join(runFolder(state, run), 'snapshot.json');
@@ -176,7 +180,7 @@ function repeated(values, what, problems) {
 // The bytes of the regular file `file`, at most `cap`, read without following a symlink and without waiting on a FIFO:
 // { bytes } or { problem, code }, where `code` is the error code of a file that could not be opened, such as ENOENT.
 // It reads at most one byte past the cap, so a file that grows after the stat is still refused.
-function readCapped(file, cap) {
+export function readCapped(file, cap) {
   let fd;
   try {
     if (lstatSync(file).isSymbolicLink()) return { problem: `${file} is a symlink` };
@@ -409,9 +413,11 @@ function ledgerRows(bytes) {
   });
 }
 
-// Run `run` as its files hold it: { init, snapshot, states } or { problem }. `states` maps an issue key to the latest
-// ledger row of it, { state, decision }; a row that is not one of the shapes this file writes is left out. Both files are
-// read as readCapped reads, and snapshot.json must have the sha256 and issue count the init row recorded.
+// Run `run` as its files hold it: { init, snapshot, states, rows } or { problem }. `states` maps an issue key to the
+// latest ledger row of it, { state, decision }; a row that is not one of the shapes this file writes is left out. `rows`
+// are every JSON object of the ledger after the init row, in order, for lib/project-run-gate.mjs to read by its own
+// checks. Both files are read as readCapped reads, and snapshot.json must have the sha256 and issue count the init row
+// recorded.
 export function readRun(state, run) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) return { problem: `the run id ${quote(run)} is not a run id` };
   const folder = entryAt(runFolder(state, run));
@@ -439,7 +445,7 @@ export function readRun(state, run) {
     if (row.event !== 'issue' || !keys.has(row.key) || !ISSUE_STATES.includes(row.state)) continue;
     states.set(row.key, { state: row.state, decision: typeof row.decision === 'string' && DECISION_ID.test(row.decision) ? row.decision : null });
   }
-  return { init, snapshot: checked.snapshot, states };
+  return { init, snapshot: checked.snapshot, states, rows: rows.slice(1) };
 }
 
 // Whether `row` is the init row initRun writes for `run`.
@@ -467,6 +473,23 @@ export function recordIssue(state, run, { key, state: issueState, decision = nul
     const row = { event: 'issue', key, state: issueState, ...(decision ? { decision } : {}), at: new Date(now).toISOString() };
     appendRow(file, row);
     return row;
+  });
+}
+
+// Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
+// that lock: { rows } appended in order, or { problem } appending none, which is what it returns. The run's folder must
+// hold snapshot.json before the lock is taken, as recordIssue's. Throws jsonl.mjs's LOCKED when another holds the lock.
+export function appendToRun(state, run, build) {
+  if (typeof run !== 'string' || !RUN_ID.test(run)) return { problem: `${quote(run)} is not a run id` };
+  if (!entryAt(runFolder(state, run))?.isDirectory() || !entryAt(snapshotFile(state, run))?.isFile()) return { problem: `no run ${run} in ${runsFolder(state)}` };
+  const file = ledgerFile(state, run);
+  return withLocks([file], () => {
+    const found = readRun(state, run);
+    if (found.problem) return { problem: found.problem };
+    const built = build(found);
+    if (built.problem) return built;
+    for (const row of built.rows) appendRow(file, row);
+    return built;
   });
 }
 

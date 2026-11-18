@@ -309,30 +309,51 @@ function reaches({ files, known, placed, linksTo }, folder, shields, roots) {
 // already on disk; a change of mode or owner counts there too, and on the state root that holds the folder. A target
 // in a folder no path gives, and a word of a command in a shell the lexer cannot read, count when a part of it is named
 // `unattended`, or, for a glob, may name it (globNamesFile). With `links` false it skips the link walk.
-export function unattendedMarkWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, folders = markFolders() } = {}) {
-  return stateFolderWriteDenial(input, human, {
-    name: MARK_FOLDER, folders, project, links, unattended,
-    what: 'the unattended marks', tells: 'which tell the hooks a session no Human attends wherever it runs', writer: 'the handoff gate',
-  });
+export function unattendedMarkWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = markFolders() } = {}) {
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: folders, terminals: [] });
 }
 
 // Why the call in `input` may not run because it changes the shell records of lib/terminal-replace.mjs, or null, read
 // as unattendedMarkWriteDenial reads the marks, in `folders` (terminalFolders), by the folder name `handoff-terminals`:
 // a record names the session a shell opens in its terminal next, which only a session's own Stop hook writes.
-export function terminalRecordWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, folders = terminalFolders() } = {}) {
-  return stateFolderWriteDenial(input, human, {
-    name: TERMINAL_FOLDER, folders, project, links, unattended,
-    what: 'the shell records', tells: 'which name the session a shell opens in its terminal next', writer: 'a session\'s own Stop hook',
-  });
+export function terminalRecordWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = terminalFolders() } = {}) {
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, marks: [], terminals: folders });
 }
 
-// The guard of a folder `name` under the state root, found in `folders`, which only `writer` writes and which `tells`:
-// { match, reason } for a subagent's call, and an unattended session's, that reaches it, else null.
-function stateFolderWriteDenial(input, human, { name, folders, project, links, unattended, what, tells, writer }) {
-  const subagent = isSubagent(input);
+// Both guards above in one pass, which the agent gates hook runs: the call's write targets, and its link walk, are read
+// once for the two folders. `marks` and `terminals` are the folders of each.
+export function stateFoldersWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, marks = markFolders(), terminals = terminalFolders() } = {}) {
   const { files, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
   if (files.length === 0 && names.length === 0 && globs.length === 0 && modes.length === 0) return null;
+  let seen;
+  const walk = () => {
+    seen ??= links ? linkWalk(input) : null;
+    return seen;
+  };
+  // Each target's real path, read once for both folders: a call may write a thousand.
+  let placedOnce;
+  const placed = () => {
+    placedOnce ??= placedTargets({ files, globs, modes });
+    return placedOnce;
+  };
+  const read = { input, names, globs, modes, project, links, walk, placed };
+  const specs = [
+    { name: MARK_FOLDER, folders: marks, what: 'the unattended marks', tells: 'which tell the hooks a session no Human attends wherever it runs', writer: 'the handoff gate' },
+    { name: TERMINAL_FOLDER, folders: terminals, what: 'the shell records', tells: 'which name the session a shell opens in its terminal next', writer: 'a session\'s own Stop hook' },
+  ];
+  for (const spec of specs) {
+    const denied = spec.folders.length > 0 ? stateFolderWriteDenial(read, human, unattended, spec) : null;
+    if (denied) return denied;
+  }
+  return null;
+}
+
+// The guard of a folder `name` under the state root, found in `folders`, which only `writer` writes and which `tells`:
+// { match, reason } for a subagent's call, and an unattended session's, that reaches it, else null. `read` is the call's
+// write targets, read once.
+function stateFolderWriteDenial({ input, names, globs, modes, project, links, walk, placed }, human, unattended, { name, folders, what, tells, writer }) {
+  const subagent = isSubagent(input);
   const part = new RegExp(String.raw`^${name}$`, 'iu');
   // The folder as a glob from any folder may name it: by its own name, or with the state root's above it.
   const tail = path.join('aidrian', name);
@@ -340,7 +361,7 @@ function stateFolderWriteDenial(input, human, { name, folders, project, links, u
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   const byName = names.some(named) || unplaced.some(({ text }) => named(text))
     || globs.some((glob) => (glob.unsure || glob.opaque) && (named(glob.text) || globNamesFile(glob.text, tail, { folderParts: 0 })));
-  const hit = byName || reachesFolders({ input, files, globs, modes, unplaced, folders, project, links });
+  const hit = byName || reachesFolders({ ...placed(), folders, project, links, walk });
   if (!hit || !(subagent || unattended())) return null;
   const opaque = opaqueShellCommand(input) !== null;
   const verb = opaque || byName ? 'may change' : 'changes';
@@ -349,16 +370,20 @@ function stateFolderWriteDenial(input, human, { name, folders, project, links, u
   return { match: `${verb} ${what}`, reason: projectRuleReason(input, why, human) };
 }
 
-// Whether the placed write targets of a call reach one of `folders`, as reaches reads them.
-function reachesFolders({ input, files, globs, modes, unplaced, folders, project, links }) {
+// The write targets of a call whose folder is known, by their real paths: { targets, known, placed, sure }, as reaches
+// reads them, with `sure` the globs whose path is certain.
+function placedTargets({ files, globs, modes }) {
+  const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
   const sure = globs.filter((glob) => !glob.unsure);
-  const known = sure.flatMap(globPaths);
-  const targets = files.map(real);
+  return { targets: files.map(real), known: sure.flatMap(globPaths), placed, sure };
+}
+
+// Whether the placed write targets of a call reach one of `folders`, as reaches reads them.
+function reachesFolders({ targets, known, placed, sure, folders, project, links, walk }) {
   const guarded = folders.map((folder) => ({ mark: real(folder), root: real(path.dirname(folder)) }));
   const near = (target) => guarded.some(({ root }) => isWithin(root, target) || isWithin(target, root));
-  const seen = links ? linkWalk(input) : null;
-  const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+  const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, walk(), { below: true }));
   if (![...targets, ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !guarded.some(({ root }) => linksTo(root))) return false;
   const roots = (project?.checkouts ?? []).map(real);
   return guarded.some(({ mark, root }) => reaches({ files: targets, known, placed, linksTo }, mark, [root], roots));

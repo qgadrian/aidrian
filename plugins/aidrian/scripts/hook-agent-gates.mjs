@@ -37,7 +37,7 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended, terminalRecordWriteDenial, unattendedMarkWriteDenial } from '../lib/handoff-guard.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
@@ -78,7 +78,7 @@ async function gate(input) {
     let outside;
     try {
       outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended })
-        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended }) ?? terminalRecordWriteDenial(input, DEFAULTS, { unattended }));
+        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? stateFoldersWriteDenial(input, DEFAULTS, { unattended }));
     } catch (error) {
       if (!(error instanceof PastDeadline)) throw error;
       outside = deadlineDenial(input, DEFAULTS, { unattended });
@@ -126,13 +126,11 @@ function guards(input, project, config, gated, snapshot, marked, unattended) {
     ?? handoffEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended })
-    ?? unattendedMarkWriteDenial(input, config, { project, links: false, unattended })
-    ?? terminalRecordWriteDenial(input, config, { project, links: false, unattended })
+    ?? stateFoldersWriteDenial(input, config, { project, links: false, unattended })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended })
-    ?? unattendedMarkWriteDenial(input, config, { project, unattended })
-    ?? terminalRecordWriteDenial(input, config, { project, unattended })
+    ?? stateFoldersWriteDenial(input, config, { project, unattended })
     ?? otherProject(input, project, marked, unattended);
 }
 

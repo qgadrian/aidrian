@@ -91,6 +91,9 @@ export function cacheVars(cache, env = {}, { registries = [] } = {}) {
   };
 }
 
+// Every name cacheVars may give, whatever the registries: the only names a host hands its sandboxed commands.
+export const CACHE_VAR_NAMES = Object.freeze(Object.keys(cacheVars('/', {}, { registries: REGISTRY_NAMES })));
+
 // A variable name a shell takes.
 export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;

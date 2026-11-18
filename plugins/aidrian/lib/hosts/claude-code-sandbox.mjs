@@ -190,14 +190,17 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
   };
 }
 
-// npm's global config files a sandboxed command could read a registry token from, outside the home folder:
-// `<prefix>/etc/npmrc`, for the prefix the driver's environment names and the one the npm first on PATH, in an absolute
-// folder, lies under (`<prefix>/bin/npm`).
+// The npm config files a sandboxed command could read a registry token from beside ~/.npmrc: the user and global config
+// files the driver's environment names (npm_config_userconfig and npm_config_globalconfig, in either case), and
+// `<prefix>/etc/npmrc`, for the prefix it names and the one the npm first on PATH, in an absolute folder, lies under
+// (`<prefix>/bin/npm`).
 export function npmGlobalConfigs(env) {
-  const prefixes = [env.NPM_CONFIG_PREFIX, env.npm_config_prefix].filter((each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each));
+  const absolute = (each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each);
+  const named = [env.npm_config_userconfig, env.NPM_CONFIG_USERCONFIG, env.npm_config_globalconfig, env.NPM_CONFIG_GLOBALCONFIG].filter(absolute).map((each) => path.resolve(each));
+  const prefixes = [env.NPM_CONFIG_PREFIX, env.npm_config_prefix].filter(absolute);
   const npm = programOnPath(env, programNames('npm'));
   if (npm && !CONTROL.test(npm)) prefixes.push(path.dirname(path.dirname(npm)));
-  return [...new Set(prefixes.map((prefix) => path.join(path.resolve(prefix), 'etc', 'npmrc')))];
+  return [...new Set([...named, ...prefixes.map((prefix) => path.join(path.resolve(prefix), 'etc', 'npmrc'))])];
 }
 
 // A value as a POSIX shell reads it inside single quotes, each quote closed, escaped, and opened again.

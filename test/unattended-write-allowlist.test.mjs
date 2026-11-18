@@ -318,7 +318,7 @@ test('a session no Human attends never publishes, withdraws, or changes a packag
   const refused = [
     'npm publish', 'npm publish --access public', 'npm --registry https://registry.npmjs.org publish', 'npm unpublish x@1.0.0', 'npm dist-tag add x@1.0.0 latest',
     'npm deprecate x "gone"', 'npm owner add other x', 'npm access set status=public x', 'npm token create',
-    'pnpm publish', 'pnpm -r publish', 'pnpm unpublish x', 'pnpm dist-tag add x@1 next', 'pnpm deprecate x y', 'pnpm owner ls x', 'pnpm access public x', 'pnpm token list',
+    'pnpm publish', 'pnpm -r publish', 'pnpm unpublish x', 'pnpm dist-tag add x@1 next', 'pnpm deprecate x y', 'pnpm owner add a x', 'pnpm access public x', 'pnpm token list',
     'yarn publish', 'yarn unpublish x', 'yarn dist-tag add x@1 next', 'yarn deprecate x y', 'yarn owner add a x', 'yarn access public x', 'yarn token list',
     'yarn npm publish', 'yarn npm tag add x@1 next', 'yarn npm login', 'yarn tag add x@1 next', 'yarn login',
     'bun publish', 'bun pm publish', 'bun unpublish x', 'bun dist-tag add x@1 next', 'bun deprecate x y', 'bun owner add a x', 'bun access public x', 'bun token list',
@@ -326,10 +326,19 @@ test('a session no Human attends never publishes, withdraws, or changes a packag
     'cargo publish', 'cargo publish --registry r', 'cargo yank --version 1.0.0', 'cargo owner --add a', 'cargo login',
     'twine upload dist/*', 'python -m twine upload dist/*', 'python3 -m twine upload dist/*', 'uvx twine upload dist/*', 'pipx run twine upload dist/*', 'npx twine upload dist/*',
     'uv publish', 'uv publish --token x', 'poetry publish', 'poetry publish --build', 'npx npm publish',
+    // Release tools, through a runner and npm's and pnpm's exec forms, and Ruby's release task.
+    'lerna publish', 'npx lerna publish', 'pnpm dlx lerna publish', 'npx changeset publish', 'npx @changesets/cli publish', 'pnpm dlx @changesets/cli@2 publish',
+    'npm exec -- lerna publish', 'npm exec lerna publish', 'npm x changeset publish', 'pnpm exec changeset publish', 'npm exec -- npm publish',
+    'bundle exec rake release', 'rake release',
+    // Options before the subcommand, in any order and form.
+    'pnpm --filter web publish', 'pnpm -F web publish', 'pnpm --filter=web publish', 'yarn workspace web publish', 'yarn workspace web npm publish',
+    'cargo +nightly publish', 'npm --loglevel verbose publish', 'npm --registry=https://registry.npmjs.org publish',
   ];
   for (const command of refused) assert.match(fx.ask(bash(command))?.reason ?? '', /a package on a registry, or its owners/u, command);
   for (const command of ['npm install', 'npm ci', 'npm run publish-docs', 'npm view x', 'pnpm install', 'yarn install', 'yarn npm info x', 'bun install', 'gem install x', 'bundle install',
-    'cargo build', 'cargo fetch', 'twine check dist/*', 'python -m pip install x', 'uv sync', 'uv add x', 'poetry install', 'npm pack']) {
+    'cargo build', 'cargo fetch', 'twine check dist/*', 'python -m pip install x', 'uv sync', 'uv add x', 'poetry install', 'npm pack',
+    'npm owner ls x', 'npm dist-tag ls x', 'pnpm owner ls x', 'npm access list packages', 'lerna run build', 'npx changeset version', 'npm exec -- tsc',
+    'bundle exec rake test', 'cargo +nightly build', 'yarn workspace web build']) {
     assert.equal(fx.ask(bash(command)), null, command);
   }
 });

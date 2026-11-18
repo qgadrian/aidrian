@@ -42,8 +42,8 @@ A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
 
 ## Start lines
 
-Before anything else, in a main session whose own mark names a confined attempt of a project run, or whose pending
-mark starts it in that attempt's clone, the hook hands the host the environment that attempt's sandboxed commands get,
+Before anything else, in a main session whose own mark names a run and issue whose ledger gives it the confined
+attempt it starts in, or whose pending mark starts it in that attempt's clone, the hook hands the host the environment that attempt's sandboxed commands get,
 the package managers' caches in its `cache` folder, on a host that takes it: Claude Code, through the file it names in
 `CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). It prints nothing for it.
 
@@ -1062,11 +1062,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `npm login`, `npm adduser`, `crontab` but `-l`, `launchctl` but its reads, and `defaults write`, `delete`, `import`,
     and `rename`; and every command that publishes, withdraws, or changes a package or its owners on a registry:
     `npm`, `pnpm`, `yarn`, and `bun` `publish`, `unpublish`, `dist-tag`, `deprecate`, `owner`, `access`, and `token`,
-    `yarn npm publish`, `tag`, and `login`, `gem push`, `yank`, `owner`, and `signin`, `cargo publish`, `yank`,
-    `owner`, and `login`, `twine upload`, `uv publish`, and `poetry publish`
+    `yarn npm publish`, `tag`, and `login`, `lerna publish`, `changeset publish`, `gem push`, `yank`, `owner`, and
+    `signin`, `rake release` and `bundle exec rake release`, `cargo publish`, `yank`, `owner`, and `login`, also after
+    `+<toolchain>`, `twine upload`, `uv publish`, and `poetry publish`, past options in any order and yarn's
+    `workspace <name>`, with the read forms `owner ls`, `dist-tag ls`, and `access list` and `get` passing
     ([Dependency installs](providers/claude-code.md#dependency-installs)). A subcommand is found past the program's global options that take a value, as in
-    `codex --profile p login` or `gh -R o/r config set`, and through a package runner: `npx`, `pnpm dlx`, `bunx`, and
-    `yarn dlx`.
+    `codex --profile p login` or `gh -R o/r config set`, and through a package runner: `npx`, `pnpm dlx`, `bunx`,
+    `yarn dlx`, `npm exec`, `npm x`, and `pnpm exec`.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
     a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
     reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a

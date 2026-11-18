@@ -198,6 +198,22 @@ function sandboxNetworkProblem(env) {
   return 'Codex runs the session in its workspace-write sandbox, whose network is off unless its config.toml sets network_access = true under [sandbox_workspace_write], so the session could neither push its branch nor reach the forge';
 }
 
+// Why the user's Codex config.toml could widen the network proxy a project start turns on, or null: any line that is no
+// comment and names `network_proxy`, as a `[features.network_proxy]` table, a `network_proxy` key of `[features]`, or a
+// dotted key. Until a live run shows that the start's `-c features.network_proxy.domains` table replaces the user's
+// rather than merging with it (docs/providers/codex.md live check 12), a user allow rule could open a host the team
+// never listed. Read from the same file as hookTrust.
+function networkProxyProblem(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    return null;
+  }
+  if (!lines.some((line) => !/^\s*#/u.test(line) && /network_proxy/u.test(line))) return null;
+  return 'Codex\'s config.toml sets a features.network_proxy key, and until a live run shows that the start\'s own allow rules replace the user\'s rather than merge with them, a rule there could open a host the team never listed; remove the network_proxy settings from config.toml, then start again';
+}
+
 // The trust keys of the tracker hooks, `<event>:<group>:<handler>`, read from hooks.json so a reordered file cannot go stale.
 // Trust is per hook, so trust in another of this plugin's hooks says nothing about these.
 function trackerHookKeys() {
@@ -323,7 +339,7 @@ export default {
       confined: true,
       hookTrust: allHooksTrust,
       trustStep: 'open Codex and trust every hook of this plugin in its hooks panel, /hooks, after each install and update',
-      access: ({ env, guarded = [] }) => sandboxNetworkProblem(env) ?? writableRootsProblem(env, guarded),
+      access: ({ env, guarded = [] }) => sandboxNetworkProblem(env) ?? networkProxyProblem(env) ?? writableRootsProblem(env, guarded),
       sessionNote,
       start: ({ cwd, name, prompt, env, hold, identify, run, wait, log, beacon, grants, domains, cacheVars }) => startProject({ cwd, name, prompt, env, hold, identify, log, beacon, grants, domains, cacheVars, run, wait }),
       stop: ({ id, started, run }) => stopProcess({ id, started, run }),

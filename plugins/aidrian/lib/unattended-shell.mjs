@@ -25,14 +25,20 @@ const SHARED_COMMANDS = Object.freeze([
 // The package registry commands that publish, withdraw, or change who owns a package, or log in to do so, which a
 // session no Human attends never runs: with a token the session was handed, as by an issue's text, they would publish the
 // project's code as the token's owner (docs/providers/claude-code.md#dependency-installs). A script or a raw HTTP call
-// that does the same is the accepted residual. `valueOptions` as SHARED_COMMANDS.
-const NPM_VALUES = ['--prefix', '--userconfig', '--registry', '-w', '--workspace', '-C', '--dir', '--otp', '--tag', '--access', '--scope', '--cwd'];
+// that does the same is the accepted residual. `valueOptions` as SHARED_COMMANDS, whose `--opt=value` form is one word;
+// `reads`, the forms that only read, which pass; `toolchain`, a leading `+<toolchain>` word read as an option, as
+// cargo's; `workspace`, a leading `workspace <name>` skipped, as yarn's.
+const NPM_VALUES = ['--prefix', '--userconfig', '--registry', '-w', '--workspace', '-C', '--dir', '--otp', '--tag', '--access', '--scope', '--cwd', '--filter', '-F', '--loglevel'];
+const NPM_READS = [['owner', 'ls'], ['owner', 'list'], ['dist-tag', 'ls'], ['dist-tag', 'list'], ['dist-tags', 'ls'], ['dist-tags', 'list'], ['access', 'list'], ['access', 'get']];
 const PUBLISH_COMMANDS = Object.freeze([
-  { programs: ['npm', 'pnpm', 'yarn', 'bun'], subcommands: [['publish'], ['unpublish'], ['dist-tag'], ['dist-tags'], ['deprecate'], ['owner'], ['access'], ['token']], valueOptions: NPM_VALUES },
-  { programs: ['yarn'], subcommands: [['npm', 'publish'], ['npm', 'tag'], ['npm', 'login'], ['tag'], ['login']], valueOptions: NPM_VALUES },
+  { programs: ['npm', 'pnpm', 'yarn', 'bun'], subcommands: [['publish'], ['unpublish'], ['dist-tag'], ['dist-tags'], ['deprecate'], ['owner'], ['access'], ['token']], valueOptions: NPM_VALUES, reads: NPM_READS, workspace: true },
+  { programs: ['yarn'], subcommands: [['npm', 'publish'], ['npm', 'tag'], ['npm', 'login'], ['tag'], ['login']], valueOptions: NPM_VALUES, workspace: true },
   { programs: ['bun'], subcommands: [['pm', 'publish']], valueOptions: NPM_VALUES },
+  { programs: ['lerna', 'changeset'], subcommands: [['publish']], valueOptions: NPM_VALUES },
   { programs: ['gem'], subcommands: [['push'], ['yank'], ['owner'], ['signin']], valueOptions: ['--host', '-k', '--key', '--otp'] },
-  { programs: ['cargo'], subcommands: [['publish'], ['yank'], ['owner'], ['login']], valueOptions: ['--registry', '--index', '--token', '--manifest-path', '-p', '--package', '-Z', '--config', '-C'] },
+  { programs: ['bundle'], subcommands: [['exec', 'rake', 'release']], valueOptions: ['--gemfile'] },
+  { programs: ['rake'], subcommands: [['release']], valueOptions: ['-f', '--rakefile', '-C', '--directory'] },
+  { programs: ['cargo'], subcommands: [['publish'], ['yank'], ['owner'], ['login']], valueOptions: ['--registry', '--index', '--token', '--manifest-path', '-p', '--package', '-Z', '--config', '-C'], toolchain: true },
   { programs: ['twine'], subcommands: [['upload']], valueOptions: ['-r', '--repository', '--repository-url', '-u', '--username', '-p', '--password'] },
   { programs: ['python', 'python3', 'pipx', 'uvx'], subcommands: [['twine', 'upload']], valueOptions: [] },
   { programs: ['uv'], subcommands: [['publish']], valueOptions: ['--directory', '--project', '--index', '--publish-url', '--token', '-t', '--username', '-u', '--password', '-p'] },
@@ -40,14 +46,17 @@ const PUBLISH_COMMANDS = Object.freeze([
 ]);
 // The launchctl subcommands that only read.
 const LAUNCHCTL_READS = new Set(['list', 'print', 'print-disabled', 'print-cache', 'getenv', 'version', 'help', 'blame', 'managerpid', 'manageruid', 'managername', 'error']);
-// The package runners that run another program, { words, options }: `words`, the runner's own words before the
-// program, and `options`, its options that take the next word.
+// The package runners that run another program, each program's forms { words, options }: `words`, the runner's own
+// words before the program, and `options`, its options that take the next word.
 const RUNNERS = Object.freeze({
-  npx: { words: [], options: ['-p', '--package', '-c', '--call'] },
-  bunx: { words: [], options: ['-p', '--package'] },
-  pnpm: { words: ['dlx'], options: ['--package', '-C', '--dir'] },
-  yarn: { words: ['dlx'], options: ['-p', '--package'] },
+  npx: [{ words: [], options: ['-p', '--package', '-c', '--call'] }],
+  bunx: [{ words: [], options: ['-p', '--package'] }],
+  npm: [{ words: ['exec'], options: ['-p', '--package', '-c', '--call', '-w', '--workspace'] }, { words: ['x'], options: ['-p', '--package', '-c', '--call'] }],
+  pnpm: [{ words: ['dlx'], options: ['--package', '-C', '--dir'] }, { words: ['exec'], options: ['-C', '--dir', '--filter', '-F'] }],
+  yarn: [{ words: ['dlx'], options: ['-p', '--package'] }],
 });
+// A package whose program has another name than its last part, as `npx @changesets/cli publish` runs `changeset`.
+const PACKAGE_PROGRAMS = Object.freeze({ '@changesets/cli': 'changeset' });
 // The options of `git clone`, `git init`, and `git worktree` that take the next word.
 const CLONE_VALUES = ['-o', '--origin', '-b', '--branch', '-u', '--upload-pack', '--reference', '--reference-if-able', '--depth', '-c', '--config', '--template', '--separate-git-dir', '-j', '--jobs', '--filter', '--shallow-since', '--shallow-exclude', '--bundle-uri', '--ref-format', '--server-option'];
 const INIT_VALUES = ['--template', '--separate-git-dir', '-b', '--initial-branch', '--object-format', '--ref-format'];
@@ -163,22 +172,27 @@ function linksOf(program, args, folder, env, command) {
 
 // The program a call runs and its words, through a package runner (RUNNERS), as `npx codex login` runs codex.
 function unwrapped(program, words) {
-  const runner = RUNNERS[program];
-  if (!runner || !runner.words.every((word, i) => operands(words)[i] === word)) return { program, words };
+  const runner = (RUNNERS[program] ?? []).find((each) => each.words.every((word, i) => operands(words)[i] === word));
+  if (!runner) return { program, words };
   const rest = [...words];
   for (const word of runner.words) rest.splice(rest.indexOf(word), 1);
   let at = 0;
   while (at < rest.length && rest[at].startsWith('-')) at += runner.options.includes(rest[at]) ? 2 : 1;
-  return at < rest.length ? { program: path.basename(rest[at]).replace(/@[^@/]*$/u, ''), words: rest.slice(at + 1) } : { program, words };
+  if (at >= rest.length) return { program, words };
+  const spec = rest[at].replace(/(?<=.)@[^@/]*$/u, '');
+  return { program: PACKAGE_PROGRAMS[spec] ?? path.basename(spec), words: rest.slice(at + 1) };
 }
 
 // Whether the words of a call to `program` run one of the declared subcommands of `each`, { programs, subcommands,
-// valueOptions }: its words, past the global options that take a value, start with one, or hold one of more than one
-// word in a row.
+// valueOptions, reads, toolchain, workspace }: its words, past the global options that take a value, start with one, or
+// hold one of more than one word in a row, and start with none of its reads.
 function runsDeclared(each, program, words) {
   if (!each.programs.includes(program)) return false;
-  const named = namedWords(words, each.valueOptions ?? []);
+  let named = namedWords(words, each.valueOptions ?? []);
+  if (each.toolchain && named[0]?.startsWith('+')) named = named.slice(1);
+  if (each.workspace && named[0] === 'workspace') named = named.slice(2);
   const at = (sub, i) => sub.every((word, j) => named[i + j] === word);
+  if ((each.reads ?? []).some((sub) => at(sub, 0))) return false;
   return each.subcommands.some((sub) => at(sub, 0) || (sub.length > 1 && named.some((_, i) => at(sub, i))));
 }
 

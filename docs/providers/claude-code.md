@@ -392,8 +392,9 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/.claude/.credentials.json`, and `~/.claude/ide` (and those of `CLAUDE_CONFIG_DIR` when it moves them), the
   keyrings in `~/.local/share/keyrings`, and the shell histories `~/.bash_history`, `~/.zsh_history`, and
   `~/.local/share/fish`; and the package registries' other token stores: `~/.yarnrc.yml`, `~/.yarnrc`,
-  `~/.config/npm/npmrc`, npm's global config `<prefix>/etc/npmrc` for the prefix the driver's environment names and
-  the one the `npm` on PATH lies under, `~/.bunfig.toml`, `~/.local/share/gem/credentials`, `~/.bundle/config`,
+  `~/.config/npm/npmrc`, the npm user and global config files the driver's `npm_config_userconfig` and
+  `npm_config_globalconfig` name, in either case, npm's global config `<prefix>/etc/npmrc` for the prefix the driver's
+  environment names and the one the `npm` on PATH lies under, `~/.bunfig.toml`, `~/.local/share/gem/credentials`, `~/.bundle/config`,
   pnpm's `~/.config/pnpm/rc` and `~/Library/Preferences/pnpm/rc`, pip's `pip.conf` in `~/.config/pip`, `~/.pip`, and
   `~/Library/Application Support/pip`, poetry's `auth.toml` in `~/.config/pypoetry` and
   `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`. Credential-named environment variables are unset in the sandbox, as the table says, and the
@@ -509,8 +510,9 @@ Every session, whatever the list holds, keeps its package managers' caches and g
 driver's `wait` removes it with the attempt. The variables reach the session's sandboxed commands alone, never the
 host's own process, whose hooks, MCP servers, language servers, and status line run outside the sandbox. The gate
 writes them to `shell-env.json` in the attempt's folder, which no confined session writes, before the launch; the
-plugin's SessionStart hook, for a session whose own mark names that attempt's run and issue, or whose pending mark
-starts it in that clone, appends one `export NAME='value'` line each, single-quoted with each quote escaped, to the
+plugin's SessionStart hook, for a session whose own mark names a run and issue whose ledger gives it exactly that
+attempt's folder, or whose pending mark starts it in that very clone, appends one `export NAME='value'` line for each
+name the gate gives, and no other, single-quoted with each quote escaped, to the
 file the host names in `CLAUDE_ENV_FILE`, which it sources before each Bash command. No `env` key is passed in the
 settings. On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.
 
@@ -533,9 +535,13 @@ download, and any install script that downloads from a host the list does not ho
 
 A session no Human attends never publishes, withdraws, or changes a package or its owners: the agent gate hook refuses
 `npm`, `pnpm`, `yarn`, and `bun` `publish`, `unpublish`, `dist-tag`, `deprecate`, `owner`, `access`, and `token`
-(and `yarn npm publish`, `tag`, and `login`); `gem push`, `yank`, `owner`, and `signin`; `cargo publish`, `yank`,
-`owner`, and `login`; `twine upload`, also through `python -m`, `pipx run`, `uvx`, and `npx`; `uv publish`; and
-`poetry publish`. A script or a raw HTTP call that does the same passes the hook, as the accepted residual.
+(and `yarn npm publish`, `tag`, and `login`), past options such as `--filter web` or `--loglevel=verbose` and yarn's
+`workspace <name>`, with the read forms `owner ls`, `dist-tag ls`, and `access list` and `get` passing; `lerna publish`
+and `changeset publish`; `gem push`, `yank`, `owner`, and `signin`, and `rake release`, also through `bundle exec`;
+`cargo publish`, `yank`, `owner`, and `login`, also after a `+<toolchain>` word; `twine upload`, also through
+`python -m`, `pipx run`, and `uvx`; `uv publish`; and `poetry publish`. Each is found through a package runner too:
+`npx`, `bunx`, `npm exec` and `npm x`, `pnpm dlx` and `pnpm exec`, and `yarn dlx`. A script or a raw HTTP call that
+does the same passes the hook, as the accepted residual.
 
 The ruling on what each registry opens (security-engineer, 2026-11-18): every listed registry but `pypi` and
 `crates` gives a channel a sandboxed command can send data out on that an attacker can read, and each is accepted,

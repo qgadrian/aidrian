@@ -417,6 +417,8 @@ test('the SessionStart hook hands the cache variables to the sandboxed commands 
     input: JSON.stringify({ session_id: session, cwd, hook_event_name: 'SessionStart', source: 'startup' }),
     env: { ...fx.env, CLAUDE_ENV_FILE: file, CLAUDE_CODE_SESSION_ID: session }, encoding: 'utf8',
   });
+  // A name the gate never writes is dropped, as one the file might hold.
+  writeFileSync(path.join(attempt, SHELL_VARS), JSON.stringify({ ...vars, EVIL: 'x' }));
   const file = path.join(fx.root, 'session-env', 'own.sh');
   mkdirSync(path.dirname(file), { recursive: true });
   assert.equal(hook(STARTED[0].session, work(fx), file).status, 0);
@@ -425,6 +427,15 @@ test('the SessionStart hook hands the cache variables to the sandboxed commands 
   // What a sandboxed Bash command of the session sees once the host sources the file.
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s\\n' "$npm_config_cache" "$GOFLAGS" "$COREPACK_NPM_REGISTRY"`], { encoding: 'utf8' });
   assert.deepEqual(seen.stdout.trim().split('\n'), [vars.npm_config_cache, vars.GOFLAGS, 'https://registry.npmjs.org']);
+  assert.doesNotMatch(text, /EVIL/u, 'only the names cacheVars gives');
+  // A folder shaped like an attempt's inside the clone, which the session may write, hands over nothing, though the
+  // session's own mark names that run and issue.
+  const crafted = path.join(work(fx), 'x', 'runs', 'launch', 'attempts', 'ENG-1.9');
+  mkdirSync(path.join(crafted, 'work'), { recursive: true });
+  writeFileSync(path.join(crafted, SHELL_VARS), JSON.stringify({ npm_config_cache: '/evil' }));
+  const craftedFile = path.join(fx.root, 'session-env', 'crafted.sh');
+  assert.equal(hook(STARTED[0].session, path.join(crafted, 'work'), craftedFile).status, 0);
+  assert.throws(() => readFileSync(craftedFile), /ENOENT/u, 'nothing from the crafted folder');
   // Another session in that clone, with no mark naming the attempt, and a session elsewhere get nothing.
   for (const [session, cwd] of [['abcd1234-0000-4000-8000-00000000ff01', work(fx)], [STARTED[0].session, fx.dir]]) {
     const other = path.join(fx.root, 'session-env', `${session}-${path.basename(cwd)}.sh`);
@@ -458,6 +469,11 @@ test('npm\'s global config files are read from the prefix the environment names 
   writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\n', { mode: 0o755 });
   assert.deepEqual(npmGlobalConfigs({ PATH: `relative${path.delimiter}${bin}`, NPM_CONFIG_PREFIX: '/opt/npm' }), ['/opt/npm/etc/npmrc', path.join(root, 'prefix', 'etc', 'npmrc')]);
   assert.deepEqual(npmGlobalConfigs({ PATH: '', npm_config_prefix: 'relative' }), []);
+  // The user and global config files the driver's npm variables name, in either case, join them.
+  assert.deepEqual(npmGlobalConfigs({ PATH: '', npm_config_userconfig: '/work/.npmrc-ci', NPM_CONFIG_GLOBALCONFIG: '/etc/npmrc-ci', NPM_CONFIG_USERCONFIG: 'relative' }), ['/work/.npmrc-ci', '/etc/npmrc-ci']);
+  const settings = sandboxSettings({ work: '/w', git: '/g', grants: ['/g'], domains: ['github.com'], temp: [], home: '/home/u', platform: 'linux', stores: npmGlobalConfigs({ PATH: '', npm_config_userconfig: '/work/.npmrc-ci' }) });
+  assert.ok(settings.sandbox.filesystem.denyRead.includes('/work/.npmrc-ci'));
+  assert.ok(settings.permissions.deny.includes('Read(//work/.npmrc-ci)'));
 });
 
 test('a start halts unless the default branch sets projectRun.unverifiedHosts', (t) => {

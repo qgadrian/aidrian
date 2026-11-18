@@ -48,12 +48,12 @@ function hookKeys() {
 
 // Codex's config.toml: the plugin installed, its hooks trusted (`trusted`: 'all', 'tracker', or 'none'; `off`, a script
 // whose hook is turned off), and the workspace-write sandbox's network on, with `roots` its writable roots.
-function codexConfig({ trusted = 'all', off = null, network = true, roots = null } = {}) {
+function codexConfig({ trusted = 'all', off = null, network = true, roots = null, extra = '' } = {}) {
   const id = 'aidrian@aidrian-harness';
   const keys = hookKeys().filter(({ command }) => trusted === 'all' || (trusted === 'tracker' && /hook-tracker-(?:pre|post)\.mjs/u.test(command)));
   const trust = keys.map(({ key, command }) => `[hooks.state."${id}:hooks/hooks.json:${key}"]\ntrusted_hash = "sha256:x"\n${off && command.includes(off) ? 'enabled = false\n' : ''}`).join('');
   const sandbox = network || roots ? `[sandbox_workspace_write]\n${network ? 'network_access = true\n' : ''}${roots ? `writable_roots = [${roots.map((each) => JSON.stringify(each)).join(', ')}]\n` : ''}` : '';
-  return `[plugins."${id}"]\nenabled = true\n${trusted === 'none' ? '' : trust}${sandbox}`;
+  return `[plugins."${id}"]\nenabled = true\n${trusted === 'none' ? '' : trust}${sandbox}${extra}`;
 }
 
 // A fake `codex` in `bin`. It records its arguments, folder, pid, inherited session id, and the cache variables it got
@@ -380,6 +380,17 @@ test('a session that could not push, reach the forge, or keep out of a guarded f
   assert.equal(sandboxed.fake.call(), null, 'nothing ran');
   assert.deepEqual(sandboxed.rows(), []);
   assert.equal(sandboxed.run().states.get('ENG-1'), undefined, 'the issue is not parked');
+
+  // A user network proxy setting halts until a live run shows the start's own allow rules replace it; a comment does not.
+  for (const extra of ['[features.network_proxy]\ndomains = { "evil.example" = "allow" }\n', '[features]\nnetwork_proxy = { enabled = true }\n', 'features.network_proxy.domains = { "evil.example" = "allow" }\n']) {
+    const proxied = codexRun(t, { config: { extra } });
+    const halted = proxied.cmd(['start', 'launch', 'ENG-1']);
+    assert.match(halted.out[0], /^halt Codex's config\.toml sets a features\.network_proxy key/u, extra);
+    assert.equal(proxied.fake.call(), null, 'nothing ran');
+    assert.deepEqual(proxied.rows(), []);
+  }
+  const commented = codexRun(t, { config: { extra: '# features.network_proxy is set per start\n' } });
+  assert.equal(codex.capabilities.projectStart.access({ env: commented.env, guarded: [] }), null, 'a comment that names it does not halt');
 
   const roots = codexRun(t, { config: { roots: ['~/.local/state'] } });
   assert.match(roots.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt Codex's config\.toml makes ~\/\.local\/state writable in its workspace-write sandbox, which reaches /u);

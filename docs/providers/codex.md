@@ -214,7 +214,9 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   network proxy for sandboxed commands, `-c features.network_proxy.enabled=true`, with
   `-c features.network_proxy.domains={ "<host>" = "allow", ... }` for exactly the forge's hosts and those of the
   registries the base branch's [`projectRun.registries`](../config.md#project-run) lists. A host with no rule is
-  refused, so an empty list fails closed. No live run has checked the proxy (live check 12): a Codex that rejects
+  refused, so an empty list fails closed. Until live check 12 shows that a `-c` table override replaces the user's
+  table rather than merging with it, a `config.toml` that sets any `features.network_proxy` key, in any form, halts the
+  start, since a user allow rule could open a host the team never listed. No live run has checked the proxy (live check 12): a Codex that rejects
   either override exits before it names its session, and the start stops on that first proof, says which setting was
   refused, gives its attempt back, and halts the run. Install scripts a package runs run inside the sandbox, under its
   writable roots. `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
@@ -258,7 +260,9 @@ Before `verified` changes, a live Codex must show every one of these:
     `go mod init && go get`.
 12. `features.network_proxy` with `domains` allow rules holds `git push`, `gh`, and an install to the listed hosts
     under `codex exec --sandbox workspace-write`, refuses an unlisted host and localhost, and Codex accepts both
-    overrides; until it does, a Codex session's network is held by an unverified proxy alone.
+    overrides; and, with a user `config.toml` holding an allow rule for an unlisted host under
+    `[features.network_proxy.domains]`, whether the start's `-c` table replaces it, so that host is refused. Until it
+    does, a Codex session's network is held by an unverified proxy alone, and a user proxy setting halts the start.
 
 Codex residuals, each open until the live checks hold:
 

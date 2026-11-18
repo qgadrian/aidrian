@@ -25,11 +25,12 @@ import path from 'node:path';
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
-import { stateRoot } from './project.mjs';
-import { NPM_CONFIGS, varsProblem } from './project-registries.mjs';
+import { loadConfig } from './config.mjs';
+import { findProject, stateRoot } from './project.mjs';
+import { CACHE_VAR_NAMES, NPM_CONFIGS, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { runFolder, runsFolder } from './project-run.mjs';
-import { latestStart, startRows } from './project-run-guard.mjs';
+import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { safely } from './session-start-gate.mjs';
 import { markFolders, readUnattendedMark } from './unattended-mark.mjs';
 import { WORK_FOLDERS } from './unattended-write.mjs';
@@ -326,9 +327,11 @@ export function writeShellVars(folder, vars) {
 }
 
 // The environment the sandboxed commands of `session`, whose hook runs in `cwd`, get, or null: only for the session
-// of a confined attempt, whose clone holds `cwd`, while its own mark names that attempt's run and issue, or a pending
-// mark holds it to start in that clone, and only what the gate wrote there (writeShellVars), read without following
-// a link, from a regular file of one link. Never throws.
+// of a confined attempt, whose clone holds `cwd`, when that attempt's folder is the one the run's ledger names for the
+// session its own mark names (project-run-guard.mjs ownAttemptFolder), or the session is held by a pending mark to
+// start in that very clone; a folder shaped like an attempt's inside a clone, which its session may write, is neither.
+// Only what the gate wrote there (writeShellVars), read without following a link, from a regular file of one link, and
+// only the names cacheVars gives. Never throws.
 export function confinedShellVars({ session, cwd, env = process.env, home }) {
   try {
     const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
@@ -341,14 +344,25 @@ export function confinedShellVars({ session, cwd, env = process.env, home }) {
         return null;
       }
     };
-    const own = mark && !mark.pending && mark.project === attempt.run && mark.issue === attempt.key;
     const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
-    if (!own && !starting) return null;
-    const vars = readSmallJson(path.join(attempt.folder, SHELL_VARS));
-    return vars && !varsProblem(vars) && Object.keys(vars).length ? vars : null;
+    if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
+    const read = readSmallJson(path.join(attempt.folder, SHELL_VARS));
+    if (!read || varsProblem(read)) return null;
+    const vars = Object.fromEntries(Object.entries(read).filter(([name]) => CACHE_VAR_NAMES.includes(name)));
+    return Object.keys(vars).length ? vars : null;
   } catch {
     return null;
   }
+}
+
+// Whether `attempt` is the attempt folder the run's ledger, in the project at the main checkout the session's own mark
+// `mark` names, gives that session for its run and issue (`real` resolves a path).
+function recordedAttempt(mark, attempt, real, home) {
+  if (!mark || mark.pending || mark.project !== attempt.run || mark.issue !== attempt.key || typeof mark.root !== 'string') return false;
+  const project = findProject(mark.root);
+  if (!project) return false;
+  const own = ownAttemptFolder(project, loadConfig(project).config, mark, home ? { home } : {});
+  return own !== null && own === real(attempt.folder);
 }
 
 // The JSON of the regular file `file`, of one link and at most SHELL_VARS_CAP, read without following a link, or null.

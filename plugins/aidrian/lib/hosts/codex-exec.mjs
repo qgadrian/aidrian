@@ -23,7 +23,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { pauseSync, tailObjects } from '../fs.mjs';
@@ -229,8 +229,8 @@ export function firstTool(log) {
 // (codex-rs core's usage limit error), and `exceeded retry limit, last status: 429 Too Many Requests` once its own
 // retries ran out. UNVERIFIED: taken from Codex's source, never seen in a live `codex exec` log.
 const LIMIT_TAIL = 1024 * 1024;
-const USAGE = /\busage limit\b|\bhit your (?:usage )?limit\b/iu;
-const RATE = /\brate[ _-]?limit|\b429\b|\btoo many requests\b/iu;
+const USAGE = /\bhit your usage limit\b/iu;
+const RATE = /\blast status: 429\b/iu;
 
 // When the limit Codex's text `text` reports lifts, in milliseconds since the epoch, or null when it names no time:
 // `try again in` a span, or `try again at` a clock time on this machine's clock, as Codex prints it.
@@ -242,18 +242,29 @@ export function codexReset(text, now) {
 }
 
 // Whether the session whose events the run log `log` holds ended its turn on a usage or rate limit: { kind: 'usage' |
-// 'rate', until } when the last turn end there is a `turn.failed` whose message reports one, `until` null when it names
-// no time; else null. Only Codex's own `turn.failed` record is read: never an item's output or a message the model wrote,
-// and never a top-level `error` event, which Codex also prints for a retry it goes on from.
+// 'rate', until, at } when the last turn end there is a `turn.failed` whose message reports one, `at` the log's last
+// write, which Codex's events carry no time of their own to stand for, `until` read against it and null when the message
+// names no time; else null. Only Codex's own `turn.failed` record is read: never an item's output or a message the model
+// wrote, and never a top-level `error` event, which Codex also prints for a retry it goes on from. Codex has no setting
+// known to continue a session at the reset, so its adapter declares no `continuesAtLimit`: the gate stops the session
+// and starts the issue again after the pause.
 export function logLimit({ log, now = Date.now() }) {
   if (typeof log !== 'string' || !path.isAbsolute(log)) return null;
+  let at;
+  try {
+    const stat = lstatSync(log);
+    at = stat.isFile() ? stat.mtimeMs : null;
+  } catch {
+    return null;
+  }
   const last = (tailObjects(log, LIMIT_TAIL) ?? []).filter((event) => event.type === 'turn.failed' || event.type === 'turn.completed').at(-1);
   if (last?.type !== 'turn.failed') return null;
   const message = last.error?.message ?? last.message;
   if (typeof message !== 'string') return null;
   const usage = USAGE.test(message);
   if (!usage && !RATE.test(message)) return null;
-  return { kind: usage ? 'usage' : 'rate', until: codexReset(message, now) };
+  const written = Number.isFinite(at) ? Math.floor(at) : null;
+  return { kind: usage ? 'usage' : 'rate', until: codexReset(message, written ?? now), at: written };
 }
 
 // Reads `read()` every STEP until it gives anything but undefined, or `gone()` says the process ended, at most `ms`

@@ -177,6 +177,9 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
     // The claude.ai connectors load whatever --strict-mcp-config says; only this turns them off, and a true wins from any source.
     disableClaudeAiConnectors: true,
     worktree: { bgIsolation: 'none' },
+    // A usage limit pauses the session until the limit resets, then the host continues it, keeping its unpushed work,
+    // where the limit dialog would otherwise wait on a person (lib/project-limit.mjs).
+    autoContinueAtUsageLimit: true,
     ...(Object.keys(cacheVars).length ? { env: { ...cacheVars } } : {}),
   };
 }

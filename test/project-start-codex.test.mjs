@@ -9,7 +9,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -541,6 +541,19 @@ test('an issue running past its hours on Codex is stopped by its process', (t) =
   const waited = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: Date.now() + 7 * 60 * 60 * 1000 });
   assert.deepEqual(waited.out, ['ended ENG-1 timeout -> open', 'idle']);
   assert.ok(gone(pid));
+});
+
+test('a Codex turn that failed on a usage limit pauses the run through wait: its process is stopped and the issue opens again', (t) => {
+  const fx = codexRun(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
+  const { pid } = fx.fake.call();
+  appendFileSync(fx.log(), `${JSON.stringify({ type: 'turn.failed', error: { message: 'You\'ve hit your usage limit. Try again in 2 hours.' } })}\n`);
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  const row = fx.rows().find((each) => each.event === 'limit');
+  assert.deepEqual(waited.out, [`limit ENG-1 usage until ${row.until} -> open`, `paused until ${row.until}`, 'idle']);
+  assert.ok(Math.abs(Date.parse(row.until) - Date.now() - 2 * 60 * 60 * 1000) < 60_000, 'two hours from the log\'s last write');
+  assert.ok(gone(pid), 'Codex continues no session at the reset, so its process is stopped');
+  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).out.join('\n'), /paused until /u);
 });
 
 test('a later attempt on Codex clones again, and takes the issue branch from the forge', (t) => {

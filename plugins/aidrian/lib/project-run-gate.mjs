@@ -22,7 +22,8 @@
 //      'trusted' (a halt); from here on, an unverified host's every answer prints an `unverified:` line;
 //   6. an issue `next` does not list, and a start past a cap in code: PROJECT_STARTS a run, PROJECT_STARTS_PER_DAY a
 //      project, ISSUE_ATTEMPTS an issue, PROJECT_PARALLEL running, each also under the base branch's projectRun value,
-//      clamped to CEILINGS; each attempt counts once, and one given back (`void`) not at all;
+//      clamped to CEILINGS; each attempt counts once, and one given back (`void`) not at all, nor, toward
+//      ISSUE_ATTEMPTS, one a usage or rate limit ended, which the run's LIMIT_WAITS bounds instead;
 //   7. what the held start would refuse (heldProblem), asked before any folder is made; then a user the forge does not let
 //      push, or a session the host says could not push, reach the forge, run as confined as it is meant to, or would be
 //      let write a guarded folder (a halt); a forge that cannot be asked now; a state file with a second hard link (a
@@ -49,11 +50,11 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
-import { checkedLimit, limitEndRows, pauseOf } from './project-limit.mjs';
+import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow } from './project-limit.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
-import { custody, driverOf, ISSUE_ATTEMPTS, issueChain, latestStart, resultAuthorProblem, resumerProblem, runStore, startRows, startsOf, timeOf } from './project-run-guard.mjs';
+import { custody, driverOf, ISSUE_ATTEMPTS, issueChain, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
@@ -228,9 +229,12 @@ function capProblem({ found, key, policy, today }) {
   if (starts >= runCap) return { problem: `the run started ${starts} sessions, and a run starts at most ${runCap}, under projectRun.maxStarts and the cap in code of ${PROJECT_STARTS}` };
   if (today === null) return { problem: 'a run of this project cannot be read, so the starts of the last 24 hours cannot be counted' };
   if (today >= PROJECT_STARTS_PER_DAY) return { problem: `this project's runs started ${today} sessions in the last 24 hours, and the cap in code is ${PROJECT_STARTS_PER_DAY}` };
-  const attempts = counted(startsOf(found, key)).length;
-  if (attempts >= ISSUE_ATTEMPTS) return { problem: `the issue ${key} was started ${attempts} times, and an issue is started at most ${ISSUE_ATTEMPTS}` };
-  return { attempt: attempts + 1 };
+  // An attempt a usage or rate limit ended takes a number but counts toward no cap of the issue (spentAttempts).
+  const spent = spentAttempts(found, key);
+  if (spent >= ISSUE_ATTEMPTS) return { problem: `the issue ${key} was started ${spent} times, and an issue is started at most ${ISSUE_ATTEMPTS}` };
+  const attempt = counted(startsOf(found, key)).length + 1;
+  if (attempt > ATTEMPT_CEILING) return { problem: `the issue ${key} was started ${attempt - 1} times, and no issue is started more than ${ATTEMPT_CEILING}` };
+  return { attempt };
 }
 
 // Settles each start of the run whose outcome was unknown, or whose session could not be held or stopped, before the
@@ -257,7 +261,7 @@ function settleOrphans({ state, run, store, cap, env, spawn, now }) {
     if (!stopped) continue;
     const written = safely(() => appendToRun(state, run, (fresh) => {
       if (fresh.rows.some((each) => each.event === 'orphan' && each.key === row.key && each.attempt === row.attempt)) return { rows: [] };
-      return { rows: [{ event: 'orphan', key: row.key, attempt: row.attempt, action: sessions.length ? 'stopped' : 'none', at: iso(now) }, afterFailure(row.key, row.attempt)].map((each) => ({ at: iso(now), ...each })) };
+      return { rows: [{ event: 'orphan', key: row.key, attempt: row.attempt, action: sessions.length ? 'stopped' : 'none', at: iso(now) }, afterFailure(row.key, spentAttempts(fresh, row.key))].map((each) => ({ at: iso(now), ...each })) };
     }));
     if (!written || written.problem) continue;
     dropClaim(store, row.session);
@@ -499,8 +503,9 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
 // Waits, at most `maxWait` seconds, for an issue of run `run` to settle, as the driver: it settles orphan starts, takes
 // in the results confined sessions handed over (lib/project-result.mjs ingestDrops), records an issue whose whole chain
 // of sessions the host lists as ended with no result (`ended no_result`), and stops and records one that ran past
-// projectRun.issueHours (`ended timeout`), and ends one whose session met a usage or rate limit (`limit KEY KIND until
-// TIME -> STATE`, or `limit KEY KIND halt -> STATE` past LIMIT_WAITS), which pauses the run (lib/project-limit.mjs); then
+// projectRun.issueHours (`ended timeout`), less the time the run was paused; and, for a session that met a usage or rate
+// limit, pauses the run (lib/project-limit.mjs): one the host continues keeps running (`paused KEY KIND until TIME: ...`),
+// any other ends its attempt (`limit KEY KIND until TIME -> open`, or `limit KEY KIND halt -> open` past LIMIT_WAITS); then
 // it removes the folders of confined attempts whose session ended. It returns once any issue settles, none runs and the
 // run is not paused, or the time is up, with a line for each: `settled KEY STATE`, `result KEY STATUS -> STATE`, `ended
 // KEY REASON -> STATE`, `orphan ...`, `running KEY`, `paused until TIME` while a pause lasts, or `idle` when none runs.
@@ -580,13 +585,12 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
     const start = latestStart(found, key);
     if (!start || startsOf(found, key).at(-1) !== start) continue;
     const dropped = typeof start.drop === 'string' && existsSync(path.join(start.drop, DROP_FILE));
-    const overdue = now - timeOf(start) > policy.issueHours * HOUR;
+    // Time the run spent paused on a limit counts toward no issue's hours.
+    const overdue = now - timeOf(start) - pausedTime(found, timeOf(start), now) > policy.issueHours * HOUR;
     if (dropped && !overdue) continue;
-    const limited = dropped ? null : limitLine({ state, run, store, cap, env, home, spawn, key, start, now });
-    if (limited) {
-      lines.push(limited);
-      continue;
-    }
+    const limited = dropped ? null : limitLine({ state, run, store, cap, env, home, spawn, key, start, found, now });
+    if (limited?.line) lines.push(limited.line);
+    if (limited) continue;
     const ended = dropped ? false : chainEnded({ cap, store, id: start.id, session: start.child, env, spawn, now });
     let reason = ended === true ? 'no_result' : null;
     if (!reason && overdue) {
@@ -597,7 +601,7 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
       reason = dropped ? 'bad_result' : 'timeout';
     }
     if (!reason) continue;
-    const next = afterFailure(key, start.attempt);
+    const next = afterFailure(key, spentAttempts(found, key));
     const why = reason === 'bad_result' ? { why: `the forge did not confirm the handed-over result within ${policy.issueHours} hours` } : {};
     const written = safely(() => appendToRun(state, run, (fresh) => (fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt
       ? { rows: [{ event: 'ended', key, attempt: start.attempt, reason, ...why, at: iso(now) }, { ...next, at: iso(now) }] }
@@ -607,26 +611,41 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
   return lines;
 }
 
-// The line for the running issue `key` whose latest start `start` met a usage or rate limit, as the host's own error
-// record shows it (`capabilities.projectStart.limitOf`), or null when it shows none or the host reads none. Its sessions
-// are stopped, then the attempt ends on the limit and the run pauses, or halts past LIMIT_WAITS (project-limit.mjs
-// limitEndRows), written only while the issue still runs that attempt. A session that cannot be stopped is left for
-// the next wait.
-function limitLine({ state, run, store, cap, env, home, spawn, key, start, now }) {
+// What `wait` does for the running issue `key` whose latest start `start` met a usage or rate limit, as the host's own
+// error record shows it (`capabilities.projectStart.limitOf`): null when it shows none or the host reads none, so the
+// other checks go on; else { line } with the line to print, if any, and the issue's other checks skipped.
+//   - A session the host does not list as ended, of a host that continues its own session once the limit resets
+//     (`continuesAtLimit`), keeps running: the record's pause is written once (pauseRow), and while it lasts the issue
+//     waits; once it is over and the same record is still the session's last, the other checks go on.
+//   - Otherwise the sessions are stopped, and the attempt ends on the limit (limitEndRows). A session that cannot be
+//     stopped writes nothing and is read again by the next wait.
+// Each write happens only while the issue still runs that attempt.
+function limitLine({ state, run, store, cap, env, home, spawn, key, start, found, now }) {
   if (typeof cap.limitOf !== 'function') return null;
   const limit = checkedLimit(safely(() => cap.limitOf({ id: start.id, session: start.child, cwd: start.cwd, log: runLogFile(state, run, key, start.attempt), env, home, now })));
   if (!limit) return null;
-  if (!stopChain({ cap, store, start, env, spawn, now })) return `limited ${key} attempt ${start.attempt}: a session of it could not be stopped`;
-  let ended = null;
+  const ended = chainEnded({ cap, store, id: start.id, session: start.child, env, spawn, now });
+  const current = (fresh) => fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt;
+  const when = (until) => (until === null ? 'halt' : `until ${iso(until)}`);
+  if (ended !== true && cap.continuesAtLimit === true) {
+    if (limitRecorded(found, key, start.attempt, limit)) return pauseOf(found, now) ? {} : null;
+    let paused = null;
+    const written = safely(() => appendToRun(state, run, (fresh) => {
+      if (!current(fresh) || limitRecorded(fresh, key, start.attempt, limit)) return { rows: [] };
+      paused = pauseRow({ found: fresh, key, attempt: start.attempt, limit, now });
+      return { rows: [paused.row] };
+    }));
+    return written?.rows?.length ? { line: `paused ${key} ${limit.kind} ${when(paused.until)}: its session goes on once the limit resets` } : {};
+  }
+  if (ended !== true && !stopChain({ cap, store, start, env, spawn, now })) return { line: `limited ${key} attempt ${start.attempt}: a session of it could not be stopped` };
+  let closed = null;
   const written = safely(() => appendToRun(state, run, (fresh) => {
-    if (fresh.states.get(key)?.state !== 'running' || latestStart(fresh, key)?.attempt !== start.attempt) return { rows: [] };
-    ended = limitEndRows({ found: fresh, key, attempt: start.attempt, limit, now });
-    return { rows: ended.rows };
+    if (!current(fresh)) return { rows: [] };
+    closed = limitEndRows({ found: fresh, key, attempt: start.attempt, limit, now });
+    return { rows: closed.rows };
   }));
-  if (!written?.rows?.length) return null;
-  const next = ended.rows.at(-1);
-  const when = ended.until === null ? 'halt' : `until ${iso(ended.until)}`;
-  return `limit ${key} ${limit.kind} ${when} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`;
+  if (!written?.rows?.length) return {};
+  return { line: `limit ${key} ${limit.kind} ${when(closed.until)} -> open` };
 }
 
 // Records the result of issue `key` of run `run` from the file `file`, for the session the host names in `env`, and

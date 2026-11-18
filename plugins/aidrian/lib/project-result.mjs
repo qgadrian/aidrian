@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { changeNotFound } from './forges/index.mjs';
 import { appendToRun, runFolder } from './project-run.mjs';
-import { ISSUE_ATTEMPTS, latestStart } from './project-run-guard.mjs';
+import { ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
 import { defaultBranch } from './pr-auto-merge.mjs';
 import { hostOf, repoName } from './remotes.mjs';
 import { isObject } from './fs.mjs';
@@ -35,9 +35,10 @@ const quote = (value) => {
 };
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
 
-// What an issue becomes after an attempt that ended without a result it may be merged on: open again while attempts
-// remain, else parked on the decision `attempts`.
-export const afterFailure = (key, attempt) => (attempt < ISSUE_ATTEMPTS ? { event: 'issue', key, state: 'open' } : { event: 'issue', key, state: 'parked', decision: 'attempts' });
+// What an issue becomes after an attempt that ended without a result it may be merged on, with `spent` the attempts of it
+// that count (project-run-guard.mjs spentAttempts), that one included: open again while attempts remain, else parked on
+// the decision `attempts`.
+export const afterFailure = (key, spent) => (spent < ISSUE_ATTEMPTS ? { event: 'issue', key, state: 'open' } : { event: 'issue', key, state: 'parked', decision: 'attempts' });
 
 // The characters a result's text never keeps: format characters (bidirectional marks, zero-width joiners, tag
 // characters), private-use and unassigned code points, and variation selectors, which are deleted, so none can hide
@@ -129,10 +130,11 @@ export function mergeProblem({ forge, repository, pr, branch, since }) {
 }
 
 // What the ledger records of issue `key` after attempt `attempt` ended with `status`: merged is done; parked, pr_open,
-// and blocked park it on a decision named for the status; failed opens it again while attempts remain.
-export function afterResult(key, attempt, status) {
+// and blocked park it on a decision named for the status; failed opens it again while attempts remain, of the `spent`
+// that count (afterFailure).
+export function afterResult(key, attempt, status, spent = attempt) {
   if (status === 'merged') return { event: 'issue', key, state: 'done' };
-  if (status === 'failed') return afterFailure(key, attempt);
+  if (status === 'failed') return afterFailure(key, spent);
   return { event: 'issue', key, state: 'parked', decision: { parked: `decision-${attempt}`, pr_open: 'pr-open', blocked: 'blocked' }[status] };
 }
 
@@ -233,11 +235,11 @@ function droppedPullProblem({ forge, repository, result, branch, since }) {
 
 // What the drop of the running issue `key`'s latest start holds: { rows, line } to record, or null while there is none,
 // or the forge cannot answer.
-function dropRows({ run, key, start, branch, forge, repository, now }) {
+function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const read = readDrop(start.drop);
   if (read.missing) return null;
   const at = iso(now);
-  const bad = (why) => ({ rows: [{ event: 'ended', key, attempt: start.attempt, reason: 'bad_result', why: cleanText(why, CAPS.stop), at }, { ...afterFailure(key, start.attempt), at }], line: 'bad_result' });
+  const bad = (why) => ({ rows: [{ event: 'ended', key, attempt: start.attempt, reason: 'bad_result', why: cleanText(why, CAPS.stop), at }, { ...afterFailure(key, spent), at }], line: 'bad_result' });
   if (read.problem) return bad(read.problem);
   const { value } = read;
   if (value?.run !== run || value?.key !== key || value?.attempt !== start.attempt) return bad('the drop\'s result names another run, issue, or attempt');
@@ -247,7 +249,7 @@ function dropRows({ run, key, start, branch, forge, repository, now }) {
   if (pull?.retry) return null;
   if (pull) return bad(pull);
   const { result } = checked;
-  const next = afterResult(key, start.attempt, result.status);
+  const next = afterResult(key, start.attempt, result.status, spent);
   return {
     rows: [{ event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', at }, { ...next, at }],
     line: `${result.status} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`,
@@ -265,7 +267,7 @@ export function ingestDrops({ state, run, found, forge, now }) {
     const start = latestStart(found, key);
     if (!start?.drop) continue;
     const { branch } = found.snapshot.issues.find((issue) => issue.key === key);
-    const taken = dropRows({ run, key, start, branch, forge, repository: found.init.repository, now });
+    const taken = dropRows({ run, key, start, spent: spentAttempts(found, key), branch, forge, repository: found.init.repository, now });
     if (!taken) continue;
     const written = safely(() => appendToRun(state, run, (fresh) => (fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt
       ? { rows: taken.rows } : { rows: [] })));

@@ -329,11 +329,15 @@ ignored, so the live checks below must show each one holds.
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
   `aidrian handoff route` `route: none`, before any store or mark write. It pushes its work and records its result.
 - A usage or rate limit is read from the session's transcript alone (`lib/hosts/claude-code-limit.mjs`): its last
-  `assistant` entry, only when the host marked it `isApiErrorMessage: true`, and only when its text, the host's own,
-  names a limit, as `Claude AI usage limit reached|<epoch seconds>`, `5-hour limit reached ∙ resets 5pm`, or
-  `API Error: 429 ...`, or its `error` is `rate_limit`. The reset time is read from the epoch, or from `resets <time>
-  (<zone>)`. These shapes come from the host's issue reports and changelog, not a live run: until one shows them, a
-  limit the reader misses ends the session with no result, or past `issueHours` ([Project run](../config.md#project-run)).
+  `assistant` entry, only when the host marked it `isApiErrorMessage: true`. Its structured `error` decides where the
+  host writes one, and only `rate_limit` is a limit; with none, its text must start with a limit's words, as
+  `Claude AI usage limit reached|<epoch seconds>`, `5-hour limit reached ∙ resets 5pm`, or `API Error: 429`. The reset
+  time is read against the entry's `timestamp`: from the epoch, from `resets <time> (<zone>)`, then from `resets in`
+  a span. The session starts with `autoContinueAtUsageLimit`, so the host waits out a usage limit and continues it,
+  and the adapter declares `continuesAtLimit`: `wait` keeps a limited session the host still lists running. These
+  shapes and the setting's effect come from the host's issue reports, changelog, and binary, not a live run (live check
+  19): until one shows them, a limit the reader misses ends the session with no result, or past `issueHours`
+  ([Project run](../config.md#project-run)).
 
 The settings the session starts with (`sandboxSettings` in `lib/hosts/claude-code-sandbox.mjs`, which the tests pin
 whole). A scalar passed with `--settings` wins over the user's settings; a list merges with theirs, which the start checks.
@@ -355,6 +359,7 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 | `permissions.deny` | `Read(//<path>)` and `Read(//<path>/**)` for each credential store and the main checkout, since the file tools run outside the sandbox |
 | `disableClaudeAiConnectors` | `true`: the claude.ai connectors, which `--strict-mcp-config` leaves on, neither load nor connect; a `true` from any source wins |
 | `worktree.bgIsolation` | `"none"`, so `claude --bg` stays in the clone instead of moving into `.claude/worktrees` |
+| `autoContinueAtUsageLimit` | `true`: at a usage limit the host waits for the reset and continues the session, keeping its unpushed work, where its limit dialog would wait on a person |
 | `env` | each package manager's cache and global store in the attempt's `cache` folder, below; the host sets it for the session and every command it runs |
 
 `allowLocalBinding: false` has a cost on macOS, where it is the switch for localhost: a test that listens on a local
@@ -492,7 +497,9 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     empty, `npm ci` fails on the network and writes nothing outside the attempt's folder. The same for `pip install`
     in a virtual environment, `cargo fetch`, `go mod download`, and `bundle install`, each with its registry listed.
 19. What a usage limit and a rate limit leave at the end of a background session's transcript, and which state
-    `claude agents --json --all` then lists the session in, so `lib/hosts/claude-code-limit.mjs` reads the real record.
+    `claude agents --json --all` then lists the session in, so `lib/hosts/claude-code-limit.mjs` reads the real record;
+    and whether a `claude --bg` session started with `autoContinueAtUsageLimit` in `--settings` continues on its own
+    once the limit resets: the host's code reads the key, and may honor it only from the user's own settings.
 
 ### Dependency installs
 

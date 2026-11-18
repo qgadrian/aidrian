@@ -232,9 +232,11 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 - A usage or rate limit is read from the run log alone (`logLimit` in `lib/hosts/codex-exec.mjs`): its last turn end,
   only when it is a `turn.failed` whose message names one, as `You've hit your usage limit. ... try again in 2 hours 5
   minutes.` or `... try again at 3:04 PM.`, or `exceeded retry limit, last status: 429 Too Many Requests`; never a
-  top-level `error` event, an item's output, or a message. These come from Codex's source, not a live run: until one
-  shows them, a limit the reader misses ends the session with no result, or past `issueHours`
-  ([Project run](../config.md#project-run)).
+  top-level `error` event, an item's output, or a message. Its reset time is read against the log's last write. No
+  Codex setting is known that continues a session once the limit resets, so the adapter declares no
+  `continuesAtLimit`: `wait` stops the session and the issue starts again after the pause. These come from Codex's
+  source, not a live run: until one shows them, a limit the reader misses ends the session with no result, or past
+  `issueHours` ([Project run](../config.md#project-run)).
 - A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
   time is the one recorded. The table is read whole, up to 64 MiB of command lines, so a busy machine's listing still
   finds a start by its folder.

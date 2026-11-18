@@ -1745,17 +1745,27 @@ result over in its attempt's `drop` folder, and `wait` records it as a `result` 
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
 A session that meets a usage or rate limit pauses the run (`lib/project-limit.mjs`). `wait` asks the host adapter
-whether the session's last record is the host's own limit error, never a tool's output or the model's text; when it is,
-`wait` stops the session, ends the attempt `limit` (it counts as any attempt), opens the issue again, and writes a
-`limit` row whose `until` is the reset time the host named, held to between 1 minute and 6 hours from then, or, when it
-named none, 15, then 30, then 60 minutes for each limit in a row since the last result. It prints `limit <issue> <kind>
-until <time> -> <state>`. Until then `start` exits 1 with `paused until <time>`, `next` prints that line first and
-`--json` adds `pause`, and an idle `wait` waits with it, up to `--max-wait`. Once it is over, the same issue starts
-again as a new attempt: a fresh clone on the issue's branch as the forge holds it, whose prompt says the attempt before
-stopped on a limit. A run waits out 24 pauses at most: the next limit writes a `halt` row instead, which only
-`aidrian project resume` lifts. Neither host's limit record is verified live, and a host that reads none, or a record
-it does not recognise, leaves the backstop: the session ends with no result, or `issueHours` stops it. A limit the
-driver session meets itself is not handled: nothing restarts a driver.
+whether the session's last record is the host's own limit error, never a tool's output or the model's text, and writes
+a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to between
+1 minute and 6 hours from now, so a reset already past waits 1 minute; or, when it named none, 15, then 30, then 60
+minutes for each pause in a row since the last result. A limit met while a pause lasts joins it: the same pause, its
+end moved later only by a named reset. Until the pause is over, `start` of any issue exits 1 with `paused until
+<time>`, `next` prints that line first and `--json` adds `pause`, and an idle `wait` waits with it, up to `--max-wait`.
+Time paused counts toward no issue's `issueHours`.
+
+A session the host still lists running, on a host that continues its own session at the reset (Claude Code, started
+with `autoContinueAtUsageLimit`), keeps running: `wait` prints `paused <issue> <kind> until <time>` and goes on waiting
+on it. A session that ended on the limit, or one of a host that does not continue (Codex), is stopped, and its attempt
+ends `limit`: `wait` prints `limit <issue> <kind> until <time> -> open`. A limited attempt counts toward no cap of the
+issue, so a limit never parks one. Once the pause is over, the same issue starts again as a new attempt: a fresh
+clone of the issue's branch as the forge holds it, whose prompt says the attempt before stopped on a limit. Work the
+limited session had not pushed is lost, which the host's own continuation makes rarer. A run waits out 24 pauses at
+most: the next limit writes a `halt` row instead, which only `aidrian project resume` lifts.
+
+Neither host's limit record is verified live, and a host that reads none, or a record it does not recognise, leaves the
+backstop: the session ends with no result, or `issueHours` stops it. The driver session shares the account's limit,
+and nothing restarts a driver its own limit stopped: the run goes on when the driver's host continues it after the
+reset, which `autoContinueAtUsageLimit` in the user's own settings asks of the host.
 For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
 main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
 checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose

@@ -241,6 +241,10 @@ export default {
       // Whether the session last met a usage or rate limit, from the host's own API error entry at the end of its
       // transcript (hosts/claude-code-limit.mjs); unverified, as no live session has shown that entry.
       limitOf: ({ session, cwd, env, home, now }) => transcriptLimit({ session, cwd, env, home, now }),
+      // The session starts with autoContinueAtUsageLimit (claude-code-sandbox.mjs sandboxSettings), so the host waits
+      // out a usage limit and goes on with its work: `wait` keeps a limited session it still lists running. Unverified
+      // on a background session (docs/providers/claude-code.md#project-start lists the live check).
+      continuesAtLimit: true,
       attachLine,
       stopLine,
     },

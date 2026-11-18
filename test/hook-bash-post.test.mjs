@@ -324,7 +324,7 @@ test('a ledger at its cap is compacted, so the newest row shows and the file sta
   assert.deepEqual(readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line).branch), ['first', 'feat/newest']);
 });
 
-test('the same call made again adds no row while its pull request is among the newest shown', { skip: !POSIX }, () => {
+test('the same call made again within a minute adds no row', { skip: !POSIX }, () => {
   const session = nextSession();
   const file = path.join(ownFolder(session), 'prs.jsonl');
   runHook(payload('git push origin feat', { session }));

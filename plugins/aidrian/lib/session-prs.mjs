@@ -236,15 +236,34 @@ export function ledgerRows({ command, cwd, output = null, env = {}, forge, reade
   return [...new Map(rows.map((row) => [JSON.stringify(row), row])).values()].slice(0, MAX_ROWS);
 }
 
-// The fields that say what a row records, so a repeat of a shown row adds none: all but `at` and `agentId`.
+// The fields that say what a row records, so a repeat within REPEAT_WINDOW_MS adds none: all but `at` and `agentId`.
 const rowKey = ({ kind, forge, host, path: repoPath, number, branch, cwd }) => JSON.stringify([kind, forge, host, repoPath, number, branch, cwd]);
-const keyOfLine = (line) => {
+const parsedLine = (line) => {
   try {
-    return rowKey(JSON.parse(line));
+    const row = JSON.parse(line);
+    return { key: rowKey(row), at: typeof row.at === 'string' ? Date.parse(row.at) : Number.NaN };
   } catch {
     return null;
   }
 };
+const keyOfLine = (line) => parsedLine(line)?.key ?? null;
+// How long a row the ledger holds keeps the same call from writing it again, as a hook run on every shell call may.
+// Past it, a repeat is written with its new time, so the change request it names shows as acted on last.
+export const REPEAT_WINDOW_MS = 60_000;
+
+// The keys of the ledger's rows written within REPEAT_WINDOW_MS of `at`, read from its newest line back to the first
+// older than that, since rows are appended in time order.
+function recentKeys(lines, at) {
+  const keys = new Set();
+  if (!Number.isFinite(at)) return keys;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = parsedLine(lines[index]);
+    if (line === null || !Number.isFinite(line.at)) continue;
+    if (at - line.at >= REPEAT_WINDOW_MS) break;
+    if (Math.abs(at - line.at) < REPEAT_WINDOW_MS) keys.add(line.key);
+  }
+  return keys;
+}
 const isFolder = (folder) => {
   try {
     return lstatSync(folder).isDirectory();
@@ -268,10 +287,9 @@ function newestLines(lines) {
 }
 
 // Writes `rows`, MAX_ROWS at most, to the ledger in `folder`, which sessionFolder gave, as lib/session-folder.mjs reads
-// and writes it: a row whose cwd is no folder on disk, or whose fields one of the ledger's newest distinct rows holds,
-// is left out. Those are the newest MAX_REFS less one for each row of this call, so the row they match stays shown
-// whatever this call writes; a row matching an older one is written with its new time, so its ref is shown first
-// again. The rest are appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends
+// and writes it: a row whose cwd is no folder on disk, or whose fields a row written within REPEAT_WINDOW_MS of its `at`
+// holds, is left out; any other repeat is written with its new time, so its ref is shown first again and stays shown
+// while newer ones come. The rest are appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends
 // racing can leave it, or the append would pass it, the ledger is rewritten through a temporary file and a rename with
 // the newest rows of that tail that fit in half of it, then these, so the newest always show. Nothing is written when
 // the ledger cannot be read as the session folder's rules allow. Returns whether it wrote. Never throws.
@@ -284,11 +302,7 @@ export function appendLedger(folder, rows, options = {}) {
   lines.pop();
   if (read.cut) lines.shift();
   const taken = rows.slice(0, MAX_ROWS);
-  const seen = new Set();
-  for (let at = lines.length - 1; at >= 0 && seen.size < MAX_REFS - taken.length; at -= 1) {
-    const key = keyOfLine(lines[at]);
-    if (key !== null) seen.add(key);
-  }
+  const seen = recentKeys(lines, typeof taken[0]?.at === 'string' ? Date.parse(taken[0].at) : Number.NaN);
   const fresh = [];
   for (const row of taken) {
     const key = rowKey(row);

@@ -101,18 +101,20 @@ test('sessionRefs dedupes by repository and number, else by repository and branc
   assert.deepEqual(unsupported, []);
 });
 
-test('a pull request acted on again comes back first, after 25 others pushed it out, while a repeat of a shown one adds no row', { skip: !POSIX }, () => {
+test('a pull request acted on again is written with its new time, so it stays shown as newer ones come; a repeat within a minute adds no row', { skip: !POSIX }, () => {
   const folder = folderOf();
   const touch = (number, minute) => appendLedger(folder, [row({ kind: 'touched', number }, minute)]);
-  for (let number = 1; number <= MAX_REFS + 1; number += 1) assert.equal(touch(number, number), true, `#${number}`);
-  assert.ok(!sessionRefs(readLedger(folder), forge).refs.some((each) => each.number === 1), '#1 is the oldest of 26, so not shown');
-  assert.equal(touch(1, 40), true, 'the repeat of a ref no longer shown is written, with its new time');
+  assert.equal(touch(1, 0), true);
+  for (let number = 2; number <= MAX_REFS - 1; number += 1) assert.equal(touch(number, number), true, `#${number}`);
+  assert.equal(touch(1, 30), true, 'a repeat of a shown ref past a minute is written, with its new time');
+  assert.equal(touch(MAX_REFS, 31), true);
+  assert.equal(touch(MAX_REFS + 1, 32), true);
   const { refs } = sessionRefs(readLedger(folder), forge);
   assert.equal(refs.length, MAX_REFS);
-  assert.equal(refs[0].number, 1, 'the pull request acted on last comes first');
+  assert.equal(refs.findIndex((each) => each.number === 1), 2, '#1 is still shown, newest but two');
   const rows = readLedger(folder).length;
-  assert.equal(touch(MAX_REFS + 1, 41), false, 'a repeat of a shown ref adds no row');
-  assert.equal(touch(1, 42), false);
+  const again = { ...row({ kind: 'touched', number: MAX_REFS + 1 }, 32), at: new Date(Date.UTC(2026, 10, 18, 10, 32, 59)).toISOString() };
+  assert.equal(appendLedger(folder, [again]), false, 'the same row within a minute adds none');
   assert.equal(readLedger(folder).length, rows);
 });
 

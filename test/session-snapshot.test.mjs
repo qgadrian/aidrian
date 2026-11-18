@@ -489,7 +489,7 @@ test('the state folder read is killed at git`s limit, even by a git that ignores
   const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
   const bin = path.join(env.base, 'stubborn');
   mkdirSync(bin);
-  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" --get remote.origin.url "*) trap '' TERM; exec sleep 20;; esac\nexec ${real} "$@"\n`);
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" remote get-url origin "*) trap '' TERM; exec sleep 20;; esac\nexec ${real} "$@"\n`);
   chmodSync(path.join(bin, 'git'), 0o755);
   const { status, ms } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
   assert.equal(status, 0);
@@ -757,6 +757,19 @@ test('an origin git reads as a folder, such as vendor/mirror.git, starts no gh c
     assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: null }, origin);
     assert.deepEqual(json.errors, [], 'a local remote is unsupported, not failed');
   }
+});
+
+test('worktrees reads origin as git fetches from it: its first URL, after an insteadOf rewrite', (t) => {
+  // Two URLs: git fetches from the first, and `git config --get` would give the last.
+  const two = withWorktree(t);
+  git(two.dir, 'config', '--add', 'remote.origin.url', 'https://github.com/acme/second.git');
+  assert.equal(two.run(['--session', ID]).json.worktrees.mergedNotCleaned, 1);
+  assert.deepEqual(ghCalls(two.log).at(-1).slice(-2), ['--repo', 'github.com/acme/notes'], 'the first URL');
+  // A rewrite git applies before it fetches: the repository it names, not the one written.
+  const rewritten = withWorktree(t);
+  git(rewritten.dir, 'config', 'url.https://github.com/acme/real.git.insteadOf', 'https://github.com/acme/notes.git');
+  assert.equal(rewritten.run(['--session', ID]).json.worktrees.mergedNotCleaned, 1);
+  assert.deepEqual(ghCalls(rewritten.log).at(-1).slice(-2), ['--repo', 'github.com/acme/real'], 'the rewritten URL');
 });
 
 test('the merged-heads cache is bound to origin`s repository: once origin moves, the heads it holds are none', (t) => {

@@ -575,7 +575,8 @@ user owns, never a symlink or a folder. A store the gate refuses leaves `chain`,
 **Worktrees.** `owned` counts the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is
 the head commit of a merged pull request of their branch, before [worktree cleanup](project-folder.md#task-worktrees)'s own tree and age
 checks: a worktree it counts may still hold work that cleanup asks about. The merged heads come from the forge for
-origin's repository alone, when origin is a network remote and the forge adapter serves it (github.com today), and are
+origin's repository alone, read as git fetches from it (its first URL, after any `url.<base>.insteadOf` rewrite),
+when origin is a network remote and the forge adapter serves it (github.com today), and are
 cached for a minute in the session's folder, with the repository they were read for. With no origin, one git reads as a
 folder on disk, such as `vendor/mirror.git`, or one on a host the adapter does not serve, `mergedNotCleaned` is null and
 `errors` does not name `worktrees`: that repository is unsupported, not failed. A cache of another repository, as after

@@ -176,7 +176,8 @@ function worktreesSection({ project, folder }, validId, forge, errors) {
   const main = needed(mainRoot(project.root, KILL));
   const worktrees = listWorktrees(main, { timeoutMs: GIT_TIMEOUT_MS, ...KILL }).filter((each) => !each.main);
   const out = { owned: worktrees.length, mergedNotCleaned: null };
-  const origin = runGit(['config', '--get', 'remote.origin.url'], main, KILL);
+  // As git fetches: the first URL, after any `url.<base>.insteadOf` rewrite.
+  const origin = runGit(['remote', 'get-url', 'origin'], main, KILL);
   const repo = origin.status === 0 ? servedRepository(remoteIdentity(origin.stdout.trim())) : null;
   if (!validId || repo === null) return out;
   const heads = mergedHeadsOf(main, repo, folder, forge);

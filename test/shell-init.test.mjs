@@ -150,6 +150,9 @@ for (const shell of ['zsh', 'bash']) {
     assert.match(other.result.stdout, /done/u, 'the block parses with the alias in place');
     assert.match(other.result.stderr, /^aidrian shell-init: the alias claude runs past the shell function, so a handoff will not replace this terminal$/mu);
     assert.deepEqual(other.calls, [], 'sourcing the block started nothing');
+    const plain = inShell(t, shell, 'alias claude=claude\n. RC\necho done');
+    assert.equal(plain.result.status, 0, plain.result.stderr);
+    assert.equal(plain.result.stderr, '', 'an alias that is just claude, which bash prints quoted, says nothing');
   });
 
   test(`in ${shell}, the function reaches the record under set -e and set -u, and refuses an expiry too far ahead`, { skip: !HAS(shell) }, (t) => {
@@ -219,6 +222,10 @@ test('the session start tells an attended session the shell function did not sta
   ]) {
     assert.doesNotMatch(sessionStart(t, env, options), /Handoff terminal/u, name);
   }
+  // A session started where the startup file did not run, such as an editor's terminal: an install would change nothing.
+  const home = folder(t, 'aidrian-home-');
+  writeFileSync(path.join(home, '.zshrc'), `alias g=git\n${rcBlock('zsh')}\n`);
+  assert.doesNotMatch(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }, { home }), /Handoff terminal/u, 'the current block is installed');
 });
 
 test('the session start names a startup file whose block differs from the current one, and never rewrites it', (t) => {

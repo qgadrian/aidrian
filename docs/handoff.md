@@ -416,7 +416,8 @@ It runs only where every switch of the background route is on, and `session.hand
    with the plain line on how to open the new session instead. A session a Human attends that the shell function did
    not start, while this machine's switch and the working config turn the route on in `auto` mode, gets a
    `Handoff terminal:` line at its start that says its terminal will not follow, and names the install command
-   ([Start lines](hooks.md#start-lines)).
+   ([Start lines](hooks.md#start-lines)). When a startup file already holds the current block, it gets none: such a
+   session runs where that file did not start it, such as an editor's terminal, and an install would change nothing.
 2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
    shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now

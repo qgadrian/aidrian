@@ -84,7 +84,7 @@ function shellFunction(shell, program, attach) {
 function aliasCheck(program) {
   return [
     `if alias ${program} >/dev/null 2>&1; then`,
-    `  _aidrian_alias=$(alias ${program}); _aidrian_alias=\${_aidrian_alias#*=}; _aidrian_alias=\${_aidrian_alias#\\'}`,
+    `  _aidrian_alias=$(alias ${program}); _aidrian_alias=\${_aidrian_alias#*=}; _aidrian_alias=\${_aidrian_alias#\\'}; _aidrian_alias=\${_aidrian_alias%\\'}`,
     `  case $_aidrian_alias in ${program}|${program}\\ *) ;; *) echo "aidrian shell-init: the alias ${program} runs past the shell function, so a handoff will not replace this terminal" >&2 ;; esac`,
     '  unset _aidrian_alias',
     'fi',
@@ -217,6 +217,22 @@ function replaceFile(file, content) {
 // The command the session hands the Human for `shell`: `!` runs it in the session as the Human's own.
 const handCommand = (shell, flag = '--install') => `\`! aidrian shell-init ${shell} ${flag}\``;
 
+// The blocks of the startup file of `shell` under `env`, as blocksOf reads them, or [] when it cannot be read.
+function rcBlocks(shell, env) {
+  try {
+    const text = readText(rcFile(shell, env));
+    return text === null ? [] : blocksOf(text.split('\n'));
+  } catch {
+    return [];
+  }
+}
+
+// Whether a startup file holds the current block, alone.
+const holdsCurrent = (env) => SHELLS.some((shell) => {
+  const blocks = rcBlocks(shell, env);
+  return blocks.length === 1 && blocks[0].text === rcBlock(shell);
+});
+
 // The session start's lines about the startup files, on a host that can replace a terminal while this machine's switch
 // `background` is on: one for each startup file whose blocks differ from the current text, which a re-install replaces;
 // it never rewrites one itself. `human` names the Human.
@@ -224,14 +240,7 @@ export function staleBlockLines({ host, background, env = process.env, human }) 
   if (!replacer(host) || background !== 'on') return [];
   return SHELLS.flatMap((shell) => {
     const file = rcFile(shell, env);
-    let text;
-    try {
-      text = readText(file);
-    } catch {
-      return [];
-    }
-    if (text === null) return [];
-    const blocks = blocksOf(text.split('\n'));
+    const blocks = rcBlocks(shell, env);
     if (blocks.length === 0 || (blocks.length === 1 && blocks[0].text === rcBlock(shell))) return [];
     return [`Handoff terminal: the aidrian shell function block in ${file} differs from this plugin's, so a handoff may not replace the terminal as this version does. ` +
       `This session hands ${human} the command ${handCommand(shell)}, which replaces the block, and never runs it or edits the file itself.`];
@@ -240,11 +249,13 @@ export function staleBlockLines({ host, background, env = process.env, human }) 
 
 // The session start's line for an attended session the shell function did not start, on a host that can replace a
 // terminal, while this machine's switch `background` is on and the working config's `handoff` resolves to the
-// background route in `auto` mode: after a handoff its terminal would stay on the old session. Else null.
+// background route in `auto` mode: after a handoff its terminal would stay on the old session. Else null, and null too
+// when a startup file already holds the current block: the session then runs where that file did not start it, such as
+// an editor's terminal, and an install would change nothing.
 export function unwrappedLine({ host, background, handoff, env, human }) {
   const replace = replacer(host);
   if (!replace || background !== 'on' || handoff?.mode !== 'auto' || handoff?.continue !== 'background') return null;
-  if (shellPid(env) !== null || !replace.attended(env)) return null;
+  if (shellPid(env) !== null || !replace.attended(env) || holdsCurrent(env)) return null;
   const update = typeof replace.updateCommand === 'string' ? `, with \`${replace.updateCommand}\`` : '';
   return `Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's \`${replace.program}\`, ` +
     `so after a background handoff this terminal stays on the old session beside the new one. For it to follow, this session hands ${human} ` +

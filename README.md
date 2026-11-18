@@ -135,9 +135,9 @@ and to each session after it:
 aidrian shell-init zsh --install    # for bash: aidrian shell-init bash --install
 ```
 
-`shell-init` ships in the first release after aidrian 0.67.1. An older copy, such as 0.66.0, answers
-`unknown command: shell-init`, so update the plugin first, `claude plugin update aidrian@aidrian-harness` for Claude Code
-([Update](docs/providers/claude-code.md#update)), and check that the `aidrian` the terminal runs is the new one.
+Update the plugin first, `claude plugin update aidrian@aidrian-harness` for Claude Code
+([Update](docs/providers/claude-code.md#update)): an older copy answers `unknown command: shell-init`. Check that the
+`aidrian` the terminal runs is the new one.
 It writes a marked block to `~/.zshrc` (or `~/.bashrc`), and changes no other line. The block is the shell function
 itself, `function claude`, which runs `claude` as before; when a handoff ends the session, it opens the new one with
 `claude attach`. No plugin code runs when a terminal starts. Run again after a plugin update, it replaces the block

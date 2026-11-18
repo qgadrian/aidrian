@@ -66,7 +66,8 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), one
   `Handoff terminal:` line while this machine's `handoff.background` is `"on"` and config.json resolves
   `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
-  not start: after a background handoff its terminal stays on the old session, and the line names
+  not start, unless a startup file already holds the current block: after a background handoff its terminal stays on
+  the old session, and the line names
   `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older copy of the plugin,
   which answers `unknown command: shell-init`, with the host's update command (`claude plugin update aidrian@aidrian-harness`);
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
@@ -158,7 +159,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Git amend | `git commit --amend`; the deny names a follow-up commit, which a squash merge folds in, and `aidrian lint` fails a skill or agent that asks for an amend | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
-| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)) | none: the deny says to hand the Human the command with the `!` prefix |
+| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny names a copy with its own offline install from the lockfile | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |

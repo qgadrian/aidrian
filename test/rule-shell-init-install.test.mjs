@@ -24,6 +24,20 @@ test('denies an install or uninstall of the shell function, however aidrian is r
   deny('echo "aidrian shell-init zsh --install" | bash');
 });
 
+test('denies the command carried by a program that runs its arguments or a string as a command', () => {
+  deny('echo zsh | xargs aidrian shell-init --install');
+  deny('find . -maxdepth 0 -exec aidrian shell-init zsh --install \\;');
+  deny("watch 'aidrian shell-init zsh --install'");
+  deny('script -q /dev/null aidrian shell-init zsh --uninstall');
+  deny("script -c 'aidrian shell-init zsh --install' /dev/null");
+  deny('parallel aidrian shell-init {} --install ::: zsh');
+  deny("fish -c 'aidrian shell-init zsh --install'");
+  deny("pwsh -Command 'node /opt/aidrian/lib/cli.mjs shell-init zsh --install'");
+  allow('xargs -n1 echo < files');
+  allow('find . -name "*.md" -exec grep -l "shell-init zsh --install" {} +');
+  allow("watch 'aidrian shell-init zsh'");
+});
+
 test('allows printing the function, other aidrian commands, and text that only names the command', () => {
   allow('aidrian shell-init zsh');
   allow('eval "$(aidrian shell-init zsh)"');

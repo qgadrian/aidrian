@@ -13,7 +13,7 @@ import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectStore } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { ENDING_WINDOW, noteEnding, noteFollow, openStore, readFollow, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { ENDING_WINDOW, FOLLOW_AGE, noteEnding, noteFollow, openStore, readFollow, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
@@ -279,6 +279,12 @@ test('a request names one way to end, and the store says which shell follows a s
   assert.deepEqual(readFollow(store, BG_SESSION), { shell: 4242, id: 'abcd1234' }, 'a short id the session starts with');
   assert.equal(readFollow(store, 'abcd9999-0000'), null, 'another session');
   assert.equal(noteFollow(store, BG_SESSION, { shell: 1 }), null);
+
+  const later = Date.now() + FOLLOW_AGE + 1000;
+  assert.equal(readFollow(store, BG_SESSION, { now: later }), null, 'under the short id, past FOLLOW_AGE');
+  assert.ok(noteFollow(store, BG_SESSION, { shell: 4242 }));
+  assert.deepEqual(readFollow(store, BG_SESSION), { shell: 4242, id: BG_SESSION });
+  assert.equal(readFollow(store, BG_SESSION, { now: later }), null, 'under the full id, past FOLLOW_AGE');
 });
 
 test('a background session the terminal follows ends only its own session, and passes the terminal on to the next', (t) => {

@@ -265,6 +265,22 @@ describe('aidrian-mod band', () => {
     expect(await drawing.find({ type: 'Text', text: /^ ↻3h00m$/ })).toBeDefined()
     expect(await drawing.find({ type: 'Text', text: /^ ↻2d2h$/ })).toBeDefined()
   })
+
+  test('draws no renewal for a reset time that is not a date', async ($, on) => {
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('session.measure', () => ({ changed: [] }))
+    mock.clock(on, { now: 0 })
+    await $.session.measure({
+      context: { percent: 40, window: 200_000 },
+      rateLimits: [{ kind: 'five_hour', percentUsed: 26, resetsAt: 'not a date' }],
+    } as never)
+
+    for (const drawing of [await band($), await pane($)]) {
+      const texts = (await drawing.findAll({ type: 'Text' })).map(found => found.text)
+
+      expect(texts.filter(text => /↻|NaN/.test(text))).toEqual([])
+    }
+  })
 })
 
 describe('aidrian-mod surfaces', () => {
@@ -585,6 +601,23 @@ describe('the ticket', () => {
     expect(state.mcpCalls.filter(call => call.server === 'linear-server').map(call => call.args.id)).toEqual(['ABC-1', 'ABC-2'])
     expect(await drawing.find({ type: 'Text', text: /Current folder/ })).toBeDefined()
     expect(await drawing.find({ type: 'Text', text: /Left folder/ })).toBeUndefined()
+  })
+
+  test('refreshes during a slow lookup of the same key share it, and its title shows', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const state = world({ issues: { 'ABC-1': { ...ISSUE, title: 'Same ticket' } } })
+    const clock = await startIn($, on, state)
+
+    state.snapshot = { ticket: { key: 'ABC-1', source: 'branch' } }
+    state.linearDelayMs = { 'ABC-1': 4000 }
+    // Each move to another folder of the same branch's ticket refreshes, once a second, while Linear takes 4s.
+    for (const cwd of [WORKTREE, MAIN, WORKTREE, MAIN, WORKTREE, MAIN]) {
+      state.cwd = cwd
+      await clock.advance(1000)
+    }
+    const drawing = await pane($)
+
+    expect(state.mcpCalls.filter(call => call.server === 'linear-server').map(call => call.args.id)).toEqual(['ABC-1'])
+    expect(await drawing.find({ type: 'Text', text: /Same ticket/ })).toBeDefined()
   })
 
   test('a GitHub #N key shows as it is, with no lookup', async ($, on) => {

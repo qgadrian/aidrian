@@ -49,9 +49,10 @@ Each is a row of Claude Code's config menu:
 
 - Every process the mod starts runs by an absolute path, never through a shell: `node` for the snapshot and `git` for
   the branch, from PATH folders outside the session's folder, and `/usr/bin/osascript` with one constant script for the
-  focus check. Its PATH holds only those folders whose `git` and `gh`, which the snapshot runs by name, resolve
-  outside the session's folder too. `focusApp` is only compared with what that script prints. It reads files, the transcript included,
-  through Claude Code, with no program.
+  focus check. Its PATH holds only those folders whose `git` and `gh`, which the snapshot runs by name, are absent or
+  resolve outside the session's folder too; a folder whose lookup is denied, or whose real path holds `:`, is dropped.
+  `focusApp` is only compared with what that script prints.
+  It reads files, the transcript included, through Claude Code, with no program.
 - The branch read passes `--no-optional-locks` and `-c core.fsmonitor=false` to git, so it takes no lock and starts no
   fsmonitor program. A repository's own configured filter drivers can still run, as in Claude Code's own start-up
   status read.

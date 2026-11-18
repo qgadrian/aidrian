@@ -55,15 +55,34 @@ async function realStat(io, file, kind) {
   }
 }
 
-// Whether each program of STARTED_BY_NAME in the folder `real` is absent, or resolves to a real path `outside` keeps.
-// One that exists and cannot be resolved, as a link to nothing yet, fails the check.
+// Whether `name` is shown absent from the folder `real`: a stat that does not resolve finds nothing there, and the
+// folder's listing holds no such name. A denied lookup, or a listing that fails, shows no absence.
+async function isAbsent(io, real, name) {
+  try {
+    await io.fs.stat(`${real}/${name}`, { resolve: false });
+    return false;
+  } catch {
+    // Nothing a plain stat sees: the listing tells an absent name from a denied lookup.
+  }
+  try {
+    const names = await io.fs.list(real);
+    return Array.isArray(names) && !names.some((entry) => entry?.name === name);
+  } catch {
+    return false;
+  }
+}
+
+// Whether each program of STARTED_BY_NAME in the folder `real` is shown absent, or resolves to a real path `outside`
+// keeps. It fails closed: one that exists and cannot be resolved, as a link to nothing yet, or whose lookup is denied,
+// fails the check.
 async function startsOutside(io, real, outside) {
   for (const name of STARTED_BY_NAME) {
     let found;
     try {
       found = await io.fs.stat(`${real}/${name}`, { resolve: true });
     } catch {
-      continue;
+      if (await isAbsent(io, real, name)) continue;
+      return false;
     }
     if (!isAbsolute(found?.realPath) || !outside(found.realPath)) return false;
   }
@@ -71,8 +90,8 @@ async function startsOutside(io, real, outside) {
 }
 
 // The resolver every process of the mod runs through. Its PATH is the absolute entries of the mod's PATH whose real
-// path lies outside the real session folder `cwd` and session root `root`, compared folded, and whose git and gh, where
-// present, lie outside both too; `which` finds a program of LOOKED_UP on them, outside both too; `run` starts one of
+// path holds no PATH separator and lies outside the real session folder `cwd` and session root `root`, compared folded,
+// and whose git and gh, where present, lie outside both too; `which` finds a program of LOOKED_UP on them, outside both too; `run` starts one of
 // RUNNABLE; `frontmostApp` runs the focus check and gives the frontmost application's name, or null. A check that
 // cannot be made leaves no entry.
 export async function runnerFor(io, { cwd, root }) {
@@ -82,7 +101,8 @@ export async function runnerFor(io, { cwd, root }) {
   const entries = [];
   for (const entry of String(io.env?.PATH ?? '').split(':')) {
     const real = (await realStat(io, entry, 'dir'))?.realPath;
-    const isNew = real && outside(real) && !entries.includes(real);
+    // A real path holding the separator would split into entries no check saw, once joined into the child's PATH.
+    const isNew = real && !real.includes(':') && outside(real) && !entries.includes(real);
     if (isNew && (await startsOutside(io, real, outside))) entries.push(real);
   }
   const which = async (name) => {

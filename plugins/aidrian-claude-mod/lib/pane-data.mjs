@@ -115,8 +115,15 @@ export function formatDuration(ms) {
   return `${Math.floor(hours / 24)}d${hours % 24}h`;
 }
 
+// The milliseconds of the date string `at`, or null when `at` is not a date string that parses to a finite time: a
+// number is drawn only when finite.
+export function dateMs(at) {
+  const ms = typeof at === 'string' ? Date.parse(at) : Number.NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
+
 // The time from `now` to the date `at` names, as formatDuration writes it, or '' when `at` is not a date string.
 export function untilText(at, now) {
-  const ms = typeof at === 'string' ? Date.parse(at) - now : Number.NaN;
-  return Number.isFinite(ms) ? formatDuration(ms) : '';
+  const ms = dateMs(at);
+  return ms === null ? '' : formatDuration(ms - now);
 }

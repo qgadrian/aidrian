@@ -4,7 +4,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cacheTtlOf, cleanModel, effortOf, formatDuration, issueOf, modelVersion, repoOf, untilText } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
+import { cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, modelVersion, repoOf, untilText } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
 
 const text = (value) => [{ type: 'text', text: JSON.stringify(value) }];
 
@@ -75,4 +75,9 @@ test('the time until a reset is a duration, or empty for a date that does not pa
   assert.equal(untilText(new Date(185_000).toISOString(), 0), '3m05s');
   assert.equal(untilText(new Date(0).toISOString(), 5_000), '0s');
   for (const at of ['not a date', '', undefined, null, 7]) assert.equal(untilText(at, 0), '', String(at));
+});
+
+test('a reset time is the milliseconds of a date string, or null for any value that is not one', () => {
+  assert.equal(dateMs(new Date(185_000).toISOString()), 185_000);
+  for (const at of ['not a date', '', '+999999-01-01T00:00:00Z', undefined, null, 7, Number.NaN]) assert.equal(dateMs(at), null, String(at));
 });

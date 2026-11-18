@@ -614,6 +614,71 @@ test('a PATH folder whose git or gh links into the session`s folder or root, or 
   assert.equal(io.calls[0].init.env.PATH, [realpathSync(kept), realpathSync(env.bin)].join(':'));
 });
 
+// The host's stat rejects where the fake above answers with no real path, so these fakes reject the same way: on a
+// link to nothing when asked to resolve, and with a permission error. A folder is kept only when its git and gh are
+// shown absent, or resolve outside both fences.
+const rejecting = (io, rejects) => ({
+  ...io,
+  fs: {
+    ...io.fs,
+    stat: async (file, options = {}) => {
+      const error = rejects(file, options);
+      if (error) throw error;
+      return io.fs.stat(file, options);
+    },
+  },
+});
+const denied = () => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+
+test('a PATH folder whose git or gh is a link to nothing that stat rejects leaves no entry', async () => {
+  for (const name of ['git', 'gh']) {
+    const env = layout();
+    const dangling = path.join(env.base, `dangling-${name}`);
+    mkdirSync(dangling);
+    symlinkSync(path.join(env.project, `later/${name}`), path.join(dangling, name));
+    const io = rejecting(env.io({ PATH: [dangling, env.bin].join(':') }), (file, { resolve }) => {
+      const isDangling = lstatSync(file, { throwIfNoEntry: false }) !== undefined && statSync(file, { throwIfNoEntry: false }) === undefined;
+      return resolve && isDangling ? new Error('ENOENT') : null;
+    });
+    const runner = await runnerFor(io, { cwd: env.project, root: env.project });
+    assert.deepEqual(runner.entries, [realpathSync(env.bin)], name);
+  }
+});
+
+test('a PATH folder whose git or gh lookup is denied leaves no entry; one whose names are absent stays', async () => {
+  for (const name of ['git', 'gh']) {
+    const env = layout();
+    const guarded = path.join(env.base, `guarded-${name}`);
+    write(path.join(guarded, name));
+    const io = rejecting(env.io({ PATH: [guarded, env.bin].join(':') }), (file) => (file === path.join(guarded, name) ? denied() : null));
+    const runner = await runnerFor(io, { cwd: env.project, root: env.project });
+    assert.deepEqual(runner.entries, [realpathSync(env.bin)], name);
+  }
+  const env = layout();
+  const unlisted = path.join(env.base, 'unlisted');
+  mkdirSync(unlisted);
+  const io = rejecting(env.io({ PATH: [unlisted, env.bin].join(':') }), (file) => (path.basename(file) === 'gh' ? denied() : null));
+  io.fs.list = async (dir) => {
+    if (dir === realpathSync(unlisted)) throw denied();
+    return env.io().fs.list(dir);
+  };
+  const runner = await runnerFor(io, { cwd: env.project, root: env.project });
+  assert.deepEqual(runner.entries, [realpathSync(env.bin)], 'a denied gh lookup drops the folder that cannot be listed, not the one whose listing shows no gh');
+});
+
+test('a PATH folder whose real path holds the separator : leaves no entry', async () => {
+  const env = layout();
+  const colon = path.join(env.base, 'a:b');
+  write(path.join(colon, 'node'));
+  const link = path.join(env.base, 'colon-link');
+  symlinkSync(colon, link);
+  const io = env.io({ PATH: [link, env.bin].join(':') });
+  const runner = await runnerFor(io, { cwd: env.project, root: env.project });
+  assert.deepEqual(runner.entries, [realpathSync(env.bin)]);
+  assert.equal((await runSnapshot(io, { session: ID, cwd: env.project, root: env.project })).kind, 'ok');
+  assert.equal(io.calls[0].init.env.PATH, realpathSync(env.bin));
+});
+
 test('a non-zero exit is failed, whatever the output', async () => {
   const env = layout();
   for (const exitCode of [1, 2, -1, null]) {

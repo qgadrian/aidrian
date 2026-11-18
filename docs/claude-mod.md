@@ -73,8 +73,9 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
 - **Processes.** Every process starts by an absolute path through one resolver, never through a shell: `node` and
   `git` from PATH folders outside the session's folder, and `/usr/bin/osascript` with one constant script for the
   focus check. `focusApp` is only compared with what that script prints. Each process gets as its PATH only those
-  folders, and of them only the ones whose `git` and `gh`, when present, resolve outside the session's folder too:
-  the snapshot runs both by name.
+  folders, and of them only the ones whose `git` and `gh` are shown absent or resolve outside the session's folder
+  too: the snapshot runs both by name. The check fails closed: a folder whose `git` or `gh` is a link to nothing, or
+  whose lookup is denied, is dropped, and so is a folder whose real path holds the PATH separator `:`.
 - **The git status read.** The branch read passes `--no-optional-locks` and `-c core.fsmonitor=false` to git, so it
   takes no lock and starts no fsmonitor program. A repository's own configured filter drivers can still run, as in
   Claude Code's own start-up status read.
@@ -91,8 +92,9 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
 ## The forge seam
 
 The mod reads only the snapshot and calls no forge: the `aidrian` plugin's forge adapter in `lib/forges/` fills the
-snapshot's `prs`. The mod's one naming of a forge is the forge table in
-[`lib/format.mjs`](../plugins/aidrian-claude-mod/lib/format.mjs), keyed by each row's `forge`.
+snapshot's `prs`. The forge table in [`lib/format.mjs`](../plugins/aidrian-claude-mod/lib/format.mjs), keyed by each
+row's `forge`, holds the mod's only forge words and links. The resolver also names the `gh` executable, but only to
+check the PATH it hands the snapshot, which runs `gh` by name: it never runs `gh` or calls a forge itself.
 A new forge adapter ([Adding a forge](providers/adding-a-host.md#adding-a-forge)) adds one entry there, its words for a change and
 its link pattern; until then its rows show as a `change`, with no link.
 

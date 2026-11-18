@@ -11,4 +11,5 @@ export function modelVersion(id: string): { family: string; major: number; minor
 export function effortOf(inputs: { seen?: Effort | null; fromEnv: unknown; model: string; settings: unknown }): Effort | null
 export function cleanModel(model: string): string
 export function formatDuration(ms: number): string
+export function dateMs(at: unknown): number | null
 export function untilText(at: unknown, now: number): string

@@ -4,7 +4,7 @@ import type { EngineInterface, On, PluginOptions, SessionMeasureInput } from 'cl
 import type { AgentRow, Effort, Issue, Repo, SnapshotResult, Usage } from '../types'
 import { bandSegments, changeRows, changesParts, COLORS, displayText, noticeOf, ticketRow } from '../lib/format.mjs'
 import type { Part, Row, Segment } from '../lib/format.mjs'
-import { cacheTtlOf, cleanModel, effortOf, formatDuration, issueOf, repoOf } from '../lib/pane-data.mjs'
+import { cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, repoOf } from '../lib/pane-data.mjs'
 import { ISSUE_TOOL, issueLookup, LINEAR_SERVERS } from '../lib/servers.mjs'
 import { configDirOf, findTranscript, ownPlace, poller, runnerFor, runSnapshot } from '../lib/snapshot-client.mjs'
 
@@ -62,7 +62,9 @@ type Refresh = SnapshotResult & { repo?: Repo | null }
 // Kept in the module, not in `$.state`: a reload runs session.start again, which sets them anew. `alerts` says whether
 // the session is an interactive terminal one, the only kind the notifications reach; `transcript` is the session's
 // checked transcript, which the cache lifetime is read from: the one a snapshot run was given, or the one the lib finds
-// when no run has given one; `draws` counts the refreshes drawn, so a slow lookup of an older one stores nothing.
+// when no run has given one; `draws` counts the refreshes drawn, so an older one stores no transcript; `issueKey` is
+// the ticket the newest draw looks up, so a slow lookup of another key stores nothing; `lookup` is the Linear lookup in
+// flight, which a refresh of the same key waits on rather than starting another.
 const live: {
   client: { trigger: () => Promise<void> } | null
   alerts: boolean
@@ -70,8 +72,10 @@ const live: {
   cwd: string | null
   transcript: { session: string; file: string } | null
   issue: { key: string; value: Issue | null; fetchedAt: number } | null
+  issueKey: string | null
+  lookup: { key: string; answer: Promise<Issue | null> } | null
   draws: number
-} = { client: null, alerts: false, ticks: 0, cwd: null, transcript: null, issue: null, draws: 0 }
+} = { client: null, alerts: false, ticks: 0, cwd: null, transcript: null, issue: null, issueKey: null, lookup: null, draws: 0 }
 
 // Whether this session takes notifications: an interactive session drawn in a terminal, as session.start said. A `-p`
 // run, the SDK, and the desktop app take none.
@@ -130,6 +134,8 @@ export function registerPane(on: On, options: PluginOptions) {
     live.ticks = 0
     live.cwd = null
     live.issue = null
+    live.issueKey = null
+    live.lookup = null
     live.transcript = null
     await update($, isRefreshing, () => false)
     const startedAt = await $.clock.now()
@@ -658,7 +664,7 @@ export async function recordUsage($: EngineInterface, measured: SessionMeasureIn
   const limits = measured.rateLimits.map(limit => ({
     kind: limit.kind,
     percent: limit.percentUsed,
-    resetsAt: limit.resetsAt ? Date.parse(limit.resetsAt) : null,
+    resetsAt: dateMs(limit.resetsAt),
   }))
   const latest: Usage = { contextPercent: measured.context.percent ?? null, contextWindow: measured.context.window, limits }
 
@@ -800,7 +806,7 @@ async function readAll(io: Io, asked: Target, prefixes: string): Promise<Refresh
 }
 
 // The poller does not wait for a draw, so a newer draw can start while this one waits on Linear; `isLatest` says
-// whether this draw is still the newest, and only then are its transcript and its lookup stored.
+// whether this draw is still the newest, and only then are its transcript stored and its lookup started.
 async function drawRefresh($: EngineInterface, drawn: Refresh, asked: Target, settings: Settings) {
   const draw = ++live.draws
   const isLatest = () => draw === live.draws
@@ -820,7 +826,7 @@ async function drawRefresh($: EngineInterface, drawn: Refresh, asked: Target, se
     return
   }
 
-  await loadIssue($, snapshot, settings.prefixes, isLatest)
+  await loadIssue($, snapshot, settings.prefixes)
 }
 
 // The transcript a snapshot run was given becomes the session's; when it is the first the session has, the cache
@@ -870,8 +876,11 @@ async function loadRepo(io: Io, { cwd, root }: Target): Promise<Repo | null> {
 
 // The title and state of the snapshot's ticket: the one MCP call of the mod, `get_issue` with the `{ id }` issueLookup
 // gives for a key a valid prefix matched, to the first Linear server that answers. A GitHub `#N` key is not looked up.
-async function loadIssue($: EngineInterface, snapshot: SnapshotResult, prefixes: string, isLatest: () => boolean) {
+// Called for the newest draw only, so the key it looks up becomes the active one; an answer is drawn only while its key
+// is still active.
+async function loadIssue($: EngineInterface, snapshot: SnapshotResult, prefixes: string) {
   const lookup = snapshot.kind === 'ok' ? issueLookup(snapshot.snapshot?.ticket ?? null, prefixes) : null
+  live.issueKey = lookup?.id ?? null
 
   if (lookup === null) {
     await update($, issueAtom, () => null)
@@ -881,14 +890,39 @@ async function loadIssue($: EngineInterface, snapshot: SnapshotResult, prefixes:
   const at = await $.clock.now()
   const cached = live.issue
   const isFresh = cached !== null && cached.key === lookup.id && at - cached.fetchedAt < ISSUE_TTL_MS
-  const issue = isFresh ? cached.value : await askLinear($, lookup)
+  const issue = isFresh ? cached.value : await sharedLookup($, lookup, at)
 
-  if (!isLatest()) {
+  if (live.issueKey !== lookup.id) {
     return
   }
 
-  live.issue = isFresh ? cached : { key: lookup.id, value: issue, fetchedAt: at }
   await update($, issueAtom, () => issue)
+}
+
+// The Linear lookup for `lookup`'s key: the one in flight for that key, else a new one. Its answer is cached when it
+// comes while its key is still the active one, whichever draw started it, so refreshes during a slow lookup reuse it
+// rather than each discarding the one before.
+function sharedLookup($: EngineInterface, lookup: { id: string }, at: number): Promise<Issue | null> {
+  if (live.lookup?.key === lookup.id) {
+    return live.lookup.answer
+  }
+
+  const answer = askLinear($, lookup)
+    .catch(() => null)
+    .then(issue => {
+      if (live.lookup?.answer === answer) {
+        live.lookup = null
+      }
+
+      if (live.issueKey === lookup.id) {
+        live.issue = { key: lookup.id, value: issue, fetchedAt: at }
+      }
+
+      return issue
+    })
+  live.lookup = { key: lookup.id, answer }
+
+  return answer
 }
 
 async function askLinear($: EngineInterface, lookup: { id: string }): Promise<Issue | null> {

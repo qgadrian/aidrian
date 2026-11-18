@@ -1,6 +1,7 @@
 // The GitHub adapter of the forge facade: what the plugin asks of the code forge a pull request lives on, through gh
 // (github-cli.mjs). Shared code calls the facade, from forgeFor in index.mjs, instead of a forge's commands and routes.
-// Payloads stay GitHub's shapes until a second adapter gives a reason to change them.
+// Payloads stay GitHub's shapes until a second adapter gives a reason to change them, but for changesState's row, which
+// is the forge-neutral shape of a change request that the session snapshot shows.
 
 import { isRefName } from '../git.mjs';
 import { hasHidden } from '../hidden-text.mjs';
@@ -45,6 +46,100 @@ export function changeRef(fields) {
   if (repository === null || !numbered || !named || (number === null && branch === null)) return null;
   const [owner, name] = path.split('/');
   return Object.freeze({ host, owner, name, number, branch });
+}
+
+// The most refs one changesState call reads, as the security gate set it.
+export const MAX_CHANGE_REFS = 25;
+// The one host changesState asks, named to gh as a constant, so neither GH_HOST nor any ref's text picks another: gh sends
+// GH_ENTERPRISE_TOKEN to any host but github.com.
+const CHANGES_HOST = 'github.com';
+// The pull requests of one head branch read, newest first, in the ref's repository and again in its parent's.
+const HEAD_CHANGES = 5;
+// What changesState reads of one pull request. statusCheckRollup's counts by state cover every check of the head commit,
+// however many, with no page of them read (GitHub's StatusCheckRollupContextConnection).
+const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName '
+  + 'headRepository { name owner { login } } repository { name owner { login } } reviewThreads(first: 100) { nodes { isResolved } } '
+  + 'commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } } }';
+const headChanges = (index) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change } }`;
+
+// The one query operation for `refs`, as changeRef gave them: its text is built from each ref's index and kind alone, a
+// number or a branch, and every value is a variable (changesVariables). Never a mutation.
+function changesQuery(refs) {
+  const head = refs.map((ref, i) => `$o${i}: String!, $n${i}: String!, ${ref.number === null ? `$b${i}: String!` : `$p${i}: Int!`}`);
+  const body = refs.map((ref, i) => `r${i}: repository(owner: $o${i}, name: $n${i}) { ${ref.number === null ? `${headChanges(i)} parent { ${headChanges(i)} }` : `pullRequest(number: $p${i}) { ...change }`} }`);
+  return `query changes(${head.join(', ')}) { ${body.join(' ')} }\n${CHANGE_FIELDS}`;
+}
+const changesVariables = (refs) => Object.assign({}, ...refs.map((ref, i) => ({ [`o${i}`]: ref.owner, [`n${i}`]: ref.name, ...(ref.number === null ? { [`b${i}`]: ref.branch } : { [`p${i}`]: ref.number }) })));
+
+// The `data` of a GraphQL answer: gh's stdout, read on a non-zero exit too, since an answer that holds errors still holds
+// the aliases that resolved. One that does not parse, or holds no data object, throws, as gh's own failure does.
+function changesData(call) {
+  let text;
+  try {
+    text = call();
+  } catch (error) {
+    if (typeof error?.stdout !== 'string' || error.stdout.trim() === '') throw error;
+    text = error.stdout;
+  }
+  const data = JSON.parse(text)?.data;
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) throw new Error('GitHub answered no data');
+  return data;
+}
+
+const sameName = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+const createdAt = (node) => {
+  const time = Date.parse(node?.createdAt);
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
+};
+
+// The pull request one alias of the answer gives `ref`: a number's own; for a branch, the newest of those whose head is
+// that branch of the ref's repository, in the repository or its parent, so a fork's pull request from a branch of the
+// same name never resolves it, and a branch pushed to a fork resolves to its pull request on the parent. Else null.
+function answeredChange(ref, alias) {
+  if (ref.number !== null) return alias?.pullRequest ?? null;
+  const nodes = [alias?.pullRequests?.nodes, alias?.parent?.pullRequests?.nodes].flatMap((list) => (Array.isArray(list) ? list : []));
+  const heads = nodes.filter((node) => sameName(node?.headRepository?.owner?.login, ref.owner) && sameName(node?.headRepository?.name, ref.name) && node?.headRefName === ref.branch);
+  return heads.sort((a, b) => createdAt(b) - createdAt(a))[0] ?? null;
+}
+
+const STATES = Object.freeze({ OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' });
+const MERGEABLE = Object.freeze({ MERGEABLE: true, CONFLICTING: false });
+const DECISIONS = Object.freeze({ APPROVED: 'approved', CHANGES_REQUESTED: 'changes_requested', REVIEW_REQUIRED: 'review_required' });
+// The count each state of a check run or a status context adds to, as gh pr checks sorts them; any other state, such as
+// QUEUED, IN_PROGRESS, WAITING, EXPECTED, or STALE, is pending.
+const CHECK_STATES = Object.freeze({
+  SUCCESS: 'passed', SKIPPED: 'skipped', NEUTRAL: 'skipped',
+  FAILURE: 'failed', ERROR: 'failed', CANCELLED: 'failed', TIMED_OUT: 'failed', ACTION_REQUIRED: 'failed', STARTUP_FAILURE: 'failed',
+});
+const pick = (table, key, otherwise = null) => (typeof key === 'string' && Object.hasOwn(table, key) ? table[key] : otherwise);
+
+// { passed, failed, pending, skipped }, from the counts by state of a head commit's rollup, with no check-name rule.
+function checkCounts(contexts) {
+  const counts = { passed: 0, failed: 0, pending: 0, skipped: 0 };
+  const byState = [contexts?.checkRunCountsByState, contexts?.statusContextCountsByState].flatMap((list) => (Array.isArray(list) ? list : []));
+  for (const each of byState) {
+    if (Number.isSafeInteger(each?.count) && each.count >= 0) counts[pick(CHECK_STATES, each.state, 'pending')] += each.count;
+  }
+  return counts;
+}
+
+// One pull request as the forge-neutral row (docs/providers/adding-a-host.md#adding-a-forge), or null when its owner,
+// name, number, or state has no GitHub shape. `url` is built from the owner, name, and number GitHub answered, and kept
+// only when GitHub's own url equals it.
+function changeRow(node) {
+  const owner = node?.repository?.owner?.login;
+  const name = node?.repository?.name;
+  const number = node?.number;
+  if (typeof owner !== 'string' || typeof name !== 'string' || changeRef({ host: CHANGES_HOST, path: `${owner}/${name}`, number }) === null) return null;
+  if (pick(STATES, node.state) === null) return null;
+  const url = `https://${CHANGES_HOST}/${owner}/${name}/pull/${number}`;
+  const threads = Array.isArray(node.reviewThreads?.nodes) ? node.reviewThreads.nodes : [];
+  return {
+    forge: 'github', host: CHANGES_HOST, repo: `${owner}/${name}`.toLowerCase(), number, title: typeof node.title === 'string' ? node.title : '',
+    url: node.url === url ? url : null, isDraft: node.isDraft === true, state: pick(STATES, node.state), mergeable: pick(MERGEABLE, node.mergeable),
+    reviewDecision: pick(DECISIONS, node.reviewDecision), unresolvedThreads: threads.filter((thread) => thread?.isResolved === false).length,
+    checks: checkCounts(node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts),
+  };
 }
 
 // The REST media type `aidrian pr await-review` has always named: index.mjs passes it as `mediaType` for `strictJson`.
@@ -252,6 +347,23 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The hosts it serves, FORGE_HOSTS, the allowlist of the session ledger: a host no adapter declares is recorded nowhere.
     hosts: FORGE_HOSTS,
     changeRef,
+    // The state of the change requests `refs` name, each `{ host, path, number, branch }` as the session ledger holds it,
+    // newest first: for each of the first MAX_CHANGE_REFS, the forge-neutral row of its pull request (changeRow), or null
+    // when it fails changeRef, resolves to none, or its alias is null. One GraphQL call for them all, its body on gh's
+    // stdin and its host the constant CHANGES_HOST; none when no ref passes. An answer that does not parse throws.
+    changesState: (refs) => {
+      const checked = (Array.isArray(refs) ? refs : []).slice(0, MAX_CHANGE_REFS).map((ref) => changeRef(ref));
+      const asked = checked.filter(Boolean);
+      if (asked.length === 0) return checked;
+      const input = JSON.stringify({ query: changesQuery(asked), variables: changesVariables(asked) });
+      const data = changesData(() => gh(['api', 'graphql', '--hostname', CHANGES_HOST, '--input', '-'], { input }));
+      let alias = 0;
+      return checked.map((ref) => {
+        if (ref === null) return null;
+        const node = answeredChange(ref, data[`r${alias++}`]);
+        return node ? changeRow(node) : null;
+      });
+    },
     // The pull request `ref` (a number, a branch, or a URL; none: the current branch's), with the gh `fields` named;
     // `repo` looks in that repository instead of the default one. With a `repo`, an empty `ref` still goes to gh, as the
     // merge guard has always sent it: gh needs an argument with `--repo`, and an empty one is the current branch's.
@@ -468,22 +580,26 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     },
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
     // REVIEWS_PAGE of each, with each list's `totalCount`.
+    // The owner and name go as raw -f strings, and the number through idOf before -F, which reads a leading `@` as a file.
     reviewsWithComments: (repo, n) => {
+      const number = idOf(n, 'a pull request number');
       const [owner, name] = repo.split('/');
-      return json(['api', 'graphql', '-f', `query=${REVIEWS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${n}`]);
+      return json(['api', 'graphql', '-f', `query=${REVIEWS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`]);
     },
     // One page of the review threads, each with its first comment, after the cursor `after` (null: the first page):
     // GitHub's GraphQL answer, `data.repository.pullRequest.reviewThreads` with its `pageInfo`.
     reviewThreads: (repo, n, after = null) => {
+      const number = idOf(n, 'a pull request number');
       const [owner, name] = repo.split('/');
-      return json(['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`, ...(after ? ['-f', `after=${after}`] : [])]);
+      return json(['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`, ...(after ? ['-f', `after=${after}`] : [])]);
     },
     // When the body of pull request `n` of `repo` was last edited and its title last renamed, GitHub's GraphQL answer:
     // `data.repository.pullRequest` with `lastEditedAt` (null when never edited) and `timelineItems.nodes`, the newest
     // rename's `createdAt` or none.
     changeEdits: (repo, n, { host } = {}) => {
+      const number = idOf(n, 'a pull request number');
       const [owner, name] = repo.split('/');
-      return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${EDITS_QUERY}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`]);
+      return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${EDITS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`]);
     },
     commit: (repo, sha) => rest(`repos/${repo}/commits/${sha}`),
     // The check runs of one commit, every page.

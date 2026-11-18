@@ -6,16 +6,17 @@
 // sessions folder and the session folder are each a real folder, no symlink, owned by this process's user, that no other
 // user may read or write; and the session folder's real path is `<real state>/sessions/<id>`. Its files are written as a
 // temporary file and a rename, mode 0600, under the names in SESSION_FILES alone, with one exception: the session's pull
-// request ledger, `prs.jsonl` (APPENDED_FILES), which lib/session-prs.mjs reads through readSessionFile and appends to in
-// place through appendSessionFile, no-follow, mode 0600, only while it is a regular file with one link this user alone may
-// read, and rewrites through writeSessionFile when an append would pass its cap; a file's reservation for one fixed
+// request ledger, `prs.jsonl` (APPENDED_FILES), which lib/session-prs.mjs reads through readSessionFile, or its tail
+// through readSessionTail, and appends to in place through appendSessionFile, no-follow, mode 0600, only while it is a
+// regular file with one link this user alone may read, and rewrites through writeSessionFile when an append would pass
+// its cap; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
 // untouched for SWEEP_DAYS, and the sweep deletes only those names, their temporary files, and their reservations, then
 // the folder, which it never empties of anything else.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
@@ -147,6 +148,38 @@ export function readSessionFile(folder, name, { maxBytes, uid = processUid() } =
   const read = readOwnFile(file, { cap: maxBytes, uid });
   if (read === null || read.stat.nlink !== 1 || (Number.isInteger(uid) && (read.stat.mode & 0o077) !== 0)) return null;
   return read.text;
+}
+
+// A tail read opens where no symlink is, and never waits on a named pipe.
+const READ_TAIL = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+// The last `maxBytes` of the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave, under
+// readSessionFile's rules but for the size, which is never refused: { text, cut }, `cut` true when the text starts inside
+// a line; { text: '', cut: false } when the file is missing; and null when it is refused. Opened no-follow and
+// non-blocking, and read only when fstat shows a regular file with one link this user alone may read. Never throws.
+export function readSessionTail(folder, name, { maxBytes, uid = processUid() } = {}) {
+  if (!APPENDED_FILES.includes(name) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || !isPrivateFolder(folder, uid)) return null;
+  const file = path.join(folder, name);
+  let fd;
+  try {
+    if (!lstatSync(file).isFile()) return null;
+    fd = openSync(file, READ_TAIL);
+    const stat = fstatSync(fd);
+    const owned = !Number.isInteger(uid) || (stat.uid === uid && (stat.mode & 0o077) === 0);
+    if (!stat.isFile() || stat.nlink !== 1 || !owned) return null;
+    // One byte before the tail, when there is one, says whether the tail starts a line.
+    const start = Math.max(0, stat.size - maxBytes - 1);
+    const bytes = Buffer.alloc(stat.size - start);
+    let read = 0;
+    for (let n = 1; n > 0 && read < bytes.length; read += n) n = readSync(fd, bytes, read, bytes.length - read, start + read);
+    const text = bytes.subarray(0, read);
+    if (stat.size <= maxBytes) return { text: text.toString('utf8'), cut: false };
+    return { text: text.subarray(1).toString('utf8'), cut: text[0] !== 0x0a };
+  } catch (error) {
+    return error?.code === 'ENOENT' && fd === undefined ? { text: '', cut: false } : null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 // Appends `text` to the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave: opened write-only,

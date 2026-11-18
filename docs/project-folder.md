@@ -156,8 +156,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── sessions/<session id>/  what aidrian session snapshot caches for one session, and its pull request ledger, for its user alone:
 │   ├── usage.json            the transcript read so far, as the handoff numbers fold it, saved step by step
 │   ├── prs.jsonl             the session's pull request ledger, one row per pull request a Bash call touched (hooks.md#session-ledger)
+│   ├── prs-cache.json        the ledger's pull requests as the forge last answered, and when it was last asked
 │   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
-│   └── merged-heads-cache.json.<window>.lock  held for a moment while a snapshot records its forge attempt
+│   └── <cache>.<window>.lock  held for a moment while a snapshot records its forge attempt
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
@@ -174,7 +175,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   temporary file, mode 0600, renamed over it, under the cache names alone, with one exception, the ledger
   `prs.jsonl`, which `lib/session-prs.mjs` appends to in place through the helper's `appendSessionFile` for the
   [session ledger hook](hooks.md#session-ledger), no-follow, mode 0600, only while it is a regular file with one link
-  this user alone may read, and within 256 KB, rewritten by a temporary file and a rename with its newest rows when a
+  this user alone may read, and the snapshot reads its last 256 KB through `readSessionTail` under the same checks,
+  no-follow and non-blocking, and within 256 KB, rewritten by a temporary file and a rename with its newest rows when a
   write would pass that; a cache's reservation for one fixed window,
   `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so

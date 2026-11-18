@@ -170,7 +170,22 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   ref `{ host, owner, name, number, branch }` when every field has the forge's shape, else null. GitHub's takes a host
   it declares, a path of exactly `owner/name` with an owner shaped as a login and a repository name, a positive whole
   number, and a branch that passes git's ref-name rules within 255 bytes (`isRefName` in `lib/git.mjs`), with at least
-  one of number and branch. The hook calls it before every ledger write.
+  one of number and branch. The hook calls it before every ledger write, and the snapshot before every read.
+  `changesState(refs)`, the one batched read of the snapshot's `prs`: given refs `{ host, path, number, branch }` as the
+  ledger holds them, newest first, it answers, for each of the first 25, the forge-neutral row of its change request, or
+  null when the ref fails `changeRef`, resolves to none, or the forge gives no answer for it. A number is its own change
+  request; a branch is the newest whose head is that branch of the ref's repository, in that repository or the one it
+  was forked from, never one from a fork with a branch of the same name. The row is
+  `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`:
+  `forge` the adapter's `id`; `host` and `repo` the repository as `repoIdentity` reads it, `repo` its path; `state`
+  `open`, `closed`, or `merged`; `isDraft` a boolean; `mergeable` true, false, or null while the forge has not worked it
+  out; `reviewDecision` `approved`, `changes_requested`, `review_required`, or null; `unresolvedThreads` a count;
+  `checks` `{ passed, failed, pending, skipped }`, counts of every check of the head, with no check-name rule; and `url`
+  the change request's link, built by the adapter from the owner, name, and number the forge answered, or null. One
+  call for all the refs, which never holds a value in its text or its arguments: GitHub's sends one GraphQL query, its
+  aliases built from indexes, every value a variable in a JSON body on gh's stdin, to the constant `--hostname
+  github.com`. An answer that holds errors still gives the rows that resolved; one that does not parse throws. Shared
+  code reads no field of the forge's answer, only this row.
   A forge's reader of its own command for the ledger, such as GitHub's `gh pr` calls, `GH_REPO`, and the pull request
   URL in gh's output, sits under `lib/rules/<forge id>/`, as `lib/rules/github/session-calls.mjs` does. It runs nothing,
   exports `FORGE`, its adapter's `id`, `readCall`, `createdChanges`, and `variables`, the environment its command reads
@@ -228,7 +243,7 @@ so it lives in `lib/forges/identity.mjs`, and an adapter neither implements nor 
 It reads a host that reaches the same repositories as another, such as `ssh.github.com`, as that one,
 and a bare `owner/repo` as a repository on the default forge's host, github.com.
 
-The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names.
+The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names, but for `changesState`, which answers the forge-neutral row above.
 The arguments are GitHub's too: the `fields` strings callers pass to `change`, `mergedChanges`, and `openChanges`
 are gh's `--json` names, such as `number,headRefOid`, and the reaction contents, such as `+1`, are GitHub's.
 That shape is provisional: it stays as it is until a second adapter shows which fields both forges share,
@@ -254,3 +269,5 @@ An adapter moves the calls. Some text and code still assume GitHub, so each of t
 | Skills that run gh in code blocks: `pr-merge-when-green` (10 lines), `pr-screenshot` (7), `pr-review` (3), `pr-review-loop` (3), `pr-write` (2), `knowledge` (1), `session-continue` (1) | The forge's command for each step, or an `aidrian` command that reads through `forgeFor`, as `aidrian pr checks` does. The counts are the fenced lines that run gh across each skill's folder, `references/` and `steps/` included: recount them before the work starts |
 | `lib/review-gate.mjs`: `repoName`, and the review marker `markerFor` writes | Both keep only `owner/name`, the last two parts of a path, so a namespaced path such as `a/sub/project` loses its namespace and its host. They need the full `repoIdentity` |
 | `lib/lesson-signals.mjs` | It builds `https://github.com/<owner>/<name>/pull/<n>` as a lesson's evidence; it needs the forge's own link to a pull request |
+| `aidrian session snapshot`: the `PR` and `PRs` words of its `--line` summary (`changesSummary` in `lib/session-prs.mjs`) | GitHub's word for a change request, such as GitLab's `MR` |
+| The snapshot's `prs` key, the ledger `prs.jsonl`, its cache `prs-cache.json`, and the module `lib/session-prs.mjs` | GitHub's word for a change request, kept for every forge: a rename moves the key, the files, and every reader of them together |

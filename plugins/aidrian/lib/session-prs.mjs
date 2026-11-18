@@ -6,17 +6,18 @@
 // id; the adapter, from forgeFor, gives that id, its `hosts`, and `changeRef`, the one shape check of a ref. What is
 // read here is git's, which is no forge: a push (lib/git-push.mjs), and the remotes and the branch of the folder a call
 // ran in. A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, with no raw URL, command text, or
-// output, and every field checked first, so no row exceeds a fixed size.
+// output, and every field checked first, so no row exceeds a fixed size. `aidrian session snapshot` reads it back:
+// readLedger, then sessionRefs, then resolveChanges through the adapter's one batched read.
 
 import { lstatSync } from 'node:fs';
 import path from 'node:path';
 
 import { repoIdentity } from './forges/index.mjs';
-import { runGit } from './git.mjs';
+import { isRefName, runGit } from './git.mjs';
 import { changesGitTarget, CURRENT, readPush } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { hasHidden } from './hidden-text.mjs';
-import { appendSessionFile, readSessionFile, writeSessionFile } from './session-folder.mjs';
+import { appendSessionFile, readSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
 import { changesVariable, commandLines, lexCommand, readInvocation, walkCommands } from './shell-lex.mjs';
 
 // The ledger's name in the session folder (lib/session-folder.mjs APPENDED_FILES).
@@ -241,4 +242,110 @@ export function appendLedger(folder, rows, options = {}) {
   // display data: the next touch records it again and the snapshot dedupes. Compacting under reserveSessionFile closes it.
   const compacted = newestLines(lines).map((line) => `${line}\n`).join('') + text;
   return writeSessionFile(folder, LEDGER, compacted, options) !== null;
+}
+
+// The most change requests the snapshot shows, each a ref of the ledger, a number or a branch, counted before branches
+// resolve, so a branch with no change request uses one. The forge's batched read takes as many at most.
+export const MAX_REFS = 25;
+const KINDS = new Set(['created', 'pushed', 'touched']);
+const HOST_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u;
+const PATH_MAX_BYTES = 1024;
+
+// The ledger's rows in `folder`, oldest first, read no-follow from its last LEDGER_MAX_BYTES: a first line the cut fell
+// inside and a last line still being written are dropped, and so is a line that is no row object. Null when the ledger
+// cannot be read as the session folder's rules allow, such as a named pipe or a symlink there.
+export function readLedger(folder, options = {}) {
+  const read = readSessionTail(folder, LEDGER, { ...options, maxBytes: LEDGER_MAX_BYTES });
+  if (read === null) return null;
+  const lines = read.text.split('\n');
+  lines.pop();
+  if (read.cut) lines.shift();
+  return lines.flatMap((line) => {
+    try {
+      const row = JSON.parse(line);
+      return row !== null && typeof row === 'object' && !Array.isArray(row) ? [row] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+const isNumber = (number) => number === null || (Number.isSafeInteger(number) && number > 0);
+const isBranch = (branch) => branch === null || (isRefName(branch) && !hasHidden(branch));
+const isRepoPath = (repoPath) => typeof repoPath === 'string' && repoPath !== '' && Buffer.byteLength(repoPath) <= PATH_MAX_BYTES && !hasHidden(repoPath);
+// Whether a row on a host no adapter declares passes the snapshot's own field checks before it is shown: a host name, a
+// path, cwd absolute, a number a positive integer or none, a branch the ref-name check or none, and one of the two.
+const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, cwd }) => typeof host === 'string' && HOST_NAME.test(host)
+  && isRepoPath(repoPath) && validCwd(cwd) && isNumber(number) && isBranch(branch) && (number !== null || branch !== null);
+
+// The refs the snapshot shows from the ledger's `rows`: each row of a known kind with a time, on a host the adapter
+// `forge` declares and whose fields pass its changeRef and the cwd check, or on another host and passing
+// isUnsupportedRow; deduped by repository and number, else by repository and branch, touched rows as well as pushed;
+// ordered by each ref's latest row, newest first, since the ledger keeps a row's first time alone; MAX_REFS at most.
+// { refs, unsupported }: the refs `forge` reads, each `{ host, path, number, branch }`, and the rest as rows of the
+// change request's shape with `unsupported: true`, no forge, and null for all the forge would answer: they start no call.
+export function sessionRefs(rows, forge) {
+  const found = new Map();
+  rows.forEach((row, index) => {
+    const at = typeof row.at === 'string' ? Date.parse(row.at) : Number.NaN;
+    if (!KINDS.has(row.kind) || !Number.isFinite(at)) return;
+    const { host, path: repoPath, number = null, branch = null } = row;
+    const declared = forge.hosts.includes(host);
+    if (declared ? forge.changeRef({ host, path: repoPath, number, branch }) === null || !validCwd(row.cwd) : !isUnsupportedRow(row)) return;
+    const key = JSON.stringify(number === null ? [host, repoPath, null, branch] : [host, repoPath, number, null]);
+    const ref = found.get(key) ?? { host, path: repoPath, number, branch: number === null ? branch : null, declared, at, index };
+    found.set(key, { ...ref, at: Math.max(ref.at, at), index });
+  });
+  const newest = [...found.values()].sort((a, b) => b.at - a.at || b.index - a.index).slice(0, MAX_REFS);
+  return {
+    refs: newest.filter((ref) => ref.declared).map(({ host, path: repoPath, number, branch }) => ({ host, path: repoPath, number, branch })),
+    unsupported: newest.filter((ref) => !ref.declared).map(({ host, path: repo, number }) => ({ host, repo, number, ...UNKNOWN, unsupported: true })),
+  };
+}
+
+// What a row on a host no adapter declares cannot know.
+const UNKNOWN = Object.freeze({ title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null });
+
+// The change requests `refs` resolve to, through the adapter's one batched read (changesState): rows that resolved to
+// the same change request, by the repository and number the forge answered, give one entry, the newest ref's. Throws
+// what the read throws.
+export function resolveChanges(forge, refs) {
+  const rows = forge.changesState(refs);
+  if (!Array.isArray(rows)) throw new Error('no rows');
+  const seen = new Set();
+  return rows.filter((row) => {
+    if (!isChangeRow(row)) return false;
+    const key = JSON.stringify([row.host, row.repo, row.number]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+const STATES = new Set(['open', 'closed', 'merged']);
+const DECISIONS = new Set(['approved', 'changes_requested', 'review_required']);
+const CHECKS = ['passed', 'failed', 'pending', 'skipped'];
+const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
+const isText = (value) => typeof value === 'string' && value.length <= PATH_MAX_BYTES;
+
+// Whether `row` has the forge-neutral shape of a change request (docs/providers/adding-a-host.md#adding-a-forge), as a
+// row the forge answers, or a cached one, must before it is shown.
+export const isChangeRow = (row) => row !== null && typeof row === 'object' && isText(row.forge) && isText(row.host) && isText(row.repo)
+  && Number.isSafeInteger(row.number) && row.number > 0 && isText(row.title) && (row.url === null || isText(row.url))
+  && typeof row.isDraft === 'boolean' && STATES.has(row.state) && [true, false, null].includes(row.mergeable)
+  && (row.reviewDecision === null || DECISIONS.has(row.reviewDecision)) && isCount(row.unresolvedThreads)
+  && row.checks !== null && typeof row.checks === 'object' && CHECKS.every((name) => isCount(row.checks[name]));
+export const isChangeRows = (value) => Array.isArray(value) && value.length <= MAX_REFS && value.every(isChangeRow);
+
+// The pull request summary of a status line: how many, then how many have a failed check, a pending one and none failed,
+// or only passed or skipped ones. One with no check counts in none.
+export function changesSummary(prs) {
+  const states = prs.map(({ checks }) => {
+    if (!checks) return null;
+    if (checks.failed > 0) return 'failed';
+    if (checks.pending > 0) return 'pending';
+    return checks.passed + checks.skipped > 0 ? 'passed' : null;
+  });
+  const count = (state) => states.filter((each) => each === state).length;
+  return `${prs.length} PR${prs.length === 1 ? '' : 's'} · ✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
 }

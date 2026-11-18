@@ -1252,8 +1252,8 @@ folder 0700, refuses a symlink, and, when it makes one, sweeps the session folde
 non-blocking, mode 0600, and writes only when the open file is a regular file with one link that this user owns and no
 other user may read or write. Before a write it reads the ledger, no-follow, and leaves out a row whose fields, all but
 `at` and `agentId`, a row already holds, so a call made again adds nothing, and a row whose folder is not a folder on
-disk. The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads, so it
-reads every row): a write that would pass it rewrites the ledger, through a temporary file and a rename under the same
+disk. The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
+last 256 KB, so it reads every row, and drops a first line the cut fell inside if two writes passed the cap together): a write that would pass it rewrites the ledger, through a temporary file and a rename under the same
 checks, with its newest rows that fit in half of it and then the new ones, so the newest pull requests always show. The `SessionEnd` hook and
 worktree cleanup leave it alone, so a resumed session keeps its pull requests.
 

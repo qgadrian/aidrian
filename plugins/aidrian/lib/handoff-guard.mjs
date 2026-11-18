@@ -24,7 +24,7 @@ import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-gua
 import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
-import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
+import { ARMING_FILE, openStore, RECORD_ID, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, opaqueShellCommand } from './hosts/index.mjs';
 import { defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { canonical } from './rules/main-checkout.mjs';
@@ -185,9 +185,10 @@ const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|continued)-/iu;
 // A request to end a session or a record that a terminal follows one (lib/terminal-replace.mjs), whose forgery would end
 // an attended session or move a terminal: named by the id shape a host gives a session, 8 hex digits or a whole UUID, as
 // the store writes them. `ending-` and `follow-` are common words, so a name such as `follow-up.json` stays out of it.
-const RECORD_NAME = /^(?:ending|follow)-[0-9a-f]{8}(?:-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\.json$/iu;
-// An unsure glob's part whose plain start may still grow into such a name, as `ending-*` or `follow-ab12*`.
-const RECORD_GLOB = /^(?:ending|follow)-[0-9a-f-]*$/iu;
+const RECORD_NAME = new RegExp(String.raw`^(?:ending|follow)-${RECORD_ID.source.slice(1, -1)}\.json$`, 'iu');
+// An unsure glob's part whose plain start may still grow into such a name, as `ending-*` or `follow-ab12*`: up to 8 hex
+// digits, or 8 and the start of a UUID's rest.
+const RECORD_GLOB = /^(?:ending|follow)-(?:[0-9a-f]{0,8}|[0-9a-f]{8}-[0-9a-f-]{0,27})$/iu;
 // A word of a command no lexer reads that names the store's folder by its own name.
 const STORE_FOLDER = /^\.continue$/iu;
 // A text that names the store's folder, or a marker in it.

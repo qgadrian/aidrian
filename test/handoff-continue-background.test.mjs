@@ -28,7 +28,7 @@ const ADVICE = 'Advice from Claude, not a spec: check each claim against the doc
 const brief = (chain = 0, worktree = 'none yet') => `# Handoff: continue the widget\nWritten: 2026-11-15 | Chain: ${chain} | Supersedes: none\n${ADVICE}\n\n` +
   `## Objective\n- Ship the widget.\n\n## Current state\n- Worktree: ${worktree}\n- Branch: feat/widget\n\n## Still running\nNone.\n\n` +
   '## Next steps\n1. Ship it.\n\n## Open risks and questions\nNone.\n';
-const SESSION = 'session-1';
+const SESSION = '5e551011-0000-4000-8000-000000000000';
 const NEW_SESSION = 'abcd1234-0000-4000-8000-000000000001';
 const SWITCH_ON = { handoff: { background: 'on' } };
 const noWait = () => {};

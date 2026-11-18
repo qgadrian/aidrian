@@ -943,7 +943,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. A request to end a session
   or a record that a terminal follows one ([Replacing the terminal](handoff.md#replacing-the-terminal)) is matched only
   with the id shape the store writes, `ending-` or `follow-` and 8 hex digits or a whole UUID, so a common name such as
-  `follow-up.json` stays allowed. That is an accepted limit
+  `follow-up.json` stays allowed; the store writes and reads a follow record under that shape alone. That is an accepted limit
   of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule

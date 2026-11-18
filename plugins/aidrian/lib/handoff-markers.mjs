@@ -59,7 +59,10 @@ const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued|endi
 const CHAIN_CEILING = 10_000;
 // A short id a floor may be filed under: what a host prints before its listing names the session's full id.
 const SHORT_FROM = /^from-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
-const SHORT_FOLLOW = /^follow-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
+// The one id shape a follow record is written and read under, and the guard refuses by name (lib/handoff-guard.mjs):
+// a host's short id, 8 hex digits, or a whole UUID, in any case.
+export const RECORD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/iu;
+const SHORT_FOLLOW = /^follow-([0-9a-f]{8})\.json$/iu;
 // A session name the say line prints in single quotes, and a started marker keeps: no quote, `$`, `;`, or other
 // character a shell reads inside them.
 export const PLAIN_NAME = /^[\w .@:\u00b7-]{1,100}$/u;
@@ -421,13 +424,13 @@ const isFollow = (value) => isObject(value) && isPid(value.shell) && Number.isFi
 // the host printed. Returns the file, or null.
 export function noteFollow(store, session, { shell }, { now = Date.now() } = {}) {
   const value = { shell, at: now };
-  return isFollow(value) ? writeMarker(store, sessionFile('follow', session), value) : null;
+  return isFollow(value) && RECORD_ID.test(session ?? '') ? writeMarker(store, sessionFile('follow', session), value) : null;
 }
 
 // The shell whose terminal follows `session`, from the last FOLLOW_AGE, under its own id or a short one it starts with, the
 // latest if several: { shell, id }, where `id` is the id it was filed under; or null.
 export function readFollow(store, session, { now = Date.now() } = {}) {
-  if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  if (typeof session !== 'string' || !RECORD_ID.test(session)) return null;
   const read = (id) => {
     const value = readMarker(store, sessionFile('follow', id), { now, field: 'at', shape: isFollow });
     return value && { shell: value.shell, id, at: value.at };

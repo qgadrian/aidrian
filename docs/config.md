@@ -302,6 +302,13 @@ and `strategy` and the cleanup stay the team's. The older `"on"` and `"off"` sti
 With `default: "on"`, every machine with no local setting merges without having chosen to, so a team sets it knowingly.
 A local file with an error, or one git tracks, counts as `enabled: false`.
 `aidrian check` warns when the machine opts in and the team does not allow it.
+It also warns, while `allow` is true and [`review.visual`](review.md#visual-review) is unset, when git tracks a screen
+file, since a session could then merge a screen change no capture checked; setting `review.visual.targets` to the project's
+screens ends it ([Screens checked on every device](config-recipes.md#screens-checked-on-every-device)).
+A screen file is a `.tsx`, `.jsx`, `.vue`, `.svelte`, or `.html` file that git tracks under the project folder, outside any
+`docs`, `examples`, `vendor`, `node_modules`, `test`, `tests`, `__tests__`, `e2e`, `fixtures`, or `__fixtures__` folder
+and any folder whose name starts with a dot, and not a `.test.`, `.spec.`, or `.stories.` file. The guess leaves out
+screens in other files, such as `.ts` or server templates: there the check stays silent. It reads the working copy.
 It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
 The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
 Read from a worktree, the main checkout's file gets every check it gets when read there, and its errors are reported the same:

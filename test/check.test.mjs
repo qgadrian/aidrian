@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { isScreenFile } from '../plugins/aidrian/lib/check.mjs';
 import { isIgnored } from '../plugins/aidrian/lib/git.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -419,6 +420,45 @@ test('check warns on a tag outside the vocabulary, untagged docs, and a placehol
     'note: 1 of 8 docs have no tags; no agent routes to them',
     '',
   ]);
+});
+
+test('check warns when auto-merge is allowed, review.visual is unset, and git tracks a screen file', (t) => {
+  const dir = exampleRepo(t);
+  const write = (file, text = '') => {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+    execFileSync('git', ['-C', dir, 'add', file]);
+  };
+  const config = (extra) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: true } }, ...extra }));
+  const warning = (count, first) => `warning: github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as ${first}): set review.visual.targets to the routes and files of the project's screens\n`;
+  const check = () => {
+    const { status, stderr } = run(['check'], dir);
+    assert.equal(status, 0, stderr);
+    return stderr;
+  };
+
+  config({});
+  write('docs/site/index.html', '<p>docs</p>');
+  write('src/app/page.test.tsx');
+  write('e2e/fixtures/screen.html');
+  write('.storybook/preview.tsx');
+  assert.equal(check(), '', 'docs, test, and dot-folder files are not screens');
+
+  write('src/app/page.tsx', 'export default () => null;');
+  writeFileSync(path.join(dir, 'src/app/draft.tsx'), '');
+  assert.equal(check(), warning('1 tracked screen file', 'src/app/page.tsx'), 'an untracked file does not count');
+  write('src/app/layout.vue');
+  assert.equal(check(), warning('2 tracked screen files', 'src/app/layout.vue'));
+
+  config({ review: { visual: { platform: 'web', targets: [{ files: ['src/app/**'], routes: ['/'] }], viewports: [390, 1024, 1440] } } });
+  assert.equal(check(), '', 'silent with review.visual set');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: false } } }));
+  assert.equal(check(), '', 'silent with auto-merge not allowed');
+});
+
+test('a screen file is a .tsx, .jsx, .vue, .svelte, or .html file outside docs, examples, tests, and dot folders', () => {
+  for (const file of ['index.html', 'src/App.jsx', 'app/routes/home.svelte', 'web/src/pages/Floor.vue', 'src/app/staff/page.tsx']) assert.equal(isScreenFile(file), true, file);
+  for (const file of ['src/app/page.ts', 'docs/index.html', 'packages/ui/docs/a.html', 'examples/demo/App.tsx', 'node_modules/x/a.jsx', 'test/a.tsx', 'src/__tests__/a.tsx', 'e2e/a.html', '.github/a.html', 'src/Button.stories.tsx', 'src/Button.spec.jsx', 'src/Button.test.tsx']) assert.equal(isScreenFile(file), false, file);
 });
 
 test('check fails on an index whose dir does not exist, apart from one outside the project', (t) => {

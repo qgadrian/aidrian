@@ -24,6 +24,10 @@ Ask it before the main-checkout guard question, whose answer hands-on sets, as o
   and the proposal names each kept key. Leave out `git.mainCheckout`: Q5 writes the guard, last.
 - `github.requiredChecks`: put the names of the CI checks the project's workflows run on a pull request in place of `"test"`.
   With none found, leave the key out, and the report says auto-merge stays off until it names one.
+- `full-autonomy` and `autopilot`: put the project's screens in place of the placeholder target in `review.visual.targets`,
+  one target per group of screens, each with its files' globs and the routes that show them. With no screen yet, leave out
+  `review.visual` and `review.productFeedback`, and the report says the screen check is off until the first screen lands,
+  when `aidrian check` warns to add the targets.
 - Set `requires.aidrian` to the running plugin's version when the recipe sets any `github.autoMerge`,
   `unattendedWaiver`, `review.unattendedSignoff`, or `session.handoff.continue` key.
 - Never write `.aidrian.local.json`: the config guard refuses a subagent's write of its switches. Return the recipe's

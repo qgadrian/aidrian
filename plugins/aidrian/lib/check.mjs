@@ -20,13 +20,41 @@ import { bannedFileProblems } from './banned-terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
 
-// The warnings for `decisions.escalateDocs` entries no tracked path matches. Outside git, or when git fails, nothing
-// says what is tracked, so there are none. `-z` keeps a path git would otherwise quote as it is on disk.
+// The paths git tracks under the project root, or null outside git or when git fails, since nothing then says what is
+// tracked. `-z` keeps a path git would otherwise quote as it is on disk.
+function trackedFiles(project) {
+  const listed = runGit(['ls-files', '-z'], project.root, { maxBuffer: 64 * 1024 * 1024 });
+  return listed.status === 0 ? listed.stdout.split('\0').filter(Boolean) : null;
+}
+
+// The warnings for `decisions.escalateDocs` entries no tracked path matches; none when nothing says what is tracked.
 function untrackedDocs(project, config) {
   const entries = config.decisions.escalateDocs;
   if (!entries.length) return [];
-  const listed = runGit(['ls-files', '-z'], project.root, { maxBuffer: 64 * 1024 * 1024 });
-  return listed.status === 0 ? escalateDocWarnings(entries, listed.stdout.split('\0').filter(Boolean)) : [];
+  const tracked = trackedFiles(project);
+  return tracked ? escalateDocWarnings(entries, tracked) : [];
+}
+
+// A screen file, by a conservative guess from its path: a .tsx, .jsx, .vue, .svelte, or .html file outside docs,
+// examples, vendored code, test folders, and dot folders, and not a test, spec, or story file.
+// SHORTCUT: extensions alone; a project whose screens are .ts or templates of another kind is not seen, which only costs
+// a warning. A per-project list would replace it if one is needed.
+const SCREEN_FILE = /\.(?:tsx|jsx|vue|svelte|html)$/u;
+const NOT_SCREEN_NAME = /\.(?:test|spec|stories)\.[^./]+$/u;
+const NOT_SCREEN_FOLDERS = new Set(['docs', 'examples', 'node_modules', 'vendor', 'test', 'tests', '__tests__', 'e2e', 'fixtures', '__fixtures__']);
+export function isScreenFile(file) {
+  if (!SCREEN_FILE.test(file) || NOT_SCREEN_NAME.test(file)) return false;
+  return !file.split('/').slice(0, -1).some((folder) => folder.startsWith('.') || NOT_SCREEN_FOLDERS.has(folder));
+}
+
+// The warning that auto-merge can ship a screen change no capture checked: the team allows auto-merge, `review.visual`
+// is unset, and git tracks a screen file. Like the other checks, this reads the working copy.
+function unseenScreenWarnings(project, config) {
+  if (!config.github.autoMerge.allow || config.review.visual) return [];
+  const screens = (trackedFiles(project) ?? []).filter(isScreenFile);
+  if (!screens.length) return [];
+  const count = screens.length === 1 ? '1 tracked screen file' : `${screens.length} tracked screen files`;
+  return [`github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as ${screens[0]}): set review.visual.targets to the routes and files of the project's screens`];
 }
 
 // The warnings for `quorum.product` settings that have no effect. "Set" reads the file itself, since a key set to its
@@ -81,7 +109,9 @@ export const commands = {
       const tags = tagWarnings(buckets);
       // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
-      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker)];
+      // Only with no errors too: a `review.visual` with an error reads as unset, and its error already says what to fix.
+      const screens = errors.length ? [] : unseenScreenWarnings(project, config);
+      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker), ...screens];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {

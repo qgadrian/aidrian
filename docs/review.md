@@ -561,8 +561,10 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 ### Screens checked on every device
 
 A project whose staff use the same screens on a phone, a tablet, and a desktop often wants each change to those screens
-seen at every width and tried by hand, on top of its unit and end-to-end tests. Four settings together give that, with
-no rule pasted into a session:
+seen at every width and tried by hand, on top of its unit and end-to-end tests. The full-autonomy and autopilot
+[config recipes](config-recipes.md#screens-checked-on-every-device) set `review.visual` and `review.productFeedback`
+already, around a placeholder target; this config fills in the targets and adds a flow whose invariants block the
+review. Four settings together give that, with no rule pasted into a session:
 
 ```json
 "review": {

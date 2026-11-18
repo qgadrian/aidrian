@@ -19,12 +19,17 @@ How to apply one:
 2. Add the machine switches the recipe names, if any, to `.aidrian.local.json` in the main checkout.
    A few switches live only there, so that a pull request can never turn them on; a subagent may not write them.
 3. Replace `"test"` in `github.requiredChecks` with the names of the project's CI checks. Auto-merge stays off without one.
+   In a recipe that merges alone, replace the placeholder screen target too, `src/app/**` at `/`, with the project's
+   screen files and routes, or leave the screen check out while the project has no screens:
+   [Screens checked on every device](#screens-checked-on-every-device).
 4. Set [`requires.aidrian`](config.md#plugin-version) to the plugin release the project runs, since an older plugin
    rejects keys it does not know.
 
 A recipe sets only the keys it changes; [config.md](config.md#keys) holds every key and its default.
-It sets no key that names the project's own files or screens, such as `review.visual`, `review.flows`, or
-`review.productFeedback`: [Screens checked on every device](#screens-checked-on-every-device) adds those on top of any recipe.
+The two that merge alone, full autonomy and autopilot, also check every screen change before it merges, with
+`review.visual` and `review.productFeedback` around a placeholder target that setup replaces, as it replaces `"test"`.
+Hands-on leaves that check out, since the Human tries the screens, and can add it:
+[Screens checked on every device](#screens-checked-on-every-device).
 It sets nothing about the host's own permissions: how often Claude Code or Codex asks before a tool runs is the host's
 setting, and the more autonomous recipes pay off only with a permission mode that does not stop each command.
 
@@ -47,7 +52,11 @@ bodies, and the lesson inbox.
     "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true },
     "unattendedWaiver": { "allow": true }
   },
-  "review": { "unattendedSignoff": { "allow": true } },
+  "review": {
+    "unattendedSignoff": { "allow": true },
+    "visual": { "platform": "web", "targets": [{ "files": ["src/app/**"], "routes": ["/"] }], "viewports": [390, 1024, 1440] },
+    "productFeedback": { "auto": true }
+  },
   "decisions": {
     "mode": "decide-reversible",
     "maxMode": "decide-reversible",
@@ -79,6 +88,8 @@ What it turns on:
 - On Claude Code, the handoff continues in a background session with nothing typed, up to 5 in a row ([Handoff](handoff.md)).
   Codex has no background route: there the handoff writes a brief, and a person resumes it.
 - Persona-audit triage files issues without asking.
+- Each change to a screen is captured at a phone, a tablet, and a desktop width for the visual reviewers, and walked by
+  a persona before the pull request is marked ready ([Screens checked on every device](#screens-checked-on-every-device)).
 
 What it still keeps for a person: a security verdict and a critical-flow sign-off, which no setting hands to an agent;
 a hard product call in a floor class, after its quorum; on Codex, resuming a handoff;
@@ -101,6 +112,10 @@ few points that keep them from drifting: a product call and a review that needs 
     "reviewLoop": "auto",
     "extraRounds": "ask",
     "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
+  },
+  "review": {
+    "visual": { "platform": "web", "targets": [{ "files": ["src/app/**"], "routes": ["/"] }], "viewports": [390, 1024, 1440] },
+    "productFeedback": { "auto": true }
   },
   "decisions": {
     "mode": "decide-reversible",
@@ -127,6 +142,7 @@ What it turns on, and where it stops:
 - An unattended run parks a floor-class decision for the Human instead of taking a default.
 - On Claude Code, the handoff continues in the background, up to 3 in a row before a person looks.
   On Codex it writes a brief for a person to resume.
+- Each change to a screen is captured at every width and walked by a persona, as in full autonomy.
 
 ## Hands-on
 
@@ -165,15 +181,36 @@ What it turns on:
 
 ## Screens checked on every device
 
-An add-on for any recipe, for a project whose staff use the same screens on a phone, a tablet, and a desktop:
-each change to those screens is captured at every width, checked against invariants that block the review, and walked
-by a persona in the running app. It names the project's routes and files, so no recipe can hold it.
-[Screens checked on every device](review.md#screens-checked-on-every-device) has the config and what each key does.
+Full autonomy and autopilot merge with no person looking, so neither ships a screen change nobody checked:
 
-It needs a persona doc for the staff role ([Personas](personas.md)), Playwright in the project's dependencies, and a
-base URL: `review.visual.baseUrl` in `.aidrian.local.json`, or a `preview` command.
+- `review.visual` captures each touched route at 390, 1024, and 1440 px, a phone, a tablet, and a desktop, and the
+  visual reviewers check the images.
+- `review.productFeedback.auto` has a persona walk the change in the running app, and the `product-manager` agent read
+  it, before the pull request is marked ready. The feedback is no approval and no merge block; only the ready mark
+  waits for it.
 
-How it sits with each recipe:
+The target, `{ "files": ["src/app/**"], "routes": ["/"] }`, is a placeholder, as `"test"` is: replace it with the
+project's screen files and the routes that show them, one target per group of screens. The `harness-setup` skill does
+this when it applies the recipe. [Screens checked on every device](review.md#screens-checked-on-every-device) has a
+fuller config, with a flow whose invariants block the review, and what each key does.
+
+What each part needs, and what happens without it:
+
+- **Images**: Playwright in the project's dependencies and a base URL, `review.visual.baseUrl` in `.aidrian.local.json`
+  or a `preview` command. Without either, the visual reviewers get a status instead of images and review from the code;
+  the review goes on.
+- **The persona walk**: a persona doc for the people who use the screens ([Personas](personas.md)). Without one, the
+  `product-manager` read still runs.
+
+A project with no screens yet leaves out `review.visual` and `review.productFeedback`: `review.visual.targets` may not
+be empty, and a target that matches no file checks nothing. While auto-merge is allowed, `aidrian check` warns once git
+tracks a screen file and `review.visual` is still unset, so the check gets turned on when the first screen lands.
+[Auto-merge](config.md#auto-merge) says what counts as a screen file.
+
+Hands-on leaves the check out, since the Human is there to try the screens. A hands-on project that wants the captures
+too adds the same two keys, or the fuller config of the review doc.
+
+How a flow on the screens, as in the review doc's config, sits with each recipe:
 
 - **Full autonomy**: leave `signoff` on the flow unset. The flow's reviewers close its invariants from the captures,
   and a disputed one goes to an [unattended ruling](review.md#unattended-rulings). `"signoff": "human"` makes every

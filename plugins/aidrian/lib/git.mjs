@@ -35,6 +35,16 @@ export function currentRoot(cwd) {
   return firstLine(['rev-parse', '--show-toplevel'], cwd);
 }
 
+// The tree of the commit HEAD names in the checkout that `cwd` is in, or of the branch `branch` when given, or null:
+// git cannot say, or `branch` is no branch name by git's own rules, such as one that reads as a revision.
+export function treeOf(cwd, branch = null) {
+  // Git's own answer with only its line end cut: a name may end in a character trim() would drop, such as a no-break space.
+  const checked = branch === null ? null : runGit(['check-ref-format', '--branch', branch], cwd);
+  if (checked && (checked.status !== 0 || checked.stdout.replace(/\n$/u, '') !== branch)) return null;
+  const ref = branch === null ? 'HEAD' : `refs/heads/${branch}`;
+  return firstLine(['rev-parse', '--verify', '--quiet', `${ref}^{tree}`], cwd);
+}
+
 // `cwd` from the top of its checkout, with a trailing slash: '' at the top, or when git cannot answer.
 export function showPrefix(cwd) {
   return firstLine(['rev-parse', '--show-prefix'], cwd) ?? '';

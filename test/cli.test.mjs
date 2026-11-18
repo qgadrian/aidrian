@@ -84,6 +84,7 @@ test('the usage fits 100 columns, with one line for each form of a command and i
   assert.deepEqual(lines.filter((line) => line.length > 100), []);
   assert.deepEqual(lines.filter((line) => line.startsWith('  aidrian lesson ')).map((line) => line.split(' ')[4]), ['add', 'list', 'resolve', 'update', 'stats', 'nudge', 'migrate']);
   assert.deepEqual(lines.filter((line) => line.startsWith('  aidrian worktree ')).map((line) => line.split(' ')[4]), ['new', 'cleanup']);
+  assert.ok(lines.some((line) => line.startsWith('  aidrian session snapshot [--session ID] [--transcript PATH]')), 'the usage lists session snapshot');
   assert.ok(lines.includes('  aidrian commit-msg (--file PATH | --message TEXT) [--project DIR]'), 'a choice in parentheses is one form');
   assert.ok(lines.includes('  aidrian pre-commit [--project DIR]'));
   const lesson = lines.findIndex((line) => line.startsWith('  aidrian lesson add '));

@@ -60,6 +60,18 @@ export function resolvedPath(file) {
   }
 }
 
+// The first of `checkouts` whose real path holds the real path `real`, compared in the case the disk folds to, or
+// undefined. The continuation store and the session folder refuse a state folder inside a checkout by it.
+export function checkoutHolding(real, checkouts) {
+  return checkouts.find((each) => {
+    const root = resolvedPath(each);
+    return root !== null && isWithin(foldCase(root), foldCase(real));
+  });
+}
+
+// This process's user id, or null where the system has none, as on Windows.
+export const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
+
 // `base` and `rel` joined as POSIX-style relative paths, or null when the text escapes `base`. It reads no disk, so it
 // also checks a path in a tree that is not checked out, such as a base branch read through GitHub.
 export function joinedInside(base, rel) {

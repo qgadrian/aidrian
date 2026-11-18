@@ -186,8 +186,12 @@ const indexProblems = (errors) => errors.map((problem) => ({ doc: null, line: nu
 // is a problem: it counts toward the domain pause, so the Human must be able to find it. A doc through a symlink is the
 // file it reaches. When git cannot search a checkout, `notes` says those markers went unscanned. A marker may hold a class of
 // the working copy's `decisions.classes`, as it holds the working copy's docs; only `resolve` needs the base branch's.
-export function scanDecisions(project) {
-  const { classes } = commandConfig(project).decisions;
+// `unindexed: false` leaves out the git grep over tracked Markdown, which only finds those problems, never a decision, and
+// runs under GIT_READ's limit; `config`, a config the caller loaded, is read for the classes in place of commandConfig,
+// which stops on any error in config.json. `aidrian session snapshot` passes both: it counts decisions, reports no
+// problem, and reads a config with errors as the hooks do.
+export function scanDecisions(project, { unindexed = true, config = commandConfig(project) } = {}) {
+  const { classes } = config.decisions;
   const { buckets, errors } = loadKnowledge(project);
   const docs = indexedPaths(buckets);
   const read = (doc) => readFileSync(path.resolve(project.root, doc), 'utf8');
@@ -196,7 +200,7 @@ export function scanDecisions(project) {
   const outside = [];
   const onDisk = (doc) => real(path.resolve(project.root, doc));
   const known = new Set(docs.map(onDisk));
-  const tracked = gitReader(project).markerFiles();
+  const tracked = unindexed ? gitReader(project).markerFiles() : [];
   const notes = tracked === null && insideGit(project.root) ? ['markers in files no index lists could not be scanned: git grep failed'] : [];
   for (const doc of (tracked ?? []).filter((file) => !known.has(onDisk(file)))) {
     let text;

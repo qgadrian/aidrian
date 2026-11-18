@@ -23,11 +23,11 @@
 // No function throws on a missing folder; a read returns null for anything it cannot use.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { CONTINUE_ROUTES } from './config-schema.mjs';
-import { foldCase, isObject, isWithin, resolvedPath } from './fs.mjs';
+import { checkoutHolding, foldCase, isObject, processUid, resolvedPath } from './fs.mjs';
 
 // A session id that may name a file.
 export const SESSION_ID = /^[\w-]{1,128}$/u;
@@ -90,16 +90,13 @@ export function slugOf(name) {
 // symlink; it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the
 // case it was spelled in; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
 // writable by every user, where the system has user ids. A folder its group may write passes: a umask of 002 is common. A folder not made yet passes,
-// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds every
-// chain a marker holds. `uid` is this process's user, null where the system has none, and every read refuses a marker
-// or a brief another user owns.
+// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds the
+// chain of an armed or ready marker; a chain floor or a start record is bounded by CHAIN_CEILING alone. `uid` is
+// this process's user, null where the system has none, and every read refuses a marker or a brief another user owns.
 export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
   const real = resolvedPath(storePath(state));
-  const checkout = real && checkouts.find((each) => {
-    const root = resolvedPath(each);
-    return root !== null && isWithin(foldCase(root), foldCase(real));
-  });
+  const checkout = real && checkoutHolding(real, checkouts);
   let refused = null;
   if (real === null) refused = `the continuation store ${storePath(state)} is behind a broken symlink`;
   else if (isLink(storePath(state))) refused = `the continuation store ${storePath(state)} is a symlink, and no continuation marker is kept behind one`;
@@ -111,8 +108,6 @@ export function openStore(state, { checkouts = [], maxChain, uid = processUid() 
   return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain, uid, refused });
 }
 
-const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
-
 // Whether a stat names a file of another user than `uid`; never where the system has no user ids.
 const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 
@@ -120,7 +115,8 @@ const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 // Both checks hold only where the system has user ids: Windows has none, and Node reports its writable folders with the
 // other-write bit set, so there the mode tells nothing.
 // A folder that is not there, or cannot be read, gives null: the store's own checks then refuse what they cannot read.
-function looseFolder(dir, uid) {
+// lib/session-folder.mjs holds its folders to the same rule.
+export function looseFolder(dir, uid) {
   if (!Number.isInteger(uid)) return null;
   let stat;
   try {
@@ -225,15 +221,30 @@ const isChecked = (value) => isObject(value) && typeof value.sha256 === 'string'
 // `window`, or `shape` refuses it.
 function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1]] ?? DAY, shape }) {
   if (store.refused || !name) return null;
+  const read = readOwnFile(path.join(store.dir, name), { cap: MARKER_CAP, uid: store.uid });
+  if (!read || !fresh(Math.floor(read.stat.mtimeMs), now, window)) return null;
+  try {
+    const value = JSON.parse(read.text);
+    return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// The text of `file` and its stat, { text, stat }, or null when it is missing, a symlink, no regular file, owned by
+// another user than `uid`, or larger than `cap` bytes. It is opened no-follow and non-blocking, so no read follows a
+// symlink or waits on a FIFO, and at most the size fstat gave is read, so a file that grows meanwhile stays under the cap.
+export function readOwnFile(file, { cap, uid = processUid() }) {
   let fd;
   try {
-    const file = path.join(store.dir, name);
     if (!lstatSync(file).isFile()) return null;
     fd = openSync(file, NO_FOLLOW);
     const stat = fstatSync(fd);
-    if (!stat.isFile() || foreign(stat, store.uid) || stat.size > MARKER_CAP || !fresh(Math.floor(stat.mtimeMs), now, window)) return null;
-    const value = JSON.parse(readFileSync(fd, 'utf8'));
-    return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
+    if (!stat.isFile() || foreign(stat, uid) || stat.size > cap) return null;
+    const bytes = Buffer.alloc(stat.size);
+    let read = 0;
+    for (let n = 1; n > 0 && read < bytes.length; read += n) n = readSync(fd, bytes, read, bytes.length - read, read);
+    return { text: bytes.subarray(0, read).toString('utf8'), stat };
   } catch {
     return null;
   } finally {
@@ -471,6 +482,24 @@ export function verifyKept(file, sha256, { uid = processUid() } = {}) {
   }
 }
 
+// The newest brief in the store's handoffs folder, by modification time, whichever session wrote it: { name, slug }, or
+// null, and null when the store is refused. A brief counts when its name matches BRIEF_FILE with a slug SLUG matches and
+// no control character, and lstat reports a regular file this user owns. It reads only the listing: no brief's text.
+export function latestBrief(store) {
+  if (store.refused) return null;
+  let newest = null;
+  for (const name of listFolder(store.handoffs)) {
+    if (!BRIEF_FILE.test(name) || !SLUG.test(slugOf(name)) || hasControl(name)) continue;
+    try {
+      const stat = lstatSync(path.join(store.handoffs, name));
+      if (stat.isFile() && !foreign(stat, store.uid) && !(newest?.mtimeMs >= stat.mtimeMs)) newest = { name, slug: slugOf(name), mtimeMs: stat.mtimeMs };
+    } catch {
+      // Gone meanwhile.
+    }
+  }
+  return newest && { name: newest.name, slug: newest.slug };
+}
+
 const checkedFile = (name) => (BRIEF_FILE.test(name) && SLUG.test(slugOf(name)) ? `checked-${name}.json` : null);
 
 // Stamps the brief at `briefPath` as passed, with the sha256 of the bytes that passed, when it is a brief right inside
@@ -503,10 +532,12 @@ export function sweep(store, now = Date.now()) {
   }
 }
 
-function listStore(store) {
+function listFolder(dir) {
   try {
-    return readdirSync(store.dir);
+    return readdirSync(dir);
   } catch {
     return [];
   }
 }
+
+const listStore = (store) => listFolder(store.dir);

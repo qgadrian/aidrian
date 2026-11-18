@@ -167,6 +167,33 @@ test('the Stop hook ends the session its gate asked to end, after the turn, and 
   assert.equal(takeEnding(store, SESSION), null, 'the request is taken');
 });
 
+test('a stop that ends the session skips the session-length reminder, though the session is long enough for one', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = folder(t, 'aidrian-stop-long-');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, session: { handoff: { mode: 'ask' } } }));
+  const project = findProject(dir);
+  const store = projectStore(project, loadConfig(project).config);
+  const { child, exited } = fakeClaude(t);
+  const temp = folder(t, 'aidrian-stop-long-tmp-');
+  const env = { ...process.env, TMPDIR: temp, CLAUDECODE: '1', CLAUDE_PID: String(child.pid), AIDRIAN_SHELL_PID: String(process.pid), CLAUDE_CODE_SESSION_ATTENDED: '1' };
+  const record = path.join(terminalFolder(env), String(process.pid));
+  // An earlier test of this file may have left this process's record; the shell would have taken it.
+  rmSync(record, { force: true });
+  // Each call of this transcript costs 2.7 times a fresh session's, past the default costRatio of 2: on its own, this
+  // stop would send the turn back with the reminder (test/session-length.test.mjs walks the same fixture).
+  const transcript = path.resolve(import.meta.dirname, 'fixtures/transcripts/handoff-cost.jsonl');
+  assert.ok(noteEnding(store, SESSION, { hostPid: child.pid, shell: process.pid, id: 'abcd1234' }));
+
+  const result = spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ hook_event_name: 'Stop', session_id: SESSION, cwd: dir, transcript_path: transcript, stop_hook_active: false }), env, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, 'the stop is not sent back');
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /This session is long/u, 'no session-length reminder');
+  assert.equal(existsSync(path.join(temp, `aidrian-session-length-${SESSION}`)), false, 'no session-length marker');
+  assert.match(readFileSync(record, 'utf8'), /^abcd1234 \d+\n$/u, 'the shell opens the session that took the work');
+  assert.deepEqual(await withTimeout(exited, END_DELAY + 5000), { code: null, signal: 'SIGTERM' }, 'the session ends');
+});
+
 // Runs `script` in `zsh -f` after the shell function, with a fake `claude` first on PATH that logs its shell variable and
 // arguments; on a start it writes `next` as this shell's record and exits 143, and on `attach <id>` it writes the record
 // `chain[id]` when given, and exits 5.

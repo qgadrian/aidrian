@@ -325,6 +325,12 @@ about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
 function.
 
+## The Claude mod
+
+`aidrian-mod` is an optional mod for Claude Code alone: a band above the prompt, a pane, and notifications, drawn
+from `aidrian session snapshot`. It installs beside the plugin, `claude plugin install aidrian-mod@aidrian-harness`.
+[Claude mod](../claude-mod.md) has what it shows, its settings, the status line fallback, and its limits.
+
 ## Limits
 
 Claude Code enforces each agent's tool limits.

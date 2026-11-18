@@ -55,6 +55,10 @@
       "summary": "Reminder, plan offer, break-even, continuation, background, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, brief sections, snapshot",
       "tags": []
     },
+    "claude-mod.md": {
+      "summary": "Claude mod, aidrian-mod: band, pane, and alerts from the session snapshot, handoff verdict, install, settings, status line fallback, folder trust, limits.",
+      "tags": []
+    },
     "config.md": {
       "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, review.productFeedback.maxPersonas, product feedback items and diff, PR body, gate.",
       "tags": []

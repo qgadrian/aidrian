@@ -1,0 +1,63 @@
+{
+  "name": "aidrian-mod",
+  "version": "0.1.0",
+  "description": "Optional Claude Code mod for the aidrian plugin: a band above the prompt, an aidrian-mod pane, and notifications. Requires the aidrian plugin.",
+  "author": {
+    "name": "aidrian"
+  },
+  "homepage": "https://github.com/qgadrian/aidrian",
+  "repository": "https://github.com/qgadrian/aidrian",
+  "license": "Apache-2.0",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Mode",
+      "description": "shadow logs what would be sent, live sends it",
+      "options": ["shadow", "live"],
+      "default": "live"
+    },
+    "notifyMinTurnSeconds": {
+      "type": "number",
+      "title": "Minimum turn length to notify (seconds)",
+      "description": "Turns shorter than this end without a Done notification",
+      "default": 20
+    },
+    "focusCheck": {
+      "type": "boolean",
+      "title": "Skip desktop notifications while the terminal app is in front",
+      "description": "Sounds and toasts still play",
+      "default": true
+    },
+    "focusApp": {
+      "type": "string",
+      "title": "Terminal app for the focus check",
+      "description": "The name macOS gives the terminal app's process, compared with the app in front",
+      "default": "kitty"
+    },
+    "sounds": {
+      "type": "boolean",
+      "title": "Sounds",
+      "description": "Play the cute-minimal sounds in live mode",
+      "default": true
+    },
+    "volume": {
+      "type": "number",
+      "title": "Volume",
+      "description": "Linear gain from 0 to 4",
+      "default": 0.5
+    },
+    "ticketPrefixes": {
+      "type": "string",
+      "title": "Ticket key prefixes",
+      "description": "Pipe-separated issue key prefixes found in the branch name, at most 32; empty reads a GitHub #N",
+      "default": ""
+    },
+    "cacheTtlSeconds": {
+      "type": "number",
+      "title": "Prompt cache lifetime (seconds)",
+      "description": "Used for the cache countdown until the first turn shows the real one",
+      "default": 3600
+    }
+  }
+}

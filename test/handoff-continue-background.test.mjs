@@ -750,14 +750,15 @@ test('a transcript with no permission-mode entry gives the mode of its last user
   // The last entry that names the mode wins, more than 3 MB before the end, behind a line longer than a read chunk.
   transcript(setting, [userEntry('manual'), userEntry('auto'), assistantEntry(1_500_000), ...Array.from({ length: 40 }, () => assistantEntry(50_000))]);
   assert.equal(read(), 'auto');
-  // Only a top-level field counts: one nested in a message, quoted in its text, or on a subagent's or another session's
-  // entry does not.
+  // Only a top-level field counts: one nested in a message, quoted in its text, or on a subagent's entry, another
+  // session's, or one with no session id does not.
   transcript(setting, [
     userEntry('plan'),
     { type: 'user', message: { content: [{ type: 'tool_result', content: { permissionMode: 'bypassPermissions' } }] }, sessionId: SESSION },
     { ...assistantEntry(0), message: { content: '{"permissionMode":"bypassPermissions"}' } },
     userEntry('bypassPermissions', { isSidechain: true }),
     userEntry('bypassPermissions', { sessionId: 'someone-else' }),
+    userEntry('bypassPermissions', { sessionId: undefined }),
     '{"permissionMode":"bypassPermissions", not json',
   ]);
   assert.equal(read(), 'plan');
@@ -773,16 +774,47 @@ test('a transcript with no permission-mode entry gives the mode of its last user
   assert.equal(read(), 'acceptEdits');
 });
 
-test('a line too long to hold is skipped, and the entry before it still gives the mode', (t) => {
+const MB = 1024 * 1024;
+
+test('a line too long to parse that holds the mode key fails closed; one without it is skipped', (t) => {
   const setting = setup(t, { mode: null });
-  transcript(setting, [userEntry('auto'), { ...assistantEntry(33 * 1024 * 1024), permissionMode: 'bypassPermissions' }, assistantEntry(10)]);
-  assert.equal(sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env }), 'auto');
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The key near the line's end, read before the line is known to be too long.
+  transcript(setting, [userEntry('auto'), { ...assistantEntry(33 * MB), permissionMode: 'bypassPermissions' }, assistantEntry(10)]);
+  assert.equal(read(), null);
+  // The key more than 32 MB from the line's end, split across two read chunks: 8 of its bytes before a chunk edge.
+  const before = '{"type":"assistant","a":"x","permissionMode":"manual","b":"';
+  const after = `","sessionId":"${SESSION}"}`;
+  const key = '"permissionMode":"manual","b":"';
+  const fill = 34 * MB + 8 - key.length - after.length - 1;
+  writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(userEntry('auto'))}\n${before}${'x'.repeat(fill)}${after}\n`);
+  const text = readFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
+  const at = text.lastIndexOf('"permissionMode"');
+  assert.ok(text.length - at === 34 * MB + 8, 'the key straddles a chunk edge');
+  assert.equal(read(), null);
+  // A line too long to parse with no key in it is skipped, and the entry before it still gives the mode.
+  transcript(setting, [userEntry('auto'), assistantEntry(33 * MB), assistantEntry(10)]);
+  assert.equal(read(), 'auto');
 });
 
-test('the gate passes on the mode a transcript gives only on its user entries, and refuses when that mode is bypassed', (t) => {
-  const start = (mode) => {
+test('a newline on a read chunk edge splits the lines there', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The bytes after the mode line's newline are exactly 1 MB, so that newline is the last byte of the second chunk
+  // read; then 1 MB minus one, so it is the first byte of the first chunk read.
+  for (const tail of [MB, MB - 1]) {
+    const pad = JSON.stringify(assistantEntry(0)).length;
+    const filler = JSON.stringify(assistantEntry(tail - 1 - pad));
+    assert.equal(filler.length + 1, tail);
+    writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(userEntry('manual'))}\n${JSON.stringify(userEntry('plan'))}\n${filler}\n`);
+    assert.equal(read(), 'plan', `${tail} bytes after the newline`);
+  }
+});
+
+test('the gate passes on the mode a transcript gives only on its user entries, and refuses when that mode is bypassed or not a string', (t) => {
+  const start = (mode, earlier = []) => {
     const setting = setup(t, { mode: null });
-    transcript(setting, [userEntry(mode), ...Array.from({ length: 30 }, () => assistantEntry(100_000))]);
+    transcript(setting, [...earlier, userEntry(mode), ...Array.from({ length: 30 }, () => assistantEntry(100_000))]);
     passCheck(setting);
     const { run, calls } = fakeRun({ own: setting.dir });
     return { result: gate(setting, { run }), args: bgCalls(calls)[0]?.args ?? null };
@@ -793,6 +825,12 @@ test('the gate passes on the mode a transcript gives only on its user entries, a
   const bypass = start('bypassPermissions');
   assert.equal(bypass.args, null, 'no session started');
   assert.match(bypass.result.out[1], /this session runs with permission checks bypassed/u);
+  // The session's own entry whose mode is not a string refuses, whatever an earlier entry says.
+  for (const odd of [42, null, ['auto'], { mode: 'auto' }]) {
+    const unread = start(odd, [userEntry('auto')]);
+    assert.equal(unread.args, null, `${JSON.stringify(odd)}: no session started`);
+    assert.match(unread.result.out[1], /the permission mode of this session could not be read/u);
+  }
 });
 
 test('a session a hop started and named is named again by its base name and the new count, never a second count', (t) => {
@@ -801,7 +839,11 @@ test('a session a hop started and named is named again by its base name and the 
   assert.equal(named('widget-work · 1', 2), 'widget-work · 2');
   assert.equal(named('widget-work · 1 · 2', 3), 'widget-work · 3');
   assert.equal(named('widget-work ·  4', 5), 'widget-work · 5');
-  // A count inside the name stays, and so does the first word of a name that ends in a count.
-  assert.equal(named('v · 2 docs', 1), 'v · 2 docs · 1');
   assert.equal(named('7 · 1', 2), '7 · 2');
+  // A count that is not the last hop's is part of the name the Human gave, and stays.
+  assert.equal(named('release · 2026', 1), 'release · 2026 · 1');
+  assert.equal(named('release · 2026', 3), 'release · 2026 · 3');
+  assert.equal(named('release · 2026 · 1', 2), 'release · 2026 · 2');
+  assert.equal(named('widget-work · 3', 2), 'widget-work · 3 · 2');
+  assert.equal(named('v · 2 docs', 3), 'v · 2 docs · 3');
 });

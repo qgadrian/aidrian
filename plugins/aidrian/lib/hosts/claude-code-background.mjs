@@ -33,13 +33,16 @@ const PERMISSION_MODES = new Set(['acceptEdits', 'auto', 'dontAsk', 'manual', 'p
 const MODE_NAMES = new Map([['default', 'manual']]);
 const BYPASS = 'bypassPermissions';
 // A transcript is read from its end in chunks of MODE_CHUNK bytes until an entry names the mode, so a long session
-// costs no more memory than a short one. A line longer than MODE_LINE is skipped unread, so one huge entry cannot
-// exhaust memory. MODE_KEY picks the lines worth parsing.
+// costs no more memory than a short one. A line longer than MODE_LINE is not parsed, so one huge entry cannot exhaust
+// memory; one that holds MODE_KEY may name a stricter mode than any line before it, so the read fails closed on it.
+// MODE_KEY picks the lines worth parsing.
 const MODE_CHUNK = 1024 * 1024;
 const MODE_LINE = 32 * 1024 * 1024;
 const MODE_KEY = Buffer.from('"permissionMode"');
-// The count a name ends with, ` · <n>`, once or more: a session a hop started already carries one.
-const CHAIN_SUFFIX = /(?:\s+\u00b7\s*\d+)+$/u;
+// What the read gives for the session's own entry whose `permissionMode` is not a string: no mode the gate passes on.
+const UNREADABLE_MODE = '(unreadable)';
+// The count a name ends with, ` · <n>`.
+const LAST_COUNT = /\s+\u00b7\s*(\d+)$/u;
 // A spawn that failed before `claude` ran, and the output of a `claude --bg` that refused the start before the supervisor
 // took it, checked on 2.1.326: no other failure proves that nothing started.
 const NOT_RUN = new Set(['ENOENT', 'EACCES']);
@@ -124,56 +127,83 @@ export function sessionMode({ session, cwd, env }) {
   return null;
 }
 
-// The mode a transcript line names: its top-level `permissionMode` string when the entry is the session's own, else
-// null. A sidechain entry is a subagent's, which may run in another mode.
+// The mode a transcript line names: its top-level `permissionMode` when the entry is the session's own, by its
+// `sessionId`, else null. A sidechain entry is a subagent's, which may run in another mode. A `permissionMode` that is
+// not a string gives UNREADABLE_MODE, which the gate refuses.
 function lineMode(line, session) {
   if (line.indexOf(MODE_KEY) === -1) return null;
+  let entry;
   try {
-    const entry = JSON.parse(line.toString('utf8'));
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry) || entry.isSidechain === true) return null;
-    if (entry.sessionId !== undefined && entry.sessionId !== session) return null;
-    return typeof entry.permissionMode === 'string' ? entry.permissionMode : null;
+    entry = JSON.parse(line.toString('utf8'));
   } catch {
     return null;
   }
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry) || entry.isSidechain === true) return null;
+  if (entry.sessionId !== session || !Object.hasOwn(entry, 'permissionMode')) return null;
+  return typeof entry.permissionMode === 'string' ? entry.permissionMode : UNREADABLE_MODE;
+}
+
+// The line of a transcript being read backwards, a piece at a time: `add` takes the bytes before those it holds, and
+// `mode` reads it once whole. Past MODE_LINE bytes it keeps only the first MODE_KEY.length - 1 of them, enough to find
+// MODE_KEY across the next piece, and notes whether MODE_KEY was in it.
+function backwardLine() {
+  let parts = [];
+  let size = 0;
+  let over = false;
+  let keyed = false;
+  let head = Buffer.alloc(0);
+  return {
+    add(piece) {
+      if (!over) {
+        parts.push(piece);
+        size += piece.length;
+        if (size <= MODE_LINE) return;
+        head = Buffer.concat(parts.reverse());
+        parts = [];
+        over = true;
+      } else {
+        head = Buffer.concat([piece, head]);
+      }
+      keyed ||= head.includes(MODE_KEY);
+      head = Buffer.from(head.subarray(0, MODE_KEY.length - 1));
+    },
+    // { mode } for a line that names one, { refuse } for a long line that may, or null.
+    mode(session) {
+      if (over) return keyed ? { refuse: true } : null;
+      const mode = lineMode(parts.length === 1 ? parts[0] : Buffer.concat(parts.reverse()), session);
+      return mode === null ? null : { mode };
+    },
+  };
 }
 
 // The mode the last line of the regular file `file` to name one names, read backwards in MODE_CHUNK chunks: the mode,
-// null when no line names one, or undefined when the file cannot be read.
+// null when no line names one or a line too long to parse holds MODE_KEY, or undefined when the file cannot be read.
 function lastMode(file, session) {
   let fd;
   try {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const stat = fstatSync(fd);
     if (!stat.isFile()) return undefined;
-    // `rest`: the start of the text read so far, up to its first newline, the end of a line that starts further back;
-    // `skip`: that line is longer than MODE_LINE, and its bytes are dropped.
     let end = stat.size;
-    let rest = Buffer.alloc(0);
-    let skip = false;
+    let line = backwardLine();
     while (end > 0) {
       const start = Math.max(0, end - MODE_CHUNK);
       const chunk = Buffer.alloc(end - start);
       readSync(fd, chunk, 0, chunk.length, start);
       end = start;
-      let text = Buffer.concat([chunk, rest]);
-      for (let cut = text.lastIndexOf(0x0a, text.length - rest.length - 1); cut !== -1; cut = text.lastIndexOf(0x0a, cut - 1)) {
-        const line = text.subarray(cut + 1);
-        if (!skip) {
-          const mode = lineMode(line, session);
-          if (mode !== null) return mode;
-        }
-        skip = false;
-        text = text.subarray(0, cut);
-        if (cut === 0) break;
+      // Each newline ends the line after it, which is then whole.
+      let stop = chunk.length;
+      for (let cut = chunk.lastIndexOf(0x0a, stop - 1); cut !== -1; cut = cut === 0 ? -1 : chunk.lastIndexOf(0x0a, cut - 1)) {
+        line.add(chunk.subarray(cut + 1, stop));
+        const found = line.mode(session);
+        if (found) return found.refuse ? null : found.mode;
+        line = backwardLine();
+        stop = cut;
       }
-      rest = text;
-      if (rest.length > MODE_LINE) {
-        rest = Buffer.alloc(0);
-        skip = true;
-      }
+      line.add(chunk.subarray(0, stop));
     }
-    return skip ? null : lineMode(rest, session);
+    const found = line.mode(session);
+    return found?.refuse ? null : found?.mode ?? null;
   } catch {
     return undefined;
   } finally {
@@ -181,11 +211,24 @@ function lastMode(file, session) {
   }
 }
 
+// The handing-off session's name without the counts a hop gave it: when it ends in ` · <chain - 1>`, that count and the
+// ones before it that count down by one, as an earlier build left them. Any other name stays whole, such as
+// `release · 2026`.
+function withoutCounts(own, chain) {
+  let name = own;
+  let want = Number(chain) - 1;
+  for (let match = LAST_COUNT.exec(name); match && want >= 0 && Number(match[1]) === want; match = LAST_COUNT.exec(name)) {
+    name = name.slice(0, match.index);
+    want -= 1;
+  }
+  return name;
+}
+
 // The new session's name: the handing-off session's, without the count a hop gave it, else the slug, then
 // ` · <chain>`, within 100 characters.
 function sessionName(own, slug, chain) {
   const suffix = ` · ${chain}`;
-  const bare = typeof own === 'string' && NAME.test(own) ? own.replace(CHAIN_SUFFIX, '') : '';
+  const bare = typeof own === 'string' && NAME.test(own) ? withoutCounts(own, chain) : '';
   const base = NAME.test(bare) ? bare : slug;
   return `${base.slice(0, 100 - suffix.length).trimEnd()}${suffix}`;
 }

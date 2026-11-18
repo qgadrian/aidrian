@@ -24,3 +24,6 @@ export function withinDeadline(at, body) {
 export function checkDeadline() {
   if (performance.now() > deadline) throw new PastDeadline('the guards ran out of time');
 }
+
+// The milliseconds left of the running budget, Infinity outside one: for a read that takes its own limit, such as git's.
+export const remainingMs = () => deadline - performance.now();

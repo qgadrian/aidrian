@@ -32,7 +32,7 @@ import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
-import { findProject, stateDir } from '../lib/project.mjs';
+import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
 import { staleBlockLines, unwrappedLine } from '../lib/shell-init.mjs';
 
@@ -53,7 +53,7 @@ await runHook(async (input) => {
     saveGateSnapshot(input.session_id, project.root, started.agents);
     // Where this session's folders lie, so the session-folder guard holds them wherever a subagent works later.
     try {
-      noteOrigin(input.session_id, path.resolve(stateDir(project, { config: started })));
+      noteOrigin(input.session_id, path.resolve(stateDir(project, { config: started })), { checkouts: projectCheckouts(project) });
     } catch {
       // No state folder to name: the guard still holds the call's own project.
     }

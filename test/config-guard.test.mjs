@@ -15,7 +15,7 @@ import { noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs'
 import { forgetGateSnapshot, saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { configFiles, findProject, stateDir, stateRoot } from '../plugins/aidrian/lib/project.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
-import { originFolder } from '../plugins/aidrian/lib/session-origins.mjs';
+import { originFolder, readOrigins } from '../plugins/aidrian/lib/session-origins.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -1533,4 +1533,48 @@ test('a gated subagent`s Read in the project its session started in runs one git
   };
   assert.equal(calls('Read', { file_path: path.join(dir, 'src/app.js') }).length, 1, 'the project lookup alone');
   assert.equal(calls('Grep', { pattern: 'x', path: dir }).length, 1);
+});
+
+test('a session that starts with a state folder its repository holds records no origin, so the folder stays writable from elsewhere', { skip: process.platform === 'win32' }, (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-refused-origin-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const repo = path.join(base, 'repo');
+  const sub = path.join(repo, 'sub');
+  mkdirSync(path.join(sub, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(repo, 'sessions', 'notes'), { recursive: true });
+  writeFileSync(path.join(sub, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.' } }));
+  writeFileSync(path.join(repo, 'sessions/notes/a.md'), 'x\n');
+  gitIn(repo, 'init', '-q', '-b', 'main');
+  gitIn(repo, 'add', '.');
+  gitIn(repo, 'commit', '-q', '-m', 'start');
+  const { dir: elsewhere } = project(t, { version: 1 });
+  const session = 'refused-origin-1';
+  const ran = spawnSync(process.execPath, [SESSION_START], { input: JSON.stringify({ session_id: session, cwd: sub, hook_event_name: 'SessionStart' }), cwd: sub, encoding: 'utf8' });
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(readOrigins(session), [], 'the writer would refuse the repository root as a state folder');
+  const result = subagentWrite(elsewhere, session, { file_path: path.join(repo, 'sessions/notes/a.md'), content: 'y\n' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('the session-folder guard`s checkout read stops at what is left of the guards` budget', { skip: process.platform === 'win32' }, (t) => {
+  const { dir } = project(t, { version: 1 });
+  gitIn(dir, 'init', '-q', '-b', 'main');
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-stall-git-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const timed = (pattern) => {
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase "$*" in ${pattern}) exec sleep 30;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const near = path.join(stateRoot(), 'projects', 'stall-probe', 'notes.txt');
+    const started = Date.now();
+    const ran = spawnSync(process.execPath, [HOOK], {
+      input: JSON.stringify({ session_id: 'stall-1', tool_name: 'Write', tool_input: { file_path: near, content: 'x' }, cwd: dir, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
+      cwd: dir, encoding: 'utf8', timeout: 15_000, env: { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '600', PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+    });
+    assert.notEqual(ran.status, null, 'the hook ended');
+    return Date.now() - started;
+  };
+  const baseline = timed('no-such-call');
+  const over = timed('*"worktree list"*') - baseline;
+  // git's own 2 s limit would show as well over a second; the guards' 0.6 s budget as less.
+  assert.ok(over < 1200, `the stalled checkout read cost ${over} ms over the ${baseline} ms baseline`);
 });

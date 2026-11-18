@@ -314,8 +314,16 @@ export function appendSessionFile(folder, name, text, { maxBytes, uid = processU
 // one this call made, or null when the name is not one of SESSION_FILES, `folder` fails boundFolder, any entry holds the
 // name, or it cannot be made. Never throws.
 export function reserveSessionFile(folder, name, { windowMs, now = Date.now(), uid = processUid(), gid = processGid() } = {}) {
+  if (!SESSION_FILES.includes(name) || !boundFolder(folder, { uid, gid })) return null;
+  return reserveFile(folder, name, { windowMs, now });
+}
+
+// The reservation reserveSessionFile takes, `<name>.<window>.lock` in `folder`, for a caller that has checked the folder
+// itself, such as lib/session-origins.mjs: created only where nothing is, never through a symlink, mode 0600. Returns
+// the release function, or null. Never throws.
+export function reserveFile(folder, name, { windowMs, now = Date.now() } = {}) {
   const index = Math.floor(now / windowMs);
-  if (!SESSION_FILES.includes(name) || !Number.isSafeInteger(index) || index < 0 || !boundFolder(folder, { uid, gid })) return null;
+  if (!Number.isSafeInteger(index) || index < 0) return null;
   const file = path.join(folder, reservationName(name, index));
   let fd;
   try {

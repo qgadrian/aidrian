@@ -15,17 +15,18 @@
 // aidrian ...`), and a path built from a variable. The gate's own checks (lib/handoff-markers.mjs) keep what gets past
 // harmless: a stray marker of the wrong shape, time, or host process is never delivered.
 
-import { readdirSync } from 'node:fs';
+import { opendirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { checkDeadline, PastDeadline } from './deadline.mjs';
+import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-guard.mjs';
 import { foldCase, globParts, isEntry, isWithin, partsReach } from './fs.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
+import { GIT_TIMEOUT_MS } from './git.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, opaqueShellCommand } from './hosts/index.mjs';
 import { defaultStateDir, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { SESSION_FILES } from './session-folder.mjs';
@@ -334,7 +335,7 @@ export const SESSION_FILE_NAME = new RegExp(String.raw`(?<![\w.-])sessions[\\/]+
 // checked at each one, so a large state root cannot run the guard past it. `read` and `entry` are readdirSync and isEntry,
 // which a test may count.
 const defaultScans = new WeakMap();
-export function defaultSessionsFolders(input, { read = readdirSync, entry = isEntry } = {}) {
+export function defaultSessionsFolders(input, { read = folderNames, entry = isEntry } = {}) {
   if (!defaultScans.has(input)) {
     const found = [];
     try {
@@ -353,20 +354,52 @@ export function defaultSessionsFolders(input, { read = readdirSync, entry = isEn
   return defaultScans.get(input);
 }
 
+// The names in the folder `dir`, one entry read at a time, so a caller that checks the deadline between them never
+// waits on a whole listing first.
+function* folderNames(dir) {
+  const opened = opendirSync(dir);
+  try {
+    for (let each = opened.readSync(); each !== null; each = opened.readSync()) yield each.name;
+  } finally {
+    opened.closeSync();
+  }
+}
+
 // The real sessions folders a call may not reach, each { folder, shields }, its state folder the one shield: those of
 // `states`, the state folders the caller names, whether or not they are there yet, then defaultSessionsFolders. So a
 // subagent that works in another project, or in none, still meets the session folders its session started with. A
 // sessions folder one of `roots`, the checkouts the session folder's writer keeps it out of, holds is left out: the
 // writer never writes there, as with a `state.dir` of `..` in a checkout named `sessions`, or of `.` in a project below
-// the repository root, which would otherwise make every file of a checkout a session file.
+// the repository root, which would otherwise make every file of a checkout a session file. Each folder's real path is
+// read under the guards' deadline (real), and the answer is kept for the call, by `input`, for both passes of the agent
+// gate hook.
 function sessionsFolders(input, states, roots) {
+  return readOnce(input, `sessions:${JSON.stringify([states, roots])}`, () => scanSessions(input, states, roots));
+}
+
+function scanSessions(input, states, roots) {
   const seen = new Set();
-  return [...states.map((state) => path.join(state, 'sessions')), ...defaultSessionsFolders(input)].map(real).filter((folder) => {
+  const found = [...states.map((state) => path.join(state, 'sessions')), ...defaultSessionsFolders(input)].map(real).filter((folder) => {
     if (seen.has(folder) || roots.some((root) => isWithin(root, folder))) return false;
     seen.add(folder);
     return true;
   }).map((folder) => ({ folder, shields: [path.dirname(folder)] }));
+  return found;
 }
+
+// The session's origins (readOrigins) and the writer's checkouts of `project` (projectCheckouts, its git read stopped at
+// what is left of the guards' deadline, by SIGKILL), each read once a call, by `input`, for both passes.
+const callReads = new WeakMap();
+function readOnce(input, key, read) {
+  if (!callReads.has(input)) callReads.set(input, new Map());
+  const reads = callReads.get(input);
+  if (!reads.has(key)) reads.set(key, read());
+  return reads.get(key);
+}
+const deadlineGit = () => {
+  const left = remainingMs();
+  return Number.isFinite(left) ? { timeout: Math.max(1, Math.min(GIT_TIMEOUT_MS, Math.floor(left))), killSignal: 'SIGKILL' } : {};
+};
 
 // Why the call in `input` may not run because it writes in the session folders, or null: { match, reason }. The folders
 // are those sessionsFolders gives for the state folder `state` gives, none with no `project`, as the agent gate hook asks
@@ -392,9 +425,8 @@ export function sessionFoldersWriteDenial(input, project, { names: { human }, st
   if (names.some(named) || unplaced.some(({ text }) => named(text)) || globs.some((glob) => (glob.unsure || glob.opaque) && named(glob.text))) {
     return held() ? { match: 'may change the session folders', reason: why('may change', 'sessions/<id>') } : null;
   }
-  const started = origins(input.session_id);
-  let checkouts;
-  const roots = () => (checkouts ??= (project === null ? [] : projectCheckouts(project) ?? project.checkouts).map(real));
+  const started = readOnce(input, 'origins', () => origins(input.session_id));
+  const roots = () => readOnce(input, `roots:${project?.root ?? ''}`, () => (project === null ? [] : projectCheckouts(project, deadlineGit) ?? project.checkouts).map(real));
   const folders = () => sessionsFolders(input, [...(project === null ? [] : [state()]), ...started], roots());
   const anchors = started.map(real);
   const hit = reachesStateFolder(input, { files, globs, modes }, { dir: project !== null && Boolean(dir), links, folders, roots, anchors });

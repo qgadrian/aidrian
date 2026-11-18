@@ -952,9 +952,16 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   a glob that may reach them by its path or through a link on disk, and a change of mode or owner of them or of a
   folder that holds them. The folders are those of the call's project; those of the state folders the session started
   with, which the main session's `SessionStart` hook records in `<state root>/session-origins/<session id>.json`
-  (`lib/session-origins.mjs`), whether or not the hooks have written there yet; those of every project's default state
-  folder under the state root (`<root>/projects/<id>/sessions`) that are there, found once a call with the guards'
-  deadline checked at each; and those of the project the session's gate snapshot or unattended mark names, each
+  (`lib/session-origins.mjs`), whether or not the hooks have written there yet. It records a state folder only when the
+  session folder writer would keep folders there by its own repository's checkouts, writes the record as the
+  unattended marks are written (a folder the user's alone, 0700, and a random temporary file created only where nothing
+  is, then a rename), reads and writes it as one step under its reservations (`exclusive` in `lib/session-rows.mjs`),
+  and writes it again on a resume, so a resumed session's record is never pruned as stale; the guard reads it once a
+  call as the store reads its own files: no-follow, non-blocking, a regular file the user owns, mode 0600, within
+  16 KB, so a link, a named pipe, or a record others may read gives none. Also those of every project's default state
+  folder under the state root (`<root>/projects/<id>/sessions`) that are there, listed one entry at a time with the
+  guards' deadline checked at each, their real paths kept for both passes of the call; the writer's checkout list it
+  reads stops its git at what is left of the deadline. And those of the project the session's gate snapshot or unattended mark names, each
   project folder by itself, so a linked checkout whose config moves `state.dir` is its own. The snapshot's project is
   opened, which runs git, only for a call that may write, a shell call or one with a write target, and never when it
   is the call's own project, so a subagent's Read runs one git, to find its project. So a subagent that works in

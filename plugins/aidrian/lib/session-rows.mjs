@@ -50,7 +50,8 @@ export function appendRows(folder, name, rows, { maxBytes, select = (lines, give
   if (typeof folder !== 'string' || !Array.isArray(rows) || rows.length === 0) return false;
   // A file the session folder's rules refuse waits for no reservation: it would never be written.
   if (readSessionTail(folder, name, { ...options, maxBytes: 0 }) === null) return false;
-  return exclusive(folder, name, options, () => {
+  const ids = { ...(options.uid === undefined ? {} : { uid: options.uid }), ...(options.gid === undefined ? {} : { gid: options.gid }) };
+  return exclusive((at) => reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now: at, ...ids }), () => {
     const read = readSessionTail(folder, name, { ...options, maxBytes });
     if (read === null) return false;
     const lines = tailLines(read);
@@ -88,20 +89,20 @@ export const LOCK_WAIT_MS = 1_000;
 const RETRY_MS = 5;
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-// `step()`'s answer, run while this process holds the file's reservations (reserveSessionFile) for the window that holds
-// now and the next one, taken in that order and released after; false when it cannot take them within LOCK_WAIT_MS.
-// Two writers whose steps overlap in time share a window, so one waits for the other while the first's step takes less
-// than a window: an append does not land on a file a compaction is about to rename over, and two compactions do not
-// drop each other's rows. The accepted limits, for display data (docs/hooks.md#session-ledger): a writer that waits
-// past LOCK_WAIT_MS, as while a killed writer's reservations hold their two windows, writes nothing and its rows are
-// lost; and a step paused past both windows is no longer alone. `options` gives reserveSessionFile its ids.
-function exclusive(folder, name, { uid, gid }, step) {
-  const ids = { ...(uid === undefined ? {} : { uid }), ...(gid === undefined ? {} : { gid }) };
+// `step()`'s answer, run while this process holds the reservations `reserve(at)` takes, each a release function or
+// null, for the window that holds now and the next one (`at` a window later), taken in that order and released after;
+// `fallback` when it cannot take them within LOCK_WAIT_MS. Two writers whose steps overlap in time share a window, so
+// one waits for the other while the first's step takes less than a window: an append does not land on a file a
+// compaction is about to rename over, and two compactions do not drop each other's rows. The accepted limits, for
+// display data (docs/hooks.md#session-ledger): a writer that waits past LOCK_WAIT_MS, as while a killed writer's
+// reservations hold their two windows, writes nothing and its rows are lost; and a step paused past both windows is no
+// longer alone. lib/session-origins.mjs takes its records' updates the same way.
+export function exclusive(reserve, step, fallback = false) {
   const until = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     const now = Date.now();
-    const first = reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now, ...ids });
-    const second = first && reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now: now + LOCK_WINDOW_MS, ...ids });
+    const first = reserve(now);
+    const second = first && reserve(now + LOCK_WINDOW_MS);
     if (first && second) {
       try {
         return step();
@@ -111,7 +112,7 @@ function exclusive(folder, name, { uid, gid }, step) {
       }
     }
     first?.();
-    if (Date.now() >= until) return false;
+    if (Date.now() >= until) return fallback;
     pause(RETRY_MS);
   }
 }

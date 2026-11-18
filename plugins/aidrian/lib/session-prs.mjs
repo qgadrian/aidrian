@@ -4,8 +4,8 @@
 //
 // This file names no forge. A forge's reader of its own command comes in the `readers` table, keyed by its adapter's
 // id; the adapter, from forgeFor, gives that id, its `hosts`, and `changeRef`, the one shape check of a ref. What is
-// read here is git's, which is no forge: a push (lib/git-push.mjs), and the remotes and the branch of the folder a call
-// ran in. A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, with no raw URL, command text, or
+// read here is git's, which is no forge: what a push recorded (lib/git-push.mjs), and the remotes and the branch of the
+// folder a call ran in. A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, with no raw URL, command text, or
 // output, and every field checked first, so no row exceeds a fixed size. `aidrian session snapshot` reads it back:
 // readLedger, then sessionRefs, then resolveSelection through the adapter's one batched read, cached, and shownChanges.
 // It holds both the writer and the reader of the one ledger, so the hook's forge-seam test reads a single file.
@@ -15,7 +15,7 @@ import path from 'node:path';
 
 import { repoIdentity } from './forges/index.mjs';
 import { isRefName, runGit } from './git.mjs';
-import { changesGitTarget, CURRENT, readPush } from './git-push.mjs';
+import { changesGitTarget, isPush, pushedRefs } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { hasHidden } from './hidden-text.mjs';
 import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
@@ -35,40 +35,31 @@ export const MAX_ROWS = 32;
 // resolve, so a branch with no change request uses one. The forge's batched read takes as many at most.
 export const MAX_REFS = 25;
 const CWD_MAX_BYTES = 1024;
-// A remote word git reads as a URL rather than a remote's name: a scheme, or git's `host:path` form.
-const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\/|^[^/]*:/iu;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 
-// What git says of a folder, read once each and for MAX_FOLDERS folders at most, from one `git config` read: its remotes
-// by name, each `{ fetch, push }` as repoIdentity reads the first `remote.<name>.url` and the first `remote.<name>.pushurl`,
-// null for one it cannot read and absent for none, and `refspecs: true` when `remote.<name>.push` is set; `pushDefault`
-// and `pushMode`, git's `remote.pushDefault` and `push.default`; each branch's `pushRemote`, `remote`, and `merge`; and
-// the current branch. A key git keeps one value of takes its last, as git does. No value of the ledger reaches git's argv.
-// SHORTCUT: a `url.<base>.insteadOf` or `pushInsteadOf` rewrite in the folder's config is not applied, so a rewritten
-// remote records the URL as written. Enough for display data; applying git's rewrite rules here would replace it.
-const CONFIG_KEYS = '^(remote\\..*\\.(url|pushurl|push)|remote\\.pushdefault|push\\.default|branch\\..*\\.(pushremote|remote|merge))$';
-const BRANCH_KEYS = { pushremote: 'pushRemote', remote: 'remote', merge: 'merge' };
+// What git says of a folder, read once each and for MAX_FOLDERS folders at most: from one `git config` read, its remotes
+// by name, each `{ fetch }` as repoIdentity reads the first `remote.<name>.url`, null for one it cannot read, and each
+// branch's `merge`; the current branch; and the remote-tracking refs a push updated (pushedRefs), in the git common dir
+// one `git rev-parse` names. A key git keeps one value of takes its last, as git does. No value of the ledger reaches
+// git's argv.
+// SHORTCUT: a `url.<base>.insteadOf` rewrite in the folder's config is not applied, so a rewritten remote records the
+// URL as written. Enough for display data; applying git's rewrite rules here would replace it.
+const CONFIG_KEYS = '^(remote\\..*\\.url|branch\\..*\\.merge)$';
 function readConfig(stdout) {
-  const config = { remotes: new Map(), branches: new Map(), pushDefault: null, pushMode: null };
+  const config = { remotes: new Map(), branches: new Map() };
   for (const line of stdout.split('\n')) {
-    const remote = /^remote\.([^ ]+)\.(url|pushurl|push)(?: (.*))?$/u.exec(line);
-    const branch = /^branch\.([^ ]+)\.(pushremote|remote|merge) (.*)$/u.exec(line);
-    const single = /^(remote\.pushdefault|push\.default) (.*)$/u.exec(line);
-    if (remote?.[2] === 'push') config.remotes.set(remote[1], { ...config.remotes.get(remote[1]), refspecs: true });
-    else if (remote && remote[3] !== undefined) {
-      const each = config.remotes.get(remote[1]) ?? {};
-      const key = remote[2] === 'url' ? 'fetch' : 'push';
-      if (!Object.hasOwn(each, key)) each[key] = repoIdentity(remote[3]);
-      config.remotes.set(remote[1], each);
-    } else if (branch) config.branches.set(branch[1], { ...config.branches.get(branch[1]), [BRANCH_KEYS[branch[2]]]: branch[3] });
-    else if (single) config[single[1] === 'push.default' ? 'pushMode' : 'pushDefault'] = single[2];
+    const remote = /^remote\.([^ ]+)\.url (.*)$/u.exec(line);
+    const branch = /^branch\.([^ ]+)\.merge (.*)$/u.exec(line);
+    if (remote && !config.remotes.has(remote[1])) config.remotes.set(remote[1], { fetch: repoIdentity(remote[2]) });
+    else if (branch) config.branches.set(branch[1], { merge: branch[2] });
   }
   return config;
 }
-const NO_CONFIG = Object.freeze({ remotes: new Map(), branches: new Map(), pushDefault: null, pushMode: null });
+const NO_CONFIG = Object.freeze({ remotes: new Map(), branches: new Map() });
 function folderReader(read) {
   const configs = new Map();
   const branches = new Map();
+  const pushes = new Map();
   const readable = (folder) => configs.has(folder) || configs.size < MAX_FOLDERS;
   const configOf = (folder) => {
     if (!readable(folder)) return NO_CONFIG;
@@ -87,7 +78,17 @@ function folderReader(read) {
     }
     return branches.get(folder);
   };
-  return { config: configOf, remotes: (folder) => configOf(folder).remotes, branch: branchOf };
+  const pushedOf = (folder, now) => {
+    if (!readable(folder)) return [];
+    configOf(folder);
+    if (!pushes.has(folder)) {
+      const { status, stdout } = read(['rev-parse', '--git-common-dir'], folder);
+      const common = status === 0 ? stdout.replace(/\n$/u, '') : '';
+      pushes.set(folder, common === '' ? [] : pushedRefs(path.resolve(folder, common), now));
+    }
+    return pushes.get(folder);
+  };
+  return { config: configOf, remotes: (folder) => configOf(folder).remotes, branch: branchOf, pushed: pushedOf };
 }
 
 const sameRepo = (a, b) => Boolean(a && b) && a.host === b.host && a.path === b.path;
@@ -101,35 +102,15 @@ function declaredRepos(folders, folder, hosts) {
   return out;
 }
 
-// The branch a push with no refspec to the remote `name` updates, as git's push.default reads it: the current branch
-// for `simple` (git's default) or `current`, the branch `branch.<current>.merge` names for `upstream` when `name` is that
-// branch's remote, and none for `matching`, `nothing`, any other, or a remote whose `remote.<name>.push` is set.
-function defaultBranch(name, config, current) {
-  if (current === null || config.remotes.get(name)?.refspecs) return null;
-  const mode = config.pushMode ?? 'simple';
-  if (mode === 'simple' || mode === 'current') return current;
-  const { remote = null, merge = null } = config.branches.get(current) ?? {};
-  if ((mode === 'upstream' || mode === 'tracking') && remote === name && merge?.startsWith('refs/heads/')) return merge.slice('refs/heads/'.length) || null;
-  return null;
-}
-
-// A push's rows: the repository of the remote it names, read through its push URL alone when it has one, and none when
-// that URL names no repository, else its URL; a URL as written; or, when it names none, the remote git pushes to:
-// `branch.<current>.pushRemote`, then `remote.pushDefault`, then `branch.<current>.remote`, then origin.
-function pushedRows(push, folder, folders) {
-  const config = folders.config(folder);
-  const current = folders.branch(folder);
-  const tracking = (current === null ? null : config.branches.get(current)) ?? {};
-  const name = push.remote ?? tracking.pushRemote ?? config.pushDefault ?? tracking.remote ?? 'origin';
-  let repo = null;
-  if (config.remotes.has(name)) {
-    const remote = config.remotes.get(name);
-    repo = (Object.hasOwn(remote, 'push') ? remote.push : remote.fetch) ?? null;
-  }
-  else if (URL_LIKE.test(name)) repo = repoIdentity(name);
-  if (!repo) return [];
-  const branches = push.refs.length === 0 ? [defaultBranch(name, config, current)] : push.refs.map((ref) => (ref === CURRENT ? current : ref));
-  return branches.filter(Boolean).map((branch) => ({ kind: 'pushed', repo, number: null, branch, cwd: folder }));
+// A push's rows: each remote-tracking ref git recorded a push to (pushedRefs) in the git common dir of `folder`, on the
+// repository of its remote's URL, the configured remote whose name, then `/`, starts the ref's path, the longest such.
+function pushedRows(folder, folders, now) {
+  const remotes = folders.remotes(folder);
+  return folders.pushed(folder, now).flatMap((ref) => {
+    const name = [...remotes.keys()].filter((each) => ref.startsWith(`${each}/`)).sort((a, b) => b.length - a.length)[0];
+    const repo = name === undefined ? null : remotes.get(name).fetch;
+    return repo ? [{ kind: 'pushed', repo, number: null, branch: ref.slice(name.length + 1), cwd: folder }] : [];
+  });
 }
 
 // A touched call's row: a link names its repository; anything else takes the repository `-R` or GH_REPO names, else the
@@ -201,8 +182,7 @@ const validCwd = (cwd) => typeof cwd === 'string' && path.isAbsolute(cwd) && Buf
 // The rows of one walked command, before their checks.
 function entryRows(entry, folder, context) {
   const { folders, forge, reader, env, links, changers } = context;
-  const push = readPush(entry);
-  if (push) return pushedRows(push, folder, folders);
+  if (isPush(entry)) return pushedRows(folder, folders, context.now);
   if (changers.some((other) => other !== entry)) return [];
   const call = reader.readCall(entry.invocation, env);
   if (call?.kind === 'created') return printsAlone(context.entries, entry, context.command) ? createdRows(call, folder, folders, forge.hosts, links) : [];
@@ -216,8 +196,8 @@ function entryRows(entry, folder, context) {
 // readers by id, each with `readCall(invocation, env)`, `createdChanges(output)`, and `variables`, the environment
 // names its command reads. A line that changes a variable git reads its repository or config from, or reads a shell
 // file into the shell (`source`, `.`), which may set any, records nothing.
-// `read` runs git, which a test may replace.
-export function ledgerRows({ command, cwd, output = null, env = {}, forge, readers, agentId = null, at = new Date().toISOString(), read = runGit }) {
+// `read` runs git, which a test may replace, and `now` is the time a push's record is read against (PUSH_WINDOW_MS).
+export function ledgerRows({ command, cwd, output = null, env = {}, forge, readers, agentId = null, at = new Date().toISOString(), now = Date.now(), read = runGit }) {
   const reader = forge && Object.hasOwn(readers ?? {}, forge.id) ? readers[forge.id] : null;
   if (typeof command !== 'string' || typeof cwd !== 'string' || !reader || !Array.isArray(forge.hosts)) return [];
   const entries = walkCommands(command, cwd);
@@ -227,7 +207,7 @@ export function ledgerRows({ command, cwd, output = null, env = {}, forge, reade
   // The commands that may change a variable the reader's command reads: one pass, so a long line costs linear time.
   const variables = reader.variables ?? [];
   const changers = entries.filter(({ invocation }) => variables.some((name) => changesVariable(invocation, name)));
-  const context = { folders, forge, reader, env, changers, entries, command, links: () => (links ??= typeof output === 'string' ? reader.createdChanges(outputTail(output)) : []) };
+  const context = { folders, forge, reader, env, changers, entries, command, now, links: () => (links ??= typeof output === 'string' ? reader.createdChanges(outputTail(output)) : []) };
   const known = knownFolders(command, cwd, entries);
   const found = entries.flatMap((entry, index) => (known[index] ? entryRows(entry, known[index], context) : []));
   const agent = typeof agentId === 'string' && SESSION_ID.test(agentId) ? agentId : null;

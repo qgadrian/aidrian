@@ -92,6 +92,21 @@ const pushed = (repoPath, branch, cwd = OWN) => row('pushed', repoPath, { branch
 const touched = (repoPath, fields, cwd = OWN) => row('touched', repoPath, { ...fields, cwd });
 const URL_OF = (repoPath, n) => `https://github.com/${repoPath}/pull/${n}`;
 
+// A project checkout on `branch`, with one commit, whose origin is `url` and whose pushes land in a bare repository of
+// its own through `url.<bare>.insteadOf`, so git records a push as it does one to the forge. Each is new, so no push of
+// another case lies within its window.
+let pushRepos = 0;
+function pushRepo(branch, url = 'https://github.com/acme/notes') {
+  pushRepos += 1;
+  const bare = path.join(ROOT, `push-${pushRepos}.git`);
+  assert.equal(spawnSync('git', ['init', '-q', '--bare', bare], { env: ENV }).status, 0);
+  const dir = checkout(`push-${pushRepos}`, { origin: url }, branch);
+  sh(dir, `git config url.${bare}.insteadOf ${url} && git -c user.name=t -c user.email=t@t.test commit -q --allow-empty -m one`);
+  return dir;
+}
+// Runs `command` in a shell in `dir`, as the session's call ran it.
+const sh = (dir, command) => assert.equal(spawnSync('/bin/sh', ['-c', command], { cwd: dir, env: ENV }).status, 0, command);
+
 test('gh pr create records the pull request its stdout links, with the forge id, host, and path, and no raw URL, command, or output', () => {
   const recorded = rows('gh pr create --title "Add x" --body "Why"', { stdout: `${URL_OF('acme/widgets', 12)}\n` });
   assert.deepEqual(recorded, [created('acme/widgets', 12)]);
@@ -140,64 +155,44 @@ test('only the last 64 KB of the output is read', () => {
 });
 
 test('a response the adapter cannot read gives no created row, and a push in the same call still records', () => {
+  const dir = pushRepo('feat/ledger');
+  sh(dir, 'git push -q origin HEAD');
   for (const response of [null, 'text', { stdout: 7 }, []]) {
-    assert.deepEqual(rows('gh pr create --fill && git push origin feat/ledger', { response }), [pushed('acme/widgets', 'feat/ledger')], JSON.stringify(response));
+    assert.deepEqual(rows('gh pr create --fill && git push origin HEAD', { cwd: dir, response }), [pushed('acme/notes', 'feat/ledger', dir)], JSON.stringify(response));
   }
 });
 
-test('git push records the branch of each refspec on the repository of the remote it names', () => {
+test('a push records each branch git recorded it updated, as the remote-tracking ref`s reflog holds it', () => {
   const cases = [
-    ['git push origin feat/a', [pushed('acme/widgets', 'feat/a')]],
-    ['git push', [pushed('acme/widgets', 'feat/ledger')]],
-    ['git push -u origin HEAD', [pushed('acme/widgets', 'feat/ledger')]],
-    ['git push origin @', [pushed('acme/widgets', 'feat/ledger')]],
-    ['git push origin +feat:refs/heads/review', [pushed('acme/widgets', 'review')]],
-    ['git push origin feat/a feat/b', [pushed('acme/widgets', 'feat/a'), pushed('acme/widgets', 'feat/b')]],
-    ['git push origin refs/heads/feat/c', [pushed('acme/widgets', 'feat/c')]],
-    ['git push --force-with-lease origin HEAD:feat/d', [pushed('acme/widgets', 'feat/d')]],
-    [`git push ${'https://github.com/other/repo'} feat`, [pushed('other/repo', 'feat')]],
-    ['git push git@github.com:other/repo.git feat', [pushed('other/repo', 'feat')]],
-    ['git push origin feat/a || true', [pushed('acme/widgets', 'feat/a')]],
-    ['git push origin :feat', []],
-    ['git push origin --delete feat', []],
-    ['git push -d origin feat', []],
-    ['git push origin v1:refs/tags/v1', []],
-    ['git push origin refs/tags/v1', []],
-    ['git push --dry-run origin feat', []],
-    ['git push --tags', []],
-    ['git push "$REMOTE" feat', []],
-    ['git push origin "$BRANCH"', []],
-    ['git push -- -x feat', []],
-    ['git push nowhere feat', []],
-    ['git push https://github.com/a/b/c feat', [], 'three path parts'],
-    [`git push origin ${'b'.repeat(300)}`, [], 'a refspec of 300 bytes'],
-    ['git push origin a..b', []],
+    ['feat/head', 'git push -q origin HEAD', ['feat/head']],
+    ['feat/local', 'git config push.default upstream && git config branch.feat/local.remote origin && git config branch.feat/local.merge refs/heads/main-line && git push -q', ['main-line']],
+    ['feat', 'git push -q origin feat:release', ['release']],
+    ['feat/tag', 'git tag v1 && git push -q origin tag v1', []],
+    ['feat/switch', 'git branch main && git push -q origin HEAD && git switch -q main', ['feat/switch']],
+    ['feat/url', 'git push -q ../BARE HEAD', [], 'a push to a URL no remote names updates no remote-tracking ref'],
   ];
-  for (const [command, expected, why] of cases) assert.deepEqual(rows(command), expected, why ?? command);
-});
-
-test('git push`s tag keyword pushes a tag, so `tag <name>` records no branch', () => {
-  assert.deepEqual(rows('git push origin tag v1'), []);
-  assert.deepEqual(rows('git push origin tag v1 feat/a'), [pushed('acme/widgets', 'feat/a')], 'a branch beside the tag still records');
-  assert.deepEqual(rows('git push origin feat/a tag'), [], 'a tag keyword with no name, which git refuses');
-});
-
-test('a push in a fork checkout records the remote it names, origin when it names none', () => {
-  assert.deepEqual(rows('git push', { cwd: FORK }), [pushed('me/widgets', 'fix/fork', FORK)]);
-  assert.deepEqual(rows('git push upstream fix/fork', { cwd: FORK }), [pushed('acme/widgets', 'fix/fork', FORK)]);
+  for (const [branch, written, branches, why] of cases) {
+    const dir = pushRepo(branch);
+    const command = written.replace('BARE', `${path.basename(dir)}.git`);
+    sh(dir, command);
+    assert.deepEqual(rows(command, { cwd: dir }), branches.map((each) => pushed('acme/notes', each, dir)), why ?? command);
+  }
 });
 
 test('a push records the folder it ran in: git -C, then a cd before it on the line, else the payload folder', () => {
-  assert.deepEqual(rows(`git -C ${OTHER} push`), [pushed('acme/other', 'main', OTHER)]);
-  assert.deepEqual(rows(`cd ${OTHER} && npm test && git push`), [pushed('acme/other', 'main', OTHER)]);
-  assert.deepEqual(rows('git -C "$W" push'), []);
-  assert.deepEqual(rows('cd "$W" && git push'), []);
+  const dir = pushRepo('feat/folder');
+  sh(dir, 'git push -q origin HEAD');
+  assert.deepEqual(rows(`git -C ${dir} push`), [pushed('acme/notes', 'feat/folder', dir)]);
+  assert.deepEqual(rows(`cd ${dir} && npm test && git push`), [pushed('acme/notes', 'feat/folder', dir)]);
+  assert.deepEqual(rows('git push', { cwd: dir }), [pushed('acme/notes', 'feat/folder', dir)]);
+  assert.deepEqual(rows('git -C "$W" push', { cwd: dir }), []);
+  assert.deepEqual(rows('cd "$W" && git push', { cwd: dir }), []);
 });
 
 test('a row is recorded only for a host the forge adapter declares', () => {
-  assert.deepEqual(rows('git push origin feat', { cwd: GITLAB }), [], 'gitlab.com');
-  assert.deepEqual(rows('git push made feat', { cwd: GITLAB }), [], 'a made-up host');
-  assert.deepEqual(rows('git push https://gitlab.com/acme/widgets feat'), []);
+  const dir = pushRepo('feat/gitlab', 'https://gitlab.com/acme/notes');
+  sh(dir, 'git push -q origin HEAD');
+  assert.deepEqual(rows('git push', { cwd: dir }), [], 'gitlab.com');
   assert.deepEqual(rows('gh pr view 4', { cwd: GITLAB }), []);
 });
 
@@ -228,18 +223,18 @@ test('in a fork checkout, a number with no repository records nothing, and -R na
 });
 
 test('a subagent`s call records its agent id under the parent session', () => {
-  const recorded = rows('git push origin feat', { extra: { agent_id: 'a1b2c3d4', agent_type: 'aidrian:harness-mechanic' } });
-  assert.deepEqual(recorded, [{ ...pushed('acme/widgets', 'feat'), agentId: 'a1b2c3d4' }]);
-  assert.deepEqual(rows('git push origin feat', { extra: { agent_id: '../x y' } }), [pushed('acme/widgets', 'feat')], 'an id of another shape is left out');
+  const recorded = rows('gh pr view feat', { extra: { agent_id: 'a1b2c3d4', agent_type: 'aidrian:harness-mechanic' } });
+  assert.deepEqual(recorded, [{ ...touched('acme/widgets', { branch: 'feat' }), agentId: 'a1b2c3d4' }]);
+  assert.deepEqual(rows('gh pr view feat', { extra: { agent_id: '../x y' } }), [touched('acme/widgets', { branch: 'feat' })], 'an id of another shape is left out');
 });
 
 test('nothing is written for an interrupted call, a bad session id, a folder with no project, or input the hook cannot read', () => {
-  assert.deepEqual(rows('git push origin feat', { response: { stdout: '', stderr: '', interrupted: true } }), []);
+  assert.deepEqual(rows('gh pr view feat', { response: { stdout: '', stderr: '', interrupted: true } }), []);
   for (const session of ['../x', 'a/b', '', 'x'.repeat(129)]) {
-    runHook(payload('git push origin feat', { session }));
+    runHook(payload('gh pr view feat', { session }));
   }
-  runHook({ ...payload('git push origin feat'), session_id: undefined });
-  assert.deepEqual(rows('git push origin feat', { cwd: NO_PROJECT }), []);
+  runHook({ ...payload('gh pr view feat'), session_id: undefined });
+  assert.deepEqual(rows('gh pr view feat', { cwd: NO_PROJECT }), []);
   for (const input of ['', 'not json', '[]', '{"tool_input":{"command":7}}']) runHook(input);
   const projects = path.join(STATE, 'aidrian/projects');
   const files = existsSync(projects) ? readdirSync(projects).flatMap((id) => (existsSync(path.join(projects, id, 'sessions')) ? readdirSync(path.join(projects, id, 'sessions')) : [])) : [];
@@ -248,8 +243,8 @@ test('nothing is written for an interrupted call, a bad session id, a folder wit
 
 test('the session folder is 0700 and prs.jsonl 0600, appended line by line', { skip: !POSIX }, () => {
   const session = nextSession();
-  runHook(payload('git push origin feat/a', { session }));
-  runHook(payload('git push origin feat/b', { session }));
+  runHook(payload('gh pr view feat/a', { session }));
+  runHook(payload('gh pr view feat/b', { session }));
   const [file] = ledgerFiles(session);
   assert.equal(statSync(path.dirname(file)).mode & 0o777, 0o700);
   assert.equal(statSync(file).mode & 0o777, 0o600);
@@ -258,7 +253,7 @@ test('the session folder is 0700 and prs.jsonl 0600, appended line by line', { s
 
 // The session folder of `session` under the project of OWN, made by a first call.
 function ownFolder(session) {
-  runHook(payload('git push origin first', { session }));
+  runHook(payload('gh pr view first', { session }));
   const [file] = ledgerFiles(session);
   return path.dirname(file);
 }
@@ -278,7 +273,7 @@ test('a hard link at prs.jsonl receives no write: one link is required', { skip:
   const folder = ownFolder(session);
   rmSync(path.join(folder, 'prs.jsonl'));
   linkSync(outside, path.join(folder, 'prs.jsonl'));
-  runHook(payload('git push origin feat', { session }));
+  runHook(payload('gh pr view feat', { session }));
   assert.equal(readFileSync(outside, 'utf8'), 'kept\n');
 });
 
@@ -288,7 +283,7 @@ test('a symlink at prs.jsonl receives no write: the ledger opens no-follow', { s
   const folder = ownFolder(session);
   rmSync(path.join(folder, 'prs.jsonl'));
   symlinkSync(outside, path.join(folder, 'prs.jsonl'));
-  runHook(payload('git push origin feat', { session }));
+  runHook(payload('gh pr view feat', { session }));
   assert.equal(readFileSync(outside, 'utf8'), 'kept\n');
   assert.equal(statSync(outside).nlink, 1);
 });
@@ -299,7 +294,7 @@ test('a ledger another user may read receives no write: it must be 0600', { skip
   const file = path.join(folder, 'prs.jsonl');
   const before = readFileSync(file, 'utf8');
   chmodSync(file, 0o644);
-  runHook(payload('git push origin feat', { session }));
+  runHook(payload('gh pr view feat', { session }));
   assert.equal(readFileSync(file, 'utf8'), before);
 });
 
@@ -309,7 +304,7 @@ test('a symlinked session folder receives no write', { skip: !POSIX }, () => {
   const target = path.join(ROOT, 'elsewhere');
   mkdirSync(target, { mode: 0o700 });
   symlinkSync(target, path.join(path.dirname(folder), moved));
-  runHook(payload('git push origin feat', { session: moved }));
+  runHook(payload('gh pr view feat', { session: moved }));
   assert.deepEqual(readdirSync(target), []);
   assert.ok(lstatSync(path.join(path.dirname(folder), moved)).isSymbolicLink());
 });
@@ -318,7 +313,7 @@ test('a ledger at its cap is compacted, so the newest row shows and the file sta
   const session = nextSession();
   const file = path.join(ownFolder(session), 'prs.jsonl');
   appendFileSync(file, `${' '.repeat(LEDGER_MAX_BYTES - statSync(file).size - 10)}\n`);
-  runHook(payload('git push origin feat/newest', { session }));
+  runHook(payload('gh pr view feat/newest', { session }));
   assert.ok(statSync(file).size <= LEDGER_MAX_BYTES);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.deepEqual(readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line).branch), ['first', 'feat/newest']);
@@ -327,9 +322,9 @@ test('a ledger at its cap is compacted, so the newest row shows and the file sta
 test('the same call made again within a minute adds no row', { skip: !POSIX }, () => {
   const session = nextSession();
   const file = path.join(ownFolder(session), 'prs.jsonl');
-  runHook(payload('git push origin feat', { session }));
+  runHook(payload('gh pr view feat', { session }));
   const size = statSync(file).size;
-  for (let at = 0; at < 3; at += 1) runHook(payload('git push origin feat', { session }));
+  for (let at = 0; at < 3; at += 1) runHook(payload('gh pr view feat', { session }));
   assert.equal(statSync(file).size, size);
 });
 
@@ -339,7 +334,7 @@ test('creating a session folder sweeps the folders untouched for 30 days', { ski
   const then = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
   utimesSync(path.join(folder, 'prs.jsonl'), then, then);
   utimesSync(folder, then, then);
-  runHook(payload('git push origin feat', { session: nextSession() }));
+  runHook(payload('gh pr view feat', { session: nextSession() }));
   assert.equal(existsSync(folder), false);
 });
 
@@ -357,22 +352,19 @@ test('each host`s recorded payload records the created pull request through its 
   }
 });
 
-// A checkout whose origin fetches from the parent and pushes to the fork, and one whose folder name holds a bidi control.
-const PUSH_URL = checkout('push-url', { origin: 'https://github.com/acme/widgets.git' }, 'feat/push');
-assert.equal(spawnSync('git', ['config', 'remote.origin.pushurl', 'git@github.com:me/widgets.git'], { cwd: PUSH_URL, env: ENV }).status, 0);
+// A checkout whose folder name holds a bidi control.
 const BIDI = checkout('bidi‮own', { origin: 'https://github.com/acme/widgets.git' });
 mkdirSync(path.join(OWN, 'sub'), { recursive: true });
 
 test('the folder of a call comes from an absolute cd, git -C, or env -C, and the payload folder only on a line that changes no directory', () => {
   assert.deepEqual(rows('cd sub && gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'a relative cd');
-  assert.deepEqual(rows(`cd ${OTHER} && git push`), [pushed('acme/other', 'main', OTHER)]);
-  assert.deepEqual(rows(`git push && cd ${OTHER}`), [], 'the payload folder may be the one the line ended in');
-  assert.deepEqual(rows(`cd ${OTHER}; git push`), [], 'a cd that is no leading cd with &&');
-  assert.deepEqual(rows('git push'), [pushed('acme/widgets', 'feat/ledger')]);
-  assert.deepEqual(rows('git -C sub push'), [], 'a relative git -C');
-  assert.deepEqual(rows(`env -C ${OTHER} git push`), [pushed('acme/other', 'main', OTHER)]);
-  assert.deepEqual(rows("bash -c 'cd sub && git push'"), [], 'a relative cd in a shell the line runs');
-  assert.deepEqual(rows('echo "$(pwd)" && git push'), [pushed('acme/widgets', 'feat/ledger')]);
+  assert.deepEqual(rows(`cd ${OTHER} && gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
+  assert.deepEqual(rows(`gh pr view 3 && cd ${OTHER}`), [], 'the payload folder may be the one the line ended in');
+  assert.deepEqual(rows(`cd ${OTHER}; gh pr view 3`), [], 'a cd that is no leading cd with &&');
+  assert.deepEqual(rows('gh pr view 3'), [touched('acme/widgets', { number: 3 })]);
+  assert.deepEqual(rows(`env -C ${OTHER} gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
+  assert.deepEqual(rows("bash -c 'cd sub && gh pr view 3'"), [], 'a relative cd in a shell the line runs');
+  assert.deepEqual(rows('echo "$(pwd)" && gh pr view 3'), [touched('acme/widgets', { number: 3 })]);
 });
 
 test('a call whose repository or config the line may move records nothing', () => {
@@ -381,6 +373,13 @@ test('a call whose repository or config the line may move records nothing', () =
     'export GH_REPO=acme/other; gh pr view 12',
     'GH_REPO=acme/other; gh pr view 12',
     'unset GH_REPO && gh pr view 12',
+    'GIT_DIR=/x/.git gh pr view 12',
+  ];
+  for (const command of cases) assert.deepEqual(rows(command), [], command);
+  // A push git recorded in this folder, which each line below may not be the one that made it.
+  const dir = pushRepo('feat/moved');
+  sh(dir, 'git push -q origin HEAD');
+  const pushes = [
     'git -c remote.origin.url=https://github.com/x/y push',
     'git --git-dir=/x/.git push',
     'git --work-tree=/x push origin feat',
@@ -388,18 +387,10 @@ test('a call whose repository or config the line may move records nothing', () =
     'GIT_DIR=/x/.git git push',
     'export GIT_DIR=/x/.git && git push',
     'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=x git push',
-    'GIT_DIR=/x/.git gh pr view 12',
-    'git push --repo "$R"',
-    'git push --repo $R feat',
   ];
-  for (const command of cases) assert.deepEqual(rows(command), [], command);
-  assert.deepEqual(rows('git --no-pager push origin feat'), [pushed('acme/widgets', 'feat')], 'a switch that moves nothing');
+  for (const command of pushes) assert.deepEqual(rows(command, { cwd: dir }), [], command);
+  assert.deepEqual(rows('git --no-pager push origin HEAD', { cwd: dir }), [pushed('acme/notes', 'feat/moved', dir)], 'a switch that moves nothing');
   assert.deepEqual(rows(`gh pr create --body "$(cat <<'EOF'\nWhy\nEOF\n)" --title t`, { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [created('acme/widgets', 12)], 'the canonical heredoc body is quoted');
-});
-
-test('a push reads the remote`s push URL before its URL', () => {
-  assert.deepEqual(rows('git push', { cwd: PUSH_URL }), [pushed('me/widgets', 'feat/push', PUSH_URL)]);
-  assert.deepEqual(rows('gh pr view 3', { cwd: PUSH_URL }), [touched('acme/widgets', { number: 3 }, PUSH_URL)], 'gh reads the fetch URL');
 });
 
 test('a bare owner/name in -R or GH_REPO records nothing while GH_HOST is set', () => {
@@ -411,24 +402,37 @@ test('a bare owner/name in -R or GH_REPO records nothing while GH_HOST is set', 
 });
 
 test('a folder or a branch holding a hidden character writes nothing', () => {
-  assert.deepEqual(rows(`cd '${BIDI}' && git push`), [], 'a bidi control in the folder');
-  assert.deepEqual(rows('git push origin \'feat‮x\''), [], 'a bidi control in a refspec');
-  assert.deepEqual(rows('git push origin \'feat​x\''), [], 'a zero-width space in a refspec');
-  assert.deepEqual(rows(`git push origin 'feat\u001b[2J'`), [], 'an escape in a refspec');
+  assert.deepEqual(rows(`cd '${BIDI}' && gh pr view 3`), [], 'a bidi control in the folder');
+  assert.deepEqual(rows('gh pr view \'feat‮x\''), [], 'a bidi control in a branch');
+  assert.deepEqual(rows('gh pr view \'feat​x\''), [], 'a zero-width space in a branch');
+  assert.deepEqual(rows(`gh pr view 'feat\u001b[2J'`), [], 'an escape in a branch');
 });
 
-// ledgerRows over a fake git: `remotes` by name and URL, the branch every folder is on, and more config lines as
-// `git config --get-regexp` prints them. `calls` holds the folder of
+// ledgerRows over a fake git: `remotes` by name and URL, the branch every folder is on, more config lines as
+// `git config --get-regexp` prints them, and the git common dir every folder has, or none. `calls` holds the folder of
 // each git read.
-function fakeGit(remotes, branch = 'feat', pushUrls = [], config = []) {
+function fakeGit(remotes, branch = 'feat', config = [], common = null) {
   const calls = [];
   const read = (args, folder) => {
     calls.push(folder);
-    const lines = [...Object.entries(remotes).map(([name, url]) => `remote.${name}.url ${url}`), ...pushUrls.map(([name, url]) => `remote.${name}.pushurl ${url}`), ...config];
+    const lines = [...Object.entries(remotes).map(([name, url]) => `remote.${name}.url ${url}`), ...config];
     if (args[0] === 'config') return { status: 0, stdout: lines.join('\n') };
+    if (args[0] === 'rev-parse') return common === null ? { status: 128, stdout: '' } : { status: 0, stdout: `${common}\n` };
     return { status: 0, stdout: `${branch}\n` };
   };
   return { read, calls };
+}
+// A git common dir whose remote-tracking refs `refs`, each a path under refs/remotes/, a push updated just now.
+let commons = 0;
+function pushedCommon(refs) {
+  commons += 1;
+  const common = path.join(ROOT, `common-${commons}`);
+  for (const ref of refs) {
+    const file = path.join(common, 'logs/refs/remotes', ref);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${'0'.repeat(40)} ${'1'.repeat(40)} T <t@t.test> ${Math.floor(Date.now() / 1000)} +0000\tupdate by push\n`);
+  }
+  return common;
 }
 const unit = (command, cwd, read, output = null) =>
   ledgerRows({ command, cwd, output, forge: forgeFor(cwd), readers: { [githubCalls.FORGE]: githubCalls }, read, at: 'T' }).map(({ at, ...each }) => each);
@@ -436,24 +440,18 @@ const ORIGIN = { origin: 'https://github.com/acme/widgets.git' };
 
 test('a row`s cwd is absolute within 1,024 bytes', () => {
   const at = `/${'a'.repeat(1023)}`;
-  assert.deepEqual(unit('git push', at, fakeGit(ORIGIN).read), [pushed('acme/widgets', 'feat', at)]);
-  assert.deepEqual(unit('git push', `/${'a'.repeat(1024)}`, fakeGit(ORIGIN).read), []);
-});
-
-test('a remote word that starts with - records nothing, even where a remote has that name', () => {
-  const { read } = fakeGit({ ...ORIGIN, '-x': 'https://github.com/acme/dash.git' });
-  assert.deepEqual(unit('git push -- -x feat', '/w', read), []);
-  assert.deepEqual(unit('git push -- origin feat', '/w', read), [pushed('acme/widgets', 'feat', '/w')]);
+  assert.deepEqual(unit('gh pr view 3', at, fakeGit(ORIGIN).read), [touched('acme/widgets', { number: 3 }, at)]);
+  assert.deepEqual(unit('gh pr view 3', `/${'a'.repeat(1024)}`, fakeGit(ORIGIN).read), []);
 });
 
 test('one call has git read at most MAX_FOLDERS folders and writes at most MAX_ROWS rows', () => {
-  const { read, calls } = fakeGit(ORIGIN);
+  const { read, calls } = fakeGit(ORIGIN, 'feat', [], pushedCommon(['origin/feat']));
   const many = Array.from({ length: 20 }, (_, at) => `git -C /w/${at} push origin feat`).join(' && ');
   const recorded = unit(many, '/w', read);
   assert.ok(new Set(calls).size <= MAX_FOLDERS, `${new Set(calls).size} folders`);
   assert.equal(recorded.length, MAX_FOLDERS);
-  const branches = Array.from({ length: 40 }, (_, at) => `b${at}`).join(' ');
-  assert.equal(unit(`git push origin ${branches}`, '/w', fakeGit(ORIGIN).read).length, MAX_ROWS);
+  const common = pushedCommon(Array.from({ length: 40 }, (_, at) => `origin/b${at}`));
+  assert.equal(unit('git push', '/w', fakeGit(ORIGIN, 'feat', [], common).read).length, MAX_ROWS);
 });
 
 test('the output tail keeps a first line the cut did not split', () => {
@@ -465,72 +463,22 @@ test('the output tail keeps a first line the cut did not split', () => {
   assert.equal(outputTail(split), 'next\n');
 });
 
-test('a push URL, when set, is the push`s repository alone: one that names none records nothing', () => {
-  const push = (pushUrls) => unit('git push', '/w', fakeGit(ORIGIN, 'feat', pushUrls).read);
-  assert.deepEqual(push([['origin', 'git@github.com:me/widgets.git']]), [pushed('me/widgets', 'feat', '/w')]);
-  for (const url of ['/srv/git/widgets', 'file:///srv/git/widgets', 'DISABLED', `https://github.com/me/${'w'.repeat(1100)}`]) assert.deepEqual(push([['origin', url]]), [], url.slice(0, 40));
-  assert.deepEqual(push([['origin', 'DISABLED'], ['origin', 'git@github.com:me/widgets.git']]), [], 'a later push URL never replaces an unreadable first one');
-  assert.deepEqual(push([['origin', 'git@github.com:me/widgets.git'], ['origin', 'git@github.com:other/widgets.git']]), [pushed('me/widgets', 'feat', '/w')], 'the first push URL');
-});
-
-test('a push that names no remote goes where git sends it: the branch`s pushRemote, then remote.pushDefault, then its remote, then origin', () => {
-  const remotes = { ...ORIGIN, fork: 'https://github.com/me/widgets.git', up: 'https://github.com/acme/up.git', track: 'https://github.com/acme/track.git' };
-  const push = (config, command = 'git push') => unit(command, '/w', fakeGit(remotes, 'feat', [], config).read);
-  assert.deepEqual(push(['branch.feat.pushremote fork', 'remote.pushdefault up', 'branch.feat.remote track']), [pushed('me/widgets', 'feat', '/w')], 'pushRemote');
-  assert.deepEqual(push(['branch.other.pushremote fork', 'remote.pushdefault up', 'branch.feat.remote track']), [pushed('acme/up', 'feat', '/w')], 'pushDefault, past another branch`s pushRemote');
-  assert.deepEqual(push(['branch.feat.remote track']), [pushed('acme/track', 'feat', '/w')], 'the branch`s remote');
-  assert.deepEqual(push(['remote.pushdefault fork', 'remote.pushdefault up']), [pushed('acme/up', 'feat', '/w')], 'the last value, as git reads it');
-  assert.deepEqual(push([]), [pushed('acme/widgets', 'feat', '/w')], 'origin');
-  assert.deepEqual(push(['remote.pushdefault up'], 'git push origin'), [pushed('acme/widgets', 'feat', '/w')], 'a remote on the line wins');
-});
-
-test('a push with no refspec records the branch push.default sends, and none for matching, nothing, or a remote`s own push refspec', () => {
-  const push = (config, command = 'git push') => unit(command, '/w', fakeGit(ORIGIN, 'feat', [], config).read);
-  for (const mode of ['simple', 'current']) assert.deepEqual(push([`push.default ${mode}`]), [pushed('acme/widgets', 'feat', '/w')], mode);
-  const upstream = ['push.default upstream', 'branch.feat.remote origin', 'branch.feat.merge refs/heads/main-line'];
-  assert.deepEqual(push(upstream), [pushed('acme/widgets', 'main-line', '/w')], 'upstream: the branch merge names');
-  assert.deepEqual(push(upstream, 'git push origin'), [pushed('acme/widgets', 'main-line', '/w')]);
-  assert.deepEqual(push(['push.default upstream', 'branch.feat.remote up', 'branch.feat.merge refs/heads/x'], 'git push origin'), [], 'origin is not the upstream`s remote');
-  assert.deepEqual(push(['push.default upstream']), [], 'no upstream');
-  for (const mode of ['matching', 'nothing', 'Simple']) assert.deepEqual(push([`push.default ${mode}`]), [], mode);
-  assert.deepEqual(push(['remote.origin.push refs/heads/feat:refs/heads/elsewhere']), [], 'remote.origin.push');
-  assert.deepEqual(push(['remote.origin.push']), [], 'remote.origin.push with no value');
-  assert.deepEqual(push(['remote.origin.push refs/heads/x'], 'git push origin feat/a'), [pushed('acme/widgets', 'feat/a', '/w')], 'a refspec on the line wins');
-  assert.deepEqual(push(['push.default matching'], 'git push origin HEAD'), [pushed('acme/widgets', 'feat', '/w')], 'HEAD on the line');
-});
-
-test('a push reads pushRemote from the folder`s real git config', () => {
-  const dir = checkout('push-remote', { origin: 'https://github.com/acme/widgets.git', fork: 'https://github.com/me/widgets.git' }, 'feat/pr');
-  assert.equal(spawnSync('git', ['config', 'branch.feat/pr.pushRemote', 'fork'], { cwd: dir, env: ENV }).status, 0);
-  assert.deepEqual(rows('git push', { cwd: dir }), [pushed('me/widgets', 'feat/pr', dir)]);
-  assert.equal(spawnSync('git', ['config', 'push.default', 'matching'], { cwd: dir, env: ENV }).status, 0);
-  assert.deepEqual(rows('git push', { cwd: dir }), []);
-});
-
 test('a gh pr call with no target records the pull request gh checked out, and an owner:branch target its head`s fork', () => {
-  const read = fakeGit(ORIGIN, 'feat', [], ['branch.feat.merge refs/pull/42/head']).read;
+  const read = fakeGit(ORIGIN, 'feat', ['branch.feat.merge refs/pull/42/head']).read;
   assert.deepEqual(unit('gh pr view', '/w', read), [touched('acme/widgets', { number: 42 }, '/w')], 'branch.feat.merge refs/pull/42/head, as gh pr checkout sets it');
-  assert.deepEqual(unit('gh pr view', '/w', fakeGit(ORIGIN, 'feat', [], ['branch.feat.merge refs/heads/feat']).read), [touched('acme/widgets', { branch: 'feat' }, '/w')]);
+  assert.deepEqual(unit('gh pr view', '/w', fakeGit(ORIGIN, 'feat', ['branch.feat.merge refs/heads/feat']).read), [touched('acme/widgets', { branch: 'feat' }, '/w')]);
   assert.deepEqual(unit('gh pr view feat', '/w', read), [touched('acme/widgets', { branch: 'feat' }, '/w')], 'a branch named: gh looks the branch up');
   assert.deepEqual(unit('gh pr checks me:fix/x', '/w', fakeGit(ORIGIN).read), [touched('me/widgets', { branch: 'fix/x' }, '/w')], 'owner:branch');
   assert.deepEqual(unit('gh pr checks me:fix/x -R acme/other', '/w', fakeGit(ORIGIN).read), [touched('me/other', { branch: 'fix/x' }, '/w')]);
   for (const word of ['bad--owner:fix', 'me:/fix', 'me:a:b', 'git@github.com:acme/widgets']) assert.deepEqual(unit(`gh pr view '${word}'`, '/w', fakeGit(ORIGIN).read), [], word);
 });
 
-test('a --repo value the shell fills in records nothing, even where a remote has that name', () => {
-  const { read } = fakeGit({ ...ORIGIN, $R: 'https://github.com/acme/dollar.git' });
-  assert.deepEqual(unit('git push --repo "$R"', '/w', read), []);
-  assert.deepEqual(unit('git push --repo "$R" feat', '/w', read), []);
-  assert.deepEqual(unit('git push --repo=origin', '/w', read), [pushed('acme/widgets', 'feat', '/w')]);
-  assert.deepEqual(unit('git push --repo=origin feat', '/w', read), [], 'git takes a positional word over --repo: feat is the repository');
-});
-
 test('a line that reads a shell file into the shell, or runs cd through builtin, records nothing', () => {
   assert.deepEqual(rows('source ./env.sh && gh pr view 12'), []);
   assert.deepEqual(rows('. ./env.sh; gh pr view 12'), []);
-  assert.deepEqual(rows('builtin source ./env.sh && git push origin feat'), []);
-  assert.deepEqual(rows(`builtin cd ${OTHER} && git push`), [], 'the payload folder may be the one the line ended in');
-  assert.deepEqual(rows(`git push && builtin pushd ${OTHER}`), []);
+  assert.deepEqual(rows('builtin source ./env.sh && gh pr view 12'), []);
+  assert.deepEqual(rows(`builtin cd ${OTHER} && gh pr view 12`), [], 'the payload folder may be the one the line ended in');
+  assert.deepEqual(rows(`gh pr view 12 && builtin pushd ${OTHER}`), []);
 });
 
 test('a line of thousands of gh calls is read in linear time', () => {

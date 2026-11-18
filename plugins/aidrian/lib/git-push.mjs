@@ -1,13 +1,13 @@
-// What a `git push` on a session's command line pushes, read from its words alone, for the session ledger
-// (lib/session-prs.mjs). Git is no forge, so this names none. It runs nothing: the remote's URL and the folder's branch
-// are the ledger's reads. A push it cannot read with certainty gives nothing, so no row names a repository or branch the
-// push may not have touched.
+// What a `git push` on a session's command line pushed, for the session ledger (lib/session-prs.mjs), read from what git
+// itself recorded rather than rebuilt from the command's words and config. Git is no forge, so this names none. isPush
+// says whether a walked command is a push the ledger may read; pushedRefs reads the remote-tracking refs a push updated
+// from the reflogs git keeps for them.
 
-import { changesVariable, isLongOption, readGit, readShortOptions } from './shell-lex.mjs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
+import path from 'node:path';
 
-// The branch a refspec pushes when it names the folder's current branch.
-export const CURRENT = Symbol('current');
-const NOTHING = Symbol('nothing');
+import { changesVariable, readGit } from './shell-lex.mjs';
+
 // The variables that move the repository, the work tree, or the config git reads: set, unset, or emptied by `env -i` on
 // the line, they make every git and forge call on it record nothing. GIT_CONFIG_KEY_<n> takes effect only with
 // GIT_CONFIG_COUNT, so that name covers them.
@@ -15,48 +15,9 @@ const GIT_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESP
 // The git global options a read push may carry: `-C` with its folder, which the walk reads, and switches that change no
 // repository or config. Any other, such as `-c`, `--config-env`, `--git-dir`, or `--work-tree`, gives nothing.
 const PLAIN_GLOBALS = new Set(['--no-pager', '-P', '-p', '--paginate', '--no-optional-locks', '--no-replace-objects', '--literal-pathspecs']);
-const PUSH_VALUES = new Set(['-o']);
-const PUSH_LONG_VALUES = ['--repo', '--push-option', '--receive-pack', '--exec'];
 
 // Whether readInvocation's invocation changes a variable of GIT_VARIABLES for what it runs, or for the shell after it.
 export const changesGitTarget = (invocation) => GIT_VARIABLES.some((name) => changesVariable(invocation, name));
-
-// The branch one refspec pushes to: a name, CURRENT for the folder's branch, or NOTHING.
-function refspecBranch(text) {
-  const spec = text.startsWith('+') ? text.slice(1) : text;
-  const colon = spec.indexOf(':');
-  if (colon === -1 && (spec === 'HEAD' || spec === '@')) return CURRENT;
-  const dst = colon === -1 ? spec : spec.slice(colon + 1);
-  if (colon === 0 || dst === '' || dst === 'HEAD' || dst === '@') return NOTHING;
-  if (dst.startsWith('refs/heads/')) return dst.slice('refs/heads/'.length) || NOTHING;
-  return dst.startsWith('refs/') ? NOTHING : dst;
-}
-
-// The branch each refspec of `specs` pushes, as refspecBranch reads it, with git's `tag <name>` form, which pushes the
-// tag refs/tags/<name>, giving none for both words. Null for a `tag` with no name after it, which git refuses.
-function tagFree(specs) {
-  const refs = [];
-  for (let i = 0; i < specs.length; i += 1) {
-    if (specs[i] !== 'tag') refs.push(refspecBranch(specs[i]));
-    else if (i + 1 < specs.length) i += 1;
-    else return null;
-  }
-  return refs;
-}
-
-// The option word `text` of a push: 'stop' for one that pushes no branch, 'value' for one whose value is the next word,
-// `{ repo }` for `--repo=<remote>`, else null.
-function pushOption(text) {
-  if (text.startsWith('--')) {
-    if (isLongOption(text, '--delete', '--de') || isLongOption(text, '--dry-run', '--dr')) return 'stop';
-    if (['--all', '--mirror', '--branches', '--tags'].some((each) => isLongOption(text, each, each))) return 'stop';
-    if (text.startsWith('--repo=')) return { repo: text.slice('--repo='.length) };
-    return PUSH_LONG_VALUES.includes(text) ? 'value' : null;
-  }
-  const { options, value } = readShortOptions(text, PUSH_VALUES);
-  if (options.includes('-d') || options.includes('-n')) return 'stop';
-  return value && value.attached === null ? 'value' : null;
-}
 
 // Whether every git global option before `push` is `-C` with its folder or one of PLAIN_GLOBALS.
 function plainGlobals(globals) {
@@ -67,44 +28,84 @@ function plainGlobals(globals) {
   return true;
 }
 
-// The words after `push`: { operands, repo }, or null for a push that pushes no branch or holds a word the shell fills
-// in or expands, the value of `--repo` included.
-function pushWords(rest) {
-  const operands = [];
-  let repo = null;
-  let ended = false;
-  for (let i = 0; i < rest.length; i += 1) {
-    const token = rest[i];
-    if (token.dynamic || token.expands) return null;
-    if (ended || !token.text.startsWith('-') || token.text === '-') operands.push(token.text);
-    else if (token.text === '--') ended = true;
-    else {
-      const option = pushOption(token.text);
-      if (option === 'stop') return null;
-      if (option?.repo) repo = option.repo;
-      if (option !== 'value') continue;
-      const value = rest[i + 1];
-      if (value && (value.dynamic || value.expands)) return null;
-      if (token.text === '--repo') repo = value?.text ?? null;
-      i += 1;
-    }
-  }
-  return { operands, repo };
+// Whether one walked command (shell-lex walkCommands) is a `git push` whose record the ledger may read: one with no git
+// global option that may move its repository or config, and that changes no variable of GIT_VARIABLES itself.
+export function isPush(entry) {
+  const git = readGit(entry.segment);
+  return git?.subcommand === 'push' && plainGlobals(git.globals) && !changesGitTarget(entry.invocation);
 }
 
-// A `git push` of one walked command (shell-lex walkCommands) as `{ remote, refs }`: `remote` the word naming it, null
-// for origin, and `refs` the branch each refspec pushes, CURRENT for the folder's, empty for no refspec. Null for no push,
-// and for a push that pushes no branch, holds a word the shell fills in or expands, carries a git global option that
-// may move its repository or config, or changes a variable of GIT_VARIABLES itself.
-export function readPush(entry) {
-  const git = readGit(entry.segment);
-  if (git?.subcommand !== 'push' || !plainGlobals(git.globals) || changesGitTarget(entry.invocation)) return null;
-  const words = pushWords(git.rest);
-  if (words === null) return null;
-  const [remote = words.repo, ...specs] = words.operands;
-  if (remote?.startsWith('-')) return null;
-  const refs = tagFree(specs);
-  if (refs === null) return null;
-  if (specs.length > 0 && refs.every((ref) => ref === NOTHING)) return null;
-  return { remote, refs: refs.filter((ref) => ref !== NOTHING) };
+// How long before the hook reads it a push's record may have been written and still be read as this call's.
+export const PUSH_WINDOW_MS = 60_000;
+// The most entries one read visits under logs/refs/remotes, and how much of each log's end it reads.
+const MAX_ENTRIES = 4096;
+const TAIL_BYTES = 4096;
+const READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+// The message git writes in a remote-tracking ref's reflog when a push updates that ref.
+const PUSHED = 'update by push';
+
+// The last whole line of the regular file `file`, from its last TAIL_BYTES, opened no-follow, or null.
+function lastLine(file) {
+  let fd = null;
+  try {
+    fd = openSync(file, READ);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    const { size } = stat;
+    const length = Math.min(size, TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    const read = readSync(fd, buffer, 0, length, size - length);
+    const lines = buffer.toString('utf8', 0, read).replace(/\n$/u, '').split('\n');
+    return lines.length > 1 || read === size ? lines.at(-1) : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+// Whether a reflog line, git's `<old> <new> <name> <email> <time> <zone>\t<message>`, records a push within
+// PUSH_WINDOW_MS of `now`.
+function pushedWithin(line, now) {
+  const tab = line.indexOf('\t');
+  if (tab === -1 || line.slice(tab + 1) !== PUSHED) return false;
+  const time = Number(line.slice(0, tab).split(' ').at(-2)) * 1000;
+  return Number.isFinite(time) && Math.abs(now - time) <= PUSH_WINDOW_MS;
+}
+
+// The remote-tracking refs a push updated within PUSH_WINDOW_MS of `now`, each as its path under refs/remotes/, such as
+// `origin/feat/x`, from the reflogs under `<commonDir>/logs/refs/remotes`: a log whose mtime is older than the window is
+// skipped, a symlink is never followed, and of each other log only its last line is read. MAX_ENTRIES entries at most.
+// A tag push, a delete, a push to a URL rather than a remote's name, and a repository whose refs git keeps in a reftable
+// leave no such log, so they give none.
+export function pushedRefs(commonDir, now = Date.now()) {
+  const found = [];
+  let visited = 0;
+  const walk = (dir, rel) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      visited += 1;
+      if (visited > MAX_ENTRIES) return;
+      const name = rel === '' ? entry.name : `${rel}/${entry.name}`;
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file, name);
+      else if (entry.isFile() && recent(file, now) && pushedWithin(lastLine(file) ?? '', now)) found.push(name);
+    }
+  };
+  walk(path.join(commonDir, 'logs', 'refs', 'remotes'), '');
+  return found;
+}
+
+// Whether the file `file` was changed within PUSH_WINDOW_MS of `now`.
+function recent(file, now) {
+  try {
+    return now - lstatSync(file).mtimeMs <= PUSH_WINDOW_MS;
+  } catch {
+    return false;
+  }
 }

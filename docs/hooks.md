@@ -1226,7 +1226,7 @@ snapshot's `displayText` removes). One call writes at most 32 rows and has git r
 | Kind | From | Its repository and pull request |
 | --- | --- | --- |
 | `created` | `gh pr create` | A line of the output, from its last 64 KB, that is exactly a pull request link. Its repository must be the one `-R` or `GH_REPO` names, else one of the repositories the remotes of the call's folder name, so a fork's pull request on its parent records the parent and an echoed link of another repository records nothing. The output is read only when `gh pr create` is the line's one command, after a leading `cd` or bare variable assignments, with no other command that could print: a `cat` with no redirection inside a substitution, such as a heredoc body, is the one other command allowed, so `gh pr create && echo <link>` records nothing |
-| `pushed` | `git push` | The remote it names: a URL, a remote's name read through its first push URL alone when it has one (and nothing when that names no repository, such as a local path or `DISABLED`), else its first URL. With no remote named, the one git pushes to: the current branch's `branch.<name>.pushRemote`, then `remote.pushDefault`, then the branch's `branch.<name>.remote`, then origin. Each refspec gives its row: a name, `HEAD` or `@` for the current branch, `src:dst` for `dst`, without a leading `+` and `refs/heads/`. With no refspec, the branch `push.default` sends: the current one when it is unset, `simple`, or `current`, the one `branch.<name>.merge` names when it is `upstream` and the remote is the branch's own, and none for `matching`, `nothing`, or a remote whose `remote.<name>.push` is set. A delete, a dry run, a tag, as `refs/tags/<name>` or git's `tag <name>`, and `--all`, `--mirror`, `--branches`, or `--tags` record nothing |
+| `pushed` | `git push` | What git itself recorded, not the command's words: each remote-tracking ref whose reflog, `<git common dir>/logs/refs/remotes/<remote>/<branch>`, ends in an `update by push` entry written within the last 60 s (`PUSH_WINDOW_MS` in `lib/git-push.mjs`), so git's own remote selection, `push.default`, `remote.<name>.push`, and refspec mapping decide the branch, and `git push origin HEAD && git switch main` records the branch pushed. The branch is the ref's path after `<remote>/`, the remote the configured one whose name, the longest, starts that path, and the repository that remote's first `remote.<name>.url`. Logs older than the window by their mtime are skipped, a symlink is never followed, and only each log's last line is read, from its last 4 KB, 4,096 entries at most. A push to a URL that no remote names, a tag, a delete, and a dry run update no remote-tracking ref, and a reftable repository keeps no such log, so they record nothing, an accepted limit. A push an earlier call made within the window is read again, also accepted, and its repeat is left out as below |
 | `touched` | `gh pr ready`, `edit`, `merge`, `checks`, `view`, `comment` | A link names its own repository. A number, a branch, or no target takes the repository `-R` or `GH_REPO` names, else the one repository on a declared host the folder's remotes name, and nothing when they name several, as in a fork checkout. No target is the folder's current branch, or the pull request gh checked out on it, as its `branch.<name>.merge` of `refs/pull/<n>/head` names. An `owner:branch` target is that branch of the owner's repository of the same name, gh's fork |
 
 A bare `owner/name` in `-R` or `GH_REPO` names nothing while `GH_HOST` is set, since gh then reads it on that host.
@@ -1237,16 +1237,16 @@ a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` 
 line where no command, a nested one included, runs `cd`, `pushd`, or `popd`, plain or through `builtin`, and nothing
 else moves the call; and
 otherwise none, so the call records nothing. `cd sub && gh pr create` and `git push && cd /other` record nothing.
-The current branch is read with `git symbolic-ref`, and the remotes and the push settings with one `git config --get-regexp`, in that folder: no word of the line or value of the ledger reaches git's arguments.
+The current branch is read with `git symbolic-ref`, the remotes and branches' `merge` with one `git config --get-regexp`, and, on a line that runs `git push`, the git common dir with one `git rev-parse --git-common-dir`, in that folder: no word of the line or value of the ledger reaches git's arguments.
 
-What may point a call at another repository records nothing: a folder, remote, repository, target, or refspec the shell
+What may point a call at another repository records nothing: a folder, repository, or target the shell
 fills in, a word it fills in unquoted anywhere in a `gh` call, since it may split into a second `-R`, a line that sets,
 unsets, or empties `GH_REPO` or `GH_HOST` outside the call's own prefix, a git global option other than `-C` and plain
 switches such as `--no-pager` (so `-c`, `--config-env`, `--git-dir`, and `--work-tree`), and a line that changes
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, or a `GIT_CONFIG` variable, or reads a shell file into the
 shell with `source` or `.`, which may set any of them.
-A `url.<base>.insteadOf` or `pushInsteadOf` rewrite in the folder's config is not applied, an accepted limit: such a
-remote records its URL as written.
+A `url.<base>.insteadOf` rewrite in the folder's config is not applied, an accepted limit: such a remote records its
+URL as written.
 
 The forge seam: `scripts/hook-bash-post.mjs` and `lib/session-prs.mjs` name no forge. The reading of `gh pr` calls,
 `GH_REPO`, and the pull request link is GitHub's, in `lib/rules/github/session-calls.mjs`, which runs nothing; the hook
@@ -1272,9 +1272,10 @@ ledger, through a temporary file and a rename under the same checks, with the ne
 of it and then the new ones, so the newest pull requests always show. The `SessionEnd` hook and
 worktree cleanup leave it alone, so a resumed session keeps its pull requests.
 
-A row records what the command line names, not what each command did. Claude Code runs `PostToolUse` only for a Bash
-call that succeeded, but one command's status inside a line is not seen, so `git push || true` records its row. On Codex
-a shell call that exits non-zero still runs `PostToolUse`, so a failed push records its row too. A row whose branch has no
+A `created` or `touched` row records what the command line names, not what each command did. Claude Code runs
+`PostToolUse` only for a Bash call that succeeded, but one command's status inside a line is not seen, so
+`gh pr view 12 || true` records its row, and on Codex a shell call that exits non-zero still runs `PostToolUse`. A failed
+push leaves no record of its own, so it records nothing. A row whose branch has no
 pull request shows nothing.
 
 Where it is verified:

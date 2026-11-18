@@ -88,7 +88,7 @@ test('a git that hangs is stopped after the timeout and counts as git not answer
   assert.ok(Date.now() - started < GIT_TIMEOUT_MS + 1500, `${Date.now() - started} ms`);
 });
 
-test('repositoryCheckouts lists every checkout but a gone one; [] only outside a repository or without git, else null on failure', (t) => {
+test('repositoryCheckouts lists every checkout but a gone one; [] only outside a repository, else null on failure', (t) => {
   const { dir, worktree } = repo(t);
   assert.deepEqual(repositoryCheckouts(path.join(dir, 'src')), [dir, worktree]);
   assert.deepEqual(repositoryCheckouts(worktree), [worktree, dir], 'the checkout it is in comes first');
@@ -100,7 +100,8 @@ test('repositoryCheckouts lists every checkout but a gone one; [] only outside a
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   assert.deepEqual(repositoryCheckouts(outside), []);
   // A git that exits 128 for everything: inside a repository the list always names the main checkout, so a failed one is
-  // unknown, never empty; outside one there is nothing to list. With no git at all, there is nothing to list either.
+  // unknown, never empty; outside one there is nothing to list. A git missing from PATH is the same: inside a repository
+  // the checkouts are unknown, so a linked worktree the caller does not know of is never taken for no checkout.
   const bin = mkdtempSync(path.join(tmpdir(), 'aidrian-git-bin-'));
   t.after(() => rmSync(bin, { recursive: true, force: true }));
   writeFileSync(path.join(bin, 'git'), '#!/bin/sh\necho "fatal: broken" >&2\nexit 128\n', { mode: 0o755 });
@@ -116,7 +117,9 @@ test('repositoryCheckouts lists every checkout but a gone one; [] only outside a
   assert.deepEqual(answer(outside, bin), []);
   const empty = mkdtempSync(path.join(tmpdir(), 'aidrian-no-bin-'));
   t.after(() => rmSync(empty, { recursive: true, force: true }));
-  assert.deepEqual(answer(dir, empty), []);
+  assert.equal(answer(dir, empty), null, 'no git inside a repository');
+  assert.equal(answer(worktree, empty), null, 'no git inside a linked worktree');
+  assert.deepEqual(answer(outside, empty), [], 'no git outside every repository');
 });
 
 test('repositoryCheckouts is null when the environment points git at another repository, or keeps it from this one', (t) => {

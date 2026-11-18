@@ -430,7 +430,7 @@ test('check warns when auto-merge is allowed, review.visual is unset, and git tr
     execFileSync('git', ['-C', dir, 'add', file]);
   };
   const config = (extra) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: true } }, ...extra }));
-  const warning = (count, first) => `warning: github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as ${first}): set review.visual.targets to the routes and files of the project's screens\n`;
+  const warning = (count, first) => `warning: github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as "${first}"): set review.visual.targets to the routes and files of the project's screens\n`;
   const check = () => {
     const { status, stderr } = run(['check'], dir);
     assert.equal(status, 0, stderr);
@@ -454,6 +454,22 @@ test('check warns when auto-merge is allowed, review.visual is unset, and git tr
   assert.equal(check(), '', 'silent with review.visual set');
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: false } } }));
   assert.equal(check(), '', 'silent with auto-merge not allowed');
+});
+
+test('the screen warning escapes control characters in the file it names, so a file name cannot forge a line', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: true } } }));
+  // A line break that would start a forged diagnostic, an ESC and a one-byte CSI that would drive the terminal, and a
+  // Unicode line separator.
+  const name = 'page\nerror: forged \u001b[31mred\u009b0m\u2028.tsx';
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, 'src', name), '');
+  execFileSync('git', ['-C', dir, 'add', '--', `src/${name}`]);
+  const { status, stderr } = run(['check'], dir);
+  assert.equal(status, 0, stderr);
+  assert.equal(stderr, `warning: github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (1 tracked screen file, such as "src/page\\nerror: forged \\u001b[31mred\\u009b0m\\u2028.tsx"): set review.visual.targets to the routes and files of the project's screens\n`);
+  assert.doesNotMatch(stderr, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/u, 'no raw control character reaches the terminal');
+  assert.equal(stderr.split('\n').length, 2, 'one warning line');
 });
 
 test('a screen file is a .tsx, .jsx, .vue, .svelte, or .html file outside docs, examples, tests, and dot folders', () => {

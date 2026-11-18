@@ -54,8 +54,13 @@ function unseenScreenWarnings(project, config) {
   const screens = (trackedFiles(project) ?? []).filter(isScreenFile);
   if (!screens.length) return [];
   const count = screens.length === 1 ? '1 tracked screen file' : `${screens.length} tracked screen files`;
-  return [`github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as ${screens[0]}): set review.visual.targets to the routes and files of the project's screens`];
+  return [`github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as ${quotedPath(screens[0])}): set review.visual.targets to the routes and files of the project's screens`];
 }
+
+// A tracked path as a diagnostic names it: quoted as JSON, as the other commands name a path, so a line break or an
+// ESC in a file name cannot start a line of its own or drive the terminal. JSON leaves DEL, the C1 controls, such as the
+// one-byte CSI, and the Unicode line separators as they are, so those are escaped too.
+const quotedPath = (file) => JSON.stringify(file).replace(/[\u007f-\u009f\u2028\u2029]/gu, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
 // The warnings for `quorum.product` settings that have no effect. "Set" reads the file itself, since a key set to its
 // default looks unset once merged. As decisionWarnings does, this reads the working copy, the local file's `decisions` over it.

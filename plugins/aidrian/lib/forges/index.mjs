@@ -6,11 +6,11 @@
 // payloads are: a second forge reshapes them with its adapter.
 
 import { createGithubForge, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE, servedRepository } from './github.mjs';
-import { repoIdentity } from './identity.mjs';
+import { remoteIdentity, repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
-// text before any forge is chosen.
-export { repoIdentity };
+// text before any forge is chosen. remoteIdentity reads a remote URL alone, and is null for one git reads as a folder.
+export { remoteIdentity, repoIdentity };
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };

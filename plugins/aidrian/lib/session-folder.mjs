@@ -4,7 +4,8 @@
 // The folder follows the continuation store's rules (lib/handoff-markers.mjs), checked before every write, read, and
 // sweep: the state folder resolves inside no checkout of the repository, and no other user owns it or may write it; the
 // sessions folder and the session folder are each a real folder, no symlink, owned by this process's user, that no other
-// user may read or write; and the session folder's real path is `<real state>/sessions/<id>`. Its files are written as a
+// user may read or write; and the session folder's real path is `<real state>/sessions/<id>`, and is still the folder's
+// own path at each write, read, and sweep, so a folder above it swapped for a symlink since gets none. Its files are written as a
 // temporary file and a rename, mode 0600, under the names in SESSION_FILES alone; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
@@ -16,7 +17,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdi
 import path from 'node:path';
 
 import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
-import { looseFolder, SESSION_ID } from './handoff-markers.mjs';
+import { looseFolder, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 
 // A session folder whose newest file is older than this goes when another session's folder is created.
 export const SWEEP_DAYS = 30;
@@ -87,13 +88,22 @@ function privateFolder(dir, uid) {
   return !Number.isInteger(uid) || (looseFolder(dir, uid) === null && (stat.mode & 0o077) === 0);
 }
 
-// privateFolder, false for a folder that is missing or cannot be read.
-function isPrivateFolder(dir, uid) {
+// Whether the session folder `folder`, a real path sessionFolder gave, is still the folder it checked: its real path is
+// still itself, so no folder above it was swapped for a symlink since, and it passes privateFolder. False for a folder
+// that is missing or cannot be read. Every write, reservation, read, and sweep asks it first.
+export function boundFolder(folder, { uid = processUid() } = {}) {
   try {
-    return privateFolder(dir, uid);
+    return realpathSync(folder) === folder && privateFolder(folder, uid);
   } catch {
     return false;
   }
+}
+
+// The text of the file `name`, one of SESSION_FILES, in `folder`, under the Reads rule (readOwnFile) and `cap`, as
+// { text, stat }, or null: the name is not one of SESSION_FILES, `folder` fails boundFolder, or readOwnFile gives none.
+export function readSessionFile(folder, name, { cap, uid = processUid() }) {
+  if (!SESSION_FILES.includes(name) || !boundFolder(folder, { uid })) return null;
+  return readOwnFile(path.join(folder, name), { cap, uid });
 }
 
 // The temporary file `name` in `folder` is written through: `.<name>.<pid>.<token>.tmp`, which SESSION_TEMPORARY matches.
@@ -101,10 +111,10 @@ export const temporaryName = (folder, name, token = newToken()) => path.join(fol
 
 // Writes `text` to the file `name`, one of SESSION_FILES, in `folder`, which sessionFolder gave: to a new temporary
 // file, opened only where nothing is and never through a symlink, mode 0600, then renamed over the file. Returns the
-// file, or null when the name is not one of SESSION_FILES, `folder` fails privateFolder at the time of the write, or the
+// file, or null when the name is not one of SESSION_FILES, `folder` fails boundFolder at the time of the write, or the
 // write fails. Never throws. `token` is the temporary name's random part, which a test may fix.
 export function writeSessionFile(folder, name, text, { token = newToken(), uid = processUid() } = {}) {
-  if (!SESSION_FILES.includes(name) || !TOKEN.test(token) || !isPrivateFolder(folder, uid)) return null;
+  if (!SESSION_FILES.includes(name) || !TOKEN.test(token) || !boundFolder(folder, { uid })) return null;
   const file = path.join(folder, name);
   const temporary = temporaryName(folder, name, token);
   try {
@@ -129,11 +139,11 @@ export function writeSessionFile(folder, name, text, { token = newToken(), uid =
 // that holds `now`, so that one process alone reads, checks, and writes it in that window: creates `<name>.<window>.lock`
 // only where nothing is, never through a symlink, mode 0600. Nothing is ever taken over: a reservation a killed process
 // left blocks only its own window. Returns the function that releases it, deleting the reservation while it is still the
-// one this call made, or null when the name is not one of SESSION_FILES, `folder` fails privateFolder, any entry holds the
+// one this call made, or null when the name is not one of SESSION_FILES, `folder` fails boundFolder, any entry holds the
 // name, or it cannot be made. Never throws.
 export function reserveSessionFile(folder, name, { windowMs, now = Date.now(), uid = processUid() } = {}) {
   const index = Math.floor(now / windowMs);
-  if (!SESSION_FILES.includes(name) || !Number.isSafeInteger(index) || index < 0 || !isPrivateFolder(folder, uid)) return null;
+  if (!SESSION_FILES.includes(name) || !Number.isSafeInteger(index) || index < 0 || !boundFolder(folder, { uid })) return null;
   const file = path.join(folder, reservationName(name, index));
   let fd;
   try {
@@ -159,10 +169,12 @@ function releaseReservation(file, dev, ino) {
 // Removes each session folder under `sessions`, the real path sessionFolder checked, but `current`, whose folder and
 // files were all last changed more than SWEEP_DAYS before `now`: it deletes the files named in SESSION_FILES, their
 // temporary files, and their reservations that are regular files, then removes the folder only when that left it empty. An entry whose name
-// fails SESSION_ID, or that fails privateFolder, a symlink among them, is left alone.
+// fails SESSION_ID, or that fails boundFolder, a symlink among them, is left alone, and so is every entry once `sessions`
+// is no longer its own real path.
 function sweepSessions(sessions, { current, uid, now }) {
   let names;
   try {
+    if (realpathSync(sessions) !== sessions) return;
     names = readdirSync(sessions);
   } catch {
     return;
@@ -178,7 +190,7 @@ function sweepSessions(sessions, { current, uid, now }) {
 }
 
 function sweepFolder(dir, uid, now) {
-  if (!privateFolder(dir, uid)) return;
+  if (!boundFolder(dir, { uid })) return;
   const names = readdirSync(dir);
   const newest = Math.max(lstatSync(dir).mtimeMs, ...names.map((name) => lstatSync(path.join(dir, name)).mtimeMs));
   if (now - newest <= SWEEP_DAYS * DAY) return;

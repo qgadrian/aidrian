@@ -10,12 +10,27 @@ import path from 'node:path';
 // waits as long as git takes.
 export const GIT_TIMEOUT_MS = 2000;
 let stalled = null;
+// The signal a git past its limit gets when the call names none: git's own SIGTERM, which lets it remove a lock it holds,
+// or SIGKILL inside killingGit.
+let killSignal;
+
+// `read()`, with every git call it makes that names no signal killed outright at its limit: spawnSync waits for a child
+// that ignores SIGTERM. Only for reads that hold no lock, such as `aidrian session snapshot`'s.
+export function killingGit(read) {
+  const before = killSignal;
+  killSignal = 'SIGKILL';
+  try {
+    return read();
+  } finally {
+    killSignal = before;
+  }
+}
 
 // The raw spawn result: { status, stdout, stderr, error }. Some git commands use exit 1 as an answer, not a failure.
 // A git stopped by the timeout, and every later call that does not set its own timeout, has `status` null.
 export function runGit(args, cwd, options = {}) {
   if (stalled && options.timeout === undefined) return stalled;
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...options });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...(killSignal ? { killSignal } : {}), ...options });
   if (result.error?.code === 'ETIMEDOUT' && options.timeout === undefined) stalled = { status: null, stdout: '', stderr: '', error: result.error };
   return result;
 }
@@ -57,6 +72,15 @@ export function worktreePaths(cwd) {
   const { status, stdout } = runGit(['worktree', 'list', '--porcelain'], cwd);
   if (status !== 0) return [];
   return stdout.split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length));
+}
+
+// The top folder of every checkout of the repository `cwd` is in, from `git worktree list`: the main checkout and each
+// linked worktree. [] outside git or without git, and null when git did not answer in time, so a caller that keeps files
+// out of every checkout can refuse.
+export function repositoryCheckouts(cwd) {
+  const { status, stdout, error } = runGit(['worktree', 'list', '--porcelain'], cwd);
+  if (status === null) return error?.code === 'ENOENT' ? [] : null;
+  return status === 0 ? stdout.split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length)) : [];
 }
 
 // Whether git ignores `file` (absolute, or relative to `root`).

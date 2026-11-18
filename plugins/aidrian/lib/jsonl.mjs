@@ -5,7 +5,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync
 import { hostname } from 'node:os';
 import path from 'node:path';
 
-import { resolvedPath } from './fs.mjs';
+import { readRegularFile, resolvedPath } from './fs.mjs';
 
 // Appends one row. A single write in append mode: rows from concurrent processes never interleave.
 // A write cut short leaves the file without its last newline; the next row then starts on a line of its own, so the
@@ -211,14 +211,10 @@ export function readRows(file) {
   return { rows, skipped };
 }
 
+// A named pipe, or any other entry that is no regular file, throws at once rather than making the read wait.
 function readLines(file) {
-  let text;
-  try {
-    text = readFileSync(file, 'utf8');
-  } catch (error) {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  }
+  const text = readRegularFile(file);
+  if (text === null) return [];
   return text
     .split('\n')
     .filter((line) => line.trim() !== '')

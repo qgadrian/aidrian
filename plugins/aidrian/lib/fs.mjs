@@ -2,7 +2,7 @@
 // commands. Paths are relative to `root` where a function takes one. No dependencies: this file runs from the installed
 // plugin, which has no node_modules.
 
-import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason.
@@ -97,6 +97,24 @@ export function isFile(file) {
     return statSync(file).isFile();
   } catch {
     return false;
+  }
+}
+
+// The text of `file`, or null when it is missing. It is opened non-blocking and read only when it is a regular file, so a
+// named pipe there never makes the read wait: one, or any other entry that is no regular file, throws.
+export function readRegularFile(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) throw Object.assign(new Error(`${file}: not a regular file`), { code: 'ENOTREG' });
+    return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
   }
 }
 

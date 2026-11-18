@@ -1,11 +1,11 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { boundFolder, readSessionFile, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
@@ -202,6 +202,25 @@ test('a session file is not written into a folder another user may read, or thro
   assert.equal(writeSessionFile(linked, 'usage.json', '{}'), null);
   assert.deepEqual(readdirSync(target), []);
   assert.equal(writeSessionFile(path.join(root, 'missing'), 'usage.json', '{}'), null);
+});
+
+test('once a folder above a session folder is swapped for a symlink, its files are neither written, reserved, nor read there', { skip: !POSIX }, () => {
+  const { state, sessions } = stateWithSessions();
+  const folder = sessionFolder(state, 'abc', NONE);
+  assert.ok(writeSessionFile(folder, 'usage.json', 'mine\n'));
+  // Another user of a state folder its group may write moves the sessions folder away and links one elsewhere in its
+  // place, holding a private folder of the same name, as the user's own folders are.
+  const elsewhere = path.join(path.dirname(state), 'elsewhere');
+  mkdirSync(path.join(elsewhere, 'abc'), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(elsewhere, 'abc', 'usage.json'), 'theirs\n', { mode: 0o600 });
+  renameSync(sessions, path.join(state, 'moved'));
+  symlinkSync(elsewhere, sessions);
+  assert.equal(writeSessionFile(folder, 'usage.json', 'redirected\n'), null);
+  assert.equal(reserveSessionFile(folder, 'usage.json', { windowMs: WINDOW }), null);
+  assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024 }), null);
+  assert.equal(boundFolder(folder), false);
+  assert.deepEqual(readdirSync(path.join(elsewhere, 'abc')), ['usage.json']);
+  assert.equal(readFileSync(path.join(elsewhere, 'abc', 'usage.json'), 'utf8'), 'theirs\n');
 });
 
 const WINDOW = 60_000;

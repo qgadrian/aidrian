@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFile
 import path from 'node:path';
 
 import { parseReport } from './audit-import.mjs';
-import { isFile, isObject } from './fs.mjs';
+import { isFile, isObject, readRegularFile } from './fs.mjs';
 import { withLocks } from './jsonl.mjs';
 
 export const SIDECAR_VERSION = 1;
@@ -310,7 +310,8 @@ export function readTriage(dir) {
   if (!existsSync(file)) return { version: 1, reports: {} };
   let value;
   try {
-    value = JSON.parse(readFileSync(file, 'utf8'));
+    // Non-blocking, so a named pipe there throws rather than making the read wait.
+    value = JSON.parse(readRegularFile(file) ?? 'null');
   } catch (error) {
     throw triageError(`${file}: invalid JSON (${error.message})`);
   }

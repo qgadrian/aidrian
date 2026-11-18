@@ -43,3 +43,13 @@ export function repoIdentity(value) {
   if (parts.length === 2) return identity(DEFAULT_HOST, parts.join('/'));
   return parts.length > 2 ? identity(parts[0], parts.slice(1).join('/')) : null;
 }
+
+// A remote URL's identity, as repoIdentity reads it, only when the URL names a network remote: a URL with a scheme, or
+// git's `host:path`. git reads anything else as a folder on disk, a bare `vendor/mirror.git` relative to the repository
+// included, so its path parts never reach a forge as an owner and a name: null. `-R` values keep repoIdentity.
+export function remoteIdentity(url) {
+  if (typeof url !== 'string') return null;
+  const text = url.trim();
+  const network = /^[a-z][a-z0-9+.-]*:\/\//iu.test(text) || (!LOCAL_PATH.test(text) && SCP_LIKE.test(text));
+  return network ? repoIdentity(text) : null;
+}

@@ -506,10 +506,12 @@ calls it for its own trigger, so the two never disagree. The first that holds wi
 | `quiet` | None does. Under `mode: "off"` the hook never reminds, so the level is always `quiet`, and the numbers stay. |
 
 The snapshot is `due` or `ceiling` on exactly the turns the Stop hook reminds. It reads the hook's marker at the hook's
-own path, and the transcript through the usage cache, so each call reads only the lines written since the last one
-([Local state](project-folder.md#local-state)). Like the reminder, the handoff section is verified on Claude Code
-transcripts only. It needs the session's folder in the state folder, so when the state folder is inside a checkout,
-as with `state.dir` set to a folder in the repository, the snapshot gives no handoff, lessons, or audits section, and
+own path, and the transcript through the usage cache, so each call folds only the lines written since the last one,
+after a hash of the bytes it folded before shows they are unchanged: a transcript rewritten in place, at the same
+length included, is folded again from the start ([Local state](project-folder.md#local-state)). Like the reminder, the handoff section is verified on Claude Code
+transcripts only. It needs the session's folder in the state folder, so when the state folder is inside a checkout of
+the repository, the main checkout or any linked worktree, as with `state.dir` set to a folder in the repository, or a
+relative `state.dir` of a project below the repository root, which resolves against that root, the snapshot gives no handoff, lessons, or audits section, and
 names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
 gives no handoff section either, and names `handoff` and `worktrees`.
 `chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
@@ -524,9 +526,11 @@ user owns, never a symlink or a folder. A store the gate refuses leaves `chain`,
 **Worktrees.** `owned` counts the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is
 the head commit of a merged pull request of their branch, before [worktree cleanup](project-folder.md#task-worktrees)'s own tree and age
 checks: a worktree it counts may still hold work that cleanup asks about. The merged heads come from the forge for
-origin's repository alone, when the forge adapter serves it (github.com today), and are cached for a minute in the
-session's folder. With no origin, or one on a host the adapter does not serve, `mergedNotCleaned` is null and `errors`
-does not name `worktrees`: that repository is unsupported, not failed. One session starts at most one forge call a
+origin's repository alone, when origin is a network remote and the forge adapter serves it (github.com today), and are
+cached for a minute in the session's folder, with the repository they were read for. With no origin, one git reads as a
+folder on disk, such as `vendor/mirror.git`, or one on a host the adapter does not serve, `mergedNotCleaned` is null and
+`errors` does not name `worktrees`: that repository is unsupported, not failed. A cache of another repository, as after
+origin moved under a fixed `state.dir`, counts as none, so its heads are never shown for the new one. One session starts at most one forge call a
 minute, whatever became of the last and however many snapshots start at once: a snapshot records its attempt under the
 cache's reservation for the current fixed minute, a lock file only one process can create, and one that finds the
 reservation held, or an attempt another snapshot recorded first, starts no call and shows the cached count as stale.
@@ -535,10 +539,13 @@ a reservation a killed snapshot left blocks only its own minute. The call has 4 
 past it, and the cached count then shows with `stale: true`, or as null with `worktrees` in `errors` when there is none.
 A value too large for the cache's 1 MiB read is not stored, but the attempt is, so the minute still holds.
 
-**Run time.** Every git call the snapshot starts is killed at git's 2 s limit, and once one is, the later ones of the
+**Run time.** Every git call the snapshot starts, those of finding the project and its state folder included, is
+killed outright at git's 2 s limit, even one that ignores SIGTERM, and once one is, the later ones of the
 same run give up at once, but for the worktree list, which has its own 2 s. With the 4 s forge budget, a run takes at
 most about 8 s past its own reading. A caller, such as a status line command, sets its timeout above that, or kills
-the snapshot's whole process group, since a forge command it started may outlive it.
+the snapshot's whole process group, since a forge command it started may outlive it. No read of the state folder
+waits: a named pipe, or any other entry that is no regular file, at the lesson inbox or the audits triage file fails
+that section at once, as at a cache file of the session's folder.
 
 **The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
 line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,

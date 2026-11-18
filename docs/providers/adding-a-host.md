@@ -215,6 +215,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 so it lives in `lib/forges/identity.mjs`, and an adapter neither implements nor carries it.
 It reads a host that reaches the same repositories as another, such as `ssh.github.com`, as that one,
 and a bare `owner/repo` as a repository on the default forge's host, github.com.
+`remoteIdentity(url)`, beside it, reads a remote URL alone: it is null for a URL git reads as a folder on disk, a bare
+`vendor/mirror.git` included, so a local path's parts never reach a forge as an owner and a name.
+`aidrian session snapshot` reads origin with it.
 
 The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names.
 The arguments are GitHub's too: the `fields` strings callers pass to `change`, `mergedChanges`, and `openChanges`

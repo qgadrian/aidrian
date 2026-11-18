@@ -409,7 +409,7 @@ test('the merged-heads cache is read under the Reads rule: a named pipe, a file 
     const folder = path.join(env.projectState(), 'sessions', ID);
     mkdirSync(folder, { recursive: true, mode: 0o700 });
     const cache = path.join(folder, MERGED_HEADS.name);
-    const fresh = JSON.stringify({ value: [['feat/x', env.head], ['feat/y', 'e'.repeat(40)]], valueAt: Date.now(), attemptAt: Date.now() });
+    const fresh = JSON.stringify({ value: { repo: 'github.com/acme/notes', pairs: [['feat/x', env.head], ['feat/y', 'e'.repeat(40)]] }, valueAt: Date.now(), attemptAt: Date.now() });
     const target = path.join(env.base, 'target.json');
     if (kind === 'pipe') spawnSync('mkfifo', [cache]);
     if (kind === 'large') writeFileSync(cache, fresh.replace('"feat/y"', `"${'y'.repeat(MERGED_HEADS.cap)}"`));
@@ -564,7 +564,7 @@ test('a warm cache answers a 60 MB transcript fast, and a cold one stops gh at t
   assert.ok(cold.ms < baseline.ms + 200 + 1500, `with a cold merged-heads cache gh is stopped at the deadline: ${cold.ms} ms against ${baseline.ms} ms with a fast gh`);
   assert.equal(cold.json.worktrees.mergedNotCleaned, null);
   const cache = path.join(env.projectState(), 'sessions', ID, MERGED_HEADS.name);
-  writeFileSync(cache, JSON.stringify({ value: [['feat/x', env.head]], valueAt: Date.now(), attemptAt: Date.now() }));
+  writeFileSync(cache, JSON.stringify({ value: { repo: 'github.com/acme/notes', pairs: [['feat/x', env.head]] }, valueAt: Date.now(), attemptAt: Date.now() }));
   const calls = ghCalls(env.log).length;
   const warm = env.run(['--session', ID, '--transcript', transcript]);
   t.diagnostic(`warm snapshot of a 60 MB transcript: ${warm.ms} ms; cold: ${cold.ms} ms; cold with a fast gh: ${baseline.ms} ms`);
@@ -593,7 +593,10 @@ test('a value whose text passes the cap is not stored, but its attempt is, so th
   assert.deepEqual(cachedValue({ ...options, refresh: () => ['x'.repeat(500)] }), { value: ['x'.repeat(500)], stale: false });
   const stored = JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8'));
   assert.deepEqual([stored.value, stored.valueAt, typeof stored.attemptAt], [null, null, 'number']);
-  assert.equal(cachedValue({ ...options, refresh: () => assert.fail('inside the window') }), null);
+  // cachedValue catches what a refresh throws, so each callback records its calls, asserted once cachedValue returns.
+  let calls = 0;
+  assert.equal(cachedValue({ ...options, refresh: () => ++calls && ['y'] }), null);
+  assert.equal(calls, 0, 'inside the window');
 });
 
 test('SessionEnd removes the marker only by stopMarkerPath', (t) => {
@@ -627,16 +630,18 @@ test('cachedValue records its attempt before the refresh, and with no folder ref
   chmodSync(folder, 0o700);
   const name = MERGED_HEADS.name;
   const options = { folder, name, windowMs: 60_000, cap: 1024, isValue: Array.isArray };
-  let calls = 0;
+  // cachedValue catches what a refresh throws, so the callback records what it saw, asserted once cachedValue returns.
+  const seen = [];
   const refresh = () => {
-    calls += 1;
-    assert.equal(typeof JSON.parse(readFileSync(path.join(folder, name), 'utf8')).attemptAt, 'number', 'the attempt is on disk first');
+    seen.push(existsSync(path.join(folder, name)) ? JSON.parse(readFileSync(path.join(folder, name), 'utf8')).attemptAt : null);
     return null;
   };
   assert.equal(cachedValue({ ...options, refresh }), null);
   assert.equal(cachedValue({ ...options, refresh }), null);
-  assert.equal(calls, 1);
-  assert.equal(cachedValue({ ...options, folder: null, refresh: () => assert.fail('no folder, no call') }), null);
+  assert.equal(seen.length, 1);
+  assert.equal(typeof seen[0], 'number', 'the attempt is on disk first');
+  assert.equal(cachedValue({ ...options, folder: null, refresh: () => seen.push('no folder') && ['v'] }), null);
+  assert.equal(seen.length, 1, 'no folder, no call');
   assert.deepEqual(cachedValue({ ...options, now: Date.now() + 61_000, refresh: () => ['v'] }), { value: ['v'], stale: false });
   assert.deepEqual(cachedValue({ ...options, now: Date.now() + 62_000, refresh: () => assert.fail('inside the window') }), { value: ['v'], stale: false });
 });
@@ -654,7 +659,9 @@ test('cachedValue starts no refresh while another process holds this window`s re
   const { folder, options } = expiredCache(['old']);
   const now = Date.now();
   const held = reserveSessionFile(folder, MERGED_HEADS.name, { windowMs: 60_000, now });
-  assert.deepEqual(cachedValue({ ...options, now, refresh: () => assert.fail('another process is recording its attempt') }), { value: ['old'], stale: true });
+  let calls = 0;
+  assert.deepEqual(cachedValue({ ...options, now, refresh: () => ++calls && ['new'] }), { value: ['old'], stale: true });
+  assert.equal(calls, 0, 'another process is recording its attempt');
   assert.equal(JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8')).attemptAt < now - 60_000, true, 'no attempt recorded');
   const next = now + 60_000;
   assert.deepEqual(cachedValue({ ...options, now: next, refresh: () => ['new'] }), { value: ['new'], stale: false }, 'a killed process blocks only its own window');
@@ -693,4 +700,83 @@ test('processes that start together on an expired cache start one refresh betwee
   const answers = done.map(({ out }) => JSON.parse(out));
   assert.equal(answers.filter((each) => each.stale === false).length, 1);
   assert.ok(answers.every((each) => each.stale === false || each.value[0] === 'old'), 'the others give the stored value, stale');
+});
+
+test('a state folder in any checkout of the repository gets no session folder: a nested project`s, or one in another worktree', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const transcript = path.join(env.base, 'session.jsonl');
+  writeFileSync(transcript, turnsOf('handoff-cost')[4]);
+  const refused = (cwd) => {
+    const { json, status } = env.run(['--session', ID, '--transcript', transcript], { cwd });
+    assert.equal(status, 0);
+    assert.deepEqual([json.handoff, json.lessons, json.audits], [null, null, null]);
+    assert.deepEqual(json.errors, ['handoff', 'prs', 'lessons', 'worktrees', 'audits']);
+  };
+  // A project in a subfolder: a relative state.dir resolves against the repository root, inside the checkout.
+  const sub = path.join(env.dir, 'sub');
+  mkdirSync(path.join(sub, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(sub, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.state' } }));
+  refused(sub);
+  assert.equal(existsSync(path.join(env.dir, '.state')), false, 'nothing is written at the repository root');
+  // A state folder in a linked worktree, which is no checkout of the project's own.
+  const tree = path.join(env.base, 'tree');
+  git(env.dir, 'worktree', 'add', '-q', '-b', 'feat/x', tree);
+  writeFileSync(path.join(env.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: path.join(tree, '.state') } }));
+  refused(env.dir);
+  assert.equal(existsSync(path.join(tree, '.state')), false, 'nothing is written in the other worktree');
+});
+
+test('an origin git reads as a folder, such as vendor/mirror.git, starts no gh call', (t) => {
+  for (const origin of ['vendor/mirror.git', 'acme/notes']) {
+    const env = withWorktree(t, { origin });
+    const { json } = env.run(['--session', ID]);
+    assert.deepEqual(ghCalls(env.log), [], origin);
+    assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: null }, origin);
+    assert.deepEqual(json.errors, [], 'a local remote is unsupported, not failed');
+  }
+});
+
+test('the merged-heads cache is bound to origin`s repository: once origin moves, the heads it holds are none', (t) => {
+  const env = withWorktree(t);
+  // An explicit state folder, which origin's URL does not move, and the same session id.
+  const fixed = path.join(env.base, 'fixed-state');
+  writeFileSync(path.join(env.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: fixed } }));
+  assert.equal(env.run(['--session', ID]).json.worktrees.mergedNotCleaned, 1);
+  git(env.dir, 'remote', 'set-url', 'origin', 'https://github.com/acme/other.git');
+  const moved = env.run(['--session', ID]).json;
+  assert.deepEqual(moved.worktrees, { owned: 1, mergedNotCleaned: null }, 'inside the window, no other repository`s heads');
+  assert.ok(moved.errors.includes('worktrees'));
+  const cache = path.join(fixed, 'sessions', ID, MERGED_HEADS.name);
+  writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), attemptAt: Date.now() - 120_000 }));
+  fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
+  const failed = env.run(['--session', ID, '--deadline-ms', '200']).json;
+  assert.deepEqual(failed.worktrees, { owned: 1, mergedNotCleaned: null }, 'a failed refresh shows no other repository`s heads as stale');
+  assert.deepEqual(ghCalls(env.log).at(-1).slice(-2), ['--repo', 'github.com/acme/other']);
+});
+
+test('project discovery is killed at git`s limit, even by a git that ignores SIGTERM', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const bin = path.join(env.base, 'stubborn');
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" --git-common-dir "*) trap '' TERM; exec sleep 20;; esac\nexec ${real} "$@"\n`);
+  chmodSync(path.join(bin, 'git'), 0o755);
+  const { status, ms, json } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
+  assert.equal(status, 0);
+  assert.ok(ms < 10_000, `${ms} ms`);
+  assert.ok(json.errors.every((name) => SECTIONS.includes(name)));
+});
+
+test('a named pipe at the lesson inbox or the audits triage file fails that section alone, without waiting', { skip: !POSIX }, (t) => {
+  for (const [file, name] of [['lessons/inbox.jsonl', 'lessons'], ['audits/triage.json', 'audits']]) {
+    const env = setup(t);
+    const at = path.join(env.projectState(), file);
+    mkdirSync(path.dirname(at), { recursive: true });
+    spawnSync('mkfifo', [at]);
+    const { json, status, ms } = env.run();
+    assert.equal(status, 0, name);
+    assert.ok(ms < 10_000, `${name}: ${ms} ms`);
+    assert.equal(json[name], null);
+    assert.deepEqual(json.errors, [name]);
+  }
 });

@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
+import { remoteIdentity, repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 
 // repoIdentity is the facade's own helper: it reads a remote or a `-R` value before any forge is chosen.
 test('repoIdentity reads every form of a repository to its host and full path', () => {
@@ -33,6 +33,17 @@ test('repoIdentity is null for what names no repository, a local remote included
   for (const value of [...local, '', 'notes', '/', 'acme//notes', 'https://github.com/', 'https://github.com/notes', 'git@github.com:notes.git', 'ssh://[bad', null, undefined, 42, {}]) {
     assert.equal(repoIdentity(value), null, String(value));
   }
+});
+
+test('remoteIdentity reads a network remote alone: a path git reads as a folder names no repository', () => {
+  for (const url of ['https://github.com/acme/notes.git', 'ssh://git@github.com/acme/notes', 'git@github.com:acme/notes.git', 'github.com:acme/notes']) {
+    assert.deepEqual(remoteIdentity(url), { host: 'github.com', path: 'acme/notes' }, url);
+  }
+  // git reads each of these as a folder relative to the repository, and repoIdentity as `[host/]owner/repo`.
+  for (const url of ['vendor/mirror.git', 'vendor/mirror', 'github.com/acme/notes', 'srv/git/acme/notes.git', '/srv/git/acme/notes.git', './acme/notes', 'C:/acme/notes', 'file:///srv/acme/notes.git', '', null]) {
+    assert.equal(remoteIdentity(url), null, String(url));
+  }
+  assert.deepEqual(repoIdentity('vendor/mirror.git'), { host: 'github.com', path: 'vendor/mirror' }, 'a -R value keeps its bare form');
 });
 
 test('repoIdentity keeps the namespace that the last-two-parts key threw away', () => {

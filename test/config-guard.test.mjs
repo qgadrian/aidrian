@@ -10,7 +10,9 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { forgetGateSnapshot, saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { configFiles, findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -1337,11 +1339,20 @@ test('a subagent, and a session the background route started, may not write in t
     ['Bash', { command: `chmod -R 777 ${state}` }],
     ['Bash', { command: `chmod 777 ${sessions}` }],
     ['Bash', { command: 'cd "$X" && echo {} > sessions/x/prs.jsonl' }],
+    // Interpreter code, where a closing quote follows the path.
+    ['Bash', { command: `python3 -c "open('${own}/prs.jsonl', 'a').write('{}')"` }],
+    ['Bash', { command: `node -e "require('fs').appendFileSync('${own}/links.jsonl', '{}')"` }],
+    ['Bash', { command: 'python3 -c "open(\'sessions/abc-1/usage.json\', \'w\')"' }],
+    // A file appended in place, by its name alone, after a `cd` the guard cannot follow.
+    ['Bash', { command: 'cd "$X" && echo {} >> prs.jsonl' }],
+    ['Bash', { command: 'cd "$X" && echo {} >> links.jsonl' }],
   ];
   const passing = [
     ['Write', { file_path: path.join(dir, 'src/sessions/store.js'), content: 'export {};\n' }],
     ['Write', { file_path: path.join(dir, 'sessions'), content: 'notes\n' }],
     ['Bash', { command: 'cd "$X" && echo {} > sessions/notes.md' }],
+    ['Bash', { command: 'cd "$X" && echo {} > usage.json' }],
+    ['Bash', { command: 'cd "$X" && echo {} > old-prs.jsonl.bak' }],
   ];
   for (const [session, agent] of [['plain-session', true], [full, false]]) {
     for (const [tool, toolInput] of blocked) {
@@ -1354,5 +1365,66 @@ test('a subagent, and a session the background route started, may not write in t
   assert.match(named.stderr, /the session folders, where only the hooks and the `aidrian` commands write/u);
   for (const [tool, toolInput] of blocked.filter(([, input]) => !String(input.command ?? '').startsWith('chmod -R'))) {
     assert.equal(run('plain-session', tool, toolInput).status, 0, `an attended session may: ${JSON.stringify(toolInput)}`);
+  }
+});
+
+// A session folder of `session` under the state folder of the project at `dir`, as the hooks make it.
+function sessionFolderOf(dir, session) {
+  const found = findProject(dir);
+  const made = sessionFolder(stateDir(found), session, { checkouts: found.checkouts });
+  assert.ok(made, 'the session folder is made');
+  return made;
+}
+
+const subagentWrite = (cwd, session, toolInput) => spawnSync(process.execPath, [HOOK], {
+  input: JSON.stringify({ session_id: session, tool_name: 'Write', tool_input: toolInput, cwd, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
+  cwd, encoding: 'utf8',
+});
+
+test('a subagent that works in another project, or in no project, may not write the session folders of the project it started in', (t) => {
+  const { dir: home } = project(t, { version: 1 });
+  const { dir: elsewhere } = project(t, { version: 1 });
+  const loose = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-loose-')));
+  t.after(() => rmSync(loose, { recursive: true, force: true }));
+  const own = sessionFolderOf(home, 'moved-1');
+  const homeState = stateDir(findProject(home));
+  t.after(() => rmSync(homeState, { recursive: true, force: true }));
+  const write = { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' };
+  for (const cwd of [elsewhere, loose]) {
+    const result = subagentWrite(cwd, 'moved-1', write);
+    assert.equal(result.status, 2, `from ${cwd}: ${result.stderr}`);
+    assert.match(result.stderr, /the session folders/u);
+  }
+  assert.equal(subagentWrite(elsewhere, 'moved-1', { file_path: path.join(elsewhere, 'src/app.js'), content: 'x\n' }).status, 0, 'its own work in the other project');
+});
+
+test('a subagent in another project meets the session folders of a state.dir its gate snapshot`s project moves', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-origin-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const moved = path.join(base, 'moved-state');
+  const gates = { 'some-other-agent': { deny: ['WebFetch'] } };
+  const { dir: home } = project(t, { version: 1, state: { dir: moved }, agents: gates });
+  const { dir: elsewhere } = project(t, { version: 1 });
+  const session = 'origin-1';
+  assert.ok(saveGateSnapshot(session, home, gates));
+  t.after(() => forgetGateSnapshot(session));
+  const own = sessionFolderOf(home, session);
+  assert.ok(own.startsWith(realpathSync(moved)));
+  const result = subagentWrite(elsewhere, session, { file_path: path.join(own, 'links.jsonl'), content: '{}\n' });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /the session folders/u);
+});
+
+test('a state.dir of ".." in a checkout named sessions leaves the checkout writable: no session folder lies there', { skip: process.platform === 'win32' }, (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-parent-state-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = path.join(base, 'sessions');
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '..' } }));
+  assert.equal(stateDir(findProject(dir)), base);
+  for (const file of ['src/app.js', 'README.md']) {
+    const result = subagentWrite(dir, 'plain-session', { file_path: path.join(dir, file), content: 'x\n' });
+    assert.equal(result.status, 0, `${file}: ${result.stderr}`);
   }
 });

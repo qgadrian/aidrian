@@ -15,19 +15,20 @@
 // aidrian ...`), and a path built from a variable. The gate's own checks (lib/handoff-markers.mjs) keep what gets past
 // harmless: a stray marker of the wrong shape, time, or host process is never delivered.
 
+import { readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { checkDeadline } from './deadline.mjs';
 import { bashCall, globNamesFile, opaqueTexts, writeTargets } from './config-guard.mjs';
-import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
+import { foldCase, globParts, isEntry, isWithin, partsReach } from './fs.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, opaqueShellCommand } from './hosts/index.mjs';
 import { defaultStateDir, stateDir, stateRoot } from './project.mjs';
-import { SESSION_FILES } from './session-folder.mjs';
+import { APPENDED_FILES, SESSION_FILES } from './session-folder.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { aidrianArgs, changesVariable, walkCommands } from './shell-lex.mjs';
 import { TERMINAL_FOLDER, terminalFolders } from './terminal-replace.mjs';
@@ -284,41 +285,79 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   const joined = opaque && names.some((name) => name.split('/').some((part) => STORE_FOLDER.test(part)));
   const unsure = (glob) => ((glob.unsure || glob.opaque) && globNamesStore(glob.text)) || (glob.opaque && globNamesFile(glob.text, STORE_TAIL));
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
-  const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
   const namedMode = unplaced.some(({ text }) => namesStore(text) || text.split('/').some((part) => STORE_PART.test(part)));
   if (joined || names.some(namesStore) || globs.some(unsure) || namedMode) {
     return held() ? { match: 'may change the continuation store', reason: why('may change', 'handoffs/.continue') } : null;
   }
-  const sure = globs.filter((glob) => !glob.unsure);
-  const known = sure.flatMap(globPaths);
-  if (files.length === 0 && known.length === 0 && placed.length === 0) return null;
+  const folders = () => {
+    const folder = state();
+    return [{ folder: real(storePath(folder)), shields: [real(folder), real(path.join(folder, 'handoffs'))] }];
+  };
+  const hit = reachesStateFolder(input, { files, globs, modes }, { dir, links, folders, roots: () => project.checkouts.map(real) });
+  if (!hit || !held()) return null;
+  const verb = opaque ? 'may change' : 'changes';
+  return { match: `${verb} the continuation store`, reason: why(verb, hit.folder) };
+}
+
+// Of `folders()`, each { folder, shields } as reaches takes them, the first the write targets of the call in `input`
+// reach, or null: continueStoreWriteDenial and sessionFoldersWriteDenial both ask it. It reads the targets' real paths
+// once (placedTargets), and asks `folders()` only past a cheap check: always with `dir`, a state folder the config moves;
+// else only when a target, or a link a glob may pass (globLinksTo, skipped with `links` false), lies near the state root.
+// `roots()` gives the project's checkouts, real and case-folded.
+function reachesStateFolder(input, { files, globs, modes }, { dir, links, folders, roots }) {
+  const { targets, known, placed, sure } = placedTargets({ files, globs, modes });
+  if (targets.length === 0 && known.length === 0 && placed.length === 0) return null;
   const root = real(stateRoot());
   const near = (target) => isWithin(root, target) || isWithin(target, root);
   // A glob anywhere may pass a link into the state root; the walk reads each folder once a call (linkWalk).
   const seen = linkWalk(input);
   const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
-  if (!dir && ![...realFiles(files), ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !linksTo(root)) return null;
-  const folder = state();
-  const store = real(storePath(folder));
-  const shields = [real(folder), real(path.join(folder, 'handoffs'))];
-  const hit = reaches({ files: realFiles(files), known, placed, linksTo }, store, shields, project.checkouts.map(real));
-  if (!hit || !held()) return null;
-  const verb = opaque ? 'may change' : 'changes';
-  return { match: `${verb} the continuation store`, reason: why(verb, store) };
+  if (!dir && ![...targets, ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !linksTo(root)) return null;
+  const checkouts = roots();
+  return folders().find(({ folder, shields }) => reaches({ files: targets, known, placed, linksTo }, folder, shields, checkouts)) ?? null;
 }
 
-// A path that names a session file (lib/session-folder.mjs SESSION_FILES) below a sessions folder, in any case:
-// `sessions/<a part>/<a file>`. The word `sessions` alone never counts, since a project may hold a folder of that name.
-const SESSION_FILE_NAME = new RegExp(String.raw`(?:^|/)sessions/[^/]+/(?:${SESSION_FILES.map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|')})(?:$|/)`, 'iu');
+// A text that names a session file (lib/session-folder.mjs SESSION_FILES) below a sessions folder, in any case:
+// `sessions/<a part>/<a file>`; or a file appended in place (APPENDED_FILES) by its name alone, since a `cd` the guard
+// cannot follow may have put the call in a session folder. Each is read as a path part: any character but a word
+// character, `.`, or `-` may stand before or after it, such as the closing quote that follows a path in interpreter
+// code. The word `sessions` alone never counts, since a project may hold a folder of that name, and nor does
+// `usage.json` alone, a name other tools use.
+const escapedNames = (names) => names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|');
+export const SESSION_FILE_NAME = new RegExp(String.raw`(?<![\w.-])sessions/[^/]+/(?:${escapedNames(SESSION_FILES)})(?![\w.-])|(?<![\w.-])(?:${escapedNames(APPENDED_FILES)})(?![\w.-])`, 'iu');
 
-// Why the call in `input` may not run because it writes in the session folders, `<state>/sessions/`, of the state folder
-// `state` gives, or null: { match, reason }. It holds for a subagent, and for a main session `unattended()` says the
-// background route started, asked once a call reaches the folders, read as continueStoreWriteDenial reads the store: a
-// target that lies in them, a folder that holds them and no checkout, a glob that may reach them by the path it spells
+// The real sessions folders a call may not reach, each { folder, shields }, its state folder the one shield:
+// `<state>/sessions` of the state folder `state`, when there is one, and that of every project's default state folder
+// under the state root, `<root>/projects/<id>/sessions`, that is there. So a subagent that works in another project,
+// or in none, still meets the session folders of the project its session started in. A sessions folder one of `roots`,
+// the checkouts, holds is left out: lib/session-folder.mjs never writes there, as with a `state.dir` of `..` in a
+// checkout named `sessions`, which would otherwise make every file of the checkout a session file.
+function sessionsFolders(state, roots) {
+  const own = state === null ? [] : [path.join(state, 'sessions')];
+  let found = [];
+  try {
+    const projects = path.join(stateRoot(), 'projects');
+    found = readdirSync(projects).map((name) => path.join(projects, name, 'sessions')).filter((each) => isEntry(each));
+  } catch {
+    // No state root, or no project in it: only the call's own folder.
+  }
+  const seen = new Set();
+  return [...own, ...found].map(real).filter((folder) => {
+    if (seen.has(folder) || roots.some((root) => isWithin(root, folder))) return false;
+    seen.add(folder);
+    return true;
+  }).map((folder) => ({ folder, shields: [path.dirname(folder)] }));
+}
+
+// Why the call in `input` may not run because it writes in the session folders, or null: { match, reason }. The folders
+// are those sessionsFolders gives for the state folder `state` gives, or for none with no `project`, as the agent gate
+// hook asks outside a project. It holds for a subagent, and for a main session `unattended()` says the background route
+// started, asked once a call reaches the folders, read as continueStoreWriteDenial reads the store (reachesStateFolder):
+// a target that lies in them, a folder that holds them and no checkout, a glob that may reach them by the path it spells
 // or through a link on disk, and a change of mode or owner of them or of a folder that holds them. A target no path
-// places, and a word of a command in a shell the lexer cannot read, count when they name SESSION_FILE_NAME. The hooks
-// and the aidrian commands write there through their own code, which no guard reads. With `links` false it skips the
-// link walk.
+// places, interpreter code, and a word of a command in a shell the lexer cannot read count when they name
+// SESSION_FILE_NAME. The hooks and the aidrian commands write there through their own code, which no guard reads. With
+// `links` false it skips the link walk.
 export function sessionFoldersWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false } = {}) {
   const subagent = isSubagent(input);
   const opaque = opaqueShellCommand(input) !== null;
@@ -332,21 +371,13 @@ export function sessionFoldersWriteDenial(input, project, { names: { human }, st
   if (names.some(named) || unplaced.some(({ text }) => named(text)) || globs.some((glob) => (glob.unsure || glob.opaque) && named(glob.text))) {
     return held() ? { match: 'may change the session folders', reason: why('may change', 'sessions/<id>') } : null;
   }
-  const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
-  const sure = globs.filter((glob) => !glob.unsure);
-  const known = sure.flatMap(globPaths);
-  if (files.length === 0 && known.length === 0 && placed.length === 0) return null;
-  const root = real(stateRoot());
-  const near = (target) => isWithin(root, target) || isWithin(target, root);
-  const seen = linkWalk(input);
-  const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
-  if (!dir && ![...realFiles(files), ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !linksTo(root)) return null;
-  const folder = state();
-  const sessions = real(path.join(folder, 'sessions'));
-  const hit = reaches({ files: realFiles(files), known, placed, linksTo }, sessions, [real(folder)], project.checkouts.map(real));
+  let checkouts;
+  const roots = () => (checkouts ??= (project?.checkouts ?? []).map(real));
+  const folders = () => sessionsFolders(project === null ? null : state(), roots());
+  const hit = reachesStateFolder(input, { files, globs, modes }, { dir: project !== null && Boolean(dir), links, folders, roots });
   if (!hit || !held()) return null;
   const verb = opaque ? 'may change' : 'changes';
-  return { match: `${verb} the session folders`, reason: why(verb, sessions) };
+  return { match: `${verb} the session folders`, reason: why(verb, hit.folder) };
 }
 
 // Whether the write targets of a call reach `folder`, a real, case-folded path: a file target lies in it, or holds it

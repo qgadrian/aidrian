@@ -18,7 +18,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 
 // Every name the facade gives its callers.
 const FACADE = [
-  'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState',
+  'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',

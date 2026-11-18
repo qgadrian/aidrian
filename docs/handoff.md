@@ -557,7 +557,8 @@ Each entry is the forge-neutral row the adapter fills ([Adding a forge](provider
 boolean, `mergeable` true, false, or null while the forge has not worked it out, `reviewDecision` `approved`,
 `changes_requested`, `review_required`, or null, `unresolvedThreads` the unresolved among the first 100 review threads,
 `checks` `{ passed, failed, pending, skipped }` counted over every check of the head commit with no check-name rule, and `url` the pull request's link on
-github.com, or null when the forge answered any other. A row on a host no adapter declares, such as gitlab.com, passes
+github.com, or null when the forge answered any other; a cached `url` shows only when it is the link the adapter's
+`changeUrl` builds for the entry's forge, repository, and number, else null. A row on a host no adapter declares, such as gitlab.com, passes
 the snapshot's own checks (a host name, an absolute folder, a positive number, a branch git takes) and shows with
 `unsupported: true`, no `forge`, and null for what the forge would answer; it starts no forge call. The ledger hook
 records rows only on a declared host, so such a row appears only from a ledger written another way, such as by a later

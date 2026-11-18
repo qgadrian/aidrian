@@ -415,11 +415,12 @@ export const resolveChanges = (forge, refs) => distinctRows(resolveSelection(for
 // resolveSelection gave it, for the refs `refs` still selects alone, newest first and one entry a change request, then
 // the `unsupported` rows. A row is `stale: true` when `stale` says the cache is past its window, or when a selected
 // ref has no answer in it, since the ledger moved on since the forge was read; the cache's own window refreshes it.
-export function shownChanges({ refs, unsupported, cache, stale }) {
+// Each row's `url` is the one the adapter `forge` takes for it (changeUrl), else null, so a cache never names a link.
+export function shownChanges({ forge, refs, unsupported, cache, stale }) {
   const answers = new Map(cache.refs.map((key, index) => [key, cache.rows[index]]));
   const keys = refs.map(refKey);
   const behind = stale || keys.some((key) => !answers.has(key));
-  const rows = distinctRows(keys.map((key) => answers.get(key) ?? null));
+  const rows = distinctRows(keys.map((key) => answers.get(key) ?? null)).map((row) => ({ ...row, url: typeof forge?.changeUrl === 'function' ? forge.changeUrl(row) : null }));
   return [...rows.map((row) => (behind ? { ...row, stale: true } : row)), ...unsupported].slice(0, MAX_REFS);
 }
 

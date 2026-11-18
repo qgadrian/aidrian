@@ -402,6 +402,15 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         return node ? changeRow(node) : null;
       });
     },
+    // The link of a change row, as changesState gives one or a cache holds one: its `url` when it is the one this adapter
+    // builds for the row's forge, host, repository, and number, in printable ASCII and equal to it but for letter case,
+    // as GitHub writes an owner's name; anything else, a link to another host included, is null.
+    changeUrl: (row) => {
+      const repo = typeof row?.repo === 'string' ? row.repo : '';
+      if (row?.forge !== FORGE_ID || changeRef({ host: row.host, path: repo, number: row.number }) === null) return null;
+      const built = `https://${CHANGES_HOST}/${repo}/pull/${row.number}`;
+      return typeof row.url === 'string' && /^[\x21-\x7e]+$/u.test(row.url) && row.url.toLowerCase() === built.toLowerCase() ? row.url : null;
+    },
     // The pull request `ref` (a number, a branch, or a URL; none: the current branch's), with the gh `fields` named;
     // `repo` looks in that repository instead of the default one. With a `repo`, an empty `ref` still goes to gh, as the
     // merge guard has always sent it: gh needs an argument with `--repo`, and an empty one is the current branch's.

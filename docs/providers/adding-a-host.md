@@ -191,6 +191,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   aliases built from indexes, every value a variable in a JSON body on gh's stdin, to the constant `--hostname
   github.com`. An answer that holds errors still gives the rows that resolved; one that does not parse throws. Shared
   code reads no field of the forge's answer, only this row.
+  `changeUrl(row)`, text only: a change row's `url` when it is the link the adapter builds for the row's `forge`,
+  `host`, `repo`, and `number` (GitHub's compares in printable ASCII, ignoring letter case), else null. The snapshot
+  passes every row it shows through it, so a cached row never shows a link to another host.
   A forge's reader of its own command for the ledger, such as GitHub's `gh pr` calls, `GH_REPO`, and the pull request
   URL in gh's output, sits under `lib/rules/<forge id>/`, as `lib/rules/github/session-calls.mjs` does. It runs nothing,
   exports `FORGE`, its adapter's `id`, `readCall`, `createdChanges`, and `variables`, the environment its command reads

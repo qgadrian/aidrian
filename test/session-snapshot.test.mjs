@@ -834,6 +834,24 @@ test('prs: a warm cache shows its rows only for refs the ledger still selects, s
   assert.deepEqual(json.errors, []);
 });
 
+test('prs: a cached url other than the one the adapter builds for the row shows as null', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7, { url: 'https://github.com/Acme/Notes/pull/7', repository: { name: 'Notes', owner: { login: 'Acme' } } }) } } });
+  assert.equal(env.run(['--session', ID]).json.prs[0].url, 'https://github.com/Acme/Notes/pull/7', 'GitHub`s own, in its own letter case');
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  const stored = JSON.parse(readFileSync(cache, 'utf8'));
+  const tampered = (url) => {
+    writeFileSync(cache, JSON.stringify({ ...stored, value: { ...stored.value, rows: [{ ...stored.value.rows[0], url }] } }), { mode: 0o600 });
+    return env.run(['--session', ID]).json.prs[0].url;
+  };
+  assert.equal(tampered('https://evil.example/acme/notes/pull/7'), null, 'another host');
+  assert.equal(tampered('https://github.com/acme/notes/pull/8'), null, 'another number');
+  assert.equal(tampered('https://github.com/acme/notes/pull/7\u202e'), null, 'a hidden character');
+  assert.equal(tampered('https://github.com/acme/notes/pull/7'), 'https://github.com/acme/notes/pull/7');
+  assert.equal(env.calls().length, 1, 'each read the cache');
+});
+
 test('prs: results cache 60s; past the deadline the cached rows are stale, and with no cache the section fails; no row gives []', { skip: !POSIX }, (t) => {
   const env = withLedger(t);
   env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);

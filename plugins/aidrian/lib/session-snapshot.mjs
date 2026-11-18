@@ -194,7 +194,7 @@ function prsSection(ctx, cwd, forge) {
   const { refs, unsupported } = sessionRefs(needed(readLedger(folder)), forgeFor(cwd));
   const refresh = () => forge((timeoutMs) => resolveSelection(forgeFor(cwd, { timeoutMs, ...KILL }), refs));
   const cached = refs.length ? needed(cachedValue({ folder, ...PRS_CACHE, isValue: isChangeCache, refresh })) : { value: { refs: [], rows: [] }, stale: false };
-  return shownChanges({ refs, unsupported, cache: cached.value, stale: cached.stale }).map(shownChange);
+  return shownChanges({ forge: forgeFor(cwd), refs, unsupported, cache: cached.value, stale: cached.stale }).map(shownChange);
 }
 
 // A change request's row as shown: its documented keys alone, in order, strings through displayText, flags as booleans.

@@ -24,7 +24,7 @@ import { HIDDEN } from './hidden-text.mjs';
 import { inboxPath, lessons, lessonStats } from './lesson-inbox.mjs';
 import { findProject, stateDir } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
-import { changesSummary, isChangeRows, readLedger, resolveChanges, sessionRefs } from './session-prs.mjs';
+import { changesSummary, isChangeCache, readLedger, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
 import { sessionFolder } from './session-folder.mjs';
 import { handoffStatus, stopMarkerPath } from './session-length.mjs';
 import { cachedSessionUsage } from './session-usage-cache.mjs';
@@ -186,15 +186,15 @@ function continuationOf(store, session, maxChain) {
 }
 
 // The change requests the session's ledger names (lib/session-prs.mjs), newest first: those on a host the forge adapter
-// declares from its one batched read, cached, each with `stale: true` when shown past the deadline, then the rest, each
+// declares from its one batched read, cached with its refs, as shownChanges shows them, then the rest, each
 // `unsupported: true`, which start no forge call. The forge runs in the session's folder `cwd`, never in one a ledger row
 // names. A ledger that cannot be read, or a read that fails with no cached value, throws.
 function prsSection(ctx, cwd, forge) {
   const folder = needed(outsideCheckout(ctx).folder);
   const { refs, unsupported } = sessionRefs(needed(readLedger(folder)), forgeFor(cwd));
-  const refresh = () => forge((timeoutMs) => resolveChanges(forgeFor(cwd, { timeoutMs, ...KILL }), refs));
-  const cached = refs.length ? needed(cachedValue({ folder, ...PRS_CACHE, isValue: isChangeRows, refresh })) : { value: [], stale: false };
-  return [...cached.value.map((row) => (cached.stale ? { ...row, stale: true } : row)), ...unsupported].map(shownChange);
+  const refresh = () => forge((timeoutMs) => resolveSelection(forgeFor(cwd, { timeoutMs, ...KILL }), refs));
+  const cached = refs.length ? needed(cachedValue({ folder, ...PRS_CACHE, isValue: isChangeCache, refresh })) : { value: { refs: [], rows: [] }, stale: false };
+  return shownChanges({ refs, unsupported, cache: cached.value, stale: cached.stale }).map(shownChange);
 }
 
 // A change request's row as shown: its documented keys alone, in order, strings through displayText, flags as booleans.

@@ -809,12 +809,29 @@ test('prs: a cached row`s key the docs do not name, at the top or inside checks,
   const cache = path.join(env.folder, PRS_CACHE.name);
   const stored = JSON.parse(readFileSync(cache, 'utf8'));
   const hostile = 'x\u202e\u009b2J';
-  const [row] = stored.value;
-  writeFileSync(cache, JSON.stringify({ ...stored, value: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile }, stale: hostile, unsupported: hostile }] }), { mode: 0o600 });
+  const [row] = stored.value.rows;
+  writeFileSync(cache, JSON.stringify({ ...stored, value: { ...stored.value, rows: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile }, stale: hostile, unsupported: hostile }] } }), { mode: 0o600 });
   const { json, stdout } = env.run(['--session', ID]);
   assert.deepEqual(json.prs, [{ ...PR_ROW, stale: false, unsupported: false }], 'the documented keys alone, checks its four counts, and each flag a boolean');
   assert.equal(env.calls().length, 1, 'the cached row was read, with no new forge call');
   assert.ok(!stdout.includes('smuggled') && !/[\u202e\u009b]/u.test(stdout), 'neither key nor its text shows');
+});
+
+test('prs: a warm cache shows its rows only for refs the ledger still selects, stale when one has no answer, and 25 entries at most', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  const numbered = [1, 2, 3, 4, 5].map((number) => ledgerRow(env.dir, { kind: 'created', number }, number));
+  env.ledger(numbered);
+  env.answer({ data: Object.fromEntries([5, 4, 3, 2, 1].map((number, index) => [`r${index}`, { pullRequest: prNode(number) }])) });
+  assert.deepEqual(env.run(['--session', ID]).json.prs.map(({ number }) => number), [5, 4, 3, 2, 1]);
+  // 23 rows of an unsupported host and one new pull request, newer than all five: the newest 25 keep #5 alone of them.
+  const unsupported = Array.from({ length: 23 }, (_, index) => ledgerRow(env.dir, { host: 'gitlab.com', number: 100 + index }, 10 + index));
+  env.ledger([...numbered, ...unsupported, ledgerRow(env.dir, { kind: 'created', number: 6 }, 40)]);
+  const { json } = env.run(['--session', ID]);
+  assert.equal(env.calls().length, 1, 'inside the window: the cache, with no new forge call');
+  const shown = json.prs.filter((each) => !each.unsupported);
+  assert.deepEqual(shown.map(({ number, stale }) => [number, stale]), [[5, true]], 'the evicted #1 to #4 are not shown; #6 has no answer yet, so #5 shows stale');
+  assert.ok(json.prs.length <= 25, `${json.prs.length} entries`);
+  assert.deepEqual(json.errors, []);
 });
 
 test('prs: results cache 60s; past the deadline the cached rows are stale, and with no cache the section fails; no row gives []', { skip: !POSIX }, (t) => {

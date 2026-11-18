@@ -7,7 +7,7 @@
 // read here is git's, which is no forge: a push (lib/git-push.mjs), and the remotes and the branch of the folder a call
 // ran in. A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, with no raw URL, command text, or
 // output, and every field checked first, so no row exceeds a fixed size. `aidrian session snapshot` reads it back:
-// readLedger, then sessionRefs, then resolveChanges through the adapter's one batched read.
+// readLedger, then sessionRefs, then resolveSelection through the adapter's one batched read, cached, and shownChanges.
 // It holds both the writer and the reader of the one ledger, so the hook's forge-seam test reads a single file.
 
 import { lstatSync } from 'node:fs';
@@ -383,20 +383,44 @@ export function sessionRefs(rows, forge) {
 // What a row on a host no adapter declares cannot know.
 const UNKNOWN = Object.freeze({ title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null });
 
-// The change requests `refs` resolve to, through the adapter's one batched read (changesState): rows that resolved to
-// the same change request, by the repository and number the forge answered, give one entry, the newest ref's. Throws
-// what the read throws.
-export function resolveChanges(forge, refs) {
+// A ref's key in the change requests' cache: every field the forge's answer for it depends on.
+const refKey = ({ host, path: repoPath, number, branch, rank = null }) => JSON.stringify([host, repoPath, number, branch, rank]);
+const REF_KEY_MAX_BYTES = 4096;
+
+// The answer the cache keeps for `refs`, through the adapter's one batched read (changesState): `{ refs, rows }`, each
+// ref's key and the change request it resolved to, or null. Throws what the read throws.
+export function resolveSelection(forge, refs) {
   const rows = forge.changesState(refs);
   if (!Array.isArray(rows)) throw new Error('no rows');
+  return { refs: refs.map(refKey), rows: refs.map((_, index) => (isChangeRow(rows[index]) ? rows[index] : null)) };
+}
+
+// `rows` less the nulls, and one entry for rows of the same change request, by the repository and number the forge
+// answered: the first, the newest ref's.
+function distinctRows(rows) {
   const seen = new Set();
   return rows.filter((row) => {
-    if (!isChangeRow(row)) return false;
+    if (row === null) return false;
     const key = JSON.stringify([row.host, row.repo, row.number]);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+
+// The change requests `refs` resolve to, one entry each (distinctRows). Throws what the read throws.
+export const resolveChanges = (forge, refs) => distinctRows(resolveSelection(forge, refs).rows);
+
+// What the snapshot shows of the session's change requests, MAX_REFS at most: the cached answer `cache`, as
+// resolveSelection gave it, for the refs `refs` still selects alone, newest first and one entry a change request, then
+// the `unsupported` rows. A row is `stale: true` when `stale` says the cache is past its window, or when a selected
+// ref has no answer in it, since the ledger moved on since the forge was read; the cache's own window refreshes it.
+export function shownChanges({ refs, unsupported, cache, stale }) {
+  const answers = new Map(cache.refs.map((key, index) => [key, cache.rows[index]]));
+  const keys = refs.map(refKey);
+  const behind = stale || keys.some((key) => !answers.has(key));
+  const rows = distinctRows(keys.map((key) => answers.get(key) ?? null));
+  return [...rows.map((row) => (behind ? { ...row, stale: true } : row)), ...unsupported].slice(0, MAX_REFS);
 }
 
 const STATES = new Set(['open', 'closed', 'merged']);
@@ -412,7 +436,10 @@ export const isChangeRow = (row) => row !== null && typeof row === 'object' && i
   && typeof row.isDraft === 'boolean' && STATES.has(row.state) && [true, false, null].includes(row.mergeable)
   && (row.reviewDecision === null || DECISIONS.has(row.reviewDecision)) && isCount(row.unresolvedThreads)
   && row.checks !== null && typeof row.checks === 'object' && CHECKS.every((name) => isCount(row.checks[name]));
-export const isChangeRows = (value) => Array.isArray(value) && value.length <= MAX_REFS && value.every(isChangeRow);
+// Whether `value` is the shape resolveSelection gives, as a cached one must be before it is read.
+export const isChangeCache = (value) => value !== null && typeof value === 'object' && Array.isArray(value.refs) && Array.isArray(value.rows)
+  && value.refs.length === value.rows.length && value.refs.length <= MAX_REFS
+  && value.refs.every((key) => typeof key === 'string' && key.length <= REF_KEY_MAX_BYTES) && value.rows.every((row) => row === null || isChangeRow(row));
 
 // The pull request summary of a status line: how many, then how many have a failed check, a pending one and none failed,
 // or only passed or skipped ones. One with no check counts in none.

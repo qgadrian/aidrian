@@ -562,9 +562,12 @@ the snapshot's own checks (a host name, an absolute folder, a positive number, a
 `unsupported: true`, no `forge`, and null for what the forge would answer; it starts no forge call. The ledger hook
 records rows only on a declared host, so such a row appears only from a ledger written another way, such as by a later
 adapter.
-The answer is cached for a minute in `prs-cache.json`, under the merged heads' rules: one forge call a minute at most,
-a 1 MiB read, and the 4 s budget, which the two reads share, this one first. Past it the cached entries show with
-`stale: true`, or `prs` is null with `prs` in `errors` when there is none. An answer that holds errors still gives the
+The answer is cached for a minute in `prs-cache.json`, with the refs it answered, under the merged heads' rules: one
+forge call a minute at most, a 1 MiB read, and the 4 s budget, which the two reads share, this one first. A cached
+answer shows only for the refs the ledger still selects, so a pull request pushed out of the newest 25 leaves, and the
+section never holds more than 25 entries, unsupported ones counted. When a selected ref has no cached answer, as when
+the session touched a new pull request inside the minute, the entries show with `stale: true` until the next refresh.
+Past the deadline the cached entries show with `stale: true`, or `prs` is null with `prs` in `errors` when there is none. An answer that holds errors still gives the
 pull requests that resolved; only one that does not parse, or the deadline, fails the read, and its text never shows.
 A ledger with no row, or whose rows resolve to none, gives `[]`. A ledger that cannot be read, such as a named pipe or
 a symlink there, makes `prs` null with `prs` in `errors`.

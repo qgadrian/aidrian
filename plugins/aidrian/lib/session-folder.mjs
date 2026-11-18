@@ -5,16 +5,19 @@
 // user can swap a folder between a check and the open that follows it, and the state folder resolves inside no checkout
 // of the repository. The sessions folder and the session folder are each a real folder, no symlink, owned by this
 // process's user, that no other user may read or write; and the session folder's real path is `<real state>/sessions/<id>`,
-// and is still the folder's own path at each write, read, and sweep, so a folder above it swapped for a symlink since gets
-// none. Its files are written as a
-// temporary file and a rename, mode 0600, under the names in SESSION_FILES alone; a file's reservation for one fixed
+// and is still the folder's own path at each write, read, and sweep (boundFolder), so a folder above it swapped for a
+// symlink since gets none. Its files are written as a temporary file and a rename, mode 0600, under the names in
+// SESSION_FILES alone, with one exception: the session's pull request ledger, `prs.jsonl` (APPENDED_FILES), which
+// lib/session-prs.mjs reads by its tail through readSessionTail, and appends to in place through appendSessionFile,
+// no-follow, mode 0600, only while it is a regular file with one link this user alone may read, and rewrites through
+// writeSessionFile when it is past its cap or an append would pass it; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
 // untouched for SWEEP_DAYS, and the sweep deletes only those names, their temporary files, and their reservations, then
 // the folder, which it never empties of anything else.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkoutHolding, isEntry, processGid, processUid, resolvedPath } from './fs.mjs';
@@ -36,6 +39,10 @@ export const reservationName = (name, index) => `${name}.${index}.lock`;
 export const SESSION_RESERVATION = new RegExp(String.raw`^(?:${SESSION_FILES.map(escaped).join('|')})\.\d+\.lock$`, 'u');
 // A temporary file or a reservation is created only where nothing is, and never through a symlink.
 const CREATE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+// The files appended to in place, never renamed over: the session ledger alone.
+export const APPENDED_FILES = Object.freeze(['prs.jsonl']);
+// An append opens where no symlink is, and never waits on a named pipe.
+const APPEND = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 // The real path of the folder of `sessionId` under the state folder `state`, created for this user alone when missing,
 // or null, with nothing made, written, or swept: the id fails SESSION_ID; `checkouts`, the project's, is no list; the
@@ -183,6 +190,61 @@ export function writeSessionFile(folder, name, text, { token = newToken(), uid =
       // The sweep removes it later.
     }
     return null;
+  }
+}
+
+// A tail read opens where no symlink is, and never waits on a named pipe.
+const READ_TAIL = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+// The last `maxBytes` of the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave: { text, cut },
+// `cut` true when the text starts inside a line, and { text: '', cut: false } when the file is missing. A file of any
+// size is read, its tail alone. Null, the read refused, when `folder` fails boundFolder at the time of the read, or the
+// file is a symlink (lstat, then opened no-follow), no regular file, has more than one link, or is not owned by `uid`
+// with a mode no other user may read or write (fstat of the descriptor). Opened non-blocking, so a named pipe never
+// waits. Never throws.
+export function readSessionTail(folder, name, { maxBytes, uid = processUid(), gid = processGid() } = {}) {
+  if (!APPENDED_FILES.includes(name) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || !boundFolder(folder, { uid, gid })) return null;
+  const file = path.join(folder, name);
+  let fd;
+  try {
+    if (!lstatSync(file).isFile()) return null;
+    fd = openSync(file, READ_TAIL);
+    const stat = fstatSync(fd);
+    const owned = !Number.isInteger(uid) || (stat.uid === uid && (stat.mode & 0o077) === 0);
+    if (!stat.isFile() || stat.nlink !== 1 || !owned) return null;
+    // One byte before the tail, when there is one, says whether the tail starts a line.
+    const start = Math.max(0, stat.size - maxBytes - 1);
+    const bytes = Buffer.alloc(stat.size - start);
+    let read = 0;
+    for (let n = 1; n > 0 && read < bytes.length; read += n) n = readSync(fd, bytes, read, bytes.length - read, start + read);
+    const text = bytes.subarray(0, read);
+    if (stat.size <= maxBytes) return { text: text.toString('utf8'), cut: false };
+    return { text: text.subarray(1).toString('utf8'), cut: text[0] !== 0x0a };
+  } catch (error) {
+    return error?.code === 'ENOENT' && fd === undefined ? { text: '', cut: false } : null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// Appends `text` to the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave: opened write-only,
+// append, create, no-follow, and non-blocking, mode 0600, and written only when `folder` passes boundFolder at the time
+// of the write, fstat of the descriptor shows a regular file with one link, owned by `uid`, that no other user may read
+// or write, and its size with `text` stays within `maxBytes`. Returns whether every byte was written. Never throws.
+export function appendSessionFile(folder, name, text, { maxBytes, uid = processUid(), gid = processGid() } = {}) {
+  if (!APPENDED_FILES.includes(name) || typeof text !== 'string' || !Number.isSafeInteger(maxBytes) || !boundFolder(folder, { uid, gid })) return false;
+  const bytes = Buffer.from(text);
+  let fd;
+  try {
+    fd = openSync(path.join(folder, name), APPEND, 0o600);
+    const stat = fstatSync(fd);
+    const owned = !Number.isInteger(uid) || (stat.uid === uid && (stat.mode & 0o077) === 0);
+    if (!stat.isFile() || stat.nlink !== 1 || !owned || stat.size + bytes.length > maxBytes) return false;
+    return writeSync(fd, bytes) === bytes.length;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 

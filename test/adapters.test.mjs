@@ -113,6 +113,18 @@ for (const host of [...HOSTS, fakeHost]) {
   });
 }
 
+test('a process no adapter claims reads a shell call`s response through every adapter`s shellOutput', () => {
+  assert.deepEqual(UNKNOWN_HOST.shellOutput({ stdout: 'out', stderr: '', interrupted: false }), { output: 'out', interrupted: false });
+  assert.deepEqual(UNKNOWN_HOST.shellOutput('combined output'), { output: 'combined output', interrupted: false });
+  assert.deepEqual(UNKNOWN_HOST.shellOutput({ stdout: '', interrupted: true }), { output: '', interrupted: true });
+  for (const response of [null, undefined, 7, [], { stdout: 7 }]) assert.deepEqual(UNKNOWN_HOST.shellOutput(response), { output: null, interrupted: false }, JSON.stringify(response));
+  for (const host of HOSTS) {
+    const read = host.shellOutput(null);
+    assert.deepEqual(Object.keys(read).sort(), ['interrupted', 'output'], host.id);
+    assert.equal(read.output, null, host.id);
+  }
+});
+
 for (const host of HOSTS) {
   test(`host ${host.id} has recorded payloads, which say whether they are live`, () => {
     const file = path.join(ROOT, 'test/fixtures/hosts', host.id, 'tracker.json');

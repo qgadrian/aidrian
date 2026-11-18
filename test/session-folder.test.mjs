@@ -1,13 +1,13 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import fs, { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { stateRoot } from '../plugins/aidrian/lib/project.mjs';
-import { boundFolder, heldFolder, readSessionFile, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { appendSessionFile, APPENDED_FILES, boundFolder, heldFolder, readSessionFile, readSessionTail, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { cachedSessionUsage } from '../plugins/aidrian/lib/session-usage-cache.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -311,10 +311,11 @@ test('a session file is not written into a folder another user may read, or thro
   assert.equal(writeSessionFile(path.join(root, 'missing'), 'usage.json', '{}'), null);
 });
 
-test('once a folder above a session folder is swapped for a symlink, its files are neither written, reserved, read, nor swept there', { skip: !POSIX }, () => {
+test('once a folder above a session folder is swapped for a symlink, its files are neither written, appended, reserved, read, nor swept there', { skip: !POSIX }, () => {
   const { state, sessions } = stateWithSessions();
   const folder = sessionFolder(state, 'abc', NONE);
   assert.ok(writeSessionFile(folder, 'usage.json', 'mine\n'));
+  assert.ok(appendSessionFile(folder, 'prs.jsonl', 'mine\n', { maxBytes: 1024 }));
   // Another user of a state folder moves the sessions folder away and links one elsewhere in its place, holding a
   // private folder of the same name, as the user's own folders are, with a usage cache of the session's transcript
   // whose fold no read of it gives, and an old session folder.
@@ -330,21 +331,29 @@ test('once a folder above a session folder is swapped for a symlink, its files a
   const then = new Date(Date.now() - 31 * DAY);
   utimesSync(planted, then, then);
   utimesSync(path.dirname(planted), then, then);
+  // And a ledger of rows the session never wrote.
+  const ledger = path.join(elsewhere, 'abc', 'prs.jsonl');
+  writeFileSync(ledger, 'theirs\n', { mode: 0o600 });
+  utimesSync(ledger, then, then);
+  utimesSync(path.dirname(planted), then, then);
   const old = oldFolder(elsewhere, 'old', 31);
   renameSync(sessions, path.join(state, 'moved'));
   symlinkSync(elsewhere, sessions);
   assert.equal(writeSessionFile(folder, 'usage.json', 'redirected\n'), null);
   assert.equal(reserveSessionFile(folder, 'usage.json', { windowMs: WINDOW }), null);
   assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024 }), null);
+  assert.equal(readSessionTail(folder, 'prs.jsonl', { maxBytes: 1024 }), null, 'the planted ledger is not read');
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'redirected\n', { maxBytes: 1024 }), false, 'nor appended to');
   assert.equal(boundFolder(folder), false);
   // The usage cache neither reads the planted usage.json nor writes over it.
   assert.equal(cachedSessionUsage({ transcript, cacheFile: path.join(folder, 'usage.json') }).model, 'mine');
   // A sweep from a new session's folder deletes nothing behind the symlink, however old.
   sweepSessions(sessions, { current: 'new', uid: process.getuid(), now: Date.now() });
   assert.deepEqual(readdirSync(elsewhere).sort(), ['abc', 'old']);
-  assert.deepEqual(readdirSync(path.join(elsewhere, 'abc')), ['usage.json']);
+  assert.deepEqual(readdirSync(path.join(elsewhere, 'abc')).sort(), ['prs.jsonl', 'usage.json']);
   assert.deepEqual(readdirSync(old), ['usage.json']);
   assert.equal(readFileSync(planted, 'utf8'), theirs);
+  assert.equal(readFileSync(ledger, 'utf8'), 'theirs\n');
 });
 
 const WINDOW = 60_000;
@@ -403,4 +412,60 @@ test('the sweep deletes a reservation only when it is a regular file', { skip: !
   utimesSync(old, then, then);
   assert.notEqual(sessionFolder(state, 'new', NONE), null);
   assert.equal(lstatSync(linked).isSymbolicLink(), true);
+});
+
+test('appendSessionFile appends the ledger in place, within its cap, and only the ledger', { skip: !POSIX }, () => {
+  const { state } = stateWithSessions();
+  const folder = sessionFolder(state, 'appender', NONE);
+  assert.deepEqual(APPENDED_FILES, ['prs.jsonl']);
+  assert.ok(SESSION_FILES.includes('prs.jsonl'), 'the sweep deletes it too');
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'a\n', { maxBytes: 10 }), true);
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'b\n', { maxBytes: 10 }), true);
+  assert.equal(readFileSync(path.join(folder, 'prs.jsonl'), 'utf8'), 'a\nb\n');
+  assert.equal(statSync(path.join(folder, 'prs.jsonl')).mode & 0o777, 0o600);
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'c'.repeat(7), { maxBytes: 10 }), false, 'past the cap: nothing written');
+  assert.equal(readFileSync(path.join(folder, 'prs.jsonl'), 'utf8'), 'a\nb\n');
+  assert.equal(appendSessionFile(folder, 'usage.json', 'x', { maxBytes: 10 }), false, 'a renamed file is never appended');
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'x'), false, 'no cap, no write');
+  assert.equal(existsSync(path.join(folder, 'usage.json')), false);
+});
+
+test('appendSessionFile writes nothing in a symlinked or group-readable folder', { skip: !POSIX }, () => {
+  const { state, sessions } = stateWithSessions();
+  const target = path.join(scratch(), 'target');
+  mkdirSync(target, { mode: 0o700 });
+  symlinkSync(target, path.join(sessions, 'linked'));
+  assert.equal(appendSessionFile(path.join(sessions, 'linked'), 'prs.jsonl', 'x\n', { maxBytes: 100 }), false);
+  assert.deepEqual(readdirSync(target), []);
+  const open = path.join(sessions, 'open');
+  mkdirSync(open, { mode: 0o700 });
+  chmodSync(open, 0o750);
+  assert.equal(appendSessionFile(open, 'prs.jsonl', 'x\n', { maxBytes: 100 }), false);
+  assert.deepEqual(readdirSync(open), []);
+  assert.equal(sessionFolder(state, 'fine', NONE) !== null, true);
+});
+
+test('readSessionTail reads the ledger no-follow: missing is empty, any size is its tail, and a link or a shared file is refused', { skip: !POSIX }, () => {
+  const { state } = stateWithSessions();
+  const folder = sessionFolder(state, 'reader', NONE);
+  const file = path.join(folder, 'prs.jsonl');
+  const tail = (maxBytes = 100) => readSessionTail(folder, 'prs.jsonl', { maxBytes });
+  assert.deepEqual(tail(), { text: '', cut: false });
+  appendSessionFile(folder, 'prs.jsonl', 'row\n', { maxBytes: 100 });
+  assert.deepEqual(tail(), { text: 'row\n', cut: false });
+  assert.deepEqual(tail(3), { text: 'ow\n', cut: true }, 'past the cap: the tail, never a refusal');
+  chmodSync(file, 0o644);
+  assert.equal(tail(), null, 'readable by others');
+  chmodSync(file, 0o600);
+  const other = path.join(scratch(), 'other.txt');
+  writeFileSync(other, 'x\n', { mode: 0o600 });
+  rmSync(file);
+  linkSync(other, file);
+  assert.equal(tail(), null, 'a hard link');
+  rmSync(file);
+  symlinkSync(other, file);
+  assert.equal(tail(), null, 'a symlink');
+  rmSync(file);
+  mkdirSync(file);
+  assert.equal(tail(), null, 'no regular file');
 });

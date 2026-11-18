@@ -1,0 +1,1299 @@
+{
+  "recordedAt": "2026-11-18T09:06:02.841Z",
+  "refs": [
+    {
+      "host": "github.com",
+      "path": "leonxljx/cli",
+      "number": null,
+      "branch": "fix/11247-pr-create-json"
+    },
+    {
+      "host": "github.com",
+      "path": "nodejs/node",
+      "number": null,
+      "branch": "actions/tools-update-acorn"
+    },
+    {
+      "host": "github.com",
+      "path": "cli/cli",
+      "number": null,
+      "branch": "aidrian-no-such-branch"
+    },
+    {
+      "host": "github.com",
+      "path": "cli/cli",
+      "number": 15035,
+      "branch": null
+    },
+    {
+      "host": "github.com",
+      "path": "aidrian-no-such-owner-x/none",
+      "number": 1,
+      "branch": null
+    }
+  ],
+  "status": 1,
+  "answer": {
+    "data": {
+      "r0": {
+        "pullRequests": {
+          "nodes": []
+        },
+        "parent": {
+          "pullRequests": {
+            "nodes": [
+              {
+                "number": 15035,
+                "title": "feat(pr): add JSON output flags to pr create",
+                "url": "https://github.com/cli/cli/pull/15035",
+                "isDraft": false,
+                "state": "CLOSED",
+                "mergeable": "MERGEABLE",
+                "reviewDecision": "REVIEW_REQUIRED",
+                "createdAt": "2026-11-12T03:17:32Z",
+                "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
+                "headRepository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "LeonxLJX"
+                  }
+                },
+                "repository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "cli"
+                  }
+                },
+                "reviewThreads": {
+                  "nodes": [
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    }
+                  ]
+                },
+                "commits": {
+                  "nodes": [
+                    {
+                      "commit": {
+                        "statusCheckRollup": {
+                          "contexts": {
+                            "checkRunCountsByState": [
+                              {
+                                "state": "ACTION_REQUIRED",
+                                "count": 0
+                              },
+                              {
+                                "state": "CANCELLED",
+                                "count": 0
+                              },
+                              {
+                                "state": "COMPLETED",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "IN_PROGRESS",
+                                "count": 0
+                              },
+                              {
+                                "state": "NEUTRAL",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "QUEUED",
+                                "count": 0
+                              },
+                              {
+                                "state": "SKIPPED",
+                                "count": 20
+                              },
+                              {
+                                "state": "STALE",
+                                "count": 0
+                              },
+                              {
+                                "state": "STARTUP_FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 8
+                              },
+                              {
+                                "state": "TIMED_OUT",
+                                "count": 0
+                              },
+                              {
+                                "state": "WAITING",
+                                "count": 0
+                              }
+                            ],
+                            "statusContextCountsByState": [
+                              {
+                                "state": "EXPECTED",
+                                "count": 0
+                              },
+                              {
+                                "state": "ERROR",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 0
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "number": 15034,
+                "title": "feat(pr): structured output for pr create",
+                "url": "https://github.com/cli/cli/pull/15034",
+                "isDraft": false,
+                "state": "CLOSED",
+                "mergeable": "MERGEABLE",
+                "reviewDecision": "REVIEW_REQUIRED",
+                "createdAt": "2026-11-12T03:16:21Z",
+                "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
+                "headRepository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "LeonxLJX"
+                  }
+                },
+                "repository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "cli"
+                  }
+                },
+                "reviewThreads": {
+                  "nodes": [
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    }
+                  ]
+                },
+                "commits": {
+                  "nodes": [
+                    {
+                      "commit": {
+                        "statusCheckRollup": {
+                          "contexts": {
+                            "checkRunCountsByState": [
+                              {
+                                "state": "ACTION_REQUIRED",
+                                "count": 0
+                              },
+                              {
+                                "state": "CANCELLED",
+                                "count": 0
+                              },
+                              {
+                                "state": "COMPLETED",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "IN_PROGRESS",
+                                "count": 0
+                              },
+                              {
+                                "state": "NEUTRAL",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "QUEUED",
+                                "count": 0
+                              },
+                              {
+                                "state": "SKIPPED",
+                                "count": 20
+                              },
+                              {
+                                "state": "STALE",
+                                "count": 0
+                              },
+                              {
+                                "state": "STARTUP_FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 8
+                              },
+                              {
+                                "state": "TIMED_OUT",
+                                "count": 0
+                              },
+                              {
+                                "state": "WAITING",
+                                "count": 0
+                              }
+                            ],
+                            "statusContextCountsByState": [
+                              {
+                                "state": "EXPECTED",
+                                "count": 0
+                              },
+                              {
+                                "state": "ERROR",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 0
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "number": 15033,
+                "title": "feat(pr): add --json and --jq flags to pr create",
+                "url": "https://github.com/cli/cli/pull/15033",
+                "isDraft": false,
+                "state": "CLOSED",
+                "mergeable": "MERGEABLE",
+                "reviewDecision": "REVIEW_REQUIRED",
+                "createdAt": "2026-11-12T03:15:27Z",
+                "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
+                "headRepository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "LeonxLJX"
+                  }
+                },
+                "repository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "cli"
+                  }
+                },
+                "reviewThreads": {
+                  "nodes": [
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    }
+                  ]
+                },
+                "commits": {
+                  "nodes": [
+                    {
+                      "commit": {
+                        "statusCheckRollup": {
+                          "contexts": {
+                            "checkRunCountsByState": [
+                              {
+                                "state": "ACTION_REQUIRED",
+                                "count": 0
+                              },
+                              {
+                                "state": "CANCELLED",
+                                "count": 0
+                              },
+                              {
+                                "state": "COMPLETED",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "IN_PROGRESS",
+                                "count": 0
+                              },
+                              {
+                                "state": "NEUTRAL",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "QUEUED",
+                                "count": 0
+                              },
+                              {
+                                "state": "SKIPPED",
+                                "count": 20
+                              },
+                              {
+                                "state": "STALE",
+                                "count": 0
+                              },
+                              {
+                                "state": "STARTUP_FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 8
+                              },
+                              {
+                                "state": "TIMED_OUT",
+                                "count": 0
+                              },
+                              {
+                                "state": "WAITING",
+                                "count": 0
+                              }
+                            ],
+                            "statusContextCountsByState": [
+                              {
+                                "state": "EXPECTED",
+                                "count": 0
+                              },
+                              {
+                                "state": "ERROR",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 0
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "number": 15032,
+                "title": "feat(pr): add --json and --jq flags to pr create",
+                "url": "https://github.com/cli/cli/pull/15032",
+                "isDraft": false,
+                "state": "CLOSED",
+                "mergeable": "MERGEABLE",
+                "reviewDecision": "REVIEW_REQUIRED",
+                "createdAt": "2026-11-12T03:12:41Z",
+                "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
+                "headRepository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "LeonxLJX"
+                  }
+                },
+                "repository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "cli"
+                  }
+                },
+                "reviewThreads": {
+                  "nodes": [
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    }
+                  ]
+                },
+                "commits": {
+                  "nodes": [
+                    {
+                      "commit": {
+                        "statusCheckRollup": {
+                          "contexts": {
+                            "checkRunCountsByState": [
+                              {
+                                "state": "ACTION_REQUIRED",
+                                "count": 0
+                              },
+                              {
+                                "state": "CANCELLED",
+                                "count": 0
+                              },
+                              {
+                                "state": "COMPLETED",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "IN_PROGRESS",
+                                "count": 0
+                              },
+                              {
+                                "state": "NEUTRAL",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "QUEUED",
+                                "count": 0
+                              },
+                              {
+                                "state": "SKIPPED",
+                                "count": 20
+                              },
+                              {
+                                "state": "STALE",
+                                "count": 0
+                              },
+                              {
+                                "state": "STARTUP_FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 8
+                              },
+                              {
+                                "state": "TIMED_OUT",
+                                "count": 0
+                              },
+                              {
+                                "state": "WAITING",
+                                "count": 0
+                              }
+                            ],
+                            "statusContextCountsByState": [
+                              {
+                                "state": "EXPECTED",
+                                "count": 0
+                              },
+                              {
+                                "state": "ERROR",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 0
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "number": 15031,
+                "title": "feat(pr): add --json and --jq flags to pr create",
+                "url": "https://github.com/cli/cli/pull/15031",
+                "isDraft": false,
+                "state": "CLOSED",
+                "mergeable": "MERGEABLE",
+                "reviewDecision": "REVIEW_REQUIRED",
+                "createdAt": "2026-11-12T02:20:00Z",
+                "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
+                "headRepository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "LeonxLJX"
+                  }
+                },
+                "repository": {
+                  "name": "cli",
+                  "owner": {
+                    "login": "cli"
+                  }
+                },
+                "reviewThreads": {
+                  "nodes": [
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    },
+                    {
+                      "isResolved": false
+                    }
+                  ]
+                },
+                "commits": {
+                  "nodes": [
+                    {
+                      "commit": {
+                        "statusCheckRollup": {
+                          "contexts": {
+                            "checkRunCountsByState": [
+                              {
+                                "state": "ACTION_REQUIRED",
+                                "count": 0
+                              },
+                              {
+                                "state": "CANCELLED",
+                                "count": 0
+                              },
+                              {
+                                "state": "COMPLETED",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "IN_PROGRESS",
+                                "count": 0
+                              },
+                              {
+                                "state": "NEUTRAL",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "QUEUED",
+                                "count": 0
+                              },
+                              {
+                                "state": "SKIPPED",
+                                "count": 20
+                              },
+                              {
+                                "state": "STALE",
+                                "count": 0
+                              },
+                              {
+                                "state": "STARTUP_FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 8
+                              },
+                              {
+                                "state": "TIMED_OUT",
+                                "count": 0
+                              },
+                              {
+                                "state": "WAITING",
+                                "count": 0
+                              }
+                            ],
+                            "statusContextCountsByState": [
+                              {
+                                "state": "EXPECTED",
+                                "count": 0
+                              },
+                              {
+                                "state": "ERROR",
+                                "count": 0
+                              },
+                              {
+                                "state": "FAILURE",
+                                "count": 0
+                              },
+                              {
+                                "state": "PENDING",
+                                "count": 0
+                              },
+                              {
+                                "state": "SUCCESS",
+                                "count": 0
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "r1": {
+        "pullRequests": {
+          "nodes": [
+            {
+              "number": 66715,
+              "title": "deps: update acorn to 8.19.0",
+              "url": "https://github.com/nodejs/node/pull/66715",
+              "isDraft": false,
+              "state": "CLOSED",
+              "mergeable": "MERGEABLE",
+              "reviewDecision": "REVIEW_REQUIRED",
+              "createdAt": "2026-10-14T03:22:28Z",
+              "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "NONE",
+              "headRepository": {
+                "name": "node",
+                "owner": {
+                  "login": "Afreire1984"
+                }
+              },
+              "repository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "reviewThreads": {
+                "nodes": []
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "statusCheckRollup": {
+                        "contexts": {
+                          "checkRunCountsByState": [
+                            {
+                              "state": "ACTION_REQUIRED",
+                              "count": 0
+                            },
+                            {
+                              "state": "CANCELLED",
+                              "count": 0
+                            },
+                            {
+                              "state": "COMPLETED",
+                              "count": 0
+                            },
+                            {
+                              "state": "FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "IN_PROGRESS",
+                              "count": 0
+                            },
+                            {
+                              "state": "NEUTRAL",
+                              "count": 0
+                            },
+                            {
+                              "state": "PENDING",
+                              "count": 0
+                            },
+                            {
+                              "state": "QUEUED",
+                              "count": 0
+                            },
+                            {
+                              "state": "SKIPPED",
+                              "count": 41
+                            },
+                            {
+                              "state": "STALE",
+                              "count": 0
+                            },
+                            {
+                              "state": "STARTUP_FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "SUCCESS",
+                              "count": 36
+                            },
+                            {
+                              "state": "TIMED_OUT",
+                              "count": 0
+                            },
+                            {
+                              "state": "WAITING",
+                              "count": 0
+                            }
+                          ],
+                          "statusContextCountsByState": [
+                            {
+                              "state": "EXPECTED",
+                              "count": 0
+                            },
+                            {
+                              "state": "ERROR",
+                              "count": 0
+                            },
+                            {
+                              "state": "FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "PENDING",
+                              "count": 0
+                            },
+                            {
+                              "state": "SUCCESS",
+                              "count": 30
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "number": 66655,
+              "title": "deps: update acorn to 8.19.0",
+              "url": "https://github.com/nodejs/node/pull/66655",
+              "isDraft": false,
+              "state": "MERGED",
+              "mergeable": "UNKNOWN",
+              "reviewDecision": "APPROVED",
+              "createdAt": "2026-10-11T01:04:42Z",
+              "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
+              "headRepository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "repository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "reviewThreads": {
+                "nodes": []
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "statusCheckRollup": {
+                        "contexts": {
+                          "checkRunCountsByState": [
+                            {
+                              "state": "ACTION_REQUIRED",
+                              "count": 0
+                            },
+                            {
+                              "state": "CANCELLED",
+                              "count": 0
+                            },
+                            {
+                              "state": "COMPLETED",
+                              "count": 0
+                            },
+                            {
+                              "state": "FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "IN_PROGRESS",
+                              "count": 0
+                            },
+                            {
+                              "state": "NEUTRAL",
+                              "count": 0
+                            },
+                            {
+                              "state": "PENDING",
+                              "count": 0
+                            },
+                            {
+                              "state": "QUEUED",
+                              "count": 0
+                            },
+                            {
+                              "state": "SKIPPED",
+                              "count": 41
+                            },
+                            {
+                              "state": "STALE",
+                              "count": 0
+                            },
+                            {
+                              "state": "STARTUP_FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "SUCCESS",
+                              "count": 36
+                            },
+                            {
+                              "state": "TIMED_OUT",
+                              "count": 0
+                            },
+                            {
+                              "state": "WAITING",
+                              "count": 0
+                            }
+                          ],
+                          "statusContextCountsByState": [
+                            {
+                              "state": "EXPECTED",
+                              "count": 0
+                            },
+                            {
+                              "state": "ERROR",
+                              "count": 0
+                            },
+                            {
+                              "state": "FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "PENDING",
+                              "count": 0
+                            },
+                            {
+                              "state": "SUCCESS",
+                              "count": 30
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "number": 61925,
+              "title": "deps: update acorn to 8.16.0",
+              "url": "https://github.com/nodejs/node/pull/61925",
+              "isDraft": false,
+              "state": "MERGED",
+              "mergeable": "UNKNOWN",
+              "reviewDecision": "APPROVED",
+              "createdAt": "2026-02-22T00:49:17Z",
+              "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
+              "headRepository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "repository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "reviewThreads": {
+                "nodes": []
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "statusCheckRollup": {
+                        "contexts": {
+                          "checkRunCountsByState": [
+                            {
+                              "state": "ACTION_REQUIRED",
+                              "count": 0
+                            },
+                            {
+                              "state": "CANCELLED",
+                              "count": 0
+                            },
+                            {
+                              "state": "COMPLETED",
+                              "count": 0
+                            },
+                            {
+                              "state": "FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "IN_PROGRESS",
+                              "count": 0
+                            },
+                            {
+                              "state": "NEUTRAL",
+                              "count": 0
+                            },
+                            {
+                              "state": "PENDING",
+                              "count": 0
+                            },
+                            {
+                              "state": "QUEUED",
+                              "count": 0
+                            },
+                            {
+                              "state": "SKIPPED",
+                              "count": 24
+                            },
+                            {
+                              "state": "STALE",
+                              "count": 0
+                            },
+                            {
+                              "state": "STARTUP_FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "SUCCESS",
+                              "count": 27
+                            },
+                            {
+                              "state": "TIMED_OUT",
+                              "count": 0
+                            },
+                            {
+                              "state": "WAITING",
+                              "count": 0
+                            }
+                          ],
+                          "statusContextCountsByState": [
+                            {
+                              "state": "EXPECTED",
+                              "count": 0
+                            },
+                            {
+                              "state": "ERROR",
+                              "count": 0
+                            },
+                            {
+                              "state": "FAILURE",
+                              "count": 0
+                            },
+                            {
+                              "state": "PENDING",
+                              "count": 0
+                            },
+                            {
+                              "state": "SUCCESS",
+                              "count": 32
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "number": 58711,
+              "title": "deps: update acorn to 8.15.0",
+              "url": "https://github.com/nodejs/node/pull/58711",
+              "isDraft": false,
+              "state": "MERGED",
+              "mergeable": "UNKNOWN",
+              "reviewDecision": "APPROVED",
+              "createdAt": "2025-06-15T00:41:01Z",
+              "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
+              "headRepository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "repository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "reviewThreads": {
+                "nodes": []
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "statusCheckRollup": null
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "number": 57382,
+              "title": "deps: update acorn to 8.14.1",
+              "url": "https://github.com/nodejs/node/pull/57382",
+              "isDraft": false,
+              "state": "MERGED",
+              "mergeable": "UNKNOWN",
+              "reviewDecision": "APPROVED",
+              "createdAt": "2025-03-09T00:29:08Z",
+              "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
+              "headRepository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "repository": {
+                "name": "node",
+                "owner": {
+                  "login": "nodejs"
+                }
+              },
+              "reviewThreads": {
+                "nodes": []
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "statusCheckRollup": null
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "parent": null
+      },
+      "r2": {
+        "pullRequests": {
+          "nodes": []
+        },
+        "parent": null
+      },
+      "r3": {
+        "pullRequest": {
+          "number": 15035,
+          "title": "feat(pr): add JSON output flags to pr create",
+          "url": "https://github.com/cli/cli/pull/15035",
+          "isDraft": false,
+          "state": "CLOSED",
+          "mergeable": "MERGEABLE",
+          "reviewDecision": "REVIEW_REQUIRED",
+          "createdAt": "2026-11-12T03:17:32Z",
+          "headRefName": "fix/11247-pr-create-json",
+          "viewerDidAuthor": false,
+          "authorAssociation": "NONE",
+          "headRepository": {
+            "name": "cli",
+            "owner": {
+              "login": "LeonxLJX"
+            }
+          },
+          "repository": {
+            "name": "cli",
+            "owner": {
+              "login": "cli"
+            }
+          },
+          "reviewThreads": {
+            "nodes": [
+              {
+                "isResolved": false
+              },
+              {
+                "isResolved": false
+              },
+              {
+                "isResolved": false
+              }
+            ]
+          },
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "statusCheckRollup": {
+                    "contexts": {
+                      "checkRunCountsByState": [
+                        {
+                          "state": "ACTION_REQUIRED",
+                          "count": 0
+                        },
+                        {
+                          "state": "CANCELLED",
+                          "count": 0
+                        },
+                        {
+                          "state": "COMPLETED",
+                          "count": 0
+                        },
+                        {
+                          "state": "FAILURE",
+                          "count": 0
+                        },
+                        {
+                          "state": "IN_PROGRESS",
+                          "count": 0
+                        },
+                        {
+                          "state": "NEUTRAL",
+                          "count": 0
+                        },
+                        {
+                          "state": "PENDING",
+                          "count": 0
+                        },
+                        {
+                          "state": "QUEUED",
+                          "count": 0
+                        },
+                        {
+                          "state": "SKIPPED",
+                          "count": 20
+                        },
+                        {
+                          "state": "STALE",
+                          "count": 0
+                        },
+                        {
+                          "state": "STARTUP_FAILURE",
+                          "count": 0
+                        },
+                        {
+                          "state": "SUCCESS",
+                          "count": 8
+                        },
+                        {
+                          "state": "TIMED_OUT",
+                          "count": 0
+                        },
+                        {
+                          "state": "WAITING",
+                          "count": 0
+                        }
+                      ],
+                      "statusContextCountsByState": [
+                        {
+                          "state": "EXPECTED",
+                          "count": 0
+                        },
+                        {
+                          "state": "ERROR",
+                          "count": 0
+                        },
+                        {
+                          "state": "FAILURE",
+                          "count": 0
+                        },
+                        {
+                          "state": "PENDING",
+                          "count": 0
+                        },
+                        {
+                          "state": "SUCCESS",
+                          "count": 0
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "r4": null
+    },
+    "errors": [
+      {
+        "type": "NOT_FOUND",
+        "path": [
+          "r4"
+        ],
+        "locations": [
+          {
+            "line": 1,
+            "column": 1133
+          }
+        ],
+        "message": "Could not resolve to a Repository with the name 'aidrian-no-such-owner-x/none'."
+      }
+    ]
+  }
+}

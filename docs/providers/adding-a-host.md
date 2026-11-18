@@ -59,6 +59,7 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `serverSpelling(server)` | How it spells a server's name, such as a hyphen as an underscore |
 | `githubTools` | Optional: a GitHub connector's merge, comment, and ready tools by standard name, each with `as`, the GitHub MCP server's tool it stands for, `repo`, its `owner/name` input, `fields`, and `fixed`, the inputs the tool implies without taking them, such as `draft: false`. `hooks.json` lists each by its raw name |
 | `toolResponse(response)` | The objects a tool's response holds, the most direct first |
+| `shellOutput(response)` | Optional: a shell call's response as `{ output, interrupted }`: `output` the text the command printed, or null when the response holds none it can read, and `interrupted` whether the host stopped the call. The [session ledger](../hooks.md#session-ledger) reads a created pull request's link from `output` alone, so no shared code reads a payload field. A host without it records no created pull request, and a process no adapter claims reads it through every adapter's, the first output one reads, interrupted when any says so |
 | `hookInput(input)` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is. A call of a tool the host runs under another tool's permission rules may carry `permission_tool_name`, that tool's standard name, which a bare deny of it then covers (`deniedNames` in `lib/hosts/index.mjs`) |
 | `opaqueShellTools` | Optional: its tools that run `tool_input.command` in a shell the shared lexer cannot read, such as PowerShell. They keep their own name, so no `Bash(<prefix>)` pattern admits them, and the guards read the command as opaque text, failing closed for a subagent (`opaqueShellCommand` in `lib/hosts/index.mjs`). Every `Bash` and `Bash(<prefix>)` deny covers them (`deniedNames`) |
 | `sessionStart` | Optional: `{ programs, starts(args) }`, the host's own command that starts or resumes a session. `programs` are the command's names; `starts` takes the lexer's argument tokens after the name, each `{ text, dynamic }`, and says whether that command line starts or resumes one, failing closed on a word it does not know. The agent gates hook refuses such a command to a subagent and to a session the background handoff route started, for every host's command whatever host runs the session (`hostSessionStartDenial` in `lib/handoff-guard.mjs`) |
@@ -163,6 +164,42 @@ A forge is where a pull request lives: its checks, reviews, comments, and reposi
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
 
 - `id`, `cwd`, and the helper `isTrustedCommenter(comment)`.
+- The session ledger's members ([Session ledger](../hooks.md#session-ledger)): `hosts`, the hosts the adapter serves,
+  a constant in its own file (`FORGE_HOSTS`, `['github.com']` for GitHub), which no config, remote, ledger row, or cache
+  adds to; and `changeRef({ host, path, number, branch })`, text only, which starts no process and answers the frozen
+  ref `{ host, owner, name, number, branch }` when every field has the forge's shape, else null. GitHub's takes a host
+  it declares, a path of exactly `owner/name` with an owner shaped as a login and a repository name, a positive whole
+  number that GraphQL's `Int` holds (2,147,483,647 at most, so one number never fails a batched read), and a branch that passes git's ref-name rules within 255 bytes (`isRefName` in `lib/git.mjs`), with at least
+  one of number and branch. The hook calls it before every ledger write, and the snapshot before every read.
+  `changesState(refs)`, the one batched read of the snapshot's `prs`: given refs `{ host, path, number, branch }` as the
+  ledger holds them, newest first, it answers, for each of the first 25, the forge-neutral row of its change request, or
+  null when the ref fails `changeRef`, resolves to none, or the forge gives no answer for it. A number is its own change
+  request; a branch is, among those whose head is that branch of the ref's repository, in that repository or the one
+  it was forked from, with the ref's `rank` `open` (a `touched` row's), the open one first, then the newest, as the
+  forge's own command looks a branch up, and otherwise the one the forge's signed-in user wrote first, as the change request itself says (GitHub's
+  `viewerDidAuthor`), then one by a person who belongs to the repository (GitHub's `authorAssociation` of `OWNER`,
+  `MEMBER`, or `COLLABORATOR`; any other is an outsider's), then an open one, then the newest, never one from a fork
+  with a branch of the same name. The read names no field of the signed-in user at the query's root, which a token
+  that cannot resolve it, such as an app's installation token, would turn into no answer at all. The row is
+  `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`:
+  `forge` the adapter's `id`; `host` and `repo` the repository as `repoIdentity` reads it, `repo` its path; `state`
+  `open`, `closed`, or `merged`; `isDraft` a boolean; `mergeable` true, false, or null while the forge has not worked it
+  out; `reviewDecision` `approved`, `changes_requested`, `review_required`, or null; `unresolvedThreads` a count;
+  `checks` `{ passed, failed, pending, skipped }`, counts of every check of the head, with no check-name rule; and `url`
+  the change request's link, built by the adapter from the owner, name, and number the forge answered, or null. One
+  call for all the refs, which never holds a value in its text or its arguments: GitHub's sends one GraphQL query, its
+  aliases built from indexes, every value a variable in a JSON body on gh's stdin, to the constant `--hostname
+  github.com`. An answer that holds errors still gives the rows that resolved; one that does not parse throws. Shared
+  code reads no field of the forge's answer, only this row.
+  `changeUrl(row)`, text only: a change row's `url` when it is the link the adapter builds for the row's `forge`,
+  `host`, `repo`, and `number` (GitHub's compares in printable ASCII, ignoring letter case), else null. The snapshot
+  passes every row it shows through it, so a cached row never shows a link to another host.
+  A forge's reader of its own command for the ledger, such as GitHub's `gh pr` calls, `GH_REPO`, and the pull request
+  URL in gh's output, sits under `lib/rules/<forge id>/`, as `lib/rules/github/session-calls.mjs` does. It runs nothing,
+  exports `FORGE`, its adapter's `id`, `readCall`, `createdChanges`, and `variables`, the environment its command reads
+  its repository and host from, and may export `checkedOutChange(merge)`, the change request a branch's
+  `branch.<name>.merge` names (GitHub's `refs/pull/<n>/head`), and `headRepository(repo, owner)`, the repository an
+  `owner:branch` target's head is in, and the hook hands it to the shared `lib/session-prs.mjs` in a table keyed by that id.
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, `pull`, `diff`, its diff as text,
   where `mergedChanges` and `openChanges` take a `repo` option, the repository the check below names,
   `nodeChange`, the pull request a GraphQL node id names, `changeEdits(repo, n, { host })`, when its body was last edited
@@ -221,7 +258,7 @@ Both read any `file:` URL as a local path, one that names a host, such as `file:
 `aidrian session snapshot` reads origin with it, and `aidrian pr checks` each remote it matches `-R` against,
 so a local remote names no host there.
 
-The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names.
+The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names, but for `changesState`, which answers the forge-neutral row above.
 The arguments are GitHub's too: the `fields` strings callers pass to `change`, `mergedChanges`, and `openChanges`
 are gh's `--json` names, such as `number,headRefOid`, and the reaction contents, such as `+1`, are GitHub's.
 That shape is provisional: it stays as it is until a second adapter shows which fields both forges share,
@@ -247,3 +284,5 @@ An adapter moves the calls. Some text and code still assume GitHub, so each of t
 | Skills that run gh in code blocks: `pr-merge-when-green` (10 lines), `pr-screenshot` (7), `pr-review` (3), `pr-review-loop` (3), `pr-write` (2), `knowledge` (1), `session-continue` (1) | The forge's command for each step, or an `aidrian` command that reads through `forgeFor`, as `aidrian pr checks` does. The counts are the fenced lines that run gh across each skill's folder, `references/` and `steps/` included: recount them before the work starts |
 | `lib/review-gate.mjs`: `repoName`, and the review marker `markerFor` writes | Both keep only `owner/name`, the last two parts of a path, so a namespaced path such as `a/sub/project` loses its namespace and its host. They need the full `repoIdentity` |
 | `lib/lesson-signals.mjs` | It builds `https://github.com/<owner>/<name>/pull/<n>` as a lesson's evidence; it needs the forge's own link to a pull request |
+| `aidrian session snapshot`: the `PR` and `PRs` words of its `--line` summary (`changesSummary` in `lib/session-prs.mjs`) | GitHub's word for a change request, such as GitLab's `MR` |
+| The snapshot's `prs` key, the ledger `prs.jsonl`, its cache `prs-cache.json`, and the module `lib/session-prs.mjs` | GitHub's word for a change request, kept for every forge: a rename moves the key, the files, and every reader of them together |

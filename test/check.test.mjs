@@ -520,6 +520,10 @@ test('each screen file asks its nearest package.json whether it is native, so a 
 
   writeFileSync(path.join(dir, 'packages/web/package.json'), '{ not json');
   assert.match(check(), warns('packages/web/src/App.tsx'), 'a manifest that does not parse keeps the warning');
+  rmSync(path.join(dir, 'packages/web/package.json'));
+  symlinkSync(path.join(dir, 'packages/web/gone.json'), path.join(dir, 'packages/web/package.json'));
+  assert.match(check(), warns('packages/web/src/App.tsx'), 'a manifest that is a broken link keeps the warning, not the native root above it');
+  rmSync(path.join(dir, 'packages/web/package.json'));
   writeFileSync(path.join(dir, 'packages/web/package.json'), deps({ 'react-native': '0.80.0' }));
   assert.equal(check(), '', 'a native workspace is native');
   writeFileSync(path.join(dir, 'package.json'), deps({ react: '19.0.0' }));

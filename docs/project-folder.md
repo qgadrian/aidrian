@@ -143,7 +143,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
 │   ├── .prior/           the brief a refresh supersedes, and the last brief that passed aidrian handoff check
-│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors
+│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors, requests to end, follow records
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
@@ -167,7 +167,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
 - Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
   each session started with ([hooks.md](hooks.md#agent-gates)), and `unattended/`, the marks of the sessions the
-  [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days.
+  [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, and
+  `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
+  60 seconds, deleted when the shell reads it ([Replacing the terminal](handoff.md#replacing-the-terminal)).
 - The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of
   [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with

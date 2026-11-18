@@ -113,7 +113,7 @@ and the two give a ladder:
 | Warn only | `mode: "ask"`, `continue: "none"` | The agent asks; on a yes it writes the brief and prints the resume line. |
 | Brief, no new session | `mode: "auto"`, `continue: "none"` | The agent writes the brief unasked and prints the resume line. |
 | Brief, then a clear | `mode: "auto"` or `"ask"`, `continue: "clear"` | The brief, then the Human types the clear command and one message, and the new session resumes from the brief with nothing else typed. |
-| Fully automatic | `mode: "auto"` on the base branch, and `"handoff": { "background": "on" }` in this machine's `.aidrian.local.json` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on. |
+| Fully automatic | `mode: "auto"` on the base branch, and `"handoff": { "background": "on" }` in this machine's `.aidrian.local.json` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on; with the [shell function](#replacing-the-terminal), it also ends itself, and its terminal opens the new session. |
 
 The `continue` default follows `mode`: with `mode: "auto"` and no `continue`, the route is `"background"`; with any
 other mode it is `"none"`. A `continue` that config.json sets always wins, so `mode: "auto"` with `continue: "none"`
@@ -308,7 +308,10 @@ to another folder falls back to the clear route with that reason; committing `st
    count as the continuation.
 6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
-   host's command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
+   host's command to open it. The line ends on what becomes of this session: with the
+   [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends;
+   without it, `This session has ended its work; the new one is <name>, open it with <the host's command>.`
+   The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
 
@@ -319,10 +322,10 @@ listing does not show ends as step 5 says, by the clear route only when nothing 
 
 Limits:
 
-- The old session stays open and idle: it spends no tokens while no turn starts, and the Human closes it at will.
-  Nothing closes it by itself. A turn that starts there after the gate, such as a background agent's report, runs
-  beside the new session in the same worktree, so the skill settles every agent first, as on the clear route, and
-  the prompt hook names the session that owns the work.
+- Without the [shell function](#replacing-the-terminal), the old session stays open and idle: it spends no tokens
+  while no turn starts, and the Human closes it at will. A turn that starts there after the gate, such as a background
+  agent's report, runs beside the new session in the same worktree, so the skill settles every agent first, as on the
+  clear route, and the prompt hook names the session that owns the work.
 - The new session starts in the host's default model for that folder; a model the old session switched to in the
   session does not carry over. Its permission mode is the old session's, as step 3 says.
 - No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
@@ -362,6 +365,103 @@ Limits:
     would move the store, the session the gate reads floors for, or the host command it runs.
   A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
   closed.
+
+### Replacing the terminal
+
+With a block in the shell's startup file, a background handoff also replaces the old session in its terminal: the
+old session ends itself once its turn ends, and the same terminal opens the new one, with nothing typed. A host's
+plugins have no install step, and the startup file is the Human's, so the Human writes the block once, in a terminal,
+or in a session with the `!` prefix:
+
+```sh
+aidrian shell-init zsh --install    # or bash, into ~/.bashrc
+aidrian shell-init zsh --uninstall  # removes it
+```
+
+No agent runs either: the [Bash rule](hooks.md#bash-rules) `shell-init-install` refuses both to every agent call, the
+main session's too, and says to hand the Human the command with `!`. The session start's lines word it the same way.
+
+`--install` writes the block to `~/.zshrc`, `$ZDOTDIR/.zshrc` when `ZDOTDIR` is set, or `~/.bashrc`, creating the file
+when it is missing, between the lines `# >>> aidrian shell-init >>>` and `# <<< aidrian shell-init <<<`, and changes no
+other line. The block holds the shell function itself, so no plugin code runs when a terminal starts and nothing is
+looked up on PATH. A file that already holds a block gets the current text in its place, or is left as it is when the
+block is current; a file with a line of its own outside a block that runs `aidrian shell-init` is left as it is. The
+command says which. On macOS, `--install` for bash also warns when `~/.bash_profile`, which a new terminal reads, does
+not source `~/.bashrc`. `--uninstall` removes every block, from its start marker to its end marker, and nothing else;
+a start marker with no end after it changes nothing and exits 1. A startup file that is a link stays one, and keeps its
+mode. Each prints what it did. When a block differs from the current text, as after a plugin update that changed it,
+the session start adds a `Handoff terminal:` line that names the file and the command to hand the Human; it never
+rewrites the block itself.
+
+`aidrian shell-init zsh` (or `bash`) prints the same function, for a startup file that evals it, and exits 2 for any
+other shell. The function is named for each host program that can do it, today `claude`, and is declared as
+`function claude`, so neither shell expands an alias of that name in its definition. It runs the program as
+`command claude "$@"`, with `AIDRIAN_SHELL_PID` set to the shell's own pid. Once the program exits, it reads and deletes
+this shell's record, `$XDG_STATE_HOME/aidrian/handoff-terminals/<shell pid>`, a line `<id> <expiry in epoch seconds>`.
+When the record is a regular file this user owns, not a symlink, its expiry is neither past nor more than 65 seconds
+away, and the id is letters, digits, dashes, and underscores, 4 to 128 of them, starting with a letter or digit, it runs
+the host's command that opens that session, `command claude attach <id>`, and reads the record again once that exits.
+With no record, or one it refuses, it returns the exit code of the last program it ran. It runs nothing from the record
+but that id. Each exit is caught, and every variable is set before it is read, so a shell with `set -e` or `set -u`
+still reaches the record.
+
+An alias for `claude` takes the place of the function when typed. One whose value starts with `claude`, such as
+`alias claude='claude --dangerously-skip-permissions'`, still reaches the function, flag and all. One that points
+elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
+the block prints one line on stderr that says so when the shell reads it.
+
+It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
+`"auto"`, on a host whose adapter declares `replaceTerminal` ([Adding a host](providers/adding-a-host.md)):
+
+1. Once the background session started and the gate recorded it, the gate asks the host adapter for this session's host
+   process. It must be a child of the shell `AIDRIAN_SHELL_PID` names, of the host's program, and attended by a Human,
+   as the host tells it. The gate then notes in the continuation store, `ending-<session>.json`, the host process, the
+   shell, and the new session's id and full id. When anything above is missing, it notes nothing, and the say line ends
+   with the plain line on how to open the new session instead. A session a Human attends that the shell function did
+   not start, while this machine's switch and the working config turn the route on in `auto` mode, gets a
+   `Handoff terminal:` line at its start that says its terminal will not follow, and names the install command
+   ([Start lines](hooks.md#start-lines)). When a startup file already holds the current block, it gets none: such a
+   session runs where that file did not start it, such as an editor's terminal, and an install would change nothing.
+2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
+   its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
+   shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
+   follows the new session, for 12 hours, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
+   hooks and shows the last message. It checks the process is still the host's program that shell started, and sends
+   the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
+   A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
+   skips the session-length reminder.
+3. The host's program exits, and the shell function opens the new session in the same terminal.
+
+The next hops chain the same way, so the terminal follows each session of the chain. The session the terminal opens is a
+background session: no Human attends it as far as the hooks know, and it carries no `AIDRIAN_SHELL_PID`. When it hands
+off in turn, with every switch above on and its launch confirmed, the gate notes a request only when the store holds a
+`follow-` record for it, under its full id or the short one the host printed. That request names the session's own id
+in place of a host process; a session the host says a Human attends, as a former background session a Human resumed,
+never gets one. Its Stop hook takes it once, checks that the session's own id is that id or starts with it, that no
+Human attends it, and, through the host adapter (`replaceTerminal.hasClient`, pid, parent, and program name alone), that
+the shell is alive and the parent of a `claude` process, as a terminal attached to the session is. Then it writes the
+shell's record, passes the `follow-` record on to the next session, and starts the helper. The helper ends
+that session alone, through the host's own stop command, `replaceTerminal.endOwn`. It stops nothing unless the host's
+listing names exactly one background session that is this very session under that id. On Claude Code that is
+`claude stop <id>`, and `claude attach` in the shell then exits 0, so the shell function opens the next session. The
+chain floor and its cap of 5 continuations in a row bound the hops: at the cap the gate goes on by none, and the session
+stays open. This is a provisional decision of the harness, which lets a session no Human attends end its own session
+and nothing else. Dropping the request that names a session's own id puts the later hops back on the plain line.
+
+Limits:
+
+- A subagent cannot run the gate, and its stop is not the Stop hook's, so no subagent ends a process or a session. A
+  session no Human attends ends only itself, through the host, and only when a terminal follows it; it never names a
+  process. Every other refusal of such a session stays, such as starting a session from a shell. The store, where the
+  request and the `follow-` record live, is closed to both, as for a chain floor.
+- When the Human leaves an attached session, the `follow-` record still says the terminal follows it. At its handoff it
+  still ends itself, and the shell's record waits a minute for a program the shell function ran to exit.
+- The shell's record lies outside the continuation store, in a folder that is the user's alone (0700), each record 0600.
+  The [agent gates](hooks.md#agent-gates) hook refuses a write there to a subagent and to a session no Human attends, as
+  it refuses the unattended marks. Another process of the same user can still write one: it can only make the terminal
+  open a session by a plain id, within its minute, the next time a program the shell function ran exits.
+- A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
+  mid-turn. Its transcript is kept, and the work goes on in the new session.
 
 ## The snapshot
 

@@ -5,7 +5,8 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, startBackground, stopBackground, stopLine } from './claude-code-background.mjs';
+import { attachLine, findLine, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -135,7 +136,8 @@ export default {
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
     // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
     // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, and `attachLine`
-    // says how to open one.
+    // and `attachCommand` say how to open one. `replaceTerminal` ends a session that handed off once its turn ends, so the
+    // shell function `aidrian shell-init` prints opens the new one in the same terminal (lib/hosts/claude-code-terminal.mjs).
     handoffContinue: {
       routes: ['clear', 'background'],
       steps: {
@@ -149,6 +151,21 @@ export default {
       stopLine,
       findLine,
       attachLine,
+      attachCommand: ({ id }) => `claude attach ${id}`,
+      replaceTerminal: {
+        program: PROGRAM,
+        attach: 'attach',
+        attended,
+        // The command that updates the plugin, for a terminal whose copy is older than `shell-init`.
+        updateCommand: 'claude plugin update aidrian@aidrian-harness',
+        hostProcess: ({ env, shell, run }) => hostProcess({ env, shell, run }),
+        isHost: ({ pid, shell, run }) => isWrappedHost({ pid, shell, run }),
+        // A background session the terminal follows ends itself with `claude stop`, which the supervisor owns, and
+        // `claude attach` then exits 0 about a second later (probed on 2.1.326), so the shell function goes on.
+        endOwn: ({ id, session, env, run }) => stopOwnBackground({ id, session, env, run }),
+        hasClient: ({ shell, run }) => hasClient({ shell, run }),
+        signal: END_SIGNAL,
+      },
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),

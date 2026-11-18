@@ -8,8 +8,9 @@ const DEFAULT_HOST = 'github.com';
 const HOST_ALIASES = { 'ssh.github.com': 'github.com' };
 // `git@host:path`, git's scp-like form: no scheme, and a colon before the first slash.
 const SCP_LIKE = /^(?:[^@/]+@)?([^:/]+):(?!\/\/)(.+)$/u;
-// A remote on this machine's disk, which names no forge: `/srv/git/x`, `./x`, `../x`, `~/x`, `C:/x`, `C:\x`.
-const LOCAL_PATH = /^(?:[/.~\\]|[a-z]:[/\\])/iu;
+// A remote on this machine's disk, which names no forge: `/srv/git/x`, `./x`, `../x`, `~/x`, `C:/x`, `C:\x`, and any
+// `file:` URL, one with a host such as `file://github.com/acme/notes` included, since git reads that host as no network one.
+const LOCAL_PATH = /^(?:[/.~\\]|[a-z]:[/\\]|file:)/iu;
 
 const clean = (value) => value.toLowerCase().replace(/\/+$/u, '').replace(/\.git$/u, '').replace(/\/+$/u, '').replace(/^\/+/u, '');
 const identity = (host, rest) => {

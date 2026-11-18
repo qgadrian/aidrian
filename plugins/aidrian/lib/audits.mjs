@@ -307,11 +307,13 @@ const triageError = (message) => Object.assign(new Error(message), { code: TRIAG
 // A missing file is an empty record; an unreadable one throws, so a write never replaces decisions it could not read.
 export function readTriage(dir) {
   const file = path.join(dir, TRIAGE_FILE);
-  if (!existsSync(file)) return { version: 1, reports: {} };
   let value;
   try {
-    // Non-blocking, so a named pipe there throws rather than making the read wait.
-    value = JSON.parse(readRegularFile(file) ?? 'null');
+    // Non-blocking, so a named pipe there throws rather than making the read wait. One read, which alone says the file is
+    // missing: a folder that cannot be searched throws, never reads as no record.
+    const text = readRegularFile(file);
+    if (text === null) return { version: 1, reports: {} };
+    value = JSON.parse(text);
   } catch (error) {
     throw triageError(`${file}: invalid JSON (${error.message})`);
   }

@@ -1,13 +1,13 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { parseReport } from '../plugins/aidrian/lib/audit-import.mjs';
-import { auditNudge, evidenceProblem, issueLabels, listAudits, OWNER_WORDS, pendingGroups, proseProblems, proseShorthand, searchLabels, sidecarProblems } from '../plugins/aidrian/lib/audits.mjs';
+import { auditNudge, evidenceProblem, issueLabels, listAudits, OWNER_WORDS, pendingGroups, proseProblems, proseShorthand, readTriage, searchLabels, sidecarProblems, TRIAGE_FILE, TRIAGE_UNREADABLE } from '../plugins/aidrian/lib/audits.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AIDRIAN = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -345,6 +345,19 @@ test('the start line is empty without audits, and never throws on a broken folde
   writeFileSync(path.join(dir, 'triage.json'), '{"version":1,"reports":{}}');
   writeFileSync(path.join(dir, 'front-desk-2026-06-01.json'), '{ broken');
   assert.equal(auditNudge(dir), 'Audit inbox: 1 untriaged finding in 1 report. The persona-audit-triage skill triages them.', 'an invalid sidecar counts its prose');
+});
+
+test('a triage record in a folder that cannot be searched throws, and never reads as no record', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'needs folder modes that bind this user' }, (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-audits-'));
+  t.after(() => {
+    chmodSync(dir, 0o700);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  assert.deepEqual(readTriage(dir), { version: 1, reports: {} }, 'a missing file is an empty record');
+  writeFileSync(path.join(dir, TRIAGE_FILE), '{"version":1,"reports":{"r":{"F1":{"decision":"drop"}}}}');
+  chmodSync(dir, 0o000);
+  // A record read as empty here would let the next write replace the decisions it could not read.
+  assert.throws(() => readTriage(dir), { code: TRIAGE_UNREADABLE });
 });
 
 test('pending orders the items: blockers alone, then by severity and owner, then the replaced run, reruns, and doc gaps', () => {

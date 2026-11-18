@@ -19,7 +19,7 @@
 // Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output, another repository, or a
 // config.json with errors).
 
-import { forgeFor, repoIdentity } from './forges/index.mjs';
+import { forgeFor, remoteIdentity, repoIdentity } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 
 const NON_TERMINAL = new Set(['IN_PROGRESS', 'QUEUED', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED']);
@@ -101,9 +101,10 @@ export function parseCliArgs(argv) {
 
 // One remote URL as `{ host, path }` to match a `-R` value against, or null. `host` is null when the remote names
 // no forge host to compare: a host with no dot is an SSH config alias (`git@github-work:acme/notes.git`), and a remote on
-// this machine's disk (a path, or file://) keeps only its last two path parts, as gh's `owner/repo`.
+// this machine's disk (a path git reads as a folder, a bare `vendor/mirror.git` included, or a file: URL) keeps only its
+// last two path parts, as gh's `owner/repo`: remoteIdentity reads a network remote alone.
 export function remoteRepo(url) {
-  const identity = repoIdentity(url);
+  const identity = remoteIdentity(url);
   if (identity) return identity.host.includes('.') ? identity : { ...identity, host: null };
   if (typeof url !== 'string') return null;
   const parts = url.trim().replace(/\/+$/u, '').replace(/\.git$/u, '').split(/[/:]/u).filter(Boolean);

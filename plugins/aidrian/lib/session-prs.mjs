@@ -19,7 +19,7 @@ import { changesGitTarget, isPush, pushedRefs } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { hasHidden } from './hidden-text.mjs';
 import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
-import { changesVariable, commandLines, lexCommand, readInvocation, shellRedirections, walkCommands } from './shell-lex.mjs';
+import { changesVariable, commandLines, lexCommand, readGit, readInvocation, shellRedirections, walkCommands } from './shell-lex.mjs';
 
 // The ledger's name in the session folder (lib/session-folder.mjs APPENDED_FILES).
 export const LEDGER = 'prs.jsonl';
@@ -182,14 +182,23 @@ function printsAlone(entries, entry, command) {
 
 const validCwd = (cwd) => typeof cwd === 'string' && path.isAbsolute(cwd) && Buffer.byteLength(cwd) <= CWD_MAX_BYTES && !hasHidden(cwd);
 
-// The rows of one walked command, before their checks.
-function entryRows(entry, folder, context) {
+// Whether a walked command moves its folder's HEAD to another branch: `git checkout`, `git switch`, or `git worktree add`.
+const HEAD_MOVES = new Set(['checkout', 'switch']);
+const movesHead = ({ segment }) => {
+  const git = readGit(segment);
+  return HEAD_MOVES.has(git?.subcommand) || (git?.subcommand === 'worktree' && git.rest[0]?.text === 'add');
+};
+
+// The rows of the walked command `entry`, the line's `index`th, before their checks. A touched call with no target
+// records nothing when a command after it on the line moves HEAD (movesHead), since the branch read after the line
+// may not be the one it acted on.
+function entryRows(entry, index, folder, context) {
   const { folders, forge, reader, env, links, changers } = context;
   if (isPush(entry)) return pushedRows(folder, folders, context.now);
   if (changers.some((other) => other !== entry)) return [];
   const call = reader.readCall(entry.invocation, env);
   if (call?.kind === 'created') return printsAlone(context.entries, entry, context.command) ? createdRows(call, folder, folders, forge.hosts, links) : [];
-  if (call?.kind === 'touched') return touchedRows(call, folder, folders, forge.hosts, reader);
+  if (call?.kind === 'touched') return call.target === null && index < context.lastHeadMove ? [] : touchedRows(call, folder, folders, forge.hosts, reader);
   return [];
 }
 
@@ -210,9 +219,9 @@ export function ledgerRows({ command, cwd, output = null, env = {}, forge, reade
   // The commands that may change a variable the reader's command reads: one pass, so a long line costs linear time.
   const variables = reader.variables ?? [];
   const changers = entries.filter(({ invocation }) => variables.some((name) => changesVariable(invocation, name)));
-  const context = { folders, forge, reader, env, changers, entries, command, now, links: () => (links ??= typeof output === 'string' ? reader.createdChanges(outputTail(output)) : []) };
+  const context = { folders, forge, reader, env, changers, entries, command, now, lastHeadMove: entries.findLastIndex(movesHead), links: () => (links ??= typeof output === 'string' ? reader.createdChanges(outputTail(output)) : []) };
   const known = knownFolders(command, cwd, entries);
-  const found = entries.flatMap((entry, index) => (known[index] ? entryRows(entry, known[index], context) : []));
+  const found = entries.flatMap((entry, index) => (known[index] ? entryRows(entry, index, known[index], context) : []));
   const agent = typeof agentId === 'string' && SESSION_ID.test(agentId) ? agentId : null;
   const rows = found.filter(({ repo, number, branch, cwd: folder }) => forge.changeRef({ host: repo.host, path: repo.path, number, branch }) !== null && validCwd(folder))
     .map(({ kind, repo, number, branch, cwd: folder }) => ({ at, agentId: agent, kind, forge: forge.id, host: repo.host, path: repo.path, number, branch, cwd: folder }));

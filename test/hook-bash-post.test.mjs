@@ -481,6 +481,13 @@ test('a gh pr call with no target records the pull request gh checked out, and a
   for (const word of ['bad--owner:fix', 'me:/fix', 'me:a:b', 'git@github.com:acme/widgets']) assert.deepEqual(unit(`gh pr view '${word}'`, '/w', fakeGit(ORIGIN).read), [], word);
 });
 
+test('a gh pr call with no target records nothing when a later command on the line moves HEAD', () => {
+  const { read } = fakeGit(ORIGIN);
+  for (const after of ['git switch main', 'git checkout main', 'git -C /w worktree add ../x main']) assert.deepEqual(unit(`gh pr view && ${after}`, '/w', read), [], after);
+  assert.deepEqual(unit('git switch feat && gh pr view', '/w', read), [touched('acme/widgets', { branch: 'feat' }, '/w')], 'a move before it');
+  assert.deepEqual(unit('gh pr view 3 && git switch main', '/w', read), [touched('acme/widgets', { number: 3 }, '/w')], 'a target');
+});
+
 test('a line that reads a shell file into the shell, or runs cd through builtin, records nothing', () => {
   assert.deepEqual(rows('source ./env.sh && gh pr view 12'), []);
   assert.deepEqual(rows('. ./env.sh; gh pr view 12'), []);

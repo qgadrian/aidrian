@@ -698,7 +698,7 @@ test('a worktree the call did not create records no links row: no result, a refu
     [`echo '${createdLine('feat/existing', tree)}'; aidrian worktree new feat/existing`, `${createdLine('feat/existing', tree)}\n`],
     ['false && aidrian worktree new feat/existing; cat saved.json', `${createdLine('feat/existing', tree)}\n`],
     // A command after it prints too, so its result is not alone in the output.
-    ['aidrian worktree new feat/existing && npm test', `${createdLine('feat/existing', tree)}\n${'x'.repeat(70_000)}\n`],
+    ['aidrian worktree new feat/existing && npm test', `${createdLine('feat/existing', tree)}\ntest output\n`],
     // Two creations on one line: neither is the line's one printing command.
     ['aidrian worktree new feat/existing && aidrian worktree new feat/other', `${createdLine('feat/existing', tree)}\n`],
     // A relative cd: the payload may name the folder the line started in or the one it ended in.

@@ -598,8 +598,10 @@ review. Four settings together give that, with no rule pasted into a session:
   for the feedback. The walk needs a persona doc for the staff role ([Personas](personas.md)).
 - **Every UI file owes feedback**: `productFeedback.files` lists the whole UI surface, not only the captured routes:
   every screen component, the hooks and helpers beside them, the locales, and the styles. Unset, it falls back to the
-  visual targets' files, and a pull request that changes only a file outside them, such as a translation or a UI hook,
-  reads as `not_user_facing` and gets no feedback.
+  visual targets' files, and a pull request whose every changed file, such as a translation or a UI hook, is outside
+  the lists of both the default branch and the base can read as `not_user_facing` and get no feedback. A rename, a
+  file with no change type, or a file list shorter than the change still counts as user-facing
+  ([`status`](config.md#the-commands)).
 - **A person looks too**: add `"signoff": "human"` to the flow when a person, not only agents, must try the screens
   before the review passes ([Sign-off by the Human](#sign-off-by-the-human)). Keep it to the few flows that need it,
   since every head that touches them waits for that person.

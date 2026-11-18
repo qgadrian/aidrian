@@ -203,10 +203,12 @@ fuller config, with a flow whose invariants block the review, and what each key 
 
 Set `review.productFeedback.files` too, to the project's whole UI surface: every screen component, the hooks and
 helpers beside them, the locales, and the styles. Unset, product feedback falls back to the visual targets' files,
-which name only the routes worth capturing. In one real project that left out about 800 UI files, whole sections,
-every locale file, and the UI hooks among them: a pull request that changed only those read as `not_user_facing`, and
-the ready hold let it through with no feedback. The recipes leave `files` out on purpose, since a placeholder there
-would hide the same gap.
+which name only the routes worth capturing. A pull request whose every changed file is outside the lists of both the
+default branch and the base then reads as `not_user_facing`, unless it holds a rename, a file with no change type, or
+more files than its list shows, which count as user-facing ([`status`](config.md#the-commands)). In one real project
+the fallback left out about 800 UI files, whole sections, every locale file, and the UI hooks among them: a pull
+request that changed only those read as `not_user_facing`, and the ready hold let it through with no feedback.
+The recipes leave `files` out on purpose, since a placeholder there would hide the same gap.
 
 What each part needs, and what happens without it:
 

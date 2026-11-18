@@ -29,7 +29,8 @@ Ask it before the main-checkout guard question, whose answer hands-on sets, as o
   takes only `"web"`: with no web screen, such as a native-only app, leave out `review.visual` and still set
   `review.productFeedback` with `files`, and the report says no capture covers its screens. Set
   `review.productFeedback.files` to the project's UI file patterns: every screen component, the hooks and helpers beside
-  them, the locales, and the styles. Unset, it falls back to the targets' files, and a change outside them gets no feedback. With no screen yet, leave out
+  them, the locales, and the styles. Unset, it falls back to the targets' files, and a pull request whose every changed file is outside them, on the
+  default branch and the base alike, can pass with no feedback. With no screen yet, leave out
   `review.visual` and `review.productFeedback`, and the report says the screen check is off until the first screen lands,
   when `aidrian check` warns to add the targets.
 - Set `requires.aidrian` to the running plugin's version when the recipe sets any `github.autoMerge`,

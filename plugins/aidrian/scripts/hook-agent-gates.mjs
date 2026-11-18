@@ -140,11 +140,12 @@ function guards(input, project, config, gated, snapshot, others, unattended) {
     ?? otherProjects(input, project, others, unattended);
 }
 
-// The first denial of the guards of each of `others` that is another project than the call's, each asked once.
+// The first denial of the guards of each of `others` that is another project folder than the call's, each asked once:
+// by its own folder, so a linked checkout whose config moves `state.dir` elsewhere than the main checkout's is its own.
 function otherProjects(input, project, others, unattended) {
-  const seen = new Set([canonical(project.checkouts.at(-1))]);
+  const seen = new Set([canonical(project.root)]);
   for (const other of others) {
-    const key = other ? canonical(other.checkouts.at(-1)) : null;
+    const key = other ? canonical(other.root) : null;
     if (key === null || seen.has(key)) continue;
     seen.add(key);
     const denial = otherProject(input, other, unattended);

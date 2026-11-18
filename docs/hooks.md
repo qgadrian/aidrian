@@ -950,17 +950,24 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A subagent, and a main session the background route started, may not write in the session folders,
   `<state>/sessions/`, read as the continuation store is: a target in them, a folder that holds them and no checkout,
   a glob that may reach them by its path or through a link on disk, and a change of mode or owner of them or of a
-  folder that holds them. The folders are those of the call's project, those of every project's default state
-  folder under the state root (`<root>/projects/<id>/sessions`) that are there, and those of the project the
-  session's gate snapshot or unattended mark names: so a subagent that works in another project, or in a folder with
-  no project, still meets the session folders of the project its session started in. A sessions folder that a
-  checkout holds, as with a `state.dir` of `..` in a checkout named `sessions`, is no session folder (the session
-  folder's own rules refuse it), so the checkout stays writable. A target in a folder no path gives, interpreter code
-  such as `python3 -c "open('…/prs.jsonl', 'a')"`, and a word of a command in a shell the lexer cannot read count when
-  they name `sessions/<a part>/<a session file>`, or `prs.jsonl` or `links.jsonl` alone, the files appended in place,
-  read as a path part, whatever quote stands around it, so `cd "$X" && echo {} >> prs.jsonl` is refused; the word
-  `sessions` alone never counts, so a project's own folder of that name stays writable, and nor does `usage.json`
-  alone. The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the
+  folder that holds them. The folders are those of the call's project; those of the state folders the session started
+  with, which the main session's `SessionStart` hook records in `<state root>/session-origins/<session id>.json`
+  (`lib/session-origins.mjs`), whether or not the hooks have written there yet; those of every project's default state
+  folder under the state root (`<root>/projects/<id>/sessions`) that are there, found once a call with the guards'
+  deadline checked at each; and those of the project the session's gate snapshot or unattended mark names, each
+  project folder by itself, so a linked checkout whose config moves `state.dir` is its own. So a subagent that works in
+  another project, another checkout, or a folder with no project still meets the session folders of the project its
+  session started in, gated or not. No subagent or unattended session may write the origins folder, as for the marks.
+  A sessions folder that a checkout holds is no session folder, by the checkouts the session folder's writer keeps it
+  out of (`projectCheckouts`: the project's, the repository root, and every worktree), so a `state.dir` of `..` in a
+  checkout named `sessions`, of `.` in a project below the repository root, or in a sibling worktree leaves those
+  checkouts writable. A target in a folder no path gives, interpreter code such as
+  `python3 -c "open('…/prs.jsonl', 'a')"`, and a word of a command in a shell the lexer cannot read count when they
+  name `sessions/<a part>/<a session file>`, with `/` or `\` between the parts, one or more, as a native Windows path in
+  a string spells it, or a session file but `usage.json` by its name alone, read as a path part, whatever quote stands
+  around it, so `cd "$X" && echo {} >> prs.jsonl` is refused; the word `sessions` alone never counts, so a project's
+  own folder of that name stays writable, and nor does `usage.json` alone, a name other tools use.
+  The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the
   [ledger](#session-ledger) still records a subagent's push. An attended main session is not held. The guard shares
   the store guard's reach check (`reachesStateFolder` in `lib/handoff-guard.mjs`) and its limits, and runs where it
   runs, first without its link walk and again with it.

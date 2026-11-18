@@ -170,7 +170,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   each session started with ([hooks.md](hooks.md#agent-gates)), and `unattended/`, the marks of the sessions the
   [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, and
   `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
-  60 seconds, deleted when the shell reads it ([Replacing the terminal](handoff.md#replacing-the-terminal)).
+  60 seconds, deleted when the shell reads it ([Replacing the terminal](handoff.md#replacing-the-terminal)), and
+  `session-origins/`, the state folders each session started with, which the session-folder guard holds for its
+  subagents wherever they work ([hooks.md](hooks.md#agent-gates)), owner-only, kept 30 days.
 - The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of
   [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with

@@ -29,7 +29,9 @@ const READ = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 export const CHUNK_BYTES = 8 * 1024 * 1024;
 // SHORTCUT: `prefix` hashes this much at each end of the bytes folded before, never the middle, so a warm call costs the
 // same at any transcript size. A rewrite in place confined to the middle goes unseen, and its old fold stays: the cache
-// is display data, and a transcript is only ever appended to.
+// is display data, and a transcript is only ever appended to. A window rewritten while a fold runs goes unseen too: each
+// save hashes the windows read again from the file, not the bytes it folded, so the cache can pair the old fold with the
+// new bytes. The way to close it: hash the tail from the bytes just folded, and the head from the first step.
 export const PREFIX_WINDOW = 64 * 1024;
 
 // sessionUsage of the transcript at `transcript`, folding only what was written since the cache at `cacheFile`, a

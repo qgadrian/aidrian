@@ -258,7 +258,7 @@ test('a project below the repository root with a relative state.dir, which resol
   assert.equal(start(setting).stdout, plain(setting));
 });
 
-test('a store that cannot be read leaves every hook as it is today',{ skip: process.getuid?.() === 0 && 'root reads any folder' }, (t) => {
+test('a store that cannot be read leaves every hook as it is today', { skip: process.getuid?.() === 0 && 'root reads any folder' }, (t) => {
   const setting = setup(t);
   armMarker(setting);
   const before = plain(setting);

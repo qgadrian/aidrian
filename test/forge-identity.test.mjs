@@ -46,6 +46,20 @@ test('remoteIdentity reads a network remote alone: a path git reads as a folder 
   assert.deepEqual(repoIdentity('vendor/mirror.git'), { host: 'github.com', path: 'vendor/mirror' }, 'a -R value keeps its bare form');
 });
 
+test('an scp-style remote takes its host from before the first colon, whatever `@` its path holds', () => {
+  // git reads `host:path` up to its first colon: a user name holds no colon, so the path never supplies the host.
+  const cases = [
+    ['evil.com:foo@github.com:acme/notes', 'evil.com', 'foo@github.com:acme/notes'],
+    ['git@evil.com:foo@github.com:acme/notes', 'evil.com', 'foo@github.com:acme/notes'],
+    ['host:owner@x:y/repo', 'host', 'owner@x:y/repo'],
+    ['host:owner@x/repo', 'host', 'owner@x/repo'],
+  ];
+  for (const [url, host, repoPath] of cases) {
+    assert.deepEqual(remoteIdentity(url), { host, path: repoPath }, url);
+    assert.deepEqual(repoIdentity(url), { host, path: repoPath }, url);
+  }
+});
+
 test('repoIdentity keeps the namespace that the last-two-parts key threw away', () => {
   const values = ['https://gitlab.com/a/sub/project.git', 'git@other.host:b/sub/project.git', 'ssh://git@third.host/c/sub/project'];
   const identities = values.map(repoIdentity);

@@ -374,6 +374,8 @@ test('remoteKey keeps the host of https, ssh, and scp-style remotes, and reads n
   }
   assert.equal(remoteKey('git@github-work:acme/notes.git'), 'github-work/acme/notes', 'another alias stays what it says: no ssh config is read');
   assert.equal(remoteKey('git@ssh.github.com.evil.example:acme/notes.git'), 'ssh.github.com.evil.example/acme/notes');
+  // git's host ends at the first colon: an `@` in the path's first part never moves the host into the path.
+  assert.equal(remoteKey('evil.example:x@github.com:acme/notes.git'), 'evil.example/x@github.com:acme/notes');
   for (const url of ['/srv/git/acme/notes.git', '../notes', 'file:///srv/acme/notes.git', 'file://github.com/acme/notes.git', 'vendor/mirror.git', 'https://proxy.example/git/acme/notes', '']) {
     assert.equal(remoteKey(url), null, url);
   }

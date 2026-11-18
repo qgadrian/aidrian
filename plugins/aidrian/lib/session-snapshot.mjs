@@ -20,6 +20,7 @@ import { checkoutHolding, resolvedPath } from './fs.mjs';
 import { GIT_TIMEOUT_MS, mainRoot, runGit } from './git.mjs';
 import { projectStore } from './handoff-continue.mjs';
 import { latestBrief, MARKER_CAP, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
+import { HIDDEN } from './hidden-text.mjs';
 import { inboxPath, lessons, lessonStats } from './lesson-inbox.mjs';
 import { findProject, stateDir } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
@@ -45,11 +46,8 @@ const KILL = { killSignal: 'SIGKILL' };
 // The longest text displayText keeps, in code points: a title, a name (a branch, an owner, a repository, a check, a
 // slug, or a ticket key), and a path or URL.
 export const DISPLAY_CAPS = Object.freeze({ title: 200, name: 100, path: 1024 });
-// Every character of the Unicode categories Cc, Cf, Zl, Zp, and Cs: C0, C1, DEL, the line and paragraph separators, the
-// bidi controls and marks, zero-width and tag characters, and lone surrogates.
-const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/gu;
 
-// `text` without a hidden character, cut at `cap` code points. lib/feedback-record.mjs cleanTitle is its pattern.
+// `text` without a hidden character (hidden-text.mjs), cut at `cap` code points. lib/feedback-record.mjs cleanTitle is its pattern.
 export const displayText = (text, cap = DISPLAY_CAPS.name) => [...String(text).replace(HIDDEN, '')].slice(0, cap).join('');
 
 const OPTIONS = Object.fromEntries([...['session', 'transcript', 'ticket-prefixes', 'deadline-ms'].map((name) => [name, { type: 'string' }]),

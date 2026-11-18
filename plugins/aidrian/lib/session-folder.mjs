@@ -5,18 +5,21 @@
 // sweep: the state folder resolves inside no checkout of the repository, and no other user owns it or may write it; the
 // sessions folder and the session folder are each a real folder, no symlink, owned by this process's user, that no other
 // user may read or write; and the session folder's real path is `<real state>/sessions/<id>`. Its files are written as a
-// temporary file and a rename, mode 0600, under the names in SESSION_FILES alone; a file's reservation for one fixed
+// temporary file and a rename, mode 0600, under the names in SESSION_FILES alone, with one exception: the session's pull
+// request ledger, `prs.jsonl` (APPENDED_FILES), which lib/session-prs.mjs reads through readSessionFile and appends to in
+// place through appendSessionFile, no-follow, mode 0600, only while it is a regular file with one link this user alone may
+// read, and rewrites through writeSessionFile when an append would pass its cap; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
 // untouched for SWEEP_DAYS, and the sweep deletes only those names, their temporary files, and their reservations, then
 // the folder, which it never empties of anything else.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
-import { looseFolder, SESSION_ID } from './handoff-markers.mjs';
+import { looseFolder, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 
 // A session folder whose newest file is older than this goes when another session's folder is created.
 export const SWEEP_DAYS = 30;
@@ -34,6 +37,10 @@ export const reservationName = (name, index) => `${name}.${index}.lock`;
 export const SESSION_RESERVATION = new RegExp(String.raw`^(?:${SESSION_FILES.map(escaped).join('|')})\.\d+\.lock$`, 'u');
 // A temporary file or a reservation is created only where nothing is, and never through a symlink.
 const CREATE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+// The files appended to in place, never renamed over: the session ledger alone.
+export const APPENDED_FILES = Object.freeze(['prs.jsonl']);
+// An append opens where no symlink is, and never waits on a named pipe.
+const APPEND = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 // The real path of the folder of `sessionId` under the state folder `state`, created for this user alone when missing,
 // or null, with nothing made, written, or swept: the id fails SESSION_ID; `checkouts`, the project's, is no list; the
@@ -122,6 +129,44 @@ export function writeSessionFile(folder, name, text, { token = newToken(), uid =
       // The sweep removes it later.
     }
     return null;
+  }
+}
+
+// The text of the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave: '' when it is missing, and
+// null when `folder` fails privateFolder, or the file is a symlink, no regular file, has more than one link, is another
+// user's or readable by one, or holds more than `maxBytes` (handoff-markers readOwnFile, no-follow and non-blocking).
+// Never throws.
+export function readSessionFile(folder, name, { maxBytes, uid = processUid() } = {}) {
+  if (!APPENDED_FILES.includes(name) || !Number.isSafeInteger(maxBytes) || !isPrivateFolder(folder, uid)) return null;
+  const file = path.join(folder, name);
+  try {
+    lstatSync(file);
+  } catch (error) {
+    return error.code === 'ENOENT' ? '' : null;
+  }
+  const read = readOwnFile(file, { cap: maxBytes, uid });
+  if (read === null || read.stat.nlink !== 1 || (Number.isInteger(uid) && (read.stat.mode & 0o077) !== 0)) return null;
+  return read.text;
+}
+
+// Appends `text` to the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave: opened write-only,
+// append, create, no-follow, and non-blocking, mode 0600, and written only when `folder` passes privateFolder at the time
+// of the write, fstat of the descriptor shows a regular file with one link, owned by `uid`, that no other user may read
+// or write, and its size with `text` stays within `maxBytes`. Returns whether every byte was written. Never throws.
+export function appendSessionFile(folder, name, text, { maxBytes, uid = processUid() } = {}) {
+  if (!APPENDED_FILES.includes(name) || typeof text !== 'string' || !Number.isSafeInteger(maxBytes) || !isPrivateFolder(folder, uid)) return false;
+  const bytes = Buffer.from(text);
+  let fd;
+  try {
+    fd = openSync(path.join(folder, name), APPEND, 0o600);
+    const stat = fstatSync(fd);
+    const owned = !Number.isInteger(uid) || (stat.uid === uid && (stat.mode & 0o077) === 0);
+    if (!stat.isFile() || stat.nlink !== 1 || !owned || stat.size + bytes.length > maxBytes) return false;
+    return writeSync(fd, bytes) === bytes.length;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 

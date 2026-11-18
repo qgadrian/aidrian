@@ -97,6 +97,9 @@ export default {
   // Its names are the standard, which is what hooks.json matches; a plugin's GitHub server has its own matcher there.
   rawToolName: (standard) => standard,
   toolResponse: responseObjects,
+  // A Bash call's response, `{ stdout, stderr, interrupted, … }`, as `{ output, interrupted }`: its stdout, or null when the
+  // response holds none (test/fixtures/hosts/claude-code/bash-post.json).
+  shellOutput: (response) => ({ output: typeof response?.stdout === 'string' ? response.stdout : null, interrupted: response?.interrupted === true }),
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
   // as `Monitor` in an agent gate does for a Monitor call read as Bash.
   hookInput(input) {

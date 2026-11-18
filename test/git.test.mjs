@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, GIT_TIMEOUT_MS, isIgnored, mainRoot } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, GIT_TIMEOUT_MS, isIgnored, isRefName, mainRoot, REF_NAME_MAX_BYTES } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -86,4 +86,21 @@ test('a git that hangs is stopped after the timeout and counts as git not answer
   const ran = spawnSync(process.execPath, [hook], { input, cwd: dir, env, encoding: 'utf8' });
   assert.deepEqual([ran.status, ran.stderr], [0, '']);
   assert.ok(Date.now() - started < GIT_TIMEOUT_MS + 1500, `${Date.now() - started} ms`);
+});
+
+test('isRefName takes a branch name git takes, in pure JS, and refuses each shape git refuses', () => {
+  for (const name of ['main', 'feat/session-prs', 'fix/123-login', 'release-1.2', 'a.b', 'ü-branch', 'x'.repeat(REF_NAME_MAX_BYTES)]) assert.equal(isRefName(name), true, name);
+  const refused = [
+    '', '@', 'a b', 'a\tb', 'a\nb', 'a\u0000b', 'a\u007fb',
+    'a~b', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b',
+    'a..b', 'a@{b', 'a//b',
+    '-a', '/a', 'a/', 'a.', 'a.lock', 'a/b.lock/c', 'a/.b', '.a',
+    'x'.repeat(REF_NAME_MAX_BYTES + 1), 'é'.repeat(128),
+  ];
+  for (const name of refused) assert.equal(isRefName(name), false, JSON.stringify(name));
+  for (const value of [null, undefined, 12, {}]) assert.equal(isRefName(value), false, String(value));
+});
+
+test('isRefName starts no process: its code names no runner', () => {
+  assert.doesNotMatch(isRefName.toString(), /runGit|spawn|exec|firstLine/u);
 });

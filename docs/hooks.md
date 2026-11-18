@@ -20,6 +20,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
 | A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command, and one line naming the [background session](handoff.md#the-background-route) that owns the work when the session handed it off in the last 24 hours; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
+| After a Bash command | The [session ledger](#session-ledger): a row for each pull request the command created, pushed a branch of, or acted on | Claude Code (verified by the hook test on a recorded result); Codex by payload fixture only ([not live](#session-ledger)) | no |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
@@ -1193,6 +1194,87 @@ Two hooks weigh what continuing the main session costs against a fresh session s
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.
+
+## Session ledger
+
+After a Bash command, `scripts/hook-bash-post.mjs` appends a row to the session's pull request ledger,
+`<state>/sessions/<session id>/prs.jsonl`, for each pull request the command created, pushed a branch of, or acted on.
+`aidrian session snapshot` reads it, as display data only: no hook, gate, skill, or agent decides anything from it.
+A subagent's call carries its parent's session id, so a dispatched slice lands in the same ledger, with its `agentId`.
+
+A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, and never a link, command text, or output.
+`forge` is the forge adapter's `id`, `host` and `path` the repository as `repoIdentity` reads it, and `cwd` the folder
+the call ran in. A row is written only for a host the adapter declares (`hosts`, github.com today), and only when the
+adapter's `changeRef` takes its fields: a path of exactly `owner/name`, a positive number, and a branch that passes
+git's ref-name rules within 255 bytes and holds no hidden character. `cwd` is absolute, within 1,024 bytes, with no
+hidden character: none of the Unicode categories Cc, Cf, Zl, Zp, and Cs (`lib/hidden-text.mjs`, the pattern the
+snapshot's `displayText` removes). One call writes at most 32 rows and has git read at most 8 folders.
+
+| Kind | From | Its repository and pull request |
+| --- | --- | --- |
+| `created` | `gh pr create` | A line of the output, from its last 64 KB, that is exactly a pull request link. Its repository must be the one `-R` or `GH_REPO` names, else one of the repositories the remotes of the call's folder name, so a fork's pull request on its parent records the parent and an echoed link of another repository records nothing |
+| `pushed` | `git push` | The remote it names: a URL, a remote's name read through its first push URL alone when it has one (and nothing when that names no repository, such as a local path or `DISABLED`), else its first URL, or origin when it names none. Each refspec gives its row: a name, `HEAD` or `@` for the current branch, `src:dst` for `dst`, without a leading `+` and `refs/heads/`. With no refspec, the current branch. A delete, a dry run, a tag, and `--all`, `--mirror`, `--branches`, or `--tags` record nothing |
+| `touched` | `gh pr ready`, `edit`, `merge`, `checks`, `view`, `comment` | A link names its own repository. A number, a branch, or no target takes the repository `-R` or `GH_REPO` names, else the one repository on a declared host the folder's remotes name, and nothing when they name several, as in a fork checkout. No target is the folder's current branch |
+
+A bare `owner/name` in `-R` or `GH_REPO` names nothing while `GH_HOST` is set, since gh then reads it on that host.
+
+The call's folder holds under either reading of the payload's `cwd`, the folder the line started in or the one it
+ended in, which no host documents for a Bash call ([Claude Code](providers/claude-code.md)): it is the absolute folder
+a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` reads it; the payload's `cwd` only on a
+line where no command, a nested one included, runs `cd`, `pushd`, or `popd`, plain or through `builtin`, and nothing
+else moves the call; and
+otherwise none, so the call records nothing. `cd sub && gh pr create` and `git push && cd /other` record nothing.
+The current branch and the remotes are read with `git symbolic-ref` and `git config`, in that folder.
+
+What may point a call at another repository records nothing: a folder, remote, repository, target, or refspec the shell
+fills in, a word it fills in unquoted anywhere in a `gh` call, since it may split into a second `-R`, a line that sets,
+unsets, or empties `GH_REPO` or `GH_HOST` outside the call's own prefix, a git global option other than `-C` and plain
+switches such as `--no-pager` (so `-c`, `--config-env`, `--git-dir`, and `--work-tree`), and a line that changes
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, or a `GIT_CONFIG` variable, or reads a shell file into the
+shell with `source` or `.`, which may set any of them.
+A `url.<base>.insteadOf` or `pushInsteadOf` rewrite in the folder's config is not applied, an accepted limit: such a
+remote records its URL as written.
+
+The forge seam: `scripts/hook-bash-post.mjs` and `lib/session-prs.mjs` name no forge. The reading of `gh pr` calls,
+`GH_REPO`, and the pull request link is GitHub's, in `lib/rules/github/session-calls.mjs`, which runs nothing; the hook
+hands it to `session-prs.mjs` in a table keyed by the adapter's `id`. A later forge adds its reader under
+`lib/rules/<forge id>/` ([Adding a forge](providers/adding-a-host.md#adding-a-forge)).
+
+The output comes from the host's adapter, its `shellOutput`, never from a payload field read in shared code: Claude
+Code's `stdout`, and Codex's one string of output. A response the adapter cannot read gives no `created` row, while
+`pushed` and `touched` rows still record. A call the host reports as interrupted, a session id that fails `SESSION_ID`,
+a payload folder with no project, and input the hook cannot read write nothing. The hook never refuses, always exits 0,
+and prints nothing on stdout or stderr.
+
+The folder and its file follow [the session folder's rules](project-folder.md): `lib/session-folder.mjs` makes the
+folder 0700, refuses a symlink, and, when it makes one, sweeps the session folders untouched for 30 days. Its
+`appendSessionFile` checks the folder again, then opens the ledger write-only, append, create, no-follow, and
+non-blocking, mode 0600, and writes only when the open file is a regular file with one link that this user owns and no
+other user may read or write. Before a write it reads the ledger, no-follow, and leaves out a row whose fields, all but
+`at` and `agentId`, a row already holds, so a call made again adds nothing, and a row whose folder is not a folder on
+disk. The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads, so it
+reads every row): a write that would pass it rewrites the ledger, through a temporary file and a rename under the same
+checks, with its newest rows that fit in half of it and then the new ones, so the newest pull requests always show. The `SessionEnd` hook and
+worktree cleanup leave it alone, so a resumed session keeps its pull requests.
+
+A row records what the command line names, not what each command did. Claude Code runs `PostToolUse` only for a Bash
+call that succeeded, but one command's status inside a line is not seen, so `git push || true` records its row. On Codex
+a shell call that exits non-zero still runs `PostToolUse`, so a failed push records its row too. A row whose branch has no
+pull request shows nothing.
+
+Where it is verified:
+
+| On | Verified | Not live |
+| --- | --- | --- |
+| Claude Code | `test/hook-bash-post.test.mjs` runs the hook on `test/fixtures/hosts/claude-code/bash-post.json`, whose `tool_response` is the result Claude Code 2.1.326 recorded for a real `gh pr create` Bash call | No hook has received that payload, an accepted limit: a session may not start another to record one, and the fixture says `live: false` |
+| Codex | The same test runs `test/fixtures/hosts/codex/bash-post.json`, built from the source at `rust-v0.169.0` | Any hook on Codex, which runs only after a person trusts it |
+
+What the Codex source says, at `rust-v0.169.0`: a shell call reaches the hook as `Bash`, with `tool_input` `{ command }`
+(`codex-rs/core/src/tools/handlers/unified_exec.rs`, `post_unified_exec_tool_use_payload`); its `tool_response` is the
+command's output as one string, stdout and stderr together; and a call still running or stopped sends no `PostToolUse`
+(`codex-rs/core/src/tools/context.rs`, `ExecCommandToolOutput`). The payload's fields are `PostToolUseCommandInput` in
+`codex-rs/hooks/src/schema.rs`. The group comes last in `PostToolUse`, so the trust keys of the tracker hooks,
+`pre_tool_use:5:0` and `post_tool_use:3:0`, do not move.
 
 ## Overrides
 

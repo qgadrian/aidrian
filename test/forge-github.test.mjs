@@ -17,7 +17,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 
 // Every name the facade gives its callers.
 const FACADE = [
-  'id', 'cwd', 'isTrustedCommenter',
+  'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
@@ -200,6 +200,42 @@ test('mergedChanges takes a repo option, as openChanges does, and the repository
   for (const identity of [null, undefined, {}, { host: 'github.com' }, { host: 'github.com', path: 7 }, { host: 'GITHUB.COM', path: 'a/b' }]) {
     assert.equal(servedRepository(identity), null, JSON.stringify(identity));
   }
+});
+
+test('hosts is the constant host list, and changeRef answers a ref only when every field has GitHub`s shape, with no gh call', () => {
+  const { forge, calls } = recorded();
+  assert.deepEqual(forge.hosts, ['github.com']);
+  assert.equal(forge.hosts, FORGE_HOSTS, 'the adapter`s own constant: no config, remote, ledger row, or cache adds a host');
+  const ref = (fields) => forge.changeRef(fields);
+  assert.deepEqual(ref({ host: 'github.com', path: 'acme/notes', number: 12 }), { host: 'github.com', owner: 'acme', name: 'notes', number: 12, branch: null });
+  assert.deepEqual(ref({ host: 'github.com', path: 'acme/my.repo_name-2', branch: 'feat/x' }), { host: 'github.com', owner: 'acme', name: 'my.repo_name-2', number: null, branch: 'feat/x' });
+  assert.deepEqual(ref({ host: 'github.com', path: 'acme/notes', number: 3, branch: 'feat' }), { host: 'github.com', owner: 'acme', name: 'notes', number: 3, branch: 'feat' });
+  assert.ok(Object.isFrozen(ref({ host: 'github.com', path: 'acme/notes', number: 1 })));
+  const refused = [
+    { host: 'gitlab.com', path: 'acme/notes', number: 1 },
+    { host: 'git.example.test', path: 'acme/notes', number: 1 },
+    { host: 'GITHUB.COM', path: 'acme/notes', number: 1 },
+    { host: 'github.com', path: 'acme/sub/notes', number: 1 },
+    { host: 'github.com', path: '-acme/notes', number: 1 },
+    { host: 'github.com', path: 'acme/..', number: 1 },
+    { host: 'github.com', path: `acme/${'n'.repeat(101)}`, number: 1 },
+    { host: 'github.com', path: 'acme/notes' },
+    { host: 'github.com', path: 'acme/notes', number: 0 },
+    { host: 'github.com', path: 'acme/notes', number: -2 },
+    { host: 'github.com', path: 'acme/notes', number: 1.5 },
+    { host: 'github.com', path: 'acme/notes', number: '12' },
+    { host: 'github.com', path: 'acme/notes', number: 2 ** 60 },
+    { host: 'github.com', path: 'acme/notes', branch: 'a..b' },
+    { host: 'github.com', path: 'acme/notes', branch: 'x'.repeat(256) },
+    { host: 'github.com', path: 'acme/notes', branch: '' },
+    { host: 'github.com', path: 'acme/notes', number: 1, branch: '-x' },
+    { host: 'github.com', path: 'acme/notes', branch: 'feat\u202ex' },
+    { host: 'github.com', path: 'acme/notes', branch: 'feat\u200bx' },
+    { host: 'github.com', path: 'acme/notes', branch: 'feat\u2028x' },
+  ];
+  for (const fields of refused) assert.equal(ref(fields), null, JSON.stringify(fields).slice(0, 120));
+  for (const fields of [null, undefined, 'github.com/acme/notes']) assert.equal(forge.changeRef(fields), null, String(fields));
+  assert.deepEqual(calls, [], 'changeRef starts no process');
 });
 
 test('changeEvidence: a comment, review, or review comment of the pull request, each read by its id', () => {

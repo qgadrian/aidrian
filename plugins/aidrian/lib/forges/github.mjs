@@ -2,6 +2,8 @@
 // (github-cli.mjs). Shared code calls the facade, from forgeFor in index.mjs, instead of a forge's commands and routes.
 // Payloads stay GitHub's shapes until a second adapter gives a reason to change them.
 
+import { isRefName } from '../git.mjs';
+import { hasHidden } from '../hidden-text.mjs';
 import { runGh } from './github-cli.mjs';
 
 // The author associations GitHub gives the people who belong to a repository.
@@ -28,6 +30,21 @@ export function servedRepository(identity) {
   const parts = typeof identity?.path === 'string' ? identity.path.split('/') : [];
   if (!host || parts.length !== 2 || !isLogin(parts[0]) || !REPOSITORY_NAME.test(parts[1])) return null;
   return `${host}/${parts[0]}/${parts[1]}`;
+}
+
+// A change request's ref, the one shape check of a ref before it is written to the session's ledger or read: given
+// `{ host, path, number, branch }`, host and path as repoIdentity reads them, the frozen `{ host, owner, name, number,
+// branch }`, or null unless servedRepository names the repository, a number is a positive safe integer, a branch passes
+// isRefName (git's ref-name rules within 255 bytes) and holds no hidden character (hidden-text.mjs), and one of the two
+// is given. Text only: it starts no process.
+export function changeRef(fields) {
+  const { host, path, number = null, branch = null } = fields !== null && typeof fields === 'object' ? fields : {};
+  const repository = servedRepository({ host, path });
+  const numbered = number === null || (Number.isSafeInteger(number) && number > 0);
+  const named = branch === null || (isRefName(branch) && !hasHidden(branch));
+  if (repository === null || !numbered || !named || (number === null && branch === null)) return null;
+  const [owner, name] = path.split('/');
+  return Object.freeze({ host, owner, name, number, branch });
 }
 
 // The REST media type `aidrian pr await-review` has always named: index.mjs passes it as `mediaType` for `strictJson`.
@@ -232,6 +249,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     id: 'github',
     cwd,
     isTrustedCommenter,
+    // The hosts it serves, FORGE_HOSTS, the allowlist of the session ledger: a host no adapter declares is recorded nowhere.
+    hosts: FORGE_HOSTS,
+    changeRef,
     // The pull request `ref` (a number, a branch, or a URL; none: the current branch's), with the gh `fields` named;
     // `repo` looks in that repository instead of the default one. With a `repo`, an empty `ref` still goes to gh, as the
     // merge guard has always sent it: gh needs an argument with `--repo`, and an empty one is the current branch's.

@@ -59,6 +59,7 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `serverSpelling(server)` | How it spells a server's name, such as a hyphen as an underscore |
 | `githubTools` | Optional: a GitHub connector's merge, comment, and ready tools by standard name, each with `as`, the GitHub MCP server's tool it stands for, `repo`, its `owner/name` input, `fields`, and `fixed`, the inputs the tool implies without taking them, such as `draft: false`. `hooks.json` lists each by its raw name |
 | `toolResponse(response)` | The objects a tool's response holds, the most direct first |
+| `shellOutput(response)` | Optional: a shell call's response as `{ output, interrupted }`: `output` the text the command printed, or null when the response holds none it can read, and `interrupted` whether the host stopped the call. The [session ledger](../hooks.md#session-ledger) reads a created pull request's link from `output` alone, so no shared code reads a payload field. A host without it records no created pull request, and a process no adapter claims reads it through every adapter's, the first output one reads, interrupted when any says so |
 | `hookInput(input)` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is. A call of a tool the host runs under another tool's permission rules may carry `permission_tool_name`, that tool's standard name, which a bare deny of it then covers (`deniedNames` in `lib/hosts/index.mjs`) |
 | `opaqueShellTools` | Optional: its tools that run `tool_input.command` in a shell the shared lexer cannot read, such as PowerShell. They keep their own name, so no `Bash(<prefix>)` pattern admits them, and the guards read the command as opaque text, failing closed for a subagent (`opaqueShellCommand` in `lib/hosts/index.mjs`). Every `Bash` and `Bash(<prefix>)` deny covers them (`deniedNames`) |
 | `sessionStart` | Optional: `{ programs, starts(args) }`, the host's own command that starts or resumes a session. `programs` are the command's names; `starts` takes the lexer's argument tokens after the name, each `{ text, dynamic }`, and says whether that command line starts or resumes one, failing closed on a word it does not know. The agent gates hook refuses such a command to a subagent and to a session the background handoff route started, for every host's command whatever host runs the session (`hostSessionStartDenial` in `lib/handoff-guard.mjs`) |
@@ -163,6 +164,17 @@ A forge is where a pull request lives: its checks, reviews, comments, and reposi
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
 
 - `id`, `cwd`, and the helper `isTrustedCommenter(comment)`.
+- The session ledger's members ([Session ledger](../hooks.md#session-ledger)): `hosts`, the hosts the adapter serves,
+  a constant in its own file (`FORGE_HOSTS`, `['github.com']` for GitHub), which no config, remote, ledger row, or cache
+  adds to; and `changeRef({ host, path, number, branch })`, text only, which starts no process and answers the frozen
+  ref `{ host, owner, name, number, branch }` when every field has the forge's shape, else null. GitHub's takes a host
+  it declares, a path of exactly `owner/name` with an owner shaped as a login and a repository name, a positive whole
+  number, and a branch that passes git's ref-name rules within 255 bytes (`isRefName` in `lib/git.mjs`), with at least
+  one of number and branch. The hook calls it before every ledger write.
+  A forge's reader of its own command for the ledger, such as GitHub's `gh pr` calls, `GH_REPO`, and the pull request
+  URL in gh's output, sits under `lib/rules/<forge id>/`, as `lib/rules/github/session-calls.mjs` does. It runs nothing,
+  exports `FORGE`, its adapter's `id`, `readCall`, `createdChanges`, and `variables`, the environment its command reads
+  its repository and host from, and the hook hands it to the shared `lib/session-prs.mjs` in a table keyed by that id.
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, `pull`, `diff`, its diff as text,
   where `mergedChanges` and `openChanges` take a `repo` option, the repository the check below names,
   `nodeChange`, the pull request a GraphQL node id names, `changeEdits(repo, n, { host })`, when its body was last edited

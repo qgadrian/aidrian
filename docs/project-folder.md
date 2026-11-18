@@ -153,8 +153,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 │                         and triage.json, the decision on each finding (personas.md#triage)
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
-├── sessions/<session id>/  what aidrian session snapshot caches for one session, for its user alone:
+├── sessions/<session id>/  what aidrian session snapshot caches for one session, and its pull request ledger, for its user alone:
 │   ├── usage.json            the transcript read so far, as the handoff numbers fold it, saved step by step
+│   ├── prs.jsonl             the session's pull request ledger, one row per pull request a Bash call touched (hooks.md#session-ledger)
 │   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
 │   └── merged-heads-cache.json.<window>.lock  held for a moment while a snapshot records its forge attempt
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
@@ -170,7 +171,11 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
   mode 0700, no bit for the group or others, checked before every write, read, and sweep; each file is written as a
-  temporary file, mode 0600, renamed over it, under the cache names alone; a cache's reservation for one fixed window,
+  temporary file, mode 0600, renamed over it, under the cache names alone, with one exception, the ledger
+  `prs.jsonl`, which `lib/session-prs.mjs` appends to in place through the helper's `appendSessionFile` for the
+  [session ledger hook](hooks.md#session-ledger), no-follow, mode 0600, only while it is a regular file with one link
+  this user alone may read, and within 256 KB, rewritten by a temporary file and a rename with its newest rows when a
+  write would pass that; a cache's reservation for one fixed window,
   `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so
   one a killed process left blocks its own window alone. A state folder inside a checkout gets no

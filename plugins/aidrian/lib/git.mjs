@@ -64,3 +64,19 @@ export function isIgnored(root, file) {
   const { status } = runGit(['check-ignore', '-q', '--', file], root);
   return status === 0 ? true : status === 1 ? false : null;
 }
+
+// The longest branch name isRefName takes, in UTF-8 bytes: a ledger row stays a fixed size (lib/session-prs.mjs).
+export const REF_NAME_MAX_BYTES = 255;
+// A control character, a space, or one of ~ ^ : ? * [ \, which git refuses anywhere in a ref name.
+const REF_NAME_CHARACTER = /[\u0000- \u007f~^:?*[\\]/u;
+
+// Whether `name` is a branch name git takes, by `git check-ref-format --branch`'s rules, within REF_NAME_MAX_BYTES:
+// none of REF_NAME_CHARACTER; no `..`, `@{`, or `//`; no leading `-` or `/`; no trailing `/` or `.`; no part that starts
+// with `.` or ends with `.lock`; and not `@`. Pure JS: it starts no process, so a value from a command or a ledger row
+// never reaches git as an argument.
+export function isRefName(name) {
+  if (typeof name !== 'string' || name === '' || name === '@' || Buffer.byteLength(name) > REF_NAME_MAX_BYTES) return false;
+  if (REF_NAME_CHARACTER.test(name) || name.includes('..') || name.includes('@{') || name.includes('//')) return false;
+  if (name.startsWith('-') || name.startsWith('/') || name.endsWith('/') || name.endsWith('.')) return false;
+  return name.split('/').every((part) => !part.startsWith('.') && !part.endsWith('.lock'));
+}

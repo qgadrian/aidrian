@@ -198,6 +198,11 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
   others untouched for 30 days, deleting only the cache files and the ledger, their temporary files, and their
   reservations that are regular files, then the folder once empty.
+- A chain floor in `handoffs/.continue/` may name its `parent`, the session that handed off
+  ([The chain](handoff.md#the-chain)). The snapshot follows those names to the folders of the earlier sessions and reads
+  their ledgers ([Across a handoff](handoff.md#across-a-handoff)): it finds each by its full id, under the same rules
+  as the session's own, and creates or sweeps none. A subagent, and a session the background route started, may not
+  write in `sessions/` ([Agent gates](hooks.md#agent-gates)).
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

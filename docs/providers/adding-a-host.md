@@ -93,6 +93,16 @@ and its `live` field says whether a real host ever sent it.
 Only a live session with the hooks running proves a guard holds.
 [Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified) says how far each host has come.
 
+### Session links
+
+The [snapshot](../handoff.md#across-a-handoff) shows the pull requests and the ticket of the sessions a handoff came
+from, through the `parent` a chain floor names. A host gets that only through its continue routes.
+
+| Host | Inheritance | Verified |
+| --- | --- | --- |
+| Claude Code | The clear route and the background route write `parent` on the chain floor | By `node --test` on fixtures (`test/session-snapshot-links.test.mjs`, `test/handoff-continue-hooks.test.mjs`, `test/handoff-continue-background.test.mjs`); not live |
+| Codex | None: Codex declares no continue route, so it has no floor and no parent | Nothing to verify |
+
 ### What else a new host has to check by hand
 
 - **The auto-merge guard.** `GUARDED_PATHS` in `lib/project.mjs` lists the folders that instruct a host, such as `.codex/`.

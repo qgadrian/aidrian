@@ -947,6 +947,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `follow-up.json` stays allowed. That is an accepted limit
   of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
+- A subagent, and a main session the background route started, may not write in the session folders,
+  `<state>/sessions/`, read as the continuation store is: a target in them, a folder that holds them and no checkout,
+  a glob that may reach them by its path or through a link on disk, and a change of mode or owner of them or of a
+  folder that holds them. A target in a folder no path gives, and a word of a command in a shell the lexer cannot read,
+  count when they name `sessions/<a part>/<a session file>`; the word `sessions` alone never counts, so a project's own
+  folder of that name stays writable. The hooks and the `aidrian` commands write there through their own code, which
+  no guard reads, so the [ledger](#session-ledger) still records a subagent's push. An attended main session is not
+  held. The guard has the store guard's limits, and runs where it runs, first without its link walk and again with it.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule
   above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
 - A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:
@@ -1279,6 +1287,12 @@ last 256 KB, so it reads every row, and drops a first line the cut fell inside i
 ledger, through a temporary file and a rename under the same checks, with the newest rows of that tail that fit in half
 of it and then the new ones, so the newest pull requests always show. The `SessionEnd` hook and
 worktree cleanup leave it alone, so a resumed session keeps its pull requests.
+
+The snapshot also reads the ledgers of the sessions a handoff came from, through the `parent` each chain floor names
+([Across a handoff](handoff.md#across-a-handoff)): at most 5 of them, the last 64 KB of each, from a folder it finds by
+the full id and never creates. Of those it keeps only `created` and `pushed` rows on a repository the project's remotes
+name, written at or before the hop, and it reads no further ledger once it holds 25 refs. A row more than 60 seconds
+ahead of the snapshot's clock, of any ledger, is dropped when read.
 
 A `created` or `touched` row records what the command line names, not what each command did. Claude Code runs
 `PostToolUse` only for a Bash call that succeeded, but one command's status inside a line is not seen, so

@@ -1316,3 +1316,43 @@ test('a gated subagent\'s bracket glob in a known folder gets the folder check, 
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /\.aidrian\/config\.json/u);
 });
+
+test('a subagent, and a session the background route started, may not write in the session folders; an attended main session may', (t) => {
+  const { dir, state, full } = unattendedSetting(t);
+  const sessions = path.join(state, 'sessions');
+  const own = path.join(sessions, 'abc-1');
+  mkdirSync(own, { recursive: true, mode: 0o700 });
+  symlinkSync(path.join(own, 'prs.jsonl'), path.join(dir, 'into-sessions'));
+  const run = (session, tool, toolInput, { agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: session, tool_name: tool, tool_input: toolInput, cwd: dir, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
+    cwd: dir, encoding: 'utf8',
+  });
+  const blocked = [
+    ['Write', { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' }],
+    ['Write', { file_path: path.join(own, 'links.jsonl'), content: '{}\n' }],
+    ['Bash', { command: `echo '{}' >> ${own}/prs.jsonl` }],
+    ['Bash', { command: `rm -rf ${sessions}` }],
+    ['Bash', { command: `cp /tmp/x ${state}/sess*/x/prs.jsonl` }],
+    ['Bash', { command: `echo '{}' > ${path.join(dir, 'into-sessions')}` }],
+    ['Bash', { command: `chmod -R 777 ${state}` }],
+    ['Bash', { command: `chmod 777 ${sessions}` }],
+    ['Bash', { command: 'cd "$X" && echo {} > sessions/x/prs.jsonl' }],
+  ];
+  const passing = [
+    ['Write', { file_path: path.join(dir, 'src/sessions/store.js'), content: 'export {};\n' }],
+    ['Write', { file_path: path.join(dir, 'sessions'), content: 'notes\n' }],
+    ['Bash', { command: 'cd "$X" && echo {} > sessions/notes.md' }],
+  ];
+  for (const [session, agent] of [['plain-session', true], [full, false]]) {
+    for (const [tool, toolInput] of blocked) {
+      const result = run(session, tool, toolInput, { agent });
+      assert.equal(result.status, 2, `${session}: ${JSON.stringify(toolInput)}`);
+    }
+    for (const [tool, toolInput] of passing) assert.equal(run(session, tool, toolInput, { agent }).status, 0, `${session}: ${JSON.stringify(toolInput)}`);
+  }
+  const named = run('plain-session', 'Write', { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' }, { agent: true });
+  assert.match(named.stderr, /the session folders, where only the hooks and the `aidrian` commands write/u);
+  for (const [tool, toolInput] of blocked.filter(([, input]) => !String(input.command ?? '').startsWith('chmod -R'))) {
+    assert.equal(run('plain-session', tool, toolInput).status, 0, `an attended session may: ${JSON.stringify(toolInput)}`);
+  }
+});

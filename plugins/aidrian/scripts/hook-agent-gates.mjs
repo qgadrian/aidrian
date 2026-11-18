@@ -3,7 +3,7 @@
 // and, with or without gates, from setting the machine's switches, as it keeps a session the background handoff route
 // started (lib/handoff-guard.mjs startedUnattended); lib/handoff-guard.mjs, with or without
 // gates, from running `aidrian handoff continue` or writing in the handoff continuation store, and keeps a subagent
-// and such a session from writing there or in the unattended marks, from starting a host session outside the gate, and
+// and such a session from writing there, in the unattended marks, or in the session folders, from starting a host session outside the gate, and
 // from running the gate with a variable of their own that moves its store or session. Whether the session is such a
 // one is read from its unattended mark (lib/unattended-mark.mjs) on every call, before it runs, wherever it runs, with
 // no project at its folder too: the mark names the project the gate started it in, whose guards then hold the call.
@@ -37,7 +37,7 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, sessionFoldersWriteDenial, startedUnattended, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
@@ -126,10 +126,12 @@ function guards(input, project, config, gated, snapshot, marked, unattended) {
     ?? handoffEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended })
+    ?? sessionFoldersWriteDenial(input, project, config, state, { links: false, unattended })
     ?? stateFoldersWriteDenial(input, config, { project, links: false, unattended })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended })
+    ?? sessionFoldersWriteDenial(input, project, config, state, { unattended })
     ?? stateFoldersWriteDenial(input, config, { project, unattended })
     ?? otherProject(input, project, marked, unattended);
 }
@@ -141,7 +143,8 @@ function otherProject(input, project, marked, unattended) {
   const { config } = loadConfig(marked);
   let dir;
   const state = () => (dir ??= stateDir(marked, { config }));
-  return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended });
+  return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended })
+    ?? sessionFoldersWriteDenial(input, marked, config, state, { unattended });
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

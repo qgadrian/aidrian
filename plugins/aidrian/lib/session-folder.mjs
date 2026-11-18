@@ -71,6 +71,54 @@ export function sessionFolder(state, sessionId, { checkouts, uid = processUid(),
   }
 }
 
+// The folder of `sessionId` as sessionFolder would give it, with nothing created and nothing swept, for a reader of
+// another session's files, such as an ancestor's in the snapshot (lib/session-links.mjs): { folder, refused }. `folder`
+// is its real path, or null; `refused` is true when the id fails SESSION_ID, `checkouts` is no list, or the state folder,
+// the sessions folder, or the session folder fails its rule, and false when a folder that would hold it is not there.
+// Never throws.
+export function existingSessionFolder(state, sessionId, { checkouts, uid = processUid(), gid = processGid() } = {}) {
+  const refused = { folder: null, refused: true };
+  const none = { folder: null, refused: false };
+  if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return refused;
+  try {
+    const sessions = heldSessions(state, checkouts, { uid, gid });
+    if (sessions === undefined) return refused;
+    if (sessions === null) return none;
+    const folder = path.join(sessions, sessionId);
+    if (!isEntry(folder)) return none;
+    return outside(folder, checkouts) && boundFolder(folder, { uid, gid }) ? { folder, refused: false } : refused;
+  } catch {
+    return refused;
+  }
+}
+
+// The names of the folders under the sessions folder that pass SESSION_ID, [] when there is none, or null when the
+// state folder or the sessions folder fails its rule, as existingSessionFolder holds them. Creates nothing. Never throws.
+export function sessionFolderNames(state, { checkouts, uid = processUid(), gid = processGid() } = {}) {
+  try {
+    const sessions = heldSessions(state, checkouts, { uid, gid });
+    if (sessions === undefined) return null;
+    return sessions === null ? [] : readdirSync(sessions).filter((name) => SESSION_ID.test(name));
+  } catch {
+    return null;
+  }
+}
+
+// The real path of the sessions folder under the state folder `state`, checked as sessionFolder checks it, with nothing
+// made: undefined when a rule fails, and null when the state folder or the sessions folder is not there.
+function heldSessions(state, checkouts, ids) {
+  if (!Array.isArray(checkouts)) return undefined;
+  const resolved = resolvedPath(state);
+  if (resolved === null || checkoutHolding(resolved, checkouts) || !stateHeld(state, ids)) return undefined;
+  if (!isEntry(state)) return null;
+  const real = realpathSync(state);
+  if (checkoutHolding(real, checkouts) || !heldChain(real, ids, false)) return undefined;
+  const sessions = path.join(real, 'sessions');
+  if (!outside(sessions, checkouts)) return undefined;
+  if (!isEntry(sessions)) return null;
+  return privateFolder(sessions, ids.uid) ? sessions : undefined;
+}
+
 // The real path of the state folder, made when missing, or null when it resolves inside one of `checkouts`, or it fails
 // stateHeld, checked before anything is made and again after.
 function ownState(state, checkouts, ids) {

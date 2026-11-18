@@ -19,6 +19,7 @@ import { changesGitTarget, isPush, pushedRefs } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { hasHidden } from './hidden-text.mjs';
 import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
+import { readRows } from './session-rows.mjs';
 import { changesVariable, commandLines, lexCommand, readGit, readInvocation, shellRedirections, walkCommands } from './shell-lex.mjs';
 
 // The ledger's name in the session folder (lib/session-folder.mjs APPENDED_FILES).
@@ -96,6 +97,20 @@ function folderReader(read) {
     return pushes.get(folder);
   };
   return { config: configOf, remotes: (folder) => configOf(folder).remotes, branch: branchOf, pushed: pushedOf };
+}
+
+// The repositories the remotes of `folder` name, each remote's `url` and `pushurl` as readConfig reads them, from one
+// `git config --get-regexp` with constant arguments, distinct, as `{ host, path }`; [] when git finds no key, and null
+// when the read fails. A remote git reads as a folder on disk names none. `read` runs git, which a test may replace.
+export function remoteRepos(folder, read = runGit) {
+  const { status, stdout } = read(['config', '--get-regexp', CONFIG_KEYS], folder);
+  if (status === 1 && stdout === '') return [];
+  if (status !== 0) return null;
+  const out = [];
+  for (const { fetch = null, push = null } of readConfig(stdout).remotes.values()) {
+    for (const repo of [fetch, push]) if (repo && !out.some((each) => sameRepo(each, repo))) out.push({ host: repo.host, path: repo.path });
+  }
+  return out;
 }
 
 const sameRepo = (a, b) => Boolean(a && b) && a.host === b.host && a.path === b.path;
@@ -327,21 +342,7 @@ const PATH_MAX_BYTES = 1024;
 // The ledger's rows in `folder`, oldest first, read no-follow from its last LEDGER_MAX_BYTES: a first line the cut fell
 // inside and a last line still being written are dropped, and so is a line that is no row object. Null when the ledger
 // cannot be read as the session folder's rules allow, such as a named pipe or a symlink there.
-export function readLedger(folder, options = {}) {
-  const read = readSessionTail(folder, LEDGER, { ...options, maxBytes: LEDGER_MAX_BYTES });
-  if (read === null) return null;
-  const lines = read.text.split('\n');
-  lines.pop();
-  if (read.cut) lines.shift();
-  return lines.flatMap((line) => {
-    try {
-      const row = JSON.parse(line);
-      return row !== null && typeof row === 'object' && !Array.isArray(row) ? [row] : [];
-    } catch {
-      return [];
-    }
-  });
-}
+export const readLedger = (folder, options = {}) => readRows(folder, LEDGER, { ...options, maxBytes: LEDGER_MAX_BYTES });
 
 const isNumber = (number) => number === null || (Number.isSafeInteger(number) && number > 0);
 const isBranch = (branch) => branch === null || (isRefName(branch) && !hasHidden(branch));
@@ -360,8 +361,32 @@ const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, 
 // forge user's own first (changesState). A number's is null.
 // { refs, unsupported }: the refs `forge` reads, each `{ host, path, number, branch, rank }`, and the rest as rows of the
 // change request's shape with `unsupported: true`, no forge, and null for all the forge would answer: they start no call.
+// `ancestors`, an iterable of row groups, nearest first, as lib/session-links.mjs reads them, adds the refs of each group
+// that no nearer one holds, newest first, each `inherited: true`, while there are fewer than MAX_REFS: no further group
+// is read once there are. The session's own refs come first and fill the places first.
 const RANKS = Object.freeze({ created: 'own', pushed: 'own', touched: 'open' });
-export function sessionRefs(rows, forge) {
+export function sessionRefs(rows, forge, ancestors = []) {
+  const held = new Map();
+  const take = (group, inherited) => {
+    for (const ref of groupRefs(group, forge)) if (held.size < MAX_REFS && !held.has(ref.key)) held.set(ref.key, { ...ref, inherited });
+  };
+  take(rows, false);
+  const groups = ancestors[Symbol.iterator]();
+  while (held.size < MAX_REFS) {
+    const next = groups.next();
+    if (next.done) break;
+    take(next.value, true);
+  }
+  const chosen = [...held.values()];
+  const mark = (ref, inherited) => (inherited ? { ...ref, inherited: true } : ref);
+  return {
+    refs: chosen.filter((ref) => ref.declared).map(({ host, path: repoPath, number, branch, rank, inherited }) => mark({ host, path: repoPath, number, branch, rank }, inherited)),
+    unsupported: chosen.filter((ref) => !ref.declared).map(({ host, path: repo, number, inherited }) => mark({ host, repo, number, ...UNKNOWN, unsupported: true }, inherited)),
+  };
+}
+
+// The refs of one group of rows, as sessionRefs reads them, newest first, MAX_REFS at most, each with its `key`.
+function groupRefs(rows, forge) {
   const found = new Map();
   rows.forEach((row, index) => {
     const at = typeof row.at === 'string' ? Date.parse(row.at) : Number.NaN;
@@ -371,14 +396,10 @@ export function sessionRefs(rows, forge) {
     if (declared ? forge.changeRef({ host, path: repoPath, number, branch }) === null || !validCwd(row.cwd) : !isUnsupportedRow(row)) return;
     const key = JSON.stringify(number === null ? [host, repoPath, null, branch] : [host, repoPath, number, null]);
     const rank = number === null ? RANKS[row.kind] : null;
-    const ref = found.get(key) ?? { host, path: repoPath, number, branch: number === null ? branch : null, rank, declared, at, index };
+    const ref = found.get(key) ?? { key, host, path: repoPath, number, branch: number === null ? branch : null, rank, declared, at, index };
     found.set(key, { ...ref, at: Math.max(ref.at, at), index, rank: at >= ref.at ? rank : ref.rank });
   });
-  const newest = [...found.values()].sort((a, b) => b.at - a.at || b.index - a.index).slice(0, MAX_REFS);
-  return {
-    refs: newest.filter((ref) => ref.declared).map(({ host, path: repoPath, number, branch, rank }) => ({ host, path: repoPath, number, branch, rank })),
-    unsupported: newest.filter((ref) => !ref.declared).map(({ host, path: repo, number }) => ({ host, repo, number, ...UNKNOWN, unsupported: true })),
-  };
+  return [...found.values()].sort((a, b) => b.at - a.at || b.index - a.index).slice(0, MAX_REFS);
 }
 
 // What a row on a host no adapter declares cannot know.
@@ -391,7 +412,7 @@ const REF_KEY_MAX_BYTES = 4096;
 // The answer the cache keeps for `refs`, through the adapter's one batched read (changesState): `{ refs, rows }`, each
 // ref's key and the change request it resolved to, or null. Throws what the read throws.
 export function resolveSelection(forge, refs) {
-  const rows = forge.changesState(refs);
+  const rows = forge.changesState(refs.map(({ inherited, ...ref }) => ref));
   if (!Array.isArray(rows)) throw new Error('no rows');
   return { refs: refs.map(refKey), rows: refs.map((_, index) => (isChangeRow(rows[index]) ? rows[index] : null)) };
 }
@@ -409,8 +430,10 @@ function distinctRows(rows) {
   });
 }
 
-// The change requests `refs` resolve to, one entry each (distinctRows). Throws what the read throws.
-export const resolveChanges = (forge, refs) => distinctRows(resolveSelection(forge, refs).rows);
+// The change requests `refs` resolve to, one entry each (distinctRows), each with the `inherited` of the ref it
+// answers, so a ref of the session's own, which comes first, wins over an inherited one. Throws what the read throws.
+export const resolveChanges = (forge, refs) => distinctRows(withInherited(resolveSelection(forge, refs).rows, refs));
+const withInherited = (rows, refs) => rows.map((row, index) => row && { ...row, inherited: refs[index].inherited === true });
 
 // What the snapshot shows of the session's change requests, MAX_REFS at most: the cached answer `cache`, as
 // resolveSelection gave it, for the refs `refs` still selects alone, newest first and one entry a change request, then
@@ -418,14 +441,17 @@ export const resolveChanges = (forge, refs) => distinctRows(resolveSelection(for
 // ref has no answer in it, since the ledger moved on since the forge was read; the cache's own window refreshes it.
 // When no selected ref has an answer in it, it throws, so the section shows as unavailable rather than as no change
 // requests. Each row's `url` is the one the adapter `forge` takes for it (changeUrl), else null, so a cache never
-// names a link.
+// names a link. Every row holds `inherited`, the boolean of its ref, never the cache's: an inherited row shows only
+// while its state is `open`, and an unsupported one, whose state nothing knows, shows.
 export function shownChanges({ forge, refs, unsupported, cache, stale }) {
   const answers = new Map(cache.refs.map((key, index) => [key, cache.rows[index]]));
   const keys = refs.map(refKey);
   if (keys.length > 0 && !keys.some((key) => answers.has(key))) throw new Error('no answer for the selected refs');
   const behind = stale || keys.some((key) => !answers.has(key));
-  const rows = distinctRows(keys.map((key) => answers.get(key) ?? null)).map((row) => ({ ...row, url: typeof forge?.changeUrl === 'function' ? forge.changeUrl(row) : null }));
-  return [...rows.map((row) => (behind ? { ...row, stale: true } : row)), ...unsupported].slice(0, MAX_REFS);
+  const rows = distinctRows(withInherited(keys.map((key) => answers.get(key) ?? null), refs)).filter((row) => !row.inherited || row.state === 'open')
+    .map((row) => ({ ...row, url: typeof forge?.changeUrl === 'function' ? forge.changeUrl(row) : null }));
+  const others = unsupported.map((row) => ({ ...row, inherited: row.inherited === true }));
+  return [...rows.map((row) => (behind ? { ...row, stale: true } : row)), ...others].slice(0, MAX_REFS);
 }
 
 const STATES = new Set(['open', 'closed', 'merged']);

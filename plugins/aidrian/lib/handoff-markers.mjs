@@ -4,8 +4,9 @@
 //   checked-<brief name>.json  { sha256, at }                                       the brief that passed the check
 //   armed-<session>.json       { route, session, brief, slug, chain, sha256, armed_at }
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
-//   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session;
-//                              a background hop's adds { tree, done, stalls }, the progress it starts from
+//   from-<session>.json        { slug, chain, brief, route, parent, at }              the chain floor of a session;
+//                              a background hop's adds { tree, done, stalls }, the progress it starts from;
+//                              `parent`, the session that handed off, is optional, and only the snapshot reads it
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 //   ending-<session>.json      { shell, id, next, host_pid | own, at }   a session that ends itself once its turn ends,
@@ -379,33 +380,63 @@ export function clearPending(store, { now = Date.now() } = {}) {
 
 // Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to, and
 // the background route's `progress`, { tree, done, stalls }, when it is given; a progress of another shape writes nothing.
-// `session` may be the short id a host printed for a session it started, which readFrom matches by prefix.
-export function noteFrom(store, session, { slug, chain, brief, route, progress }, { now = Date.now() } = {}) {
-  const value = { slug, chain, brief, route, ...progress, at: now };
+// `session` may be the short id a host printed for a session it started, which readFrom matches by prefix. `parent`, the
+// session that handed off, is written only when it passes SESSION_ID and is not `session` in the case the disk folds to;
+// isFrom does not read it, so a floor without one, or with a bad one, is the same floor (readHop).
+export function noteFrom(store, session, { slug, chain, brief, route, progress, parent }, { now = Date.now() } = {}) {
+  const named = typeof parent === 'string' && SESSION_ID.test(parent) && typeof session === 'string' && foldCase(parent) !== foldCase(session);
+  const value = { slug, chain, brief, route, ...progress, ...(named ? { parent } : {}), at: now };
   return isFrom(value) && (noProgress(value) || isProgress(value)) ? writeMarker(store, sessionFile('from', session), value) : null;
 }
 
 // The chain floor `session` was given, or null: the highest of its own and every one filed under a short id it starts
 // with, as a background start files one when the host had not listed the new session's full id yet. A lower floor under
 // its own id never hides a higher one under a short id.
-export function readFrom(store, session, { now = Date.now() } = {}) {
-  return floorsOf(store, session, now).reduce((high, each) => (high && high.chain >= each.chain ? high : each), null);
+// `names` is a listing of the store storeNames gave, which the snapshot reads once for all its readers; a gate or a
+// guard passes none, so it never counts a floor from an old listing.
+export function readFrom(store, session, { now = Date.now(), names } = {}) {
+  return highest(floorsOf(store, session, now, names))?.value ?? null;
+}
+
+const highest = (floors) => floors.reduce((high, each) => (high && high.value.chain >= each.value.chain ? high : each), null);
+
+// The names in the store's folder, [] for a refused store or one that cannot be listed: what readFrom and readHop take
+// as `names`.
+export const storeNames = (store) => (store.refused ? [] : listStore(store));
+
+// Of the floor readFrom picks for `session`: { parent, at, short, read }, where `parent` is the id it names when that
+// passes SESSION_ID, else null; `at` its time; `short` the short id it is filed under, or null under the session's own
+// id; and `read` the floor files it opened. Null with no floor, a refused store, or more than `limit` files to open.
+export function readHop(store, session, { now = Date.now(), names, limit = Infinity } = {}) {
+  if (store.refused) return null;
+  const files = floorFiles(store, session, names);
+  if (files.length > limit) return null;
+  const pick = highest(files.map((name) => ({ name, value: readFloor(store, name, now) })).filter(({ value }) => value));
+  if (!pick) return null;
+  const { parent, at } = pick.value;
+  const short = pick.name === sessionFile('from', session) ? null : SHORT_FROM.exec(pick.name)[1];
+  return { parent: typeof parent === 'string' && SESSION_ID.test(parent) ? parent : null, at, short, read: files.length };
 }
 
 // Whether the background route started `session`, so no Human attends it: a chain floor of route `background` is filed
 // for it, under its own id or a short one it starts with. lib/handoff-guard.mjs startedUnattended asks it.
-export const startedInBackground = (store, session, { now = Date.now() } = {}) => floorsOf(store, session, now).some((floor) => floor.route === 'background');
+export const startedInBackground = (store, session, { now = Date.now() } = {}) => floorsOf(store, session, now).some(({ value }) => value.route === 'background');
 
-// Every chain floor filed for `session`: its own, then those under a short id it starts with.
-function floorsOf(store, session, now) {
+const readFloor = (store, name, now) => readMarker(store, name, { now, field: 'at', shape: isFrom });
+
+// The names of the chain floors filed for `session`: its own, then those under a short id it starts with, from `names`
+// when given, else from a listing of the store.
+function floorFiles(store, session, names) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return [];
-  const read = (name) => readMarker(store, name, { now, field: 'at', shape: isFrom });
   const prefixOf = (name) => {
     const short = SHORT_FROM.exec(name)?.[1];
     return short !== undefined && short !== session && session.startsWith(short);
   };
-  return [read(sessionFile('from', session)), ...listStore(store).filter(prefixOf).map(read)].filter(Boolean);
+  return [sessionFile('from', session), ...(names ?? listStore(store)).filter(prefixOf)];
 }
+
+// Every chain floor filed for `session`, as { name, value }.
+const floorsOf = (store, session, now, names) => floorFiles(store, session, names).map((name) => ({ name, value: readFloor(store, name, now) })).filter(({ value }) => value);
 
 // Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
 // brief, chain, id, session, name, cwd, mode }, where `id` is the id the gate names it by, `session` its full id or null,

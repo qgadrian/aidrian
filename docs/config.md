@@ -1697,6 +1697,9 @@ declares, github.com today, read in one forge call. The ledger hook records rows
 row, on any other host, appears only from a ledger written another way, such as by a later adapter. It reads at most 25
 refs, the newest: each ref is a pull request number or a branch, counted before branches resolve, so a branch with no
 pull request uses one, and fewer than 25 pull requests can show while an older one is left out.
+After a handoff, `prs` also shows the open pull requests the sessions it came from created or pushed, each
+`inherited: true`, and `ticket` comes from the current branch (`source: "branch"`), else from a branch the session's
+ledger, or an earlier session's, recorded (`source: "ledger"`) ([Across a handoff](handoff.md#across-a-handoff)).
 Unlike the other commands it never stops on a `config.json` with errors: like the hooks, it uses the default in place
 of each bad value, and a section that cannot be read is null with its name in `errors`, so the status line keeps working.
 

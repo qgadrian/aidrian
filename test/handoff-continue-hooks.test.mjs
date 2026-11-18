@@ -14,7 +14,7 @@ import test from 'node:test';
 
 import { chainOf, checkBrief } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { arm, openStore, promote, readArmed, readFrom } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { arm, openStore, promote, readArmed, readFrom, readHop } from '../plugins/aidrian/lib/handoff-markers.mjs';
 
 const SCRIPTS = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts');
 const START = path.join(SCRIPTS, 'hook-session-start.mjs');
@@ -125,6 +125,8 @@ test('the clear route: the gate arms, the session end promotes, and the session 
   assert.match(continuation[2], /Chain: 2/u);
   assert.ok(!context.includes(SECRET) && !banner.includes(SECRET), 'the brief is named, never quoted');
   assert.deepEqual(readFrom(setting.store, 'new'), { ...readFrom(setting.store, 'new'), slug: 'widget', chain: 2, brief: setting.file, route: 'clear' });
+  assert.equal(readFrom(setting.store, 'new').parent, 'old', 'the floor names the session that armed the clear');
+  assert.equal(readHop(setting.store, 'new').parent, 'old');
 
   assert.equal(start(setting).stdout, before, 'taken once: a second start prints the plain lines');
 });

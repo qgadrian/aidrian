@@ -2,8 +2,8 @@
 // are written. It holds caches a reader keeps between calls, such as the usage cache (lib/session-usage-cache.mjs);
 // docs/project-folder.md lists them. Display data only: no hook, gate, skill, or agent decides anything from it.
 // The state folder and every folder above it pass heldFolder, checked before every write, read, and sweep, so no other
-// user can swap a folder between a check and the open that follows it, and the state folder resolves inside no checkout
-// of the repository. The sessions folder and the session folder are each a real folder, no symlink, owned by this
+// user can swap a folder between a check and the open that follows it, and the state folder, the sessions folder, and the
+// session folder each resolve inside no checkout of the repository. The sessions folder and the session folder are each a real folder, no symlink, owned by this
 // process's user, that no other user may read or write; and the session folder's real path is `<real state>/sessions/<id>`,
 // and is still the folder's own path at each write, read, and sweep (boundFolder), so a folder above it swapped for a
 // symlink since gets none. Its files are written as a temporary file and a rename, mode 0600, under the names in
@@ -46,7 +46,8 @@ const APPEND = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (co
 
 // The real path of the folder of `sessionId` under the state folder `state`, created for this user alone when missing,
 // or null, with nothing made, written, or swept: the id fails SESSION_ID; `checkouts`, the project's, is no list; the
-// state folder fails its rule, or a sessions or session folder fails its own; or the folder fails boundFolder, so no
+// state folder fails its rule, or a sessions or session folder fails its own or resolves inside one of `checkouts`; or
+// the folder fails boundFolder, so no
 // folder it gives is one its writes refuse. Creating the folder sweeps the others. `uid` and `gid` are this user's ids,
 // which a test may set. Never throws.
 export function sessionFolder(state, sessionId, { checkouts, uid = processUid(), gid = processGid(), now = Date.now() } = {}) {
@@ -56,9 +57,11 @@ export function sessionFolder(state, sessionId, { checkouts, uid = processUid(),
     const real = ownState(state, checkouts, ids);
     if (real === null) return null;
     const sessions = path.join(real, 'sessions');
+    if (!outside(sessions, checkouts)) return null;
     made(sessions);
     if (!privateFolder(sessions, uid)) return null;
     const folder = path.join(sessions, sessionId);
+    if (!outside(folder, checkouts)) return null;
     const created = made(folder);
     if (!boundFolder(folder, ids)) return null;
     if (created) sweepSessions(sessions, { current: sessionId, ...ids, now });
@@ -77,6 +80,14 @@ function ownState(state, checkouts, ids) {
   const real = realpathSync(state);
   if (checkoutHolding(real, checkouts) || !heldChain(real, ids, false)) return null;
   return real;
+}
+
+// Whether the folder `dir`, below the state folder's real path, resolves inside none of `checkouts`. The state folder
+// lying outside them is not enough: with a committed `state.dir` of ".." in a repository folder named `sessions`, the
+// sessions folder is the checkout itself.
+function outside(dir, checkouts) {
+  const resolved = resolvedPath(dir);
+  return resolved !== null && checkoutHolding(resolved, checkouts) === undefined;
 }
 
 // Whether the folder `dir` lets no user but this one rename or replace what lies below it, as OpenSSH's StrictModes holds

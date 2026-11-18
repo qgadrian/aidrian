@@ -192,10 +192,12 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so
   one a killed process left blocks its own window alone. A state folder inside a checkout of the repository, the
   main checkout or any linked worktree, or one git could not list the checkouts for, gets no session folder,
-  and neither does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
+  and neither does one whose `sessions` folder or session folder resolves inside a checkout, as with `state.dir` set to
+  `..` in a repository whose folder is named `sessions`; the snapshot reads the lesson inbox and the audits folder under
+  the same rule. Nor does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
   the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
-  others untouched for 30 days, deleting only the cache files, their temporary files, and their reservations that are
-  regular files, then the folder once empty.
+  others untouched for 30 days, deleting only the cache files and the ledger, their temporary files, and their
+  reservations that are regular files, then the folder once empty.
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

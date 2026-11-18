@@ -7,10 +7,12 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { arm, noteFrom, noteStarted, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { cachedValue } from '../plugins/aidrian/lib/session-cached-value.mjs';
 import { reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { DISPLAY_CAPS, displayText, MERGED_HEADS, PRS_CACHE, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
+import { auditsSection, lessonsSection, snapshotContext } from '../plugins/aidrian/lib/session-snapshot-state.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
@@ -1057,4 +1059,72 @@ test('prs: a symlinked prs.jsonl and a symlinked session folder receive no write
   const folder = env.run(['--session', 'linked-1']).json;
   assert.deepEqual([folder.prs, folder.errors.includes('prs')], [null, true]);
   assert.deepEqual(readdirSync(elsewhere), ['prs.jsonl'], 'no cache or temporary file is written through the symlink');
+});
+
+// A project whose repository folder is named `name`, with a committed state.dir of "..": the state folder, the folder
+// that holds the checkout, lies outside it, but its own `name` folder is the checkout itself.
+function parentState(t, name) {
+  const env = setup(t, { name, config: { state: { dir: '..' } } });
+  assert.equal(path.resolve(env.projectState()), env.base, 'the state folder is the checkout`s parent');
+  return env;
+}
+
+test('a state.dir of ".." in a repository folder named lessons reads no inbox at the repository root', { skip: !POSIX }, (t) => {
+  const env = parentState(t, 'lessons');
+  const add = spawnSync(process.execPath, [CLI, 'lesson', 'add', '--tier', 'P1'], { cwd: env.dir, env: env.env, input: 'title: first\nA note.\n', encoding: 'utf8' });
+  assert.equal(add.status, 0, add.stderr);
+  assert.equal(existsSync(path.join(env.dir, 'inbox.jsonl')), true, 'the inbox lies at the repository root');
+  const { json, status } = env.run();
+  assert.equal(status, 0);
+  assert.equal(json.lessons, null);
+  assert.deepEqual(json.errors, ['lessons']);
+});
+
+test('a state.dir of ".." in a repository folder named audits reads no report in the work tree', { skip: !POSIX }, (t) => {
+  const env = parentState(t, 'audits');
+  writeFileSync(path.join(env.dir, 'front-desk-2026-06-01.md'), '## Findings\n\n### F1. polish: x\n');
+  const { json, status } = env.run();
+  assert.equal(status, 0);
+  assert.equal(json.audits, null);
+  assert.deepEqual(json.errors, ['audits']);
+});
+
+test('a state.dir of ".." in a repository folder named sessions makes no session folder in the work tree', { skip: !POSIX }, (t) => {
+  const env = parentState(t, 'sessions');
+  // A 0700 checkout passes the sessions folder's own rule, so only the checkout check keeps the session folder out.
+  chmodSync(env.dir, 0o700);
+  const { json, status } = env.run(['--session', ID]);
+  assert.equal(status, 0);
+  assert.equal(existsSync(path.join(env.dir, ID)), false, 'no session folder inside the work tree');
+  assert.equal(json.prs, null);
+  assert.deepEqual(json.errors, ['prs', 'worktrees']);
+});
+
+test('lessons and audits read the state folder the context resolved, though its symlink is repointed after', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const link = path.join(env.base, 'state-link');
+  const [first, second] = ['first', 'second'].map((name) => path.join(env.base, name));
+  const point = (target) => {
+    rmSync(link, { force: true });
+    symlinkSync(target, link);
+  };
+  writeFileSync(path.join(env.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: link } }));
+  const add = () => {
+    const added = spawnSync(process.execPath, [CLI, 'lesson', 'add', '--tier', 'P1'], { cwd: env.dir, env: env.env, input: 'title: one\nA note.\n', encoding: 'utf8' });
+    assert.equal(added.status, 0, added.stderr);
+  };
+  for (const [target, count] of [[first, 1], [second, 2]]) {
+    mkdirSync(path.join(target, 'audits'), { recursive: true });
+    point(target);
+    for (let n = 1; n <= count; n += 1) {
+      add();
+      writeFileSync(path.join(target, 'audits', `front-desk-2026-06-0${n}.md`), `## Findings\n\n### F${n}. polish: x\n`);
+    }
+  }
+  point(first);
+  const ctx = snapshotContext(findProject(env.dir), { session: null, transcript: null, validId: false }, new Set());
+  point(second);
+  assert.equal(lessonsSection(ctx).open, 1, 'the lessons come from the folder the context checked');
+  assert.deepEqual(auditsSection(ctx), { untriaged: 1 });
+  assert.equal(ctx.state, first, 'the context keeps the resolved path');
 });

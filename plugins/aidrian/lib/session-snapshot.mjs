@@ -12,19 +12,15 @@ import { lstatSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { listAudits } from './audits.mjs';
-import { loadConfig } from './config.mjs';
 import { scanDecisions } from './decisions-cli.mjs';
 import { forgeFor, remoteIdentity, servedRepository } from './forges/index.mjs';
-import { checkoutHolding, resolvedPath } from './fs.mjs';
 import { GIT_TIMEOUT_MS, killingGit, mainRoot, runGit } from './git.mjs';
 import { latestBrief, MARKER_CAP, openStore, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { HIDDEN } from './hidden-text.mjs';
-import { lessons, lessonStats, stateInbox } from './lesson-inbox.mjs';
-import { findProject, projectCheckouts, stateDir } from './project.mjs';
+import { findProject } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
 import { changesSummary, isChangeCache, readLedger, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
-import { sessionFolder, stateHeld } from './session-folder.mjs';
+import { auditsSection, KILL, lessonsSection, ownState, snapshotContext } from './session-snapshot-state.mjs';
 import { handoffStatus, stopMarkerPath } from './session-length.mjs';
 import { cachedSessionUsage } from './session-usage-cache.mjs';
 import { usageLines } from './usage.mjs';
@@ -39,8 +35,6 @@ export const PRS_CACHE = Object.freeze({ name: 'prs-cache.json', windowMs: 60_00
 // Ticket prefixes: at most 32, each a letter and up to 15 letters or digits.
 const PREFIX = /^[A-Za-z][A-Za-z0-9]{0,15}$/u;
 const MAX_PREFIXES = 32;
-// The git and gh calls a snapshot starts, its readers' too (killingGit), hold no lock: one past its limit is killed.
-const KILL = { killSignal: 'SIGKILL' };
 
 // The longest text displayText keeps, in code points: a title, a name (a branch, an owner, a repository, a check, a
 // slug, or a ticket key), and a path or URL.
@@ -97,7 +91,7 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   try {
     const found = findProject(cwd);
     if (!found) return out;
-    ctx = context(found, { session, transcript, validId }, errors);
+    ctx = snapshotContext(found, { session, transcript, validId }, errors);
   } catch {
     return { ...out, errors: [...SECTIONS] };
   }
@@ -105,56 +99,24 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   if (validId && transcript !== null) section('handoff', () => handoffSection(ctx, session, transcript));
   const forge = forgeBudget(budgetMs);
   if (validId) section('prs', () => prsSection(ctx, cwd, forge));
-  section('lessons', () => lessonCounts(lessonStats(lessons(stateInbox(ownState(ctx)))).open));
+  section('lessons', () => lessonsSection(ctx));
   section('worktrees', () => worktreesSection(ctx, validId, forge, errors));
   section('decisions', () => ({ provisional: unconfirmed(scanDecisions(project, { unindexed: false, config: ctx.config })) }));
-  section('audits', () => ({ untriaged: listAudits(path.join(ownState(ctx), 'audits')).reduce((sum, each) => sum + Math.max(each.untriaged, 0), 0) }));
+  section('audits', () => auditsSection(ctx));
   section('ticket', () => ticketOf(cwd, ticketPrefixes));
   return { ...out, errors: SECTIONS.filter((name) => errors.has(name)) };
 }
-
-// What the sections share: { project, config, state, checkouts, inside, loose, folder }. `checkouts` are the project's
-// and every checkout of its repository (projectCheckouts), null when git could not list them. `inside` says the state
-// folder resolves inside one of them, or it or they cannot be resolved; `loose` says it, or a folder above it, fails
-// stateHeld. `folder` is the session's folder, or null; a session that was given and has none, whether its id fails or
-// its folder cannot be made, names the cached sections in `errors`: `worktrees`, `handoff` when the id fails or a
-// transcript was given, and `prs` when the id fails or the state folder is inside a checkout.
-function context(project, { session, transcript, validId }, errors) {
-  const config = loadConfig(project).config;
-  let state = null;
-  try {
-    state = stateDir(project, { config, read: () => KILL });
-  } catch {
-    // Each section that needs the state folder fails on its own.
-  }
-  const real = state === null ? null : resolvedPath(state);
-  const checkouts = projectCheckouts(project);
-  const inside = real === null || checkouts === null || checkoutHolding(real, checkouts) !== undefined;
-  const loose = real !== null && !stateHeld(real);
-  const folder = validId && !inside ? sessionFolder(state, session, { checkouts }) : null;
-  if (session !== null && folder === null) {
-    const named = [['prs', !validId || inside], ['worktrees', true], ['handoff', !validId || transcript !== null]];
-    for (const [name, failed] of named) if (failed) errors.add(name);
-  }
-  return { project, config, state, checkouts, inside, loose, folder };
-}
-
-// The state folder of `ctx` when it lies outside every checkout and it and every folder above pass stateHeld; else throws.
-const ownState = (ctx) => {
-  if (ctx.inside || ctx.loose) throw new Error('not the user`s own');
-  return ctx.state;
-};
 
 const needed = (value) => {
   if (value === null || value === undefined) throw new Error('missing');
   return value;
 };
 
-const lessonCounts = ({ count, tiers }) => ({ open: count, byTier: tiers });
 const unconfirmed = ({ decisions, unlisted }) => [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed').length;
 
 // The handoff numbers of the session, from its transcript through the usage cache, and the Stop hook's marker, at the
-// hook's own path. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay.
+// hook's own path. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
+// store is opened at the state folder's real path the context resolved, the same path the session folder was made under.
 function handoffSection({ config, state, checkouts, folder }, session, transcript) {
   const usage = cachedSessionUsage({ transcript, cacheFile: path.join(needed(folder), 'usage.json') });
   const { handoff } = config.session;

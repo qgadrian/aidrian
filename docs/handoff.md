@@ -550,11 +550,19 @@ the repository, the main checkout or any linked worktree, as with `state.dir` se
 relative `state.dir` of a project below the repository root, which resolves against that root,
 or when git cannot list the checkouts in time, the snapshot gives no handoff, lessons, or audits section, and
 names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
-gives no handoff section either, and names `handoff` and `worktrees`. A state folder that fails the session folder's
+gives no handoff section either, and names `handoff`, `prs`, and `worktrees`. A state folder that fails the session folder's
 rule for it and every folder above it ([Local state](project-folder.md#local-state)), such as one another user owns, or
 one below a folder every user may write, gives no lessons, audits, or pull requests section, as it gives no session folder.
-The hooks and the gate hold the continuation store to the same list of checkouts, and keep no marker there when git
-cannot give it.
+A state folder outside every checkout can still hold one: with `state.dir` set to `..` in a repository whose folder is
+named `lessons`, `audits`, or `sessions`, that folder below the state folder is the checkout itself. So each folder the
+snapshot reads or makes below the state folder, the lesson inbox, the audits folder, the sessions folder, and the
+session's own folder, is resolved again, and one inside a checkout gives no section that needs it, with its name in
+`errors`. The snapshot resolves the state folder's real path once and reads every section through that path, so a
+symlink at `state.dir` repointed after the check moves no read.
+The hooks that write or deliver a continuation marker, and the gate, hold the continuation store to every checkout of
+the repository, and keep no marker there when git cannot list them. The agent gates' unattended check is the exception:
+it looks for a background chain floor in any store outside the project's own checkouts, even when git cannot list the
+rest, since a floor it finds only adds refusals.
 `chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
 armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
 from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's

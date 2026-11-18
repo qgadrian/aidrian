@@ -408,6 +408,17 @@ test('walk_widths: the viewports when a changed file matches allWidths.files, an
   }
 });
 
+test('walk_widths: a project folder git cannot give exits 3 with no JSON, never a guessed []', (t) => {
+  const visual = { platform: 'web', targets: [{ files: ['src/**'], routes: ['/'] }], viewports: [390, 1440] };
+  const config = { review: { productFeedback: { maxPersonas: 2, allWidths: { files: ['src/**'] } }, visual } };
+  // A project in web/ whose changed file is web/src/page.tsx: read as the top, it would match nothing and answer [].
+  const { gh } = fakeGh({ pull: view({ files: [change('web/src/page.tsx')], changedFiles: 1 }) });
+  const { code, out, err } = resolve(t, ['123'], gh, REMOTES, config, () => [], () => null);
+  assert.equal(code, 3);
+  assert.equal(out, '', 'no JSON');
+  assert.match(err, /^error: git: could not give the project's folder in the repository, which walk_widths needs$/u);
+});
+
 test('gh failing, or an answer the command cannot trust, exits 3 and prints no JSON: no field is guessed', (t) => {
   const failing = () => {
     throw Object.assign(new Error('Command failed'), { stderr: 'GraphQL: Could not resolve to a PullRequest\nmore' });

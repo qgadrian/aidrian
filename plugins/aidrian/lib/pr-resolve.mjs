@@ -12,16 +12,18 @@
 // also its limit: a Preview line trusts everything able to create deployments, so a project whose workflow deploys fork
 // builds with a write token names no Preview line until that is fixed.
 // `walk_widths` is the widths each in-scope browser task is walked at: review.visual.viewports, each once, in config order,
-// when review.productFeedback.allWidths is set and a changed file matches its files, and [] otherwise. Only then is gh
-// asked for the file list, so with the key off the call is the same as without the feature.
+// when review.productFeedback.allWidths is set and a changed file matches its files, and [] otherwise. gh is asked for
+// the file list, and git for the project's folder, whenever allWidths.files and review.visual.viewports are both set,
+// whether or not a file then matches; with either unset, the call is the same as without the feature.
 // docs/personas.md#a-pull-request-link-alone describes the JSON.
-// Exit 0 with the JSON, 3 on a refusal, a gh failure, an answer it cannot read, or a config.json with errors.
+// Exit 0 with the JSON, 3 on a refusal, a gh failure, an answer it cannot read, a project folder git cannot give when
+// walk_widths needs it, or a config.json with errors.
 
 import { readFileSync } from 'node:fs';
 
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { isObject } from './fs.mjs';
-import { showPrefix } from './git.mjs';
+import { runGit } from './git.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, personaDocs, previewPatterns } from './personas.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
@@ -152,16 +154,23 @@ function deploymentPreview({ host, repo, head }, patterns, forge) {
   return null;
 }
 
+// The project's folder from the top of its repository, with a trailing slash, '' at the top, or null when git fails.
+function projectFolder(root) {
+  const shown = runGit(['rev-parse', '--show-prefix'], root);
+  return shown.status === 0 ? shown.stdout.trim() : null;
+}
+
 // The CLI body. `forge`, `remotes`, `patterns`, and `prefix` are the test seams: the forge facade (lib/forges), whose
 // methods throw as gh does, () → checkoutRemotes, () → the Preview patterns, which may throw when the doc cannot be read:
-// no patterns, so no preview, and () → the project's folder in the repository, read only when walk_widths needs it.
+// no patterns, so no preview, and () → the project's folder in the repository, or null when git cannot give it, read only
+// when walk_widths needs it.
 export function runResolve(
   argv,
   config,
   forge = forgeFor(undefined),
   remotes = () => checkoutRemotes(process.cwd()),
   patterns = () => projectPreviewPatterns(projectAt(process.cwd())),
-  prefix = () => showPrefix(projectAt(process.cwd()).root),
+  prefix = () => projectFolder(projectAt(process.cwd()).root),
 ) {
   const fail = (message) => {
     console.error(`error: ${message}`);
@@ -204,7 +213,10 @@ export function runResolve(
     allowed = [];
   }
   const previewUrl = allowed.length ? deploymentPreview({ host: answered.host, repo, head: view.headRefOid }, allowed, forge) : null;
-  const widths = allWidths ? walkWidths(config.review, view, prefix()) : [];
+  // A project in a subfolder matches its files under that folder, so a prefix git cannot give is no answer: never ''.
+  const folder = allWidths ? prefix() : '';
+  if (typeof folder !== 'string') return fail('git: could not give the project\'s folder in the repository, which walk_widths needs');
+  const widths = allWidths ? walkWidths(config.review, view, folder) : [];
   console.log(JSON.stringify({
     number: target.number,
     host: answered.host,

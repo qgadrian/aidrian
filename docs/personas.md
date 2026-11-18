@@ -122,7 +122,8 @@ A refusal exits 3, names its kind, and never echoes the argument, which may hold
 `preview_url`, `max_personas`, and `walk_widths`. `walk_widths` is the widths each in-scope browser task is walked at:
 `review.visual.viewports`, each once, in config order, when [`review.productFeedback.allWidths`](config.md#walking-every-width)
 is set and a changed file matches its `files`, and `[]` otherwise. That key is `null`, off, by default, and on it costs
-personas x tasks x widths walks: 18 in place of 6 for 2 personas of 3 tasks at 3 widths.
+personas x tasks x widths walks: 18 in place of 6 for 2 personas of 3 tasks at 3 widths. With the key and viewports set,
+a project folder git cannot give exits 3 with no JSON, never a guessed `[]`.
 Every later gh call passes `--repo <host>/<repo>`.
 A merged or closed pull request resolves too: the walk rules decide its evidence level.
 A remote matches by host, owner, and name; `ssh.github.com` counts as `github.com`, and no other SSH host alias is resolved,

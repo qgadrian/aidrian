@@ -194,6 +194,24 @@ test('a push records the folder it ran in: git -C, then a cd before it on the li
   assert.deepEqual(rows('cd "$W" && git push', { cwd: dir }), []);
 });
 
+test('a push records only what it pushed of its own folder`s HEAD, never a sibling worktree`s push in the window', () => {
+  const base = pushRepo('main');
+  const [a, b] = ['wt-a', 'wt-b'].map((name) => path.join(ROOT, `${path.basename(base)}-${name}`));
+  sh(base, `git worktree add -q -b feat/wt-a '${a}' && git worktree add -q -b feat/wt-b '${b}'`);
+  mkdirSync(path.join(a, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(a, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  sh(a, 'git push -q origin HEAD');
+  // A's own push, moved out of the window, so only B's falls in it.
+  const old = new Date(Date.now() - 2 * 60_000);
+  utimesSync(path.join(base, '.git/logs/refs/remotes/origin/feat/wt-a'), old, old);
+  const commit = '-c user.name=t -c user.email=t@t.test commit -q --allow-empty -m';
+  sh(b, `git ${commit} b && git push -q origin HEAD`);
+  sh(a, 'git push -q origin HEAD');
+  assert.deepEqual(rows('git push origin HEAD', { cwd: a }), [], 'A had nothing to push');
+  sh(a, `git ${commit} a && git push -q origin HEAD`);
+  assert.deepEqual(rows('git push origin HEAD', { cwd: a }), [pushed('acme/notes', 'feat/wt-a', a)], 'A pushed its own branch');
+});
+
 test('a row is recorded only for a host the forge adapter declares', () => {
   const dir = pushRepo('feat/gitlab', 'https://gitlab.com/acme/notes');
   sh(dir, 'git push -q origin HEAD');
@@ -421,20 +439,23 @@ test('a folder or a branch holding a hidden character writes nothing', () => {
 });
 
 // ledgerRows over a fake git: `remotes` by name and URL, the branch every folder is on, more config lines as
-// `git config --get-regexp` prints them, and the git common dir every folder has, or none. `calls` holds the folder of
-// each git read.
+// `git config --get-regexp` prints them, and the git common dir every folder has, or none; its HEAD is PUSHED_HEAD.
+// `calls` holds the folder of each git read.
 function fakeGit(remotes, branch = 'feat', config = [], common = null) {
   const calls = [];
   const read = (args, folder) => {
     calls.push(folder);
     const lines = [...Object.entries(remotes).map(([name, url]) => `remote.${name}.url ${url}`), ...config];
     if (args[0] === 'config') return { status: 0, stdout: lines.join('\n') };
-    if (args[0] === 'rev-parse') return common === null ? { status: 128, stdout: '' } : { status: 0, stdout: `${common}\n` };
+    if (args[0] === 'rev-parse' && common === null) return { status: 128, stdout: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: args[1] === 'HEAD' ? `${PUSHED_HEAD}\n` : `${common}\n` };
     return { status: 0, stdout: `${branch}\n` };
   };
   return { read, calls };
 }
-// A git common dir whose remote-tracking refs `refs`, each a path under refs/remotes/, a push updated just now.
+// A git common dir whose remote-tracking refs `refs`, each a path under refs/remotes/, a push updated to PUSHED_HEAD
+// just now.
+const PUSHED_HEAD = '1'.repeat(40);
 let commons = 0;
 function pushedCommon(refs) {
   commons += 1;
@@ -442,7 +463,7 @@ function pushedCommon(refs) {
   for (const ref of refs) {
     const file = path.join(common, 'logs/refs/remotes', ref);
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, `${'0'.repeat(40)} ${'1'.repeat(40)} T <t@t.test> ${Math.floor(Date.now() / 1000)} +0000\tupdate by push\n`);
+    writeFileSync(file, `${'0'.repeat(40)} ${PUSHED_HEAD} T <t@t.test> ${Math.floor(Date.now() / 1000)} +0000\tupdate by push\n`);
   }
   return common;
 }

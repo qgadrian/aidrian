@@ -13,6 +13,8 @@ import { PUSH_WINDOW_MS, pushedRefs } from '../plugins/aidrian/lib/git-push.mjs'
 const ROOT = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-push-')));
 after(() => rmSync(ROOT, { recursive: true, force: true }));
 const NOW = Date.now();
+// The commit every entry below records a push of, and the HEAD of the folder the push ran in.
+const HEAD = '1'.repeat(40);
 
 // One reflog line as git writes it, at `at` in ms, with `message`.
 const entry = (at, message = 'update by push') => `${'0'.repeat(40)} ${'1'.repeat(40)} T <t@t.test> ${Math.floor(at / 1000)} +0000\t${message}\n`;
@@ -33,7 +35,7 @@ test('a ref counts only when its log`s last line is a push within the window', (
   log(common, 'origin/pushed-then-fetched', `${entry(NOW)}${entry(NOW, 'fetch: fast-forward')}`);
   const stale = log(common, 'origin/untouched', entry(NOW));
   utimesSync(stale, new Date(NOW - 2 * PUSH_WINDOW_MS), new Date(NOW - 2 * PUSH_WINDOW_MS));
-  assert.deepEqual(pushedRefs(common, NOW), ['origin/feat/new']);
+  assert.deepEqual(pushedRefs(common, HEAD, NOW), ['origin/feat/new']);
 });
 
 test('a symlinked log is never read', { skip: process.platform === 'win32' }, () => {
@@ -45,9 +47,17 @@ test('a symlinked log is never read', { skip: process.platform === 'win32' }, ()
   mkdirSync(path.join(ROOT, 'elsewhere-dir/feat'), { recursive: true });
   writeFileSync(path.join(ROOT, 'elsewhere-dir/feat/x'), entry(NOW));
   symlinkSync(path.join(ROOT, 'elsewhere-dir'), path.join(common, 'logs/refs/remotes/upstream'));
-  assert.deepEqual(pushedRefs(common, NOW), []);
+  assert.deepEqual(pushedRefs(common, HEAD, NOW), []);
 });
 
 test('a common dir with no logs, as a reftable repository has, gives none', () => {
-  assert.deepEqual(pushedRefs(path.join(ROOT, 'no-such-dir'), NOW), []);
+  assert.deepEqual(pushedRefs(path.join(ROOT, 'no-such-dir'), HEAD, NOW), []);
+});
+
+test('a ref counts only when its push recorded the HEAD commit of the folder the push ran in', () => {
+  const common = path.join(ROOT, 'head');
+  log(common, 'origin/mine', entry(NOW));
+  log(common, 'origin/sibling', entry(NOW).replace(` ${HEAD} `, ` ${'2'.repeat(40)} `));
+  assert.deepEqual(pushedRefs(common, HEAD, NOW), ['origin/mine']);
+  for (const head of [null, '', 'HEAD', '1'.repeat(39)]) assert.deepEqual(pushedRefs(common, head, NOW), [], String(head));
 });

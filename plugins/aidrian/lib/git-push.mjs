@@ -64,21 +64,27 @@ function lastLine(file) {
   }
 }
 
-// Whether a reflog line, git's `<old> <new> <name> <email> <time> <zone>\t<message>`, records a push within
-// PUSH_WINDOW_MS of `now`.
-function pushedWithin(line, now) {
+// Whether a reflog line, git's `<old> <new> <name> <email> <time> <zone>\t<message>`, records a push of the commit
+// `head` within PUSH_WINDOW_MS of `now`.
+function pushedWithin(line, now, head) {
   const tab = line.indexOf('\t');
   if (tab === -1 || line.slice(tab + 1) !== PUSHED) return false;
-  const time = Number(line.slice(0, tab).split(' ').at(-2)) * 1000;
-  return Number.isFinite(time) && Math.abs(now - time) <= PUSH_WINDOW_MS;
+  const fields = line.slice(0, tab).split(' ');
+  const time = Number(fields.at(-2)) * 1000;
+  return fields[1] === head && Number.isFinite(time) && Math.abs(now - time) <= PUSH_WINDOW_MS;
 }
+// A full object id, as `git rev-parse HEAD` prints it: SHA-1 or SHA-256.
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
-// The remote-tracking refs a push updated within PUSH_WINDOW_MS of `now`, each as its path under refs/remotes/, such as
-// `origin/feat/x`, from the reflogs under `<commonDir>/logs/refs/remotes`: a log whose mtime is older than the window is
-// skipped, a symlink is never followed, and of each other log only its last line is read. MAX_ENTRIES entries at most.
+// The remote-tracking refs a push updated to the commit `head` within PUSH_WINDOW_MS of `now`, each as its path under
+// refs/remotes/, such as `origin/feat/x`, from the reflogs under `<commonDir>/logs/refs/remotes`: a log whose mtime is
+// older than the window is skipped, a symlink is never followed, and of each other log only its last line is read.
+// MAX_ENTRIES entries at most. `head` is the HEAD commit of the folder the push ran in, so a push a sibling worktree
+// made, which shares this common dir, gives none unless it pushed that same commit. No `head` gives none.
 // A tag push, a delete, a push to a URL rather than a remote's name, and a repository whose refs git keeps in a reftable
 // leave no such log, so they give none.
-export function pushedRefs(commonDir, now = Date.now()) {
+export function pushedRefs(commonDir, head, now = Date.now()) {
+  if (typeof head !== 'string' || !OBJECT_ID.test(head)) return [];
   const found = [];
   let visited = 0;
   const walk = (dir, rel) => {
@@ -94,7 +100,7 @@ export function pushedRefs(commonDir, now = Date.now()) {
       const name = rel === '' ? entry.name : `${rel}/${entry.name}`;
       const file = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(file, name);
-      else if (entry.isFile() && recent(file, now) && pushedWithin(lastLine(file) ?? '', now)) found.push(name);
+      else if (entry.isFile() && recent(file, now) && pushedWithin(lastLine(file) ?? '', now, head)) found.push(name);
     }
   };
   walk(path.join(commonDir, 'logs', 'refs', 'remotes'), '');

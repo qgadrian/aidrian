@@ -43,7 +43,8 @@ const isLocalPath = (url) => /^file:/iu.test(url) || !/^[a-z][a-z0-9+.-]*:\/\/|^
 // What git says of a folder, read once each and for MAX_FOLDERS folders at most: from one `git config` read, its remotes
 // by name, each `{ fetch }` as repoIdentity reads the first `remote.<name>.url`, null for one it cannot read or that is
 // a local path (isLocalPath), and each branch's `merge`; the current branch; and the remote-tracking refs a push
-// updated (pushedRefs), in the git common dir one `git rev-parse` names. A key git keeps one value of takes its last, as git does. No value of the ledger reaches
+// updated to the folder's HEAD commit, which one `git rev-parse HEAD` reads (pushedRefs), in the git common dir one
+// `git rev-parse --git-common-dir` names. A key git keeps one value of takes its last, as git does. No value of the ledger reaches
 // git's argv.
 // SHORTCUT: a `url.<base>.insteadOf` rewrite in the folder's config is not applied, so a rewritten remote records the
 // URL as written. Enough for display data; applying git's rewrite rules here would replace it.
@@ -87,7 +88,8 @@ function folderReader(read) {
     if (!pushes.has(folder)) {
       const { status, stdout } = read(['rev-parse', '--git-common-dir'], folder);
       const common = status === 0 ? stdout.replace(/\n$/u, '') : '';
-      pushes.set(folder, common === '' ? [] : pushedRefs(path.resolve(folder, common), now));
+      const head = common === '' ? null : read(['rev-parse', 'HEAD'], folder);
+      pushes.set(folder, head?.status === 0 ? pushedRefs(path.resolve(folder, common), head.stdout.trim(), now) : []);
     }
     return pushes.get(folder);
   };
@@ -105,8 +107,9 @@ function declaredRepos(folders, folder, hosts) {
   return out;
 }
 
-// A push's rows: each remote-tracking ref git recorded a push to (pushedRefs) in the git common dir of `folder`, on the
-// repository of its remote's URL, the configured remote whose name, then `/`, starts the ref's path, the longest such.
+// A push's rows: each remote-tracking ref git recorded a push of the HEAD commit of `folder` to (pushedRefs) in its git
+// common dir, on the repository of its remote's URL, the configured remote whose name, then `/`, starts the ref's path,
+// the longest such.
 function pushedRows(folder, folders, now) {
   const remotes = folders.remotes(folder);
   return folders.pushed(folder, now).flatMap((ref) => {

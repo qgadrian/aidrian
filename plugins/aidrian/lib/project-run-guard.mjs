@@ -355,6 +355,11 @@ const RULES = Object.freeze({
   wait: driverOnly,
   handoff: driverOnly,
   end: driverOnly,
+  // The reports the run owes the tracker, and closing one: the driver's, as the tracker guard holds its writes to them.
+  report: driverOnly,
+  recorded: driverOnly,
+  // Reads every check a start would make, and starts nothing.
+  preflight: readOnly,
   result: ({ found, store, key, session, home }) => {
     let mark = null;
     try {

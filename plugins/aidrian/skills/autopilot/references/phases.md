@@ -111,3 +111,4 @@ Then:
    In a session no Human attends, the merge also needs merge trust: the review bot's pass on the head, requested with
    `aidrian pr await-review <n> --request`, and the Human's sign-off of each flow that asks for one, from a session they attend.
 3. Write the last checkpoint when allowed, then the report of `SKILL.md` § Report.
+   Under a project run, then record the result: `references/entry-task.md` § Under a project run.

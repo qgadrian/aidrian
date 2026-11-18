@@ -1,5 +1,9 @@
 // PreToolUse hook for every MCP tool: the refusal half of the tracker write guard (docs/config.md#tracker).
-// lib/tracker-guard.mjs judges a call of a tool in `tracker.writeTools` against the session's record of the connected
+// First, whatever the working copy's `tracker.enabled` says, the project run rule (lib/tracker-guard.mjs runWriteRefusal):
+// on a tool a known tracker's connection serves, or one the working copy's writeTools name, a session of a project run
+// writes only what its role allows (lib/project-report.mjs runWriter reads the role from the session's unattended mark
+// and the run's ledger), and no session no Human attends calls a tool that merges code.
+// Then lib/tracker-guard.mjs judges a call of a tool in `tracker.writeTools` against the session's record of the connected
 // workspace, which hook-tracker-post.mjs writes, and a refused call exits 2 with the reason on stderr, recorded as the
 // other hooks record their blocks (lib/hook-deny.mjs), except the routine refusal of a session's first write, which every
 // session that writes meets, and which would read as a problem in the counts. That one leaves a marker instead, and
@@ -16,16 +20,23 @@ import path from 'node:path';
 import { isObject } from '../lib/fs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
+import { baseReader } from '../lib/handoff-guard.mjs';
 import { block, deny, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
-import { judgeTrackerWrite, refusalMarker } from '../lib/tracker-guard.mjs';
+import { baseTracker, runWriter } from '../lib/project-report.mjs';
+import { judgeTrackerWrite, refusalMarker, runCallKind, runWriteRefusal } from '../lib/tracker-guard.mjs';
 
 await runHook(async (input) => {
-  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
-  if (!project) return;
-  const { config } = loadConfig(project);
-  if (config.tracker.enabled !== true) return;
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const project = findProject(cwd);
+  const config = project ? loadConfig(project).config : null;
+  const run = runDenial(input, cwd, project, config);
+  if (run) {
+    if (!project) deny(run.reason);
+    await block(input, 'tracker-guard', run.reason, { match: run.match, project, config });
+  }
+  if (!project || config.tracker.enabled !== true) return;
   const file = snapshotPath(input.session_id)?.replace(/\.json$/u, '.tracker.json');
   const denial = judgeTrackerWrite(config, input.tool_name, input.tool_input, file ? readRecord(file) : null, { skipMissingRecord: !file || !canHoldRecord(file), rawTool: input.raw_tool_name, host: detectHost({ input }) });
   if (!denial) return;
@@ -35,6 +46,24 @@ await runHook(async (input) => {
   }
   await block(input, 'tracker-guard', denial.reason, { match: denial.match, project, config });
 });
+
+// The project run rule's refusal of the call in `input`, or null. Only a write or a merge on a tool a known tracker serves,
+// or one the working copy's writeTools name, is read further, so a read, or any other MCP tool, reads no mark or ledger.
+function runDenial(input, cwd, project, config) {
+  const tool = input.tool_name;
+  if (typeof tool !== 'string' || !tool.startsWith('mcp__')) return null;
+  const working = config?.tracker ?? null;
+  const listed = [...(working?.writeTools ?? [])];
+  if (!runCallKind({ tool, rawTool: input.raw_tool_name, tracker: working, writeTools: listed })) return null;
+  const base = project ? baseReader(project) : () => ({});
+  const writer = runWriter({ session: input.session_id, cwd, base });
+  if (!writer) return null;
+  const tracker = baseTracker(base);
+  return runWriteRefusal({
+    writer, tool, rawTool: input.raw_tool_name, input: input.tool_input, tracker,
+    writeTools: [...(tracker?.writeTools ?? []), ...listed], human: config?.names?.human ?? 'the Human',
+  });
+}
 
 // Leaves what the row at the session's end needs, which the SessionEnd payload lacks. The first refusal of a session keeps
 // its marker. Never throws: a marker that cannot be written costs that row, never the refusal.

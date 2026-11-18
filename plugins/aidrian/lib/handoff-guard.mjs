@@ -174,7 +174,7 @@ const runsGate = (actions) => ({ invocation, unread }) => {
 };
 
 // Every `aidrian project` subcommand, today's and those a later step adds (lib/project-run-guard.mjs).
-export const PROJECT_SUBCOMMANDS = Object.freeze(['init', 'next', 'start', 'wait', 'result', 'handoff', 'resume', 'summary', 'report', 'recorded', 'stop-action', 'end']);
+export const PROJECT_SUBCOMMANDS = Object.freeze(['init', 'next', 'start', 'wait', 'result', 'handoff', 'resume', 'summary', 'report', 'recorded', 'preflight', 'stop-action', 'end']);
 // A subcommand word, and the word `project`, in any case, as a text no lexer reads names them; lib/project-run-guard.mjs
 // reads them too.
 export const PROJECT_SUB = new RegExp(String.raw`(?<![\w-])(?:${PROJECT_SUBCOMMANDS.join('|')})(?![\w-])`, 'iu');

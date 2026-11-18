@@ -132,6 +132,8 @@ Only a live session with the hooks running proves a guard holds.
 | `project` | Optional: `field`, the input that names a project |
 | `idHint` | Optional: what a refused issue key tells the agent to do when the write is on something else |
 | `unguardedRoutes` | `[{ name, reason }]`: each way a write reaches no judgment, such as a tool whose arguments nest the real one. `aidrian check` warns of each |
+| `run` | Optional: what a [project run](../config.md#project-run)'s sessions write: `issue` `{ tool, key, status, label, fields }`, the tool that updates one issue by the input `key`, with `fields` the others an issue's session may set; `comment` `{ tool, key, body }`. With none, the run's sessions write nothing on it |
+| `mergeVerbs` | Optional: its tools that merge code, as patterns after `mcp__<server>__`, which no session no Human attends may call |
 
 A project then writes `"tracker": { "enabled": true, "provider": "<id>", ... }` ([Tracker](../config.md#tracker)) and asks a person for no tool name.
 `test/fixtures/adapters/fake-tracker.mjs` and `fake-per-call-tracker.mjs` show both shapes,

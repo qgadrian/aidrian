@@ -22,4 +22,14 @@ export default {
   idHint: "pass the item's UUID when it is not an issue",
   // Every write tool of its connection is a named tool that reaches the hooks.
   unguardedRoutes: [],
+  // What a session of a project run may write (lib/tracker-guard.mjs runWriteRefusal), by tool and input field: an
+  // update of one issue, which `save_issue` makes only with `id` (without it, it creates), and a new comment on one.
+  // `state` takes a status type, such as `completed`, as well as a name or id. `fields` are what an issue's own
+  // session may also set on its issue; `parentId` or `id` on a comment, a reply or an edit, are none of these.
+  run: {
+    issue: { tool: 'save_issue', key: 'id', status: 'state', label: 'addLabels', fields: ['estimate', 'description', 'patch'] },
+    comment: { tool: 'save_comment', key: 'issueId', body: 'body' },
+  },
+  // Tools that merge code, which a session no Human attends never calls: a merge goes only through pr-auto-merge.
+  mergeVerbs: ['merge_*'],
 };

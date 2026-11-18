@@ -17,8 +17,10 @@ const walk = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true 
 }) : []);
 // The code of a file with its comments removed: whole comment lines, and a trailing ` // ...`.
 const code = (text) => text.split('\n').filter((line) => !/^\s*(?:\/\/|\*|\/\*)/u.test(line)).map((line) => line.replace(/\s\/\/ .*$/u, '')).join('\n');
+// A file's key: its path from the plugin folder, `/` between parts on every system, as ALLOWED and GATES spell it.
+const keyOf = (relative, sep = path.sep) => relative.split(sep).join('/');
 const sources = (folders) => Object.fromEntries(folders.flatMap((folder) => walk(path.join(PLUGIN, folder)))
-  .filter((file) => file.endsWith('.mjs')).map((file) => [path.relative(PLUGIN, file), code(readFileSync(file, 'utf8'))]));
+  .filter((file) => file.endsWith('.mjs')).map((file) => [keyOf(path.relative(PLUGIN, file)), code(readFileSync(file, 'utf8'))]));
 
 // What each file may use of the session links: the modules it imports, and the readers it names.
 const USES = {
@@ -49,18 +51,26 @@ function breaches(files) {
 
 // The hooks that print: no file under scripts/ loads the snapshot or the session links' reader, by a static or a
 // dynamic import. The writer's module, which the ledger's hook loads, reads no session file.
-const WRITER_HOOK = path.join('scripts', 'hook-bash-post.mjs');
-const printers = (files) => Object.entries(files).filter(([file, text]) => file.startsWith(`scripts${path.sep}`) && /session-(?:snapshot|links)\.mjs/u.test(text)).map(([file]) => file);
+const WRITER_HOOK = 'scripts/hook-bash-post.mjs';
+const printers = (files) => Object.entries(files).filter(([file, text]) => file.startsWith('scripts/') && /session-(?:snapshot|links)\.mjs/u.test(text)).map(([file]) => file);
 
 // A gate or a guard reads every floor itself: no call of readFrom or startedInBackground passes a listing in these files.
 const GATES = ['lib/handoff-continue.mjs', 'lib/handoff-guard.mjs'];
-const listed = (files) => Object.entries(files).filter(([file, text]) => (GATES.includes(file) || file.startsWith(`scripts${path.sep}`))
+const listed = (files) => Object.entries(files).filter(([file, text]) => (GATES.includes(file) || file.startsWith('scripts/'))
   && /\b(?:readFrom|startedInBackground|floorsOf)\([^)]*\bnames\b/u.test(text)).map(([file]) => file);
 
 // The plugin's text that a model reads: no skill or agent runs the snapshot or names a session file.
 const TEXT_FOLDERS = ['skills', 'agents', 'codex', 'agents-src', 'providers', 'agent-addons'];
 const WORDS = /session snapshot|prs\.jsonl|links\.jsonl/iu;
 const named = (files) => Object.entries(files).filter(([, text]) => WORDS.test(text)).map(([file]) => file);
+
+test('a file is keyed with `/` between its parts on every system, so a Windows path meets ALLOWED and GATES', () => {
+  const key = keyOf(path.win32.relative('C:\\plugin', 'C:\\plugin\\scripts\\hook-bash-post.mjs'), path.win32.sep);
+  assert.equal(key, WRITER_HOOK);
+  assert.deepEqual(breaches({ [key]: "const links = await import('../lib/session-links-writer.mjs');" }), [], 'an import its entry allows');
+  assert.deepEqual(listed({ [keyOf('lib\\handoff-guard.mjs', '\\')]: 'readFrom(store, session, { names })' }), ['lib/handoff-guard.mjs'], 'a gate file by its key');
+  assert.deepEqual(Object.keys(sources(['scripts'])).filter((file) => file.includes('\\')), []);
+});
 
 test('only the listed files read the session links, each for what it may use', () => {
   assert.deepEqual(breaches(sources(['lib', 'scripts'])), []);
@@ -71,8 +81,8 @@ test('only the listed files read the session links, each for what it may use', (
 
 test('no hook loads the snapshot or the session links, so none prints a value of them', () => {
   assert.deepEqual(printers(sources(['scripts'])), []);
-  assert.deepEqual(printers({ [path.join('scripts', 'hook-stop.mjs')]: "const { snapshot } = await import('../lib/session-snapshot.mjs');" }), [path.join('scripts', 'hook-stop.mjs')]);
-  assert.deepEqual(printers({ [path.join('scripts', 'hook-stop.mjs')]: "const links = await import('../lib/session-links.mjs');" }), [path.join('scripts', 'hook-stop.mjs')]);
+  assert.deepEqual(printers({ 'scripts/hook-stop.mjs': "const { snapshot } = await import('../lib/session-snapshot.mjs');" }), ['scripts/hook-stop.mjs']);
+  assert.deepEqual(printers({ 'scripts/hook-stop.mjs': "const links = await import('../lib/session-links.mjs');" }), ['scripts/hook-stop.mjs']);
   assert.deepEqual(printers({ [WRITER_HOOK]: "const links = await import('../lib/session-links-writer.mjs');\nlinks.recordLinks(folder, rows);" }), [], 'the writer');
   assert.deepEqual(printers({ [WRITER_HOOK]: "const links = await import('../lib/session-links.mjs');" }), [WRITER_HOOK], 'the reader in the writer`s hook');
   assert.deepEqual(breaches({ [WRITER_HOOK]: "import { readRows } from '../lib/session-rows.mjs';" }), [`${WRITER_HOOK}: session rows module`]);

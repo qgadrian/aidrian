@@ -20,7 +20,7 @@ How to apply one:
    A few switches live only there, so that a pull request can never turn them on; a subagent may not write them.
 3. Replace `"test"` in `github.requiredChecks` with the names of the project's CI checks. Auto-merge stays off without one.
    In a recipe that merges alone, replace the placeholder screen target too, `src/app/**` at `/`, with the project's
-   screen files and routes, or leave the screen check out while the project has no screens:
+   web screen files and routes. With no web screen, leave out `review.visual`, and with no screen at all, both keys:
    [Screens checked on every device](#screens-checked-on-every-device).
 4. Set [`requires.aidrian`](config.md#plugin-version) to the plugin release the project runs, since an older plugin
    rejects keys it does not know.
@@ -199,6 +199,7 @@ The target, `{ "files": ["src/app/**"], "routes": ["/"] }`, is a placeholder, as
 project's screen files and the routes that show them, one target per group of screens. The `harness-setup` skill does
 this when it applies the recipe. [Screens checked on every device](review.md#screens-checked-on-every-device) has a
 fuller config, with a flow whose invariants block the review, and what each key does.
+`platform` takes only `"web"` today: the capture opens routes in Playwright, and no adapter captures a native app.
 
 Set `review.productFeedback.files` too, to the project's whole UI surface: every screen component, the hooks and
 helpers beside them, the locales, and the styles. Unset, product feedback falls back to the visual targets' files,
@@ -217,8 +218,13 @@ What each part needs, and what happens without it:
 
 A project with no screens yet leaves out `review.visual` and `review.productFeedback`: `review.visual.targets` may not
 be empty, and a target that matches no file checks nothing. While auto-merge is allowed, `aidrian check` warns once git
-tracks a screen file and `review.visual` is still unset, so the check gets turned on when the first screen lands.
-[Auto-merge](config.md#auto-merge) says what counts as a screen file.
+tracks a web screen file and `review.visual` is still unset, so the check gets turned on when the first screen lands.
+[Auto-merge](config.md#auto-merge) says what counts as a screen file: web screen extensions only, so `.tsx` and `.jsx`
+files of an app that depends on `react-native` and not on `react-dom` do not count.
+
+A project whose screens are all native, such as an iOS, Android, or React Native app, leaves out `review.visual`, since
+no capture reaches its screens, and still sets `review.productFeedback` with `files` for its UI, so its changes still
+owe product feedback before the ready mark.
 
 Hands-on leaves the check out, since the Human is there to try the screens. A hands-on project that wants the captures
 too adds the same two keys, or the fuller config of the review doc.

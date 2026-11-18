@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { isScreenFile } from '../plugins/aidrian/lib/check.mjs';
+import { isNativeOnly, isScreenFile } from '../plugins/aidrian/lib/check.mjs';
 import { isIgnored } from '../plugins/aidrian/lib/git.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -470,6 +470,38 @@ test('the screen warning escapes control characters in the file it names, so a f
   assert.equal(stderr, `warning: github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (1 tracked screen file, such as "src/page\\nerror: forged \\u001b[31mred\\u009b0m\\u2028.tsx"): set review.visual.targets to the routes and files of the project's screens\n`);
   assert.doesNotMatch(stderr, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/u, 'no raw control character reaches the terminal');
   assert.equal(stderr.split('\n').length, 2, 'one warning line');
+});
+
+test('the screen warning leaves out a native-only React Native app, whose screens no web capture reaches', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: true } } }));
+  mkdirSync(path.join(dir, 'src/screens'), { recursive: true });
+  writeFileSync(path.join(dir, 'src/screens/Home.tsx'), '');
+  execFileSync('git', ['-C', dir, 'add', 'src/screens/Home.tsx']);
+  const pkg = (dependencies) => writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'app', dependencies }));
+  const check = () => {
+    const { status, stderr } = run(['check'], dir);
+    assert.equal(status, 0, stderr);
+    return stderr;
+  };
+
+  pkg({ react: '19.0.0', 'react-native': '0.80.0' });
+  assert.equal(check(), '', 'react-native without react-dom: its .tsx screens are native');
+  pkg({ react: '19.0.0', 'react-native': '0.80.0', 'react-dom': '19.0.0' });
+  assert.match(check(), /^warning: github\.autoMerge\.allow is true and review\.visual is unset, .*"src\/screens\/Home\.tsx"/u, 'with react-dom it renders for the web too');
+  pkg({ react: '19.0.0', 'react-native': '0.80.0' });
+  writeFileSync(path.join(dir, 'src/screens/index.html'), '');
+  execFileSync('git', ['-C', dir, 'add', 'src/screens/index.html']);
+  assert.match(check(), /"src\/screens\/index\.html"/u, 'an .html file still counts in a native app');
+});
+
+test('a native-only project depends on react-native and not on react-dom', () => {
+  assert.equal(isNativeOnly({ dependencies: { 'react-native': '1' } }), true);
+  assert.equal(isNativeOnly({ devDependencies: { 'react-native': '1' } }), true);
+  assert.equal(isNativeOnly({ dependencies: { 'react-native': '1' }, devDependencies: { 'react-dom': '1' } }), false);
+  assert.equal(isNativeOnly({ dependencies: { react: '1', 'react-dom': '1' } }), false);
+  assert.equal(isNativeOnly({ dependencies: 'react-native' }), false);
+  assert.equal(isNativeOnly(null), false);
 });
 
 test('a screen file is a .tsx, .jsx, .vue, .svelte, or .html file outside docs, examples, tests, and dot folders', () => {

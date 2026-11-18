@@ -24,8 +24,10 @@ Ask it before the main-checkout guard question, whose answer hands-on sets, as o
   and the proposal names each kept key. Leave out `git.mainCheckout`: Q5 writes the guard, last.
 - `github.requiredChecks`: put the names of the CI checks the project's workflows run on a pull request in place of `"test"`.
   With none found, leave the key out, and the report says auto-merge stays off until it names one.
-- `full-autonomy` and `autopilot`: put the project's screens in place of the placeholder target in `review.visual.targets`,
-  one target per group of screens, each with its files' globs and the routes that show them. Set
+- `full-autonomy` and `autopilot`: put the project's web screens in place of the placeholder target in `review.visual.targets`,
+  one target per group of screens, each with its files' globs and the routes that show them. `review.visual.platform`
+  takes only `"web"`: with no web screen, such as a native-only app, leave out `review.visual` and still set
+  `review.productFeedback` with `files`, and the report says no capture covers its screens. Set
   `review.productFeedback.files` to the project's UI file patterns: every screen component, the hooks and helpers beside
   them, the locales, and the styles. Unset, it falls back to the targets' files, and a change outside them gets no feedback. With no screen yet, leave out
   `review.visual` and `review.productFeedback`, and the report says the screen check is off until the first screen lands,

@@ -42,16 +42,31 @@ function untrackedDocs(project, config) {
 const SCREEN_FILE = /\.(?:tsx|jsx|vue|svelte|html)$/u;
 const NOT_SCREEN_NAME = /\.(?:test|spec|stories)\.[^./]+$/u;
 const NOT_SCREEN_FOLDERS = new Set(['docs', 'examples', 'node_modules', 'vendor', 'test', 'tests', '__tests__', 'e2e', 'fixtures', '__fixtures__']);
-export function isScreenFile(file) {
+// A React Native app's screens are .tsx and .jsx files too, but `review.visual.platform` takes only "web", so no capture
+// reaches them. With `nativeOnly`, those files do not count.
+const NATIVE_SCREEN = /\.(?:tsx|jsx)$/u;
+export function isScreenFile(file, { nativeOnly = false } = {}) {
   if (!SCREEN_FILE.test(file) || NOT_SCREEN_NAME.test(file)) return false;
+  if (nativeOnly && NATIVE_SCREEN.test(file)) return false;
   return !file.split('/').slice(0, -1).some((folder) => folder.startsWith('.') || NOT_SCREEN_FOLDERS.has(folder));
 }
 
+// Whether the project's package.json depends on react-native and not on react-dom, which a React Native app that also
+// renders for the web, such as through react-native-web or Expo for the web, depends on. No package.json, or one that
+// does not parse, is not native.
+// SHORTCUT: the project root's package.json only; a monorepo whose native app lives in a workspace still counts its
+// .tsx files, which costs a warning, and reading each workspace's package.json would replace it.
+export function isNativeOnly(pkg) {
+  const deps = Object.assign({}, ...['dependencies', 'devDependencies', 'peerDependencies'].map((key) => (pkg?.[key] && typeof pkg[key] === 'object' ? pkg[key] : {})));
+  return Object.hasOwn(deps, 'react-native') && !Object.hasOwn(deps, 'react-dom');
+}
+
 // The warning that auto-merge can ship a screen change no capture checked: the team allows auto-merge, `review.visual`
-// is unset, and git tracks a screen file. Like the other checks, this reads the working copy.
+// is unset, and git tracks a web screen file. Like the other checks, this reads the working copy.
 function unseenScreenWarnings(project, config) {
   if (!config.github.autoMerge.allow || config.review.visual) return [];
-  const screens = (trackedFiles(project) ?? []).filter(isScreenFile);
+  const nativeOnly = isNativeOnly(readJson(project.root, 'package.json', []));
+  const screens = (trackedFiles(project) ?? []).filter((file) => isScreenFile(file, { nativeOnly }));
   if (!screens.length) return [];
   const count = screens.length === 1 ? '1 tracked screen file' : `${screens.length} tracked screen files`;
   return [`github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as ${quotedPath(screens[0])}): set review.visual.targets to the routes and files of the project's screens`];

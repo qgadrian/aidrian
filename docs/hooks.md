@@ -1320,7 +1320,7 @@ status is the line's own: the last command, or joined to the end by `&&`. A run 
 and every run on Codex, which runs the hook for a failed call too and sends no exit status, is judged by its counts alone:
 passed only with a pass count above 0 and a fail count of 0. The counts are node's runner summary (`ℹ pass 12`, `# fail 0`),
 else the "12 passed, 1 failed" of vitest, jest, and pytest. The record keeps its newest rows within 64 KB.
-A line of only programs that run no tests, such as git, gh, and grep, reads no config and records nothing.
+A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
 
 Two checks read it:
 
@@ -1328,7 +1328,7 @@ Two checks read it:
   fenced code. One that names a test command, in backticks or, for a `testing.fullSuite` command, as plain words, and
   says it passed (a pass word, a check mark, or "N/N"), needs a row of that command that passed at the tree of HEAD in
   the folder gh runs in, or of the commit the clause names, such as "at 056c3c2", with each pass count the clause states. A clause that names a failure, "not finished", or CI is
-  not a pass claim: a CI result is quoted from `gh pr checks`. A session whose record cannot be read is not judged.
+  not a pass claim: a CI result is quoted from the checks the forge shows, such as `gh pr checks` on GitHub. A session whose record cannot be read is not judged.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, and sends it
   back once, on the first stop of its turn, to quote the output a finished run returned or to call the run "not finished".
 

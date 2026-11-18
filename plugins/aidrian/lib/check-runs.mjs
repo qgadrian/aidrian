@@ -41,7 +41,7 @@ const TEST_PREFIXES = [
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // Programs that run no test suite, so a line of only these needs no config read (mayRunTests).
 const NEVER_TESTS = new Set([
-  'git', 'gh', 'ls', 'cat', 'echo', 'printf', 'grep', 'egrep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr',
+  'git', 'ls', 'cat', 'echo', 'printf', 'grep', 'egrep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr',
   'find', 'xargs', 'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod', 'ln', 'pwd', 'which', 'test', '[', 'true', 'false', 'sleep', 'date',
   'diff', 'jq', 'curl', 'tee', 'stat', 'file', 'basename', 'dirname', 'realpath', 'export', 'set', 'unset', 'source', '.', 'aidrian-knowledge',
   'cd', 'pushd', 'popd',
@@ -230,7 +230,7 @@ const PASS_WORD = /\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|all\s+\d+\s+te
 // A clause that reports a failure or an unfinished run, which claims no pass: a fail word with no count or a count above 0.
 const FAIL_WORD = /\bnot\s+finished\b|\b(?:failed|failing|red|timed\s+out|stopped|interrupted)\b|\b[1-9]\d*\s+(?:fail(?:s|ed|ures?)?)\b|\bfail(?:s|ures?)?\s*:?\s*[1-9]/iu;
 // A clause about CI, which the record cannot see: its results are quoted from the forge.
-const CI_WORD = /\bCI\b|\bGitHub Actions\b|\bworkflow\b|\bgh pr checks\b/u;
+const CI_WORD = /\bCI\b|\bpipeline\b|\bworkflow\b/u;
 // A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one.
 const COMMIT_ID = /\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b/gu;
 // The pass counts a clause states: "4071/4071", "12 pass", "pass 12", "12 tests passed".
@@ -281,6 +281,6 @@ export function claimProblem(missing, runs, { where }) {
   const stated = missing.some((each) => each.counts.length) ? 'with the count it states, ' : '';
   return `${where} says ${named} passed, but no run of it that a shell call finished with a pass, ${stated}` +
     `is on this session's record. ${record} Quote only output a tool returned in this session; a run stopped or still running ` +
-    'is "not finished", never a result, and a CI result is quoted from `gh pr checks`. ' +
+    'is "not finished", never a result, and a CI result is quoted from the checks the forge shows. ' +
     'To get a result, run the command in the foreground to its end, or `aidrian test changed` for the test files this change touches.';
 }

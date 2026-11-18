@@ -1,7 +1,7 @@
 // `aidrian session snapshot`: what a status line shows about the session it runs for and the project at the current
 // folder, as one JSON object or one line of plain text (docs/handoff.md#the-snapshot). Display data only: no hook, gate,
 // skill, or agent decides anything from it, and the Stop hook keeps reading the whole transcript.
-//   { session: { id, transcript, cwd }, handoff, prs, lessons, worktrees, decisions, audits, ticket, errors }
+//   { session: { id, transcript, cwd }, handoff, prs, lessons, worktrees, decisions, audits, ticket, links, errors }
 // The caller passes what it needs, `--session` and `--transcript`: the command reads no host variable and no stdin.
 // Each section fails open: one that throws is null and its name goes in `errors`, which holds names alone, and the
 // command exits 0 whenever its arguments parse. Every process it starts has a time limit: git's (lib/git.mjs), or the
@@ -19,7 +19,7 @@ import { latestBrief, MARKER_CAP, readArmed, readFrom, readOwnFile, SESSION_ID }
 import { HIDDEN } from './hidden-text.mjs';
 import { findProject } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
-import { sessionLinks, ticketOf } from './session-links.mjs';
+import { LINKS, LINKS_MAX_BYTES, linksOf, sessionLinks, ticketOf } from './session-links.mjs';
 import { changesSummary, isChangeCache, LEDGER, LEDGER_MAX_BYTES, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
 import { auditsSection, KILL, lessonsSection, ownState, snapshotContext } from './session-snapshot-state.mjs';
 import { handoffStatus, stopMarkerPath } from './session-length.mjs';
@@ -27,14 +27,14 @@ import { cachedSessionUsage } from './session-usage-cache.mjs';
 import { usageLines } from './usage.mjs';
 import { listWorktrees, mergedHeads } from './worktree.mjs';
 
-export const SECTIONS = Object.freeze(['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket']);
+export const SECTIONS = Object.freeze(['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket', 'links']);
 // How long the forge calls of one snapshot may take together, in milliseconds; `--deadline-ms` shortens it.
 export const FORGE_BUDGET_MS = 4000;
 // The merged heads' and the change requests' caches: each refreshed at most once a minute, and never read past 1 MiB.
 export const MERGED_HEADS = Object.freeze({ name: 'merged-heads-cache.json', windowMs: 60_000, cap: 1024 * 1024 });
 export const PRS_CACHE = Object.freeze({ name: 'prs-cache.json', windowMs: 60_000, cap: 1024 * 1024 });
 // The session files the row reader reads, each with the most of the session's own it reads (lib/session-links.mjs).
-const ROW_FILES = Object.freeze({ [LEDGER]: LEDGER_MAX_BYTES });
+const ROW_FILES = Object.freeze({ [LEDGER]: LEDGER_MAX_BYTES, [LINKS]: LINKS_MAX_BYTES });
 // `git remote get-url`'s exit status when the remote is not configured.
 const NO_SUCH_REMOTE = 2;
 
@@ -105,14 +105,34 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   const forge = forgeBudget(budgetMs);
   if (validId) section('prs', () => prsSection(ctx, links, cwd, forge));
   section('lessons', () => lessonsSection(ctx));
-  section('worktrees', () => worktreesSection(ctx, validId, forge, errors));
+  // The worktree list, read once a snapshot for the worktrees and links sections; a failed read fails each that asks.
+  const worktrees = once(() => listWorktrees(needed(mainRoot(project.root, KILL)), { timeoutMs: GIT_TIMEOUT_MS, ...KILL }));
+  section('worktrees', () => worktreesSection(ctx, worktrees, validId, forge, errors));
   section('decisions', () => ({ provisional: unconfirmed(scanDecisions(project, { unindexed: false, config: ctx.config })) }));
   section('audits', () => auditsSection(ctx));
   section('ticket', () => shownTicket(ticketOf(cwd, ticketPrefixes, { rows: links?.rows ?? null, git: KILL })));
+  section('links', () => shownLink(linksOf(links?.rows ?? null, worktrees)));
   return { ...out, errors: SECTIONS.filter((name) => errors.has(name)) };
 }
 
 const shownTicket = (ticket) => ticket && { key: displayText(ticket.key), source: ticket.source };
+const shownLink = (link) => link && { branch: displayText(link.branch), worktree: displayText(link.worktree, DISPLAY_CAPS.path), source: link.source };
+
+// `read`'s value, or what it threw, read once and given again.
+function once(read) {
+  let done = null;
+  return () => {
+    if (done === null) {
+      try {
+        done = { value: read() };
+      } catch (error) {
+        done = { error };
+      }
+    }
+    if (done.error) throw done.error;
+    return done.value;
+  };
+}
 
 const needed = (value) => {
   if (value === null || value === undefined) throw new Error('missing');
@@ -182,9 +202,9 @@ const shownChange = (row) => Object.fromEntries(SHOWN.filter(([key]) => Object.h
 // pull request of their branch, without cleanup's tree and age checks; null without a session, with no origin, or for
 // an origin the forge does not serve, and null, naming the section in `errors`, when origin cannot be read or the
 // merged heads' read fails with no cached value.
-function worktreesSection({ project, folder }, validId, forge, errors) {
+function worktreesSection({ project, folder }, list, validId, forge, errors) {
   const main = needed(mainRoot(project.root, KILL));
-  const worktrees = listWorktrees(main, { timeoutMs: GIT_TIMEOUT_MS, ...KILL }).filter((each) => !each.main);
+  const worktrees = list().filter((each) => !each.main);
   const out = { owned: worktrees.length, mergedNotCleaned: null };
   if (!validId) return out;
   // As git fetches in the checkout that asks: the first URL, after any `url.<base>.insteadOf` rewrite, with that

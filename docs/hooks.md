@@ -1294,6 +1294,22 @@ the full id and never creates. Of those it keeps only `created` and `pushed` row
 name, written at or before the hop, and it reads no further ledger once it holds 25 refs. A row more than 60 seconds
 ahead of the snapshot's clock, of any ledger, is dropped when read.
 
+The same hook records the worktree a session creates, in a second file, `<state>/sessions/<session id>/links.jsonl`:
+one row `{ at, kind: "worktree", host, path, branch, cwd }` for each `aidrian worktree new <branch>` a shell call ran.
+It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the shell fills in, a branch or an option it does not know
+that starts with `-`, or `--plan`, records nothing. `cwd` is the worktree's path as `git worktree list` prints it in
+the project's main checkout, read after the call, so the snapshot compares two spellings by git; a branch git lists no
+worktree for, or lists as prunable, records nothing. `host` and `path` are origin's repository as `remoteIdentity`
+reads it, both null with no origin. Every field is checked as the reader checks it, and the row is filed under the
+payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
+output and exit code are its own ([Session links](providers/adding-a-host.md#session-links) says why the hook and not
+the command is the writer). `links.jsonl` keeps to 64 KB under the ledger's rules, through the same append
+(`appendRows` in `lib/session-rows.mjs`), but with no key: every row is appended, and the reader settles repeats. Its
+read-time key is `host/path:branch`, or the branch alone with no origin, and for each key the row with the newest `at`
+decides, the later line on a tie. That differs from the pull request ledger on purpose: the ledger leaves out a repeat
+within a minute when it writes, keeps a row's first `at`, and the snapshot orders its refs by each ref's latest row;
+`links.jsonl` keeps every row, so its newest `at` is the real latest, which a worktree that went needs.
+
 A `created` or `touched` row records what the command line names, not what each command did. Claude Code runs
 `PostToolUse` only for a Bash call that succeeded, but one command's status inside a line is not seen, so
 `gh pr view 12 || true` records its row, and on Codex a shell call that exits non-zero still runs `PostToolUse`. A failed

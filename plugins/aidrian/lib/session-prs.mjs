@@ -18,8 +18,7 @@ import { isRefName, runGit } from './git.mjs';
 import { changesGitTarget, isPush, pushedRefs } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { hasHidden } from './hidden-text.mjs';
-import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
-import { readRows } from './session-rows.mjs';
+import { appendRows, readRows } from './session-rows.mjs';
 import { changesVariable, commandLines, lexCommand, readGit, readInvocation, shellRedirections, walkCommands } from './shell-lex.mjs';
 
 // The ledger's name in the session folder (lib/session-folder.mjs APPENDED_FILES).
@@ -201,7 +200,8 @@ function printsAlone(entries, entry, command) {
     && entries.every((each) => each.line === command || (each.invocation.program === 'cat' && shellRedirections(each.segment).length === 0));
 }
 
-const validCwd = (cwd) => typeof cwd === 'string' && path.isAbsolute(cwd) && Buffer.byteLength(cwd) <= CWD_MAX_BYTES && !hasHidden(cwd);
+// Whether a row's folder is absolute, within CWD_MAX_BYTES, with no hidden character: the ledger's check, and the links' (lib/session-links.mjs).
+export const validCwd = (cwd) => typeof cwd === 'string' && path.isAbsolute(cwd) && Buffer.byteLength(cwd) <= CWD_MAX_BYTES && !hasHidden(cwd);
 
 // Whether a walked command moves its folder's HEAD to another branch: `git checkout`, `git switch`, or `git worktree add`.
 const HEAD_MOVES = new Set(['checkout', 'switch']);
@@ -261,7 +261,6 @@ const parsedLine = (line) => {
     return null;
   }
 };
-const keyOfLine = (line) => parsedLine(line)?.key ?? null;
 // How long a row the ledger holds keeps the same call from writing it again, as a hook run on every shell call may.
 // Past it, a repeat is written with its new time, so the change request it names shows as acted on last.
 export const REPEAT_WINDOW_MS = 60_000;
@@ -287,20 +286,6 @@ const isFolder = (folder) => {
   }
 };
 
-// The ledger's lines kept when a write would pass LEDGER_MAX_BYTES: the newest rows that fit in half of it.
-function newestLines(lines) {
-  const kept = [];
-  let bytes = 0;
-  for (let at = lines.length - 1; at >= 0; at -= 1) {
-    const size = Buffer.byteLength(lines[at]) + 1;
-    if (keyOfLine(lines[at]) === null) continue;
-    if (bytes + size > LEDGER_MAX_BYTES / 2) break;
-    kept.unshift(lines[at]);
-    bytes += size;
-  }
-  return kept;
-}
-
 // Writes `rows`, MAX_ROWS at most, to the ledger in `folder`, which sessionFolder gave, as lib/session-folder.mjs reads
 // and writes it: a row whose cwd is no folder on disk, or whose fields the newest row of its change request holds when
 // that row was written within REPEAT_WINDOW_MS of its `at`, is left out; any other repeat is written with its new time,
@@ -308,31 +293,22 @@ function newestLines(lines) {
 // appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends racing can leave it, or the append would
 // pass it, the ledger is rewritten through a temporary file and a rename with the newest rows of that tail that fit in
 // half of it, then these, so the newest always show. Nothing is written when the ledger cannot be read as the session
-// folder's rules allow. Returns whether it wrote. Never throws.
+// folder's rules allow. Returns whether it wrote. Never throws. The append and the compaction are lib/session-rows.mjs
+// appendRows'; this one decides the repeats from the lines it read.
+// SHORTCUT: two hooks of one session writing together can lose a row in a compaction or add a duplicate. Enough for
+// display data: the next touch records it again and the snapshot dedupes. Compacting under reserveSessionFile closes it.
 export function appendLedger(folder, rows, options = {}) {
-  if (typeof folder !== 'string' || !Array.isArray(rows) || rows.length === 0) return false;
-  const read = readSessionTail(folder, LEDGER, { ...options, maxBytes: LEDGER_MAX_BYTES });
-  if (read === null) return false;
-  // As readLedger reads it: a first line the cut fell inside and a last line still being written are no rows.
-  const lines = read.text.split('\n');
-  lines.pop();
-  if (read.cut) lines.shift();
-  const taken = rows.slice(0, MAX_ROWS);
-  const newest = newestKeys(lines, typeof taken[0]?.at === 'string' ? Date.parse(taken[0].at) : Number.NaN);
-  const fresh = [];
-  for (const row of taken) {
-    const key = rowKey(row);
-    if (newest.get(rowRef(row)) === key || !isFolder(row.cwd)) continue;
-    newest.set(rowRef(row), key);
-    fresh.push(`${JSON.stringify(row)}\n`);
-  }
-  if (fresh.length === 0) return false;
-  const text = fresh.join('');
-  if (!read.cut && Buffer.byteLength(read.text) + Buffer.byteLength(text) <= LEDGER_MAX_BYTES) return appendSessionFile(folder, LEDGER, text, { ...options, maxBytes: LEDGER_MAX_BYTES });
-  // SHORTCUT: two hooks of one session writing together can lose a row in a compaction or add a duplicate. Enough for
-  // display data: the next touch records it again and the snapshot dedupes. Compacting under reserveSessionFile closes it.
-  const compacted = newestLines(lines).map((line) => `${line}\n`).join('') + text;
-  return writeSessionFile(folder, LEDGER, compacted, options) !== null;
+  if (!Array.isArray(rows)) return false;
+  const select = (lines, taken) => {
+    const newest = newestKeys(lines, typeof taken[0]?.at === 'string' ? Date.parse(taken[0].at) : Number.NaN);
+    return taken.filter((row) => {
+      const key = rowKey(row);
+      if (newest.get(rowRef(row)) === key || !isFolder(row.cwd)) return false;
+      newest.set(rowRef(row), key);
+      return true;
+    });
+  };
+  return appendRows(folder, LEDGER, rows.slice(0, MAX_ROWS), { ...options, maxBytes: LEDGER_MAX_BYTES, select });
 }
 
 const KINDS = new Set(['created', 'pushed', 'touched']);
@@ -347,6 +323,8 @@ export const readLedger = (folder, options = {}) => readRows(folder, LEDGER, { .
 const isNumber = (number) => number === null || (Number.isSafeInteger(number) && number > 0);
 const isBranch = (branch) => branch === null || (isRefName(branch) && !hasHidden(branch));
 const isRepoPath = (repoPath) => typeof repoPath === 'string' && repoPath !== '' && Buffer.byteLength(repoPath) <= PATH_MAX_BYTES && !hasHidden(repoPath);
+// Whether `host` and `path` name a repository as the snapshot's own checks take one: a host name and a path.
+export const isRepository = (host, repoPath) => typeof host === 'string' && HOST_NAME.test(host) && isRepoPath(repoPath);
 // Whether a row on a host no adapter declares passes the snapshot's own field checks before it is shown: a host name, a
 // path, cwd absolute, a number a positive integer or none, a branch the ref-name check or none, and one of the two.
 const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, cwd }) => typeof host === 'string' && HOST_NAME.test(host)

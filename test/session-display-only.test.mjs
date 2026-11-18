@@ -24,6 +24,7 @@ const sources = (folders) => Object.fromEntries(folders.flatMap((folder) => walk
 const USES = {
   'session links module': (text) => /from\s+['"][^'"]*session-links\.mjs['"]|import\(\s*['"][^'"]*session-links\.mjs['"]/u.test(text),
   'session rows module': (text) => /from\s+['"][^'"]*session-rows\.mjs['"]|import\(\s*['"][^'"]*session-rows\.mjs['"]/u.test(text),
+  'links writer module': (text) => /from\s+['"][^'"]*session-links-writer\.mjs['"]|import\(\s*['"][^'"]*session-links-writer\.mjs['"]/u.test(text),
   readHop: (text) => /\breadHop\b/u.test(text),
   storeNames: (text) => /\bstoreNames\b/u.test(text),
   lineage: (text) => /\blineage\s*\(/u.test(text),
@@ -32,10 +33,13 @@ const USES = {
 const ALLOWED = {
   'lib/session-snapshot.mjs': ['session links module'],
   'lib/session-prs.mjs': ['session rows module'],
-  'lib/session-links.mjs': ['session rows module', 'readHop', 'storeNames', 'lineage'],
+  'lib/session-links.mjs': ['session rows module', 'links writer module', 'readHop', 'storeNames', 'lineage'],
+  'lib/session-links-writer.mjs': ['session rows module'],
   'lib/session-rows.mjs': [],
   'lib/handoff-markers.mjs': ['readHop', 'storeNames'],
   'lib/handoff-continue.mjs': ['parent'],
+  // The writer of links.jsonl: the writer's module alone, which reads no session file.
+  'scripts/hook-bash-post.mjs': ['links writer module'],
 };
 
 // Each use a file of `files` makes that ALLOWED does not give it: `<file>: <use>`.
@@ -43,7 +47,9 @@ function breaches(files) {
   return Object.entries(files).flatMap(([file, text]) => Object.entries(USES).filter(([name, uses]) => uses(text) && !(ALLOWED[file] ?? []).includes(name)).map(([name]) => `${file}: ${name}`));
 }
 
-// The hooks that print: no file under scripts/ loads the snapshot or the session links, by a static or a dynamic import.
+// The hooks that print: no file under scripts/ loads the snapshot or the session links' reader, by a static or a
+// dynamic import. The writer's module, which the ledger's hook loads, reads no session file.
+const WRITER_HOOK = path.join('scripts', 'hook-bash-post.mjs');
 const printers = (files) => Object.entries(files).filter(([file, text]) => file.startsWith(`scripts${path.sep}`) && /session-(?:snapshot|links)\.mjs/u.test(text)).map(([file]) => file);
 
 // A gate or a guard reads every floor itself: no call of readFrom or startedInBackground passes a listing in these files.
@@ -66,6 +72,19 @@ test('only the listed files read the session links, each for what it may use', (
 test('no hook loads the snapshot or the session links, so none prints a value of them', () => {
   assert.deepEqual(printers(sources(['scripts'])), []);
   assert.deepEqual(printers({ [path.join('scripts', 'hook-stop.mjs')]: "const { snapshot } = await import('../lib/session-snapshot.mjs');" }), [path.join('scripts', 'hook-stop.mjs')]);
+  assert.deepEqual(printers({ [path.join('scripts', 'hook-stop.mjs')]: "const links = await import('../lib/session-links.mjs');" }), [path.join('scripts', 'hook-stop.mjs')]);
+  assert.deepEqual(printers({ [WRITER_HOOK]: "const links = await import('../lib/session-links-writer.mjs');\nlinks.recordLinks(folder, rows);" }), [], 'the writer');
+  assert.deepEqual(printers({ [WRITER_HOOK]: "const links = await import('../lib/session-links.mjs');" }), [WRITER_HOOK], 'the reader in the writer`s hook');
+  assert.deepEqual(breaches({ [WRITER_HOOK]: "import { readRows } from '../lib/session-rows.mjs';" }), [`${WRITER_HOOK}: session rows module`]);
+});
+
+// No filesystem call on a row's value: the session links reach the disk only through the session folder's helpers.
+const fsImports = (text) => /from\s+['"](?:node:)?fs(?:\/promises)?['"]|import\(\s*['"](?:node:)?fs/u.test(text);
+
+test('session-links.mjs and its writer import nothing from node:fs', () => {
+  const lib = sources(['lib']);
+  for (const file of ['lib/session-links.mjs', 'lib/session-links-writer.mjs']) assert.equal(fsImports(lib[file]), false, file);
+  assert.equal(fsImports("import { lstatSync } from 'node:fs';"), true);
 });
 
 test('a gate, a guard, and a hook count chain floors from their own listing, never one passed in', () => {

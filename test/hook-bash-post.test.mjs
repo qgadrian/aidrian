@@ -626,3 +626,61 @@ test('the PostToolUse Bash group comes last in hooks.json, so the tracker hooks 
   assert.deepEqual(last.hooks.map(({ command }) => command), ['node "$CLAUDE_PLUGIN_ROOT/scripts/hook-bash-post.mjs"']);
   assert.ok(!JSON.stringify(hooks.PostToolUseFailure ?? []).includes('hook-bash-post.mjs'), 'no row for a call that failed');
 });
+
+// A project checkout with one commit and a worktree of `branch`, under `parent` (a folder that may be reached by a
+// symlink), whose origin is `origin` or none. `listed` is the worktree's path as `git worktree list` prints it.
+let worktreeRepos = 0;
+function worktreeRepo(branch, { origin = 'git@github.com:acme/widgets.git', parent = ROOT } = {}) {
+  worktreeRepos += 1;
+  const dir = path.join(parent, `wt-${worktreeRepos}`);
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const env = { ...ENV, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const git = (...args) => {
+    const ran = spawnSync('git', args, { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(ran.status, 0, `${args.join(' ')}: ${ran.stderr}`);
+    return ran.stdout;
+  };
+  git('init', '-q', '-b', 'main');
+  if (origin) git('remote', 'add', 'origin', origin);
+  git('add', '.');
+  git('commit', '-q', '-m', 'start');
+  git('worktree', 'add', '-q', '-b', branch, path.join(parent, `wt-${worktreeRepos}-tree`));
+  const listed = git('worktree', 'list', '--porcelain').split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length))[1];
+  return { dir, listed };
+}
+
+// The rows the hook appended to the session's links.jsonl for `command` run in `cwd`.
+function linkRows(command, cwd, session = nextSession()) {
+  runHook(payload(command, { cwd, session }));
+  const projects = path.join(STATE, 'aidrian/projects');
+  return readdirSync(projects).map((id) => path.join(projects, id, 'sessions', session, 'links.jsonl')).filter((file) => existsSync(file))
+    .flatMap((file) => readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line)));
+}
+
+test('aidrian worktree new records one links row under the payload`s session: its branch, git`s path, and origin', { skip: !POSIX }, () => {
+  const { dir, listed } = worktreeRepo('feat/wt');
+  const [only, ...more] = linkRows('aidrian worktree new feat/wt', dir);
+  assert.deepEqual(more, []);
+  assert.deepEqual({ ...only, at: 'x' }, { at: 'x', kind: 'worktree', host: 'github.com', path: 'acme/widgets', branch: 'feat/wt', cwd: listed });
+  assert.deepEqual(linkRows('cd /tmp && aidrian worktree new feat/wt --base origin/main', dir).length, 1);
+  const none = worktreeRepo('feat/no-origin', { origin: null });
+  assert.deepEqual(linkRows('aidrian worktree new feat/no-origin', none.dir).map(({ host, path: repo }) => [host, repo]), [[null, null]]);
+});
+
+test('a shell-filled branch, an option, --plan, or a branch git lists no worktree for records no links row', { skip: !POSIX }, () => {
+  const { dir } = worktreeRepo('feat/quiet');
+  for (const command of ['aidrian worktree new "$B"', 'aidrian worktree new -x', 'aidrian worktree new feat/quiet --plan', 'aidrian worktree new feat/never']) {
+    assert.deepEqual(linkRows(command, dir), [], command);
+  }
+});
+
+test('in a checkout under a symlinked folder, the row`s cwd is the path git worktree list prints', { skip: !POSIX }, () => {
+  const real = path.join(ROOT, 'real-parent');
+  mkdirSync(real);
+  const linked = path.join(ROOT, 'linked-parent');
+  symlinkSync(real, linked);
+  const { dir, listed } = worktreeRepo('feat/linked', { parent: linked });
+  const [row] = linkRows('aidrian worktree new feat/linked', dir);
+  assert.equal(row.cwd, listed);
+});

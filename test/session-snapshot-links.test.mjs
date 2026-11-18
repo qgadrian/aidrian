@@ -4,7 +4,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -31,7 +31,7 @@ const git = (cwd, ...args) => {
 // A project on `branch` whose `upstream` remote names acme/notes on github.com (origin stays unset, so the merged-heads
 // read starts no forge call), with its own state root, a fake gh that logs each call and answers what `answer` last set,
 // and a fake git before the real one that logs each call's argv, folder, and environment.
-function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme/notes.git' }, failRemotes = false } = {}) {
+function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme/notes.git' }, failRemotes = false, failList = false } = {}) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-snapshot-links-')));
   const dir = path.join(base, 'project');
   mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
@@ -50,7 +50,8 @@ function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme
   const record = (log) => `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), env: process.env, input }) + '\\n');\n`;
   writeFileSync(path.join(bin, 'gh'), `#!${process.execPath}\nconst fs = require('node:fs');\nconst input = process.argv.includes('--input') ? fs.readFileSync(0, 'utf8') : null;\n${record(ghLog)}` +
     `const { text } = JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\nprocess.stdout.write(text);\n`);
-  const fail = failRemotes ? `if (process.argv.includes('--get-regexp')) { process.exitCode = 128; return; }\n` : '';
+  const fail = (failRemotes ? `if (process.argv.includes('--get-regexp')) { process.exitCode = 128; return; }\n` : '')
+    + (failList ? `if (process.argv.includes('--porcelain')) { process.exitCode = 128; return; }\n` : '');
   writeFileSync(path.join(bin, 'git'), `#!${process.execPath}\nconst input = null;\n${record(gitLog)}(() => {\n${fail}` +
     `const r = require('node:child_process').spawnSync(${JSON.stringify(REAL_GIT)}, process.argv.slice(2), { stdio: 'inherit' });\nprocess.exitCode = r.status ?? 1;\n})();\n`);
   chmodSync(path.join(bin, 'gh'), 0o755);
@@ -260,7 +261,7 @@ test('one snapshot lists the store once, reads each ledger once, and lists the s
   assert.equal(counts.store, 1, 'the store is listed once, its handoff section included');
   assert.equal(counts.names, 0, 'every floor under a full id: the sessions folder is not listed');
   assert.deepEqual([...counts.reads.values()].every((count) => count === 1), true, JSON.stringify([...counts.reads]));
-  assert.deepEqual([...counts.reads.keys()].sort(), ['a-1/prs.jsonl', 'b-1/prs.jsonl', 'c-1/prs.jsonl', `${ID}/prs.jsonl`]);
+  assert.deepEqual([...counts.reads.keys()].sort(), ['a-1', 'b-1', 'c-1', ID].flatMap((id) => [`${id}/links.jsonl`, `${id}/prs.jsonl`]).sort(), 'each ledger and each links file, once');
   const short = setup();
   short.ledger(ID, []);
   noteFrom(short.store, 'kid-', { slug: 'task', chain: 1, brief: path.join(short.store.handoffs, '2026-11-17-task.md'), route: 'clear', parent: PARENT });
@@ -268,4 +269,91 @@ test('one snapshot lists the store once, reads each ledger once, and lists the s
   const listed = { names: 0 };
   inProcess(short, { io: { sessionNames: () => (listed.names += 1, []) } });
   assert.equal(listed.names, 1, 'a floor under a short id: listed once');
+});
+
+// The links section. A worktree of `branch` made with the real git, and its path as git lists it.
+function withWorktree(env, branch) {
+  const tree = path.join(env.base, branch.replace(/\W/gu, '-'));
+  git(env.dir, 'worktree', 'add', '-q', '-b', branch, tree);
+  return git(env.dir, 'worktree', 'list', '--porcelain').split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice(9)).find((each) => each.endsWith(path.basename(tree)));
+}
+const linkRow = (fields, minute = 0) => ({ at: new Date(Date.UTC(2026, 10, 18, 8, minute)).toISOString(), kind: 'worktree', host: 'github.com', path: 'acme/notes', branch: 'feat/x', cwd: ROOT, ...fields });
+const links = (env, id, rows) => writeFileSync(path.join(env.folder(id), 'links.jsonl'), rows.map((each) => `${JSON.stringify(each)}\n`).join(''), { mode: 0o600 });
+
+test('links shows the session`s worktree as git lists it, own, then the parent`s inherited; the list is read once', { skip: !POSIX }, () => {
+  const env = setup();
+  const listed = withWorktree(env, 'feat/own');
+  links(env, ID, [linkRow({ branch: 'feat/own', cwd: listed }, 1)]);
+  const lists = (args) => {
+    const from = env.gitCalls().length;
+    const out = env.run(args);
+    return { out, count: env.gitCalls().slice(from).filter((call) => call.args.join(' ') === 'worktree list --porcelain').length };
+  };
+  const baseline = lists(['--session', 'fresh-0']).count;
+  const { out: json, count } = lists(['--session', ID]);
+  assert.deepEqual([json.links, json.errors], [{ branch: 'feat/own', worktree: listed, source: 'own' }, []]);
+  assert.equal(count, baseline, 'the links section reads no worktree list of its own: it shares the worktrees section`s');
+  assert.deepEqual(json.worktrees.owned, 1);
+  const child = 'kid-2';
+  links(env, child, [linkRow({ branch: 'feat/gone', cwd: path.join(env.base, 'gone') }, 2)]);
+  env.hop(child, ID);
+  assert.deepEqual(env.run(['--session', child]).links, { branch: 'feat/own', worktree: listed, source: 'inherited' });
+  assert.deepEqual(env.run(['--session', 'fresh-1']).links, null, 'no links.jsonl: null, and no error');
+  assert.equal(env.run(['--session', 'fresh-1']).errors.includes('links'), false);
+});
+
+test('links is null with links in errors when the session`s links cannot be read, or the worktree list fails', { skip: !POSIX }, () => {
+  const env = setup();
+  const started = Date.now();
+  env.folder(ID);
+  spawnSync('mkfifo', [path.join(env.projectState, 'sessions', ID, 'links.jsonl')]);
+  const piped = env.run(['--session', ID]);
+  assert.deepEqual([piped.links, piped.errors.includes('links')], [null, true]);
+  writeFileSync(path.join(env.base, 'elsewhere.jsonl'), `${JSON.stringify(linkRow({}))}\n`, { mode: 0o600 });
+  env.folder('linked-1');
+  symlinkSync(path.join(env.base, 'elsewhere.jsonl'), path.join(env.projectState, 'sessions', 'linked-1', 'links.jsonl'));
+  const linked = env.run(['--session', 'linked-1']);
+  assert.deepEqual([linked.links, linked.errors.includes('links')], [null, true]);
+  assert.ok(Date.now() - started < 20_000);
+  assert.deepEqual(env.run([]).errors, ['links'], 'no --session');
+  assert.ok(env.run(['--session', '../x']).errors.includes('links'), 'an id that fails SESSION_ID');
+  const failing = setup({ failList: true });
+  links(failing, ID, [linkRow({}, 1)]);
+  const json = failing.run(['--session', ID]);
+  assert.deepEqual([json.links, json.errors.includes('links')], [null, true]);
+});
+
+test('a links row names no process folder or argument, and a cwd that is a named pipe or an unreadable folder changes nothing', { skip: !POSIX }, () => {
+  const env = setup();
+  const pipe = path.join(env.base, 'pipe');
+  spawnSync('mkfifo', [pipe]);
+  const locked = path.join(env.base, 'locked');
+  mkdirSync(path.join(locked, 'inner'), { recursive: true });
+  chmodSync(locked, 0o000);
+  try {
+    const madeUp = path.join(env.base, 'made', 'up');
+    links(env, ID, [linkRow({ branch: 'feat/secret-branch', cwd: madeUp }, 1), linkRow({ branch: 'feat/pipe', cwd: pipe }, 2), linkRow({ branch: 'feat/locked', cwd: path.join(locked, 'inner') }, 3)]);
+    const started = Date.now();
+    const json = env.run(['--session', ID]);
+    assert.ok(Date.now() - started < 10_000);
+    assert.deepEqual([json.links, json.errors], [null, []]);
+    for (const call of [...env.gitCalls(), ...env.ghCalls()]) {
+      const seen = JSON.stringify([call.args, call.env]);
+      for (const value of ['feat/secret-branch', madeUp, pipe, locked]) assert.ok(!seen.includes(value), `${value} in ${call.args.join(' ')}`);
+      assert.ok(![madeUp, pipe, locked].some((folder) => call.cwd.startsWith(folder)));
+    }
+  } finally {
+    chmodSync(locked, 0o700);
+  }
+});
+
+test('a links branch and path holding ESC, U+202E, and U+200B come out without them, cut at 100 and 1024 code points', { skip: !POSIX }, () => {
+  const env = setup();
+  const listed = withWorktree(env, 'feat/plain');
+  // A row edited by hand to name the listed path is the reader's only way to a hostile path; the branch keeps its own checks.
+  links(env, ID, [linkRow({ branch: `feat/${'b'.repeat(120)}`, cwd: listed }, 1)]);
+  const json = env.run(['--session', ID]);
+  assert.equal([...json.links.branch].length, 100);
+  assert.equal(json.links.worktree, listed);
+  for (const hidden of ['\u001b', '‮', '​']) assert.ok(!JSON.stringify(json.links).includes(hidden));
 });

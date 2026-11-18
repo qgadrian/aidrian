@@ -7,9 +7,9 @@
 // process's user, that no other user may read or write; and the session folder's real path is `<real state>/sessions/<id>`,
 // and is still the folder's own path at each write, read, and sweep (boundFolder), so a folder above it swapped for a
 // symlink since gets none. Its files are written as a temporary file and a rename, mode 0600, under the names in
-// SESSION_FILES alone, with one exception: the session's pull request ledger, `prs.jsonl` (APPENDED_FILES), which
-// lib/session-prs.mjs reads by its tail through readSessionTail, and appends to in place through appendSessionFile,
-// no-follow, mode 0600, only while it is a regular file with one link this user alone may read, and rewrites through
+// SESSION_FILES alone, with one exception: the files of APPENDED_FILES, the pull request ledger `prs.jsonl` and `links.jsonl`, which
+// lib/session-rows.mjs reads by their tail through readSessionTail, and appends to in place through appendSessionFile,
+// no-follow, mode 0600, only while it is a regular file with one link this user alone may read, and rewrites each through
 // writeSessionFile when it is past its cap or an append would pass it; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
@@ -27,7 +27,7 @@ import { readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 export const SWEEP_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
 // The files a session folder holds: nothing else is written there, and the sweep deletes nothing else.
-export const SESSION_FILES = Object.freeze(['usage.json', 'prs.jsonl', 'prs-cache.json', 'merged-heads-cache.json']);
+export const SESSION_FILES = Object.freeze(['usage.json', 'prs.jsonl', 'links.jsonl', 'prs-cache.json', 'merged-heads-cache.json']);
 // The random part of a temporary file's name, and the names of the temporary files, `.<file>.<pid>.<token>.tmp`.
 const TOKEN = /^[0-9a-f]{12}$/u;
 const newToken = () => randomBytes(6).toString('hex');
@@ -39,8 +39,8 @@ export const reservationName = (name, index) => `${name}.${index}.lock`;
 export const SESSION_RESERVATION = new RegExp(String.raw`^(?:${SESSION_FILES.map(escaped).join('|')})\.\d+\.lock$`, 'u');
 // A temporary file or a reservation is created only where nothing is, and never through a symlink.
 const CREATE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
-// The files appended to in place, never renamed over: the session ledger alone.
-export const APPENDED_FILES = Object.freeze(['prs.jsonl']);
+// The files appended to in place, never renamed over but to compact them: the session ledger and the session's links.
+export const APPENDED_FILES = Object.freeze(['prs.jsonl', 'links.jsonl']);
 // An append opens where no symlink is, and never waits on a named pipe.
 const APPEND = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 

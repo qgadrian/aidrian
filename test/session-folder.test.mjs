@@ -417,7 +417,7 @@ test('the sweep deletes a reservation only when it is a regular file', { skip: !
 test('appendSessionFile appends the ledger in place, within its cap, and only the ledger', { skip: !POSIX }, () => {
   const { state } = stateWithSessions();
   const folder = sessionFolder(state, 'appender', NONE);
-  assert.deepEqual(APPENDED_FILES, ['prs.jsonl']);
+  assert.deepEqual(APPENDED_FILES, ['prs.jsonl', 'links.jsonl']);
   assert.ok(SESSION_FILES.includes('prs.jsonl'), 'the sweep deletes it too');
   assert.equal(appendSessionFile(folder, 'prs.jsonl', 'a\n', { maxBytes: 10 }), true);
   assert.equal(appendSessionFile(folder, 'prs.jsonl', 'b\n', { maxBytes: 10 }), true);
@@ -516,4 +516,19 @@ test('existingSessionFolder and sessionFolderNames refuse a symlinked sessions f
   writeFileSync(path.join(fresh.sessions, 'file-1'), '');
   mkdirSync(path.join(fresh.sessions, 'bad name'));
   assert.deepEqual(sessionFolderNames(fresh.state, NONE), ['file-1'], 'names that pass SESSION_ID alone');
+});
+
+test('links.jsonl is a session file appended in place: written, appended, and swept, and a name off the lists is still refused', { skip: !POSIX }, () => {
+  assert.ok(SESSION_FILES.includes('links.jsonl') && APPENDED_FILES.includes('links.jsonl'));
+  const { state, sessions } = stateWithSessions();
+  const folder = sessionFolder(state, 'links-1', NONE);
+  assert.ok(writeSessionFile(folder, 'links.jsonl', '{"a":1}\n'));
+  assert.equal(appendSessionFile(folder, 'links.jsonl', '{"b":2}\n', { maxBytes: 1024 }), true);
+  assert.equal(readFileSync(path.join(folder, 'links.jsonl'), 'utf8'), '{"a":1}\n{"b":2}\n');
+  assert.equal(statSync(path.join(folder, 'links.jsonl')).mode & 0o777, 0o600);
+  assert.equal(writeSessionFile(folder, 'links.json', '{}'), null);
+  assert.equal(appendSessionFile(folder, 'notes.jsonl', '{}\n', { maxBytes: 1024 }), false);
+  const old = oldFolder(sessions, 'old-links', 31, ['links.jsonl', path.basename(temporaryName(path.join(sessions, 'old-links'), 'links.jsonl')), 'links.jsonl.bak']);
+  assert.notEqual(sessionFolder(state, 'links-2', NONE), null);
+  assert.deepEqual(readdirSync(old), ['links.jsonl.bak'], 'the sweep deletes links.jsonl and its temporary file, and nothing it did not delete before');
 });

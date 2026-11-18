@@ -156,6 +156,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── sessions/<session id>/  what aidrian session snapshot caches for one session, and its pull request ledger, for its user alone:
 │   ├── usage.json            the transcript read so far, as the handoff numbers fold it, and a hash of its first and last 64 KiB, saved step by step
 │   ├── prs.jsonl             the session's pull request ledger, one row per pull request a Bash call touched (hooks.md#session-ledger)
+│   ├── links.jsonl           the worktrees the session's aidrian worktree new calls created, one row each (hooks.md#session-ledger)
 │   ├── prs-cache.json        the ledger's pull requests as the forge last answered, and when it was last asked
 │   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
 │   └── <cache>.<window>.lock  held for a moment while a snapshot records its forge attempt
@@ -182,12 +183,12 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   group the user's primary group whose id is the user's id, as Debian, Ubuntu, and Fedora give each user, whose umask
   002 makes folders 0775. `/tmp`, root's and sticky, passes. A state folder not there yet is checked by the nearest
   folder above it before anything is made. Each file is written as a
-  temporary file, mode 0600, renamed over it, under the cache names alone, with one exception, the ledger
-  `prs.jsonl`, which `lib/session-prs.mjs` appends to in place through the helper's `appendSessionFile` for the
+  temporary file, mode 0600, renamed over it, under the cache names alone, with two exceptions, the ledger
+  `prs.jsonl` and the session's links `links.jsonl`, which `lib/session-rows.mjs` appends to in place through the helper's `appendSessionFile` for the
   [session ledger hook](hooks.md#session-ledger), no-follow, mode 0600, only while it is a regular file with one link
-  this user alone may read, and the snapshot reads its last 256 KB through `readSessionTail` under the same checks,
-  no-follow and non-blocking, and within 256 KB, rewritten by a temporary file and a rename with its newest rows when a
-  write would pass that or finds it past that, the writer reading the same last 256 KB; a cache's reservation for one fixed window,
+  this user alone may read, and the snapshot reads the ledger's last 256 KB, and the last 64 KB of the links, through `readSessionTail` under the same checks,
+  no-follow and non-blocking, and each within its cap, 256 KB and 64 KB, rewritten by a temporary file and a rename with its newest rows when a
+  write would pass that or finds it past that, the writer reading the same tail; a cache's reservation for one fixed window,
   `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so
   one a killed process left blocks its own window alone. A state folder inside a checkout of the repository, the
@@ -196,7 +197,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   `..` in a repository whose folder is named `sessions`; the snapshot reads the lesson inbox and the audits folder under
   the same rule. Nor does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
   the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
-  others untouched for 30 days, deleting only the cache files and the ledger, their temporary files, and their
+  others untouched for 30 days, deleting only the cache files, the ledger, and the links, their temporary files, and their
   reservations that are regular files, then the folder once empty.
 - A chain floor in `handoffs/.continue/` may name its `parent`, the session that handed off
   ([The chain](handoff.md#the-chain)). The snapshot follows those names to the folders of the earlier sessions and reads

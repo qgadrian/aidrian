@@ -1700,6 +1700,8 @@ pull request uses one, and fewer than 25 pull requests can show while an older o
 After a handoff, `prs` also shows the open pull requests the sessions it came from created or pushed, each
 `inherited: true`, and `ticket` comes from the current branch (`source: "branch"`), else from a branch the session's
 ledger, or an earlier session's, recorded (`source: "ledger"`) ([Across a handoff](handoff.md#across-a-handoff)).
+`links` shows the worktree the session, or an earlier one, created with `aidrian worktree new`, while git still lists
+it ([The worktree](handoff.md#the-worktree)).
 Unlike the other commands it never stops on a `config.json` with errors: like the hooks, it uses the default in place
 of each bad value, and a section that cannot be read is null with its name in `errors`, so the status line keeps working.
 

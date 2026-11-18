@@ -522,13 +522,15 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
 | `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `ticket` | `{ key, source }` or null: a key of `--ticket-prefixes` in a branch name, such as `ABC-123`, else `#42` from a branch named `fix/42-slug`; `source` is `branch` for the current branch, `ledger` for a branch the session's ledger, or an earlier session's, recorded ([The ticket](#the-ticket)). |
+| `links` | `{ branch, worktree, source }` or null: the worktree the session created with `aidrian worktree new`, while git still lists it, `source` `own`, else the one an earlier session created, `inherited` ([The worktree](#the-worktree)). |
 | `errors` | The names of the sections that failed, never their error text. |
 
 Each section fails open: one that fails is null with its name in `errors`, and the command exits 0 whenever its
 arguments parse, so a status line never breaks. In a folder with no project every section but `session` is null,
 `errors` is empty, and nothing is written. Without `--session`, `handoff`, `prs`, and `worktrees.mergedNotCleaned` are
 null and `errors` does not name them, since their caches are kept per session; without `--transcript`, `handoff` is
-null the same way. A session id that fails `SESSION_ID` writes nothing, and names `handoff`, `prs`, and `worktrees` in
+null the same way. `links` is the exception: without `--session` it is null with `links` in `errors`. A session id that
+fails `SESSION_ID` writes nothing, and names `handoff`, `prs`, `worktrees`, and `links` in
 `errors`.
 More than 32 ticket prefixes, or one that is not a letter and up to 15 letters or digits, make `ticket` null.
 
@@ -672,11 +674,29 @@ have no parent, and show their own rows alone.
 
 1. The branch of the current folder: `source: "branch"`. This rule never reads a ledger, so a ledger that cannot be
    read never hides the branch's ticket.
-2. With `--session`, the newest row of the session's ledger whose branch holds a key; with none there, the nearest
-   earlier session's rows, as it hands them down, and so on: `source: "ledger"`. The newest is the latest `at`, then
-   the later line. The ledger keeps the first time of a repeated row, so a branch pushed again does not move forward.
+2. With `--session`, the newest row of the session's ledger or of its `links.jsonl` whose branch holds a key; with none
+   there, the nearest earlier session's rows, as it hands them down, and so on: `source: "ledger"`. The newest is the
+   latest `at`, then on a tie a row of `links.jsonl` before one of the ledger, then the later line. The ledger keeps the
+   first time of a repeated row, so a branch pushed again does not move forward.
    A ledger of the session's own that cannot be read makes `ticket` null with `ticket` in `errors`; without
    `--session`, or with no session folder, this rule does not run.
+
+**The worktree.** `links` reads the session's `links.jsonl`, the worktrees its `aidrian worktree new` calls created
+([Session ledger](hooks.md#session-ledger)). It keeps the newest row of each key, `host/path:branch`, drops each whose
+`cwd` is not, string for string, the path of a worktree `git worktree list` names and does not mark prunable, and
+shows the newest left with `source: "own"`; with none left, it does the same for the nearest earlier session's rows,
+as that session hands them down, with `source: "inherited"`. An earlier session hands down a worktree row only on a
+repository the project's remotes name, or with no repository when they name none. So a worktree shows only while git
+lists it: once it is removed, pruned, or moved with `git worktree move`, it is gone, and a worktree switched to another
+branch still shows the branch it was made with. The list is the one the `worktrees` section reads, read once a
+snapshot and only when a row needs it, and no filesystem call is made on a row's value. `links` is null with `links`
+in `errors` whenever the snapshot cannot read the session's links: without `--session`, with an id that fails
+`SESSION_ID`, with no session folder, as for a state folder inside a checkout, with a file the session folder's rules
+refuse, such as a named pipe or a symlink, and when the worktree list cannot be read. It is null with `errors` not
+naming it when the session has no `links.jsonl`, or none of its rows names a worktree git still lists. This is unlike
+`prs`, which `errors` does not name without `--session`: a reader that treats any error name as a failure sees `links`
+on every call without a session. The snapshot reads no host variable, so a host that gives its shell calls no session
+id shows the same as a call without `--session`.
 
 **Run time.** Every git call the snapshot starts, those of finding the project and its state folder included, is
 killed outright at git's 2 s limit, even one that ignores SIGTERM, and once one is, the later ones of the

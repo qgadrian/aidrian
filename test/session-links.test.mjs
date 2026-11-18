@@ -11,7 +11,8 @@ import test, { after } from 'node:test';
 
 import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
 import { noteFrom, openStore, readFrom, readHop, storeNames } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { keyOfBranch, lineage, MAX_ANCESTORS, prefixList, rowReader, ticketOf } from '../plugins/aidrian/lib/session-links.mjs';
+import { keyOfBranch, lineage, linksOf, MAX_ANCESTORS, prefixList, rowReader, ticketOf } from '../plugins/aidrian/lib/session-links.mjs';
+import { isWorktreeRow, recordLinks, worktreeBranches, worktreeRows } from '../plugins/aidrian/lib/session-links-writer.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { remoteRepos } from '../plugins/aidrian/lib/session-prs.mjs';
 import { readRows } from '../plugins/aidrian/lib/session-rows.mjs';
@@ -162,7 +163,7 @@ function sessionWith(state, id, rows) {
   return folder;
 }
 const REMOTES = [{ host: 'github.com', path: 'acme/notes' }];
-const FILES = { 'prs.jsonl': 256 * KB };
+const FILES = { 'prs.jsonl': 256 * KB, 'links.jsonl': 64 * KB };
 function readerOf(state, own, chain, { remotes = () => REMOTES, read } = {}) {
   return rowReader({ own, files: FILES, chain: () => chain, remotes, state, checkouts: [], now: NOW, ...(read ? { read } : {}) });
 }
@@ -283,12 +284,96 @@ test('ticketOf: the current branch first, then the newest own row with a key, th
   assert.throws(() => ticketOf(repo, '', { rows: readerOf(state, piped, []) }), 'an own ledger that cannot be read fails the section');
 });
 
-test('session-links.mjs and session-rows.mjs name no host, forge, or tracker outside their comments', () => {
-  for (const file of ['session-links.mjs', 'session-rows.mjs']) {
+test('session-links.mjs, its writer, and session-rows.mjs name no host, forge, or tracker outside their comments', () => {
+  for (const file of ['session-links.mjs', 'session-links-writer.mjs', 'session-rows.mjs']) {
     const code = readFileSync(path.join(LIB, file), 'utf8').split('\n')
       .filter((line) => !/^\s*\/\//u.test(line)).map((line) => line.replace(/\s\/\/ .*$/u, '')).join('\n');
     assert.doesNotMatch(code, /claude|codex|github|gitlab|linear/iu, file);
     assert.doesNotMatch(code, /['"`]gh['"`]/u, file);
   }
   assert.deepEqual(readdirSync(LIB).filter((name) => name === 'session-links.mjs').length, 1);
+});
+
+// A worktree row of `links.jsonl`, `minute` minutes before now.
+const linkRow = (fields, minute = 10) => ({ at: at(minute), kind: 'worktree', host: 'github.com', path: 'acme/notes', branch: 'feat/x', cwd: '/w/x', ...fields });
+function linksWith(state, id, rows) {
+  const folder = sessionFolder(state, id, { checkouts: [] });
+  writeFileSync(path.join(folder, 'links.jsonl'), rows.map((row) => `${JSON.stringify(row)}\n`).join(''), { mode: 0o600 });
+  return folder;
+}
+const linkReader = (state, own, chain, options = {}) => rowReader({ own, files: FILES, chain: () => chain, remotes: () => REMOTES, state, checkouts: [], now: NOW, checks: { 'links.jsonl': isWorktreeRow }, ...options });
+const listOf = (...paths) => () => paths.map((entry) => (typeof entry === 'string' ? { path: entry, prunable: false } : entry));
+
+test('a worktree row has exactly its six checked fields; the reader drops one that fails any', () => {
+  assert.equal(isWorktreeRow(linkRow({})), true);
+  assert.equal(isWorktreeRow(linkRow({ host: null, path: null })), true, 'no origin');
+  for (const bad of [linkRow({ cwd: 'relative/w' }), linkRow({ branch: 'feat/\u0007x' }), linkRow({ branch: 'a..b' }), { ...linkRow({}), extra: 'x'.repeat(10 * KB) },
+    linkRow({ host: null }), linkRow({ at: 'never' }), linkRow({ kind: 'issue' }), linkRow({ cwd: `/${'x'.repeat(1100)}` }), linkRow({ path: 'acme/notes‮' })]) {
+    assert.equal(isWorktreeRow(bad), false, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
+test('worktreeBranches reads aidrian worktree new through the shared lexer: a shell-filled word, a leading dash, or --plan records none', () => {
+  assert.deepEqual(worktreeBranches('aidrian worktree new feat/x'), ['feat/x']);
+  assert.deepEqual(worktreeBranches('cd /repo && aidrian worktree new --base origin/main feat/x --slug x --fetch'), ['feat/x']);
+  assert.deepEqual(worktreeBranches('node /p/plugins/aidrian/lib/cli.mjs worktree new feat/y --reuse-existing'), ['feat/y']);
+  for (const command of ['aidrian worktree new "$B"', 'aidrian worktree new -x', 'aidrian worktree new feat/x --plan', 'aidrian worktree new --plan=1 feat/x',
+    'aidrian worktree new', 'aidrian worktree new a b', 'aidrian worktree cleanup', 'echo aidrian worktree new feat/x', 'aidrian worktree new $(echo x)', 'aidrian worktree new a..b']) {
+    assert.deepEqual(worktreeBranches(command), [], command);
+  }
+});
+
+test('worktreeRows takes cwd as git spells the listed path, and writes none for a branch git lists no worktree for', () => {
+  const list = () => [{ path: '/repo', branch: 'main', prunable: false }, { path: '/w/feat-x', branch: 'feat/x', prunable: false }, { path: '/w/old', branch: 'old', prunable: true }];
+  const rows = worktreeRows({ branches: ['feat/x', 'none', 'old'], main: '/repo', origin: { host: 'github.com', path: 'acme/notes' }, at: at(0), list });
+  assert.deepEqual(rows, [{ at: at(0), kind: 'worktree', host: 'github.com', path: 'acme/notes', branch: 'feat/x', cwd: '/w/feat-x' }]);
+  assert.deepEqual(worktreeRows({ branches: ['feat/x'], main: '/repo', origin: null, at: at(0), list }).map(({ host, path: repo }) => [host, repo]), [[null, null]], 'no origin');
+  assert.deepEqual(worktreeRows({ branches: ['feat/x'], main: '/repo', origin: null, list: () => { throw new Error('git'); } }), [], 'a list that fails');
+});
+
+test('the links section: the newest row of each key whose cwd git still lists, own first, then the parent`s as cut', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const own = linksWith(state, 'kid-6', [linkRow({ branch: 'feat/a', cwd: '/w/a' }, 20), linkRow({ branch: 'feat/a', cwd: '/w/a-moved' }, 10), linkRow({ branch: 'feat/b', cwd: '/w/b' }, 15)]);
+  assert.deepEqual(linksOf(linkReader(state, own, []), listOf('/w/a', '/w/b')), { branch: 'feat/b', worktree: '/w/b', source: 'own' }, 'the newer row of feat/a names a path git does not list');
+  assert.deepEqual(linksOf(linkReader(state, own, []), listOf('/w/a-moved', '/w/b')), { branch: 'feat/a', worktree: '/w/a-moved', source: 'own' });
+  for (const [label, paths] of [['a trailing slash', ['/w/a-moved/', '/w/b/']], ['letter case', ['/W/a-moved', '/W/b']], ['prunable', [{ path: '/w/a-moved', prunable: true }, { path: '/w/b', prunable: true }]]]) {
+    assert.equal(linksOf(linkReader(state, own, []), listOf(...paths)), null, label);
+  }
+  const empty = linksWith(state, 'kid-7', [linkRow({ cwd: '/w/gone' }, 1)]);
+  linksWith(state, 'mom-7', [linkRow({ branch: 'feat/p', cwd: '/w/p' }, 30), linkRow({ branch: 'feat/late', cwd: '/w/late' }, 1), linkRow({ branch: 'feat/other', cwd: '/w/other', path: 'other/repo' }, 29), linkRow({ branch: 'feat/next', cwd: '/w/next', at: new Date(NOW + 365 * 86_400_000).toISOString() })]);
+  const chain = [{ id: 'mom-7', hopAt: NOW - 5 * 60_000 }];
+  assert.deepEqual(linksOf(linkReader(state, empty, chain), listOf('/w/p', '/w/late', '/w/other', '/w/next')), { branch: 'feat/p', worktree: '/w/p', source: 'inherited' }, 'not one written after the hop, on another repository, or dated ahead');
+  let asked = 0;
+  assert.equal(linksOf(linkReader(state, sessionFolder(state, 'none-7', { checkouts: [] }), []), () => (asked += 1, [])), null, 'no links.jsonl');
+  assert.equal(asked, 0, 'no row: the list is not read');
+  assert.throws(() => linksOf(null, listOf()), Error, 'with no session reader');
+  assert.throws(() => linksOf(linkReader(state, own, []), () => { throw new Error('git'); }), 'a list that fails');
+  const piped = sessionFolder(state, 'pipe-7', { checkouts: [] });
+  spawnSync('mkfifo', [path.join(piped, 'links.jsonl')]);
+  assert.throws(() => linksOf(linkReader(state, piped, []), listOf()), 'a named pipe');
+  const dropped = linksWith(state, 'bad-7', [linkRow({ cwd: 'relative' }), { ...linkRow({}), extra: 1 }]);
+  assert.equal(linksOf(linkReader(state, dropped, []), listOf('relative', '/w/x')), null);
+});
+
+test('the ticket reads both files: a worktree row gives it, and of one at, the links row wins', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const repo = path.join(ROOT, `repo-links-${states}`);
+  mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const own = linksWith(state, 'kid-8', [linkRow({ branch: 'fix/42-login' }, 5)]);
+  assert.deepEqual(ticketOf(repo, '', { rows: linkReader(state, own, []) }), { key: '#42', source: 'ledger' });
+  writeFileSync(path.join(own, 'prs.jsonl'), `${JSON.stringify(ledgerRow({ branch: 'fix/7-pushed', at: at(5) }))}\n`, { mode: 0o600 });
+  assert.deepEqual(ticketOf(repo, '', { rows: linkReader(state, own, []) }), { key: '#42', source: 'ledger' }, 'a tie goes to links.jsonl');
+  sessionWith(state, 'kid-9', []);
+  linksWith(state, 'kid-9', []);
+  linksWith(state, 'mom-9', [linkRow({ branch: 'fix/9-other', path: 'other/repo' }, 30), linkRow({ branch: 'fix/8-mine' }, 31)]);
+  assert.deepEqual(ticketOf(repo, '', { rows: linkReader(state, path.join(state, 'sessions', 'kid-9'), [{ id: 'mom-9', hopAt: NOW }]) }), { key: '#8', source: 'ledger' }, 'a parent`s worktree row on another repository gives none');
+});
+
+test('recordLinks appends every row with no key, and none that fails the row checks', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const folder = sessionFolder(state, 'rec-1', { checkouts: [] });
+  assert.equal(recordLinks(folder, [linkRow({}), linkRow({})]), true);
+  assert.equal(recordLinks(folder, [linkRow({ cwd: 'relative' })]), false);
+  assert.equal(readRows(folder, 'links.jsonl', { maxBytes: 64 * KB }).length, 2);
 });

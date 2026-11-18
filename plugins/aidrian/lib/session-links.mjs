@@ -5,7 +5,8 @@
 // those names back, nearest first; `rowReader` reads the rows of the session's own files, then each ancestor's, each
 // file at most once a snapshot, and gives an ancestor's rows only as they were when it handed off, and only those it
 // hands down: a created, pushed, or worktree row on a repository the project's remotes name. `ticketOf` holds every rule
-// of the ticket. Nothing here starts a process on a row's value, or makes a filesystem call on one; an ancestor's folder
+// of the ticket, and `linksOf` the snapshot's worktree, from the rows of `links.jsonl` that lib/session-links-writer.mjs
+// gives the ledger's hook. Nothing here starts a process on a row's value, or makes a filesystem call on one; an ancestor's folder
 // is found by its full id alone, through existingSessionFolder, which creates and sweeps nothing. This file names no
 // host, forge, or tracker.
 
@@ -13,8 +14,11 @@ import { runGit } from './git.mjs';
 import { foldCase } from './fs.mjs';
 import { openStore, readHop, SESSION_ID, storeNames } from './handoff-markers.mjs';
 import { existingSessionFolder, sessionFolderNames } from './session-folder.mjs';
+import { isWorktreeRow, LINKS } from './session-links-writer.mjs';
 import { remoteRepos } from './session-prs.mjs';
 import { readRows } from './session-rows.mjs';
+
+export { LINKS, LINKS_MAX_BYTES } from './session-links-writer.mjs';
 
 // The most ancestors a lineage holds, and the most chain floor files its walk opens.
 export const MAX_ANCESTORS = 5;
@@ -77,14 +81,16 @@ const handedDown = (row, repos) => HANDED_DOWN.has(row.kind)
 
 // The one reader of a snapshot's row groups. `own` is the session's own folder, `files` each file's name and the most
 // of the session's own that is read, `chain()` its lineage, `remotes()` the repositories the project's remotes name or
-// null, `state` and `checkouts` what existingSessionFolder takes. Each is asked at most once, and only when needed:
+// null, `state` and `checkouts` what existingSessionFolder takes, and `checks` a file's row check, by its name, which a row
+// of it must pass, as a row time must, to be read at all. Each is asked at most once, and only when needed:
 // the lineage once an ancestor's rows are, and the remotes once there is an ancestor. Each file is read at most once.
 //   own(name)            the session's own rows, timely, or null when the file cannot be read
 //   ancestor(index, name) the rows the ancestor at `index` hands down, read from its file's last ANCESTOR_MAX_BYTES and
 //                        cut at its hop; null past the last ancestor, once the walk ended: a refused folder or file ends
 //                        it, and so do remotes that cannot be read; a missing folder gives []
 //   inherited(name)      each ancestor's rows of `name` in turn, nearest first, read only as they are pulled
-export function rowReader({ own, files, chain, remotes, state, checkouts, now = Date.now(), read = readRows }) {
+export function rowReader({ own, files, chain, remotes, state, checkouts, checks = {}, now = Date.now(), read = readRows }) {
+  const kept = (name) => (row) => timely(row, now) && (checks[name]?.(row) ?? true);
   const memo = new Map();
   const once = (key, make) => {
     if (!memo.has(key)) memo.set(key, make());
@@ -93,7 +99,7 @@ export function rowReader({ own, files, chain, remotes, state, checkouts, now = 
   const ancestors = () => once('chain', () => chain());
   const repos = () => once('remotes', () => remotes());
   const folderOf = (id) => once(`folder:${id}`, () => existingSessionFolder(state, id, { checkouts }));
-  const ownRows = (name) => once(`own:${name}`, () => read(own, name, { maxBytes: files[name] })?.filter((row) => timely(row, now)) ?? null);
+  const ownRows = (name) => once(`own:${name}`, () => read(own, name, { maxBytes: files[name] })?.filter(kept(name)) ?? null);
   const ancestor = (index, name) => once(`${index}:${name}`, () => {
     const hop = ancestors()[index];
     if (!hop || (index > 0 && ancestor(index - 1, name) === null)) return null;
@@ -102,7 +108,7 @@ export function rowReader({ own, files, chain, remotes, state, checkouts, now = 
     const { folder, refused } = folderOf(hop.id);
     if (refused) return null;
     const rows = folder === null ? [] : read(folder, name, { maxBytes: ANCESTOR_MAX_BYTES });
-    return rows?.filter((row) => timely(row, now) && Date.parse(row.at) <= hop.hopAt && handedDown(row, handed)) ?? null;
+    return rows?.filter((row) => kept(name)(row) && Date.parse(row.at) <= hop.hopAt && handedDown(row, handed)) ?? null;
   });
   function* inherited(name) {
     for (let index = 0; ; index += 1) {
@@ -126,7 +132,7 @@ export function sessionLinks({ state, checkouts, maxChain, folder, session, cwd,
   const namesOf = () => (names ??= (io.storeNames ?? storeNames)(storeOf()));
   const sessionNames = () => (io.sessionNames ?? sessionFolderNames)(state, { checkouts });
   const rows = folder === null ? null : rowReader({
-    own: folder, files, now, state, checkouts, read: io.readRows,
+    own: folder, files, now, state, checkouts, checks: { [LINKS]: isWorktreeRow }, read: io.readRows,
     chain: () => lineage(storeOf(), session, { now, names: namesOf(), sessionNames }),
     remotes: () => remoteRepos(cwd, (args, dir) => runGit(args, dir, git)),
   });
@@ -157,7 +163,7 @@ export function keyOfBranch(branch, prefixes) {
 }
 
 // The files whose rows give the ticket, in the order a tie of times goes: an earlier one wins.
-const TICKET_FILES = ['prs.jsonl'];
+const TICKET_FILES = ['links.jsonl', 'prs.jsonl'];
 
 // The key of the newest row of `groups`, one row list a file in TICKET_FILES order, whose branch holds one: the latest
 // `at`, then the earlier file, then the later line.
@@ -193,5 +199,45 @@ export function ticketOf(cwd, prefixes, { rows = null, git = {} } = {}) {
     if (groups.every((each) => each === null)) return null;
     const key = newestKey(groups.map((each) => each ?? []), list);
     if (key !== null) return { key, source: 'ledger' };
+  }
+}
+
+// The read-time key of a worktree row: `host/path:branch`, or the branch alone with no repository.
+const linkKey = (row) => (row.host === null ? row.branch : `${row.host}/${row.path}:${row.branch}`);
+
+// Of `rows`, the newest row of each key, the later line on a tie, newest first.
+function newestOfKeys(rows) {
+  const newest = new Map();
+  rows.forEach((row, line) => {
+    const at = Date.parse(row.at);
+    const held = newest.get(linkKey(row));
+    if (!held || at >= held.at) newest.set(linkKey(row), { row, at, line });
+  });
+  return [...newest.values()].sort((a, b) => b.at - a.at || b.line - a.line).map(({ row }) => row);
+}
+
+// The snapshot's `links` section: { branch, worktree, source } or null. Of the session's own worktree rows, the newest of
+// each key whose `cwd` is, string for string, the path of an entry of `worktrees()`, the snapshot's one worktree list,
+// that is not prunable, the newest: `source: "own"`. With none, the same for each earlier session's rows as rowReader
+// hands them down, nearest first: `source: "inherited"`. The list is read only when a row needs it, and no filesystem
+// call is made on a row's value. Throws, so the section fails, with no reader, when the session's own file cannot be
+// read, and when the list cannot.
+export function linksOf(rows, worktrees) {
+  if (rows === null) throw new Error('no session');
+  const own = rows.own(LINKS);
+  if (own === null) throw new Error('own links');
+  const shown = (group) => {
+    const candidates = newestOfKeys(group.filter(isWorktreeRow));
+    if (candidates.length === 0) return null;
+    const listed = worktrees().filter((entry) => !entry.prunable).map((entry) => entry.path);
+    return candidates.find((row) => listed.includes(row.cwd)) ?? null;
+  };
+  const found = shown(own);
+  if (found) return { branch: found.branch, worktree: found.cwd, source: 'own' };
+  for (let index = 0; ; index += 1) {
+    const group = rows.ancestor(index, LINKS);
+    if (group === null) return null;
+    const inherited = shown(group);
+    if (inherited) return { branch: inherited.branch, worktree: inherited.cwd, source: 'inherited' };
   }
 }

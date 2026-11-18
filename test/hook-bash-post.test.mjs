@@ -333,6 +333,13 @@ test('the same call made again within a minute adds no row', { skip: !POSIX }, (
   assert.equal(statSync(file).size, size);
 });
 
+test('a repeat within a minute is written when another kind of row for its branch came between', { skip: !POSIX }, () => {
+  const folder = sessionFolder(path.join(ROOT, 'unit-state'), 'unit-repeat', { checkouts: [] });
+  const make = (kind, second) => ({ at: `2026-11-18T10:00:0${second}.000Z`, agentId: null, kind, forge: 'github', host: 'github.com', path: 'acme/widgets', number: null, branch: 'feat', cwd: ROOT });
+  assert.deepEqual([make('touched', 0), make('pushed', 1), make('touched', 2), make('touched', 3)].map((each) => appendLedger(folder, [each])), [true, true, true, false]);
+  assert.deepEqual(readFileSync(path.join(folder, 'prs.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line).kind), ['touched', 'pushed', 'touched']);
+});
+
 test('creating a session folder sweeps the folders untouched for 30 days', { skip: !POSIX }, () => {
   const old = nextSession();
   const folder = ownFolder(old);

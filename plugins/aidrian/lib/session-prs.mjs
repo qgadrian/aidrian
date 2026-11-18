@@ -230,10 +230,12 @@ export function ledgerRows({ command, cwd, output = null, env = {}, forge, reade
 
 // The fields that say what a row records, so a repeat within REPEAT_WINDOW_MS adds none: all but `at` and `agentId`.
 const rowKey = ({ kind, forge, host, path: repoPath, number, branch, cwd }) => JSON.stringify([kind, forge, host, repoPath, number, branch, cwd]);
+// The change request a row names, as sessionRefs dedupes them: its repository and number, else its repository and branch.
+const rowRef = ({ forge, host, path: repoPath, number = null, branch = null }) => JSON.stringify(number === null ? [forge, host, repoPath, null, branch] : [forge, host, repoPath, number, null]);
 const parsedLine = (line) => {
   try {
     const row = JSON.parse(line);
-    return { key: rowKey(row), at: typeof row.at === 'string' ? Date.parse(row.at) : Number.NaN };
+    return { key: rowKey(row), ref: rowRef(row), at: typeof row.at === 'string' ? Date.parse(row.at) : Number.NaN };
   } catch {
     return null;
   }
@@ -243,16 +245,16 @@ const keyOfLine = (line) => parsedLine(line)?.key ?? null;
 // Past it, a repeat is written with its new time, so the change request it names shows as acted on last.
 export const REPEAT_WINDOW_MS = 60_000;
 
-// The keys of the ledger's rows written within REPEAT_WINDOW_MS of `at`, read from its newest line back to the first
-// older than that, since rows are appended in time order.
-function recentKeys(lines, at) {
-  const keys = new Set();
+// The key of each change request's newest row (rowRef) among the ledger's rows written within REPEAT_WINDOW_MS of `at`,
+// read from its newest line back to the first older than that, since rows are appended in time order.
+function newestKeys(lines, at) {
+  const keys = new Map();
   if (!Number.isFinite(at)) return keys;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = parsedLine(lines[index]);
     if (line === null || !Number.isFinite(line.at)) continue;
     if (at - line.at >= REPEAT_WINDOW_MS) break;
-    if (Math.abs(at - line.at) < REPEAT_WINDOW_MS) keys.add(line.key);
+    if (Math.abs(at - line.at) < REPEAT_WINDOW_MS && !keys.has(line.ref)) keys.set(line.ref, line.key);
   }
   return keys;
 }
@@ -279,12 +281,13 @@ function newestLines(lines) {
 }
 
 // Writes `rows`, MAX_ROWS at most, to the ledger in `folder`, which sessionFolder gave, as lib/session-folder.mjs reads
-// and writes it: a row whose cwd is no folder on disk, or whose fields a row written within REPEAT_WINDOW_MS of its `at`
-// holds, is left out; any other repeat is written with its new time, so its ref is shown first again and stays shown
-// while newer ones come. The rest are appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends
-// racing can leave it, or the append would pass it, the ledger is rewritten through a temporary file and a rename with
-// the newest rows of that tail that fit in half of it, then these, so the newest always show. Nothing is written when
-// the ledger cannot be read as the session folder's rules allow. Returns whether it wrote. Never throws.
+// and writes it: a row whose cwd is no folder on disk, or whose fields the newest row of its change request holds when
+// that row was written within REPEAT_WINDOW_MS of its `at`, is left out; any other repeat is written with its new time,
+// so its ref is shown first again, ranked by its newest kind, and stays shown while newer ones come. The rest are
+// appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends racing can leave it, or the append would
+// pass it, the ledger is rewritten through a temporary file and a rename with the newest rows of that tail that fit in
+// half of it, then these, so the newest always show. Nothing is written when the ledger cannot be read as the session
+// folder's rules allow. Returns whether it wrote. Never throws.
 export function appendLedger(folder, rows, options = {}) {
   if (typeof folder !== 'string' || !Array.isArray(rows) || rows.length === 0) return false;
   const read = readSessionTail(folder, LEDGER, { ...options, maxBytes: LEDGER_MAX_BYTES });
@@ -294,12 +297,12 @@ export function appendLedger(folder, rows, options = {}) {
   lines.pop();
   if (read.cut) lines.shift();
   const taken = rows.slice(0, MAX_ROWS);
-  const seen = recentKeys(lines, typeof taken[0]?.at === 'string' ? Date.parse(taken[0].at) : Number.NaN);
+  const newest = newestKeys(lines, typeof taken[0]?.at === 'string' ? Date.parse(taken[0].at) : Number.NaN);
   const fresh = [];
   for (const row of taken) {
     const key = rowKey(row);
-    if (seen.has(key) || !isFolder(row.cwd)) continue;
-    seen.add(key);
+    if (newest.get(rowRef(row)) === key || !isFolder(row.cwd)) continue;
+    newest.set(rowRef(row), key);
     fresh.push(`${JSON.stringify(row)}\n`);
   }
   if (fresh.length === 0) return false;

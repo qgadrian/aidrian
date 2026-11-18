@@ -1230,6 +1230,8 @@ snapshot's `displayText` removes). One call writes at most 32 rows and has git r
 | `touched` | `gh pr ready`, `edit`, `merge`, `checks`, `view`, `comment` | A link names its own repository. A number, a branch, or no target takes the repository `-R` or `GH_REPO` names, else the one repository on a declared host the folder's remotes name, and nothing when they name several, as in a fork checkout. No target is the folder's current branch, or the pull request gh checked out on it, as its `branch.<name>.merge` of `refs/pull/<n>/head` names. An `owner:branch` target is that branch of the owner's repository of the same name, gh's fork |
 
 A bare `owner/name` in `-R` or `GH_REPO` names nothing while `GH_HOST` is set, since gh then reads it on that host.
+A remote whose URL git reads as a path on this machine, a `file:` URL or one with neither a scheme nor git's `host:path`
+form, such as `archive/widgets`, names no repository, so no call or push records it.
 
 The call's folder holds under either reading of the payload's `cwd`, the folder the line started in or the one it
 ended in, which no host documents for a Bash call ([Claude Code](providers/claude-code.md)): it is the absolute folder

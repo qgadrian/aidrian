@@ -36,11 +36,14 @@ export const MAX_ROWS = 32;
 export const MAX_REFS = 25;
 const CWD_MAX_BYTES = 1024;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
+// Whether git reads a remote's URL as a path on this machine: a `file:` URL, or one with neither a scheme nor git's
+// `host:path` form, such as `archive/widgets`. Such a remote names no repository, however its path reads.
+const isLocalPath = (url) => /^file:/iu.test(url) || !/^[a-z][a-z0-9+.-]*:\/\/|^[^/]*:/iu.test(url);
 
 // What git says of a folder, read once each and for MAX_FOLDERS folders at most: from one `git config` read, its remotes
-// by name, each `{ fetch }` as repoIdentity reads the first `remote.<name>.url`, null for one it cannot read, and each
-// branch's `merge`; the current branch; and the remote-tracking refs a push updated (pushedRefs), in the git common dir
-// one `git rev-parse` names. A key git keeps one value of takes its last, as git does. No value of the ledger reaches
+// by name, each `{ fetch }` as repoIdentity reads the first `remote.<name>.url`, null for one it cannot read or that is
+// a local path (isLocalPath), and each branch's `merge`; the current branch; and the remote-tracking refs a push
+// updated (pushedRefs), in the git common dir one `git rev-parse` names. A key git keeps one value of takes its last, as git does. No value of the ledger reaches
 // git's argv.
 // SHORTCUT: a `url.<base>.insteadOf` rewrite in the folder's config is not applied, so a rewritten remote records the
 // URL as written. Enough for display data; applying git's rewrite rules here would replace it.
@@ -50,7 +53,7 @@ function readConfig(stdout) {
   for (const line of stdout.split('\n')) {
     const remote = /^remote\.([^ ]+)\.url (.*)$/u.exec(line);
     const branch = /^branch\.([^ ]+)\.merge (.*)$/u.exec(line);
-    if (remote && !config.remotes.has(remote[1])) config.remotes.set(remote[1], { fetch: repoIdentity(remote[2]) });
+    if (remote && !config.remotes.has(remote[1])) config.remotes.set(remote[1], { fetch: isLocalPath(remote[2]) ? null : repoIdentity(remote[2]) });
     else if (branch) config.branches.set(branch[1], { merge: branch[2] });
   }
   return config;

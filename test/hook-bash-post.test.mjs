@@ -463,6 +463,14 @@ test('the output tail keeps a first line the cut did not split', () => {
   assert.equal(outputTail(split), 'next\n');
 });
 
+test('a remote git reads as a local path names no repository, so its calls and pushes record nothing', () => {
+  for (const url of ['archive/widgets', 'file:///srv/acme/widgets']) {
+    assert.deepEqual(unit('gh pr view 3', '/w', fakeGit({ origin: url }).read), [], url);
+    assert.deepEqual(unit('git push', '/w', fakeGit({ origin: url }, 'feat', [], pushedCommon(['origin/feat'])).read), [], url);
+  }
+  assert.deepEqual(unit('gh pr view 3', '/w', fakeGit({ origin: 'git@github.com:acme/widgets' }).read), [touched('acme/widgets', { number: 3 }, '/w')], 'git`s host:path form');
+});
+
 test('a gh pr call with no target records the pull request gh checked out, and an owner:branch target its head`s fork', () => {
   const read = fakeGit(ORIGIN, 'feat', ['branch.feat.merge refs/pull/42/head']).read;
   assert.deepEqual(unit('gh pr view', '/w', read), [touched('acme/widgets', { number: 42 }, '/w')], 'branch.feat.merge refs/pull/42/head, as gh pr checkout sets it');

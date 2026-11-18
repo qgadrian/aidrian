@@ -622,7 +622,7 @@ test('SessionEnd goes on to the session row when the marker cannot be removed', 
   assert.equal(existsSync(path.join(marker, 'keep')), true);
 });
 
-test('cachedValue records its attempt before the refresh, and with no folder refreshes nothing', (t) => {
+test('cachedValue records its attempt before the refresh, and with no folder refreshes nothing', () => {
   const folder = scratch();
   chmodSync(folder, 0o700);
   const name = MERGED_HEADS.name;
@@ -799,6 +799,22 @@ test('prs: a forge title and check state holding control, bidi, zero-width, and 
     assert.match(out, CLEAN);
     assert.doesNotMatch(out, /[\u202e\u200f\u200b\u2060\ufeff\u2028]|\u{E0041}/u);
   }
+});
+
+test('prs: a cached row`s key the docs do not name, at the top or inside checks, never reaches --json', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7) } } });
+  assert.deepEqual(env.run(['--session', ID]).json.prs, [PR_ROW]);
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  const stored = JSON.parse(readFileSync(cache, 'utf8'));
+  const hostile = 'x\u202e\u009b2J';
+  const [row] = stored.value;
+  writeFileSync(cache, JSON.stringify({ ...stored, value: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile } }] }), { mode: 0o600 });
+  const { json, stdout } = env.run(['--session', ID]);
+  assert.deepEqual(json.prs, [PR_ROW], 'the documented keys alone, checks its four counts');
+  assert.equal(env.calls().length, 1, 'the cached row was read, with no new forge call');
+  assert.ok(!stdout.includes('smuggled') && !/[\u202e\u009b]/u.test(stdout), 'neither key nor its text shows');
 });
 
 test('prs: results cache 60s; past the deadline the cached rows are stale, and with no cache the section fails; no row gives []', { skip: !POSIX }, (t) => {

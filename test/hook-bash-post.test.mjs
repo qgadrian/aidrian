@@ -509,6 +509,23 @@ test('the ledger takes no row for a folder that is not on disk, and keeps its ne
   assert.equal(statSync(file).mode & 0o777, 0o600);
 });
 
+test('a ledger two racing appends pushed past the cap is compacted on the next write, not left unwritable', { skip: !POSIX }, () => {
+  const folder = sessionFolder(path.join(ROOT, 'unit-state'), 'unit-over-cap', { checkouts: [] });
+  const file = path.join(folder, 'prs.jsonl');
+  const make = (branch) => ({ at: 'T', agentId: null, kind: 'pushed', forge: 'github', host: 'github.com', path: 'acme/widgets', number: null, branch, cwd: ROOT });
+  const line = (branch) => `${JSON.stringify(make(branch))}\n`;
+  let text = '';
+  for (let index = 0; Buffer.byteLength(text) < LEDGER_MAX_BYTES + 300; index += 1) text += line(`old-${index}`);
+  // Cut to exactly 300 bytes past the cap, so the tail read starts inside a line.
+  text = text.slice(Buffer.byteLength(text) - LEDGER_MAX_BYTES - 300);
+  writeFileSync(file, text, { mode: 0o600 });
+  assert.equal(statSync(file).size, LEDGER_MAX_BYTES + 300);
+  assert.equal(appendLedger(folder, [make('after-the-race')]), true, 'the over-cap ledger takes the row');
+  const rows = readFileSync(file, 'utf8').trim().split('\n').map((each) => JSON.parse(each));
+  assert.equal(rows.at(-1).branch, 'after-the-race', 'the row reads back');
+  assert.ok(statSync(file).size <= LEDGER_MAX_BYTES, `${statSync(file).size} bytes`);
+});
+
 // The code of a file, without its comment lines and its text after ` // `.
 const code = (text) => text.split('\n').filter((line) => !/^\s*(?:\/\/|\*|\/\*)/u.test(line)).map((line) => line.replace(/\s\/\/ .*$/u, '')).join('\n');
 const FORGE_WORDS = /github|gitlab|graphql|statusCheckRollup|['"`]gh['"`]/iu;

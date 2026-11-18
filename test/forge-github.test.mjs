@@ -896,7 +896,8 @@ test('changesState sends one query operation, its aliases from indexes, every va
   const { query, variables } = bodyOf(hostile);
   assert.equal(query, bodyOf(plain).query, 'the query text is the same whatever the values');
   assert.match(query, /^query changes\(/u);
-  assert.doesNotMatch(query, /mutation|@\/etc|\{owner\}|viewer/u);
+  assert.doesNotMatch(query, /mutation|@\/etc|\{owner\}|x"\)/u);
+  assert.equal(query.match(/viewer/gu).length, 1, 'the one viewer read is the adapter`s own, never a value`s');
   assert.deepEqual(variables, { o0: 'acme', n0: 'notes', b0: '@/etc/hosts', o1: 'acme', n1: 'notes', b1: '{owner}', o2: 'acme', n2: 'notes', p2: 7 }, 'the ref that fails the ref-name check is dropped');
   assert.deepEqual(Object.keys(hostile.options).sort(), ['cwd', 'input'], 'no environment of its own');
   const many = run(Array.from({ length: 30 }, (_, i) => numberRef('acme/notes', i + 1)));
@@ -956,6 +957,25 @@ test('changesState: a branch with two pull requests resolves to the newer, by it
   const answer = { data: { r0: { pullRequests: { nodes: [node(4, '2026-11-01T00:00:00Z'), node(9, '2026-11-17T00:00:00Z'), node(12, '2026-11-18T00:00:00Z', 'someone')] }, parent: null } } };
   const [row] = replay(answer).forge.changesState([branchRef('acme/notes', 'feat/x')]);
   assert.equal(row.number, 9);
+});
+
+test('changesState: a branch resolves to the viewer`s own pull request first, then an open one, then the newest', () => {
+  const node = (number, createdAt, { author = 'me', state = 'OPEN' } = {}) => ({ ...PR_NODE, number, createdAt, state, author: { login: author }, url: `https://github.com/acme/notes/pull/${number}` });
+  const resolve = (nodes, viewer = 'me') => replay({ data: { viewer: { login: viewer }, r0: { pullRequests: { nodes }, parent: null } } })
+    .forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number;
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z'), node(9, '2026-11-17T00:00:00Z', { author: 'someone' })]), 4,
+    'a newer pull request from another author, with the same head repository and branch, does not replace the viewer`s');
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { author: 'ME' }), node(9, '2026-11-17T00:00:00Z', { author: 'someone' })]), 4, 'logins compare without case');
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z'), node(9, '2026-11-17T00:00:00Z', { state: 'MERGED' })]), 4, 'an open one beats a newer merged one');
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { state: 'CLOSED' }), node(9, '2026-11-17T00:00:00Z', { state: 'MERGED' })]), 9, 'then the newest');
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { author: 'a' }), node(9, '2026-11-17T00:00:00Z', { author: 'b' })], null), 9, 'no viewer: the newest');
+});
+
+test('changesState: every row carries the adapter`s id, from the one constant that names it', () => {
+  const { forge } = replay({ data: { r0: { pullRequest: PR_NODE } } });
+  assert.equal(forge.changesState([numberRef('acme/notes', 7)])[0].forge, forge.id);
+  const source = readFileSync(new URL('../plugins/aidrian/lib/forges/github.mjs', import.meta.url), 'utf8');
+  assert.equal(source.match(/'github'/gu).length, 1, 'the id is written once');
 });
 
 test('changesState fills the forge-neutral row: its values, and every check counted from the rollup`s counts by state', () => {

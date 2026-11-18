@@ -378,7 +378,7 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | --- | --- |
 | `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
 | `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
-| `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names, newest first, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`, below. |
+| `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names: the forge's entries newest first, then the unsupported ones, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`, below. |
 | `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout. |
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
@@ -442,18 +442,23 @@ whose fields pass the adapter's `changeRef` and whose folder is absolute, and de
 else by repository and branch, `touched` rows as well as `pushed`. It orders them by each one's latest row, newest
 first, and keeps 25 refs at most, each a number or a branch, counted before branches resolve: a branch with no pull
 request uses one, and so does a row of an unsupported host. The adapter reads them all in one call (`changesState`),
-started in the session's folder, never in one a row names: a number is its own pull request; a branch is the newest
-pull request whose head is that branch of the row's repository, in that repository or its parent, so a fork's pull
-request from a branch of the same name never answers for it, and a branch pushed to a fork finds its pull request on
-the parent. A branch with none gives no entry and no error. Two rows that answer the same pull request give one entry.
+started in the session's folder, never in one a row names: a number is its own pull request; a branch is, among the
+pull requests whose head is that branch of the row's repository, in that repository or its parent, the signed-in
+user's own first, then an open one, then the newest, so a fork's pull request from a branch of the same name never
+answers for it, another author's newer one from the same branch never replaces the user's, and a branch pushed to a fork
+finds its pull request on the parent. It reads the 5 newest pull requests of the branch's name in each of the two
+repositories, so a name that 5 or more newer pull requests from forks share can crowd out the row's own, which then
+shows nothing. A branch with none gives no entry and no error. Two rows that answer the same pull request give one entry.
 Each entry is the forge-neutral row the adapter fills ([Adding a forge](providers/adding-a-host.md#adding-a-forge)):
 `forge` the adapter's `id`, `host` and `repo` the repository, `state` `open`, `closed`, or `merged`, `isDraft` a
 boolean, `mergeable` true, false, or null while the forge has not worked it out, `reviewDecision` `approved`,
-`changes_requested`, `review_required`, or null, `unresolvedThreads` a count, `checks` `{ passed, failed, pending,
-skipped }` counted over every check of the head commit with no check-name rule, and `url` the pull request's link on
+`changes_requested`, `review_required`, or null, `unresolvedThreads` the unresolved among the first 100 review threads,
+`checks` `{ passed, failed, pending, skipped }` counted over every check of the head commit with no check-name rule, and `url` the pull request's link on
 github.com, or null when the forge answered any other. A row on a host no adapter declares, such as gitlab.com, passes
 the snapshot's own checks (a host name, an absolute folder, a positive number, a branch git takes) and shows with
-`unsupported: true`, no `forge`, and null for what the forge would answer; it starts no forge call.
+`unsupported: true`, no `forge`, and null for what the forge would answer; it starts no forge call. The ledger hook
+records rows only on a declared host, so such a row appears only from a ledger written another way, such as by a later
+adapter.
 The answer is cached for a minute in `prs-cache.json`, under the merged heads' rules: one forge call a minute at most,
 a 1 MiB read, and the 4 s budget, which the two reads share, this one first. Past it the cached entries show with
 `stale: true`, or `prs` is null with `prs` in `errors` when there is none. An answer that holds errors still gives the

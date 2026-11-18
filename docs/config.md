@@ -1693,7 +1693,8 @@ prints what a status line shows for a session: its handoff numbers, from `sessio
 touched (`prs`), and the project's open lessons, worktrees, provisional decisions, untriaged audit findings, and the
 branch's ticket ([Handoff](handoff.md#the-snapshot)).
 `prs` shows the pull requests of the session's [ledger](hooks.md#session-ledger) only on the hosts a forge adapter
-declares, github.com today, read in one forge call; a row on any other host shows as unsupported. It reads at most 25
+declares, github.com today, read in one forge call. The ledger hook records rows only on those hosts, so an unsupported
+row, on any other host, appears only from a ledger written another way, such as by a later adapter. It reads at most 25
 refs, the newest: each ref is a pull request number or a branch, counted before branches resolve, so a branch with no
 pull request uses one, and fewer than 25 pull requests can show while an older one is left out.
 Unlike the other commands it never stops on a `config.json` with errors: like the hooks, it uses the default in place

@@ -6,10 +6,10 @@
 // sessions folder and the session folder are each a real folder, no symlink, owned by this process's user, that no other
 // user may read or write; and the session folder's real path is `<real state>/sessions/<id>`. Its files are written as a
 // temporary file and a rename, mode 0600, under the names in SESSION_FILES alone, with one exception: the session's pull
-// request ledger, `prs.jsonl` (APPENDED_FILES), which lib/session-prs.mjs reads through readSessionFile, or its tail
+// request ledger, `prs.jsonl` (APPENDED_FILES), which lib/session-prs.mjs reads by its tail
 // through readSessionTail, and appends to in place through appendSessionFile, no-follow, mode 0600, only while it is a
-// regular file with one link this user alone may read, and rewrites through writeSessionFile when an append would pass
-// its cap; a file's reservation for one fixed
+// regular file with one link this user alone may read, and rewrites through writeSessionFile when it is past its cap or
+// an append would pass it; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
 // untouched for SWEEP_DAYS, and the sweep deletes only those names, their temporary files, and their reservations, then

@@ -18,6 +18,8 @@ export const isTrustedCommenter = (comment) => MEMBER_ASSOCIATIONS.has(comment?.
 // Whether `name` is shaped like a GitHub login: letters, digits, and single hyphens between them, at most 39 characters.
 export const isLogin = (name) => typeof name === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/u.test(name);
 
+// The adapter's id, which forgeFor's caller keys a forge's readers by and every row changesState gives carries.
+const FORGE_ID = 'github';
 // The hosts this adapter serves, as a constant in its own source: no config, remote, ledger row, or cache adds one.
 export const FORGE_HOSTS = Object.freeze(['github.com']);
 // A GitHub repository name: letters, digits, `.`, `_`, and `-`, at most 100 characters, and never `.` or `..`.
@@ -54,20 +56,27 @@ export const MAX_CHANGE_REFS = 25;
 // GH_ENTERPRISE_TOKEN to any host but github.com.
 const CHANGES_HOST = 'github.com';
 // The pull requests of one head branch read, newest first, in the ref's repository and again in its parent's.
+// SHORTCUT: GitHub filters pullRequests(headRefName:) by the branch's name alone, from any head repository, so 5 or more
+// newer pull requests from forks' branches of the same name crowd out the row's own, which then shows nothing. Enough
+// for display data; a larger page, or paging until the row's own head repository answers, would replace it.
+// (Ref.associatedPullRequests lists other forks' pull requests too, and ignores orderBy, so it is no fix.)
 const HEAD_CHANGES = 5;
 // What changesState reads of one pull request. statusCheckRollup's counts by state cover every check of the head commit,
 // however many, with no page of them read (GitHub's StatusCheckRollupContextConnection).
-const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName '
+// SHORTCUT: unresolvedThreads counts the unresolved threads among the first 100 alone. Enough for display data; paging
+// reviewThreads, as findingThreads does, would replace it.
+const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName author { login } '
   + 'headRepository { name owner { login } } repository { name owner { login } } reviewThreads(first: 100) { nodes { isResolved } } '
   + 'commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } } }';
 const headChanges = (index) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change } }`;
 
 // The one query operation for `refs`, as changeRef gave them: its text is built from each ref's index and kind alone, a
-// number or a branch, and every value is a variable (changesVariables). Never a mutation.
+// number or a branch, and every value is a variable (changesVariables). It reads the viewer's login once, which ranks a
+// branch's pull requests (answeredChange). Never a mutation.
 function changesQuery(refs) {
   const head = refs.map((ref, i) => `$o${i}: String!, $n${i}: String!, ${ref.number === null ? `$b${i}: String!` : `$p${i}: Int!`}`);
   const body = refs.map((ref, i) => `r${i}: repository(owner: $o${i}, name: $n${i}) { ${ref.number === null ? `${headChanges(i)} parent { ${headChanges(i)} }` : `pullRequest(number: $p${i}) { ...change }`} }`);
-  return `query changes(${head.join(', ')}) { ${body.join(' ')} }\n${CHANGE_FIELDS}`;
+  return `query changes(${head.join(', ')}) { viewer { login } ${body.join(' ')} }\n${CHANGE_FIELDS}`;
 }
 const changesVariables = (refs) => Object.assign({}, ...refs.map((ref, i) => ({ [`o${i}`]: ref.owner, [`n${i}`]: ref.name, ...(ref.number === null ? { [`b${i}`]: ref.branch } : { [`p${i}`]: ref.number }) })));
 
@@ -92,14 +101,22 @@ const createdAt = (node) => {
   return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
 };
 
-// The pull request one alias of the answer gives `ref`: a number's own; for a branch, the newest of those whose head is
-// that branch of the ref's repository, in the repository or its parent, so a fork's pull request from a branch of the
-// same name never resolves it, and a branch pushed to a fork resolves to its pull request on the parent. Else null.
-function answeredChange(ref, alias) {
+// How a branch's pull requests rank, best first: the viewer's own, then an open one, then the newest.
+const byRank = (viewer) => {
+  const own = (node) => Number(isLogin(viewer) && sameName(node?.author?.login, viewer));
+  const open = (node) => Number(node?.state === 'OPEN');
+  return (a, b) => own(b) - own(a) || open(b) - open(a) || createdAt(b) - createdAt(a);
+};
+
+// The pull request one alias of the answer gives `ref`: a number's own; for a branch, the first by byRank of those whose
+// head is that branch of the ref's repository, in the repository or its parent, so a fork's pull request from a branch of
+// the same name never resolves it, a branch pushed to a fork resolves to its pull request on the parent, and another
+// author's newer pull request from the same branch never replaces the viewer's. Else null.
+function answeredChange(ref, alias, viewer) {
   if (ref.number !== null) return alias?.pullRequest ?? null;
   const nodes = [alias?.pullRequests?.nodes, alias?.parent?.pullRequests?.nodes].flatMap((list) => (Array.isArray(list) ? list : []));
   const heads = nodes.filter((node) => sameName(node?.headRepository?.owner?.login, ref.owner) && sameName(node?.headRepository?.name, ref.name) && node?.headRefName === ref.branch);
-  return heads.sort((a, b) => createdAt(b) - createdAt(a))[0] ?? null;
+  return heads.sort(byRank(viewer))[0] ?? null;
 }
 
 const STATES = Object.freeze({ OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' });
@@ -135,7 +152,7 @@ function changeRow(node) {
   const url = `https://${CHANGES_HOST}/${owner}/${name}/pull/${number}`;
   const threads = Array.isArray(node.reviewThreads?.nodes) ? node.reviewThreads.nodes : [];
   return {
-    forge: 'github', host: CHANGES_HOST, repo: `${owner}/${name}`.toLowerCase(), number, title: typeof node.title === 'string' ? node.title : '',
+    forge: FORGE_ID, host: CHANGES_HOST, repo: `${owner}/${name}`.toLowerCase(), number, title: typeof node.title === 'string' ? node.title : '',
     url: node.url === url ? url : null, isDraft: node.isDraft === true, state: pick(STATES, node.state), mergeable: pick(MERGEABLE, node.mergeable),
     reviewDecision: pick(DECISIONS, node.reviewDecision), unresolvedThreads: threads.filter((thread) => thread?.isResolved === false).length,
     checks: checkCounts(node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts),
@@ -341,7 +358,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     };
   };
   return Object.freeze({
-    id: 'github',
+    id: FORGE_ID,
     cwd,
     isTrustedCommenter,
     // The hosts it serves, FORGE_HOSTS, the allowlist of the session ledger: a host no adapter declares is recorded nowhere.
@@ -357,10 +374,11 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       if (asked.length === 0) return checked;
       const input = JSON.stringify({ query: changesQuery(asked), variables: changesVariables(asked) });
       const data = changesData(() => gh(['api', 'graphql', '--hostname', CHANGES_HOST, '--input', '-'], { input }));
+      const viewer = data.viewer?.login;
       let alias = 0;
       return checked.map((ref) => {
         if (ref === null) return null;
-        const node = answeredChange(ref, data[`r${alias++}`]);
+        const node = answeredChange(ref, data[`r${alias++}`], viewer);
         return node ? changeRow(node) : null;
       });
     },

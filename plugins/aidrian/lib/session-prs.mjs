@@ -17,13 +17,13 @@ import { isRefName, runGit } from './git.mjs';
 import { changesGitTarget, CURRENT, readPush } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { hasHidden } from './hidden-text.mjs';
-import { appendSessionFile, readSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
+import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
 import { changesVariable, commandLines, lexCommand, readInvocation, walkCommands } from './shell-lex.mjs';
 
 // The ledger's name in the session folder (lib/session-folder.mjs APPENDED_FILES).
 export const LEDGER = 'prs.jsonl';
-// The largest the ledger grows. The snapshot reads at most this much of it, so it reads every row. A write that would
-// pass it compacts the ledger first, keeping the newest rows within half of it.
+// The largest the ledger grows. The snapshot and the writer read at most this much of it, from its end. A write that
+// would pass it, or finds the ledger past it, compacts the ledger first, keeping the newest rows within half of it.
 export const LEDGER_MAX_BYTES = 256 * 1024;
 // How much of a call's output is read, from its end, for the links a create prints.
 export const OUTPUT_TAIL = 64 * 1024;
@@ -218,15 +218,19 @@ function newestLines(lines) {
 }
 
 // Writes `rows`, MAX_ROWS at most, to the ledger in `folder`, which sessionFolder gave, as lib/session-folder.mjs reads
-// and writes it: a row whose cwd is no folder on disk, or whose fields a row of the ledger already holds, is left out.
-// The rest are appended; when that would pass LEDGER_MAX_BYTES, the ledger is rewritten through a temporary file and a
-// rename with its newest rows that fit in half of it, then these, so the newest always show. Nothing is written when the
-// ledger cannot be read as the session folder's rules allow. Returns whether it wrote. Never throws.
+// and writes it: a row whose cwd is no folder on disk, or whose fields a row of the ledger's last LEDGER_MAX_BYTES
+// already holds, is left out. The rest are appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends
+// racing can leave it, or the append would pass it, the ledger is rewritten through a temporary file and a rename with
+// the newest rows of that tail that fit in half of it, then these, so the newest always show. Nothing is written when
+// the ledger cannot be read as the session folder's rules allow. Returns whether it wrote. Never throws.
 export function appendLedger(folder, rows, options = {}) {
   if (typeof folder !== 'string' || !Array.isArray(rows) || rows.length === 0) return false;
-  const existing = readSessionFile(folder, LEDGER, { ...options, maxBytes: LEDGER_MAX_BYTES });
-  if (existing === null) return false;
-  const lines = existing.split('\n').filter(Boolean);
+  const read = readSessionTail(folder, LEDGER, { ...options, maxBytes: LEDGER_MAX_BYTES });
+  if (read === null) return false;
+  // As readLedger reads it: a first line the cut fell inside and a last line still being written are no rows.
+  const lines = read.text.split('\n');
+  lines.pop();
+  if (read.cut) lines.shift();
   const seen = new Set(lines.map(keyOfLine));
   const fresh = [];
   for (const row of rows.slice(0, MAX_ROWS)) {
@@ -237,7 +241,7 @@ export function appendLedger(folder, rows, options = {}) {
   }
   if (fresh.length === 0) return false;
   const text = fresh.join('');
-  if (Buffer.byteLength(existing) + Buffer.byteLength(text) <= LEDGER_MAX_BYTES) return appendSessionFile(folder, LEDGER, text, { ...options, maxBytes: LEDGER_MAX_BYTES });
+  if (!read.cut && Buffer.byteLength(read.text) + Buffer.byteLength(text) <= LEDGER_MAX_BYTES) return appendSessionFile(folder, LEDGER, text, { ...options, maxBytes: LEDGER_MAX_BYTES });
   // SHORTCUT: two hooks of one session writing together can lose a row in a compaction or add a duplicate. Enough for
   // display data: the next touch records it again and the snapshot dedupes. Compacting under reserveSessionFile closes it.
   const compacted = newestLines(lines).map((line) => `${line}\n`).join('') + text;

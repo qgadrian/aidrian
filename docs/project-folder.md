@@ -177,7 +177,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   [session ledger hook](hooks.md#session-ledger), no-follow, mode 0600, only while it is a regular file with one link
   this user alone may read, and the snapshot reads its last 256 KB through `readSessionTail` under the same checks,
   no-follow and non-blocking, and within 256 KB, rewritten by a temporary file and a rename with its newest rows when a
-  write would pass that; a cache's reservation for one fixed window,
+  write would pass that or finds it past that, the writer reading the same last 256 KB; a cache's reservation for one fixed window,
   `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so
   one a killed process left blocks its own window alone. A state folder inside a checkout gets no

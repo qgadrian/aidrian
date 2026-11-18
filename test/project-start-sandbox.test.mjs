@@ -9,6 +9,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,15 +19,16 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { forgeDomains, forgeTokenVars } from '../plugins/aidrian/lib/forges/index.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { BEACON_WAIT, IDENTIFY_CAP, startBackground, startProject } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
-import { accessProblem, cloneProblem, configFolder, CREDENTIAL_PATHS, mcpConfig, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, configFolder, CREDENTIAL_PATHS, mcpConfig, nestedProtected, npmGlobalConfigs, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { nestedProtected as anyHostNested, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { cacheVars, isRegistries, REGISTRIES, REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
-import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
+import { cacheVars, ENV_NAME, isRegistries, REGISTRIES, REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
+import { placeHolders, SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
 import { PENDING_AGE } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, OWN_PLUGIN, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
+const SESSION_START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
 const work = (fx, attempt = 1) => path.join(runsFolder(fx.state), 'launch', 'attempts', `ENG-1.${attempt}`, 'work');
 // The host's user settings of the fixture, written as `value`.
 const userSettings = (fx, value) => {
@@ -60,7 +62,7 @@ function folders(t) {
 test('Claude Code declares an unverified, confined project start, and the host files it protects, at the root and at any depth', () => {
   const cap = claudeCode.capabilities.projectStart;
   assert.deepEqual([cap.verified, cap.evidence, cap.confined], ['unverified', 'fixtures and the host docs; no live run', true]);
-  for (const field of ['start', 'stop', 'ended', 'find', 'access', 'cloneProblem', 'attachLine', 'stopLine', 'sessionNote']) assert.equal(typeof cap[field], 'function', field);
+  for (const field of ['start', 'stop', 'ended', 'find', 'access', 'cloneProblem', 'attachLine', 'stopLine', 'sessionNote', 'shellEnv']) assert.equal(typeof cap[field], 'function', field);
   assert.equal(cap.placeholders, PLACEHOLDERS);
   assert.match(cap.sessionNote({ work: '/w', branch: 'feat/x' }), /Claude Code's sandbox, in \/w.*work only in that folder.*git push origin HEAD:refs\/heads\/feat\/x.*--head feat\/x.*starts no other session/su);
   assert.deepEqual(PROTECTED_PATHS, ['.claude/settings.json', '.claude/settings.local.json', '.claude/skills', '.claude/agents', '.claude/commands', '.claude/hooks', '.claude/workflows', '.claude/scheduled_tasks.json', '.mcp.json']);
@@ -87,9 +89,9 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
   const home = '/home/u';
   const settings = sandboxSettings({
     work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
-    config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'],
+    config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'], stores: ['/usr/local/etc/npmrc'],
   });
-  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json'];
+  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/usr/local/etc/npmrc'];
   const unread = [...stores, '/m'];
   const nested = ['/s/w/**/.claude', ...['skills', 'agents', 'commands', 'hooks', 'workflows', 'scheduled_tasks.json'].flatMap((name) => [`/s/w/**/.claude/${name}`, `/s/w/**/.claude/${name}/**`])];
   assert.deepEqual(settings, {
@@ -106,7 +108,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
         allowWrite: ['/s/g', '/s/d', '/st/plans', '/private/tmp'],
         denyWrite: [
           '/s/w/.git', '/s/g/config', '/s/g/hooks', '/s/g/commondir', '/s/g/config.worktree', ...PROTECTED_PATHS.map((each) => `/s/w/${each}`),
-          ...nested, '/s/w/**/.claude/settings*.json', '/s/w/**/SKILL.md',
+          ...nested, '/s/w/**/.claude/settings*.json', '/s/w/**/SKILL.md', '/s/drop/.aidrian-keep', '/s/cache/.aidrian-keep',
         ],
         denyRead: unread,
         allowRead: ['/m/.git'],
@@ -141,8 +143,18 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
     '.vault-token', '.config/hub', '.claude.json', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
     '.bash_history', '.zsh_history', '.local/share/fish',
+    '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
+    '.config/pnpm/rc', 'Library/Preferences/pnpm/rc', '.config/pip/pip.conf', '.pip/pip.conf', 'Library/Application Support/pip/pip.conf',
+    '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
   ]);
   assert.ok(!CREDENTIAL_PATHS.includes('.config/gh'), 'the forge CLI\'s login stays readable');
+  // Each registry token store is unreadable to a sandboxed command and to Read.
+  for (const each of ['.yarnrc.yml', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.gem/credentials', '.bundle/config', '.config/pypoetry/auth.toml', '.local/share/uv/credentials']) {
+    const file = path.join(home, each);
+    assert.ok(settings.sandbox.filesystem.denyRead.includes(file), each);
+    assert.ok(settings.permissions.deny.includes(`Read(/${file})`), each);
+  }
+  assert.ok(settings.sandbox.filesystem.denyRead.includes('/usr/local/etc/npmrc'), 'npm\'s global config');
 });
 
 test('every credential-named variable is unset in the sandbox, and the well-known ones, but the forge\'s own token', () => {
@@ -193,7 +205,7 @@ test('the adapter starts claude --bg under the sandbox settings and only the tea
   const passed = JSON.parse(args[at('--settings') + 1]);
   assert.deepEqual(passed, sandboxSettings({
     work: cwd, git, grants: [git, drop], domains: ['github.com', 'api.github.com'], temp: passed.sandbox.filesystem.allowWrite.slice(2), home: fx.home,
-    config: configFolder(env, fx.home), platform: 'linux', main, mainGit: path.join(main, '.git'), secrets: secretVars(env, forgeTokenVars()),
+    config: configFolder(env, fx.home), platform: 'linux', main, mainGit: path.join(main, '.git'), secrets: secretVars(env, forgeTokenVars()), stores: npmGlobalConfigs(env),
   }));
   assert.ok(passed.sandbox.filesystem.allowWrite.includes(realpathSync('/tmp')), 'the real /tmp');
   assert.ok(passed.sandbox.credentials.envVars.some((each) => each.name === 'STRIPE_SECRET_KEY'), 'a secret of the driver\'s environment');
@@ -313,10 +325,14 @@ test('projectRun.registries is a closed list of ecosystems, each to the fixed ho
   assert.deepEqual(loadConfig(good.project).config.projectRun.registries, ['pypi', 'npm']);
 });
 
-test('the cache variables put every package manager\'s cache and global store in the attempt\'s cache folder, and leave go\'s module cache removable', () => {
+test('the cache variables put every package manager\'s cache, global store, and npm config in the attempt\'s cache folder, and corepack there only with npm listed', () => {
   const vars = cacheVars('/a/cache', { GOFLAGS: '-mod=mod  -modcacherw' });
   assert.deepEqual(vars, {
     npm_config_cache: '/a/cache/npm',
+    npm_config_userconfig: '/a/cache/npm-user.npmrc',
+    NPM_CONFIG_USERCONFIG: '/a/cache/npm-user.npmrc',
+    npm_config_globalconfig: '/a/cache/npm-global.npmrc',
+    NPM_CONFIG_GLOBALCONFIG: '/a/cache/npm-global.npmrc',
     PNPM_HOME: '/a/cache/pnpm',
     pnpm_config_store_dir: '/a/cache/pnpm/store',
     pnpm_config_cache_dir: '/a/cache/pnpm-cache',
@@ -334,57 +350,114 @@ test('the cache variables put every package manager\'s cache and global store in
     BUNDLE_USER_HOME: '/a/cache/bundle',
   });
   for (const [name, value] of Object.entries(vars)) if (name !== 'GOFLAGS') assert.ok(value.startsWith('/a/cache/'), name);
-  for (const kept of ['HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'COREPACK_HOME', 'BUNDLE_PATH', 'npm_config_store_dir']) assert.equal(vars[kept], undefined, `${kept} stays as it is`);
+  for (const kept of ['HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'COREPACK_HOME', 'COREPACK_NPM_REGISTRY', 'BUNDLE_PATH', 'npm_config_store_dir']) assert.equal(vars[kept], undefined, `${kept} stays as it is`);
   assert.equal(cacheVars('/a/cache').GOFLAGS, '-modcacherw');
-  // The settings set them through `env`, which reaches every command of the session; none given, no `env` key.
+  // With npm listed, corepack downloads pnpm and yarn into the cache, from the listed npm registry alone.
+  const npm = cacheVars('/a/cache', {}, { registries: ['pypi', 'npm'] });
+  assert.deepEqual([npm.COREPACK_HOME, npm.COREPACK_NPM_REGISTRY], ['/a/cache/corepack', 'https://registry.npmjs.org']);
+  assert.equal(new URL(npm.COREPACK_NPM_REGISTRY).host, REGISTRIES.npm[0]);
+  assert.equal(cacheVars('/a/cache', {}, { registries: ['pypi'] }).COREPACK_HOME, undefined);
+  // A shell's variable names, shared with the host adapter.
+  assert.equal(ENV_NAME.test('npm_config_cache'), true);
+  assert.equal(ENV_NAME.test('a-b'), false);
+  // The settings take no package manager variable: `env` would reach the host's hooks and MCP servers.
   const base = { work: '/w', git: '/g', grants: ['/g'], domains: ['github.com'], temp: [], home: '/home/u', platform: 'linux' };
-  assert.deepEqual(sandboxSettings({ ...base, cacheVars: vars }).env, vars);
-  assert.equal(Object.hasOwn(sandboxSettings(base), 'env'), false);
+  assert.equal(Object.hasOwn(sandboxSettings({ ...base, cacheVars: vars }), 'env'), false);
 });
 
-test('a start on Claude Code reaches the registries both reads of the default branch list, and keeps every cache in the attempt\'s folder', (t) => {
+test('a start on Claude Code reaches the registries both reads of the default branch list, and keeps every cache in the attempt\'s folder for its sandboxed commands alone', (t) => {
   const settingsOf = (fx) => {
     const [{ args }] = fx.claude.starts();
-    return JSON.parse(args[args.indexOf('--settings') + 1]);
+    return { text: args[args.indexOf('--settings') + 1], value: JSON.parse(args[args.indexOf('--settings') + 1]) };
   };
   const forge = forgeDomains({ host: 'github.com' });
   const listed = { allow: true, unverifiedHosts: true, registries: ['npm', 'pypi'] };
   const fx = runFixture(t, { projectRun: listed });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  const cache = path.join(path.dirname(work(fx)), 'cache');
-  const settings = settingsOf(fx);
+  const attempt = path.dirname(work(fx));
+  const cache = path.join(attempt, 'cache');
+  const { text, value: settings } = settingsOf(fx);
   assert.deepEqual(settings.sandbox.network.allowedDomains, [...forge, ...REGISTRIES.npm, ...REGISTRIES.pypi]);
   assert.equal(settings.sandbox.network.strictAllowlist, true);
-  assert.deepEqual(settings.env, cacheVars(cache, fx.env));
+  assert.equal(settings.env, undefined, 'no settings env, which the host\'s hooks and MCP servers would get');
+  assert.doesNotMatch(text, /npm_config_cache|GOMODCACHE|PNPM_HOME/u);
   assert.ok(settings.sandbox.filesystem.allowWrite.includes(realpathSync(cache)), 'the cache folder is writable');
-  assert.equal(lstatSync(cache).isDirectory(), true);
-  assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'empty and owner-only');
-  assert.deepEqual(readdirSync(cache), []);
+  assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'owner-only');
+  assert.deepEqual(readdirSync(cache).sort(), ['.aidrian-keep', 'npm-global.npmrc', 'npm-user.npmrc']);
+  for (const name of ['npm-global.npmrc', 'npm-user.npmrc']) assert.equal(readFileSync(path.join(cache, name), 'utf8'), '', `${name} is empty`);
+  // The keep files of drop and cache, there before the launch, whose write the sandbox denies.
+  for (const name of ['drop', 'cache']) {
+    const keep = path.join(attempt, name, '.aidrian-keep');
+    assert.equal(lstatSync(keep).isFile(), true, keep);
+    assert.ok(settings.sandbox.filesystem.denyWrite.includes(path.join(realpathSync(attempt), name, '.aidrian-keep')), keep);
+  }
+  // The variables wait in the attempt's folder, which no confined session writes, for the SessionStart hook.
+  assert.deepEqual(JSON.parse(readFileSync(path.join(attempt, SHELL_VARS), 'utf8')), cacheVars(cache, fx.env, { registries: ['npm', 'pypi'] }));
+  assert.equal(lstatSync(path.join(attempt, SHELL_VARS)).mode & 0o777, 0o600);
 
   // A registry only one read lists is not reached: a working copy or the forge alone widens nothing.
   const half = runFixture(t, { projectRun: { ...listed, registries: ['npm', 'go'] }, forgeConfig: { version: 1, projectRun: { ...listed, registries: ['go', 'crates'] } } });
   assert.equal(half.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  assert.deepEqual(settingsOf(half).sandbox.network.allowedDomains, [...forge, ...REGISTRIES.go]);
+  assert.deepEqual(settingsOf(half).value.sandbox.network.allowedDomains, [...forge, ...REGISTRIES.go]);
+  assert.equal(JSON.parse(readFileSync(path.join(path.dirname(work(half)), SHELL_VARS), 'utf8')).COREPACK_HOME, undefined, 'npm is not listed by both');
 
   // None listed, the default: the forge's hosts only, and the caches still in the attempt's folder.
   const none = runFixture(t);
   assert.equal(none.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  assert.deepEqual(settingsOf(none).sandbox.network.allowedDomains, forge);
-  assert.deepEqual(settingsOf(none).env, cacheVars(path.join(path.dirname(work(none)), 'cache'), none.env));
+  assert.deepEqual(settingsOf(none).value.sandbox.network.allowedDomains, forge);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(path.dirname(work(none)), SHELL_VARS), 'utf8')), cacheVars(path.join(path.dirname(work(none)), 'cache'), none.env));
 });
 
-test('the Claude Code adapter refuses cache variables that are not plain text, and runs no claude', (t) => {
-  const fx = runFixture(t, { init: false });
-  const { cwd, git } = folders(t);
-  for (const bad of [{ GOPATH: '/c\n' }, { 'a-b': '/c' }, ['/c'], null]) {
-    const claude = fakeClaude({ dir: fx.dir });
-    const result = startProject({
-      session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true,
-      sandbox: { git, grants: [git], domains: ['github.com'], cacheVars: bad }, home: fx.home, platform: 'linux', run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits',
-    });
-    assert.match(result.problem ?? '', /the cache environment the gate passes the session is not variable names to plain text/u, JSON.stringify(bad));
-    assert.deepEqual(claude.calls, []);
+test('the SessionStart hook hands the cache variables to the sandboxed commands of a confined attempt\'s session alone, through the host\'s session environment file', (t) => {
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, registries: ['npm'] } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const attempt = path.dirname(work(fx));
+  const vars = JSON.parse(readFileSync(path.join(attempt, SHELL_VARS), 'utf8'));
+  const hook = (session, cwd, file) => spawnSync(process.execPath, [SESSION_START], {
+    input: JSON.stringify({ session_id: session, cwd, hook_event_name: 'SessionStart', source: 'startup' }),
+    env: { ...fx.env, CLAUDE_ENV_FILE: file, CLAUDE_CODE_SESSION_ID: session }, encoding: 'utf8',
+  });
+  const file = path.join(fx.root, 'session-env', 'own.sh');
+  mkdirSync(path.dirname(file), { recursive: true });
+  assert.equal(hook(STARTED[0].session, work(fx), file).status, 0);
+  const text = readFileSync(file, 'utf8');
+  assert.match(text, /^export npm_config_cache='/mu);
+  // What a sandboxed Bash command of the session sees once the host sources the file.
+  const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s\\n' "$npm_config_cache" "$GOFLAGS" "$COREPACK_NPM_REGISTRY"`], { encoding: 'utf8' });
+  assert.deepEqual(seen.stdout.trim().split('\n'), [vars.npm_config_cache, vars.GOFLAGS, 'https://registry.npmjs.org']);
+  // Another session in that clone, with no mark naming the attempt, and a session elsewhere get nothing.
+  for (const [session, cwd] of [['abcd1234-0000-4000-8000-00000000ff01', work(fx)], [STARTED[0].session, fx.dir]]) {
+    const other = path.join(fx.root, 'session-env', `${session}-${path.basename(cwd)}.sh`);
+    assert.equal(hook(session, cwd, other).status, 0);
+    assert.throws(() => readFileSync(other), /ENOENT/u, `${session} in ${cwd}`);
   }
+});
+
+test('the session environment file quotes each value for the shell, and writes nothing through a link or for a name a shell does not take', (t) => {
+  const { root } = folders(t);
+  const file = path.join(root, 'env.sh');
+  const vars = { A_QUOTE: "it's here", SPACED: '/a b/$HOME/`x`', GOFLAGS: '-mod=mod -modcacherw' };
+  assert.equal(writeEnvFile(file, vars), true);
+  assert.equal(writeEnvFile(file, { LATER: 'x' }), true, 'appended');
+  const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s\\n' "$A_QUOTE" "$SPACED" "$GOFLAGS" "$LATER"`], { encoding: 'utf8' });
+  assert.deepEqual(seen.stdout.split('\n').slice(0, 4), ["it's here", '/a b/$HOME/`x`', '-mod=mod -modcacherw', 'x']);
+  const target = path.join(root, 'target.sh');
+  writeFileSync(target, '');
+  symlinkSync(target, path.join(root, 'link.sh'));
+  assert.equal(writeEnvFile(path.join(root, 'link.sh'), vars), false);
+  assert.equal(readFileSync(target, 'utf8'), '', 'nothing through the link');
+  for (const bad of [{ 'a-b': 'x' }, { A: 'x\ny' }, {}]) assert.equal(writeEnvFile(path.join(root, 'bad.sh'), bad), false, JSON.stringify(bad));
+  assert.equal(writeEnvFile('relative.sh', vars), false);
+  assert.equal(writeEnvFile(undefined, vars), false);
+});
+
+test('npm\'s global config files are read from the prefix the environment names and the one npm on PATH lies under', (t) => {
+  const { root } = folders(t);
+  const bin = path.join(root, 'prefix', 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\n', { mode: 0o755 });
+  assert.deepEqual(npmGlobalConfigs({ PATH: `relative${path.delimiter}${bin}`, NPM_CONFIG_PREFIX: '/opt/npm' }), ['/opt/npm/etc/npmrc', path.join(root, 'prefix', 'etc', 'npmrc')]);
+  assert.deepEqual(npmGlobalConfigs({ PATH: '', npm_config_prefix: 'relative' }), []);
 });
 
 test('a start halts unless the default branch sets projectRun.unverifiedHosts', (t) => {

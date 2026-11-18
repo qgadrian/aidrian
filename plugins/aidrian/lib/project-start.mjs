@@ -19,18 +19,19 @@
 //     user directly in the state folder that holds no guarded folder and lies in none.
 // Every git call goes through gateGit (lib/git.mjs).
 
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { GIT_PLACEHOLDERS } from './attempt-clone.mjs';
+import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
 import { stateRoot } from './project.mjs';
+import { NPM_CONFIGS, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { runFolder, runsFolder } from './project-run.mjs';
 import { latestStart, startRows } from './project-run-guard.mjs';
 import { safely } from './session-start-gate.mjs';
-import { markFolders } from './unattended-mark.mjs';
+import { markFolders, readUnattendedMark } from './unattended-mark.mjs';
 import { WORK_FOLDERS } from './unattended-write.mjs';
 
 // The folders of the state folder a confined session may write besides its attempt's: the plans, reviews, and dispatch
@@ -169,9 +170,10 @@ export function stateWorkFolders(state, { env, home }) {
   return { folders };
 }
 
-// The fresh clone of attempt `attempt` of issue `key` for a confined host: { work, git, drop, cache } or { problem },
-// which leaves no attempt folder. `cache` is the empty, owner-only folder its package managers' caches go to
-// (project-registries.mjs cacheVars). Any folder the attempt had is removed first. The clone borrows the main checkout's objects
+// The fresh clone of attempt `attempt` of issue `key` for a confined host: { folder, work, git, drop, cache } or
+// { problem }, which leaves no attempt folder. `cache` is the owner-only folder its package managers' caches go to
+// (project-registries.mjs cacheVars), which holds only npm's empty config files (NPM_CONFIGS) at first; it and `drop`
+// each hold a read-only keep file (attempt-clone.mjs ATTEMPT_KEEP). Any folder the attempt had is removed first. The clone borrows the main checkout's objects
 // read-only, takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the
 // base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. `env` is the environment
 // of its network calls.
@@ -182,8 +184,7 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   try {
     rmSync(folder, { recursive: true, force: true });
     mkdirSync(folder, { recursive: true, mode: 0o700 });
-    mkdirSync(drop, { mode: 0o700 });
-    mkdirSync(cache, { mode: 0o700 });
+    seedFolders(folder);
   } catch (error) {
     return { problem: `the attempt's folder ${folder} cannot be made (${error.code ?? 'no code'})` };
   }
@@ -214,7 +215,17 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   const checkout = gateGit(['checkout', '--quiet', '-b', branch, from], work);
   if (checkout.status !== 0) return failed('checkout', checkout);
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
-  return plain ? gone(plain) : { work, git, drop, cache };
+  return plain ? gone(plain) : { folder, work, git, drop, cache };
+}
+
+// Makes the drop and cache folders of the attempt folder `folder`, owner-only, each with its read-only keep file
+// (attempt-clone.mjs ATTEMPT_KEEP), and npm's empty config files in the cache (project-registries.mjs NPM_CONFIGS).
+function seedFolders(folder) {
+  for (const name of KEPT_FOLDERS) {
+    mkdirSync(path.join(folder, name), { mode: 0o700 });
+    writeFileSync(path.join(folder, name, ATTEMPT_KEEP), '', { flag: 'wx', mode: 0o400 });
+  }
+  for (const name of Object.values(NPM_CONFIGS)) writeFileSync(path.join(folder, 'cache', name), '', { flag: 'wx', mode: 0o600 });
 }
 
 // Puts the host's placeholders in the fresh clone `work` whose git folder is `git`, before its session starts, where
@@ -293,5 +304,67 @@ export function sweepAttempts({ state, run, found, cap, env, spawn }) {
     const done = row.outcome === 'void' || settled.has(`${row.key}#${row.attempt}`)
       || (row.outcome === 'started' && safely(() => cap.ended({ id: row.id, session: row.child, env, run: spawn })) === true);
     if (done) safely(() => rmSync(folder, { recursive: true, force: true }));
+  }
+}
+
+// The file in an attempt's folder that holds the environment its session's sandboxed commands get
+// (project-registries.mjs cacheVars), which the gate writes before the start and a host's SessionStart hook reads
+// (confinedShellVars). No confined session writes the attempt's folder itself, only its work, git, drop, and cache.
+export const SHELL_VARS = 'shell-env.json';
+const SHELL_VARS_CAP = 64 * 1024;
+
+// Writes `vars` to SHELL_VARS in the attempt's folder `folder`, owner-only, a new file: null, or why it could not.
+export function writeShellVars(folder, vars) {
+  const bad = varsProblem(vars);
+  if (bad) return bad;
+  try {
+    writeFileSync(path.join(folder, SHELL_VARS), `${JSON.stringify(vars)}\n`, { flag: 'wx', mode: 0o600 });
+    return null;
+  } catch (error) {
+    return `the shell environment of the attempt cannot be written (${error.code ?? 'no code'})`;
+  }
+}
+
+// The environment the sandboxed commands of `session`, whose hook runs in `cwd`, get, or null: only for the session
+// of a confined attempt, whose clone holds `cwd`, while its own mark names that attempt's run and issue, or a pending
+// mark holds it to start in that clone, and only what the gate wrote there (writeShellVars), read without following
+// a link, from a regular file of one link. Never throws.
+export function confinedShellVars({ session, cwd, env = process.env, home }) {
+  try {
+    const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
+    if (!attempt) return null;
+    const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
+    const real = (file) => {
+      try {
+        return realpathSync(file);
+      } catch {
+        return null;
+      }
+    };
+    const own = mark && !mark.pending && mark.project === attempt.run && mark.issue === attempt.key;
+    const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
+    if (!own && !starting) return null;
+    const vars = readSmallJson(path.join(attempt.folder, SHELL_VARS));
+    return vars && !varsProblem(vars) && Object.keys(vars).length ? vars : null;
+  } catch {
+    return null;
+  }
+}
+
+// The JSON of the regular file `file`, of one link and at most SHELL_VARS_CAP, read without following a link, or null.
+function readSmallJson(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > SHELL_VARS_CAP) return null;
+    const buffer = Buffer.alloc(stat.size);
+    const read = readSync(fd, buffer, 0, stat.size, 0);
+    const value = JSON.parse(buffer.subarray(0, read).toString('utf8'));
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }

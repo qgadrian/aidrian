@@ -17,6 +17,7 @@ import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
+import { ATTEMPT_KEEP, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
@@ -160,7 +161,14 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
   }
   const attempt = typeof own === 'function' ? own() : null;
   if (attempt) {
-    places.specific.push(real(path.join(attempt, 'work')), real(path.join(attempt, 'drop')), real(path.join(attempt, 'cache')));
+    // Each folder of the attempt it writes is its place only while it is a plain folder: one a session replaced with a
+    // link, as `cache -> ~/.claude`, would lead its writes wherever the link goes, so it is refused there instead.
+    for (const name of ['work', 'drop', 'cache']) {
+      const folder = path.join(attempt, name);
+      if (canonical(folder) === folder) places.specific.push(real(folder));
+      else refuse(folder, `the attempt's ${name} folder, which is no plain folder but a link, and leads anywhere`, true);
+    }
+    for (const name of KEPT_FOLDERS) refuse(path.join(attempt, name, ATTEMPT_KEEP), 'the keep file of an attempt\'s folder, which holds the folder in place');
     hostRefused(refuse, path.join(attempt, 'work'));
     places.nested.push({ root: real(path.join(attempt, 'work')), work: path.join(attempt, 'work'), links: null });
     refuse(path.join(attempt, 'git', 'config'), 'the attempt clone\'s git config');

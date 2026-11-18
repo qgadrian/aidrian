@@ -188,16 +188,17 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   owner-only, where its package managers keep their caches.
   The first attempt cuts the issue's branch from the base tip; a later one fetches it from the forge.
   The main repository never fetches from a clone, and the driver's `wait` removes an attempt's folder once its session ended.
-- The session runs `codex exec --json --sandbox workspace-write --cd <work>`, with `--add-dir` for exactly its git
+- The session runs `codex exec --json --sandbox workspace-write -c <override>... --cd <work>`, with `--add-dir` for exactly its git
   folder, its drop folder, its `cache` folder, and the state work folders `plans`, `reviews`, `tmp`, and `dispatch`,
   each a plain folder of the user directly in the state folder. No flag that bypasses the sandbox or the approvals is
   ever passed.
-- Its environment holds the variables that put each package manager's cache and global store in the attempt's
-  `cache` folder, the same as on Claude Code ([Dependency installs](claude-code.md#dependency-installs) lists them);
-  `HOME` stays as it is. Codex hands its environment to the commands it runs through `shell_environment_policy`:
-  its default inherits every variable but those whose names hold `KEY`, `SECRET`, or `TOKEN`, which none of these
-  does. A user policy of `inherit = "core"` or `"none"`, or an `include_only` that leaves them out, drops them, and an
-  install then fails to write its cache outside the writable roots; nothing reaches another folder.
+- The variables that put each package manager's cache and global store in the attempt's `cache` folder, the same as
+  on Claude Code ([Dependency installs](claude-code.md#dependency-installs) lists them), reach the session's sandboxed
+  commands alone: each is a `-c shell_environment_policy.set.<name>=<value>` override, which Codex injects into a
+  command's environment after its exclusions, never the `codex exec` process's own environment, which its hooks and
+  MCP servers inherit. `HOME` stays as it is. A user's `include_only` filter, or the `filters` that replace it, can
+  still remove them; an install then fails to write its cache outside the writable roots, and nothing reaches another
+  folder.
   Its events go to `logs/<issue>.<attempt>.jsonl` in the run's folder.
 - Git cannot reach the main checkout from there: nothing under its `.git` is granted, the clone's origin is the
   pinned forge URL, and work moves only through the forge. The session pushes with a full refspec and names the branch
@@ -209,12 +210,14 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 - Codex must run every hook of this plugin unasked: each handler hooks.json lists, of every event, needs a trusted
   `[hooks.state]` entry for this plugin's id in `config.toml`, not turned off. Trust them in `/hooks` after each install
   and update. `[sandbox_workspace_write] network_access = true` must be set, or the session could neither push nor
-  reach the forge. That switch opens every host to a sandboxed command, so the registries the base branch's
-  [`projectRun.registries`](../config.md#project-run) lists, which hold a Claude Code session's network to them, narrow
-  nothing here: a Codex session reaches every registry, and every other host, whatever the list says. Install scripts
-  a package runs still run inside the sandbox, under its writable roots. Codex's experimental network proxy,
-  `features.network_proxy` with its `domains` rules, could hold a session to the forge's and the listed registries'
-  hosts; no live run has checked it, so the start does not turn it on. `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
+  reach the forge. That switch alone opens every host, localhost too, so the start also turns on Codex's experimental
+  network proxy for sandboxed commands, `-c features.network_proxy.enabled=true`, with
+  `-c features.network_proxy.domains={ "<host>" = "allow", ... }` for exactly the forge's hosts and those of the
+  registries the base branch's [`projectRun.registries`](../config.md#project-run) lists. A host with no rule is
+  refused, so an empty list fails closed. No live run has checked the proxy (live check 12): a Codex that rejects
+  either override exits before it names its session, and the start stops on that first proof, says which setting was
+  refused, gives its attempt back, and halts the run. Install scripts a package runs run inside the sandbox, under its
+  writable roots. `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
   folders, nor the runs folder. Each failure halts the start, and records nothing.
 - A start holds the session only after three proofs, each in a bounded wait: its session id in the first JSON event
   within 30 seconds, its first tool call within 180 seconds, and the agent gate hook's beacon a few seconds after it.
@@ -247,10 +250,26 @@ Before `verified` changes, a live Codex must show every one of these:
 9. Which environment hook processes get.
 10. Which top-level `error` events are fatal, so a start may halt on them as it halts on `turn.failed`.
 11. With `projectRun.registries` listing `npm`, `npm ci` in the clone installs into the attempt's `cache` folder,
-    `echo $npm_config_cache` names it, nothing new appears in `~/.npm`, and the driver's `wait` removes the attempt's
-    folder once the session ended; the same for `pip`, `cargo`, `go`, and `bundler`.
-12. Whether `features.network_proxy` with `domains` allow rules holds `git push`, `gh`, and an install to the listed
-    hosts under `codex exec --sandbox workspace-write`, and refuses an unlisted one.
+    `echo $npm_config_cache` names it, nothing new appears in `~/.npm`, a hook and an MCP server of the session see
+    none of the variables, and the driver's `wait` removes the attempt's folder once the session ended; the same for
+    `pip`, `cargo`, `go`, and `bundler`. For a project with no code yet, each with its registry listed and a sweep
+    check after it: `npm create vite@latest`, `npx create-next-app`, `pnpm create` and `pnpm dlx` through corepack,
+    `yarn create`, `uv init && uv add`, `python -m venv` then `pip install`, `cargo new && cargo add`, and
+    `go mod init && go get`.
+12. `features.network_proxy` with `domains` allow rules holds `git push`, `gh`, and an install to the listed hosts
+    under `codex exec --sandbox workspace-write`, refuses an unlisted host and localhost, and Codex accepts both
+    overrides; until it does, a Codex session's network is held by an unverified proxy alone.
+
+Codex residuals, each open until the live checks hold:
+
+- Until live check 12 holds, a sandboxed command may reach any host, localhost included, if the network proxy does
+  not hold as its reference says.
+- A sandboxed command reads every file of the user that the workspace-write sandbox does not hide, credential stores
+  included, such as `~/.ssh`, `~/.npmrc`, and `~/.yarnrc.yml`: Codex has no read denial the start can pass, unlike
+  Claude Code's `denyRead`. The publish commands the agent gate hook refuses, as on Claude Code, keep a session from
+  publishing with a token it read; a script that does stays the accepted residual.
+- The keep files of `drop` and `cache` are not denied here: a session may remove either folder and put a link in its
+  place, which the agent gate hook then refuses to write through.
 
 ## Limits
 

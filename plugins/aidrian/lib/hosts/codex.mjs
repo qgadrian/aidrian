@@ -325,7 +325,7 @@ export default {
       trustStep: 'open Codex and trust every hook of this plugin in its hooks panel, /hooks, after each install and update',
       access: ({ env, guarded = [] }) => sandboxNetworkProblem(env) ?? writableRootsProblem(env, guarded),
       sessionNote,
-      start: ({ cwd, name, prompt, env, hold, identify, run, wait, log, beacon, grants, cacheVars }) => startProject({ cwd, name, prompt, env, hold, identify, log, beacon, grants, cacheVars, run, wait }),
+      start: ({ cwd, name, prompt, env, hold, identify, run, wait, log, beacon, grants, domains, cacheVars }) => startProject({ cwd, name, prompt, env, hold, identify, log, beacon, grants, domains, cacheVars, run, wait }),
       stop: ({ id, started, run }) => stopProcess({ id, started, run }),
       ended: ({ id, run }) => processEnded({ id, run }),
       find: ({ cwd, run }) => findProcesses({ cwd, run }),

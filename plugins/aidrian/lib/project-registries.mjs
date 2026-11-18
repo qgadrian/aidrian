@@ -6,7 +6,8 @@
 //     metadata, then the files it links to, with no redirect to another host); no live confined session has run one.
 //   - cacheVars: the environment that moves every package manager's cache and global store into the attempt's `cache`
 //     folder, the one place besides its clone a session's installs write, so nothing is written outside the attempt's
-//     folder and the home folder stays as it is.
+//     folder and the home folder stays as it is. Only the session's sandboxed commands get it, never the host's own
+//     process, which its hooks and MCP servers inherit.
 // It reads no file and imports no module of the plugin: config-types.mjs checks the names against it.
 
 import path from 'node:path';
@@ -37,24 +38,40 @@ export const registryHosts = (names) => (Array.isArray(names) ? REGISTRY_NAMES.f
 // module's folder read-only, which a recursive remove cannot pass.
 const GO_WRITABLE = '-modcacherw';
 
-// The environment of a session whose attempt's cache folder is `cache`, an absolute path: each variable to a folder
-// in it, and GOFLAGS as `env` has it with GO_WRITABLE added. Every package manager's own variable:
-//   - npm: npm_config_cache.
+// The empty npm config files of an attempt's cache folder, which npm reads as its user and global config instead of
+// the user's own (cacheVars): an npm, pnpm, or yarn 1 run in the session never reads a registry token the user keeps
+// there. lib/project-start.mjs prepareAttempt makes them.
+export const NPM_CONFIGS = Object.freeze({ user: 'npm-user.npmrc', global: 'npm-global.npmrc' });
+// The registry corepack downloads pnpm and yarn from, which `npm` lists.
+const COREPACK_REGISTRY = 'https://registry.npmjs.org';
+
+// The environment of a session whose attempt's cache folder is `cache`, an absolute path, given only to the commands it
+// runs in its sandbox, never to the host's own process, its hooks, or its MCP servers: each variable to a folder or file
+// in `cache`, and GOFLAGS as `env` has it with GO_WRITABLE added. `registries` is the base branch's projectRun.registries.
+// Every package manager's own variable:
+//   - npm: npm_config_cache; npm_config_userconfig and npm_config_globalconfig, in both cases, the empty NPM_CONFIGS.
 //   - pnpm: PNPM_HOME, whose `store` is the default store of every pnpm since 7, and pnpm_config_store_dir,
 //     pnpm_config_cache_dir, and pnpm_config_state_dir, which pnpm 10 and later read; npm_config_store_dir is not set,
 //     since npm warns on every command of a key it does not know.
 //   - yarn: YARN_CACHE_FOLDER, and YARN_GLOBAL_FOLDER, where yarn 2 and later keep their global cache by default.
 //   - pip and uv: PIP_CACHE_DIR and UV_CACHE_DIR.
 //   - cargo: CARGO_HOME, its registry cache and installs; the user's ~/.cargo config and credentials no longer load.
-//   - go: GOPATH, GOMODCACHE, and GOCACHE.
+//   - go: GOPATH, GOMODCACHE, and GOCACHE; a GOFLAGS the user set with `go env -w` gives way to this one.
 //   - ruby: GEM_HOME, where gem and bundler install, and BUNDLE_USER_HOME, bundler's own cache and config; BUNDLE_PATH
 //     is not set, so bundler still uses the gems the Ruby already has.
-// COREPACK_HOME is not set: a version of yarn or pnpm corepack already downloaded stays readable where it is.
-export function cacheVars(cache, env = {}) {
+//   - corepack, only when `npm` is listed: COREPACK_HOME, and COREPACK_NPM_REGISTRY, so it downloads pnpm and yarn
+//     from the listed npm registry, never from its other hosts. Unlisted, corepack's own folder stays readable as it is.
+export function cacheVars(cache, env = {}, { registries = [] } = {}) {
   const at = (...parts) => path.join(cache, ...parts);
   const goFlags = String(env.GOFLAGS ?? '').split(/\s+/u).filter(Boolean);
+  const [user, global] = [at(NPM_CONFIGS.user), at(NPM_CONFIGS.global)];
+  const corepack = Array.isArray(registries) && registries.includes('npm') ? { COREPACK_HOME: at('corepack'), COREPACK_NPM_REGISTRY: COREPACK_REGISTRY } : {};
   return {
     npm_config_cache: at('npm'),
+    npm_config_userconfig: user,
+    NPM_CONFIG_USERCONFIG: user,
+    npm_config_globalconfig: global,
+    NPM_CONFIG_GLOBALCONFIG: global,
     PNPM_HOME: at('pnpm'),
     pnpm_config_store_dir: at('pnpm', 'store'),
     pnpm_config_cache_dir: at('pnpm-cache'),
@@ -70,10 +87,12 @@ export function cacheVars(cache, env = {}) {
     GOFLAGS: [...goFlags.filter((flag) => flag !== GO_WRITABLE), GO_WRITABLE].join(' '),
     GEM_HOME: at('gem'),
     BUNDLE_USER_HOME: at('bundle'),
+    ...corepack,
   };
 }
 
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
+// A variable name a shell takes.
+export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
 
 // Why `vars`, the environment a gate passes a host's start, is not an object of variable names to plain text, or null.

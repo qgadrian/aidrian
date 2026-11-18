@@ -341,7 +341,7 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 | `sandbox.enableWeakerNetworkIsolation` | `true` on macOS only, where git and gh need it |
 | `sandbox.allowAppleEvents`, `sandbox.allowNestedUserNamespaces` | `false`: no sandboxed command launches another application, or a user namespace of its own |
 | `sandbox.filesystem.allowWrite` | the clone's git folder, the drop folder, the attempt's `cache` folder, the state work folders `plans`, `reviews`, `tmp`, and `dispatch`, the real `/tmp`, and the host's temporary folder; never the dispatch log |
-| `sandbox.filesystem.denyWrite` | the clone's `.git` pointer, its git folder's `config`, `hooks`, `commondir`, and `config.worktree`, on every platform, each a placeholder there at launch; each protected host file of the clone: `.claude/settings.json`, `.claude/settings.local.json`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`, `.claude/scheduled_tasks.json`, and `.mcp.json`; and, as `**` globs, any `.claude` folder itself at any depth, so none is made or made a link, those of each, its `settings*.json`, and any `SKILL.md` |
+| `sandbox.filesystem.denyWrite` | the clone's `.git` pointer, its git folder's `config`, `hooks`, `commondir`, and `config.worktree`, on every platform, each a placeholder there at launch; each protected host file of the clone: `.claude/settings.json`, `.claude/settings.local.json`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`, `.claude/scheduled_tasks.json`, and `.mcp.json`; and, as `**` globs, any `.claude` folder itself at any depth, so none is made or made a link, those of each, its `settings*.json`, and any `SKILL.md`; the keep file `.aidrian-keep` of the attempt's `drop` and `cache` folders, there at launch, so neither can be emptied and removed, and a link put in its place |
 | `sandbox.filesystem.denyRead` | the user's credential stores, below, and the main checkout, whose git-ignored files, such as env files, a session never reads |
 | `sandbox.filesystem.allowRead` | the main checkout's git folder, when it lies in the main checkout: the clone borrows its objects |
 | `sandbox.network` | `strictAllowlist: true`, `allowedDomains` the forge's hosts (`github.com` and its API host for GitHub) and the hosts of each registry the base branch's [`projectRun.registries`](../config.md#project-run) lists, none by default, `allowAllUnixSockets: false`, `allowLocalBinding: false`; no `allowUnixSockets` |
@@ -349,7 +349,6 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 | `permissions.deny` | `Read(//<path>)` and `Read(//<path>/**)` for each credential store and the main checkout, since the file tools run outside the sandbox |
 | `disableClaudeAiConnectors` | `true`: the claude.ai connectors, which `--strict-mcp-config` leaves on, neither load nor connect; a `true` from any source wins |
 | `worktree.bgIsolation` | `"none"`, so `claude --bg` stays in the clone instead of moving into `.claude/worktrees` |
-| `env` | each package manager's cache and global store in the attempt's `cache` folder, below; the host sets it for the session and every command it runs |
 
 `allowLocalBinding: false` has a cost on macOS, where it is the switch for localhost: a test that listens on a local
 port, or connects to one, fails in a confined session. On Linux it has no effect, and the network namespace keeps a
@@ -392,7 +391,12 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/.gem/credentials`, `~/.vault-token`, `~/.config/hub`, the host's own `~/.claude.json`,
   `~/.claude/.credentials.json`, and `~/.claude/ide` (and those of `CLAUDE_CONFIG_DIR` when it moves them), the
   keyrings in `~/.local/share/keyrings`, and the shell histories `~/.bash_history`, `~/.zsh_history`, and
-  `~/.local/share/fish`. Credential-named environment variables are unset in the sandbox, as the table says, and the
+  `~/.local/share/fish`; and the package registries' other token stores: `~/.yarnrc.yml`, `~/.yarnrc`,
+  `~/.config/npm/npmrc`, npm's global config `<prefix>/etc/npmrc` for the prefix the driver's environment names and
+  the one the `npm` on PATH lies under, `~/.bunfig.toml`, `~/.local/share/gem/credentials`, `~/.bundle/config`,
+  pnpm's `~/.config/pnpm/rc` and `~/Library/Preferences/pnpm/rc`, pip's `pip.conf` in `~/.config/pip`, `~/.pip`, and
+  `~/Library/Application Support/pip`, poetry's `auth.toml` in `~/.config/pypoetry` and
+  `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`. Credential-named environment variables are unset in the sandbox, as the table says, and the
   main checkout is unreadable but its git folder. The forge CLI's login, `~/.config/gh`, and its token variables stay:
   the session pushes and opens pull requests through them. Git's `store` credential helper keeps the push token in
   `~/.git-credentials`, which the sandbox hides, so a main checkout whose git config names it halts the start: use the
@@ -436,8 +440,8 @@ Residual risks, each known and left for a later change:
 - A `.claude` link a session's git makes, as by checking out a branch that holds one, is denied by the `**/.claude`
   glob, and the hook refuses a write through it or, while git's index lists it, to the folder it leads to; a link git
   does not list is judged by the path as written alone.
-- Each registry `projectRun.registries` lists is a host a sandboxed command can send data to; [Dependency
-  installs](#dependency-installs) names each one's path. Hosts an install reaches beyond its registry, such as a
+- Each registry `projectRun.registries` lists is a host a sandboxed command can send data to, an accepted channel;
+  [Dependency installs](#dependency-installs) names each one's path and the ruling. Hosts an install reaches beyond its registry, such as a
   native module's prebuilt binary, node-gyp's headers, or a toolchain download, stay refused.
 - A script the session runs can write any record in `reviews` and `dispatch`, which the sandbox grants for the review
   commands; merge trust that rests on the forge alone closes that for the merge.
@@ -483,8 +487,13 @@ Before `verified` changes, a live Claude Code must show every one of these, each
 18. With `projectRun.registries` listing `npm`, `npm ci` in the clone installs, its `postinstall` script cannot write
     `~/probe` or reach an unlisted host, `echo $npm_config_cache` names the attempt's `cache` folder, nothing new
     appears in `~/.npm`, and the driver's `wait` removes the attempt's folder once the session ended; with the list
-    empty, `npm ci` fails on the network and writes nothing outside the attempt's folder. The same for `pip install`
-    in a virtual environment, `cargo fetch`, `go mod download`, and `bundle install`, each with its registry listed.
+    empty, `npm ci` fails on the network and writes nothing outside the attempt's folder. A hook and an MCP server of
+    the session see none of the variables, and the SessionStart hook's lines reach a Bash command under `claude --bg`.
+    For a project with no code yet, each with its registry listed and a sweep check after it: `npm create vite@latest`,
+    `npx create-next-app`, `pnpm create` and `pnpm dlx` through corepack, `yarn create`, `uv init && uv add`,
+    `python -m venv` then `pip install`, `cargo new && cargo add`, and `go mod init && go get`; and `npm ci`,
+    `pip install` in a virtual environment, `cargo fetch`, `go mod download`, and `bundle install` in a project that has
+    code.
 
 ### Dependency installs
 
@@ -496,38 +505,55 @@ build backend, or a cargo `build.rs`, run as the session's commands do: inside t
 the table above grants and reaching only the listed hosts. That is why letting a session install is acceptable.
 
 Every session, whatever the list holds, keeps its package managers' caches and global stores in its attempt's
-`cache` folder, through the settings' `env`; `HOME` stays as it is, so nothing an install writes lands outside the
-attempt's folder, and the driver's `wait` removes it with the attempt. The same variables reach a Codex session.
+`cache` folder; `HOME` stays as it is, so nothing an install writes lands outside the attempt's folder, and the
+driver's `wait` removes it with the attempt. The variables reach the session's sandboxed commands alone, never the
+host's own process, whose hooks, MCP servers, language servers, and status line run outside the sandbox. The gate
+writes them to `shell-env.json` in the attempt's folder, which no confined session writes, before the launch; the
+plugin's SessionStart hook, for a session whose own mark names that attempt's run and issue, or whose pending mark
+starts it in that clone, appends one `export NAME='value'` line each, single-quoted with each quote escaped, to the
+file the host names in `CLAUDE_ENV_FILE`, which it sources before each Bash command. No `env` key is passed in the
+settings. On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.
 
-| Package manager | Variables, each a folder in `cache` |
+| Package manager | Variables, each a folder or file in `cache` |
 | --- | --- |
-| npm | `npm_config_cache` |
+| npm | `npm_config_cache`; `npm_config_userconfig` and `npm_config_globalconfig`, and their upper-case forms, two empty config files the start makes, so npm, pnpm, and yarn 1 never read a token from the user's `~/.npmrc` or npm's global config |
 | pnpm | `PNPM_HOME`, whose `store` is the default store of every pnpm since 7; `pnpm_config_store_dir`, `pnpm_config_cache_dir`, and `pnpm_config_state_dir`, which pnpm 10 and later read. `npm_config_store_dir` is left out, since npm warns of a key it does not know on every command |
 | yarn | `YARN_CACHE_FOLDER`, and `YARN_GLOBAL_FOLDER`, where yarn 2 and later keep their global cache |
 | pip, uv | `PIP_CACHE_DIR`, `UV_CACHE_DIR` |
 | cargo | `CARGO_HOME`: its registry cache and installs; the user's `~/.cargo` config no longer loads |
-| go | `GOPATH`, `GOMODCACHE`, `GOCACHE`, and `-modcacherw` added to the driver's `GOFLAGS`, so go leaves its module cache writable and the attempt's folder can be removed |
+| go | `GOPATH`, `GOMODCACHE`, `GOCACHE`, and `-modcacherw` added to the driver's `GOFLAGS`, so go leaves its module cache writable and the attempt's folder can be removed. A `GOFLAGS` the user set with `go env -w` gives way to this one, so it does not reach a confined session |
 | gem, bundler | `GEM_HOME`, where both install, and `BUNDLE_USER_HOME`, bundler's own cache and config; `BUNDLE_PATH` is left unset, so bundler still uses the gems the Ruby already has |
+| corepack, with `npm` listed | `COREPACK_HOME`, and `COREPACK_NPM_REGISTRY` set to `https://registry.npmjs.org`, so corepack downloads pnpm and yarn 2 and later from the listed npm registry; neither `nodejs.org` nor `repo.yarnpkg.com` is listed. Without `npm`, corepack's own folder stays readable where it is |
 
-`XDG_CACHE_HOME` and `COREPACK_HOME` stay as they are, so a browser a test tool downloaded before, or a version of
-yarn or pnpm corepack holds, stays readable where it is; a tool that writes there fails, as before. Each session starts
-with empty caches, so it downloads every dependency again.
+`XDG_CACHE_HOME` stays as it is, so a browser a test tool downloaded before stays readable where it is; a tool that
+writes there fails, as before. Each session starts with empty caches, so it downloads every dependency again. Known
+limits: pnpm 9 and earlier keep their metadata cache and state outside the attempt, where a write fails; poetry's and
+pdm's caches are not moved; `uv python install`, node-gyp's headers, a native module's prebuilt binary, a toolchain
+download, and any install script that downloads from a host the list does not hold all fail on the network.
 
-What each registry opens, for security-engineer to rule on, beside the forge, which a sandboxed command already
-reaches with the user's forge token:
+A session no Human attends never publishes, withdraws, or changes a package or its owners: the agent gate hook refuses
+`npm`, `pnpm`, `yarn`, and `bun` `publish`, `unpublish`, `dist-tag`, `deprecate`, `owner`, `access`, and `token`
+(and `yarn npm publish`, `tag`, and `login`); `gem push`, `yank`, `owner`, and `signin`; `cargo publish`, `yank`,
+`owner`, and `login`; `twine upload`, also through `python -m`, `pipx run`, `uvx`, and `npx`; `uv publish`; and
+`poetry publish`. A script or a raw HTTP call that does the same passes the hook, as the accepted residual.
+
+The ruling on what each registry opens (security-engineer, 2026-11-18): every listed registry but `pypi` and
+`crates` gives a channel a sandboxed command can send data out on that an attacker can read, and each is accepted,
+since the forge channel, which a sandboxed command already reaches with the user's forge token, gives one already.
+Narrowing the forge token to the repository reopens this ruling. Each one:
 
 - `npm` (`registry.npmjs.org`, `registry.yarnpkg.com`): `npm publish` of the clone's code as a package, with a token
-  the session is given, as by text in an issue; the sandbox hides `~/.npmrc` and unsets `NPM_TOKEN`, so the user's own
-  token is never used. Reads alone carry data only in the names and versions asked for, which the registry's owner
-  logs and does not publish.
+  the session is given, as by text in an issue; the user's own tokens are hidden, and the hook refuses the publish
+  commands, so a script is the path left.
 - `pypi` (`pypi.org`, `files.pythonhosted.org`): uploads go to `upload.pypi.org`, which is not listed. Downloads of a
   package land in PyPI's public download statistics, a slow channel through the choice of which files to fetch.
 - `crates` (`index.crates.io`, `static.crates.io`): publishing goes to `crates.io`, which is not listed; per-version
   download counts are public, the same slow channel.
 - `go` (`proxy.golang.org`, `sum.golang.org`): the widest. The proxy fetches any module path it is asked for from the
   host the path names, so a request for `<host>/<data>/@v/list` carries data to any server, through the proxy.
+  It stays listable, as an opt-in.
 - `rubygems` (`index.rubygems.org`, `rubygems.org`): `gem push` to `rubygems.org`, with a key the session is given;
-  `~/.gem/credentials` is hidden.
+  `~/.gem/credentials` and `~/.local/share/gem/credentials` are hidden.
 
 ## Limits
 

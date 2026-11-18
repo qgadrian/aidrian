@@ -14,10 +14,15 @@
 //   - the beacon the plugin's agent gate hook files on that call (lib/unattended-mark.mjs noteBeacon), within
 //     BEACON_GRACE of it, since the hook runs before the tool: it shows Codex runs the plugin's hooks under `codex exec`.
 // The sandbox is pinned to workspace-write; no flag that bypasses the sandbox or the approvals is ever passed. Its
-// network is one switch, `[sandbox_workspace_write] network_access`, which the host's access check requires on, and
-// which reaches every host: the gate's `domains`, the forge's and the registries projectRun.registries lists, narrow
-// nothing here, as they do on Claude Code. Codex's experimental network proxy (features.network_proxy.domains) could
-// hold a session to them; no live run has checked it, so the start does not turn it on.
+// network, `[sandbox_workspace_write] network_access`, which the host's access check requires on, reaches every host,
+// localhost too, so the start also turns on Codex's network proxy for sandboxed commands, `-c
+// features.network_proxy.enabled=true`, with an allow rule for exactly each of the gate's `domains`, the forge's and
+// the registries projectRun.registries lists: a host it lists no rule for is refused, so it fails closed. No live run
+// has checked the proxy (docs/providers/codex.md live check 12); a Codex that rejects the keys exits before it names
+// its session, which stops the start on its first proof and halts the run.
+// The package managers' caches (`cacheVars`) reach the sandboxed commands alone, through
+// `-c shell_environment_policy.set.<name>=<value>`, never the `codex exec` process's own environment, which its hooks
+// and MCP servers inherit.
 // Every process call goes through `run` (spawnSync's shape) or `launch`, which a test replaces or points at a fake
 // `codex`; the waits count their steps through `wait`, so a test passes a short one and never waits the full time.
 
@@ -47,6 +52,7 @@ export const PS_BUFFER = 64 * 1024 * 1024;
 // The most of the run log read for an event.
 const LOG_CAP = 8 * 1024 * 1024;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
+const CONTROL_ALL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu;
 const NAME = /^[^\s-][^\u0000-\u001f\u007f-\u009f\u2028\u2029]{0,99}$/u;
 const PLAIN_NAME = /^[\w .@:\u00b7-]+$/u;
 // A Codex thread id, and the id a start gives its process.
@@ -172,23 +178,35 @@ export function findProcesses({ cwd, run = runCommand }) {
   return found;
 }
 
-// The JSON objects of the whole lines of the log `log`, at most LOG_CAP of it, or null when it cannot be read.
-function logEvents(log) {
+// The first line of the log `log` that is no JSON and names a setting the start passes, as Codex prints a config error
+// on stderr, at most 200 characters of plain text, or null.
+function refusedSetting(log) {
+  const line = (logLines(log) ?? []).find((each) => !each.trim().startsWith('{') && /network_proxy|shell_environment_policy/u.test(each));
+  return line ? line.replace(CONTROL_ALL, ' ').trim().slice(0, 200) : null;
+}
+
+// The whole lines of the log `log`, at most LOG_CAP of it, or null when it cannot be read.
+function logLines(log) {
   let fd;
-  let text;
   try {
     fd = openSync(log, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     if (!fstatSync(fd).isFile()) return null;
     const buffer = Buffer.alloc(Math.min(fstatSync(fd).size, LOG_CAP));
     const read = readSync(fd, buffer, 0, buffer.length, 0);
-    text = buffer.subarray(0, read).toString('utf8');
+    return buffer.subarray(0, read).toString('utf8').split('\n').slice(0, -1);
   } catch {
     return null;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+// The JSON objects of the whole lines of the log `log`, at most LOG_CAP of it, or null when it cannot be read.
+function logEvents(log) {
+  const lines = logLines(log);
+  if (!lines) return null;
   const events = [];
-  for (const line of text.split('\n').slice(0, -1)) {
+  for (const line of lines) {
     try {
       const value = JSON.parse(line);
       if (typeof value === 'object' && value !== null && !Array.isArray(value)) events.push(value);
@@ -235,13 +253,27 @@ function poll(ms, wait, read, gone = () => false) {
   return undefined;
 }
 
-// The environment of the new session: the driver's, without the variables Codex sets for a session of its own, and with
-// `cacheVars`, which move the package managers' caches into the attempt's folder (lib/project-registries.mjs).
-const childEnv = (env, cacheVars = {}) => ({ ...Object.fromEntries(Object.entries(env).filter(([name]) => !OWN_VARS.includes(name))), ...cacheVars });
+// The environment of the new session: the driver's, without the variables Codex sets for a session of its own.
+const childEnv = (env) => Object.fromEntries(Object.entries(env).filter(([name]) => !OWN_VARS.includes(name)));
+
+// A network host the proxy's allow rules take: a host name, or `*.` and a host name.
+const DOMAIN = /^(?:\*\.)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/iu;
+
+// The `-c` overrides of a start: the network proxy on, with an allow rule for each of `domains` and no other, and each of
+// `cacheVars` set for the sandboxed commands alone. Each value is TOML, whose basic strings JSON's escapes spell.
+export function configFlags({ domains, cacheVars = {} }) {
+  const rules = domains.map((each) => `${JSON.stringify(each)} = "allow"`).join(', ');
+  return [
+    '-c', 'features.network_proxy.enabled=true',
+    '-c', `features.network_proxy.domains={ ${rules} }`,
+    ...Object.entries(cacheVars).flatMap(([name, value]) => ['-c', `shell_environment_policy.set.${name}=${JSON.stringify(value)}`]),
+  ];
+}
 
 // Why the start's inputs cannot start a session, or null: the folder, name, prompt, log, beacon read, and each folder
-// `grants` names, which must be absolute paths of plain text, and the cache environment `cacheVars`.
-function inputProblem({ cwd, name, prompt, log, beacon, grants, cacheVars }) {
+// `grants` names, which must be absolute paths of plain text, the network hosts `domains`, at least one, and the cache
+// environment `cacheVars`.
+function inputProblem({ cwd, name, prompt, log, beacon, grants, domains, cacheVars }) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || CONTROL.test(cwd)) return 'the folder to start the session in is not an absolute path of plain text';
   if (typeof name !== 'string' || !NAME.test(name)) return 'the session\'s name is not plain text of at most 100 characters that cannot read as a flag';
   if (typeof prompt !== 'string' || prompt.trim() === '' || /^\s*[-/]/u.test(prompt)) {
@@ -250,6 +282,7 @@ function inputProblem({ cwd, name, prompt, log, beacon, grants, cacheVars }) {
   if (typeof log !== 'string' || !path.isAbsolute(log) || CONTROL.test(log)) return 'the gate named no run log for the session\'s events';
   if (typeof beacon !== 'function') return 'the gate gave no way to read the agent gate hook\'s beacon';
   if (!Array.isArray(grants) || grants.some((each) => typeof each !== 'string' || !path.isAbsolute(each) || CONTROL.test(each))) return 'a folder the gate grants the session is not an absolute path of plain text';
+  if (!Array.isArray(domains) || domains.length === 0 || !domains.every((each) => typeof each === 'string' && DOMAIN.test(each))) return 'the network hosts the gate grants the session are not host names';
   return varsProblem(cacheVars);
 }
 
@@ -270,11 +303,10 @@ function realPaths(folders) {
 // the session id, after which `identify({ id, session })` files its floor and mark; its first tool call; and
 // `beacon(thread)`. Returns { id, session, name, cwd, mode: null }; { problem, uncertain: false } when nothing runs, with
 // `proof` naming the proof that failed when a process that started was stopped for it; or { problem, uncertain: true }
-// when it could not be stopped. `cacheVars` join the session's environment, which every command it runs inherits
-// unless the user's shell_environment_policy filters them. `limits` is a test's { session, tool, beacon } in
-// milliseconds of steps.
-export function startProject({ cwd, prompt, name, env, hold, identify, log, beacon, grants = [], cacheVars = {}, run = runCommand, wait = pauseSync, launch = launchCommand, resolve = codexOnPath, limits = {} }) {
-  const bad = inputProblem({ cwd, name, prompt, log, beacon, grants, cacheVars });
+// when it could not be stopped. `domains` are the network hosts the proxy allows, and `cacheVars` the variables its
+// sandboxed commands get (configFlags). `limits` is a test's { session, tool, beacon } in milliseconds of steps.
+export function startProject({ cwd, prompt, name, env, hold, identify, log, beacon, grants = [], domains, cacheVars = {}, run = runCommand, wait = pauseSync, launch = launchCommand, resolve = codexOnPath, limits = {} }) {
+  const bad = inputProblem({ cwd, name, prompt, log, beacon, grants, domains, cacheVars });
   if (bad) return { problem: bad };
   const folders = realPaths([cwd, ...grants]);
   if (folders.problem) return { problem: folders.problem };
@@ -283,14 +315,14 @@ export function startProject({ cwd, prompt, name, env, hold, identify, log, beac
   if (!codex) return { problem: NO_CODEX };
   if (!psProgram()) return { problem: 'this system has no process table program at /bin/ps or /usr/bin/ps, so a Codex session could never be stopped safely' };
   if (typeof hold !== 'function' || !hold({ cwd: real, known: [] })) return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
-  const launched = launchIn({ codex, real, granted, prompt, env: childEnv(env, cacheVars), log, launch });
+  const launched = launchIn({ codex, real, granted, prompt, env, log, launch, flags: configFlags({ domains, cacheVars }) });
   if (launched.problem) return launched;
   return proveStart({ ...launched, real, name, log, beacon, identify, run, wait, limits });
 }
 
-// Runs `codex exec` under the session's environment `env` with its output to `log`: { pid } of a process this one has
-// not reaped, or { problem, uncertain }.
-function launchIn({ codex, real, granted, prompt, env, log, launch }) {
+// Runs `codex exec` with the `-c` overrides `flags` and its output to `log`: { pid } of a process this one has not
+// reaped, or { problem, uncertain }.
+function launchIn({ codex, real, granted, prompt, env, log, launch, flags }) {
   let fd;
   try {
     fd = openSync(log, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0), 0o600);
@@ -299,8 +331,8 @@ function launchIn({ codex, real, granted, prompt, env, log, launch }) {
   }
   let started;
   try {
-    const args = ['exec', '--json', '--sandbox', 'workspace-write', '--cd', real, ...granted.flatMap((each) => ['--add-dir', each]), prompt];
-    started = launch(codex, args, { cwd: real, env, fd });
+    const args = ['exec', '--json', '--sandbox', 'workspace-write', ...flags, '--cd', real, ...granted.flatMap((each) => ['--add-dir', each]), prompt];
+    started = launch(codex, args, { cwd: real, env: childEnv(env), fd });
   } catch (error) {
     started = { pid: undefined, error };
   } finally {
@@ -326,6 +358,8 @@ function proveStart({ pid, real, name, log, beacon, identify, run, wait, limits 
   const seconds = (ms) => Math.round(ms / 1000);
   const sessionWait = limits.session ?? SESSION_WAIT;
   const thread = poll(sessionWait, wait, () => firstEvent(log), gone);
+  const refused = thread ? null : refusedSetting(log);
+  if (refused) return stopped(`Codex refused a setting the start passes (${refused}), as one that does not know features.network_proxy would, so the session could not be held to the listed hosts`, 'session');
   if (!thread) return stopped(`\`codex exec\` gave no session id in its first JSON event within ${seconds(sessionWait)} seconds`, 'session');
   if (typeof identify === 'function' && identify({ id, session: thread }) !== true) return stopped('the gate could not file the new session\'s floor and mark');
   const toolWait = limits.tool ?? FIRST_TOOL_WAIT;

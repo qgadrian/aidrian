@@ -22,6 +22,22 @@ const SHARED_COMMANDS = Object.freeze([
   { programs: ['npm'], subcommands: [['set'], ['login'], ['adduser']], valueOptions: ['--prefix', '--userconfig', '--registry', '-w', '--workspace', '--scope'] },
   { programs: ['defaults'], subcommands: [['write'], ['delete'], ['import'], ['rename']], valueOptions: [] },
 ]);
+// The package registry commands that publish, withdraw, or change who owns a package, or log in to do so, which a
+// session no Human attends never runs: with a token the session was handed, as by an issue's text, they would publish the
+// project's code as the token's owner (docs/providers/claude-code.md#dependency-installs). A script or a raw HTTP call
+// that does the same is the accepted residual. `valueOptions` as SHARED_COMMANDS.
+const NPM_VALUES = ['--prefix', '--userconfig', '--registry', '-w', '--workspace', '-C', '--dir', '--otp', '--tag', '--access', '--scope', '--cwd'];
+const PUBLISH_COMMANDS = Object.freeze([
+  { programs: ['npm', 'pnpm', 'yarn', 'bun'], subcommands: [['publish'], ['unpublish'], ['dist-tag'], ['dist-tags'], ['deprecate'], ['owner'], ['access'], ['token']], valueOptions: NPM_VALUES },
+  { programs: ['yarn'], subcommands: [['npm', 'publish'], ['npm', 'tag'], ['npm', 'login'], ['tag'], ['login']], valueOptions: NPM_VALUES },
+  { programs: ['bun'], subcommands: [['pm', 'publish']], valueOptions: NPM_VALUES },
+  { programs: ['gem'], subcommands: [['push'], ['yank'], ['owner'], ['signin']], valueOptions: ['--host', '-k', '--key', '--otp'] },
+  { programs: ['cargo'], subcommands: [['publish'], ['yank'], ['owner'], ['login']], valueOptions: ['--registry', '--index', '--token', '--manifest-path', '-p', '--package', '-Z', '--config', '-C'] },
+  { programs: ['twine'], subcommands: [['upload']], valueOptions: ['-r', '--repository', '--repository-url', '-u', '--username', '-p', '--password'] },
+  { programs: ['python', 'python3', 'pipx', 'uvx'], subcommands: [['twine', 'upload']], valueOptions: [] },
+  { programs: ['uv'], subcommands: [['publish']], valueOptions: ['--directory', '--project', '--index', '--publish-url', '--token', '-t', '--username', '-u', '--password', '-p'] },
+  { programs: ['poetry'], subcommands: [['publish']], valueOptions: ['-C', '--directory', '-P', '--project', '-r', '--repository', '-u', '--username', '-p', '--password'] },
+]);
 // The launchctl subcommands that only read.
 const LAUNCHCTL_READS = new Set(['list', 'print', 'print-disabled', 'print-cache', 'getenv', 'version', 'help', 'blame', 'managerpid', 'manageruid', 'managername', 'error']);
 // The package runners that run another program, { words, options }: `words`, the runner's own words before the
@@ -168,7 +184,7 @@ function runsDeclared(each, program, words) {
 
 // The config each program call in a command writes: `git config` by its scope (configForm), any key that makes git run
 // a program (attempt-clone.mjs PROGRAM_KEYS) at any scope, the folders `git worktree add`, `git clone`, and `git init`
-// make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, crontab, and launchctl.
+// make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, PUBLISH_COMMANDS, crontab, and launchctl.
 function programWrites(segment, invocation, folder) {
   const { program, words } = unwrapped(invocation.program, plainWords(invocation.args));
   const shown = [invocation.program, ...plainWords(invocation.args)].join(' ').slice(0, 120);
@@ -178,6 +194,7 @@ function programWrites(segment, invocation, folder) {
   if (forge) return refuse(forge.what);
   if (configCommands().some((each) => runsDeclared(each, program, words))) return refuse('the host\'s own config');
   if (SHARED_COMMANDS.some((each) => runsDeclared(each, program, words))) return refuse(`the user's config of ${program}`);
+  if (PUBLISH_COMMANDS.some((each) => runsDeclared(each, program, words))) return refuse('a package on a registry, or its owners');
   if (program === 'crontab' && !(words.length === 1 && words[0] === '-l')) return refuse('the user\'s scheduled jobs');
   const sub = operands(words)[0];
   if (program === 'launchctl' && sub !== undefined && !LAUNCHCTL_READS.has(sub)) return refuse('the user\'s launch jobs');

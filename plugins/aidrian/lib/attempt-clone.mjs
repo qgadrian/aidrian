@@ -26,6 +26,11 @@ import path from 'node:path';
 
 // A path inside an attempt's folder: the state folder, the run, the issue, the attempt, and the part after it.
 const ATTEMPT = /^(.+)\/runs\/([a-z0-9][a-z0-9-]{0,63})\/attempts\/((?:[A-Z][A-Z0-9]{0,15}-)?[1-9][0-9]{0,8})\.([1-9][0-9]{0,2})(\/.*)?$/u;
+// The folders of an attempt a confined session writes beside its clone, its drop and cache folders, and the empty
+// file each holds from the start, whose write the host's sandbox denies where it can (lib/hosts/claude-code-sandbox.mjs),
+// so the folder can be neither emptied nor removed, and a link put in its place.
+export const KEPT_FOLDERS = Object.freeze(['drop', 'cache']);
+export const ATTEMPT_KEEP = '.aidrian-keep';
 // The largest ledger read for a clone's link.
 const LEDGER_CAP = 16 * 1024 * 1024;
 
@@ -38,14 +43,14 @@ const real = (file) => {
 };
 
 // The attempt whose folder holds the path `file`, by its real path: { state, run, key, attempt, folder, work, git,
-// drop }, or null.
+// drop, cache }, or null.
 export function attemptOf(file) {
   const resolved = real(file) ?? path.resolve(file);
   const match = ATTEMPT.exec(resolved.split(path.sep).join('/'));
   if (!match) return null;
   const [, state, run, key, attempt] = match;
   const folder = path.join(state, 'runs', run, 'attempts', `${key}.${attempt}`);
-  return { state, run, key, attempt: Number(attempt), folder, work: path.join(folder, 'work'), git: path.join(folder, 'git'), drop: path.join(folder, 'drop') };
+  return { state, run, key, attempt: Number(attempt), folder, work: path.join(folder, 'work'), git: path.join(folder, 'git'), drop: path.join(folder, 'drop'), cache: path.join(folder, 'cache') };
 }
 
 // The rows of the ledger file `file`, read without following a link from a regular file with one link, or null.

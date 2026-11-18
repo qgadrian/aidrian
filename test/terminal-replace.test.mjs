@@ -1,6 +1,6 @@
 // Replacing the terminal after a background handoff (docs/handoff.md#replacing-the-terminal): the store's request to
 // end, the Stop hook's step, the detached helper that sends the signal, and the shell function that opens the next
-// session. The only process any test signals is one it started itself, a `sleep` named `claude`; no test starts a
+// session. The only process any test signals is one it started itself, a process named `claude`; no test starts a
 // session. The shell function runs in `zsh -f` with a fake `claude` first on PATH, and is skipped where zsh is missing.
 
 import '../scripts/test-state.mjs';
@@ -43,11 +43,18 @@ function folder(t, prefix) {
   return dir;
 }
 
-// A `sleep` named `claude`, started by this process, so its parent is this process: the shell, for the tests.
+// A process named `claude` that waits, started by this process, so its parent is this process: the shell, for the
+// tests. Each platform names a process by what it ran: Linux by the file, so a script named `claude` shows as `claude`;
+// macOS by the program's own path, which for a script is its interpreter, so there a link to node named `claude`. Not
+// a link to /bin/sleep: where coreutils is one program that picks its tool by its name, it would exit 1, and on Linux
+// node names its main thread `MainThread`, which `ps` then shows.
 function fakeClaude(t) {
   const bin = folder(t, 'aidrian-fake-claude-');
-  symlinkSync('/bin/sleep', path.join(bin, 'claude'));
-  const child = spawn(path.join(bin, 'claude'), ['30'], { stdio: 'ignore' });
+  const file = path.join(bin, 'claude');
+  const script = process.platform === 'linux';
+  if (script) writeFileSync(file, '#!/bin/sh\ni=0\nwhile [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done\n', { mode: 0o755 });
+  else symlinkSync(process.execPath, file);
+  const child = spawn(file, script ? [] : ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
   const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
   t.after(() => child.kill('SIGKILL'));
   return { child, exited };
@@ -366,7 +373,7 @@ test('the Stop hook of a background session the terminal follows stops that sess
   writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nif [ "$1" = agents ]; then echo '${listing}'; exit 0; fi\necho "$*" >> '${log}'\n`, { mode: 0o755 });
   const env = { ...process.env, CLAUDECODE: '1', PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   assert.ok(markUnattended(BG_SESSION, { root: dir, env }));
-  // This process stands for the shell, and a `sleep` named `claude` it started for the client attached to the session.
+  // This process stands for the shell, and a process named `claude` it started for the client attached to the session.
   fakeClaude(t);
   const shell = process.pid;
   assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell, id: 'efgh5678', next: NEXT_SESSION }));

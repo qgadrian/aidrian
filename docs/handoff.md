@@ -341,6 +341,9 @@ to another folder falls back to the clear route with that reason; committing `st
    host's command to open it. The line ends on what becomes of this session: with the
    [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends;
    without it, `This session has ended its work; the new one is <name>, open it with <the host's command>.`
+   In `auto` mode, a session a Human attends whose shell never loaded the function, such as one started in a terminal
+   opened before `aidrian shell-init <shell> --install` wrote it, adds one line on why its terminal stays: start the
+   next session in a new terminal, or after reloading the shell's startup file.
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.

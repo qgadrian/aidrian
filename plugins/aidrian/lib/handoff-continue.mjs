@@ -40,7 +40,7 @@ import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, projectCheckouts, stateDir } from './project.mjs';
-import { OPEN_ID, replacer, terminalOf } from './terminal-replace.mjs';
+import { OPEN_ID, replacer, shellPid, terminalOf } from './terminal-replace.mjs';
 import { dropPending, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
@@ -316,7 +316,7 @@ function startInBackground(ready) {
   if (!held) return unheld({ handoff, started, env, run, slug, release, fallBack });
   release();
   const ending = handTerminal({ host, store, session, env, run, now, mode, id: marker.id, next: marker.session ?? null });
-  return startedLines(host, marker, { ending });
+  return startedLines(host, marker, { ending, unhooked: !ending && unhooked({ host, store, session, env, now, mode }) });
 }
 
 // The progress the background hop from `session` records with the floor of the session it starts: { tree, done, stalls }.
@@ -346,6 +346,15 @@ function handTerminal({ host, store, session, env, run, now, mode, id, next }) {
   if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id) || !replacer(host)) return false;
   const way = unattendedHere(session, { store, env, now }) ? followed({ host, store, session, env, now }) : safely(() => terminalOf(host, { env, run }));
   return way !== null && safely(() => noteEnding(store, session, { ...way, id, next }, { now })) !== null;
+}
+
+// Whether the terminal stays on this session only because its shell never loaded the shell function: auto mode, a host
+// that can replace a terminal, a session a Human attends, and no shell pid in its environment, as when the terminal
+// opened before `aidrian shell-init <shell> --install` wrote the function, or it was never installed.
+function unhooked({ host, store, session, env, now, mode }) {
+  const replace = replacer(host);
+  if (mode !== 'auto' || !replace || shellPid(env) !== null || !replace.attended(env)) return false;
+  return !unattendedHere(session, { store, env, now });
 }
 
 // For a background session a terminal follows, on a host that can end its own session, which no Human attends as the
@@ -397,16 +406,19 @@ function safely(act) {
   }
 }
 
+// Why the terminal did not switch, for a session its shell's function did not start (docs/handoff.md#replacing-the-terminal).
+export const UNHOOKED = 'This terminal stays on this session because its shell had not loaded the aidrian shell function when this session started, as when this terminal opened before `aidrian shell-init zsh --install` (or bash) wrote it; start the next session in a new terminal, or after reloading the shell\'s startup file, and its handoff switches the terminal.';
+
 // The lines of a background start, `marker` as noteStarted records it. The say line ends on what becomes of this session:
 // with `ending`, its terminal switches to the new one once the turn ends; else a plain line on how to open the new one.
-function startedLines(host, marker, { ending = false } = {}) {
+function startedLines(host, marker, { ending = false, unhooked = false } = {}) {
   const { attachLine, attachCommand } = host.capabilities.handoffContinue;
   const look = attachLine?.({ id: marker.id, name: marker.name }) ?? `its id is ${marker.id}`;
   const called = typeof marker.name === 'string' && PLAIN_NAME.test(marker.name) ? marker.name : marker.id;
   const open = attachCommand ? `, open it with \`${attachCommand({ id: marker.id })}\`` : '';
   const last = ending
     ? `This session has ended its work; this terminal switches to the new one, \`${called}\`, once this turn ends.`
-    : `This session has ended its work; the new one is \`${called}\`${open}.`;
+    : `This session has ended its work; the new one is \`${called}\`${open}.${unhooked ? ` ${UNHOOKED}` : ''}`;
   const named = marker.name ? ` '${marker.name}'` : '';
   // A start record an earlier version wrote, whose session started in the host's default mode: it may stop at a prompt.
   const mode = marker.mode === null ? ' It runs in the host\'s default permission mode, since this session\'s own could not be read, so it may stop at a permission prompt.' : '';

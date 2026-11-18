@@ -26,8 +26,9 @@ How to apply one:
    rejects keys it does not know.
 
 A recipe sets only the keys it changes; [config.md](config.md#keys) holds every key and its default.
-The two that merge alone, full autonomy and autopilot, also check every screen change before it merges, with
-`review.visual` and `review.productFeedback` around a placeholder target that setup replaces, as it replaces `"test"`.
+The two that merge alone, full autonomy and autopilot, also turn on a screen check: `review.visual` captures for the
+visual reviewers and `review.productFeedback` before the ready mark, around a placeholder target that setup replaces,
+as it replaces `"test"`. What each part needs to run, and what it does without it, is in the section below.
 Hands-on leaves that check out, since the Human tries the screens, and can add it:
 [Screens checked on every device](#screens-checked-on-every-device).
 It sets nothing about the host's own permissions: how often Claude Code or Codex asks before a tool runs is the host's
@@ -88,8 +89,9 @@ What it turns on:
 - On Claude Code, the handoff continues in a background session with nothing typed, up to 5 in a row ([Handoff](handoff.md)).
   Codex has no background route: there the handoff writes a brief, and a person resumes it.
 - Persona-audit triage files issues without asking.
-- Each change to a screen is captured at a phone, a tablet, and a desktop width for the visual reviewers, and walked by
-  a persona before the pull request is marked ready ([Screens checked on every device](#screens-checked-on-every-device)).
+- The screen check: a change to a screen a target names is captured at a phone, a tablet, and a desktop width for the
+  visual reviewers, once the capture can reach the app, and a user-facing change owes product feedback before the ready
+  mark, with a persona walk when the project has a persona ([Screens checked on every device](#screens-checked-on-every-device)).
 
 What it still keeps for a person: a security verdict and a critical-flow sign-off, which no setting hands to an agent;
 a hard product call in a floor class, after its quorum; on Codex, resuming a handoff;
@@ -142,7 +144,7 @@ What it turns on, and where it stops:
 - An unattended run parks a floor-class decision for the Human instead of taking a default.
 - On Claude Code, the handoff continues in the background, up to 3 in a row before a person looks.
   On Codex it writes a brief for a person to resume.
-- Each change to a screen is captured at every width and walked by a persona, as in full autonomy.
+- The same screen check as full autonomy, with the same needs.
 
 ## Hands-on
 
@@ -181,13 +183,17 @@ What it turns on:
 
 ## Screens checked on every device
 
-Full autonomy and autopilot merge with no person looking, so neither ships a screen change nobody checked:
+Full autonomy and autopilot merge with no person looking, so they turn on two checks of a screen change:
 
-- `review.visual` captures each touched route at 390, 1024, and 1440 px, a phone, a tablet, and a desktop, and the
-  visual reviewers check the images.
-- `review.productFeedback.auto` has a persona walk the change in the running app, and the `product-manager` agent read
-  it, before the pull request is marked ready. The feedback is no approval and no merge block; only the ready mark
-  waits for it.
+- `review.visual` captures each route a change touches at 390, 1024, and 1440 px, a phone, a tablet, and a desktop,
+  for the visual reviewers to check. A route is touched when a changed file matches its target's `files`, and the
+  capture runs only when the review runs a visual reviewer, `designer` or `ux-specialist` by default; a flow that
+  requires them, as in the review doc's config, makes sure it does.
+- `review.productFeedback.auto` makes a user-facing pull request owe product feedback before it is marked ready: the
+  `product-manager` agent's read, and a persona's walk of the change in the running app when the project has a usable
+  persona. The feedback is no approval and no merge block; only the ready mark waits for it.
+
+A change that matches only `review.productFeedback.files`, and no target, gets feedback but no capture.
 
 The target, `{ "files": ["src/app/**"], "routes": ["/"] }`, is a placeholder, as `"test"` is: replace it with the
 project's screen files and the routes that show them, one target per group of screens. The `harness-setup` skill does
@@ -206,8 +212,8 @@ What each part needs, and what happens without it:
 - **Images**: Playwright in the project's dependencies and a base URL, `review.visual.baseUrl` in `.aidrian.local.json`
   or a `preview` command. Without either, the visual reviewers get a status instead of images and review from the code;
   the review goes on.
-- **The persona walk**: a persona doc for the people who use the screens ([Personas](personas.md)). Without one, the
-  `product-manager` read still runs.
+- **The persona walk**: a usable persona doc for the people who use the screens ([Personas](personas.md)). Without
+  one, only the `product-manager` read runs.
 
 A project with no screens yet leaves out `review.visual` and `review.productFeedback`: `review.visual.targets` may not
 be empty, and a target that matches no file checks nothing. While auto-merge is allowed, `aidrian check` warns once git

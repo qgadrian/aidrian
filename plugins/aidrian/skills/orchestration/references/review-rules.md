@@ -85,7 +85,7 @@ it is not fixed or broke something. After the second pass it is `blocked`, with 
 
 Push each fix commit at once, after only the tests of the files it touches (`aidrian test changed`). CI runs the full suite
 on the pushed head, and a reviewer's re-check runs on that head beside CI, never as a gate before the push.
-The push-first hook refuses a full suite while the branch holds a commit its remote lacks.
+In a project that turns it on, the push-first hook refuses a full suite while the branch holds a commit its remote lacks.
 
 ## Proportion
 

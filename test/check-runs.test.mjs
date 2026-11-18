@@ -15,11 +15,11 @@ import {
   appendCheckRuns, checkRows, commandKey, isFullSuite, mayRunTests, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims, workingTree,
 } from '../plugins/aidrian/lib/check-runs.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { detectHost, HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { check as prBody } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { check as pushFirst, unpushed } from '../plugins/aidrian/lib/rules/push-first.mjs';
 import { lexPipeline, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
-import { needleOf, testCommand, touchedTests } from '../plugins/aidrian/lib/test-changed.mjs';
+import { needlesOf, testCommand, touchedTests } from '../plugins/aidrian/lib/test-changed.mjs';
 
 const ROOT_DIR = path.resolve(import.meta.dirname, '..');
 const SCRIPTS = path.join(ROOT_DIR, 'plugins/aidrian/scripts');
@@ -27,7 +27,9 @@ const CLI = path.join(ROOT_DIR, 'plugins/aidrian/lib/cli.mjs');
 const ROOT = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-runs-')));
 after(() => rmSync(ROOT, { recursive: true, force: true }));
 const STATE = path.join(ROOT, 'state');
-const TESTING = DEFAULTS.testing;
+// This repository's own testing config: `npm run check` is its full suite, and push first is on.
+const TESTING = { ...DEFAULTS.testing, fullSuite: ['npm run check'], pushFirstMinutes: 5 };
+const CONFIG = { version: 1, testing: { fullSuite: ['npm run check'], pushFirstMinutes: 5 } };
 
 // Git sees no config of the machine that runs the suite, in this process and in every one it starts.
 Object.assign(process.env, { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', XDG_STATE_HOME: STATE });
@@ -35,7 +37,7 @@ const ENV = { PATH: process.env.PATH, HOME: ROOT, XDG_STATE_HOME: STATE, TMPDIR:
 
 let made = 0;
 // A project in a git repository with one commit, on branch `feat/x`, and a bare remote named origin.
-function repo({ config = { version: 1 }, files = {} } = {}) {
+function repo({ config = CONFIG, files = {} } = {}) {
   made += 1;
   const dir = path.join(ROOT, `repo-${made}`);
   const remote = path.join(ROOT, `remote-${made}.git`);
@@ -67,47 +69,74 @@ test('a test run is read through wrappers and redirects, and keyed the same way 
   assert.equal(commandKey(invocation('rtk npm run check 2>&1')), 'npm run check');
   assert.equal(commandKey(invocation('npx vitest run a.test.ts')), 'vitest run a.test.ts');
   assert.equal(commandKey(invocation('node plugins/aidrian/lib/cli.mjs test changed')), 'aidrian test changed');
-  assert.deepEqual(testRuns('cd /x && npm run check 2>&1 | tail -5', '/w'), [{ key: 'npm run check', folder: '/x', carries: false }]);
-  assert.deepEqual(testRuns('npm run check && git push', '/w'), [{ key: 'npm run check', folder: '/w', carries: true }]);
-  assert.deepEqual(testRuns('git status; node --test test/a.test.mjs', '/w'), [{ key: 'node --test test/a.test.mjs', folder: '/w', carries: true }]);
+  assert.deepEqual(testRuns('cd /x && npm run check 2>&1 | tail -5', '/w', TESTING), [{ key: 'npm run check', folder: '/x', carries: false }]);
+  assert.deepEqual(testRuns('npm run check && git push', '/w', TESTING), [{ key: 'npm run check', folder: '/w', carries: true }]);
+  assert.deepEqual(testRuns('git status; node --test test/a.test.mjs', '/w'), [{ key: 'node --test test/a.test.mjs', folder: '/w', carries: false }], 'after ; the line\'s status may be another\'s');
+  assert.deepEqual(testRuns('true || npm test', '/w').map((run) => run.carries), [false], 'after || the run may not have run');
   assert.deepEqual(testRuns('npm test || true', '/w').map((run) => run.carries), [false], 'an || masks the run\'s status');
   assert.deepEqual(testRuns('git status && echo test', '/w'), [], 'a word is not a test run');
+  assert.deepEqual(testRuns('npm run check', '/w'), [], 'the plugin names no project\'s check script');
   assert.ok(isFullSuite(invocation('npm run check'), TESTING));
+  assert.ok(!isFullSuite(invocation('npm run check'), DEFAULTS.testing), 'not by default');
   assert.ok(!isFullSuite(invocation('npm test -- test/a.test.mjs'), TESTING), 'one file is no full suite');
 });
 
-test('counts come from the node runner summary first, else the words vitest, jest, and pytest print', () => {
+// Summaries as each runner prints them at its end.
+const VITEST_PASS = ' ✓ src/a.test.ts (3 tests) 5ms\n ✓ src/b.test.ts (2 tests) 3ms\n\n Test Files  2 passed (2)\n      Tests  5 passed (5)\n   Start at  10:00:00\n   Duration  300ms\n';
+const VITEST_FAIL = ' Test Files  1 failed | 1 passed (2)\n      Tests  1 failed | 4 passed (5)\n';
+const JEST_PASS = 'Test Suites: 2 passed, 2 total\nTests:       5 passed, 5 total\nSnapshots:   0 total\nTime:        0.5 s\nRan all test suites.\n';
+const PYTEST_PASS = '============================= test session starts ==============================\ncollected 12 items\n\n' +
+  'tests/test_a.py ............                                             [100%]\n\n============================== 12 passed in 0.05s ==============================\n';
+const PYTEST_FAIL = '========================= 1 failed, 11 passed in 0.10s =========================\n';
+const RSPEC = 'Finished in 0.01 seconds (files took 0.1 seconds to load)\n12 examples, 2 failures\n';
+const MIX = 'Finished in 0.03 seconds (0.02s async, 0.01s sync)\n10 tests, 0 failures\n';
+
+test('counts come from one summary: node\'s, else the Tests line, else the last summary line', () => {
   assert.deepEqual(runCounts('ℹ tests 5\nℹ pass 4\nℹ fail 1\n12 passed elsewhere'), { pass: 4, fail: 1 });
   assert.deepEqual(runCounts('# pass 3\n# fail 0\n'), { pass: 3, fail: 0 });
-  assert.deepEqual(runCounts('Tests  1 failed | 11 passed (12)'), { pass: 11, fail: 1 });
+  assert.deepEqual(runCounts(VITEST_PASS), { pass: 5, fail: 0 }, 'the Tests line, not Test Files plus Tests');
+  assert.deepEqual(runCounts(VITEST_FAIL), { pass: 4, fail: 1 });
+  assert.deepEqual(runCounts(JEST_PASS), { pass: 5, fail: 0 }, 'the Tests line, not Test Suites plus Tests');
+  assert.deepEqual(runCounts(PYTEST_PASS), { pass: 12, fail: 0 });
+  assert.deepEqual(runCounts(PYTEST_FAIL), { pass: 11, fail: 1 });
+  assert.deepEqual(runCounts(`lint: 3 passed\n${PYTEST_PASS}`), { pass: 12, fail: 0 }, 'the last summary line, never a sum');
+  assert.deepEqual(runCounts(RSPEC), { pass: 10, fail: 2 });
+  assert.deepEqual(runCounts(MIX), { pass: 10, fail: 0 });
   assert.deepEqual(runCounts('lint ok'), { pass: null, fail: null });
+  for (const output of [VITEST_PASS, JEST_PASS, PYTEST_PASS, MIX]) assert.equal(runStatus(runCounts(output), false), 'passed', output);
+  for (const output of [VITEST_FAIL, PYTEST_FAIL, RSPEC]) assert.equal(runStatus(runCounts(output), false), 'failed', output);
   assert.equal(runStatus({ pass: null, fail: null }, true), 'passed', 'an exit of 0 the line carries passes');
   assert.equal(runStatus({ pass: 4, fail: 1 }, true), 'failed');
-  assert.equal(runStatus({ pass: null, fail: null }, false), 'failed', 'no exit status and no counts is no pass');
-  assert.equal(runStatus({ pass: 4, fail: 0 }, false), 'passed');
+  assert.equal(runStatus({ pass: null, fail: null }, false), 'unjudged', 'no exit status and no counts is no verdict');
 });
 
-test('the working tree counts uncommitted and untracked files, and matches the commit that holds them', () => {
+test('the working trees count uncommitted files, with and without the untracked ones, and match the commit that holds them', () => {
   const { dir, git } = repo();
-  writeFileSync(path.join(dir, 'new.txt'), 'n\n');
+  writeFileSync(path.join(dir, 'README.md'), 'changed\n');
+  writeFileSync(path.join(dir, 'scratch.txt'), 'n\n');
   const before = workingTree(dir);
-  assert.notEqual(before, git('rev-parse', 'HEAD^{tree}'));
-  git('add', '-A');
+  assert.notEqual(before.tree, before.trackedTree, 'the scratch file is in one tree only');
+  git('add', 'README.md');
   git('commit', '-q', '-m', 'second');
-  assert.equal(before, git('rev-parse', 'HEAD^{tree}'));
-  assert.equal(workingTree(path.join(dir, '.aidrian')), before, 'from a subfolder too');
+  assert.equal(before.trackedTree, git('rev-parse', 'HEAD^{tree}'), 'a commit that leaves the scratch file out');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'third');
+  assert.equal(before.tree, git('rev-parse', 'HEAD^{tree}'), 'a commit that holds it');
+  assert.deepEqual(workingTree(path.join(dir, '.aidrian')), { tree: before.tree, trackedTree: before.tree }, 'from a subfolder too');
   assert.equal(git('status', '--porcelain'), '', 'the checkout\'s own index is untouched');
 });
 
 test('a row a finished run, with the status the line carries', () => {
-  const tree = () => 'abc';
-  const row = (command, output, exitZero = true) => checkRows({ command, cwd: '/w', output, exitZero, tree, at: 't' });
-  assert.deepEqual(row('npm run check', 'ℹ pass 4\nℹ fail 0'), [{ at: 't', agentId: null, command: 'npm run check', tree: 'abc', status: 'passed', pass: 4, fail: 0 }]);
-  assert.equal(row('npm run check | tail -3', 'lint ok')[0].status, 'failed', 'a pipe hides the exit status, and no count shows a pass');
+  const tree = () => ({ tree: 'abc', trackedTree: 'abd' });
+  const row = (command, output, exitZero = true) => checkRows({ command, cwd: '/w', output, exitZero, tree, at: 't', testing: TESTING });
+  assert.deepEqual(row('npm run check', 'ℹ pass 4\nℹ fail 0'), [{ at: 't', agentId: null, command: 'npm run check', tree: 'abc', trackedTree: 'abd', status: 'passed', pass: 4, fail: 0 }]);
+  assert.equal(row('npm run check | tail -3', 'lint ok')[0].status, 'unjudged', 'a pipe hides the exit status, and no count says');
   assert.equal(row('npm run check | tail -3', 'ℹ pass 9\nℹ fail 0')[0].status, 'passed');
   assert.equal(row('npm run check', 'ℹ pass 9\nℹ fail 0', false)[0].status, 'passed', 'a host with no exit status judges by counts');
+  assert.equal(row('npm run check', 'lint ok', false)[0].status, 'unjudged', 'and leaves a run with no count unjudged');
   assert.deepEqual(row('git status', ''), []);
-  assert.deepEqual(checkRows({ command: 'npm test', cwd: '/w', output: '', exitZero: true, tree: () => null }), [], 'no tree, no row');
+  assert.deepEqual(checkRows({ command: 'npm test', cwd: '/w', output: '', exitZero: true, tree: () => ({ tree: null, trackedTree: null }), at: 't' }),
+    [{ at: 't', agentId: null, command: 'npm test', tree: null, trackedTree: null, status: 'passed', pass: null, fail: null }], 'no tree: the row says so');
 });
 
 const BODY = (lines) => `## Summary\n\n- x\n\n## Tests run\n\n${lines.join('\n')}\n`;
@@ -119,6 +148,8 @@ test('a pass claim names a test command and a pass, and never a failure, an unfi
     '- CI `npm run check`: green',
     '- `npm run check`: not finished',
     '- npm run check passed, 12 pass',
+    '- `npm test`: all',
+    '  12 passed, wrapped onto the next line',
     '```',
     'ℹ pass 3 `npm test` passed',
     '```',
@@ -126,26 +157,30 @@ test('a pass claim names a test command and a pass, and never a failure, an unfi
   assert.deepEqual(claims, [
     { clause: '- `npm run check`: 4071/4071 pass', key: 'npm run check', counts: [4071], commits: [] },
     { clause: '- npm run check passed, 12 pass', key: 'npm run check', counts: [12], commits: [] },
+    { clause: '- `npm test`: all 12 passed, wrapped onto the next line', key: 'npm test', counts: [12], commits: [] },
   ]);
   assert.deepEqual(passClaims('## Summary\n\n`npm test` passed\n'), [], 'only the Tests run section');
   assert.equal(passClaims('`npm test` passed', { section: null }).length, 1, 'a whole report with no section');
   assert.deepEqual(passClaims('`npm test` at 056c3c2 passed, 1234567 of them', { section: null })[0].commits, ['056c3c2'], 'a count is no commit id');
   assert.equal(passClaims('`git status` is clean and `npm run lint` passed', { section: null }).length, 0, 'no test command');
+  assert.deepEqual(passClaims('`npm test` on Node 22 pass', { section: null })[0].counts, [], 'a number after a word is a name');
 });
 
 test('a claim needs a run of its command that passed, at the tree, with the count it states', () => {
   const claims = [{ clause: 'c', key: 'npm run check', counts: [4071] }];
-  const run = { command: 'npm run check', status: 'passed', pass: 4071, fail: 0, tree: 't1' };
+  const run = { command: 'npm run check', status: 'passed', pass: 4071, fail: 0, tree: 't1', trackedTree: 't3' };
   assert.deepEqual(unsupportedClaims(claims, [run], { tree: 't1' }), []);
+  assert.deepEqual(unsupportedClaims(claims, [run], { tree: 't3' }), [], 'the tracked files\' tree');
   assert.equal(unsupportedClaims(claims, [run], { tree: 't2' }).length, 1, 'another tree');
   assert.equal(unsupportedClaims(claims, [{ ...run, pass: 4031, fail: 40, status: 'failed' }], { tree: 't1' }).length, 1, 'a failed run');
+  assert.equal(unsupportedClaims(claims, [{ ...run, status: 'unjudged', pass: null, fail: null }], { tree: 't1' }).length, 1, 'an unjudged run');
   assert.equal(unsupportedClaims(claims, [{ ...run, pass: 12 }], { tree: 't1' }).length, 1, 'another count');
   assert.deepEqual(unsupportedClaims(claims, [{ ...run, pass: null }], { tree: 't1' }), [], 'a run that printed no count');
+  assert.equal(unsupportedClaims([{ ...claims[0], counts: [] }], [{ ...run, pass: 0 }], { tree: 't1' }).length, 1, 'a run of no tests');
   assert.equal(unsupportedClaims(claims, []).length, 1, 'no run at all');
 });
 
 test('the record appends, reads back, and keeps its newest rows past its cap', () => {
-  const { dir } = repo();
   const state = path.join(ROOT, 'record-state');
   mkdirSync(path.join(state, 'sessions/s1'), { recursive: true, mode: 0o700 });
   const folder = realpathSync(path.join(state, 'sessions/s1'));
@@ -154,12 +189,12 @@ test('the record appends, reads back, and keeps its newest rows past its cap', (
   const rows = readCheckRuns(folder);
   assert.equal(rows.at(-1).pass, 599);
   assert.ok(rows.length < 600 && rows.length > 100, `kept ${rows.length}`);
-  assert.ok(dir);
 });
 
 // The PostToolUse payload Claude Code sends for a Bash call.
-const postPayload = (command, { cwd, session, stdout = '', response } = {}) => ({
+const postPayload = (command, { cwd, session, stdout = '', response, agent } = {}) => ({
   session_id: session, transcript_path: path.join(ROOT, 'none.jsonl'), cwd, hook_event_name: 'PostToolUse', tool_name: 'Bash',
+  ...(agent ? { agent_id: agent, agent_type: 'aidrian:backend-developer' } : {}),
   tool_input: { command, description: 'x' },
   tool_response: response ?? { stdout, stderr: '', interrupted: false, isImage: false, noOutputExpected: false },
 });
@@ -169,13 +204,13 @@ const runScript = (script, input) => spawnSync(process.execPath, [path.join(SCRI
 function recorded(session) {
   const projects = path.join(STATE, 'aidrian/projects');
   let rows = [];
-  for (const id of (() => {
-    try {
-      return readdirSync(projects);
-    } catch {
-      return [];
-    }
-  })()) {
+  let ids = [];
+  try {
+    ids = readdirSync(projects);
+  } catch {
+    // No project has a state folder yet.
+  }
+  for (const id of ids) {
     try {
       rows = rows.concat(readFileSync(path.join(projects, id, 'sessions', session, 'checks.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)));
     } catch {
@@ -190,7 +225,8 @@ test('the PostToolUse hook records a finished run, and nothing for one stopped o
   const tree = git('rev-parse', 'HEAD^{tree}');
   const ran = runScript('hook-bash-post.mjs', postPayload('npm run check 2>&1', { cwd: dir, session: 'rec-1', stdout: 'ℹ pass 7\nℹ fail 0\n' }));
   assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', '']);
-  assert.deepEqual(recorded('rec-1').map(({ command, status, pass, fail, tree: at }) => ({ command, status, pass, fail, at })), [{ command: 'npm run check', status: 'passed', pass: 7, fail: 0, at: tree }]);
+  assert.deepEqual(recorded('rec-1').map(({ command, status, pass, fail, tree: at, trackedTree }) => ({ command, status, pass, fail, at, trackedTree })),
+    [{ command: 'npm run check', status: 'passed', pass: 7, fail: 0, at: tree, trackedTree: tree }]);
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } }));
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'rec-2', response: { stdout: 'ℹ pass 1', stderr: '', interrupted: true } }));
   assert.deepEqual(recorded('rec-2'), [], 'a run in the background or stopped records nothing');
@@ -198,41 +234,67 @@ test('the PostToolUse hook records a finished run, and nothing for one stopped o
 
 test('the shell adapters say whether a call finished and whether its exit status is known', () => {
   const claude = detectHost({ env: { CLAUDECODE: '1' } });
+  assert.equal(claude.id, 'claude-code');
   assert.deepEqual(claude.shellRun({ stdout: 'o', stderr: 'e', interrupted: false }), { output: 'o\ne', finished: true, exitZero: true });
   assert.equal(claude.shellRun({ stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b' }).finished, false);
-  const codex = detectHost({ env: { CODEX_THREAD_ID: 't' } });
-  if (codex.id === 'codex') assert.deepEqual(codex.shellRun('out'), { output: 'out', finished: true, exitZero: false });
+  const codex = HOSTS.find((host) => host.id === 'codex');
+  assert.equal(codex.id, 'codex');
+  assert.deepEqual(codex.shellRun('out'), { output: 'out', finished: true, exitZero: false });
 });
 
 test('the pull request body rule refuses a pass the session record does not support', () => {
   // The test's folders are all in the system temp folder, which the rule otherwise refuses a body file in.
-  const { dir, git } = repo({ config: { version: 1, github: { pullRequest: { sharedTempBodyFile: false } } } });
+  const { dir, git } = repo({ config: { ...CONFIG, github: { pullRequest: { sharedTempBodyFile: false } } } });
   const tree = git('rev-parse', 'HEAD^{tree}');
   const bodyFile = path.join(ROOT, `body-${made}.md`);
-  const command = `gh pr create --draft --title "fix: x" --body-file ${bodyFile}`;
-  const judge = (lines, runs) => {
+  const create = `gh pr create --draft --title "fix: x" --body-file ${bodyFile}`;
+  const judge = (lines, runs, { command = create, open = [] } = {}) => {
     writeFileSync(bodyFile, BODY(lines));
-    return prBody(command, { cwd: dir, env: {}, listOpenPrs: () => [], readRuns: () => runs });
+    return prBody(command, { cwd: dir, env: {}, listOpenPrs: () => open, readRuns: () => runs });
   };
-  const run = { command: 'npm run check', status: 'passed', pass: 4071, fail: 0, tree };
-  assert.match(judge(['- `npm run check`: 4071/4071 pass'], []), /^Blocked: the `## Tests run` section says `npm run check` passed, but no run of it/u);
-  assert.equal(judge(['- `npm run check`: 4071/4071 pass'], [run]), null);
-  assert.match(judge(['- `npm run check`: 4071/4071 pass'], [{ ...run, pass: 4031, fail: 40, status: 'failed' }]), /The record holds failed \(pass 4031, fail 40\)/u);
-  assert.match(judge(['- `npm run check`: 4071/4071 pass'], [{ ...run, tree: 'f'.repeat(40) }]), /the files of HEAD \(tree [0-9a-f]{12}\), or of the commit the line names/u);
+  const claim = '- `npm run check`: 4071/4071 pass';
+  const run = { command: 'npm run check', status: 'passed', pass: 4071, fail: 0, tree, trackedTree: tree };
+  assert.match(judge([claim], []), /^Blocked: the `## Tests run` section says `npm run check` passed, but no run of it/u);
+  assert.equal(judge([claim], [run]), null);
+  assert.match(judge([claim], [{ ...run, pass: 4031, fail: 40, status: 'failed' }]), /The record holds failed \(pass 4031, fail 40\)/u);
+  assert.match(judge([claim], [{ ...run, pass: null, fail: null, status: 'unjudged' }]), /The record holds unjudged at tree/u);
+  assert.match(judge([claim], [{ ...run, tree: null, trackedTree: null }]), /at a tree git could not read/u);
+  assert.match(judge([claim], [{ ...run, tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) }]), /the files of HEAD \(tree [0-9a-f]{12}\), or of the commit the line names/u);
+  assert.equal(judge(['- `npm run check`: not finished (stopped under load)', '- CI `Check (Node 22)`: pass'], []), null);
+  assert.equal(judge([claim], null), null, 'a session with no readable record is not judged');
+  assert.equal(judge([claim], [], { command: `${create} --head other-branch` }), null, 'a body for another branch is not judged');
+
+  // A run made beside an untracked scratch file, then a commit that leaves the file out.
+  writeFileSync(path.join(dir, 'README.md'), 'fixed\n');
+  writeFileSync(path.join(dir, 'scratch.txt'), 's\n');
+  const ran = workingTree(dir);
+  git('add', 'README.md');
+  git('commit', '-q', '-m', 'fix');
+  assert.equal(judge([claim], [{ ...run, ...ran }]), null, 'the tracked files\' tree matches the commit');
+
   const first = git('rev-parse', 'HEAD');
   writeFileSync(path.join(dir, 'later.txt'), 'l\n');
-  git('add', '-A');
+  git('add', 'later.txt');
   git('commit', '-q', '-m', 'later');
-  assert.match(judge(['- `npm run check`: 4071/4071 pass'], [run]) ?? '', /^Blocked/u, 'a run of an earlier commit is not one of HEAD');
-  assert.equal(judge([`- \`npm run check\` at ${first.slice(0, 7)}: 4071/4071 pass`], [run]), null, 'a line that names the commit its run was of');
-  assert.equal(judge(['- `npm run check`: not finished (stopped under load)', '- CI `Check (Node 22)`: pass'], []), null);
-  assert.equal(judge(['- `npm run check`: 4071/4071 pass'], null), null, 'a session with no readable record is not judged');
+  assert.match(judge([claim], [{ ...run, ...ran }]) ?? '', /^Blocked/u, 'a run of an earlier commit is not one of HEAD');
+  assert.equal(judge([`- \`npm run check\` at ${first.slice(0, 7)}: 4071/4071 pass`], [{ ...run, ...ran }]), null, 'a line that names the commit its run was of');
+
+  // An edit judges only the lines its pull request's body lacks, and only for this branch's pull request.
+  const edit = `gh pr edit 7 --body-file ${bodyFile}`;
+  const open = [{ number: 7, headRefName: 'feat/x', body: BODY([claim]) }, { number: 8, headRefName: 'other', body: '' }];
+  assert.equal(judge([claim, '- more text'], [], { command: edit, open }), null, 'a line the body already held');
+  assert.match(judge([claim, '- `npm test`: 3 passed'], [], { command: edit, open }) ?? '', /says `npm test` passed/u, 'a new line');
+  assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit 8 --body-file ${bodyFile}`, open }), null, 'another branch\'s pull request');
+  assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit 9 --body-file ${bodyFile}`, open }), null, 'a pull request the list cannot show');
+  assert.match(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit --body-file ${bodyFile}`, open: null }) ?? '', /^Blocked/u, 'this branch\'s pull request, no list');
 });
 
-test('the subagent stop hook sends back once a report that claims a pass no finished run shows', () => {
+test('the subagent stop hook sends back once a report that claims a pass its own finished run does not show', () => {
   const { dir } = repo();
+  const transcript = path.join(ROOT, `agent-${made}.jsonl`);
+  writeFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: new Date(Date.now() - 60_000).toISOString(), message: { content: 'go' } })}\n`);
   const stop = (session, message, active = false) => runScript('hook-subagent-stop.mjs', {
-    session_id: session, cwd: dir, agent_id: 'a1', agent_type: 'aidrian:backend-developer', last_assistant_message: message, stop_hook_active: active,
+    session_id: session, cwd: dir, agent_id: 'a1', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: active,
   });
   const claim = 'Done. `npm run check`: 4071/4071 pass.';
   const sent = stop('ev-1', claim);
@@ -241,7 +303,11 @@ test('the subagent stop hook sends back once a report that claims a pass no fini
   assert.equal(stop('ev-1', claim, true).status, 0, 'the second stop ends');
   assert.equal(stop('ev-1', 'Done. `npm run check`: not finished; I stopped it.').status, 0);
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'ev-2', stdout: 'ℹ pass 4071\nℹ fail 0\n' }));
-  assert.equal(stop('ev-2', claim).status, 0, 'a finished run supports it');
+  assert.equal(stop('ev-2', claim).status, 2, 'the parent\'s run is not the subagent\'s');
+  runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'ev-2', stdout: 'ℹ pass 4071\nℹ fail 0\n', agent: 'a1' }));
+  assert.equal(stop('ev-2', claim).status, 0, 'its own finished run supports it');
+  writeFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: new Date(Date.now() + 60_000).toISOString(), message: { content: 'go' } })}\n`);
+  assert.equal(stop('ev-2', claim).status, 2, 'a run from before this dispatch started is not this dispatch\'s');
 });
 
 test('push-first refuses a full suite while the branch holds an old commit its remote lacks', () => {
@@ -262,8 +328,9 @@ test('push-first refuses a full suite while the branch holds an old commit its r
   assert.equal(run('npm run check', { now: at - 28 * 60_000 }), null, 'a commit younger than the limit');
   assert.equal(run('npm test -- test/a.test.mjs', { now: at }), null, 'test files, no full suite');
   assert.equal(run('npm run check', { now: at, env: { AIDRIAN_ALLOW_FULL_SUITE: '1' } }), null);
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, testing: { pushFirstMinutes: 0 } }));
-  assert.equal(run('npm run check', { now: at }), null, '0 turns it off');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, testing: { fullSuite: ['npm run check'] } }));
+  assert.equal(run('npm run check', { now: at }), null, 'off by default');
+  assert.equal(run('npm test', { now: at }), null);
 });
 
 test('push-first and the record read no config for a line of only readers, and do for any other program', () => {
@@ -271,7 +338,7 @@ test('push-first and the record read no config for a line of only readers, and d
   assert.equal(mayRunTests('aidrian state', '/w'), false);
   assert.equal(mayRunTests('aidrian test changed', '/w'), true);
   assert.equal(mayRunTests('make ci', '/w'), true, 'a project may name any full suite');
-  const { dir, git } = repo({ config: { version: 1, testing: { fullSuite: ['make ci'] } } });
+  const { dir, git } = repo({ config: { version: 1, testing: { fullSuite: ['make ci'], pushFirstMinutes: 5 } } });
   git('push', '-q', 'origin', 'feat/x');
   writeFileSync(path.join(dir, 'fix.txt'), 'f\n');
   git('add', '-A');
@@ -291,22 +358,41 @@ test('aidrian test changed finds the changed test files and the ones that name a
       'package.json': JSON.stringify({ scripts: { test: 'node --test' } }),
       'lib/a.mjs': 'export const a = 1;\n',
       'lib/b.mjs': 'export const b = 1;\n',
+      'lib/widget.ts': 'export const w = 1;\n',
       'test/a.test.mjs': "import '../lib/a.mjs';\n",
       'test/b.test.mjs': "import '../lib/b.mjs';\n",
+      'test/widget.test.ts': "import { w } from '../lib/widget';\n",
+      'pkg/sum.go': 'package pkg\n',
+      'pkg/sum_test.go': 'package pkg\n',
+      'other/x_test.go': 'package other\n',
       'mod/package.json': '{}',
       'mod/tests/a.test.tsx': "import '../../lib/a.mjs';\n",
     },
   });
   git('push', '-q', 'origin', 'feat/x');
-  assert.equal(needleOf('lib/a.mjs'), 'a.mjs');
-  assert.equal(needleOf('lib/hosts/index.mjs'), 'hosts/index.mjs');
-  assert.equal(needleOf('docs/hooks.md'), 'docs/hooks.md');
-  assert.equal(needleOf('test/a.test.mjs'), null);
+  assert.deepEqual(needlesOf('lib/check-runs.mjs'), ['check-runs.mjs', 'check-runs']);
+  assert.deepEqual(needlesOf('lib/a.mjs'), ['a.mjs'], 'a stem too short to search');
+  assert.deepEqual(needlesOf('lib/hosts/index.mjs'), ['hosts/index.mjs', 'hosts/index']);
+  assert.deepEqual(needlesOf('docs/hooks.md'), ['docs/hooks.md']);
+  assert.deepEqual(needlesOf('test/a.test.mjs'), []);
   writeFileSync(path.join(dir, 'lib/a.mjs'), 'export const a = 2;\n');
   writeFileSync(path.join(dir, 'test/c.test.mjs'), 'new\n');
   assert.deepEqual(touchedTests(dir, ['lib/a.mjs', 'test/c.test.mjs']), ['test/a.test.mjs', 'test/c.test.mjs'], 'a nested package\'s tests are its own runner\'s');
+  assert.deepEqual(touchedTests(dir, ['lib/widget.ts']), ['test/widget.test.ts'], 'an import with no extension');
+  assert.deepEqual(touchedTests(dir, ['pkg/sum.go']), ['pkg/sum_test.go'], 'Go tests beside the changed file');
   assert.equal(testCommand(dir, {}), 'npm test --');
   assert.equal(testCommand(dir, { changedCommand: 'node --test' }), 'node --test');
   const listed = spawnSync(process.execPath, [CLI, 'test', 'changed', '--list'], { cwd: dir, env: ENV, encoding: 'utf8' });
   assert.deepEqual([listed.status, listed.stdout], [0, 'test/a.test.mjs\ntest/c.test.mjs\n'], listed.stderr);
+});
+
+test('aidrian test changed with nothing to run says no test passed, and its row supports no claim', () => {
+  const { dir, git } = repo({ files: { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) } });
+  git('push', '-q', 'origin', 'feat/x');
+  const ran = spawnSync(process.execPath, [CLI, 'test', 'changed'], { cwd: dir, env: ENV, encoding: 'utf8' });
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.match(ran.stdout, /no test file touches[^\n]*\nℹ tests 0\nℹ pass 0\nℹ fail 0\n$/u);
+  const [row] = checkRows({ command: 'aidrian test changed', cwd: dir, output: ran.stdout, exitZero: true, tree: () => ({ tree: 't', trackedTree: 't' }) });
+  assert.deepEqual([row.status, row.pass], ['passed', 0]);
+  assert.equal(unsupportedClaims(passClaims('`aidrian test changed` passed', { section: null }), [row], { tree: 't' }).length, 1);
 });

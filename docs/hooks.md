@@ -177,7 +177,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Ready hold, in a project that runs product feedback | Marking a draft ready while its [product feedback](config.md#product-feedback) is owed ([Ready hold](#ready-hold)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in their own shell before the session |
 | Ready checks | Marking a draft ready while a check on its head has not finished, or before a check its last edit re-queues has shown, and editing a title or body in the same call as a ready ([Ready checks](#ready-checks)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, the ready hold's, set the same way |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers the guard's question, "Merge anyway" or, at the round cap, "Merge with the findings filed", or merges in their own shell; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
-| Push first | A full test suite while the branch holds a commit older than `testing.pushFirstMinutes` that its remote copy lacks ([Push first](#push-first)) | `AIDRIAN_ALLOW_FULL_SUITE=1` |
+| Push first, when turned on | A full test suite while the branch holds a commit older than `testing.pushFirstMinutes` that its remote copy lacks ([Push first](#push-first)) | `AIDRIAN_ALLOW_FULL_SUITE=1` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
@@ -1309,28 +1309,52 @@ A report once said a full suite passed, 4071 of 4071, after the runs behind it w
 result was 40 failures. So a result a report states must be one a tool returned, and the plugin keeps the record that shows it.
 
 After each Bash call, the PostToolUse hook appends a row to the session folder's `checks.jsonl` for each test run on the
-command line's top level that the call finished (`lib/check-runs.mjs`): its command, the git tree of the checkout's files
-as they were, uncommitted and untracked ones included, its pass and fail counts, and `passed` or `failed`.
-A test run is a command of config.json [`testing.fullSuite`](config.md#testing) or `testing.changedCommand`, `npm test` or
-`npm run check` and their pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `make test`,
-or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with redirects dropped.
+command line's top level that the call finished (`lib/check-runs.mjs`): its command, the agent whose call ran it
+(`agentId`), two git trees of the checkout's files as they are when the run ends, one with the untracked files git does
+not ignore and one with the tracked files alone, each null when git cannot read it, its pass and fail counts, and
+`passed`, `failed`, or `unjudged`.
+A test run is a command of config.json [`testing.fullSuite`](config.md#testing) or `testing.changedCommand`, `npm test`
+and its pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `mix test`, rspec,
+`make test`, `make check`, or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with
+redirects dropped. A project's own script, such as `npm run check`, counts once `testing.fullSuite` names it.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
-Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when its
-status is the line's own: the last command, or joined to the end by `&&`. A run whose status a pipe, `||`, or `;` hides,
-and every run on Codex, which runs the hook for a failed call too and sends no exit status, is judged by its counts alone:
-passed only with a pass count above 0 and a fail count of 0. The counts are node's runner summary (`ℹ pass 12`, `# fail 0`),
-else the "12 passed, 1 failed" of vitest, jest, and pytest. The record keeps its newest rows within 64 KB.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
+
+Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when
+the line's status is the run's: no separator but `&&` before or after it. After `;` or `||` the run may not have run,
+or another command's status is the line's. Such a run, a run behind a pipe, and every run on Codex, which runs the hook
+for a failed call too and sends no exit status, is judged by its counts alone: passed with a pass count above 0 and a
+fail count of 0, failed with a fail count above 0, and `unjudged` when it printed no count. A counts-only verdict reads
+the runner's summary, not the command's exit, so a script that runs the tests and then fails a later step reads as
+passed there: an accepted limit until a host sends an exit status.
+The counts are node's runner summary (`ℹ pass 12`, `# fail 0`), summed over its summaries; else one summary line, never
+a sum across lines: the last `Tests` line of vitest or jest, else the last line with "N passed" or "N failed", as
+pytest's, else rspec's and mix's "12 examples, 0 failures". A summary that names passes and no failure counts 0 failures.
+The record keeps its newest rows within 64 KB.
 
 Two checks read it:
 
-- The [pull request body rule](#bash-rules) reads each `## Tests run` clause, split at `;` and sentence ends, outside
-  fenced code. One that names a test command, in backticks or, for a `testing.fullSuite` command, as plain words, and
-  says it passed (a pass word, a check mark, or "N/N"), needs a row of that command that passed at the tree of HEAD in
-  the folder gh runs in, or of the commit the clause names, such as "at 056c3c2", with each pass count the clause states. A clause that names a failure, "not finished", or CI is
-  not a pass claim: a CI result is quoted from the checks the forge shows, such as `gh pr checks` on GitHub. A session whose record cannot be read is not judged.
-- The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, and sends it
-  back once, on the first stop of its turn, to quote the output a finished run returned or to call the run "not finished".
+- The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item or
+  paragraph at a time with its wrapped lines joined, split at `;` and sentence ends. A clause that names a test command,
+  in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
+  "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
+  or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. A number after a
+  word, as in "Node 22", is no count. Either of the row's trees may match, so a run made beside an untracked scratch file
+  still proves the commit that leaves it out.
+  A clause that names a failure, "not finished", or CI is not a pass claim: a CI result is quoted from the checks the
+  forge shows, such as `gh pr checks` on GitHub. A session whose record cannot be read is not judged. The record is this
+  checkout's, so a body for another branch is not judged: a `--head` that names another branch, or an edit of a pull
+  request whose head is another branch or that the open list cannot show. An edit judges only the clauses its pull
+  request's current body does not already hold.
+- The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
+  own rows since its run started: a run of the session or of another agent is that one's to report. It sends the
+  subagent back once, on the first stop of its turn, to quote the output a finished run returned or to call the run "not finished".
+
+`aidrian test changed` with nothing to run prints a summary of 0 tests, so its row shows no test passed and supports no claim.
+
+An accepted residual: the record is a file the session's own user may write, so an agent that appends a row by hand
+forges evidence the checks accept. The checks stop the mistake seen live, a report written from runs that never ended,
+not a session set on lying; a forged row is itself a fabrication, and the rows name the agent and time of each run.
 
 Where it is verified: on Claude Code, `test/check-runs.test.mjs` runs the hooks on the Bash payload shape of the
 [session ledger](#session-ledger)'s recorded fixture; no live hook has run it. On Codex, the record reads the shell
@@ -1340,10 +1364,11 @@ output the source sends, as the session ledger does, and no hook has run there.
 
 A subagent fixing review findings once held two small fixes for two hours: it ran the whole suite after each change on
 a machine three other suites loaded, and timing tests failed under that load, while CI was green on the previous head
-the whole time. So a full suite waits for the push. A command of config.json [`testing.fullSuite`](config.md#testing),
-as written with no more arguments, is refused while the branch it runs on has a remote copy that lacks a commit older
-than `testing.pushFirstMinutes` (default 5; 0 turns it off). The remote is the branch's push remote, else
-`remote.pushDefault`, else its upstream's remote, else `origin`; a branch with no remote copy is not judged.
+the whole time. So a project can make a full suite wait for the push. With config.json `testing.pushFirstMinutes` above
+0 (0, the default, turns the rule off), a command of [`testing.fullSuite`](config.md#testing), as written with no more
+arguments, is refused while the branch it runs on has a remote copy that lacks a commit older than that many minutes.
+The remote is the branch's push remote, else `remote.pushDefault`, else its upstream's remote, else `origin`; a branch
+with no remote copy is not judged.
 The deny says to push, let CI run the suite, run a reviewer's re-check on the pushed head beside CI, and run locally
 only the test files the change touches:
 
@@ -1354,12 +1379,12 @@ aidrian test changed --base origin/main
 ```
 
 `aidrian test changed` reads the change against `--base`, else the branch's remote copy, else its merge base with the
-default branch on `origin`, uncommitted and untracked files included. A test file is a changed one, or one that names a
-changed file: a code file by its name, `index.*` by its folder and name, any other file by its path. A test file in a
-nested package, a folder with its own package.json, is left out for that package's runner. It runs
-`testing.changedCommand` with the files after it, else `npm test --` when package.json has a test script, and exits
-with that command's status. A project whose CI cannot run the suite sets `testing.pushFirstMinutes` to 0 and runs the
-suite once before marking ready.
+default branch on `origin`, uncommitted and untracked files included. A test file is a changed one, a Go `_test.go`
+beside a changed `.go` file, or one that names a changed file: a code file by its name and by its name without the
+extension, `index.*` by its folder and name, any other file by its path. A test file in a nested package, a folder with
+its own package.json, is left out for that package's runner. It runs `testing.changedCommand` with the files after it,
+else `npm test --` when package.json has a test script, and exits with that command's status. A project whose CI cannot
+run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides
 

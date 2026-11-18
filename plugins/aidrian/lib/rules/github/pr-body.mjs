@@ -410,7 +410,7 @@ function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, 
     return deny(`the body is one this rule cannot read: ${cause}, so the sections config.json \`github.requiredSections\` asks for go unchecked. ` +
       `${fix ? `${fix} ` : ''}${steps()}`);
   }
-  const reason = body === null ? null : judgeBody(body, config) ?? judgeEvidence(body, config, project, folderKnown ? cwd : projectFolder, readRuns)
+  const reason = body === null ? null : judgeBody(body, config) ?? judgeEvidence(body, call, { config, project, folder: folderKnown ? cwd : projectFolder, readRuns, listOpenPrs })
     ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
 }
@@ -418,12 +418,19 @@ function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, 
 // The `## Tests run` lines that say a test command passed, each needing a run of it on the session's check-run record
 // that passed at the tree of HEAD in `folder`, or of the commit the line names ("at 056c3c2"), with the counts the line
 // states (lib/check-runs.mjs). `readRuns(project, config)` gives the record's rows, or null when this session has none
-// it can read: then nothing is judged, nor is a line whose tree git cannot give.
-function judgeEvidence(body, config, project, folder, readRuns) {
-  const claims = passClaims(body, { testing: config.testing });
+// it can read: then nothing is judged, nor is a line whose tree git cannot give. The record is of this checkout, so a
+// body for another branch is not judged (`ownBranch`), and an edit judges only the lines its pull request's body lacks.
+function judgeEvidence(body, call, { config, project, folder, readRuns, listOpenPrs }) {
+  let claims = passClaims(body, { testing: config.testing });
   if (!claims.length) return null;
   const runs = readRuns(project, config);
   if (runs === null) return null;
+  const own = ownBranch(call, folder, listOpenPrs);
+  if (!own) return null;
+  if (own.body !== null) {
+    const old = new Set(passClaims(own.body, { testing: config.testing }).map(({ clause, key }) => `${key}\n${clause}`));
+    claims = claims.filter(({ clause, key }) => !old.has(`${key}\n${clause}`));
+  }
   const trees = new Map();
   const treeAt = (commit) => {
     if (!trees.has(commit)) {
@@ -440,6 +447,35 @@ function judgeEvidence(body, config, project, folder, readRuns) {
   return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
     `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
     `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.`);
+}
+
+// Whether the body is for the branch checked out in `folder`, as { body }: the pull request's current body on an edit
+// the open list holds, else null. Null when it is for another branch, or an edit of a pull request the list cannot
+// show: a `--head` that names another branch, or a pull request whose head is another branch.
+function ownBranch(call, folder, listOpenPrs) {
+  const read = runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], folder);
+  const branch = read.status === 0 ? read.stdout.trim() : null;
+  if (!branch) return null;
+  if (call.subcommand === 'create') {
+    if (call.head?.dynamic) return null;
+    const head = call.head?.text?.replace(/^[^:]+:/u, '') ?? branch;
+    return head === branch ? { body: null } : null;
+  }
+  const text = call.target?.dynamic ? null : call.target?.text ?? '';
+  if (text === null) return null;
+  const number = /^#?\d+$/u.test(text) ? Number(text.replace('#', '')) : Number(/\/pull\/(\d+)(?:[/?#]|$)/u.exec(text)?.[1] ?? Number.NaN);
+  let open = null;
+  try {
+    open = listOpenPrs(call.repo?.text ?? null);
+  } catch {
+    open = null;
+  }
+  const pull = Array.isArray(open)
+    ? open.find((pr) => (text === '' ? pr?.headRefName === branch : pr?.number === number))
+    : undefined;
+  if (pull) return pull.headRefName === branch ? { body: typeof pull.body === 'string' ? pull.body : null } : null;
+  // No list, or no such open pull request: an edit of this branch's own pull request is still this branch's.
+  return text === '' || text === branch ? { body: null } : null;
 }
 
 // The check-run rows of the session `input` names, through its session folder, or null when it has none.
@@ -638,12 +674,17 @@ export const listForge = (cwd, options = {}) => forgeFor(cwd, { ...options, time
 
 // The open pull requests' bodies through the forge facade, or null when gh cannot answer in time.
 export function openPrBodies(cwd, forge = listForge(cwd)) {
+  // Once a repository per hook: the evidence check and the duplicate check may both ask.
+  const listed = new Map();
   return (repo) => {
-    try {
-      return forge.openChanges(200, 'number,body', { repo });
-    } catch {
-      return null;
+    if (!listed.has(repo)) {
+      try {
+        listed.set(repo, forge.openChanges(200, 'number,body,headRefName', { repo }));
+      } catch {
+        listed.set(repo, null);
+      }
     }
+    return listed.get(repo);
   };
 }
 

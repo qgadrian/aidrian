@@ -22,8 +22,9 @@ await runHook(async (input) => {
   if (typeof command !== 'string') return;
   if (typeof input.session_id !== 'string' || typeof input.cwd !== 'string' || !path.isAbsolute(input.cwd)) return;
   const { mayRunTests } = await import('../lib/check-runs.mjs');
-  if (!MAY_RECORD.test(command) && !mayRunTests(command, input.cwd)) return;
-  if (mayRunTests(command, input.cwd)) {
+  const mayTest = mayRunTests(command, input.cwd);
+  if (!MAY_RECORD.test(command) && !mayTest) return;
+  if (mayTest) {
     try {
       await recordCheckRuns(input, command);
     } catch {

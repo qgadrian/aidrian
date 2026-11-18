@@ -29,6 +29,7 @@ import { deny, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
 import { sessionFolder } from '../lib/session-folder.mjs';
+import { readText } from '../lib/transcript.mjs';
 
 // What the subagent is told when a background task it started still runs, on send-back `round` of CHILD_SEND_BACKS.
 const childrenReason = (children, round) =>
@@ -52,8 +53,24 @@ const handoffReason = (files) =>
   'An agent with neither a file tool nor a shell ends its turn with the handoff as its last message, and this hook writes it there; ' +
   'if the path belongs to another agent, say so.';
 
-// The claims of a passing test run in the subagent's final report that its session's check-run record does not support,
-// checked only on the first stop of a turn: [] on any later stop, a report with none, or a record it cannot read.
+// When the subagent's run started, in milliseconds: its transcript's first timestamp, or null when it cannot be read.
+function startedAt(input) {
+  const text = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
+  for (const line of (text ?? '').split('\n', 20)) {
+    try {
+      const at = Date.parse(JSON.parse(line)?.timestamp);
+      if (Number.isFinite(at)) return at;
+    } catch {
+      // Not a JSON line: read the next.
+    }
+  }
+  return null;
+}
+
+// The claims of a passing test run in the subagent's final report that its own rows on the session's check-run record do
+// not support: rows its own calls wrote (`agentId`), since it started. Another agent's run, the parent's included, is
+// that agent's to report. Checked only on the first stop of a turn: [] on any later stop, a report with none, or a
+// record it cannot read.
 function unsupportedReport(input, project, config) {
   if (input.stop_hook_active !== false) return [];
   const report = finalReport(input);
@@ -61,8 +78,11 @@ function unsupportedReport(input, project, config) {
   const claims = passClaims(report, { section: null, testing: config.testing });
   if (!claims.length) return [];
   const folder = sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) });
-  const runs = folder ? readCheckRuns(folder) : null;
-  return runs === null ? [] : unsupportedClaims(claims, runs).map((claim) => ({ ...claim, runs }));
+  const all = folder ? readCheckRuns(folder) : null;
+  if (all === null) return [];
+  const since = startedAt(input);
+  const runs = all.filter((run) => run.agentId === input.agent_id && (since === null || !(Date.parse(run.at) < since)));
+  return unsupportedClaims(claims, runs).map((claim) => ({ ...claim, runs }));
 }
 
 // Whether the background check sends the subagent back on this stop, given `made` send-backs so far: the count is stored

@@ -57,7 +57,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   },
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<Markdown, LICENSE, NOTICE, raster images, fonts>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
   "docs": { "wrapLimit": 155 },
-  "testing": { "fullSuite": ["npm test", "npm run test", "npm run check"], "changedCommand": null, "pushFirstMinutes": 5 },
+  "testing": { "fullSuite": ["npm test", "npm run test"], "changedCommand": null, "pushFirstMinutes": 0 },
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576, "untaggedDocBytes": null, "enforce": "warn", "baseline": {} }, "defaults": { "codeStyle": true } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
@@ -181,7 +181,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `testing.fullSuite` | The commands that run the whole test suite, as written: [Testing](#testing). |
 | `testing.changedCommand` | The command `aidrian test changed` gives the touched test files; `null`, the default, is `npm test --` when package.json has a test script: [Testing](#testing). |
-| `testing.pushFirstMinutes` | How old a commit the branch's remote copy lacks may be before a full suite is refused; `0` turns the refusal off: [Testing](#testing). |
+| `testing.pushFirstMinutes` | How old a commit the branch's remote copy lacks may be before a full suite is refused; `0`, the default, turns the refusal off: [Testing](#testing). |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.untaggedDocBytes` | The bytes one untagged knowledge doc may have; `null`, the default, sets no cap: [Knowledge budgets](#knowledge-budgets). |
@@ -1706,10 +1706,11 @@ This depends on the session-end hook: on a host with no SessionEnd, and in a ses
 ## Testing
 
 CI runs the full suite on a pushed head, so a session pushes a fix and runs locally only the test files it touches.
-The [push-first rule](hooks.md#push-first) refuses a command of `testing.fullSuite` while the branch's remote copy lacks
-a commit older than `testing.pushFirstMinutes`, and names `aidrian test changed`, which runs `testing.changedCommand`
-with those files. The [check-run record](hooks.md#check-runs) reads both lists as test runs. A project whose CI cannot
-run its suite sets `pushFirstMinutes` to 0, and runs the suite once before marking ready.
+With `testing.pushFirstMinutes` above 0, the [push-first rule](hooks.md#push-first) refuses a command of
+`testing.fullSuite` while the branch's remote copy lacks a commit older than that many minutes, and names
+`aidrian test changed`, which runs `testing.changedCommand` with those files. The default, 0, leaves it off: a project
+whose CI runs its suite opts in. The [check-run record](hooks.md#check-runs) reads both lists as test runs, so a project's
+own suite script, such as `npm run check`, belongs in `fullSuite`.
 An older plugin rejects the `testing` keys as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships them.
 
 ```json

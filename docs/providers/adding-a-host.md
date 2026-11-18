@@ -175,7 +175,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   ledger holds them, newest first, it answers, for each of the first 25, the forge-neutral row of its change request, or
   null when the ref fails `changeRef`, resolves to none, or the forge gives no answer for it. A number is its own change
   request; a branch is, among those whose head is that branch of the ref's repository, in that repository or the one
-  it was forked from, the one the forge's signed-in user wrote first, as the change request itself says (GitHub's
+  it was forked from, with the ref's `rank` `open` (a `touched` row's), the open one first, then the newest, as the
+  forge's own command looks a branch up, and otherwise the one the forge's signed-in user wrote first, as the change request itself says (GitHub's
   `viewerDidAuthor`), then one by a person who belongs to the repository (GitHub's `authorAssociation` of `OWNER`,
   `MEMBER`, or `COLLABORATOR`; any other is an outsider's), then an open one, then the newest, never one from a fork
   with a branch of the same name. The read names no field of the signed-in user at the query's root, which a token
@@ -193,7 +194,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   A forge's reader of its own command for the ledger, such as GitHub's `gh pr` calls, `GH_REPO`, and the pull request
   URL in gh's output, sits under `lib/rules/<forge id>/`, as `lib/rules/github/session-calls.mjs` does. It runs nothing,
   exports `FORGE`, its adapter's `id`, `readCall`, `createdChanges`, and `variables`, the environment its command reads
-  its repository and host from, and the hook hands it to the shared `lib/session-prs.mjs` in a table keyed by that id.
+  its repository and host from, and may export `checkedOutChange(merge)`, the change request a branch's
+  `branch.<name>.merge` names (GitHub's `refs/pull/<n>/head`), and `headRepository(repo, owner)`, the repository an
+  `owner:branch` target's head is in, and the hook hands it to the shared `lib/session-prs.mjs` in a table keyed by that id.
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, `pull`, `diff`, its diff as text,
   where `mergedChanges` and `openChanges` take a `repo` option, the repository the check below names,
   `nodeChange`, the pull request a GraphQL node id names, `changeEdits(repo, n, { host })`, when its body was last edited

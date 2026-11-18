@@ -94,10 +94,10 @@ test('sessionRefs dedupes by repository and number, else by repository and branc
   for (const each of written) assert.equal(appendLedger(folder, [each]), true, JSON.stringify(each));
   const { refs, unsupported } = sessionRefs(readLedger(folder), forge);
   assert.deepEqual(refs, [
-    { host: 'github.com', path: 'acme/notes', number: null, branch: 'feat/x' },
-    { host: 'github.com', path: 'acme/notes', number: 7, branch: null },
-    { host: 'github.com', path: 'acme/notes', number: null, branch: 'feat/y' },
-  ], 'two touched rows from two folders and a pushed row of one branch give one ref; the ref acted on last comes first');
+    { host: 'github.com', path: 'acme/notes', number: null, branch: 'feat/x', rank: 'own' },
+    { host: 'github.com', path: 'acme/notes', number: 7, branch: null, rank: null },
+    { host: 'github.com', path: 'acme/notes', number: null, branch: 'feat/y', rank: 'own' },
+  ], 'two touched rows from two folders and a pushed row of one branch give one ref, ranked as its newest row; the ref acted on last comes first');
   assert.deepEqual(unsupported, []);
 });
 
@@ -171,6 +171,20 @@ test('resolveChanges sends the refs in one batched read, and rows of one pull re
   assert.deepEqual(rows.map((each) => [each.repo, each.number]), [['acme/notes', 7]], 'a pushed and a created row of one pull request: one entry');
   assert.ok(rows.every(isChangeRow));
   assert.deepEqual(resolveChanges(createGithubForge({ cwd: ROOT, run: () => '{"data":{"r0":{"pullRequests":{"nodes":[]},"parent":null}}}' }), refs.slice(2)), [], 'a branch with none: no row');
+});
+
+test('a reused branch resolves as its newest row`s call did: a touched one to the open pull request, as gh looks it up; a pushed one to the user`s own', () => {
+  const node = (number, state, createdAt, mine) => ({
+    number, title: `t${number}`, url: `https://github.com/acme/notes/pull/${number}`, isDraft: false, state, mergeable: 'MERGEABLE', reviewDecision: null,
+    createdAt, headRefName: 'feat/x', viewerDidAuthor: mine, authorAssociation: 'MEMBER', headRepository: { name: 'notes', owner: { login: 'acme' } },
+    repository: { name: 'notes', owner: { login: 'acme' } }, reviewThreads: { nodes: [] }, commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
+  });
+  // A teammate's open pull request, and the user's newer one of the same branch, merged.
+  const answer = JSON.stringify({ data: { r0: { pullRequests: { nodes: [node(9, 'MERGED', '2026-11-17T00:00:00Z', true), node(4, 'OPEN', '2026-11-01T00:00:00Z', false)] }, parent: null } } });
+  const adapter = createGithubForge({ cwd: ROOT, run: () => answer });
+  const resolved = (rows) => resolveChanges(adapter, sessionRefs(rows, forge).refs).map((each) => each.number);
+  assert.deepEqual(resolved([row({ kind: 'pushed', branch: 'feat/x' }, 1), row({ kind: 'touched', branch: 'feat/x' }, 2)]), [4], 'gh pr view on the branch: the open one');
+  assert.deepEqual(resolved([row({ kind: 'touched', branch: 'feat/x' }, 1), row({ kind: 'pushed', branch: 'feat/x' }, 2)]), [9], 'a push: the user`s own');
 });
 
 test('the summary counts pull requests: failed, then pending, then passed or skipped; one with no check counts in none', () => {

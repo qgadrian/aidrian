@@ -133,14 +133,22 @@ function pushedRows(push, folder, folders) {
 }
 
 // A touched call's row: a link names its repository; anything else takes the repository `-R` or GH_REPO names, else the
-// one repository on a declared host the folder's remotes name, and none when they name several.
-function touchedRows(call, folder, folders, hosts) {
+// one repository on a declared host the folder's remotes name, and none when they name several. An owner on a branch
+// target puts its head in that owner's repository (the reader's headRepository). No target is the folder's current
+// branch, or the change request the reader's checkedOutChange reads from its `branch.<name>.merge`.
+function touchedRows(call, folder, folders, hosts, reader) {
   const { target } = call;
   const declared = declaredRepos(folders, folder, hosts);
-  const repo = target?.repo ?? call.repo ?? (declared.length === 1 ? declared[0] : null);
-  const branch = target === null ? folders.branch(folder) : target.branch ?? null;
-  if (!repo || (target === null && !branch)) return [];
-  return [{ kind: 'touched', repo, number: target?.number ?? null, branch, cwd: folder }];
+  const base = target?.repo ?? call.repo ?? (declared.length === 1 ? declared[0] : null);
+  if (!base || (target?.owner && !reader.headRepository)) return [];
+  if (target !== null) {
+    const repo = target.owner ? reader.headRepository(base, target.owner) : base;
+    return [{ kind: 'touched', repo, number: target.number ?? null, branch: target.branch ?? null, cwd: folder }];
+  }
+  const branch = folders.branch(folder);
+  if (!branch) return [];
+  const number = reader.checkedOutChange?.(folders.config(folder).branches.get(branch)?.merge) ?? null;
+  return [{ kind: 'touched', repo: base, number, branch: number === null ? branch : null, cwd: folder }];
 }
 
 // A create's rows: each link its output holds whose repository is the one `-R` or GH_REPO names, else one of the
@@ -187,7 +195,7 @@ function entryRows(entry, folder, context) {
   if (changers.some((other) => other !== entry)) return [];
   const call = reader.readCall(entry.invocation, env);
   if (call?.kind === 'created') return createdRows(call, folder, folders, forge.hosts, links);
-  if (call?.kind === 'touched') return touchedRows(call, folder, folders, forge.hosts);
+  if (call?.kind === 'touched') return touchedRows(call, folder, folders, forge.hosts, reader);
   return [];
 }
 
@@ -321,8 +329,12 @@ const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, 
 // `forge` declares and whose fields pass its changeRef and the cwd check, or on another host and passing
 // isUnsupportedRow; deduped by repository and number, else by repository and branch, touched rows as well as pushed;
 // ordered by each ref's latest row, newest first, since one ref has rows of several kinds and folders; MAX_REFS at most.
-// { refs, unsupported }: the refs `forge` reads, each `{ host, path, number, branch }`, and the rest as rows of the
+// A branch's `rank` comes from the ref's newest row: 'open' for a touched row, whose `gh pr` call looked the branch up
+// in the forge's own order, an open change request first, then the newest; 'own' for a created or pushed row, the
+// forge user's own first (changesState). A number's is null.
+// { refs, unsupported }: the refs `forge` reads, each `{ host, path, number, branch, rank }`, and the rest as rows of the
 // change request's shape with `unsupported: true`, no forge, and null for all the forge would answer: they start no call.
+const RANKS = Object.freeze({ created: 'own', pushed: 'own', touched: 'open' });
 export function sessionRefs(rows, forge) {
   const found = new Map();
   rows.forEach((row, index) => {
@@ -332,12 +344,13 @@ export function sessionRefs(rows, forge) {
     const declared = forge.hosts.includes(host);
     if (declared ? forge.changeRef({ host, path: repoPath, number, branch }) === null || !validCwd(row.cwd) : !isUnsupportedRow(row)) return;
     const key = JSON.stringify(number === null ? [host, repoPath, null, branch] : [host, repoPath, number, null]);
-    const ref = found.get(key) ?? { host, path: repoPath, number, branch: number === null ? branch : null, declared, at, index };
-    found.set(key, { ...ref, at: Math.max(ref.at, at), index });
+    const rank = number === null ? RANKS[row.kind] : null;
+    const ref = found.get(key) ?? { host, path: repoPath, number, branch: number === null ? branch : null, rank, declared, at, index };
+    found.set(key, { ...ref, at: Math.max(ref.at, at), index, rank: at >= ref.at ? rank : ref.rank });
   });
   const newest = [...found.values()].sort((a, b) => b.at - a.at || b.index - a.index).slice(0, MAX_REFS);
   return {
-    refs: newest.filter((ref) => ref.declared).map(({ host, path: repoPath, number, branch }) => ({ host, path: repoPath, number, branch })),
+    refs: newest.filter((ref) => ref.declared).map(({ host, path: repoPath, number, branch, rank }) => ({ host, path: repoPath, number, branch, rank })),
     unsupported: newest.filter((ref) => !ref.declared).map(({ host, path: repo, number }) => ({ host, repo, number, ...UNKNOWN, unsupported: true })),
   };
 }

@@ -542,8 +542,9 @@ whose fields pass the adapter's `changeRef` and whose folder is absolute, and de
 else by repository and branch, `touched` rows as well as `pushed`. It orders them by each one's latest row, newest
 first, and keeps 25 refs at most, each a number or a branch, counted before branches resolve: a branch with no pull
 request uses one, and so does a row of an unsupported host. The adapter reads them all in one call (`changesState`),
-started in the session's folder, never in one a row names: a number is its own pull request; a branch is, among the
-pull requests whose head is that branch of the row's repository, in that repository or its parent, the one the
+started in the session's folder, never in one a row names: a number is its own pull request; a branch whose newest row
+is `touched` is, as the `gh pr` call it records looked it up, an open pull request first, then the newest; any other
+branch is, among the pull requests whose head is that branch of the row's repository, in that repository or its parent, the one the
 signed-in user wrote first (`viewerDidAuthor`), then one by an owner, member, or collaborator of the repository
 (`authorAssociation`), then an open one, then the newest, so a fork's pull request from a branch of the same name never
 answers for it, another author's newer one from the same branch never replaces the user's, an outsider's newer open one

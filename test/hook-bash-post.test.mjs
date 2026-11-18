@@ -498,6 +498,16 @@ test('a push reads pushRemote from the folder`s real git config', () => {
   assert.deepEqual(rows('git push', { cwd: dir }), []);
 });
 
+test('a gh pr call with no target records the pull request gh checked out, and an owner:branch target its head`s fork', () => {
+  const read = fakeGit(ORIGIN, 'feat', [], ['branch.feat.merge refs/pull/42/head']).read;
+  assert.deepEqual(unit('gh pr view', '/w', read), [touched('acme/widgets', { number: 42 }, '/w')], 'branch.feat.merge refs/pull/42/head, as gh pr checkout sets it');
+  assert.deepEqual(unit('gh pr view', '/w', fakeGit(ORIGIN, 'feat', [], ['branch.feat.merge refs/heads/feat']).read), [touched('acme/widgets', { branch: 'feat' }, '/w')]);
+  assert.deepEqual(unit('gh pr view feat', '/w', read), [touched('acme/widgets', { branch: 'feat' }, '/w')], 'a branch named: gh looks the branch up');
+  assert.deepEqual(unit('gh pr checks me:fix/x', '/w', fakeGit(ORIGIN).read), [touched('me/widgets', { branch: 'fix/x' }, '/w')], 'owner:branch');
+  assert.deepEqual(unit('gh pr checks me:fix/x -R acme/other', '/w', fakeGit(ORIGIN).read), [touched('me/other', { branch: 'fix/x' }, '/w')]);
+  for (const word of ['bad--owner:fix', 'me:/fix', 'me:a:b', 'git@github.com:acme/widgets']) assert.deepEqual(unit(`gh pr view '${word}'`, '/w', fakeGit(ORIGIN).read), [], word);
+});
+
 test('a --repo value the shell fills in records nothing, even where a remote has that name', () => {
   const { read } = fakeGit({ ...ORIGIN, $R: 'https://github.com/acme/dollar.git' });
   assert.deepEqual(unit('git push --repo "$R"', '/w', read), []);

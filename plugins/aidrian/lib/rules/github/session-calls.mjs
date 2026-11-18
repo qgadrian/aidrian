@@ -4,7 +4,7 @@
 // `hosts` and `changeRef`. A word the shell fills in or expands, where the call's repository or pull request would be,
 // makes the call record nothing, and so does any word the shell fills in unquoted.
 
-import { repoIdentity } from '../../forges/index.mjs';
+import { isLogin, repoIdentity } from '../../forges/index.mjs';
 import { parseTarget } from '../../pr-resolve.mjs';
 import { unreadable } from '../product-feedback-answer.mjs';
 import { commandPath, readWords } from './review-request.mjs';
@@ -31,8 +31,11 @@ const VERBS = new Map(Object.entries(VALUES).map(([verb, values]) => [verb, new 
 // A pull request link as gh prints it, the whole line: https://<host>/<owner>/<name>/pull/<number>. Linear: no part can
 // match another's characters.
 const PULL_URL = /^https:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/pull\/\d+$/u;
-// A word gh may read as a URL or as `<owner>:<branch>`, which names no branch of this repository.
+// A word gh may read as a URL, or as `<owner>:<branch>`, the branch of that owner's fork, which targetOf reads apart.
 const SCHEME_OR_OWNER = /^[^/]*:/u;
+const OWNER_BRANCH = /^([^:/]+):([^:/][^:]*)$/u;
+// The ref git keeps for the pull request `gh pr checkout` checked out, as a branch's `branch.<name>.merge`.
+const PULL_HEAD = /^refs\/pull\/(\d{1,10})\/head$/u;
 // What a call the reader cannot read gives.
 const UNREAD = Symbol('unread');
 
@@ -62,12 +65,15 @@ function ghRepo(environment, env) {
   return value === null ? null : repoValue(value, environment, env);
 }
 
-// The pull request a target word names: `{ number }`, `{ repo, number }` for a link, `{ branch }`, or UNREAD.
+// The pull request a target word names: `{ number }`, `{ repo, number }` for a link, `{ branch }`, `{ branch, owner }`
+// for gh's `<owner>:<branch>`, whose head is that owner's, or UNREAD.
 function targetOf(word) {
   if (unreadable(word) || word.text.startsWith('-')) return UNREAD;
   const parsed = parseTarget(word.text);
   if (parsed.number !== undefined && parsed.host === undefined) return { number: parsed.number };
   if (parsed.number !== undefined) return { repo: repoIdentity(`https://${parsed.host}/${parsed.owner}/${parsed.name}`) ?? UNREAD, number: parsed.number };
+  const headed = OWNER_BRANCH.exec(word.text);
+  if (headed && isLogin(headed[1])) return { branch: headed[2], owner: headed[1] };
   if (SCHEME_OR_OWNER.test(word.text) || /^#?\d+$/u.test(word.text)) return UNREAD;
   return { branch: word.text };
 }
@@ -104,4 +110,17 @@ export function createdChanges(output) {
     const repo = number === undefined ? null : repoIdentity(`https://${host}/${owner}/${name}`);
     return repo ? [{ repo, number }] : [];
   });
+}
+
+// The repository a `<owner>:<branch>` target's head is in, from the repository the call reads, `{ host, path }`: that
+// owner's repository of the same name, gh's fork. The forge's lookup then holds the pull request's head to it.
+// SHORTCUT: a fork renamed from its parent's name resolves to none. Enough for display data; gh's own head label match,
+// by owner alone, would replace it.
+export const headRepository = (repo, owner) => ({ host: repo.host, path: `${owner}/${repo.path.split('/').at(-1)}` });
+
+// The pull request a branch's `branch.<name>.merge` names when gh checked it out (`refs/pull/<n>/head`), which gh then
+// reads before any branch lookup, as its number; else null.
+export function checkedOutChange(merge) {
+  const match = typeof merge === 'string' ? PULL_HEAD.exec(merge) : null;
+  return match ? Number(match[1]) : null;
 }

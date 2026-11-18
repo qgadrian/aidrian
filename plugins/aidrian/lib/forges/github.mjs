@@ -115,17 +115,20 @@ const own = (node) => Number(node?.viewerDidAuthor === true);
 const trusted = (node) => Number(MEMBER_ASSOCIATIONS.has(node?.authorAssociation));
 const open = (node) => Number(node?.state === 'OPEN');
 const byRank = (a, b) => own(b) - own(a) || trusted(b) - trusted(a) || open(b) - open(a) || createdAt(b) - createdAt(a);
+// How gh itself ranks a branch's pull requests when a `gh pr` call names a branch or none: an open one, then the newest
+// (pkg/cmd/pr/shared/finder.go). A ref whose `rank` is 'open', a touched row's, resolves as the call it records did.
+const byOpen = (a, b) => open(b) - open(a) || createdAt(b) - createdAt(a);
 
 // The pull request one alias of the answer gives `ref`: a number's own; for a branch, the first by byRank of those whose
 // head is that branch of the ref's repository, in the repository or its parent, so a fork's pull request from a branch of
 // the same name never resolves it, a branch pushed to a fork resolves to its pull request on the parent, and another
-// author's newer pull request from the same branch never replaces the token's user's, nor an outsider's a member's.
-// Else null.
-function answeredChange(ref, alias) {
+// author's newer pull request from the same branch never replaces the token's user's, nor an outsider's a member's;
+// with `order` byOpen, as gh's own lookup ranks them. Else null.
+function answeredChange(ref, alias, order = byRank) {
   if (ref.number !== null) return alias?.pullRequest ?? null;
   const nodes = [alias?.pullRequests?.nodes, alias?.parent?.pullRequests?.nodes].flatMap((list) => (Array.isArray(list) ? list : []));
   const heads = nodes.filter((node) => sameName(node?.headRepository?.owner?.login, ref.owner) && sameName(node?.headRepository?.name, ref.name) && node?.headRefName === ref.branch);
-  return heads.sort(byRank)[0] ?? null;
+  return heads.sort(order)[0] ?? null;
 }
 
 const STATES = Object.freeze({ OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' });
@@ -380,20 +383,22 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The hosts it serves, FORGE_HOSTS, the allowlist of the session ledger: a host no adapter declares is recorded nowhere.
     hosts: FORGE_HOSTS,
     changeRef,
-    // The state of the change requests `refs` name, each `{ host, path, number, branch }` as the session ledger holds it,
+    // The state of the change requests `refs` name, each `{ host, path, number, branch, rank }` as the session ledger
+    // holds it, a branch's `rank` 'open' for gh's own order (byOpen) and any other for the token user's first (byRank),
     // newest first: for each of the first MAX_CHANGE_REFS, the forge-neutral row of its pull request (changeRow), or null
     // when it fails changeRef, resolves to none, or its alias is null. One GraphQL call for them all, its body on gh's
     // stdin and its host the constant CHANGES_HOST; none when no ref passes. An answer that does not parse throws.
     changesState: (refs) => {
-      const checked = (Array.isArray(refs) ? refs : []).slice(0, MAX_CHANGE_REFS).map((ref) => changeRef(ref));
+      const given = (Array.isArray(refs) ? refs : []).slice(0, MAX_CHANGE_REFS);
+      const checked = given.map((ref) => changeRef(ref));
       const asked = checked.filter(Boolean);
       if (asked.length === 0) return checked;
       const input = JSON.stringify({ query: changesQuery(asked), variables: changesVariables(asked) });
       const data = changesData(() => gh(['api', 'graphql', '--hostname', CHANGES_HOST, '--input', '-'], { input }));
       let alias = 0;
-      return checked.map((ref) => {
+      return checked.map((ref, index) => {
         if (ref === null) return null;
-        const node = answeredChange(ref, data[`r${alias++}`]);
+        const node = answeredChange(ref, data[`r${alias++}`], given[index]?.rank === 'open' ? byOpen : byRank);
         return node ? changeRow(node) : null;
       });
     },

@@ -194,6 +194,11 @@ project's screen files and the routes that show them, one target per group of sc
 this when it applies the recipe. [Screens checked on every device](review.md#screens-checked-on-every-device) has a
 fuller config, with a flow whose invariants block the review, and what each key does.
 
+Set `review.productFeedback.files` too, to the project's whole UI surface: every screen component, and the hooks,
+locales, and styles behind them. Unset, product feedback falls back to the visual targets' files, which name only the
+screens worth capturing. A pull request that changes only a file outside them, such as a translation, a UI hook, or a
+screen no target lists, then reads as `not_user_facing`, and the ready hold lets it through with no feedback.
+
 What each part needs, and what happens without it:
 
 - **Images**: Playwright in the project's dependencies and a base URL, `review.visual.baseUrl` in `.aidrian.local.json`

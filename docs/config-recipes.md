@@ -89,10 +89,12 @@ What it turns on:
 - On Claude Code, the handoff continues in a background session with nothing typed, up to 5 in a row ([Handoff](handoff.md)).
   Codex has no background route: there the handoff writes a brief, and a person resumes it.
 - Persona-audit triage files issues without asking.
-- The screen check: a user-facing change owes product feedback before the ready mark, with a persona walk when the
-  project has a persona. A change to a screen a target names is captured at a phone, a tablet, and a desktop width only
-  when the review runs a visual reviewer and the capture can reach the app; the recipe adds no flow that requires one,
-  so add the review doc's flow to put one in the plan
+- The screen check: while product feedback is on, as the recipe turns it on, a pull request whose changes match the
+  feedback list in force owes product feedback before the ready mark, with a persona walk when the project has a persona.
+  That list is `review.productFeedback.files`, or the targets' files only while no `files` list is set, read from the
+  default branch and the base. A change to a screen a target names is captured at a phone, a tablet, and a desktop
+  width only when the review runs a visual reviewer and the capture can reach the app; the recipe adds no flow that
+  requires one, so add the review doc's flow to put one in the plan
   ([Screens checked on every device](#screens-checked-on-every-device)).
 
 What it still keeps for a person: a security verdict and a critical-flow sign-off, which no setting hands to an agent;
@@ -146,7 +148,8 @@ What it turns on, and where it stops:
 - An unattended run parks a floor-class decision for the Human instead of taking a default.
 - On Claude Code, the handoff continues in the background, up to 3 in a row before a person looks.
   On Codex it writes a brief for a person to resume.
-- The same screen check as full autonomy, with the same needs.
+- The same screen check as full autonomy, with the same needs: while feedback is on, a pull request whose changes
+  match the list in force on the default branch and the base owes product feedback.
 
 ## Hands-on
 
@@ -198,8 +201,10 @@ Full autonomy and autopilot merge with no person looking, so they turn on two ch
   persona. The feedback is no approval and no merge block; only the ready mark waits for it.
 
 A change that matches only `review.productFeedback.files`, and no target, gets feedback but no capture.
-Product feedback reads `files`, and the targets, from the default branch and the base, never from the pull request:
-a pull request that adds a path to the list does not owe feedback for that path itself; the next one does.
+Product feedback reads its list from the default branch and the base, never from the pull request: `files` when set,
+and the targets' files only when no `files` list is set. So a pull request that adds a path to `files` does not owe
+feedback for that path itself. A later pull request owes it while feedback is on and its changes match the list then
+in force, as [`status`](config.md#the-commands) reads it.
 
 The target, `{ "files": ["src/app/**"], "routes": ["/"] }`, is a placeholder, as `"test"` is: replace it with the
 project's screen files and the routes that show them, one target per group of screens. The `harness-setup` skill does
@@ -233,8 +238,8 @@ Do not wait for a warning: while auto-merge is allowed, `aidrian check` warns on
 file whose nearest `package.json` depends on `react-native` and not on `react-dom` does not count.
 
 A project whose screens are all native, such as an iOS, Android, or React Native app, leaves out `review.visual`, since
-no capture reaches its screens, and still sets `review.productFeedback` with `files` for its UI, so its changes still
-owe product feedback before the ready mark.
+no capture reaches its screens, and still sets `review.productFeedback` with `auto` and `files` for its UI, so its
+changes to those files still owe product feedback before the ready mark.
 
 Hands-on leaves the check out, since the Human is there to try the screens. A hands-on project that wants the captures
 too adds the same two keys, or the fuller config of the review doc.

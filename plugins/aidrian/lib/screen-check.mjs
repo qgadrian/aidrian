@@ -1,10 +1,9 @@
 // The `aidrian check` warning that auto-merge can ship a screen change no capture checked, and how it tells a web
 // screen file from the rest. docs/config.md#auto-merge describes it.
 
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { readJson } from './fs.mjs';
+import { isEntry, readJson } from './fs.mjs';
 
 // A screen file, by a conservative guess from its path: a .tsx, .jsx, .vue, .svelte, or .html file outside docs,
 // examples, vendored code, test folders, and dot folders, and not a test, spec, or story file.
@@ -31,13 +30,14 @@ export function isNativeOnly(pkg) {
 
 // Whether a file's own package is native-only: the nearest package.json above it, from its folder up to the project
 // root, decides, so each workspace of a monorepo answers for its own files. When unsure, the file counts: with no
-// manifest up to the root, or with one that does not parse or links outside the project, it is not native.
+// manifest up to the root, or with one that does not parse, links outside the project, or is a broken link, it is not
+// native. A broken link still stops the walk up, so a native root above it cannot answer for its workspace.
 // `seen` caches the answer per folder, since a project's screens share few folders.
 function nativeOnlyAt(root, folder, seen) {
   if (seen.has(folder)) return seen.get(folder);
   const rel = folder ? `${folder}/package.json` : 'package.json';
   let native;
-  if (existsSync(path.join(root, rel))) native = isNativeOnly(readJson(root, rel, []));
+  if (isEntry(path.join(root, rel))) native = isNativeOnly(readJson(root, rel, []));
   else native = folder ? nativeOnlyAt(root, path.posix.dirname(folder).replace(/^\.$/u, ''), seen) : false;
   seen.set(folder, native);
   return native;

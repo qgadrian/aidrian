@@ -319,7 +319,8 @@ These are web screens, since `review.visual.platform` takes only `"web"` today, 
 targets no capture could reach. Each `.tsx` or `.jsx` file asks its nearest `package.json`, from its own folder up to
 the project root: when that one depends on `react-native` and not on `react-dom`, the file does not count. So in a
 monorepo each workspace answers for its own files. With no `package.json` up to the root, or one that does not parse,
-the file counts.
+links outside the project, or is a broken link, the file counts: a broken link does not hand the answer to a manifest
+above it.
 
 A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
 since an older plugin rejects the key.

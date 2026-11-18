@@ -11,7 +11,7 @@ import test, { after } from 'node:test';
 
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
-import { changesSummary, isChangeRow, LEDGER_MAX_BYTES, MAX_REFS, readLedger, resolveChanges, sessionRefs } from '../plugins/aidrian/lib/session-prs.mjs';
+import { appendLedger, changesSummary, isChangeRow, LEDGER_MAX_BYTES, MAX_REFS, readLedger, resolveChanges, sessionRefs } from '../plugins/aidrian/lib/session-prs.mjs';
 import { readSessionTail, sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const ROOT = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-session-prs-')));
@@ -78,22 +78,42 @@ test('readLedger refuses a named pipe, a symlink, a hard link, and a file others
   }
 });
 
-test('sessionRefs dedupes by repository and number, else by repository and branch, and orders by latest activity', () => {
-  const rows = [
+test('sessionRefs dedupes by repository and number, else by repository and branch, and orders by latest activity', { skip: !POSIX }, () => {
+  // Rows as the writer writes them: each goes through appendLedger, which takes it, and comes back through readLedger.
+  const folder = folderOf();
+  const other = path.join(ROOT, 'other');
+  mkdirSync(other, { recursive: true });
+  const written = [
     row({ kind: 'touched', branch: 'feat/x' }, 1),
     row({ kind: 'created', number: 7 }, 2),
-    row({ kind: 'touched', branch: 'feat/x', cwd: path.join(ROOT, 'other') }, 3),
+    row({ kind: 'touched', branch: 'feat/x', cwd: other }, 3),
     row({ kind: 'pushed', branch: 'feat/y' }, 4),
     row({ kind: 'touched', number: 7, branch: null }, 5),
-    row({ kind: 'touched', branch: 'feat/x' }, 6),
+    row({ kind: 'pushed', branch: 'feat/x' }, 6),
   ];
-  const { refs, unsupported } = sessionRefs(rows, forge);
+  for (const each of written) assert.equal(appendLedger(folder, [each]), true, JSON.stringify(each));
+  const { refs, unsupported } = sessionRefs(readLedger(folder), forge);
   assert.deepEqual(refs, [
     { host: 'github.com', path: 'acme/notes', number: null, branch: 'feat/x' },
     { host: 'github.com', path: 'acme/notes', number: 7, branch: null },
     { host: 'github.com', path: 'acme/notes', number: null, branch: 'feat/y' },
-  ], 'three touched rows of one branch give one ref; the ref touched last comes first');
+  ], 'two touched rows from two folders and a pushed row of one branch give one ref; the ref acted on last comes first');
   assert.deepEqual(unsupported, []);
+});
+
+test('a pull request acted on again comes back first, after 25 others pushed it out, while a repeat of a shown one adds no row', { skip: !POSIX }, () => {
+  const folder = folderOf();
+  const touch = (number, minute) => appendLedger(folder, [row({ kind: 'touched', number }, minute)]);
+  for (let number = 1; number <= MAX_REFS + 1; number += 1) assert.equal(touch(number, number), true, `#${number}`);
+  assert.ok(!sessionRefs(readLedger(folder), forge).refs.some((each) => each.number === 1), '#1 is the oldest of 26, so not shown');
+  assert.equal(touch(1, 40), true, 'the repeat of a ref no longer shown is written, with its new time');
+  const { refs } = sessionRefs(readLedger(folder), forge);
+  assert.equal(refs.length, MAX_REFS);
+  assert.equal(refs[0].number, 1, 'the pull request acted on last comes first');
+  const rows = readLedger(folder).length;
+  assert.equal(touch(MAX_REFS + 1, 41), false, 'a repeat of a shown ref adds no row');
+  assert.equal(touch(1, 42), false);
+  assert.equal(readLedger(folder).length, rows);
 });
 
 test('sessionRefs keeps the 25 newest refs, unsupported ones counted, and drops rows whose fields fail', () => {

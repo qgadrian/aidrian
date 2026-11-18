@@ -8,6 +8,7 @@
 // ran in. A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, with no raw URL, command text, or
 // output, and every field checked first, so no row exceeds a fixed size. `aidrian session snapshot` reads it back:
 // readLedger, then sessionRefs, then resolveChanges through the adapter's one batched read.
+// It holds both the writer and the reader of the one ledger, so the hook's forge-seam test reads a single file.
 
 import { lstatSync } from 'node:fs';
 import path from 'node:path';
@@ -30,6 +31,9 @@ export const OUTPUT_TAIL = 64 * 1024;
 // The most folders one call has git read, and the most rows it writes.
 export const MAX_FOLDERS = 8;
 export const MAX_ROWS = 32;
+// The most change requests the snapshot shows, each a ref of the ledger, a number or a branch, counted before branches
+// resolve, so a branch with no change request uses one. The forge's batched read takes as many at most.
+export const MAX_REFS = 25;
 const CWD_MAX_BYTES = 1024;
 // A remote word git reads as a URL rather than a remote's name: a scheme, or git's `host:path` form.
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\/|^[^/]*:/iu;
@@ -186,7 +190,7 @@ export function ledgerRows({ command, cwd, output = null, env = {}, forge, reade
   return [...new Map(rows.map((row) => [JSON.stringify(row), row])).values()].slice(0, MAX_ROWS);
 }
 
-// The fields that say what a row records, so the same call made again adds no row: all but `at` and `agentId`.
+// The fields that say what a row records, so a repeat of a shown row adds none: all but `at` and `agentId`.
 const rowKey = ({ kind, forge, host, path: repoPath, number, branch, cwd }) => JSON.stringify([kind, forge, host, repoPath, number, branch, cwd]);
 const keyOfLine = (line) => {
   try {
@@ -218,8 +222,10 @@ function newestLines(lines) {
 }
 
 // Writes `rows`, MAX_ROWS at most, to the ledger in `folder`, which sessionFolder gave, as lib/session-folder.mjs reads
-// and writes it: a row whose cwd is no folder on disk, or whose fields a row of the ledger's last LEDGER_MAX_BYTES
-// already holds, is left out. The rest are appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends
+// and writes it: a row whose cwd is no folder on disk, or whose fields one of the ledger's newest distinct rows holds,
+// is left out. Those are the newest MAX_REFS less one for each row of this call, so the row they match stays shown
+// whatever this call writes; a row matching an older one is written with its new time, so its ref is shown first
+// again. The rest are appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends
 // racing can leave it, or the append would pass it, the ledger is rewritten through a temporary file and a rename with
 // the newest rows of that tail that fit in half of it, then these, so the newest always show. Nothing is written when
 // the ledger cannot be read as the session folder's rules allow. Returns whether it wrote. Never throws.
@@ -231,9 +237,14 @@ export function appendLedger(folder, rows, options = {}) {
   const lines = read.text.split('\n');
   lines.pop();
   if (read.cut) lines.shift();
-  const seen = new Set(lines.map(keyOfLine));
+  const taken = rows.slice(0, MAX_ROWS);
+  const seen = new Set();
+  for (let at = lines.length - 1; at >= 0 && seen.size < MAX_REFS - taken.length; at -= 1) {
+    const key = keyOfLine(lines[at]);
+    if (key !== null) seen.add(key);
+  }
   const fresh = [];
-  for (const row of rows.slice(0, MAX_ROWS)) {
+  for (const row of taken) {
     const key = rowKey(row);
     if (seen.has(key) || !isFolder(row.cwd)) continue;
     seen.add(key);
@@ -248,9 +259,6 @@ export function appendLedger(folder, rows, options = {}) {
   return writeSessionFile(folder, LEDGER, compacted, options) !== null;
 }
 
-// The most change requests the snapshot shows, each a ref of the ledger, a number or a branch, counted before branches
-// resolve, so a branch with no change request uses one. The forge's batched read takes as many at most.
-export const MAX_REFS = 25;
 const KINDS = new Set(['created', 'pushed', 'touched']);
 const HOST_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u;
 const PATH_MAX_BYTES = 1024;
@@ -285,7 +293,7 @@ const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, 
 // The refs the snapshot shows from the ledger's `rows`: each row of a known kind with a time, on a host the adapter
 // `forge` declares and whose fields pass its changeRef and the cwd check, or on another host and passing
 // isUnsupportedRow; deduped by repository and number, else by repository and branch, touched rows as well as pushed;
-// ordered by each ref's latest row, newest first, since the ledger keeps a row's first time alone; MAX_REFS at most.
+// ordered by each ref's latest row, newest first, since one ref has rows of several kinds and folders; MAX_REFS at most.
 // { refs, unsupported }: the refs `forge` reads, each `{ host, path, number, branch }`, and the rest as rows of the
 // change request's shape with `unsupported: true`, no forge, and null for all the forge would answer: they start no call.
 export function sessionRefs(rows, forge) {

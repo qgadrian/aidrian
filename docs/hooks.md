@@ -1263,9 +1263,11 @@ The folder and its file follow [the session folder's rules](project-folder.md): 
 folder 0700, refuses a symlink, and, when it makes one, sweeps the session folders untouched for 30 days. Its
 `appendSessionFile` checks the folder again, then opens the ledger write-only, append, create, no-follow, and
 non-blocking, mode 0600, and writes only when the open file is a regular file with one link that this user owns and no
-other user may read or write. Before a write it reads the ledger's last 256 KB, no-follow, as the snapshot does, and leaves out a row whose fields, all but
-`at` and `agentId`, a row already holds, so a call made again adds nothing, and a row whose folder is not a folder on
-disk. The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
+other user may read or write. Before a write it reads the ledger's last 256 KB, no-follow, as the snapshot does, and leaves out a row whose folder
+is not a folder on disk, and a row whose fields, all but `at` and `agentId`, one of the ledger's newest distinct rows
+holds: the newest 25, the most the snapshot shows, less one for each row the call writes, so that pull request stays
+shown. A call made again on one of those adds nothing; any other repeat is written with its new time, so a pull
+request acted on again, after more than 25 others, shows first again. The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
 last 256 KB, so it reads every row, and drops a first line the cut fell inside if two writes passed the cap together): a write that would pass it, or that finds the ledger past it, as two writes together can leave it, rewrites the
 ledger, through a temporary file and a rename under the same checks, with the newest rows of that tail that fit in half
 of it and then the new ones, so the newest pull requests always show. The `SessionEnd` hook and

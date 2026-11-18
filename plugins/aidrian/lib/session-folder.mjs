@@ -5,7 +5,9 @@
 // sweep: the state folder resolves inside no checkout of the repository, and no other user owns it or may write it; the
 // sessions folder and the session folder are each a real folder, no symlink, owned by this process's user, that no other
 // user may read or write; and the session folder's real path is `<real state>/sessions/<id>`, and is still the folder's
-// own path at each write, read, and sweep, so a folder above it swapped for a symlink since gets none. Its files are written as a
+// own path at each write, read, and sweep, so a folder above it swapped for a symlink since gets none; and no folder above
+// the state folder or the session folder lets another user swap one below it (openAbove), which closes the gap between
+// each check and the open that follows it. Its files are written as a
 // temporary file and a rename, mode 0600, under the names in SESSION_FILES alone; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
@@ -59,14 +61,28 @@ export function sessionFolder(state, sessionId, { checkouts, uid = processUid(),
 }
 
 // The real path of the state folder, made when missing, or null when it resolves inside one of `checkouts`, or another
-// user than `uid` owns it or every user may write it, checked before it is made and again after.
+// user than `uid` owns it or every user may write it, checked before it is made and again after, or a folder above it
+// fails openAbove.
 function ownState(state, checkouts, uid) {
   const resolved = resolvedPath(state);
   if (resolved === null || checkoutHolding(resolved, checkouts) || looseFolder(state, uid) !== null) return null;
   mkdirSync(state, { recursive: true, mode: 0o700 });
   const real = realpathSync(state);
-  if (!statSync(real).isDirectory() || checkoutHolding(real, checkouts) || looseFolder(real, uid) !== null) return null;
+  if (!statSync(real).isDirectory() || checkoutHolding(real, checkouts) || looseFolder(real, uid) !== null || openAbove(real, uid)) return null;
   return real;
+}
+
+// Whether a folder above the real path `dir` lets a user other than `uid` rename or replace what lies below it: one is
+// owned by another user than `uid` and root, or its group or every user may write it and it has no sticky bit, as
+// OpenSSH's StrictModes holds the folders above a key. A shared folder such as /tmp, root's and sticky, passes. Never
+// where the system has no user ids, as on Windows. Throws when a folder cannot be read.
+function openAbove(dir, uid) {
+  if (!Number.isInteger(uid)) return false;
+  for (let current = path.dirname(dir); ; current = path.dirname(current)) {
+    const stat = statSync(current);
+    if ((stat.uid !== uid && stat.uid !== 0) || ((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0)) return true;
+    if (path.dirname(current) === current) return false;
+  }
 }
 
 // Whether this call made the folder `dir`; false when it was there already, made by another process meanwhile included.
@@ -89,11 +105,12 @@ function privateFolder(dir, uid) {
 }
 
 // Whether the session folder `folder`, a real path sessionFolder gave, is still the folder it checked: its real path is
-// still itself, so no folder above it was swapped for a symlink since, and it passes privateFolder. False for a folder
-// that is missing or cannot be read. Every write, reservation, read, and sweep asks it first.
+// still itself, so no folder above it was swapped for a symlink since, it passes privateFolder, and no folder above it
+// fails openAbove. False for a folder that is missing or cannot be read. Every write, reservation, read, and sweep asks
+// it first.
 export function boundFolder(folder, { uid = processUid() } = {}) {
   try {
-    return realpathSync(folder) === folder && privateFolder(folder, uid);
+    return realpathSync(folder) === folder && privateFolder(folder, uid) && !openAbove(folder, uid);
   } catch {
     return false;
   }
@@ -170,8 +187,9 @@ function releaseReservation(file, dev, ino) {
 // files were all last changed more than SWEEP_DAYS before `now`: it deletes the files named in SESSION_FILES, their
 // temporary files, and their reservations that are regular files, then removes the folder only when that left it empty. An entry whose name
 // fails SESSION_ID, or that fails boundFolder, a symlink among them, is left alone, and so is every entry once `sessions`
-// is no longer its own real path.
-function sweepSessions(sessions, { current, uid, now }) {
+// is no longer its own real path. sessionFolder runs it when it creates a folder; it is exported for a test, which cannot
+// swap a folder between sessionFolder's checks and its sweep.
+export function sweepSessions(sessions, { current, uid, now }) {
   let names;
   try {
     if (realpathSync(sessions) !== sessions) return;

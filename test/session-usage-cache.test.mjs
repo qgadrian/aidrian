@@ -271,3 +271,39 @@ test('no cache is written that its reader would reject: past the cap, or with an
     assert.deepEqual(cachedSessionUsage(long), whole(long.transcript));
   }
 });
+
+test('a warm call on a 256 MiB transcript reads two windows, not every byte folded before, and sees a rewrite in either', { timeout: 120_000 }, (t) => {
+  const { transcript, cacheFile } = fixture();
+  const MIB = 1024 * 1024;
+  // A line feed at the end of each MiB, written sparse, so the lines between are NULs, which fold to nothing.
+  const fd = openSync(transcript, 'w');
+  for (let i = 1; i <= 256; i += 1) writeSync(fd, '\n', i * MIB - 1);
+  closeSync(fd);
+  const last = call({ id: 'a', context: 5_000 });
+  appendFileSync(transcript, last);
+  const read = () => cachedSessionUsage({ transcript, cacheFile });
+  const cold = read();
+  assert.deepEqual([cold.calls, cold.last], [1, 5_000]);
+  const times = [1, 2, 3].map(() => {
+    const started = performance.now();
+    assert.deepEqual(read(), cold);
+    return performance.now() - started;
+  });
+  t.diagnostic(`warm calls: ${times.map((ms) => ms.toFixed(1)).join(', ')} ms`);
+  // Hashing every byte folded before took over 100 ms at this size.
+  assert.ok(Math.min(...times) < 50, `the fastest warm call took ${Math.min(...times).toFixed(1)} ms`);
+  const rewrite = (text, at) => {
+    const handle = openSync(transcript, 'r+');
+    writeSync(handle, text, at);
+    closeSync(handle);
+  };
+  // The last window: the last line, rewritten at the same length.
+  rewrite(call({ id: 'a', context: 6_000 }), statSync(transcript).size - last.length);
+  assert.deepEqual([read().calls, read().last], [1, 6_000]);
+  // The first window: a request where the first line of NULs was.
+  rewrite(call({ id: 'b', context: 7_000 }), 0);
+  assert.deepEqual([read().calls, read().first], [2, 7_000]);
+  // The SHORTCUT's limit: a rewrite confined to the middle is not seen, and the fold saved before stays.
+  rewrite(call({ id: 'c', context: 8_000 }), 128 * MIB);
+  assert.equal(read().calls, 2);
+});

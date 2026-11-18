@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { boundFolder, readSessionFile, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { stateRoot } from '../plugins/aidrian/lib/project.mjs';
+import { boundFolder, readSessionFile, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { cachedSessionUsage } from '../plugins/aidrian/lib/session-usage-cache.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
@@ -92,6 +94,29 @@ test('a state folder every user may write gets no folder, no write, and no sweep
   chmodSync(fresh, 0o777);
   assert.equal(sessionFolder(fresh, 'new', NONE), null);
   assert.deepEqual(readdirSync(fresh), []);
+});
+
+test('a state folder below one its group or other users may write gets no session folder, unless that one is sticky', { skip: !POSIX }, () => {
+  const open = path.join(scratch(), 'open');
+  mkdirSync(open);
+  const state = path.join(open, 'state');
+  for (const mode of [0o777, 0o775, 0o757]) {
+    chmodSync(open, mode);
+    assert.equal(sessionFolder(state, 'abc', NONE), null, mode.toString(8));
+  }
+  // A shared folder like /tmp: every user may write it, but only an entry's owner may rename or remove that entry.
+  chmodSync(open, 0o1777);
+  const folder = sessionFolder(state, 'abc', NONE);
+  assert.equal(folder, path.join(state, 'sessions', 'abc'));
+  assert.ok(writeSessionFile(folder, 'usage.json', '{}\n'));
+  // Once it loses the sticky bit, the folder below is no longer bound: its files are neither written nor read.
+  chmodSync(open, 0o777);
+  assert.equal(boundFolder(folder), false);
+  assert.equal(writeSessionFile(folder, 'usage.json', 'x\n'), null);
+  assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024 }), null);
+  chmodSync(open, 0o700);
+  // The default location, under the state root, which the test run keeps in a temporary folder of its own.
+  assert.ok(sessionFolder(path.join(stateRoot(), 'projects', 'session-folder-test'), 'abc', NONE));
 });
 
 test('a session or sessions folder any other user may read or write gives no folder', { skip: !POSIX }, () => {
@@ -204,23 +229,40 @@ test('a session file is not written into a folder another user may read, or thro
   assert.equal(writeSessionFile(path.join(root, 'missing'), 'usage.json', '{}'), null);
 });
 
-test('once a folder above a session folder is swapped for a symlink, its files are neither written, reserved, nor read there', { skip: !POSIX }, () => {
+test('once a folder above a session folder is swapped for a symlink, its files are neither written, reserved, read, nor swept there', { skip: !POSIX }, () => {
   const { state, sessions } = stateWithSessions();
   const folder = sessionFolder(state, 'abc', NONE);
   assert.ok(writeSessionFile(folder, 'usage.json', 'mine\n'));
-  // Another user of a state folder its group may write moves the sessions folder away and links one elsewhere in its
-  // place, holding a private folder of the same name, as the user's own folders are.
+  // Another user of a state folder moves the sessions folder away and links one elsewhere in its place, holding a
+  // private folder of the same name, as the user's own folders are, with a usage cache of the session's transcript
+  // whose fold no read of it gives, and an old session folder.
   const elsewhere = path.join(path.dirname(state), 'elsewhere');
   mkdirSync(path.join(elsewhere, 'abc'), { recursive: true, mode: 0o700 });
-  writeFileSync(path.join(elsewhere, 'abc', 'usage.json'), 'theirs\n', { mode: 0o600 });
+  const transcript = path.join(path.dirname(state), 'transcript.jsonl');
+  writeFileSync(transcript, `${JSON.stringify({ message: { id: 'a', model: 'mine', usage: { input_tokens: 1, cache_read_input_tokens: 9 } } })}\n`);
+  const planted = path.join(elsewhere, 'abc', 'usage.json');
+  cachedSessionUsage({ transcript, cacheFile: planted });
+  const cache = JSON.parse(readFileSync(planted, 'utf8'));
+  const theirs = JSON.stringify({ ...cache, requests: cache.requests.map((each) => ({ ...each, model: 'theirs' })) });
+  writeFileSync(planted, theirs);
+  const then = new Date(Date.now() - 31 * DAY);
+  utimesSync(planted, then, then);
+  utimesSync(path.dirname(planted), then, then);
+  const old = oldFolder(elsewhere, 'old', 31);
   renameSync(sessions, path.join(state, 'moved'));
   symlinkSync(elsewhere, sessions);
   assert.equal(writeSessionFile(folder, 'usage.json', 'redirected\n'), null);
   assert.equal(reserveSessionFile(folder, 'usage.json', { windowMs: WINDOW }), null);
   assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024 }), null);
   assert.equal(boundFolder(folder), false);
+  // The usage cache neither reads the planted usage.json nor writes over it.
+  assert.equal(cachedSessionUsage({ transcript, cacheFile: path.join(folder, 'usage.json') }).model, 'mine');
+  // A sweep from a new session's folder deletes nothing behind the symlink, however old.
+  sweepSessions(sessions, { current: 'new', uid: process.getuid(), now: Date.now() });
+  assert.deepEqual(readdirSync(elsewhere).sort(), ['abc', 'old']);
   assert.deepEqual(readdirSync(path.join(elsewhere, 'abc')), ['usage.json']);
-  assert.equal(readFileSync(path.join(elsewhere, 'abc', 'usage.json'), 'utf8'), 'theirs\n');
+  assert.deepEqual(readdirSync(old), ['usage.json']);
+  assert.equal(readFileSync(planted, 'utf8'), theirs);
 });
 
 const WINDOW = 60_000;

@@ -180,10 +180,12 @@ whatever the config says, and `background` only when the config says `"backgroun
 2. `none` prints `continue: none` and exits 0.
 3. A fallback prints `continue: none` and one `fallback:` line, exit 0: the host does not list the route, or tells the
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a
-   control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
-   it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
-   user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
-   is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
+   control character; the store resolves inside a checkout of the repository, the main checkout or any linked
+   worktree, as with `state.dir` set to a folder in it, or a relative `state.dir` of a project below the repository
+   root, which resolves against that root, or git cannot list those checkouts; the state, handoffs, or store folder
+   is owned by another user or writable by every user, where the system has user ids (not on Windows, where Node
+   reports every writable folder as writable by others); or the brief's chain is `maxChain` or more, on the
+   background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
    On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
    working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
    the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
@@ -507,10 +509,10 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
 | `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
 | `prs` | Always `null`. `errors` names it only for a session id that fails `SESSION_ID`, or a state folder inside a checkout. |
-| `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout. |
+| `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
-| `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout. |
+| `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `ticket` | `{ key, source: "branch" }` or null: a key of `--ticket-prefixes` in the branch name, such as `ABC-123`, else `#42` from a branch named `fix/42-slug`. |
 | `errors` | The names of the sections that failed, never their error text. |
 
@@ -535,13 +537,20 @@ calls it for its own trigger, so the two never disagree. The first that holds wi
 
 The snapshot is `due` or `ceiling` on exactly the turns the Stop hook reminds. It reads the hook's marker at the hook's
 own path, and the transcript through the usage cache, so each call folds only the lines written since the last one,
-after a hash of the bytes it folded before shows they are unchanged: a transcript rewritten in place, at the same
-length included, is folded again from the start ([Local state](project-folder.md#local-state)). Like the reminder, the handoff section is verified on Claude Code
-transcripts only. It needs the session's folder in the state folder, so when the state folder is inside a checkout of
+after a hash of the first and the last 64 KiB it folded before shows they are unchanged: a transcript rewritten in
+place there, at the same length included, is folded again from the start ([Local state](project-folder.md#local-state)).
+A warm call reads those two windows, not every byte folded before, so it costs the same at any transcript size;
+a rewrite confined to the middle goes unseen, which display data allows, since a transcript is only appended to.
+Like the reminder, the handoff section is verified on Claude Code transcripts only.
+It needs the session's folder in the state folder, so when the state folder is inside a checkout of
 the repository, the main checkout or any linked worktree, as with `state.dir` set to a folder in the repository, or a
-relative `state.dir` of a project below the repository root, which resolves against that root, the snapshot gives no handoff, lessons, or audits section, and
+relative `state.dir` of a project below the repository root, which resolves against that root,
+or when git cannot list the checkouts in time, the snapshot gives no handoff, lessons, or audits section, and
 names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
-gives no handoff section either, and names `handoff` and `worktrees`.
+gives no handoff section either, and names `handoff` and `worktrees`. A state folder that is another user's, or that
+every user may write, gives no lessons or audits section, as it gives no session folder.
+The hooks and the gate hold the continuation store to the same list of checkouts, and keep no marker there when git
+cannot give it.
 `chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
 armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
 from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's

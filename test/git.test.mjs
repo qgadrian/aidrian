@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, GIT_TIMEOUT_MS, isIgnored, mainRoot } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, GIT_TIMEOUT_MS, isIgnored, mainRoot, repositoryCheckouts } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -86,4 +86,35 @@ test('a git that hangs is stopped after the timeout and counts as git not answer
   const ran = spawnSync(process.execPath, [hook], { input, cwd: dir, env, encoding: 'utf8' });
   assert.deepEqual([ran.status, ran.stderr], [0, '']);
   assert.ok(Date.now() - started < GIT_TIMEOUT_MS + 1500, `${Date.now() - started} ms`);
+});
+
+test('repositoryCheckouts lists every checkout but a gone one; [] only outside a repository or without git, else null on failure', (t) => {
+  const { dir, worktree } = repo(t);
+  assert.deepEqual(repositoryCheckouts(path.join(dir, 'src')), [dir, worktree]);
+  assert.deepEqual(repositoryCheckouts(worktree), [worktree, dir], 'the checkout it is in comes first');
+  const gone = path.join(dir, '.aidrian/worktrees/gone');
+  execFileSync('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'gone', gone], { stdio: 'pipe' });
+  rmSync(gone, { recursive: true, force: true });
+  assert.deepEqual(repositoryCheckouts(dir), [dir, worktree], 'a worktree whose folder is gone is no checkout');
+  const outside = mkdtempSync(path.join(tmpdir(), 'aidrian-no-git-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  assert.deepEqual(repositoryCheckouts(outside), []);
+  // A git that exits 128 for everything: inside a repository the list always names the main checkout, so a failed one is
+  // unknown, never empty; outside one there is nothing to list. With no git at all, there is nothing to list either.
+  const bin = mkdtempSync(path.join(tmpdir(), 'aidrian-git-bin-'));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  writeFileSync(path.join(bin, 'git'), '#!/bin/sh\necho "fatal: broken" >&2\nexit 128\n', { mode: 0o755 });
+  const lib = JSON.stringify(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/git.mjs'));
+  const answer = (cwd, PATH) => {
+    const script = `import { repositoryCheckouts } from ${lib}; console.log(JSON.stringify(repositoryCheckouts(${JSON.stringify(cwd)})));`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, PATH }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  assert.equal(answer(dir, bin), null);
+  assert.equal(answer(path.join(dir, 'src'), bin), null);
+  assert.deepEqual(answer(outside, bin), []);
+  const empty = mkdtempSync(path.join(tmpdir(), 'aidrian-no-bin-'));
+  t.after(() => rmSync(empty, { recursive: true, force: true }));
+  assert.deepEqual(answer(dir, empty), []);
 });

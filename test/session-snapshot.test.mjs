@@ -447,18 +447,23 @@ test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
   assert.ok(json.errors.includes('worktrees'), 'a read that failed with no cache is a failure');
 });
 
-test('a git that hangs only on the worktree list is stopped at git`s limit', { skip: !POSIX }, (t) => {
+test('a git that hangs only on the worktree list is stopped at git`s limit, and the unknown checkouts keep the state folder unread', { skip: !POSIX }, (t) => {
   const env = setup(t);
+  const transcript = path.join(env.base, 'session.jsonl');
+  writeFileSync(transcript, turnsOf('handoff-cost')[4]);
   const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
   const bin = path.join(env.base, 'hang');
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" worktree list "*) exec sleep 600;; esac\nexec ${real} "$@"\n`);
   chmodSync(path.join(bin, 'git'), 0o755);
-  const { status, ms, json } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
+  const { status, ms, json } = env.run(['--session', ID, '--transcript', transcript], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
   assert.equal(status, 0);
   assert.ok(ms < 10_000, `${ms} ms`);
   assert.equal(json.worktrees, null);
-  assert.ok(json.errors.includes('worktrees'));
+  // A list that timed out is no empty list: the state folder may be inside a checkout git did not name.
+  assert.deepEqual([json.handoff, json.lessons, json.audits], [null, null, null]);
+  for (const name of ['handoff', 'lessons', 'audits', 'worktrees']) assert.ok(json.errors.includes(name), name);
+  assert.equal(existsSync(path.join(env.projectState(), 'sessions')), false, 'no session folder is made');
 });
 
 test('the state folder read is killed at git`s limit, even by a git that ignores SIGTERM', { skip: !POSIX }, (t) => {
@@ -765,6 +770,20 @@ test('project discovery is killed at git`s limit, even by a git that ignores SIG
   assert.equal(status, 0);
   assert.ok(ms < 10_000, `${ms} ms`);
   assert.ok(json.errors.every((name) => SECTIONS.includes(name)));
+});
+
+test('a state folder every user may write gives no lessons or audits section, as it gives no session folder', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const state = env.projectState();
+  mkdirSync(path.join(state, 'lessons'), { recursive: true });
+  writeFileSync(path.join(state, 'lessons/inbox.jsonl'), '');
+  assert.deepEqual(env.run().json.errors, [], 'the user`s own folder is read');
+  chmodSync(state, 0o777);
+  t.after(() => chmodSync(state, 0o700));
+  const { json, status } = env.run();
+  assert.equal(status, 0);
+  assert.deepEqual([json.lessons, json.audits], [null, null]);
+  assert.deepEqual(json.errors, ['lessons', 'audits']);
 });
 
 test('a named pipe at the lesson inbox or the audits triage file fails that section alone, without waiting', { skip: !POSIX }, (t) => {

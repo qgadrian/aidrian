@@ -4,6 +4,8 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
+import { isDirectory, isEntry, isFile } from './fs.mjs';
+
 // How long one git call may take. Hooks run git on every tool call, inside the host's hook timeout; a git that hangs, on
 // a stalled file system or an fsmonitor, is stopped and counts as git not answering. Once one call is stopped, the later
 // ones in the same process do not wait again, so a hook pays the timeout once. `options.timeout` overrides it, and 0
@@ -77,20 +79,34 @@ export function checkoutRoots(cwd, options) {
   return { main: gitDir === commonDir ? current : path.dirname(commonDir), current };
 }
 
-// Every worktree of the repository `cwd` is in, the main checkout first, from `git worktree list`; none outside git.
-export function worktreePaths(cwd) {
-  const { status, stdout } = runGit(['worktree', 'list', '--porcelain'], cwd);
-  if (status !== 0) return [];
-  return stdout.split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length));
+// The top folder of every checkout of the repository `cwd` is in: the checkout `cwd` is in, then each one `git worktree
+// list` names that holds a work tree, so a bare entry, as a git folder kept apart lists itself, and a worktree whose
+// folder is gone are dropped. Each listed path is exactly as git prints it. [] only when no git is installed, or `cwd`
+// is outside any repository: no folder at or above it holds a `.git`. Inside a repository every failure is null, a
+// stopped git and a non-zero exit included: the list always names the main checkout, so a failed one leaves the
+// checkouts unknown, and a caller that keeps files out of every checkout refuses. `read` gives each git call's options.
+export function repositoryCheckouts(cwd, read = () => undefined) {
+  const listed = runGit(['worktree', 'list', '--porcelain'], cwd, read());
+  if (listed.error?.code === 'ENOENT') return [];
+  if (listed.status !== 0) return underGit(cwd) ? null : [];
+  const roots = checkoutRoots(cwd, read());
+  if (!roots) return null;
+  const entries = listed.stdout.split('\n\n').filter((entry) => !entry.split('\n').includes('bare'));
+  // Each path is the rest of its line, whatever that line holds.
+  const paths = entries.map((entry) => entry.split('\n').find((line) => line.startsWith('worktree '))?.slice('worktree '.length));
+  return [...new Set([roots.current, ...paths.filter((dir) => dir && holdsCheckout(dir))])];
 }
 
-// The top folder of every checkout of the repository `cwd` is in, from `git worktree list`: the main checkout and each
-// linked worktree. [] outside git or without git, and null when git did not answer in time, so a caller that keeps files
-// out of every checkout can refuse.
-export function repositoryCheckouts(cwd) {
-  const { status, stdout, error } = runGit(['worktree', 'list', '--porcelain'], cwd);
-  if (status === null) return error?.code === 'ENOENT' ? [] : null;
-  return status === 0 ? stdout.split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length)) : [];
+// Whether git keeps a work tree at `dir`: a `.git` file or folder is there.
+export const holdsCheckout =(dir) => isFile(path.join(dir, '.git')) || isDirectory(path.join(dir, '.git'));
+
+// Whether `dir` or a folder above it holds a `.git` entry, where git looks for a repository. It reads the disk alone, so
+// it answers when git does not.
+function underGit(dir) {
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    if (isEntry(path.join(current, '.git'))) return true;
+    if (path.dirname(current) === current) return false;
+  }
 }
 
 // Whether git ignores `file` (absolute, or relative to `root`).

@@ -16,11 +16,11 @@ import { listAudits } from './audits.mjs';
 import { loadConfig } from './config.mjs';
 import { scanDecisions } from './decisions-cli.mjs';
 import { remoteIdentity, servedRepository } from './forges/index.mjs';
-import { checkoutHolding, resolvedPath } from './fs.mjs';
-import { GIT_TIMEOUT_MS, killingGit, mainRoot, repositoryCheckouts, runGit } from './git.mjs';
-import { latestBrief, MARKER_CAP, openStore, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
+import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
+import { GIT_TIMEOUT_MS, killingGit, mainRoot, runGit } from './git.mjs';
+import { latestBrief, looseFolder, MARKER_CAP, openStore, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { lessons, lessonStats, stateInbox } from './lesson-inbox.mjs';
-import { findProject, stateDir } from './project.mjs';
+import { findProject, projectCheckouts, stateDir } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
 import { sessionFolder } from './session-folder.mjs';
 import { handoffStatus, stopMarkerPath } from './session-length.mjs';
@@ -104,17 +104,18 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   }
   const { project } = ctx;
   if (validId && transcript !== null) section('handoff', () => handoffSection(ctx, session, transcript));
-  section('lessons', () => lessonCounts(lessonStats(lessons(stateInbox(outsideCheckout(ctx).state))).open));
+  section('lessons', () => lessonCounts(lessonStats(lessons(stateInbox(ownState(ctx)))).open));
   section('worktrees', () => worktreesSection(ctx, validId, forgeBudget(budgetMs), errors));
   section('decisions', () => ({ provisional: unconfirmed(scanDecisions(project, { unindexed: false, config: ctx.config })) }));
-  section('audits', () => ({ untriaged: listAudits(path.join(outsideCheckout(ctx).state, 'audits')).reduce((sum, each) => sum + Math.max(each.untriaged, 0), 0) }));
+  section('audits', () => ({ untriaged: listAudits(path.join(ownState(ctx), 'audits')).reduce((sum, each) => sum + Math.max(each.untriaged, 0), 0) }));
   section('ticket', () => ticketOf(cwd, ticketPrefixes));
   return { ...out, errors: SECTIONS.filter((name) => errors.has(name)) };
 }
 
-// What the sections share: { project, config, state, checkouts, inside, folder }. `checkouts` are the project's and every
-// checkout of its repository, or null when git did not list them in time. `inside` says the state folder resolves inside
-// one of them, or that it or they cannot be resolved. `folder` is the session's folder, or null; a session
+// What the sections share: { project, config, state, checkouts, inside, loose, folder }. `checkouts` are the project's and
+// every checkout of its repository (projectCheckouts), or null when git could not list them. `inside` says the state
+// folder resolves inside one of them, or that it or they cannot be resolved. `loose` says the real state folder is another
+// user's, or every user may write it (looseFolder). `folder` is the session's folder, or null; a session
 // that was given and has none, whether its id fails or its folder cannot be made, names the cached sections in `errors`:
 // `worktrees`, `handoff` when the id fails or a transcript was given, and `prs` when the id fails or the state folder is
 // inside a checkout.
@@ -127,21 +128,22 @@ function context(project, { session, transcript, validId }, errors) {
     // Each section that needs the state folder fails on its own.
   }
   const real = state === null ? null : resolvedPath(state);
-  const repository = repositoryCheckouts(project.root);
-  const checkouts = repository && [...new Set([...project.checkouts, ...repository])];
+  const checkouts = projectCheckouts(project);
   const inside = real === null || checkouts === null || checkoutHolding(real, checkouts) !== undefined;
+  const loose = real !== null && looseFolder(real, processUid()) !== null;
   const folder = validId && !inside ? sessionFolder(state, session, { checkouts }) : null;
   if (session !== null && folder === null) {
     const named = [['prs', !validId || inside], ['worktrees', true], ['handoff', !validId || transcript !== null]];
     for (const [name, failed] of named) if (failed) errors.add(name);
   }
-  return { project, config, state, checkouts, inside, folder };
+  return { project, config, state, checkouts, inside, loose, folder };
 }
 
-// `ctx` when its state folder is outside every checkout, where its files are the user's own; else it throws.
-const outsideCheckout = (ctx) => {
-  if (ctx.inside) throw new Error('inside');
-  return ctx;
+// The state folder of `ctx` when it is outside every checkout and the user's own, as sessionFolder and openStore hold it;
+// else it throws.
+const ownState = (ctx) => {
+  if (ctx.inside || ctx.loose) throw new Error('not the user`s own');
+  return ctx.state;
 };
 
 const needed = (value) => {

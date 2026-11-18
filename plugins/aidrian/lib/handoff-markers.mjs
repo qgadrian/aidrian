@@ -93,7 +93,7 @@ export const chainLimit = (maxChain) => (maxChain === 'unlimited' ? Infinity : m
 // The store of the state folder `state`: { dir, handoffs, maxChain, uid, refused }. `dir` is the real path of the
 // store's folder. `refused` says why no marker may be written or read there, or is null: the store's folder is a
 // symlink; it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the
-// case it was spelled in; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
+// case it was spelled in, or `checkouts` is null, as when git could not list them; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
 // writable by every user, where the system has user ids. A folder its group may write passes: a umask of 002 is common. A folder not made yet passes,
 // and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, as chainLimit reads
 // it, which bounds the chain of an armed or ready marker; a chain floor or a start record is bounded by CHAIN_CEILING
@@ -102,9 +102,10 @@ export const chainLimit = (maxChain) => (maxChain === 'unlimited' ? Infinity : m
 export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
   const real = resolvedPath(storePath(state));
-  const checkout = real && checkoutHolding(real, checkouts);
+  const checkout = real && Array.isArray(checkouts) && checkoutHolding(real, checkouts);
   let refused = null;
   if (real === null) refused = `the continuation store ${storePath(state)} is behind a broken symlink`;
+  else if (!Array.isArray(checkouts)) refused = `git could not list the checkouts of the repository, so no continuation marker is kept in ${real}, which may be inside one`;
   else if (isLink(storePath(state))) refused = `the continuation store ${storePath(state)} is a symlink, and no continuation marker is kept behind one`;
   else if (checkout) refused = `the continuation store ${real} is inside the checkout ${checkout}, where no continuation marker is kept; move state.dir out of the repository`;
   else {

@@ -154,7 +154,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── sessions/<session id>/  what aidrian session snapshot caches for one session, for its user alone:
-│   ├── usage.json            the transcript read so far, as the handoff numbers fold it, and a hash of its bytes, saved step by step
+│   ├── usage.json            the transcript read so far, as the handoff numbers fold it, and a hash of its first and last 64 KiB, saved step by step
 │   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
 │   └── merged-heads-cache.json.<window>.lock  held for a moment while a snapshot records its forge attempt
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
@@ -172,12 +172,16 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
   mode 0700, no bit for the group or others, checked before every write, read, and sweep, which also checks that the
-  session folder's real path is still the one it was made at, so a folder above it swapped for a symlink gets none; each file is written as a
+  session folder's real path is still the one it was made at, so a folder above it swapped for a symlink gets none, and
+  that no folder above the state folder or the session folder is owned by another user than the user or root, or may be
+  written by its group or others without the sticky bit, as OpenSSH's StrictModes holds the folders above a key, so no
+  other user can swap a folder between a check and the write that follows; `/tmp`, root's and sticky, passes. Each file is written as a
   temporary file, mode 0600, renamed over it, under the cache names alone; a cache's reservation for one fixed window,
   `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so
   one a killed process left blocks its own window alone. A state folder inside a checkout of the repository, the
-  main checkout or any linked worktree, gets no session folder, and neither does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
+  main checkout or any linked worktree, or one git could not list the checkouts for, gets no session folder,
+  and neither does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
   the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
   others untouched for 30 days, deleting only the cache files, their temporary files, and their reservations that are
   regular files, then the folder once empty.

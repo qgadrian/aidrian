@@ -504,6 +504,16 @@ test('a remote git reads as a local path names no repository, so its calls and p
   assert.deepEqual(unit('gh pr view 3', '/w', fakeGit({ origin: 'git@github.com:acme/widgets' }).read), [touched('acme/widgets', { number: 3 }, '/w')], 'git`s host:path form');
 });
 
+test('a push URL, when set, is the push`s repository alone: one that names none records nothing', () => {
+  const push = (pushUrls) => unit('git push', '/w', fakeGit(ORIGIN, 'feat', pushUrls.map(([name, url]) => `remote.${name}.pushurl ${url}`), pushedCommon(['origin/feat'])).read);
+  assert.deepEqual(push([['origin', 'git@github.com:me/widgets.git']]), [pushed('me/widgets', 'feat', '/w')], 'a push URL on the fork records the fork');
+  assert.deepEqual(push([]), [pushed('acme/widgets', 'feat', '/w')], 'no push URL: the fetch URL');
+  for (const url of ['/srv/git/widgets', 'file:///srv/git/widgets', 'DISABLED', `https://github.com/me/${'w'.repeat(1100)}`]) assert.deepEqual(push([['origin', url]]), [], url.slice(0, 40));
+  assert.deepEqual(push([['origin', 'DISABLED'], ['origin', 'git@github.com:me/widgets.git']]), [], 'a later push URL never replaces an unreadable first one');
+  assert.deepEqual(push([['origin', 'git@github.com:me/widgets.git'], ['origin', 'git@github.com:other/widgets.git']]), [pushed('me/widgets', 'feat', '/w')], 'the first push URL');
+  assert.deepEqual(unit('gh pr view 3', '/w', fakeGit(ORIGIN, 'feat', ['remote.origin.pushurl git@github.com:me/widgets.git']).read), [touched('acme/widgets', { number: 3 }, '/w')], 'a gh call still reads the fetch URL');
+});
+
 test('a gh pr call with no target records the pull request gh checked out, and an owner:branch target its head`s fork', () => {
   const read = fakeGit(ORIGIN, 'feat', ['branch.feat.merge refs/pull/42/head']).read;
   assert.deepEqual(unit('gh pr view', '/w', read), [touched('acme/widgets', { number: 42 }, '/w')], 'branch.feat.merge refs/pull/42/head, as gh pr checkout sets it');

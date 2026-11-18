@@ -41,21 +41,25 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 const isLocalPath = (url) => /^file:/iu.test(url) || !/^[a-z][a-z0-9+.-]*:\/\/|^[^/]*:/iu.test(url);
 
 // What git says of a folder, read once each and for MAX_FOLDERS folders at most: from one `git config` read, its remotes
-// by name, each `{ fetch }` as repoIdentity reads the first `remote.<name>.url`, null for one it cannot read or that is
-// a local path (isLocalPath), and each branch's `merge`; the current branch; and the remote-tracking refs a push
-// updated to the folder's HEAD commit, which one `git rev-parse HEAD` reads (pushedRefs), in the git common dir one
-// `git rev-parse --git-common-dir` names. A key git keeps one value of takes its last, as git does. No value of the ledger reaches
-// git's argv.
-// SHORTCUT: a `url.<base>.insteadOf` rewrite in the folder's config is not applied, so a rewritten remote records the
-// URL as written. Enough for display data; applying git's rewrite rules here would replace it.
-const CONFIG_KEYS = '^(remote\\..*\\.url|branch\\..*\\.merge)$';
+// by name, each `{ fetch, push }` as repoIdentity reads the first `remote.<name>.url` and the first
+// `remote.<name>.pushurl`, null for one it cannot read or that is a local path (isLocalPath) and absent for none, and
+// each branch's `merge`; the current branch; and the remote-tracking refs a push updated to the folder's HEAD commit,
+// which one `git rev-parse HEAD` reads (pushedRefs), in the git common dir one `git rev-parse --git-common-dir` names.
+// A key git keeps one value of takes its last, as git does. No value of the ledger reaches git's argv.
+// SHORTCUT: a `url.<base>.insteadOf` or `pushInsteadOf` rewrite in the folder's config is not applied, so a rewritten
+// remote records the URL as written. Enough for display data; applying git's rewrite rules here would replace it.
+const CONFIG_KEYS = '^(remote\\..*\\.(url|pushurl)|branch\\..*\\.merge)$';
 function readConfig(stdout) {
   const config = { remotes: new Map(), branches: new Map() };
   for (const line of stdout.split('\n')) {
-    const remote = /^remote\.([^ ]+)\.url (.*)$/u.exec(line);
+    const remote = /^remote\.([^ ]+)\.(url|pushurl) (.*)$/u.exec(line);
     const branch = /^branch\.([^ ]+)\.merge (.*)$/u.exec(line);
-    if (remote && !config.remotes.has(remote[1])) config.remotes.set(remote[1], { fetch: isLocalPath(remote[2]) ? null : repoIdentity(remote[2]) });
-    else if (branch) config.branches.set(branch[1], { merge: branch[2] });
+    if (remote) {
+      const each = config.remotes.get(remote[1]) ?? {};
+      const key = remote[2] === 'url' ? 'fetch' : 'push';
+      if (!Object.hasOwn(each, key)) each[key] = isLocalPath(remote[3]) ? null : repoIdentity(remote[3]);
+      config.remotes.set(remote[1], each);
+    } else if (branch) config.branches.set(branch[1], { merge: branch[2] });
   }
   return config;
 }
@@ -108,13 +112,14 @@ function declaredRepos(folders, folder, hosts) {
 }
 
 // A push's rows: each remote-tracking ref git recorded a push of the HEAD commit of `folder` to (pushedRefs) in its git
-// common dir, on the repository of its remote's URL, the configured remote whose name, then `/`, starts the ref's path,
-// the longest such.
+// common dir, on the repository its remote pushes to, the configured remote whose name, then `/`, starts the ref's path,
+// the longest such: its push URL when one is set, so a push URL that names none records nothing, else its URL.
 function pushedRows(folder, folders, now) {
   const remotes = folders.remotes(folder);
   return folders.pushed(folder, now).flatMap((ref) => {
     const name = [...remotes.keys()].filter((each) => ref.startsWith(`${each}/`)).sort((a, b) => b.length - a.length)[0];
-    const repo = name === undefined ? null : remotes.get(name).fetch;
+    const remote = name === undefined ? {} : remotes.get(name);
+    const repo = (Object.hasOwn(remote, 'push') ? remote.push : remote.fetch) ?? null;
     return repo ? [{ kind: 'pushed', repo, number: null, branch: ref.slice(name.length + 1), cwd: folder }] : [];
   });
 }

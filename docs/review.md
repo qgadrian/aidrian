@@ -583,7 +583,7 @@ review. Four settings together give that, with no rule pasted into a session:
       "tests": ["e2e/staff*"]
     }
   },
-  "productFeedback": { "auto": true, "files": ["src/app/**", "src/components/**", "src/hooks/**", "src/**/*.css", "locales/**"] }
+  "productFeedback": { "auto": true, "files": ["src/app/**", "src/components/**", "src/hooks/**", "src/lib/ui/**", "src/**/*.css", "locales/**"] }
 },
 "quorum": { "product": { "autoStart": true } }
 ```
@@ -596,9 +596,10 @@ review. Four settings together give that, with no rule pasted into a session:
 - **Tried by hand**: `productFeedback.auto` runs the `pr-product-feedback` skill after the draft opens. A persona
   walks the tasks the diff touches in the running app, at that persona's own device width, and the ready hold waits
   for the feedback. The walk needs a persona doc for the staff role ([Personas](personas.md)).
-  `files` lists the whole UI surface, not only the captured screens: every screen component, and the hooks, locales,
-  and styles behind them. Unset, it falls back to the visual targets' files, and a pull request that changes only a
-  file outside them, such as a translation or a UI hook, reads as `not_user_facing` and gets no feedback.
+- **Every UI file owes feedback**: `productFeedback.files` lists the whole UI surface, not only the captured routes:
+  every screen component, the hooks and helpers beside them, the locales, and the styles. Unset, it falls back to the
+  visual targets' files, and a pull request that changes only a file outside them, such as a translation or a UI hook,
+  reads as `not_user_facing` and gets no feedback.
 - **A person looks too**: add `"signoff": "human"` to the flow when a person, not only agents, must try the screens
   before the review passes ([Sign-off by the Human](#sign-off-by-the-human)). Keep it to the few flows that need it,
   since every head that touches them waits for that person.

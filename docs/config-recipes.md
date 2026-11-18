@@ -194,10 +194,12 @@ project's screen files and the routes that show them, one target per group of sc
 this when it applies the recipe. [Screens checked on every device](review.md#screens-checked-on-every-device) has a
 fuller config, with a flow whose invariants block the review, and what each key does.
 
-Set `review.productFeedback.files` too, to the project's whole UI surface: every screen component, and the hooks,
-locales, and styles behind them. Unset, product feedback falls back to the visual targets' files, which name only the
-screens worth capturing. A pull request that changes only a file outside them, such as a translation, a UI hook, or a
-screen no target lists, then reads as `not_user_facing`, and the ready hold lets it through with no feedback.
+Set `review.productFeedback.files` too, to the project's whole UI surface: every screen component, the hooks and
+helpers beside them, the locales, and the styles. Unset, product feedback falls back to the visual targets' files,
+which name only the routes worth capturing. In one real project that left out about 800 UI files, whole sections,
+every locale file, and the UI hooks among them: a pull request that changed only those read as `not_user_facing`, and
+the ready hold let it through with no feedback. The recipes leave `files` out on purpose, since a placeholder there
+would hide the same gap.
 
 What each part needs, and what happens without it:
 

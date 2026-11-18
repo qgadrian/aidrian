@@ -955,7 +955,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   (`lib/session-origins.mjs`), whether or not the hooks have written there yet; those of every project's default state
   folder under the state root (`<root>/projects/<id>/sessions`) that are there, found once a call with the guards'
   deadline checked at each; and those of the project the session's gate snapshot or unattended mark names, each
-  project folder by itself, so a linked checkout whose config moves `state.dir` is its own. So a subagent that works in
+  project folder by itself, so a linked checkout whose config moves `state.dir` is its own. The snapshot's project is
+  opened, which runs git, only for a call that may write, a shell call or one with a write target, and never when it
+  is the call's own project, so a subagent's Read runs one git, to find its project. So a subagent that works in
   another project, another checkout, or a folder with no project still meets the session folders of the project its
   session started in, gated or not. No subagent or unattended session may write the origins folder, as for the marks.
   A sessions folder that a checkout holds is no session folder, by the checkouts the session folder's writer keeps it

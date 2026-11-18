@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -1509,4 +1509,28 @@ test('the default sessions folders are scanned once a call, with the guards` dea
   let entries = 0;
   assert.throws(() => withinDeadline(0, () => defaultSessionsFolders({}, { entry: () => (entries += 1, true) })), PastDeadline);
   assert.ok(entries <= 1, `${entries} folders read past the deadline`);
+});
+
+test('a gated subagent`s Read in the project its session started in runs one git, to find the project, and no other', { skip: process.platform === 'win32' }, (t) => {
+  const { dir } = project(t, GATED);
+  gitIn(dir, 'init', '-q', '-b', 'main');
+  const session = 'git-count-1';
+  assert.ok(saveGateSnapshot(session, dir, GATED.agents));
+  t.after(() => forgetGateSnapshot(session));
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-log-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const log = path.join(bin, 'calls.log');
+  const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho "$*" >> ${JSON.stringify(log)}\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+  const calls = (toolName, toolInput) => {
+    rmSync(log, { force: true });
+    const ran = spawnSync(process.execPath, [HOOK], {
+      input: JSON.stringify({ session_id: session, tool_name: toolName, tool_input: toolInput, cwd: dir, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
+      cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+    });
+    assert.equal(ran.status, 0, ran.stderr);
+    return existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+  };
+  assert.equal(calls('Read', { file_path: path.join(dir, 'src/app.js') }).length, 1, 'the project lookup alone');
+  assert.equal(calls('Grep', { pattern: 'x', path: dir }).length, 1);
 });

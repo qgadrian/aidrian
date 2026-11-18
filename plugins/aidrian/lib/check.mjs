@@ -14,6 +14,7 @@ import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
 import { ROUTED_DOMAINS } from './quorum.mjs';
 import { insideCheckout } from './review/in-force.mjs';
+import { unseenScreenWarnings } from './screen-check.mjs';
 import { trackerWarnings } from './tracker-check.mjs';
 import { loadTerms } from './terms.mjs';
 import { bannedFileProblems } from './banned-terms.mjs';
@@ -35,48 +36,6 @@ function untrackedDocs(project, config) {
   return tracked ? escalateDocWarnings(entries, tracked) : [];
 }
 
-// A screen file, by a conservative guess from its path: a .tsx, .jsx, .vue, .svelte, or .html file outside docs,
-// examples, vendored code, test folders, and dot folders, and not a test, spec, or story file.
-// SHORTCUT: extensions alone; a project whose screens are .ts or templates of another kind is not seen, which only costs
-// a warning. A per-project list would replace it if one is needed.
-const SCREEN_FILE = /\.(?:tsx|jsx|vue|svelte|html)$/u;
-const NOT_SCREEN_NAME = /\.(?:test|spec|stories)\.[^./]+$/u;
-const NOT_SCREEN_FOLDERS = new Set(['docs', 'examples', 'node_modules', 'vendor', 'test', 'tests', '__tests__', 'e2e', 'fixtures', '__fixtures__']);
-// A React Native app's screens are .tsx and .jsx files too, but `review.visual.platform` takes only "web", so no capture
-// reaches them. With `nativeOnly`, those files do not count.
-const NATIVE_SCREEN = /\.(?:tsx|jsx)$/u;
-export function isScreenFile(file, { nativeOnly = false } = {}) {
-  if (!SCREEN_FILE.test(file) || NOT_SCREEN_NAME.test(file)) return false;
-  if (nativeOnly && NATIVE_SCREEN.test(file)) return false;
-  return !file.split('/').slice(0, -1).some((folder) => folder.startsWith('.') || NOT_SCREEN_FOLDERS.has(folder));
-}
-
-// Whether the project's package.json depends on react-native and not on react-dom, which a React Native app that also
-// renders for the web, such as through react-native-web or Expo for the web, depends on. No package.json, or one that
-// does not parse, is not native.
-// SHORTCUT: the project root's package.json only; a monorepo whose native app lives in a workspace still counts its
-// .tsx files, which costs a warning, and reading each workspace's package.json would replace it.
-export function isNativeOnly(pkg) {
-  const deps = Object.assign({}, ...['dependencies', 'devDependencies', 'peerDependencies'].map((key) => (pkg?.[key] && typeof pkg[key] === 'object' ? pkg[key] : {})));
-  return Object.hasOwn(deps, 'react-native') && !Object.hasOwn(deps, 'react-dom');
-}
-
-// The warning that auto-merge can ship a screen change no capture checked: the team allows auto-merge, `review.visual`
-// is unset, and git tracks a web screen file. Like the other checks, this reads the working copy.
-function unseenScreenWarnings(project, config) {
-  if (!config.github.autoMerge.allow || config.review.visual) return [];
-  const nativeOnly = isNativeOnly(readJson(project.root, 'package.json', []));
-  const screens = (trackedFiles(project) ?? []).filter((file) => isScreenFile(file, { nativeOnly }));
-  if (!screens.length) return [];
-  const count = screens.length === 1 ? '1 tracked screen file' : `${screens.length} tracked screen files`;
-  return [`github.autoMerge.allow is true and review.visual is unset, so auto-merge can ship screen changes no capture checked (${count}, such as ${quotedPath(screens[0])}): set review.visual.targets to the routes and files of the project's screens`];
-}
-
-// A tracked path as a diagnostic names it: quoted as JSON, as the other commands name a path, so a line break or an
-// ESC in a file name cannot start a line of its own or drive the terminal. JSON leaves DEL, the C1 controls, such as the
-// one-byte CSI, and the Unicode line separators as they are, so those are escaped too.
-const quotedPath = (file) => JSON.stringify(file).replace(/[\u007f-\u009f\u2028\u2029]/gu, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
-
 // The warnings for `quorum.product` settings that have no effect. "Set" reads the file itself, since a key set to its
 // default looks unset once merged. As decisionWarnings does, this reads the working copy, the local file's `decisions` over it.
 function quorumProductWarnings(project, { quorum: { product }, decisions }) {
@@ -93,6 +52,19 @@ function quorumProductWarnings(project, { quorum: { product }, decisions }) {
   for (const key of ['approval', 'maxAutoRuns']) {
     if (Object.hasOwn(written, key)) warnings.push(`quorum.product.${key} is set, but quorum.product.autoStart is off, so it has no effect`);
   }
+  return warnings;
+}
+
+// The warnings about the checkout and this machine's switches.
+function checkoutWarnings(project, config) {
+  const warnings = [];
+  // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. Outside
+  // a repository there is nothing to warn about; when git fails inside one, the check stays silent.
+  const inside = insideCheckout(project, config, () => ({}));
+  if (inside.problem && !inside.unread) warnings.push(inside.problem);
+  // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
+  if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
+  if (project.localUnattendedWaiver === 'on' && !config.github.unattendedWaiver.allow) warnings.push('unattended waiver is on locally but the team does not allow it');
   return warnings;
 }
 
@@ -119,18 +91,12 @@ export const commands = {
         const move = state && config.state.dir ? `in ${project.paths.config} set "state": { "dir": null } to move the state folder out of the repository, or while it stays ` : '';
         errors.push(`${line} is not git-ignored: ${move}add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
-      // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. Outside
-      // a repository there is nothing to warn about; when git fails inside one, the check stays silent.
-      const inside = insideCheckout(project, config, () => ({}));
-      if (inside.problem && !inside.unread) warnings.push(inside.problem);
-      // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
-      if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
-      if (project.localUnattendedWaiver === 'on' && !config.github.unattendedWaiver.allow) warnings.push('unattended waiver is on locally but the team does not allow it');
+      warnings.push(...checkoutWarnings(project, config));
       const tags = tagWarnings(buckets);
       // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
       // Only with no errors too: a `review.visual` with an error reads as unset, and its error already says what to fix.
-      const screens = errors.length ? [] : unseenScreenWarnings(project, config);
+      const screens = errors.length ? [] : unseenScreenWarnings(project, config, () => trackedFiles(project));
       const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker), ...screens];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));

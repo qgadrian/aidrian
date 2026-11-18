@@ -315,9 +315,11 @@ A screen file is a `.tsx`, `.jsx`, `.vue`, `.svelte`, or `.html` file that git t
 `docs`, `examples`, `vendor`, `node_modules`, `test`, `tests`, `__tests__`, `e2e`, `fixtures`, or `__fixtures__` folder
 and any folder whose name starts with a dot, and not a `.test.`, `.spec.`, or `.stories.` file. The guess leaves out
 screens in other files, such as `.ts` or server templates: there the check stays silent. It reads the working copy.
-These are web screens, since `review.visual.platform` takes only `"web"` today: when the project's `package.json`
-depends on `react-native` and not on `react-dom`, its `.tsx` and `.jsx` files do not count, so a native-only app is not
-asked for targets no capture could reach. Only the project root's `package.json` is read.
+These are web screens, since `review.visual.platform` takes only `"web"` today, so a native-only app is not asked for
+targets no capture could reach. Each `.tsx` or `.jsx` file asks its nearest `package.json`, from its own folder up to
+the project root: when that one depends on `react-native` and not on `react-dom`, the file does not count. So in a
+monorepo each workspace answers for its own files. With no `package.json` up to the root, or one that does not parse,
+the file counts.
 
 A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
 since an older plugin rejects the key.

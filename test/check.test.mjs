@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { isNativeOnly, isScreenFile } from '../plugins/aidrian/lib/check.mjs';
+import { isNativeOnly, isScreenFile } from '../plugins/aidrian/lib/screen-check.mjs';
 import { isIgnored } from '../plugins/aidrian/lib/git.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -493,6 +493,38 @@ test('the screen warning leaves out a native-only React Native app, whose screen
   writeFileSync(path.join(dir, 'src/screens/index.html'), '');
   execFileSync('git', ['-C', dir, 'add', 'src/screens/index.html']);
   assert.match(check(), /"src\/screens\/index\.html"/u, 'an .html file still counts in a native app');
+});
+
+test('each screen file asks its nearest package.json whether it is native, so a web workspace under a native root warns', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: true } } }));
+  const write = (file, text = '') => {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+    execFileSync('git', ['-C', dir, 'add', file]);
+  };
+  const deps = (dependencies) => JSON.stringify({ name: 'pkg', dependencies });
+  const check = () => {
+    const { status, stderr } = run(['check'], dir);
+    assert.equal(status, 0, stderr);
+    return stderr;
+  };
+  const warns = (file) => new RegExp(`^warning: github\\.autoMerge\\.allow is true and review\\.visual is unset, so auto-merge can ship screen changes no capture checked \\(1 tracked screen file, such as "${file.replaceAll('/', '\\/').replaceAll('.', '\\.')}"\\)`, 'u');
+
+  write('package.json', deps({ 'react-native': '0.80.0' }));
+  write('apps/mobile/src/Home.tsx');
+  assert.equal(check(), '', 'a file under the native root, with no manifest of its own, is native');
+  write('packages/web/package.json', deps({ react: '19.0.0', 'react-dom': '19.0.0' }));
+  write('packages/web/src/App.tsx');
+  assert.match(check(), warns('packages/web/src/App.tsx'), 'the web workspace has its own react-dom');
+
+  writeFileSync(path.join(dir, 'packages/web/package.json'), '{ not json');
+  assert.match(check(), warns('packages/web/src/App.tsx'), 'a manifest that does not parse keeps the warning');
+  writeFileSync(path.join(dir, 'packages/web/package.json'), deps({ 'react-native': '0.80.0' }));
+  assert.equal(check(), '', 'a native workspace is native');
+  writeFileSync(path.join(dir, 'package.json'), deps({ react: '19.0.0' }));
+  writeFileSync(path.join(dir, 'packages/web/package.json'), deps({ 'react-native': '0.80.0', 'react-dom': '19.0.0' }));
+  assert.match(check(), /"apps\/mobile\/src\/Home\.tsx"/u, 'a file whose nearest manifest has no react-native counts');
 });
 
 test('a native-only project depends on react-native and not on react-dom', () => {

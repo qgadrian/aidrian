@@ -169,7 +169,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   adds to; and `changeRef({ host, path, number, branch })`, text only, which starts no process and answers the frozen
   ref `{ host, owner, name, number, branch }` when every field has the forge's shape, else null. GitHub's takes a host
   it declares, a path of exactly `owner/name` with an owner shaped as a login and a repository name, a positive whole
-  number, and a branch that passes git's ref-name rules within 255 bytes (`isRefName` in `lib/git.mjs`), with at least
+  number that GraphQL's `Int` holds (2,147,483,647 at most, so one number never fails a batched read), and a branch that passes git's ref-name rules within 255 bytes (`isRefName` in `lib/git.mjs`), with at least
   one of number and branch. The hook calls it before every ledger write, and the snapshot before every read.
   `changesState(refs)`, the one batched read of the snapshot's `prs`: given refs `{ host, path, number, branch }` as the
   ledger holds them, newest first, it answers, for each of the first 25, the forge-neutral row of its change request, or

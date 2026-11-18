@@ -995,6 +995,23 @@ test('changesState: a branch resolves to the token user`s own pull request, then
   assert.equal(noViewer.forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number, 4, 'no root viewer is read, so an answer without one still resolves');
 });
 
+test('a pull request number past GraphQL`s Int is refused before any call: the batch still resolves the others, and no read sends it', () => {
+  const past = 2 ** 31;
+  const { forge, calls } = replay({ data: { r0: { pullRequest: PR_NODE } } });
+  assert.equal(forge.changeRef(numberRef('acme/notes', past)), null);
+  assert.equal(forge.changeRef(numberRef('acme/notes', past - 1)).number, past - 1, 'the largest Int is a ref');
+  const rows = forge.changesState([numberRef('acme/notes', past), numberRef('acme/notes', 7)]);
+  assert.deepEqual(rows.map((row) => row?.number ?? null), [null, 7], 'the bad number answers null and the other still resolves');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(bodyOf(calls[0]).variables, { o0: 'acme', n0: 'notes', p0: 7 }, 'no variable holds the bad number');
+  assert.ok(!calls[0].options.input.includes(String(past)));
+  const reads = [() => forge.reviewsWithComments('acme/notes', past), () => forge.reviewThreads('acme/notes', past), () => forge.changeEdits('acme/notes', past), () => forge.findingThreads('acme/notes', past)];
+  for (const read of reads) assert.throws(read, /GraphQL/u);
+  assert.equal(calls.length, 1, 'no GraphQL read starts with it');
+  forge.comment('acme/notes', 2 ** 40);
+  assert.ok(calls.at(-1).args.includes('repos/acme/notes/issues/comments/1099511627776'), 'a REST id stays unbounded');
+});
+
 test('changesState: every row carries the adapter`s id, from the one constant that names it', () => {
   const { forge } = replay({ data: { r0: { pullRequest: PR_NODE } } });
   assert.equal(forge.changesState([numberRef('acme/notes', 7)])[0].forge, forge.id);

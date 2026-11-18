@@ -35,15 +35,21 @@ export function servedRepository(identity) {
   return `${host}/${parts[0]}/${parts[1]}`;
 }
 
+// The largest pull request number a GraphQL call takes: GitHub's `Int` is a signed 32-bit integer, and one variable past
+// it fails the whole operation, every alias of a batch included. REST ids, such as a comment's, stay unbounded.
+const GRAPHQL_INT_MAX = 2_147_483_647;
+const isChangeNumber = (number) => Number.isSafeInteger(number) && number > 0 && number <= GRAPHQL_INT_MAX;
+
 // A change request's ref, the one shape check of a ref before it is written to the session's ledger or read: given
 // `{ host, path, number, branch }`, host and path as repoIdentity reads them, the frozen `{ host, owner, name, number,
-// branch }`, or null unless servedRepository names the repository, a number is a positive safe integer, a branch passes
+// branch }`, or null unless servedRepository names the repository, a number is a positive integer GraphQL's Int holds
+// (GRAPHQL_INT_MAX), so one ref's number never fails a batch, a branch passes
 // isRefName (git's ref-name rules within 255 bytes) and holds no hidden character (hidden-text.mjs), and one of the two
 // is given. Text only: it starts no process.
 export function changeRef(fields) {
   const { host, path, number = null, branch = null } = fields !== null && typeof fields === 'object' ? fields : {};
   const repository = servedRepository({ host, path });
-  const numbered = number === null || (Number.isSafeInteger(number) && number > 0);
+  const numbered = number === null || isChangeNumber(number);
   const named = branch === null || (isRefName(branch) && !hasHidden(branch));
   if (repository === null || !numbered || !named || (number === null && branch === null)) return null;
   const [owner, name] = path.split('/');
@@ -230,6 +236,13 @@ const idOf = (value, what) => {
   return number;
 };
 
+// A pull request number as a GraphQL variable takes it: idOf's, and within GRAPHQL_INT_MAX, else it throws before any call.
+const graphNumber = (value) => {
+  const number = idOf(value, 'a pull request number');
+  if (!isChangeNumber(number)) throw new Error('a pull request number must fit GraphQL\'s Int');
+  return number;
+};
+
 // Whether gh failed on an answer GitHub gave with a 4xx status, such as 422 for a review line outside the diff.
 const clientError = (error) => /\(HTTP 4\d\d\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
 // Whether gh failed on GitHub's 404.
@@ -318,7 +331,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
   // read, and with `roots`, the ids of root comments, no page past the one where the last of them is found.
   // A page that does not answer as one, and more pages than THREAD_PAGES, throw.
   const walkThreads = (repo, n, { root = null, roots = null } = {}) => {
-    const number = idOf(n, 'a pull request number');
+    const number = graphNumber(n);
     const rootId = root === null ? null : idOf(root, 'a comment id');
     const wanted = rootId === null && Array.isArray(roots) ? new Set(roots.map((each) => String(idOf(each, 'a comment id')))) : null;
     const [owner, name, ...extra] = String(repo).split('/');
@@ -600,16 +613,16 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     },
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
     // REVIEWS_PAGE of each, with each list's `totalCount`.
-    // The owner and name go as raw -f strings, and the number through idOf before -F, which reads a leading `@` as a file.
+    // The owner and name go as raw -f strings, and the number through graphNumber before -F, which reads a leading `@` as a file.
     reviewsWithComments: (repo, n) => {
-      const number = idOf(n, 'a pull request number');
+      const number = graphNumber(n);
       const [owner, name] = repo.split('/');
       return json(['api', 'graphql', '-f', `query=${REVIEWS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`]);
     },
     // One page of the review threads, each with its first comment, after the cursor `after` (null: the first page):
     // GitHub's GraphQL answer, `data.repository.pullRequest.reviewThreads` with its `pageInfo`.
     reviewThreads: (repo, n, after = null) => {
-      const number = idOf(n, 'a pull request number');
+      const number = graphNumber(n);
       const [owner, name] = repo.split('/');
       return json(['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`, ...(after ? ['-f', `after=${after}`] : [])]);
     },
@@ -617,7 +630,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // `data.repository.pullRequest` with `lastEditedAt` (null when never edited) and `timelineItems.nodes`, the newest
     // rename's `createdAt` or none.
     changeEdits: (repo, n, { host } = {}) => {
-      const number = idOf(n, 'a pull request number');
+      const number = graphNumber(n);
       const [owner, name] = repo.split('/');
       return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${EDITS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`]);
     },

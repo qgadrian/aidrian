@@ -119,9 +119,14 @@ and neither is `.` or `..`. Its host and repository must be a remote of this che
 answers for, which is also the check on a bare number. gh gets `<n> --repo <host>/<owner>/<name>`, never the raw URL.
 A refusal exits 3, names its kind, and never echoes the argument, which may hold a token. It prints one JSON object:
 `number`, `host`, `repo` (`<owner>/<name>`), `head`, `base`, `state`, `cross_repository`, `author_association`, `limited`,
-`preview_url`, and `max_personas`. Every later gh call passes `--repo <host>/<repo>`. A merged or closed pull request
-resolves too: the walk rules decide its evidence level. A remote matches by host, owner, and name; `ssh.github.com` counts
-as `github.com`, and no other SSH host alias is resolved, so a remote that uses one fails closed and the refusal says so.
+`preview_url`, `max_personas`, and `walk_widths`. `walk_widths` is the widths each in-scope browser task is walked at:
+`review.visual.viewports`, each once, in config order, when [`review.productFeedback.allWidths`](config.md#walking-every-width)
+is set and a changed file matches its `files`, and `[]` otherwise. That key is `null`, off, by default, and on it costs
+personas x tasks x widths walks: 18 in place of 6 for 2 personas of 3 tasks at 3 widths.
+Every later gh call passes `--repo <host>/<repo>`.
+A merged or closed pull request resolves too: the walk rules decide its evidence level.
+A remote matches by host, owner, and name; `ssh.github.com` counts as `github.com`, and no other SSH host alias is resolved,
+so a remote that uses one fails closed and the refusal says so.
 The skill passes the argument single-quoted, and ends the run before any command when it holds a `'` or a control
 character. When the command cannot run at all the run ends, with no fallback to a raw gh call.
 

@@ -55,7 +55,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false, "includeGuardedPaths": false, "unreviewedPaths": [] },
     "unattendedWaiver": { "allow": false }
   },
-  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<Markdown, LICENSE, NOTICE, raster images, fonts>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
+  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<Markdown, LICENSE, NOTICE, raster images, fonts>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2, "allWidths": null } },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576, "untaggedDocBytes": null, "enforce": "warn", "baseline": {} }, "defaults": { "codeStyle": true } },
@@ -173,6 +173,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `review.publish.replies` | `true` by default: with `inline` on, each finding's thread gets one reply once it closes, and is resolved when it is the engine's alone ([Replies](review.md#replies)). `false` posts no reply. |
 | `review.publish` in `.aidrian.local.json` | This machine's choice, which only ever posts less: `"summary": "counts"` and `"inline": false`, and nothing else. Any other key or value there, `"publicSecurity": "full"` included, is a config error, and the team's value stays. |
 | `review.productFeedback.maxPersonas` | How many personas `persona-audit` [picks for a pull request](personas.md#a-pull-request-link-alone): a whole number from 1 to 10, 2 by default. A run that names personas, or `all`, has no cap. |
+| `review.productFeedback.allWidths` | `null`, the default, or `{ "files": [...] }`: when a pull request changes a listed file, the persona walk does each in-scope browser task once per width of `review.visual.viewports`. Read from the working copy, as `maxPersonas` is. It multiplies the walks by the widths: [Walking every width](#walking-every-width). |
 | `review.productFeedback.auto` | `true` makes a pull request that changes a user-facing file owe [product feedback](#product-feedback). `false`, the default. Read from the default branch and the base, never the working copy: it is on when either says true. With neither list below, it is an error here, and `status` reads it as clear. |
 | `review.productFeedback.files` | The globs, or `re:` patterns, of the user-facing files. `null`, the default, uses `review.visual.targets[].files`. Read from the default branch and the base, as their union. |
 | `review.productFeedback` in `.aidrian.local.json` | This machine's choice: `{ "auto": true }` or `{ "auto": false }`, and no other key. Read only from the main checkout's file. It wins over the branches both ways: [Product feedback](#product-feedback). |
@@ -567,7 +568,7 @@ run it after a draft opens and check it before marking ready ([review.md](review
 their own shell before the session, lifts that hold.
 
 ```json
-"review": { "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } }
+"review": { "productFeedback": { "auto": false, "files": null, "maxPersonas": 2, "allWidths": null } }
 ```
 
 and, in `.aidrian.local.json`:
@@ -580,6 +581,27 @@ The second block may set only `auto`. Local wins both ways, so one person can op
 machine choose. It comes only from the main checkout's file: a worktree's copy is not read, a copy git tracks is ignored with
 an error, and a broken file or an invalid value reads as unset, so the team's value holds, never `false`. A subagent may not
 change it: [the config guard](hooks.md#agent-gates).
+
+### Walking every width
+
+`allWidths` is off by default. Set it to `{ "files": [...] }`, globs or `re:` patterns relative to the project folder:
+
+```json
+"review": { "productFeedback": { "allWidths": { "files": ["src/app/**", "re:^src/components/"] } } }
+```
+
+When a pull request changes a listed file, the persona walk does each in-scope browser task once per width of
+`review.visual.viewports`, each width once, in place of the persona's own width. A task walked another way, such as an API
+call or a CLI, has no width and is walked once. `aidrian pr resolve` decides it and prints the widths as
+[`walk_widths`](personas.md#a-pull-request-link-alone), `[]` when no listed file changed.
+
+- It is read from the working copy, as `maxPersonas` is, not from the default branch and the base, as `auto` and `files`
+  are: it shapes a walk, and decides nothing a pull request owes. `.aidrian.local.json` cannot set it.
+- It needs `review.visual.viewports`. Without them it has no effect, and `aidrian check` warns:
+  `review.productFeedback.allWidths is set, but review.visual lists no viewports, so it has no effect`.
+- A file list gh cuts short, a rename, or a file with no change type counts as a match, as for `status`.
+- The cost: the walk count is personas x tasks x widths. With the default 2 personas, 3 tasks each, and 3 widths, that is
+  18 walks in place of 6. `maxPersonas` still caps the personas.
 
 ### The commands
 

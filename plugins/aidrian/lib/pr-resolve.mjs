@@ -11,16 +11,22 @@
 // shared hosting, such as `*.vercel.app`, is not refused: the deployment source is what stops a stranger's page. That is
 // also its limit: a Preview line trusts everything able to create deployments, so a project whose workflow deploys fork
 // builds with a write token names no Preview line until that is fixed.
+// `walk_widths` is the widths each in-scope browser task is walked at: review.visual.viewports, each once, in config order,
+// when review.productFeedback.allWidths is set and a changed file matches its files, and [] otherwise. Only then is gh
+// asked for the file list, so with the key off the call is the same as without the feature.
 // docs/personas.md#a-pull-request-link-alone describes the JSON.
 // Exit 0 with the JSON, 3 on a refusal, a gh failure, an answer it cannot read, or a config.json with errors.
 
 import { readFileSync } from 'node:fs';
 
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
+import { isObject } from './fs.mjs';
+import { showPrefix } from './git.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, personaDocs, previewPatterns } from './personas.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
 import { projectAt } from './project.mjs';
+import { pathPattern } from './review/plan.mjs';
 
 const NUMBER = /^#?(\d+)$/u;
 const SCHEME = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//u;
@@ -44,6 +50,22 @@ const PREVIEW_HOSTNAME = /^[a-z0-9.-]+$/u;
 export function fromOutside(isCrossRepository, pull) {
   if (typeof isCrossRepository !== 'boolean' || typeof pull?.author_association !== 'string' || !pull.author_association || typeof pull.base?.repo?.fork !== 'boolean') return null;
   return isCrossRepository || pull.base.repo.fork || !isTrustedCommenter(pull);
+}
+
+// Whether a changed file of the pull request, under the project's folder `prefix`, matches one of `entries` (globs or `re:`
+// patterns, relative to that folder). A file list that hides files counts as a match: one shorter than `changedFiles`, as gh
+// lists at most 100, a rename, whose old path is not listed, or a file with no change type.
+export function changedFilesMatch({ files, changedFiles }, entries, prefix) {
+  if (files.length !== changedFiles || files.some(({ changeType }) => changeType === 'RENAMED' || !changeType)) return true;
+  const patterns = entries.map(pathPattern);
+  return files.some((file) => file.path.startsWith(prefix) && patterns.some((pattern) => pattern.test(file.path.slice(prefix.length))));
+}
+
+// The widths a walk of this pull request uses: `review` is the config's `review`; `pr` holds gh's `files` and `changedFiles`.
+export function walkWidths(review, pr, prefix) {
+  const files = review.productFeedback?.allWidths?.files;
+  const viewports = review.visual?.viewports ?? [];
+  return files && viewports.length && changedFilesMatch(pr, files, prefix) ? [...new Set(viewports)] : [];
 }
 
 const safeName = (part) => SLUG.test(part) && part !== '.' && part !== '..';
@@ -130,15 +152,16 @@ function deploymentPreview({ host, repo, head }, patterns, forge) {
   return null;
 }
 
-// The CLI body. `forge`, `remotes`, and `patterns` are the test seams: the forge facade (lib/forges), whose methods throw
-// as gh does, () → checkoutRemotes, and () → the Preview patterns, which may throw when the doc cannot be read: no
-// patterns, so no preview.
+// The CLI body. `forge`, `remotes`, `patterns`, and `prefix` are the test seams: the forge facade (lib/forges), whose
+// methods throw as gh does, () → checkoutRemotes, () → the Preview patterns, which may throw when the doc cannot be read:
+// no patterns, so no preview, and () → the project's folder in the repository, read only when walk_widths needs it.
 export function runResolve(
   argv,
   config,
   forge = forgeFor(undefined),
   remotes = () => checkoutRemotes(process.cwd()),
   patterns = () => projectPreviewPatterns(projectAt(process.cwd())),
+  prefix = () => showPrefix(projectAt(process.cwd()).root),
 ) {
   const fail = (message) => {
     console.error(`error: ${message}`);
@@ -157,7 +180,9 @@ export function runResolve(
       return { failed: String(error?.stderr || error?.message || error).trim().split('\n')[0] };
     }
   };
-  const view = read(() => forge.change(String(target.number), VIEW_FIELDS, { repo: target.host ? repository(target) : null }));
+  const allWidths = Boolean(config.review.productFeedback.allWidths?.files) && Boolean(config.review.visual?.viewports?.length);
+  const fields = allWidths ? `${VIEW_FIELDS},files,changedFiles` : VIEW_FIELDS;
+  const view = read(() => forge.change(String(target.number), fields, { repo: target.host ? repository(target) : null }));
   if (view?.failed) return fail(`gh: could not read pull request ${target.number}: ${view.failed}`);
   const unreadable = () => fail(`gh: could not read pull request ${target.number}: its answer is not what gh prints`);
   // The repository gh answered for, by the URL it gave, under the same rules as an argument.
@@ -165,6 +190,7 @@ export function runResolve(
   if (!answered.host || answered.number !== target.number || view.number !== target.number) return unreadable();
   if (!isRemote(answered)) return fail(notRemote(answered));
   if (typeof view.headRefOid !== 'string' || !SHA.test(view.headRefOid) || !view.baseRefName || !view.state || typeof view.isCrossRepository !== 'boolean') return unreadable();
+  if (allWidths && (!Array.isArray(view.files) || view.files.some((file) => !isObject(file) || typeof file.path !== 'string') || !Number.isSafeInteger(view.changedFiles) || view.changedFiles < 0)) return unreadable();
   const repo = `${answered.owner}/${answered.name}`;
   const pull = read(() => forge.pull(repo, target.number, { host: answered.host }));
   if (pull?.failed) return fail(`gh: could not read pull request ${target.number}: ${pull.failed}`);
@@ -178,6 +204,7 @@ export function runResolve(
     allowed = [];
   }
   const previewUrl = allowed.length ? deploymentPreview({ host: answered.host, repo, head: view.headRefOid }, allowed, forge) : null;
+  const widths = allWidths ? walkWidths(config.review, view, prefix()) : [];
   console.log(JSON.stringify({
     number: target.number,
     host: answered.host,
@@ -190,6 +217,7 @@ export function runResolve(
     limited,
     preview_url: previewUrl,
     max_personas: config.review.productFeedback.maxPersonas,
+    walk_widths: widths,
   }));
   return 0;
 }

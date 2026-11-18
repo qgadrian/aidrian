@@ -38,11 +38,10 @@ import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './personas.mjs';
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
-import { fromOutside, parseTarget } from './pr-resolve.mjs';
+import { changedFilesMatch, fromOutside, parseTarget } from './pr-resolve.mjs';
 import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
 import { decodedCopy, neutralized, refusedKind } from './review/publish.mjs';
-import { pathPattern } from './review/plan.mjs';
 
 const ITEM_ID = /^PF([1-9]\d*)$/u;
 const RECHECKS = ['confirmed', 'reopened'];
@@ -258,10 +257,7 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
   if (unlisted) throw new Error(`review.visual on ${unlisted.branch} has errors, and its targets are that branch's file list`);
   const lists = unionOf(branches.map((config) => feedbackOf(config).files ?? targetFilesOf(config)));
   if (!lists.length) return clear('no_file_lists');
-  const patterns = lists.map(pathPattern);
-  const hidden = pr.files.length !== pr.changedFiles || pr.files.some(({ changeType }) => changeType === 'RENAMED' || !changeType);
-  const matches = pr.files.some((file) => file.path.startsWith(prefix) && patterns.some((pattern) => pattern.test(file.path.slice(prefix.length))));
-  if (!hidden && !matches) return clear('not_user_facing');
+  if (!changedFilesMatch(pr, lists, prefix)) return clear('not_user_facing');
 
   const working = loadConfig(project).config;
   const moved = stateDirProblem(working, onMain.config, "the default branch's", 'the record');

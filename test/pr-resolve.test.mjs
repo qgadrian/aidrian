@@ -11,7 +11,7 @@ import { parse } from 'yaml';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { previewPatterns } from '../plugins/aidrian/lib/personas.mjs';
 import { checkoutRemotes, remoteKey } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { parseTarget, previewFrom, runResolve } from '../plugins/aidrian/lib/pr-resolve.mjs';
+import { changedFilesMatch, parseTarget, previewFrom, runResolve, walkWidths } from '../plugins/aidrian/lib/pr-resolve.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AIDRIAN = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -40,13 +40,14 @@ function fakeGh({ pull = view(), association = 'MEMBER', fork = false, deploymen
   return { calls, gh };
 }
 
-// runResolve with its console captured: { code, out, err }. No preview line unless a test gives `patterns`.
-function resolve(t, args, gh = fakeGh().gh, remotes = REMOTES, config = CONFIG, patterns = () => []) {
+// runResolve with its console captured: { code, out, err }. No preview line unless a test gives `patterns`; the project at
+// the top of the repository unless a test gives `prefix`.
+function resolve(t, args, gh = fakeGh().gh, remotes = REMOTES, config = CONFIG, patterns = () => [], prefix = () => '') {
   const out = [];
   const err = [];
   const log = t.mock.method(console, 'log', (line) => out.push(line));
   const error = t.mock.method(console, 'error', (line) => err.push(line));
-  const code = runResolve(args, config, createGithubForge({ run: (argv) => gh(argv) }), remotes, patterns);
+  const code = runResolve(args, config, createGithubForge({ run: (argv) => gh(argv) }), remotes, patterns, prefix);
   log.mock.restore();
   error.mock.restore();
   return { code, out: out.join('\n'), err: err.join('\n') };
@@ -58,7 +59,7 @@ test('a URL, with /files or another tab, a query, or a fragment, a number, and #
     const { code, out, err } = resolve(t, [value]);
     assert.equal(code, 0, `${value}: ${err}`);
     assert.deepEqual(JSON.parse(out), {
-      number: 123, host: 'github.com', repo: 'acme/notes', head: HEAD, base: 'main', state: 'OPEN', cross_repository: false, author_association: 'MEMBER', limited: false, preview_url: null, max_personas: 2,
+      number: 123, host: 'github.com', repo: 'acme/notes', head: HEAD, base: 'main', state: 'OPEN', cross_repository: false, author_association: 'MEMBER', limited: false, preview_url: null, max_personas: 2, walk_widths: [],
     }, value);
   }
 });
@@ -338,6 +339,75 @@ test('max_personas comes from the config', (t) => {
   assert.equal(JSON.parse(out).max_personas, 7);
 });
 
+const change = (file, changeType = 'MODIFIED') => ({ path: file, additions: 1, deletions: 0, changeType });
+
+test('changedFilesMatch: a changed path under the prefix that an entry matches, or a file list that hides files', () => {
+  const pr = (files, changedFiles = files.length) => ({ files, changedFiles });
+  assert.equal(changedFilesMatch(pr([change('src/app/page.tsx')]), ['src/**'], ''), true, 'a glob');
+  assert.equal(changedFilesMatch(pr([change('app/pages/home.vue')]), ['re:^app/pages/'], ''), true, 'a re: entry');
+  assert.equal(changedFilesMatch(pr([change('README.md'), change('lib/x.mjs')]), ['src/**'], ''), false, 'no match');
+  assert.equal(changedFilesMatch(pr([]), ['src/**'], ''), false, 'no file');
+  assert.equal(changedFilesMatch(pr([change('web/src/page.tsx')]), ['src/**'], 'web/'), true, 'a path under the prefix, matched without it');
+  assert.equal(changedFilesMatch(pr([change('src/page.tsx')]), ['src/**'], 'web/'), false, 'a path outside the prefix');
+  assert.equal(changedFilesMatch(pr([change('api/src/page.tsx')]), ['src/**'], 'web/'), false, 'another folder of the prefix\'s length, which matches once that length is cut');
+  assert.equal(changedFilesMatch(pr([change('README.md')], 101), ['src/**'], ''), true, 'a list shorter than changedFiles');
+  assert.equal(changedFilesMatch(pr([change('README.md', 'RENAMED')]), ['src/**'], ''), true, 'a rename');
+  assert.equal(changedFilesMatch(pr([{ path: 'README.md' }]), ['src/**'], ''), true, 'a file with no change type');
+});
+
+test('walkWidths: the viewports, each once, in config order, when the key is set and a changed file matches; else none', () => {
+  const visual = { viewports: [1440, 390, 1024, 390] };
+  const allWidths = { files: ['src/**'] };
+  const matching = { files: [change('src/page.tsx')], changedFiles: 1 };
+  assert.deepEqual(walkWidths({ productFeedback: { allWidths }, visual }, matching, ''), [1440, 390, 1024]);
+  assert.deepEqual(walkWidths({ productFeedback: { allWidths: null }, visual }, matching, ''), [], 'the key off');
+  assert.deepEqual(walkWidths({ productFeedback: { maxPersonas: 2 } }, matching, ''), [], 'a config with only maxPersonas');
+  assert.deepEqual(walkWidths({ productFeedback: { allWidths }, visual: null }, matching, ''), [], 'no review.visual');
+  assert.deepEqual(walkWidths({ productFeedback: { allWidths }, visual }, { files: [change('README.md')], changedFiles: 1 }, ''), [], 'no match');
+});
+
+test('walk_widths: the viewports when a changed file matches allWidths.files, and [] otherwise, with gh asked for files only then', (t) => {
+  const visual = { platform: 'web', targets: [{ files: ['src/**'], routes: ['/'] }], viewports: [390, 1024, 1440, 1024] };
+  const configWith = (allWidths, withVisual = true) => ({ review: { productFeedback: { maxPersonas: 2, allWidths }, ...(withVisual && { visual }) } });
+  const fields = 'number,url,headRefOid,baseRefName,state,isCrossRepository';
+  const noPrefix = () => {
+    throw new Error('git is read only when the key is set and viewports exist');
+  };
+  // The key off, or no viewports: today's fields, no git read, and [].
+  for (const [config, label] of [[configWith(null), 'the key off'], [CONFIG, 'no allWidths at all'], [configWith({ files: ['src/**'] }, false), 'no review.visual']]) {
+    const { calls, gh } = fakeGh();
+    const { code, out, err } = resolve(t, ['123'], gh, REMOTES, config, () => [], noPrefix);
+    assert.equal(code, 0, `${label}: ${err}`);
+    assert.deepEqual(JSON.parse(out).walk_widths, [], label);
+    assert.equal(calls[0][4], fields, `${label}: the gh pr view fields are today's`);
+  }
+  const widths = (allWidths, files, { changedFiles = files.length, prefix = () => '' } = {}) => {
+    const { calls, gh } = fakeGh({ pull: view({ files, changedFiles }) });
+    const { code, out, err } = resolve(t, ['123'], gh, REMOTES, configWith(allWidths), () => [], prefix);
+    assert.equal(code, 0, err);
+    assert.equal(calls[0][4], `${fields},files,changedFiles`);
+    return JSON.parse(out).walk_widths;
+  };
+  const glob = { files: ['src/**'] };
+  assert.deepEqual(widths(glob, [change('src/app/page.tsx')]), [390, 1024, 1440], 'a glob match: each viewport once, in config order');
+  assert.deepEqual(widths({ files: ['re:^app/pages/'] }, [change('app/pages/home.vue')]), [390, 1024, 1440], 'a re: match');
+  assert.deepEqual(widths(glob, [change('README.md')]), [], 'no changed file matches');
+  assert.deepEqual(widths(glob, [change('web/src/page.tsx')], { prefix: () => 'web/' }), [390, 1024, 1440], 'under the project folder');
+  assert.deepEqual(widths(glob, [change('src/page.tsx')], { prefix: () => 'web/' }), [], 'outside the project folder');
+  assert.deepEqual(widths(glob, [change('api/src/page.tsx')], { prefix: () => 'web/' }), [], 'another folder of the project folder\'s length');
+  assert.deepEqual(widths(glob, [change('README.md')], { changedFiles: 120 }), [390, 1024, 1440], 'a list gh cut short');
+  assert.deepEqual(widths(glob, [change('README.md', 'RENAMED')]), [390, 1024, 1440], 'a rename');
+  assert.deepEqual(widths(glob, [{ path: 'README.md', additions: 1, deletions: 0 }]), [390, 1024, 1440], 'no change type');
+
+  // Asked for, an answer with no usable file list is not guessed at.
+  for (const answer of [{}, { files: [change('src/a.tsx')] }, { changedFiles: 1 }, { files: 'src/a.tsx', changedFiles: 1 }, { files: [{ path: 3 }], changedFiles: 1 }, { files: [null], changedFiles: 1 }, { files: [change('src/a.tsx')], changedFiles: '1' }, { files: [change('src/a.tsx')], changedFiles: -1 }]) {
+    const { gh } = fakeGh({ pull: view(answer) });
+    const { code, out, err } = resolve(t, ['123'], gh, REMOTES, configWith(glob), () => [], () => '');
+    assert.deepEqual([code, out], [3, ''], JSON.stringify(answer));
+    assert.match(err, /^error: gh: could not read pull request 123: its answer is not what gh prints$/u, JSON.stringify(answer));
+  }
+});
+
 test('gh failing, or an answer the command cannot trust, exits 3 and prints no JSON: no field is guessed', (t) => {
   const failing = () => {
     throw Object.assign(new Error('Command failed'), { stderr: 'GraphQL: Could not resolve to a PullRequest\nmore' });
@@ -417,7 +487,7 @@ test('aidrian pr resolve runs from a checkout: its remotes, its config, and a co
   config(4);
   const ok = run('https://github.com/acme/notes/pull/123/files');
   assert.equal(ok.status, 0, ok.stderr);
-  assert.deepEqual(JSON.parse(ok.stdout), { number: 123, host: 'github.com', repo: 'acme/notes', head: HEAD, base: 'main', state: 'OPEN', cross_repository: false, author_association: 'COLLABORATOR', limited: false, preview_url: null, max_personas: 4 });
+  assert.deepEqual(JSON.parse(ok.stdout), { number: 123, host: 'github.com', repo: 'acme/notes', head: HEAD, base: 'main', state: 'OPEN', cross_repository: false, author_association: 'COLLABORATOR', limited: false, preview_url: null, max_personas: 4, walk_widths: [] });
 
   // The Preview line is read from the product-access doc the project's knowledge index names, as the lint finds it.
   mkdirSync(path.join(dir, 'product'));
@@ -433,6 +503,30 @@ test('aidrian pr resolve runs from a checkout: its remotes, its config, and a co
   const broken = run('123');
   assert.equal(broken.status, 3, 'it runs on no default the project did not choose');
   assert.match(broken.stderr, /"review\.productFeedback\.maxPersonas" must be a whole number from 1 to 10/u);
+});
+
+test('aidrian pr resolve reads walk_widths with the project folder as the prefix', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-pr-resolve-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: dir }).status, 0);
+  assert.equal(spawnSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/notes.git'], { cwd: dir }).status, 0);
+  const app = path.join(dir, 'app');
+  mkdirSync(path.join(app, '.aidrian/knowledge'), { recursive: true });
+  writeFileSync(path.join(app, '.aidrian/config.json'), JSON.stringify({
+    version: 1,
+    review: { productFeedback: { allWidths: { files: ['src/**'] } }, visual: { platform: 'web', targets: [{ files: ['src/**'], routes: ['/'] }], viewports: [390, 1440] } },
+  }));
+  const answer = path.join(dir, 'answer.json');
+  const env = ghOnPath(t, `#!/bin/sh\ncase "$1" in\n  pr) cat '${answer}' ;;\n  *) echo '{"author_association":"MEMBER","base":{"repo":{"fork":false}}}' ;;\nesac\n`);
+  const widths = (file) => {
+    writeFileSync(answer, JSON.stringify(view({ files: [change(file)], changedFiles: 1 })));
+    const resolved = spawnSync(AIDRIAN, ['pr', 'resolve', '123'], { cwd: app, env, encoding: 'utf8' });
+    assert.equal(resolved.status, 0, resolved.stderr);
+    return JSON.parse(resolved.stdout).walk_widths;
+  };
+  assert.deepEqual(widths('app/src/page.tsx'), [390, 1440], 'a file under the project folder');
+  assert.deepEqual(widths('src/page.tsx'), [], 'the same path outside it');
+  assert.deepEqual(widths('lib/src/page.tsx'), [], 'another folder of the project folder\'s length');
 });
 
 // The case runs with model calls, so not here; its scaffold runs here, and what its fixture prints is what its graders grade.
@@ -453,7 +547,7 @@ test('the pull request link eval seeds its own run folder, with a gh that needs 
   const url = 'https://github.com/acme/bike-shop/pull/5';
   const resolved = run(AIDRIAN, 'pr', 'resolve', url);
   assert.equal(resolved.status, 0, resolved.stderr);
-  assert.deepEqual(JSON.parse(resolved.stdout), { number: 5, host: 'github.com', repo: 'acme/bike-shop', head: 'c'.repeat(40), base: 'main', state: 'OPEN', cross_repository: false, author_association: 'MEMBER', limited: false, preview_url: null, max_personas: 2 });
+  assert.deepEqual(JSON.parse(resolved.stdout), { number: 5, host: 'github.com', repo: 'acme/bike-shop', head: 'c'.repeat(40), base: 'main', state: 'OPEN', cross_repository: false, author_association: 'MEMBER', limited: false, preview_url: null, max_personas: 2, walk_widths: [] });
 
   // The diff touches three personas, one of them over the cap, and leaves the fourth out of scope.
   const diff = run('gh', 'pr', 'diff', '5', '--repo', 'github.com/acme/bike-shop');

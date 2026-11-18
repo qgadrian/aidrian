@@ -121,6 +121,11 @@ test('a created row comes only from a line that is exactly a pull request URL of
   assert.deepEqual(rows(`echo ${URL_OF('acme/widgets', 12)}`, { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'output is read only for gh pr create');
 });
 
+test('gh pr create --dry-run creates nothing, so a link in its preview body records no row', () => {
+  const preview = `Would have created a Pull Request with:\ntitle:\tAdd x\nbody:\nFollows\n${URL_OF('acme/widgets', 12)}\n`;
+  assert.deepEqual(rows('gh pr create --dry-run --title "Add x" --body-file body.md', { stdout: preview }), []);
+});
+
 test('a created row comes only from a line whose one printing command is gh pr create, after a cd or variable assignments', () => {
   const link = `${URL_OF('acme/widgets', 9)}\n`;
   assert.deepEqual(rows(`gh pr create --fill && echo ${URL_OF('acme/widgets', 9)}`, { stdout: link }), [], 'an echoed link of an allowed repository');

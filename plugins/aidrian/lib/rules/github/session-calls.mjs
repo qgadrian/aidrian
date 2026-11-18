@@ -79,8 +79,8 @@ function targetOf(word) {
 }
 
 // The ledger call of one invocation (shell-lex readInvocation), or null when it is none or the reader cannot read it:
-// `{ kind: 'created', repo }` for `gh pr create`, and `{ kind: 'touched', repo, target }` for `gh pr ready|edit|merge|
-// checks|view|comment`, where `repo` is the repository `-R` or GH_REPO names as `{ host, path }`, or null when neither
+// `{ kind: 'created', repo }` for `gh pr create`, none with `--dry-run`, which prints a preview and creates nothing, and
+// `{ kind: 'touched', repo, target }` for `gh pr ready|edit|merge|checks|view|comment`, where `repo` is the repository `-R` or GH_REPO names as `{ host, path }`, or null when neither
 // does, and `target` the pull request named, as targetOf reads it, or null for the current branch's. `env` is the
 // hook's environment, which a session's commands inherit.
 export function readCall({ program, args = [], environment = [] }, env = {}) {
@@ -96,7 +96,7 @@ export function readCall({ program, args = [], environment = [] }, env = {}) {
   const flag = flags.filter(({ name }) => REPO.includes(name)).at(-1);
   const repo = flag ? repoValue(flag.value, environment, env) : ghRepo(environment, env);
   if (repo === UNREAD) return null;
-  if (verb === 'create') return { kind: 'created', repo };
+  if (verb === 'create') return flags.some(({ name }) => name === '--dry-run') ? null : { kind: 'created', repo };
   const target = words[2] ? targetOf(words[2]) : null;
   if (target === UNREAD || target?.repo === UNREAD) return null;
   return { kind: 'touched', repo, target };

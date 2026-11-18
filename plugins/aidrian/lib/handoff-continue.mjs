@@ -34,8 +34,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { baseBranchTip, commandConfig, committedConfig, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
-import { commitOf } from './git.mjs';
-import { arm, cancelArmed, chainLimit, checkedSha, clearPending, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
+import { treeOf } from './git.mjs';
+import { arm, cancelArmed, CHAIN_CEILING, chainLimit, checkedSha, clearPending, floorFits, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
@@ -51,8 +51,6 @@ export const BACKGROUND_HOPS = 5;
 // How many background hops in a row may show no progress, no new commit and no new Done item, before the gate stops
 // the chain and the handoff goes on by the clear route, where a Human looks (progressOf).
 export const STALL_HOPS = 2;
-// A branch name the progress check reads a commit of: no space, `^`, `~`, `:`, or other character git reads in a revision.
-const BRANCH_NAME = /^[\w][\w./-]{0,200}$/u;
 
 // Whether the background route may run for `project`: { ok: true, maxChain, mode } or { ok: false, why }. This machine turns it
 // on in the main checkout's local file (`handoff.background`, project.mjs localHandoffBackground), and the team in the config.json of
@@ -257,8 +255,9 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
   };
 }
 
-// The background route, once the brief passed every check: a chain that made no progress over STALL_HOPS hops in a row
-// goes on by the clear route instead (progressOf). Otherwise the store keeps the checked bytes, the host starts a new
+// The background route, once the brief passed every check: a chain that made no progress over STALL_HOPS hops in a row,
+// or whose next floor CHAIN_CEILING cannot record, goes on by the clear route instead (progressOf, floorFits), or, when
+// the working config's maxChain cannot arm a clear at this chain, by none: a person resumes the brief. Otherwise the store keeps the checked bytes, the host starts a new
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
 // records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
 // under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start
@@ -278,10 +277,12 @@ function startInBackground(ready) {
   const handoff = host.capabilities.handoffContinue;
   const fallBack = (why) => {
     const routed = byClear(host, why);
-    return routed.route === 'clear' ? armed({ ...ready, ...routed }) : none(routed.fallback);
+    if (routed.route !== 'clear') return none(routed.fallback);
+    return chain < store.maxChain ? armed({ ...ready, ...routed }) : none(`${why}; a person resumes the brief`);
   };
   const progress = progressOf({ store, session, now, cwd, text: found.bytes.toString('utf8') });
   if (progress.stalls >= STALL_HOPS) return fallBack(`stuck: no new commits or finished steps over the last ${STALL_HOPS} handoffs`);
+  if (!floorFits({ chain: chain + 1, done: progress.done })) return fallBack(`a chain floor records at most ${CHAIN_CEILING} continuations and Done items, and this hop would pass that`);
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
@@ -315,20 +316,21 @@ function startInBackground(ready) {
   return startedLines(host, marker, { ending });
 }
 
-// The progress the background hop from `session` records with the floor of the session it starts: { head, done, stalls }.
-// `head` is the commit of the branch the brief's Current state names, read from `cwd`, the folder the gate runs in, so a
-// session that works in a worktree is read the same from the main checkout; HEAD in `cwd` when that branch names no
-// commit; null when git cannot say. `done` is the items under the brief's `## Done`; `stalls` the hops in a row, this
-// one included, where neither moved past the progress the floor of `session` records. A floor with none, as a hop from
-// a session a Human started has, counts from 0. SHORTCUT: Done items are the brief's own word, which a session can pad;
-// a commit count against the base branch would replace them if that proves too loose.
+// The progress the background hop from `session` records with the floor of the session it starts: { tree, done, stalls }.
+// `tree` is the tree of the branch the brief's Current state names, read from `cwd`, the folder the gate runs in, so a
+// session that works in a worktree is read the same from the main checkout; of HEAD in `cwd` when that branch names no
+// commit; null when git cannot say. A tree, not a commit, so an empty commit or a reword is no progress. `done` is the
+// items under the brief's `## Done`; `stalls` the hops in a row, this one included, where neither moved past the
+// progress the floor of `session` records. A floor with none, as a hop from a session a Human started has, counts from 0.
+// SHORTCUT: Done items are the brief's own word, which a session can pad, and any change to a file, even one undone by
+// the next, moves the tree; a count of commits against the base branch would replace them if that proves too loose.
 function progressOf({ store, session, now, cwd, text }) {
   const branch = branchOf(text);
-  const head = (branch && BRANCH_NAME.test(branch) ? commitOf(cwd, `refs/heads/${branch}`) : null) ?? commitOf(cwd);
+  const tree = (branch === null ? null : treeOf(cwd, branch)) ?? treeOf(cwd);
   const done = sectionItems(text, 'Done')?.length ?? 0;
   const floor = readFrom(store, session, { now });
-  const stuck = floor?.stalls !== undefined && head === floor.head && done <= floor.done;
-  return { head, done, stalls: stuck ? floor.stalls + 1 : 0 };
+  const stuck = floor?.stalls !== undefined && tree === floor.tree && done <= floor.done;
+  return { tree, done, stalls: stuck ? floor.stalls + 1 : 0 };
 }
 
 // Whether the session `session`, whose base branch's session.handoff.mode is `mode`, ends itself once this turn ends, so

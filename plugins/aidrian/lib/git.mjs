@@ -35,9 +35,12 @@ export function currentRoot(cwd) {
   return firstLine(['rev-parse', '--show-toplevel'], cwd);
 }
 
-// The commit `ref` names in the repository that `cwd` is in, HEAD by default, or null when it names none.
-export function commitOf(cwd, ref = 'HEAD') {
-  return firstLine(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd);
+// The tree of the commit HEAD names in the checkout that `cwd` is in, or of the branch `branch` when given, or null:
+// git cannot say, or `branch` is no branch name by git's own rules, such as one that reads as a revision.
+export function treeOf(cwd, branch = null) {
+  if (branch !== null && firstLine(['check-ref-format', '--branch', branch], cwd) !== branch) return null;
+  const ref = branch === null ? 'HEAD' : `refs/heads/${branch}`;
+  return firstLine(['rev-parse', '--verify', '--quiet', `${ref}^{tree}`], cwd);
 }
 
 // `cwd` from the top of its checkout, with a trailing slash: '' at the top, or when git cannot answer.

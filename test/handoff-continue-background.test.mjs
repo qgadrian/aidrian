@@ -17,7 +17,7 @@ import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, STALL_HOPS } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { noteFollow, noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { CHAIN_CEILING, noteFollow, noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -45,7 +45,11 @@ function setup(t, { handoff = { continue: 'background' }, committed = handoff, l
   mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
   const config = (session) => JSON.stringify({ version: 1, ...(set ? { state: { dir: set } } : {}), session: { handoff: session } });
   writeFileSync(path.join(dir, '.aidrian/config.json'), config(committed));
-  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8' });
+  // A last argument that is an object holds spawn options, such as `input`.
+  const git = (...args) => {
+    const options = typeof args.at(-1) === 'object' ? args.pop() : {};
+    return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8', ...options });
+  };
   git('init', '-q', '-b', 'main');
   git('add', '.aidrian/config.json');
   git('commit', '-q', '-m', 'config');
@@ -124,8 +128,8 @@ test('the background route starts the new session in this session\'s folder, rec
   assert.equal(readFileSync(kept, 'utf8'), brief(), 'an edit after the gate never reaches the copy the new session reads');
 
   const floor = readFrom(setting.store, NEW_SESSION);
-  const head = setting.git('rev-parse', 'HEAD').trim();
-  assert.deepEqual({ ...floor, at: 0 }, { slug: 'widget', chain: 1, brief: setting.file, route: 'background', head, done: 0, stalls: 0, at: 0 }, 'the floor of the new session, as a clear delivery writes it, with the progress it starts from');
+  const tree = setting.git('rev-parse', 'HEAD^{tree}').trim();
+  assert.deepEqual({ ...floor, at: 0 }, { slug: 'widget', chain: 1, brief: setting.file, route: 'background', tree, done: 0, stalls: 0, at: 0 }, 'the floor of the new session, as a clear delivery writes it, with the progress it starts from');
   assert.equal(readStarted(setting.store, SESSION).session, NEW_SESSION);
   assert.equal(readArmed(setting.store, SESSION), null, 'nothing is armed: nothing waits for a clear');
 });
@@ -834,44 +838,68 @@ test('the gate passes on the mode a transcript gives only on its user entries, a
   }
 });
 
-// A brief at `chain` whose Done section holds `done` items.
-const doneBrief = (chain, done) => brief(chain).replace('## Next steps', `## Done\n${Array.from({ length: done }, (_, i) => `- step ${i + 1}, in commit abc\n`).join('')}\n## Next steps`);
+// A brief at `chain` whose Done section holds `done` items, on the branch `branch`.
+const doneBrief = (chain, done, branch = 'feat/widget') => brief(chain).replace('Branch: feat/widget', `Branch: ${branch}`)
+  .replace('## Next steps', `## Done\n${Array.from({ length: done }, (_, i) => `- step ${i + 1}, in commit abc\n`).join('')}\n## Next steps`);
 
 // The session SESSION as a background hop started it: a floor of route background at `chain`, with the progress
 // `progress` the hop before it recorded.
 const hopFloor = (setting, chain, progress) => noteFrom(setting.store, SESSION, { slug: 'widget', chain, brief: setting.file, route: 'background', progress }, { now: Date.now() });
+const STUCK = 'stuck: no new commits or finished steps over the last 2 handoffs';
+const treeAt = (setting, ref = 'HEAD') => setting.git('rev-parse', `${ref}^{tree}`).trim();
+// A commit on `branch` with `tree`, made without checking it out, as a session in another worktree makes one.
+const commitOn = (setting, branch, tree = 'HEAD^{tree}') => {
+  const made = setting.git('commit-tree', tree, '-p', `refs/heads/${branch}`, '-m', 'work').trim();
+  setting.git('update-ref', `refs/heads/${branch}`, made);
+};
+// A tree that is HEAD's with one file more.
+const otherTree = (setting) => {
+  const blob = setting.git('hash-object', '-w', '--stdin', { input: 'more\n' }).trim();
+  return setting.git('mktree', { input: `${setting.git('ls-tree', 'HEAD')}100644 blob ${blob}\tnotes.txt\n` }).trim();
+};
 
 test('a chain whose last two hops made no new commit and no new Done item goes on by the clear route and names why', (t) => {
   const setting = setup(t, { text: brief(2) });
-  const head = setting.git('rev-parse', 'HEAD').trim();
-  assert.ok(hopFloor(setting, 2, { head, done: 0, stalls: STALL_HOPS - 1 }));
+  assert.ok(hopFloor(setting, 2, { tree: treeAt(setting), done: 0, stalls: STALL_HOPS - 1 }));
   passCheck(setting);
   const { run, calls } = fakeRun({ own: setting.dir });
   const result = gate(setting, { run });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
-  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: stuck: no new commits or finished steps over the last 2 handoffs; this handoff goes on by the clear route']);
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', `fallback: ${STUCK}; this handoff goes on by the clear route`]);
   assert.deepEqual(bgCalls(calls), [], 'no session starts');
   assert.equal(readArmed(setting.store, SESSION).route, 'clear', 'a Human continues it');
 });
 
-test('the progress check reads the commit of the brief\'s branch, so a commit in another worktree counts', (t) => {
-  const setting = setup(t, { text: brief(2) });
-  setting.git('branch', 'feat/widget');
-  const head = setting.git('rev-parse', 'feat/widget').trim();
-  assert.ok(hopFloor(setting, 2, { head, done: 0, stalls: STALL_HOPS - 1 }));
+for (const branch of ['feat/widget', 'feat/c++', 'feat/mañana', '@work']) {
+  test(`the progress check reads the tree of the brief's branch ${branch}, so a commit in another worktree counts and an empty one does not`, (t) => {
+    const setting = setup(t, { text: doneBrief(2, 0, branch) });
+    setting.git('branch', branch);
+    assert.ok(hopFloor(setting, 2, { tree: treeAt(setting, `refs/heads/${branch}`), done: 0, stalls: STALL_HOPS - 1 }));
+    const { run } = fakeRun({ own: setting.dir });
+    passCheck(setting);
+    assert.equal(gate(setting, { run }).out[0], 'continue: clear', 'the branch has not moved');
+    commitOn(setting, branch);
+    passCheck(setting);
+    assert.equal(gate(setting, { run }).out[0], 'continue: clear', 'an empty commit changes no file');
+    commitOn(setting, branch, otherTree(setting));
+    passCheck(setting);
+    assert.equal(gate(setting, { run }).out[0], 'continue: background', `${branch} moved while HEAD here stayed`);
+    assert.equal(readFrom(setting.store, NEW_SESSION).tree, treeAt(setting, `refs/heads/${branch}`));
+  });
+}
+
+test('a Branch: value git reads as a revision is never resolved: the progress check reads HEAD here instead', (t) => {
+  const setting = setup(t, { text: doneBrief(2, 0, 'main~1') });
+  commitOn(setting, 'main', otherTree(setting));
+  setting.git('reset', '-q', '--hard', 'HEAD');
+  assert.ok(hopFloor(setting, 2, { tree: treeAt(setting), done: 0, stalls: STALL_HOPS - 1 }));
   passCheck(setting);
-  const { run } = fakeRun({ own: setting.dir });
-  assert.equal(gate(setting, { run }).out[0], 'continue: clear', 'the branch has not moved');
-  const moved = setting.git('commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'work').trim();
-  setting.git('update-ref', 'refs/heads/feat/widget', moved);
-  passCheck(setting);
-  assert.equal(gate(setting, { run }).out[0], 'continue: background', 'feat/widget moved while HEAD here stayed');
-  assert.equal(readFrom(setting.store, NEW_SESSION).head, moved);
+  assert.equal(gate(setting, { run: fakeRun({ own: setting.dir }).run }).out[0], 'continue: clear', 'main~1 names the older tree, which would read as progress');
 });
 
-test('one hop with no progress still starts and counts it; a new commit or a new Done item starts the count again', (t) => {
+test('one hop with no progress still starts and counts it; a new tree or a new Done item starts the count again', (t) => {
   const setting = setup(t, { text: doneBrief(2, 1) });
-  const head = setting.git('rev-parse', 'HEAD').trim();
+  const tree = treeAt(setting);
   const hop = (progress) => {
     assert.ok(hopFloor(setting, 2, progress));
     rmSync(path.join(setting.store.dir, 'started-session-1.json'), { force: true });
@@ -880,13 +908,13 @@ test('one hop with no progress still starts and counts it; a new commit or a new
     assert.equal(result.out[0], 'continue: background', result.out.join('\n'));
     return readFrom(setting.store, NEW_SESSION);
   };
-  assert.deepEqual(pick(hop({ head, done: 1, stalls: 0 })), { head, done: 1, stalls: 1 }, 'the same HEAD and Done count: one stalled hop');
-  assert.equal(hop({ head: 'f'.repeat(40), done: 1, stalls: 1 }).stalls, 0, 'a new commit since the floor');
-  assert.equal(hop({ head, done: 0, stalls: 1 }).stalls, 0, 'a new Done item since the floor');
-  assert.equal(hop({ head: undefined, done: undefined, stalls: undefined }).stalls, 0, 'a floor with no progress, as a clear delivery writes it');
+  assert.deepEqual(pick(hop({ tree, done: 1, stalls: 0 })), { tree, done: 1, stalls: 1 }, 'the same tree and Done count: one stalled hop');
+  assert.equal(hop({ tree: 'f'.repeat(40), done: 1, stalls: 1 }).stalls, 0, 'a new tree since the floor');
+  assert.equal(hop({ tree, done: 0, stalls: 1 }).stalls, 0, 'a new Done item since the floor');
+  assert.equal(hop({ tree: undefined, done: undefined, stalls: undefined }).stalls, 0, 'a floor with no progress, as a clear delivery writes it');
 });
 
-const pick = ({ head, done, stalls }) => ({ head, done, stalls });
+const pick = ({ tree, done, stalls }) => ({ tree, done, stalls });
 
 test('maxChain "unlimited" on the base branch lifts the hop cap; the worktree cannot set it', (t) => {
   const deep = BACKGROUND_HOPS + 3;
@@ -901,6 +929,37 @@ test('maxChain "unlimited" on the base branch lifts the hop cap; the worktree ca
   const worktree = setup(t, { handoff: { mode: 'auto', maxChain: 'unlimited' }, committed: { mode: 'auto' }, text: brief(3) });
   passCheck(worktree);
   assert.match(gate(worktree, { run }).out[1], /^fallback: this brief has Chain 3, and the base branch's session\.handoff\.maxChain, at most 5 on the background route, allows 3/u);
+});
+
+test('under "unlimited", a stuck chain past 5 goes on by the clear route; past the working config\'s maxChain a person resumes it', (t) => {
+  const deep = BACKGROUND_HOPS + 3;
+  const both = setup(t, { handoff: { mode: 'auto', maxChain: 'unlimited' }, text: brief(deep) });
+  assert.ok(hopFloor(both, deep, { tree: treeAt(both), done: 0, stalls: STALL_HOPS - 1 }));
+  passCheck(both);
+  const { run, calls } = fakeRun({ own: both.dir });
+  const cleared = gate(both, { run });
+  assert.equal(cleared.exitCode, 0, cleared.err.join('\n'));
+  assert.deepEqual(cleared.out.slice(0, 2), ['continue: clear', `fallback: ${STUCK}; this handoff goes on by the clear route`]);
+
+  // An older worktree with the default maxChain 3 cannot arm a clear at Chain 8: the reason stays, and a person resumes.
+  const older = setup(t, { handoff: { mode: 'auto' }, committed: { mode: 'auto', maxChain: 'unlimited' }, text: brief(deep) });
+  assert.ok(hopFloor(older, deep, { tree: treeAt(older), done: 0, stalls: STALL_HOPS - 1 }));
+  passCheck(older);
+  const resumed = gate(older, { run });
+  assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
+  assert.deepEqual(resumed.out, ['continue: none', `fallback: ${STUCK}; a person resumes the brief`]);
+  assert.equal(readArmed(older.store, SESSION), null, 'nothing is armed');
+  assert.deepEqual(bgCalls(calls), []);
+});
+
+test('under "unlimited", a hop whose floor the store cannot record starts no session and goes on by the clear route', (t) => {
+  const setting = setup(t, { handoff: { mode: 'auto', maxChain: 'unlimited' }, text: brief(CHAIN_CEILING) });
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run });
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', `fallback: a chain floor records at most ${CHAIN_CEILING} continuations and Done items, and this hop would pass that; this handoff goes on by the clear route`]);
+  assert.deepEqual(bgCalls(calls), [], 'no --bg call');
 });
 
 test('a session a hop started and named is named again by its base name and the new count, never a second count', (t) => {

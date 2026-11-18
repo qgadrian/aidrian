@@ -4,7 +4,8 @@
 //   checked-<brief name>.json  { sha256, at }                                       the brief that passed the check
 //   armed-<session>.json       { route, session, brief, slug, chain, sha256, armed_at }
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
-//   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
+//   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session;
+//                              a background hop's adds { tree, done, stalls }, the progress it starts from
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 //   ending-<session>.json      { shell, id, next, host_pid | own, at }   a session that ends itself once its turn ends,
@@ -56,7 +57,7 @@ const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, sta
 const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued|ending|follow)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
-const CHAIN_CEILING = 10_000;
+export const CHAIN_CEILING = 10_000;
 // A short id a floor may be filed under: what a host prints before its listing names the session's full id.
 const SHORT_FROM = /^from-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 const SHORT_FOLLOW = /^follow-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
@@ -212,11 +213,15 @@ function isArmed(value, maxChain) {
 
 const isReady = (value, maxChain) => isArmed(value, maxChain) && Number.isFinite(value.ended_at) && isPid(value.host_pid);
 
-// A floor's progress, which only the background route records: none, or the commit HEAD named (null when git could not
-// say), the Done items the brief held, and how many hops in a row before it showed neither moving.
-const isProgress = (value) => (value.head === undefined && value.done === undefined && value.stalls === undefined)
-  || ((value.head === null || (typeof value.head === 'string' && /^[0-9a-f]{40,64}$/u.test(value.head)))
+// A floor's progress, which only the background route records: none, or the tree of the brief's branch (null when git
+// could not say), the Done items the brief held, and how many hops in a row before it showed neither moving.
+const isProgress = (value) => (value.tree === undefined && value.done === undefined && value.stalls === undefined)
+  || ((value.tree === null || (typeof value.tree === 'string' && /^[0-9a-f]{40,64}$/u.test(value.tree)))
     && whole(value.done, 0, CHAIN_CEILING) && whole(value.stalls, 0, CHAIN_CEILING));
+
+// Whether a chain floor can record a hop to `chain` with `done` Done items: both at most CHAIN_CEILING. The background
+// route asks it before it starts a session, since a floor it cannot record stops the session it started.
+export const floorFits = ({ chain, done = 0 }) => whole(chain, 0, CHAIN_CEILING) && whole(done, 0, CHAIN_CEILING);
 
 const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
   && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at)
@@ -354,7 +359,7 @@ export function clearPending(store, { now = Date.now() } = {}) {
 }
 
 // Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to, and
-// the background route's `progress`, { head, done, stalls }, when it is given (isProgress).
+// the background route's `progress`, { tree, done, stalls }, when it is given (isProgress).
 // `session` may be the short id a host printed for a session it started, which readFrom matches by prefix.
 export function noteFrom(store, session, { slug, chain, brief, route, progress }, { now = Date.now() } = {}) {
   const value = { slug, chain, brief, route, ...progress, at: now };

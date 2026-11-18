@@ -26,8 +26,10 @@ const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits
 const CLEAN = /^[^\u0000-\u0009\u000b-\u001f\u007f-\u009f]*\n?$/u;
 
 const scratch = () => realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-snapshot-')));
+// No global or system git config: a developer's own, such as a url.<base>.insteadOf rewrite, would change what origin names.
+const GIT_CONFIG_NONE = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (cwd, ...args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...GIT_CONFIG_NONE, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 };
@@ -59,7 +61,7 @@ function setup(t, { config = {}, origin = null, branch = 'main', name = 'project
   mkdirSync(temp);
   const log = path.join(base, 'gh.log');
   fakeGh(path.join(base, 'bin'), { log, ...gh });
-  const env = { ...process.env, XDG_STATE_HOME: state, TMPDIR: temp, PATH: `${path.join(base, 'bin')}${path.delimiter}${process.env.PATH}` };
+  const env = { ...process.env, ...GIT_CONFIG_NONE, XDG_STATE_HOME: state, TMPDIR: temp, PATH: `${path.join(base, 'bin')}${path.delimiter}${process.env.PATH}` };
   const run = (args = [], { cwd = dir, extraEnv = {} } = {}) => {
     const started = Date.now();
     const result = spawnSync(process.execPath, [CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });

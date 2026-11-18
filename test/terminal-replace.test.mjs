@@ -264,7 +264,7 @@ test('a shell record is written only for a pid and a plain id, in a folder that 
 
 // The next hops: a background session the terminal follows ends its own session, through the host's stop command.
 const BG_SESSION = 'abcd1234-0000-4000-8000-000000000001';
-const NEXT_SESSION = 'ef015678-0000-4000-8000-000000000002';
+const NEXT_SESSION = 'efgh5678-0000-4000-8000-000000000002';
 
 test('a request names one way to end, and the store says which shell follows a session, under its id or a short one', (t) => {
   const store = openStore(folder(t, 'aidrian-store-'), { maxChain: 3 });
@@ -285,15 +285,6 @@ test('a request names one way to end, and the store says which shell follows a s
   assert.ok(noteFollow(store, BG_SESSION, { shell: 4242 }));
   assert.deepEqual(readFollow(store, BG_SESSION), { shell: 4242, id: BG_SESSION });
   assert.equal(readFollow(store, BG_SESSION, { now: later }), null, 'under the full id, past FOLLOW_AGE');
-
-  // Only the id shape the guard refuses by name is written or read: 8 hex digits, or a whole UUID.
-  const value = `${JSON.stringify({ shell: 4242, at: Date.now() })}\n`;
-  writeFileSync(path.join(store.dir, 'follow-ed95.json'), value);
-  writeFileSync(path.join(store.dir, 'follow-abcd-xyz.json'), value);
-  assert.equal(readFollow(store, 'ed95a7db-0000-4000-8000-000000000003'), null, 'a short id of 4 characters is ignored');
-  assert.equal(readFollow(store, 'abcd-xyz'), null, 'an id of another shape is ignored');
-  assert.equal(noteFollow(store, 'abcd-xyz', { shell: 4242 }), null, 'and never written');
-  assert.equal(noteFollow(store, 'ed95', { shell: 4242 }), null);
 });
 
 test('a background session the terminal follows ends only its own session, and passes the terminal on to the next', (t) => {

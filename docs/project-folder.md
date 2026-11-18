@@ -157,6 +157,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── sessions/<session id>/  what aidrian session snapshot caches for one session, and its pull request ledger, for its user alone:
 │   ├── usage.json            the transcript read so far, as the handoff numbers fold it, and a hash of its first and last 64 KiB, saved step by step
 │   ├── prs.jsonl             the session's pull request ledger, one row per pull request a Bash call touched (hooks.md#session-ledger)
+│   ├── checks.jsonl          the session's check-run record, one row per test run a Bash call finished (hooks.md#check-runs)
 │   ├── prs-cache.json        the ledger's pull requests as the forge last answered, and when it was last asked
 │   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
 │   └── <cache>.<window>.lock  held for a moment while a snapshot records its forge attempt
@@ -172,7 +173,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
   60 seconds, deleted when the shell reads it ([Replacing the terminal](handoff.md#replacing-the-terminal)).
 - The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of
-  [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
+  [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from, and the
+  [check-run record](hooks.md#check-runs) `checks.jsonl`, which the pull request body rule and the subagent stop hook read. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
   mode 0700, no bit for the group or others, checked before every write, read, and sweep, which also checks that the
   session folder's real path is still the one it was made at, so a folder above it swapped for a symlink gets none, and
@@ -183,7 +185,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   group the user's primary group whose id is the user's id, as Debian, Ubuntu, and Fedora give each user, whose umask
   002 makes folders 0775. `/tmp`, root's and sticky, passes. A state folder not there yet is checked by the nearest
   folder above it before anything is made. Each file is written as a
-  temporary file, mode 0600, renamed over it, under the cache names alone, with one exception, the ledger
+  temporary file, mode 0600, renamed over it, under the cache names alone, with two exceptions: the check-run record `checks.jsonl`, appended
+  and read the same way within 64 KB (`lib/check-runs.mjs`), and the ledger
   `prs.jsonl`, which `lib/session-prs.mjs` appends to in place through the helper's `appendSessionFile` for the
   [session ledger hook](hooks.md#session-ledger), no-follow, mode 0600, only while it is a regular file with one link
   this user alone may read, and the snapshot reads its last 256 KB through `readSessionTail` under the same checks,

@@ -56,6 +56,11 @@ export const DEFAULTS = deepFreeze({
   // How a pull request is reviewed (lib/review/, docs/review.md).
   review: REVIEW_DEFAULTS,
   docs: { wrapLimit: 155 },
+  // How tests run around a pull request (lib/check-runs.mjs, lib/rules/push-first.mjs, lib/test-changed.mjs): `fullSuite`
+  // the commands that run the whole suite, which push-first refuses while a branch holds a commit older than
+  // `pushFirstMinutes` that its remote lacks (0 turns it off); `changedCommand` the command `aidrian test changed` gives
+  // the touched test files, null for `npm test --` when package.json has a test script.
+  testing: { fullSuite: ['npm test', 'npm run test', 'npm run check'], changedCommand: null, pushFirstMinutes: 5 },
   // The terms file (lib/terms.mjs); null turns the terms rule off.
   terms: { file: null },
   // The docs this plugin ships under a project's own knowledge, each on unless set to false (DEFAULT_DOCS in lib/knowledge.mjs).

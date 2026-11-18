@@ -98,6 +98,22 @@ export const headingOf = (line) => HEADING.exec(line)?.[1] ?? null;
 // Every `## ` heading outside fences, in order.
 export const headings = (body) => [...unfencedLines(body)].map(headingOf).filter((title) => title !== null);
 
+// The lines of the `## <section>` sections outside fenced code, the title compared ignoring case, or null when the body
+// has no such section.
+export function sectionLines(body, section) {
+  const wanted = section.trim().toLowerCase();
+  let lines = null;
+  let inSection = false;
+  for (const line of unfencedLines(body)) {
+    const title = headingOf(line);
+    if (title !== null) {
+      inSection = title.trim().toLowerCase() === wanted;
+      if (inSection) lines ??= [];
+    } else if (inSection) lines.push(line);
+  }
+  return lines;
+}
+
 // The list items of the `## <section>` sections, or null when the body has no such section. Each item is
 // { text, first }: `text` the whole item with its wrapped lines and its own sub-list, `first` its own first line with
 // the lines wrapped under it. A bullet indented past the item above it belongs to that item; prose that is no list item

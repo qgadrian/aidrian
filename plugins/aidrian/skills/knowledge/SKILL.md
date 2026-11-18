@@ -30,8 +30,7 @@ Without a shell, or without the command, read the indexes `.aidrian/knowledge/*.
 - `docs`: each doc with its `summary` and `tags`. Step 2 reads the docs whose `tags` hold the tag;
   step 3 searches the `summary` lines for your words.
 
-A tag from the Tags list below that no bucket defines loads nothing, which is fine.
-A tag on neither that list nor a bucket is a typo, and `route` fails on it.
+A tag from the Tags list below that no bucket defines loads nothing; one on neither is a typo, and `route` fails on it.
 
 If `.aidrian/config.json` does not exist, read the project's `AGENTS.md`, `CLAUDE.md`, and `README.md` instead,
 and report `knowledge: none` in your result. `harness-librarian` sets the folder up.
@@ -62,7 +61,7 @@ A project overrides any of these in an `always` doc, and turns the first off onl
 - When another agent reads your result, return one JSON object, the machine handoff, with these fields:
   - `status`: `done`, `blocked`, `needs_input`, or `no_op`.
   - `role`, and `decision`: what you concluded, in two sentences at most.
-  - `evidence`: at most six items, each a file, command, or link with what it shows.
+  - `evidence`: at most six items, each a file, command, or link with what it shows. A test result quotes a finished run.
   - `loaded_docs`, `deferred_refs` (what to read next, in order), `blockers`, `risks`, and `next_owner`.
   - `artifacts`: bulky output, such as long search results.
   - Optional fields such as `findings`, `sign_off`, and `pending_commit`: [references/handoff.md](references/handoff.md) defines each. A decision no doc settles: `references/decisions.md`.

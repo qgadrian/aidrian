@@ -31,9 +31,11 @@ import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
 import { forgeFor } from '../../forges/index.mjs';
-import { runGit } from '../../git.mjs';
+import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
+import { runGit, treeOf } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
-import { findProject, stateDir } from '../../project.mjs';
+import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
+import { sessionFolder } from '../../session-folder.mjs';
 import { remoteRepos, repoName } from '../../review-gate.mjs';
 import { boundedSearch, timeBudget } from '../../bounded-regexp.mjs';
 import { lexPipeline, readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
@@ -70,11 +72,11 @@ const LIST_TIMEOUT_MS = 3000;
 
 // The deny reason for `command`, or null. `listOpenPrs(repo)` returns [{ number, body }] or null; it is the test seam
 // of the one check that leaves the process.
-export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
+export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd), input = {}, readRuns = sessionRuns(input) } = {}) {
   if (env[OVERRIDE] === '1') return null;
   for (const { call, entry, written } of bodyCalls(command, cwd)) {
     const { folder, chained, line } = entry;
-    const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained) });
+    const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained), readRuns });
     if (reason) return reason;
   }
   return null;
@@ -381,7 +383,7 @@ const LONG_VALUES = new Set([
   '--reason', '--duplicate-of', '--author-email', '--match-head-commit',
 ]);
 
-function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, env, written = new Map(), listOpenPrs }) {
+function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, env, written = new Map(), listOpenPrs, readRuns = () => null }) {
   const project = findProject(projectFolder);
   if (!project || targetsAnotherRepo(call, project, ghRepo)) return null;
   const { config } = loadConfig(project);
@@ -408,8 +410,33 @@ function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, 
     return deny(`the body is one this rule cannot read: ${cause}, so the sections config.json \`github.requiredSections\` asks for go unchecked. ` +
       `${fix ? `${fix} ` : ''}${steps()}`);
   }
-  const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);
+  const reason = body === null ? null : judgeBody(body, config) ?? judgeEvidence(body, config, project, folderKnown ? cwd : projectFolder, readRuns)
+    ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
+}
+
+// The `## Tests run` lines that say a test command passed, each needing a run of it on the session's check-run record
+// that passed at the tree of HEAD in `folder`, with the counts the line states (lib/check-runs.mjs). `readRuns(project,
+// config)` gives the record's rows, or null when this session has none it can read: then nothing is judged.
+function judgeEvidence(body, config, project, folder, readRuns) {
+  const claims = passClaims(body, { testing: config.testing });
+  if (!claims.length) return null;
+  const runs = readRuns(project, config);
+  const tree = runs === null ? null : treeOf(folder);
+  if (runs === null || tree === null) return null;
+  const missing = unsupportedClaims(claims, runs, { tree });
+  if (!missing.length) return null;
+  return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of this commit's files ` +
+    `(tree ${tree.slice(0, 12)}). Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.`);
+}
+
+// The check-run rows of the session `input` names, through its session folder, or null when it has none.
+export function sessionRuns(input) {
+  return (project, config) => {
+    if (typeof input?.session_id !== 'string') return null;
+    const folder = sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) });
+    return folder ? readCheckRuns(folder) : null;
+  };
 }
 
 function judgeBody(body, config) {

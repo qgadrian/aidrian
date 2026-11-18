@@ -1,14 +1,16 @@
 // The folder of one session in the project's state folder, `<state>/sessions/<session id>/`, and the one way its files
 // are written. It holds caches a reader keeps between calls, such as the usage cache (lib/session-usage-cache.mjs);
-// docs/project-folder.md lists them. Display data only: no hook, gate, skill, or agent decides anything from it.
+// docs/project-folder.md lists them. Display data only, but for the check-run record, `checks.jsonl`
+// (lib/check-runs.mjs), which the pull request body rule and the subagent stop hook read as a report's evidence.
 // The state folder and every folder above it pass heldFolder, checked before every write, read, and sweep, so no other
 // user can swap a folder between a check and the open that follows it, and the state folder, the sessions folder, and the
 // session folder each resolve inside no checkout of the repository. The sessions folder and the session folder are each a real folder, no symlink, owned by this
 // process's user, that no other user may read or write; and the session folder's real path is `<real state>/sessions/<id>`,
 // and is still the folder's own path at each write, read, and sweep (boundFolder), so a folder above it swapped for a
 // symlink since gets none. Its files are written as a temporary file and a rename, mode 0600, under the names in
-// SESSION_FILES alone, with one exception: the session's pull request ledger, `prs.jsonl` (APPENDED_FILES), which
-// lib/session-prs.mjs reads by its tail through readSessionTail, and appends to in place through appendSessionFile,
+// SESSION_FILES alone, with two exceptions: the session's pull request ledger, `prs.jsonl`, and its check-run record,
+// `checks.jsonl` (APPENDED_FILES), which lib/session-prs.mjs and lib/check-runs.mjs read by their tail through
+// readSessionTail, and append to in place through appendSessionFile,
 // no-follow, mode 0600, only while it is a regular file with one link this user alone may read, and rewrites through
 // writeSessionFile when it is past its cap or an append would pass it; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
@@ -27,7 +29,7 @@ import { readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 export const SWEEP_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
 // The files a session folder holds: nothing else is written there, and the sweep deletes nothing else.
-export const SESSION_FILES = Object.freeze(['usage.json', 'prs.jsonl', 'prs-cache.json', 'merged-heads-cache.json']);
+export const SESSION_FILES = Object.freeze(['usage.json', 'prs.jsonl', 'prs-cache.json', 'merged-heads-cache.json', 'checks.jsonl']);
 // The random part of a temporary file's name, and the names of the temporary files, `.<file>.<pid>.<token>.tmp`.
 const TOKEN = /^[0-9a-f]{12}$/u;
 const newToken = () => randomBytes(6).toString('hex');
@@ -39,8 +41,8 @@ export const reservationName = (name, index) => `${name}.${index}.lock`;
 export const SESSION_RESERVATION = new RegExp(String.raw`^(?:${SESSION_FILES.map(escaped).join('|')})\.\d+\.lock$`, 'u');
 // A temporary file or a reservation is created only where nothing is, and never through a symlink.
 const CREATE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
-// The files appended to in place, never renamed over: the session ledger alone.
-export const APPENDED_FILES = Object.freeze(['prs.jsonl']);
+// The files appended to in place, never renamed over: the session ledger and the check-run record.
+export const APPENDED_FILES = Object.freeze(['prs.jsonl', 'checks.jsonl']);
 // An append opens where no symlink is, and never waits on a named pipe.
 const APPEND = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 

@@ -28,6 +28,11 @@ export const UNKNOWN_HOST = Object.freeze({
     const read = HOSTS.map((host) => host.shellOutput?.(response) ?? { output: null, interrupted: false });
     return { output: read.find((each) => typeof each.output === 'string')?.output ?? null, interrupted: read.some((each) => each.interrupted === true) };
   },
+  // A host no adapter claims: its exit status is unknown, so a run is judged by its counts alone.
+  shellRun: (response) => {
+    const read = HOSTS.map((host) => host.shellRun?.(response)).find((each) => each?.finished);
+    return read ? { ...read, exitZero: false } : { output: null, finished: false, exitZero: false };
+  },
   hookInput: (input) => HOSTS.reduce((each, host) => host.hookInput(each), input),
   capabilities: Object.freeze({}),
 });

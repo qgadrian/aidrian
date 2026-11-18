@@ -14,16 +14,21 @@
 // The stop the cap lets end with a task still running is recorded as a lesson for the plugin. The count is stored before
 // each send-back past the first, and a count that cannot be stored ends the stop, so no host can loop on it; a payload
 // without `stop_hook_active` (another host) is never sent back (sendsBack). The row's `sent_back` records the decision.
+// The evidence check: a final report that says a test command passed, with no run of it on the session's check-run
+// record that passed (lib/check-runs.mjs), is sent back once, on the first stop of its turn, to quote a run a tool
+// returned or call the run "not finished". A report once claimed a full suite passed after its runs were stopped.
 // config.json `telemetry.enabled: false` drops the row, never the checks or the lessons.
 
 import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendBacks } from '../lib/child-send-backs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
 import { checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered } from '../lib/dispatch-rows.mjs';
-import { deliverHandoffs } from '../lib/delivery-check.mjs';
+import { deliverHandoffs, finalReport } from '../lib/delivery-check.mjs';
+import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../lib/check-runs.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
-import { findProject } from '../lib/project.mjs';
+import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
+import { sessionFolder } from '../lib/session-folder.mjs';
 
 // What the subagent is told when a background task it started still runs, on send-back `round` of CHILD_SEND_BACKS.
 const childrenReason = (children, round) =>
@@ -47,6 +52,19 @@ const handoffReason = (files) =>
   'An agent with neither a file tool nor a shell ends its turn with the handoff as its last message, and this hook writes it there; ' +
   'if the path belongs to another agent, say so.';
 
+// The claims of a passing test run in the subagent's final report that its session's check-run record does not support,
+// checked only on the first stop of a turn: [] on any later stop, a report with none, or a record it cannot read.
+function unsupportedReport(input, project, config) {
+  if (input.stop_hook_active !== false) return [];
+  const report = finalReport(input);
+  if (typeof report !== 'string' || !report.trim()) return [];
+  const claims = passClaims(report, { section: null, testing: config.testing });
+  if (!claims.length) return [];
+  const folder = sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) });
+  const runs = folder ? readCheckRuns(folder) : null;
+  return runs === null ? [] : unsupportedClaims(claims, runs).map((claim) => ({ ...claim, runs }));
+}
+
 // Whether the background check sends the subagent back on this stop, given `made` send-backs so far: the count is stored
 // first, and a stop past the first of its turn whose count cannot be stored is let end.
 function childrenSendBack(input, children, made) {
@@ -68,12 +86,19 @@ await runHook((input) => {
   if (!children.length) forgetChildSendBacks(input);
   const forChildren = childrenSendBack(input, children, made);
   let forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
-  if (!forChildren && !forDelivery) {
+  let unsupported = [];
+  try {
+    unsupported = unsupportedReport(input, project, config);
+  } catch {
+    // A record or report it cannot read sends nothing back.
+  }
+  const forEvidence = unsupported.length > 0;
+  if (!forChildren && !forDelivery && !forEvidence) {
     delivery = deliverHandoffs(input, checked, { running });
     forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
   }
   if (config.telemetry.enabled) {
-    appendEvent(project, config, stopRow(input, project, { delivery, children, sentBack: forChildren || forDelivery, docReads: config.telemetry.docReads }));
+    appendEvent(project, config, stopRow(input, project, { delivery, children, sentBack: forChildren || forDelivery || forEvidence, docReads: config.telemetry.docReads }));
   }
   const agent = stopAgent(input);
   // The lesson's evidence names the agent's dispatch log row, which only telemetry writes.
@@ -96,5 +121,9 @@ await runHook((input) => {
     if (unwritten.length) reasons.push(handoffReason(unwritten));
   }
   if (forChildren) reasons.push(childrenReason(children, made + 1));
+  if (forEvidence) {
+    reasons.push(`${claimProblem(unsupported, unsupported[0].runs, { where: 'Your report' })} ` +
+      'Correct the report: quote the output a finished run returned, or say which runs did not finish.');
+  }
   if (reasons.length) deny(reasons.join('\n\n'));
 });

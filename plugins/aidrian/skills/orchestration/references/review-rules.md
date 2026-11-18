@@ -81,6 +81,12 @@ never change here, and a finding that would change them is a `scope_collision`.
 A finding or a failing check gets at most 2 passes: the fix, and one corrective pass when the review or the check says
 it is not fixed or broke something. After the second pass it is `blocked`, with the reason, and goes to the Human.
 
+## Pushing a fix
+
+Push each fix commit at once, after only the tests of the files it touches (`aidrian test changed`). CI runs the full suite
+on the pushed head, and a reviewer's re-check runs on that head beside CI, never as a gate before the push.
+The push-first hook refuses a full suite while the branch holds a commit its remote lacks.
+
 ## Proportion
 
 Fix every finding a review identified; never leave one silently open. Do not go hunting for new ones.

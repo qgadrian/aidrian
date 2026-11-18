@@ -12,7 +12,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import {
-  appendCheckRuns, checkRows, commandKey, isFullSuite, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims, workingTree,
+  appendCheckRuns, checkRows, commandKey, isFullSuite, mayRunTests, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims, workingTree,
 } from '../plugins/aidrian/lib/check-runs.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -124,11 +124,13 @@ test('a pass claim names a test command and a pass, and never a failure, an unfi
     '```',
   ]), { testing: TESTING });
   assert.deepEqual(claims, [
-    { clause: '- `npm run check`: 4071/4071 pass', key: 'npm run check', counts: [4071] },
-    { clause: '- npm run check passed, 12 pass', key: 'npm run check', counts: [12] },
+    { clause: '- `npm run check`: 4071/4071 pass', key: 'npm run check', counts: [4071], commits: [] },
+    { clause: '- npm run check passed, 12 pass', key: 'npm run check', counts: [12], commits: [] },
   ]);
   assert.deepEqual(passClaims('## Summary\n\n`npm test` passed\n'), [], 'only the Tests run section');
   assert.equal(passClaims('`npm test` passed', { section: null }).length, 1, 'a whole report with no section');
+  assert.deepEqual(passClaims('`npm test` at 056c3c2 passed, 1234567 of them', { section: null })[0].commits, ['056c3c2'], 'a count is no commit id');
+  assert.equal(passClaims('`git status` is clean and `npm run lint` passed', { section: null }).length, 0, 'no test command');
 });
 
 test('a claim needs a run of its command that passed, at the tree, with the count it states', () => {
@@ -216,7 +218,13 @@ test('the pull request body rule refuses a pass the session record does not supp
   assert.match(judge(['- `npm run check`: 4071/4071 pass'], []), /^Blocked: the `## Tests run` section says `npm run check` passed, but no run of it/u);
   assert.equal(judge(['- `npm run check`: 4071/4071 pass'], [run]), null);
   assert.match(judge(['- `npm run check`: 4071/4071 pass'], [{ ...run, pass: 4031, fail: 40, status: 'failed' }]), /The record holds failed \(pass 4031, fail 40\)/u);
-  assert.match(judge(['- `npm run check`: 4071/4071 pass'], [{ ...run, tree: 'f'.repeat(40) }]), /this commit's files/u);
+  assert.match(judge(['- `npm run check`: 4071/4071 pass'], [{ ...run, tree: 'f'.repeat(40) }]), /the files of HEAD \(tree [0-9a-f]{12}\), or of the commit the line names/u);
+  const first = git('rev-parse', 'HEAD');
+  writeFileSync(path.join(dir, 'later.txt'), 'l\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'later');
+  assert.match(judge(['- `npm run check`: 4071/4071 pass'], [run]) ?? '', /^Blocked/u, 'a run of an earlier commit is not one of HEAD');
+  assert.equal(judge([`- \`npm run check\` at ${first.slice(0, 7)}: 4071/4071 pass`], [run]), null, 'a line that names the commit its run was of');
   assert.equal(judge(['- `npm run check`: not finished (stopped under load)', '- CI `Check (Node 22)`: pass'], []), null);
   assert.equal(judge(['- `npm run check`: 4071/4071 pass'], null), null, 'a session with no readable record is not judged');
 });
@@ -256,6 +264,19 @@ test('push-first refuses a full suite while the branch holds an old commit its r
   assert.equal(run('npm run check', { now: at, env: { AIDRIAN_ALLOW_FULL_SUITE: '1' } }), null);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, testing: { pushFirstMinutes: 0 } }));
   assert.equal(run('npm run check', { now: at }), null, '0 turns it off');
+});
+
+test('push-first and the record read no config for a line of only readers, and do for any other program', () => {
+  assert.equal(mayRunTests('git status && grep -c x f | wc -l', '/w'), false);
+  assert.equal(mayRunTests('aidrian state', '/w'), false);
+  assert.equal(mayRunTests('aidrian test changed', '/w'), true);
+  assert.equal(mayRunTests('make ci', '/w'), true, 'a project may name any full suite');
+  const { dir, git } = repo({ config: { version: 1, testing: { fullSuite: ['make ci'] } } });
+  git('push', '-q', 'origin', 'feat/x');
+  writeFileSync(path.join(dir, 'fix.txt'), 'f\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'fix');
+  assert.match(pushFirst('make ci', { cwd: dir, env: {}, now: Date.now() + 3_600_000 }), /^Blocked: `make ci` runs the full suite/u);
 });
 
 test('push-first leaves a branch with no remote copy alone', () => {

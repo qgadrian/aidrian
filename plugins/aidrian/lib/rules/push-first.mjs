@@ -4,21 +4,21 @@
 // isFullSuite), is refused when the folder it runs in is on a branch whose remote copy exists and lacks a commit older
 // than `testing.pushFirstMinutes`; 0 turns the rule off. The remote is the branch's push remote, else `remote.pushDefault`,
 // else its upstream's remote, else `origin`, and the copy is `refs/remotes/<remote>/<branch>`: a branch never pushed has
-// none, so the rule leaves its first full run alone. Runs git only for a command whose words match a full suite.
+// none, so the rule leaves its first full run alone. A line of only programs that run no tests, such as git and grep,
+// reads nothing (check-runs.mjs mayRunTests); any other finds its project, and git runs only for a full suite.
 
-import { isFullSuite } from '../check-runs.mjs';
+import { isFullSuite, mayRunTests } from '../check-runs.mjs';
 import { loadConfig } from '../config.mjs';
 import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { walkCommands } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_FULL_SUITE';
-const MAY_RUN = /test|check/u;
 const MAX_ENTRIES = 16;
 
 // The deny reason for `command`, or null. `now` is in milliseconds; `git` is runGit's seam.
 export function check(command, { cwd = process.cwd(), env = process.env, now = Date.now(), git = runGit } = {}) {
-  if (env[OVERRIDE] === '1' || !MAY_RUN.test(command)) return null;
+  if (env[OVERRIDE] === '1' || !mayRunTests(command, cwd)) return null;
   const configs = new Map();
   for (const { invocation, folder } of walkCommands(command, cwd).slice(0, MAX_ENTRIES)) {
     if (invocation.dynamic || !invocation.program) continue;

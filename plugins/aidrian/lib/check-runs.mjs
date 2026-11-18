@@ -39,6 +39,28 @@ const TEST_PREFIXES = [
 ].map((words) => words.join(' '));
 
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
+// Programs that run no test suite, so a line of only these needs no config read (mayRunTests).
+const NEVER_TESTS = new Set([
+  'git', 'gh', 'ls', 'cat', 'echo', 'printf', 'grep', 'egrep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr',
+  'find', 'xargs', 'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod', 'ln', 'pwd', 'which', 'test', '[', 'true', 'false', 'sleep', 'date',
+  'diff', 'jq', 'curl', 'tee', 'stat', 'file', 'basename', 'dirname', 'realpath', 'export', 'set', 'unset', 'source', '.', 'aidrian-knowledge',
+  'cd', 'pushd', 'popd',
+]);
+
+// Whether `command` runs any program that could run tests, so a rule reads the project's config for it: false for a line
+// of only NEVER_TESTS programs, `aidrian` commands other than `test changed`, and nothing.
+export function mayRunTests(command, cwd = null) {
+  try {
+    return walkCommands(command, cwd).some(({ invocation }) => {
+      if (invocation.dynamic) return false;
+      const own = aidrianArgs(invocation);
+      if (own) return own[0]?.text === 'test';
+      return typeof invocation.program === 'string' && invocation.program !== '' && !NEVER_TESTS.has(invocation.program);
+    });
+  } catch {
+    return false;
+  }
+}
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const startsWith = (key, prefix) => key === prefix || key.startsWith(`${prefix} `);
@@ -209,13 +231,16 @@ const PASS_WORD = /\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|all\s+\d+\s+te
 const FAIL_WORD = /\bnot\s+finished\b|\b(?:failed|failing|red|timed\s+out|stopped|interrupted)\b|\b[1-9]\d*\s+(?:fail(?:s|ed|ures?)?)\b|\bfail(?:s|ures?)?\s*:?\s*[1-9]/iu;
 // A clause about CI, which the record cannot see: its results are quoted from the forge.
 const CI_WORD = /\bCI\b|\bGitHub Actions\b|\bworkflow\b|\bgh pr checks\b/u;
+// A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one.
+const COMMIT_ID = /\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b/gu;
 // The pass counts a clause states: "4071/4071", "12 pass", "pass 12", "12 tests passed".
 const PASS_COUNT = /\b(\d+)\s*\/\s*\d+\b|\b(\d+)\s+(?:tests?\s+)?pass(?:es|ed|ing)?\b|\bpass(?:es|ed)?\s*:?\s+(\d+)\b/giu;
 
 // The claims of a passing test run in the `## <section>` section of `body`, or in the whole of it when `section` is null,
 // outside fenced code: one a clause, split at `;` and sentence ends, that names a test command and a pass, and neither a
 // failure nor CI. A command is named in backticks, or, for a `testing.fullSuite` command, also as plain words.
-// Each is { clause, key, counts }: `key` the command's (commandKey), `counts` the pass counts it states.
+// Each is { clause, key, counts, commits }: `key` the command's (commandKey), `counts` the pass counts it states, and
+// `commits` the commit ids it names, such as "at 056c3c2", which the pull request body rule reads the tree of.
 export function passClaims(body, { section = 'Tests run', testing = {} } = {}) {
   const lines = section === null ? [...unfencedLines(body)] : sectionLines(body, section);
   const suites = (testing.fullSuite ?? []).map(keyOfText).filter(Boolean);
@@ -231,7 +256,8 @@ export function passClaims(body, { section = 'Tests run', testing = {} } = {}) {
       const bare = clause.replace(/`[^`\n]*`/gu, ' ');
       for (const suite of suites) if (new RegExp(`(?:^|[\\s(])${escape(suite)}(?=$|[\\s:,.)])`, 'u').test(bare)) keys.push(suite);
       const counts = [...clause.matchAll(PASS_COUNT)].map((match) => Number(match[1] ?? match[2] ?? match[3]));
-      for (const key of new Set(keys)) claims.push({ clause: clause.trim(), key, counts });
+      const commits = [...clause.matchAll(COMMIT_ID)].map((match) => match[0]);
+      for (const key of new Set(keys)) claims.push({ clause: clause.trim(), key, counts, commits });
     }
   }
   return claims;

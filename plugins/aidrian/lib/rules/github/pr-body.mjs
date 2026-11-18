@@ -32,7 +32,7 @@ import path from 'node:path';
 import { loadConfig } from '../../config.mjs';
 import { forgeFor } from '../../forges/index.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
-import { runGit, treeOf } from '../../git.mjs';
+import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
 import { sessionFolder } from '../../session-folder.mjs';
@@ -416,18 +416,30 @@ function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, 
 }
 
 // The `## Tests run` lines that say a test command passed, each needing a run of it on the session's check-run record
-// that passed at the tree of HEAD in `folder`, with the counts the line states (lib/check-runs.mjs). `readRuns(project,
-// config)` gives the record's rows, or null when this session has none it can read: then nothing is judged.
+// that passed at the tree of HEAD in `folder`, or of the commit the line names ("at 056c3c2"), with the counts the line
+// states (lib/check-runs.mjs). `readRuns(project, config)` gives the record's rows, or null when this session has none
+// it can read: then nothing is judged, nor is a line whose tree git cannot give.
 function judgeEvidence(body, config, project, folder, readRuns) {
   const claims = passClaims(body, { testing: config.testing });
   if (!claims.length) return null;
   const runs = readRuns(project, config);
-  const tree = runs === null ? null : treeOf(folder);
-  if (runs === null || tree === null) return null;
-  const missing = unsupportedClaims(claims, runs, { tree });
+  if (runs === null) return null;
+  const trees = new Map();
+  const treeAt = (commit) => {
+    if (!trees.has(commit)) {
+      const read = runGit(['rev-parse', '--verify', '--quiet', `${commit}^{tree}`], folder);
+      trees.set(commit, read.status === 0 ? read.stdout.trim() : null);
+    }
+    return trees.get(commit);
+  };
+  const missing = claims.filter((claim) => {
+    const tree = treeAt(claim.commits.at(-1) ?? 'HEAD');
+    return tree !== null && unsupportedClaims([claim], runs, { tree }).length > 0;
+  });
   if (!missing.length) return null;
-  return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of this commit's files ` +
-    `(tree ${tree.slice(0, 12)}). Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.`);
+  return deny(`${claimProblem(missing, runs, { where: 'the `## Tests run` section' })} The run must be of the files of HEAD ` +
+    `(tree ${String(treeAt('HEAD') ?? 'unknown').slice(0, 12)}), or of the commit the line names, such as "at <commit id>". ` +
+    `Unclaimed lines: ${missing.map(({ clause }) => `"${excerpt(clause)}"`).join(', ')}.`);
 }
 
 // The check-run rows of the session `input` names, through its session folder, or null when it has none.

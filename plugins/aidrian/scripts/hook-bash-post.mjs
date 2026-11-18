@@ -13,16 +13,17 @@ import path from 'node:path';
 import { runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 
-// A command that holds neither word can record no pull request, and one with none of the test words no check run: either
-// loads nothing more.
+// A command that holds neither word can record no pull request; one of only programs that run no tests, such as git
+// and grep, no check run (lib/check-runs.mjs mayRunTests).
 const MAY_RECORD = /push|\bpr\b/u;
-const MAY_TEST = /test|check|vitest|jest|pytest|rspec/u;
 
 await runHook(async (input) => {
   const command = input.tool_input?.command;
-  if (typeof command !== 'string' || !(MAY_RECORD.test(command) || MAY_TEST.test(command))) return;
+  if (typeof command !== 'string') return;
   if (typeof input.session_id !== 'string' || typeof input.cwd !== 'string' || !path.isAbsolute(input.cwd)) return;
-  if (MAY_TEST.test(command)) {
+  const { mayRunTests } = await import('../lib/check-runs.mjs');
+  if (!MAY_RECORD.test(command) && !mayRunTests(command, input.cwd)) return;
+  if (mayRunTests(command, input.cwd)) {
     try {
       await recordCheckRuns(input, command);
     } catch {

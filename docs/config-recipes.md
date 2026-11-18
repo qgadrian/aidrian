@@ -89,9 +89,11 @@ What it turns on:
 - On Claude Code, the handoff continues in a background session with nothing typed, up to 5 in a row ([Handoff](handoff.md)).
   Codex has no background route: there the handoff writes a brief, and a person resumes it.
 - Persona-audit triage files issues without asking.
-- The screen check: a change to a screen a target names is captured at a phone, a tablet, and a desktop width for the
-  visual reviewers, once the capture can reach the app, and a user-facing change owes product feedback before the ready
-  mark, with a persona walk when the project has a persona ([Screens checked on every device](#screens-checked-on-every-device)).
+- The screen check: a user-facing change owes product feedback before the ready mark, with a persona walk when the
+  project has a persona. A change to a screen a target names is captured at a phone, a tablet, and a desktop width only
+  when the review runs a visual reviewer and the capture can reach the app; the recipe adds no flow that requires one,
+  so add the review doc's flow to put one in the plan
+  ([Screens checked on every device](#screens-checked-on-every-device)).
 
 What it still keeps for a person: a security verdict and a critical-flow sign-off, which no setting hands to an agent;
 a hard product call in a floor class, after its quorum; on Codex, resuming a handoff;
@@ -187,13 +189,17 @@ Full autonomy and autopilot merge with no person looking, so they turn on two ch
 
 - `review.visual` captures each route a change touches at 390, 1024, and 1440 px, a phone, a tablet, and a desktop,
   for the visual reviewers to check. A route is touched when a changed file matches its target's `files`, and the
-  capture runs only when the review runs a visual reviewer, `designer` or `ux-specialist` by default; a flow that
-  requires them, as in the review doc's config, makes sure it does.
+  capture runs only when the review's plan holds a visual reviewer, `designer` or `ux-specialist` by default.
+  The recipes add no flow that requires one, so a review whose plan leaves both out captures nothing. The
+  `staff-screens` flow of [the review doc's config](review.md#screens-checked-on-every-device), which requires
+  `agent:designer` and `agent:ux-specialist`, puts them in the plan of each change that triggers it.
 - `review.productFeedback.auto` makes a user-facing pull request owe product feedback before it is marked ready: the
   `product-manager` agent's read, and a persona's walk of the change in the running app when the project has a usable
   persona. The feedback is no approval and no merge block; only the ready mark waits for it.
 
 A change that matches only `review.productFeedback.files`, and no target, gets feedback but no capture.
+Product feedback reads `files`, and the targets, from the default branch and the base, never from the pull request:
+a pull request that adds a path to the list does not owe feedback for that path itself; the next one does.
 
 The target, `{ "files": ["src/app/**"], "routes": ["/"] }`, is a placeholder, as `"test"` is: replace it with the
 project's screen files and the routes that show them, one target per group of screens. The `harness-setup` skill does

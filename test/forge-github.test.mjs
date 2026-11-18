@@ -924,17 +924,25 @@ test('changesState asks nothing for refs that fail changeRef, and answers null f
   assert.deepEqual(calls, []);
 });
 
+// The recorded answer with the last node of each full page dropped, so the ranking alone decides.
+const unfilled = () => {
+  const answer = structuredClone(RECORDED.answer);
+  answer.data.r0.parent.pullRequests.nodes.pop();
+  answer.data.r1.pullRequests.nodes.pop();
+  return answer;
+};
+
 test('changesState on recorded answers: a branch pushed to a fork resolves to its pull request on the parent, the newest of them', () => {
-  const { forge } = replay(RECORDED.answer, RECORDED.status);
-  const [fork] = forge.changesState(RECORDED.refs);
+  const [fork] = replay(unfilled(), RECORDED.status).forge.changesState(RECORDED.refs);
   assert.deepEqual(RECORDED.refs[0], branchRef('leonxljx/cli', 'fix/11247-pr-create-json'));
   assert.equal(RECORDED.answer.data.r0.parent.pullRequests.nodes.length, 5, 'the branch has five pull requests on the parent');
   assert.deepEqual([fork.repo, fork.number, fork.url], ['cli/cli', 15035, 'https://github.com/cli/cli/pull/15035']);
+  const [full] = replay(RECORDED.answer, RECORDED.status).forge.changesState(RECORDED.refs);
+  assert.equal(full, null, 'on the full page, none of them the token user`s open one: an older, better one may lie past it');
 });
 
 test('changesState on recorded answers: a newer pull request from a fork with a branch of the same name does not resolve the row', () => {
-  const { forge } = replay(RECORDED.answer, RECORDED.status);
-  const rows = forge.changesState(RECORDED.refs);
+  const rows = replay(unfilled(), RECORDED.status).forge.changesState(RECORDED.refs);
   const nodes = RECORDED.answer.data.r1.pullRequests.nodes;
   assert.notEqual(nodes[0].headRepository.owner.login, 'nodejs', 'the newest pull request on that branch name comes from a fork');
   assert.ok(Date.parse(nodes[0].createdAt) > Date.parse(nodes[1].createdAt));
@@ -993,6 +1001,20 @@ test('changesState: a branch resolves to the token user`s own pull request, then
   assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { state: 'CLOSED' }), node(9, '2026-11-17T00:00:00Z', { state: 'MERGED' })]), 9, 'then the newest');
   const noViewer = replay({ data: { viewer: null, r0: { pullRequests: { nodes: [collaborator] }, parent: null } } });
   assert.equal(noViewer.forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number, 4, 'no root viewer is read, so an answer without one still resolves');
+});
+
+test('changesState: on a full page a branch resolves only to the top class its rank asks for, since a better one may lie past it', () => {
+  const node = (number, { mine = false, state = 'CLOSED', owner = 'acme' } = {}) => ({
+    ...PR_NODE, number, createdAt: `2026-11-${10 + number}T00:00:00Z`, state, viewerDidAuthor: mine, authorAssociation: 'COLLABORATOR',
+    url: `https://github.com/acme/notes/pull/${number}`, headRepository: { name: 'notes', owner: { login: owner } },
+  });
+  const forks = [1, 2, 3, 4].map((number) => node(number, { state: 'OPEN', owner: `fork${number}` }));
+  const resolve = (nodes, rank) => replay({ data: { r0: { pullRequests: { nodes }, parent: null } } }).forge.changesState([{ ...branchRef('acme/notes', 'feat/x'), rank }])[0]?.number ?? null;
+  assert.equal(resolve([node(9), ...forks], 'open'), null, 'a touched branch: its only closed one on a full page');
+  assert.equal(resolve([node(9), ...forks.slice(1)], 'open'), 9, 'the same with room left on the page');
+  assert.equal(resolve([node(9, { state: 'OPEN' }), ...forks], 'open'), 9, 'an open one is the top class');
+  assert.equal(resolve([node(9, { mine: true, state: 'MERGED' }), ...forks], 'own'), null, 'a pushed branch: the user`s merged one on a full page');
+  assert.equal(resolve([node(9, { mine: true, state: 'OPEN' }), ...forks], 'own'), 9, 'the user`s own open one is the top class');
 });
 
 test('a pull request number past GraphQL`s Int is refused before any call: the batch still resolves the others, and no read sends it', () => {

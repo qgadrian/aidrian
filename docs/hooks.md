@@ -1306,9 +1306,12 @@ and a rename under the same checks, with the newest of the new rows that fit in 
 tail that fit in what is left and in half of it at most, so the file never passes its cap and the newest pull requests
 always show. Each write, append or rewrite, is one step no other writer of the file runs beside: it holds the file's
 reservations (`<file>.<window>.lock`, `reserveSessionFile`) for the 5-second window that holds its start and the next
-one, and a second writer waits up to a second for them, so two hooks of one session that write together lose no row;
-a killed writer's reservations hold only their two windows. A write after a line cut short, as a killed writer leaves
-it, starts on a new line, so the new row is read and only the cut one is dropped. The `SessionEnd` hook and worktree
+one, and a second writer waits up to a second for them, so two hooks of one session that write together within that
+second lose no row. These are the accepted limits, for display data: a writer that waits past its second, as while a
+killed writer's reservations hold their two windows, writes nothing and its row is lost, and the hook does not try
+again; and a writer paused for more than both windows, past the hook's own timeout, may rename a compaction over a
+later append. A write after a line cut short, as a killed writer leaves it, starts on a new line, so the new row is
+read and only the cut one is dropped. The `SessionEnd` hook and worktree
 cleanup leave it alone, so a resumed session keeps its pull requests.
 
 The snapshot also reads the ledgers of the sessions a handoff came from, through the `parent` each chain floor names
@@ -1322,18 +1325,28 @@ one row `{ at, kind: "worktree", host, path, branch, cwd }` for each worktree an
 shell call created. It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the
 shell fills in, a branch or an option it does not know that starts with `-`, or `--plan`, records nothing. A row also
 needs the command's own result in the call's output: the JSON line `aidrian worktree new` prints with
-`status: "created"`, that branch, and an absolute `worktree_path`. So a call that was skipped, as after `false &&`,
-refused, as for a branch already checked out, or printed nothing records nothing, and an existing worktree is never
-recorded as one the session made. Each command is looked up in the project of the folder it ran in, as the shell
-walk follows a `cd`, and filed in that project's session folder; one after a `cd` the walk cannot follow, or in a
-folder with no project, records nothing. `cwd` is the worktree's path as `git worktree list` prints it in that
-project's main checkout, read after the call, so the snapshot compares two spellings by git; it must be the folder
-the result names, through any symlink, and a branch git lists no worktree for, lists as prunable, or holds in the main
-checkout records nothing. `host` and `path` are origin's repository read from the raw `remote.origin.url`, as the
-snapshot reads the remotes it hands rows down on, so a `url.<base>.insteadOf` rewrite applies on neither side; both
-null with no origin. The links' git reads share a 1-second budget, each stopped by SIGKILL at its share, and run after
-the ledger's row is written and apart from it, so a worktree list that stalls neither passes the host's 5-second hook
-timeout nor loses the call's ledger row. Every field is checked as the reader checks it, and the row is filed under
+`status: "created"`, that branch, and an absolute `worktree_path`, read from the output's last 64 KB. The command must
+be the line's one printing command, read as the ledger reads a `gh pr create` (`printsAlone` in
+`lib/session-prs.mjs`): only bare assignments and a `cd` the walk leaves out may come before it, and nothing after it,
+so the output is its result alone. So a call that was skipped, as after `false &&`, refused, as for a branch already
+checked out, or printed nothing records nothing, and neither does one beside another command, such as
+`echo '<saved result>'; aidrian worktree new <branch>` or `aidrian worktree new <branch> && npm test`, or a line with
+two of them. Within that rule an existing worktree is not recorded as one the session made, but the output is what the
+host hands the hook, which the model's own shell call shapes: a call made to print a forged result, such as a wrapper
+named `aidrian`, can still claim one. That is accepted for display data. Each command is looked up in the folder it ran
+in by the ledger's rule (`knownFolders`), which holds whether a host's payload names the folder the line started in or
+the one it ended in: the folder an absolute leading `cd` names, else the payload's folder only when nothing on the line
+changes directory; after a relative `cd`, a `cd` the walk cannot follow, or in a folder with no project, it records
+nothing. It is filed in that folder's project's session folder. `cwd` is the worktree's path as `git worktree list`
+prints it in that project's main checkout, read after the call, so the snapshot compares two spellings by git; it must
+be the folder the result names, through any symlink, and a branch git lists no worktree for, lists as prunable, or
+holds in the main checkout records nothing. `host` and `path` are origin's repository read from the raw
+`remote.origin.url` in the folder the command ran in, so an origin only that checkout's own config sets
+(`config.worktree`, `includeIf.onbranch`) is the one recorded, as the snapshot there reads its remotes; a
+`url.<base>.insteadOf` rewrite applies on neither side; both null with no origin. Every step of the links, finding the
+project, its main checkout, origin, the list, and the session folder, shares a 1-second budget, each git read stopped
+by SIGKILL at what is left, and runs after the ledger's row is written and apart from it, so a git that stalls neither
+passes the host's 5-second hook timeout nor loses the call's ledger row. Every field is checked as the reader checks it, and the row is filed under
 the payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
 output and exit code are its own ([Session links](providers/adding-a-host.md#session-links) says why the hook and not
 the command is the writer). `links.jsonl` keeps to 64 KB under the ledger's rules, through the same append

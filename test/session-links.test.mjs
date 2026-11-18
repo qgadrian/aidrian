@@ -127,6 +127,12 @@ test('lineage opens at most 16 floor files: a walk that would open more ends at 
   assert.deepEqual(lineage(store, first).map(({ id }) => id), [second], 'the second lookup would pass 16 files, so the walk ends before it');
 });
 
+// A documented limit (docs/handoff.md#across-a-handoff): whether ids fold case is the system's (foldCase), not the
+// volume's, so a case-sensitive volume on macOS or Windows is read as one that folds.
+test('ids fold case by the system the snapshot runs on, not by the volume', () => {
+  assert.equal(foldCase('Kid-1'), ['darwin', 'win32'].includes(process.platform) ? 'kid-1' : 'Kid-1');
+});
+
 test('short ids, floors and folder names alike, compare in the case the disk folds to', () => {
   const { store, floor } = fixture();
   const full = 'abcd1234-0000-4000-8000-000000000001';
@@ -328,7 +334,9 @@ test('a worktree row has exactly its six checked fields; the reader drops one th
 test('worktreeBranches reads aidrian worktree new through the shared lexer, with the folder each runs in', () => {
   const branches = (command) => worktreeBranches(command, '/here').map(({ branch }) => branch);
   assert.deepEqual(worktreeBranches('aidrian worktree new feat/x', '/here'), [{ branch: 'feat/x', folder: '/here' }]);
-  assert.deepEqual(worktreeBranches('cd /repo && aidrian worktree new --base origin/main feat/x --slug x --fetch', '/here'), [{ branch: 'feat/x', folder: '/repo' }]);
+  assert.deepEqual(worktreeBranches('cd /repo && aidrian worktree new --base origin/main feat/x --slug x --fetch', '/here'), [{ branch: 'feat/x', folder: path.resolve('/repo') }], 'the folder an absolute cd names, as this system resolves it');
+  assert.deepEqual(branches('cd sub && aidrian worktree new feat/x'), [], 'a relative cd: the payload may name the folder the line started in or ended in');
+  assert.deepEqual(branches('aidrian worktree new feat/x && echo done'), [], 'not the line`s one printing command');
   assert.deepEqual(branches('node /p/plugins/aidrian/lib/cli.mjs worktree new feat/y --reuse-existing'), ['feat/y']);
   for (const command of ['aidrian worktree new "$B"', 'aidrian worktree new -x', 'aidrian worktree new feat/x --plan', 'aidrian worktree new --plan=1 feat/x',
     'aidrian worktree new', 'aidrian worktree new a b', 'aidrian worktree cleanup', 'echo aidrian worktree new feat/x', 'aidrian worktree new $(echo x)', 'aidrian worktree new a..b',

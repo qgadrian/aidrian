@@ -90,9 +90,11 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 // `step()`'s answer, run while this process holds the file's reservations (reserveSessionFile) for the window that holds
 // now and the next one, taken in that order and released after; false when it cannot take them within LOCK_WAIT_MS.
-// Two writers whose steps overlap in time share a window, so one waits for the other: an append never lands on a file
-// that a compaction is about to rename over, and two compactions never drop each other's rows. A killed writer's
-// reservations hold only their two windows, after which writes go on. `options` gives reserveSessionFile its ids.
+// Two writers whose steps overlap in time share a window, so one waits for the other while the first's step takes less
+// than a window: an append does not land on a file a compaction is about to rename over, and two compactions do not
+// drop each other's rows. The accepted limits, for display data (docs/hooks.md#session-ledger): a writer that waits
+// past LOCK_WAIT_MS, as while a killed writer's reservations hold their two windows, writes nothing and its rows are
+// lost; and a step paused past both windows is no longer alone. `options` gives reserveSessionFile its ids.
 function exclusive(folder, name, { uid, gid }, step) {
   const ids = { ...(uid === undefined ? {} : { uid }), ...(gid === undefined ? {} : { gid }) };
   const until = Date.now() + LOCK_WAIT_MS;

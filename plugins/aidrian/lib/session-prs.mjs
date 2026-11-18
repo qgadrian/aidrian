@@ -190,7 +190,7 @@ const SOURCES = new Set(['source', '.']);
 // The folder each command of `command` runs in, in walk order, under either reading of a payload's `cwd`, the folder the
 // line started in or the one it ended in: the folder an absolute leading `cd`, `git -C`, or `env -C` names; the payload's
 // `cwd` only when no command on the line changes directory and nothing else moves this one; else null.
-function knownFolders(command, cwd, fromCwd) {
+export function knownFolders(command, cwd, fromCwd) {
   const named = walkCommands(command, null);
   const moved = changesDirectory([...new Set([command, ...fromCwd.map((entry) => entry.line)])].flatMap(commandLines));
   return named.map((entry, at) => {
@@ -203,7 +203,7 @@ function knownFolders(command, cwd, fromCwd) {
 // are bare variable assignments and then `entry`, last (a `cd` the walk leaves out), and every other command the walk
 // found runs inside a substitution, whose output the shell captures, as a `cat` with no redirection, such as the heredoc
 // of a `--body "$(cat <<'EOF' … EOF)"`. Any other command on the line could print a link.
-function printsAlone(entries, entry, command) {
+export function printsAlone(entries, entry, command) {
   const own = entries.filter(({ line }) => line === command);
   const assigns = ({ invocation }) => !invocation.program && (invocation.args ?? []).length === 0;
   return own.at(-1) === entry && own.slice(0, -1).every(assigns)
@@ -304,8 +304,8 @@ const isFolder = (folder) => {
 // pass it, the ledger is rewritten through a temporary file and a rename with the newest rows of that tail that fit in
 // half of it, then these, so the newest always show. Nothing is written when the ledger cannot be read as the session
 // folder's rules allow. Returns whether it wrote. Never throws. The append and the compaction are lib/session-rows.mjs
-// appendRows', which runs each write as one step no other writer of the ledger runs beside, so two hooks of one session
-// writing together lose no row; this one decides the repeats from the lines it read.
+// appendRows', which runs each write as one step no other writer of the ledger runs beside, within its limits there;
+// this one decides the repeats from the lines it read.
 export function appendLedger(folder, rows, options = {}) {
   if (!Array.isArray(rows)) return false;
   const select = (lines, taken) => {
@@ -338,10 +338,15 @@ export const isRepository = (host, repoPath) => typeof host === 'string' && HOST
 // path, cwd absolute, a number a positive integer or none, a branch the ref-name check or none, and one of the two.
 const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, cwd }) => typeof host === 'string' && HOST_NAME.test(host)
   && isRepoPath(repoPath) && validCwd(cwd) && isNumber(number) && isBranch(branch) && (number !== null || branch !== null);
-// Whether `row` has the shape of a ledger row, as lib/session-links.mjs checks each row of a ledger before the ticket or
-// any other reader takes it: a known kind, a time that parses, and the fields isUnsupportedRow checks.
-export const isLedgerRow = (row) => row !== null && typeof row === 'object' && KINDS.has(row.kind) && typeof row.at === 'string'
-  && Number.isFinite(Date.parse(row.at)) && isUnsupportedRow(row);
+// The check of a ledger row under the adapter `forge`, which lib/session-links.mjs runs on each row of a ledger, the
+// session's own and an earlier session's, before the ticket or any other reader takes it, and groupRefs too: a known
+// kind and a time that parses; on a host the adapter declares, its own ref check (changeRef, which also bounds a number
+// as its API takes one) and the cwd check; on any other host, isUnsupportedRow. So the ticket comes only from a row the
+// writer could have written.
+export const ledgerRowCheck = (forge) => (row) => row !== null && typeof row === 'object' && KINDS.has(row.kind) && typeof row.at === 'string'
+  && Number.isFinite(Date.parse(row.at)) && (Array.isArray(forge?.hosts) && forge.hosts.includes(row.host)
+    ? forge.changeRef({ host: row.host, path: row.path, number: row.number ?? null, branch: row.branch ?? null }) !== null && validCwd(row.cwd)
+    : isUnsupportedRow(row));
 
 // The refs the snapshot shows from the ledger's `rows`: each row of a known kind with a time, on a host the adapter
 // `forge` declares and whose fields pass its changeRef and the cwd check, or on another host and passing
@@ -379,12 +384,12 @@ export function sessionRefs(rows, forge, ancestors = []) {
 // The refs of one group of rows, as sessionRefs reads them, newest first, MAX_REFS at most, each with its `key`.
 function groupRefs(rows, forge) {
   const found = new Map();
+  const check = ledgerRowCheck(forge);
   rows.forEach((row, index) => {
     const at = typeof row.at === 'string' ? Date.parse(row.at) : Number.NaN;
-    if (!KINDS.has(row.kind) || !Number.isFinite(at)) return;
+    if (!check(row)) return;
     const { host, path: repoPath, number = null, branch = null } = row;
     const declared = forge.hosts.includes(host);
-    if (declared ? forge.changeRef({ host, path: repoPath, number, branch }) === null || !validCwd(row.cwd) : !isUnsupportedRow(row)) return;
     const key = JSON.stringify(number === null ? [host, repoPath, null, branch] : [host, repoPath, number, null]);
     const rank = number === null ? RANKS[row.kind] : null;
     const ref = found.get(key) ?? { key, host, path: repoPath, number, branch: number === null ? branch : null, rank, declared, at, index };

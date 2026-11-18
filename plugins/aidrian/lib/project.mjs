@@ -80,14 +80,15 @@ export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|
 // even inside a main checkout that has one. Outside git it goes on to the file-system root.
 // Every hook starts here, some on every tool call: with no project folder above `start` it runs no git, and with one it
 // runs git once, for the checkout's top folder and its main checkout together, and once more when the local auto-merge
-// switch is on, to ask whether git tracks that file.
-export function findProject(start) {
+// switch is on, to ask whether git tracks that file. `read`, when given, gives the options of the first of those reads,
+// as stateDir's does, for a caller under a deadline.
+export function findProject(start, read) {
   const from = path.resolve(start);
   const found = nearestFolder(from);
   if (found === null) return null;
   let probe = from;
   while (!isDirectory(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
-  const roots = checkoutRoots(probe);
+  const roots = checkoutRoots(probe, typeof read === 'function' ? read() : undefined);
   if (roots !== null) {
     for (let dir = from; ; dir = path.dirname(dir)) {
       if (outside(dir, roots.current)) return null;

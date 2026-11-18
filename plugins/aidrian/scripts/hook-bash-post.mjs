@@ -33,7 +33,7 @@ await runHook(async (input) => {
     import('../lib/rules/github/session-calls.mjs'),
   ]);
   // The state folder lies outside every checkout of the repository, as the snapshot holds it; none when git cannot list them.
-  const folderOf = (project) => sessionFolder(stateDir(project), input.session_id, { checkouts: projectCheckouts(project) });
+  const folderOf = (project, read) => sessionFolder(stateDir(project, read ? { read } : {}), input.session_id, { checkouts: projectCheckouts(project, read) });
   const project = findProject(input.cwd);
   if (project) {
     // Each forge's reader of its own command, by its adapter's id.
@@ -49,39 +49,32 @@ await runHook(async (input) => {
   }
 });
 
-// Records the links of `command`, run from `cwd`, whose output was `output`: for each `aidrian worktree new` it ran
-// that printed a created result, the worktree git now lists for its branch, in the main checkout of the project of the
-// folder that command ran in, as walkCommands follows a `cd`, filed in that project's session folder. Each git read is
-// stopped at its share of LINKS_BUDGET_MS. Loads the worktree reader only for a call that names one.
+// Records the link of `command`, run from `cwd`, whose output was `output`: for the `aidrian worktree new` it ran as its
+// one printing command that printed a created result, the worktree git now lists for its branch, in the main checkout
+// of the project of the folder that command ran in (session-links-writer.mjs worktreeBranches), with origin as that
+// folder's checkout reads it, filed in that project's session folder. Every step after the worktree reader loads,
+// finding the project, its main checkout, origin, the list, and the session folder, runs inside LINKS_BUDGET_MS: each
+// git read is stopped at what is left of it, by SIGKILL, and none starts once it is spent.
 async function recordWorktrees(command, cwd, output, { findProject, folderOf }) {
   if (!/\bworktree\b/u.test(command)) return;
   const links = await import('../lib/session-links-writer.mjs');
   const created = links.createdWorktrees(output);
-  const called = created.length ? links.worktreeBranches(command, cwd) : [];
-  const projects = new Map();
-  for (const { branch, folder } of called) {
-    const project = findProject(folder);
-    if (!project) continue;
-    const group = projects.get(project.root) ?? { project, branches: [] };
-    group.branches.push(branch);
-    projects.set(project.root, group);
-  }
-  if (projects.size === 0) return;
+  const [called] = created.length ? links.worktreeBranches(command, cwd) : [];
+  if (!called) return;
   const [{ mainRoot }, { listWorktrees }, { canonical }] = await Promise.all([
     import('../lib/git.mjs'), import('../lib/worktree.mjs'), import('../lib/rules/main-checkout.mjs'),
   ]);
   const until = Date.now() + LINKS_BUDGET_MS;
   const left = () => until - Date.now();
   const git = () => ({ timeout: Math.max(1, left()), killSignal: 'SIGKILL' });
-  for (const { project, branches } of projects.values()) {
-    if (left() <= 0) return;
-    const main = mainRoot(project.root, git());
-    if (!main || left() <= 0) continue;
-    const origin = links.originRepository(main, git());
-    const list = (dir) => listWorktrees(dir, { timeoutMs: Math.max(1, left()), killSignal: 'SIGKILL' });
-    const same = (listed, printed) => listed === printed || canonical(listed) === canonical(printed);
-    const rows = links.worktreeRows({ branches, created, main, origin, list, same });
-    const folder = rows.length ? folderOf(project) : null;
-    if (folder) links.recordLinks(folder, rows);
-  }
+  const project = findProject(called.folder, git);
+  if (!project || left() <= 0) return;
+  const main = mainRoot(project.root, git());
+  if (!main || left() <= 0) return;
+  const origin = links.originRepository(called.folder, git());
+  const list = (dir) => listWorktrees(dir, { timeoutMs: Math.max(1, left()), killSignal: 'SIGKILL' });
+  const same = (listed, printed) => listed === printed || canonical(listed) === canonical(printed);
+  const rows = left() > 0 ? links.worktreeRows({ branches: [called.branch], created, main, origin, list, same }) : [];
+  const folder = rows.length && left() > 0 ? folderOf(project, git) : null;
+  if (folder) links.recordLinks(folder, rows);
 }

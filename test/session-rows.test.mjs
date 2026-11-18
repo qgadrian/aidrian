@@ -10,8 +10,8 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
-import { appendRows, readRows } from '../plugins/aidrian/lib/session-rows.mjs';
+import { reserveSessionFile, sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
+import { appendRows, LOCK_WAIT_MS, LOCK_WINDOW_MS, readRows } from '../plugins/aidrian/lib/session-rows.mjs';
 
 const ROOT = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-session-rows-')));
 after(() => rmSync(ROOT, { recursive: true, force: true }));
@@ -130,6 +130,23 @@ test('a second writer that appends while the first compacts loses no row: the tw
   assert.ok(kept.some((row) => row.first), 'the first writer`s row');
   assert.ok(kept.some((row) => row.second), 'the second writer`s row');
   assert.ok(statSync(path.join(folder, name)).size <= cap);
+});
+
+// A documented limit (docs/hooks.md#session-ledger): a writer that cannot take the reservations within LOCK_WAIT_MS,
+// as while a killed writer's are left, writes nothing, and its row is lost; once they go, writes go on.
+test('a writer that finds the reservations held past its wait writes nothing; once they go, it writes', { skip: !POSIX }, () => {
+  const folder = folderOf();
+  const now = Date.now();
+  const held = [reserveSessionFile(folder, 'links.jsonl', { windowMs: LOCK_WINDOW_MS, now }), reserveSessionFile(folder, 'links.jsonl', { windowMs: LOCK_WINDOW_MS, now: now + LOCK_WINDOW_MS })];
+  assert.ok(held.every(Boolean));
+  const started = Date.now();
+  assert.equal(appendRows(folder, 'links.jsonl', [{ lost: true }], { maxBytes: 64 * KB }), false);
+  const waited = Date.now() - started;
+  assert.ok(waited >= LOCK_WAIT_MS - 50 && waited < LOCK_WAIT_MS + 1000, `it waits its LOCK_WAIT_MS, no longer: ${waited} ms`);
+  assert.deepEqual(readRows(folder, 'links.jsonl', { maxBytes: 64 * KB }), []);
+  for (const release of held) release();
+  assert.equal(appendRows(folder, 'links.jsonl', [{ kept: true }], { maxBytes: 64 * KB }), true);
+  assert.deepEqual(readRows(folder, 'links.jsonl', { maxBytes: 64 * KB }), [{ kept: true }]);
 });
 
 test('a hard link, a symlink, and a named pipe at the file receive no write', { skip: !POSIX }, () => {

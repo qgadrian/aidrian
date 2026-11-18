@@ -651,7 +651,9 @@ sessions, as far back as a floor and a session folder live, 30 days. The walk en
 own included, compared in the case the disk folds to, at a floor with no parent, and once it has read 16 floor files.
 A floor filed under the short id a host printed gives a parent only when no other session folder name starts with
 that short id; both compare in the case the disk folds to, so on such a disk a folder whose name differs only in
-letter case is another session's, and the session's own folder in other letters is its own.
+letter case is another session's, and the session's own folder in other letters is its own. Whether ids fold is
+the system's (`foldCase`: macOS and Windows fold), not the volume's, an accepted limit for display data: on a
+case-sensitive volume of those systems, two sessions whose ids differ only in letter case read as one.
 An earlier session hands down only its `created` and `pushed` rows, and only on a repository the project's remotes
 name (each remote's `url` and `pushurl`, read once a snapshot in the current folder, and only when there is an
 earlier session), and only the rows it wrote at or before the time of the hop that left it: what it did
@@ -680,8 +682,9 @@ have no parent, and show their own rows alone.
 2. With `--session`, the newest row of the session's ledger or of its `links.jsonl` whose branch holds a key; with none
    there, the nearest earlier session's rows, as it hands them down, and so on: `source: "ledger"`. The newest is the
    latest `at`, then on a tie a row of `links.jsonl` before one of the ledger, then the later line. A row of either
-   file is read only when it has the shape its writer gives it, each field checked, so a malformed row, the session's
-   own or an earlier session's, gives no ticket. The ledger leaves out a repeat within a minute of the row it repeats,
+   file is read only when it has the shape its writer gives it, each field checked, a ledger row on a host the forge
+   adapter serves by that adapter's own ref check (`ledgerRowCheck` in `lib/session-prs.mjs`), so a malformed row, the
+   session's own or an earlier session's, gives no ticket. The ledger leaves out a repeat within a minute of the row it repeats,
    keeping that row's time, so a branch pushed again at once does not move forward; one pushed again later is written
    with its new time, and its ticket is the newest.
    A ledger or `links.jsonl` of the session's own that cannot be read makes `ticket` null with `ticket` in `errors`;

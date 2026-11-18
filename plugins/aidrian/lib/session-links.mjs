@@ -15,7 +15,7 @@ import { foldCase } from './fs.mjs';
 import { openStore, readHop, SESSION_ID, storeNames } from './handoff-markers.mjs';
 import { existingSessionFolder, sessionFolderNames } from './session-folder.mjs';
 import { isWorktreeRow, LINKS } from './session-links-writer.mjs';
-import { isLedgerRow, LEDGER, remoteRepos } from './session-prs.mjs';
+import { LEDGER, ledgerRowCheck, remoteRepos } from './session-prs.mjs';
 import { readRows } from './session-rows.mjs';
 
 export { LINKS, LINKS_MAX_BYTES } from './session-links-writer.mjs';
@@ -127,15 +127,16 @@ export function rowReader({ own, files, chain, remotes, state, checkouts, checks
 // continuation store of the state folder `state`, opened once, and `names()` its one listing (storeNames), which the
 // handoff section and the lineage both read. `rows` is the rowReader of the session's own folder `folder`, null with
 // none, over the files of `files`; its remotes are read in `cwd`, the process's own folder, with `git`, runGit's
-// options. `io` replaces storeNames, sessionFolderNames, and readRows for a test that counts their calls.
-export function sessionLinks({ state, checkouts, maxChain, folder, session, cwd, files, git = {}, now = Date.now(), io = {} }) {
+// options, and each ledger row passes the ref check of `forge`, the adapter forgeFor gives (session-prs.mjs
+// ledgerRowCheck). `io` replaces storeNames, sessionFolderNames, and readRows for a test that counts their calls.
+export function sessionLinks({ state, checkouts, maxChain, folder, session, cwd, files, forge = null, git = {}, now = Date.now(), io = {} }) {
   let store;
   let names;
   const storeOf = () => (store ??= openStore(state, { checkouts, maxChain }));
   const namesOf = () => (names ??= (io.storeNames ?? storeNames)(storeOf()));
   const sessionNames = () => (io.sessionNames ?? sessionFolderNames)(state, { checkouts });
   const rows = folder === null ? null : rowReader({
-    own: folder, files, now, state, checkouts, checks: { [LINKS]: isWorktreeRow, [LEDGER]: isLedgerRow }, read: io.readRows,
+    own: folder, files, now, state, checkouts, checks: { [LINKS]: isWorktreeRow, [LEDGER]: ledgerRowCheck(forge) }, read: io.readRows,
     chain: () => lineage(storeOf(), session, { now, names: namesOf(), sessionNames }),
     remotes: () => remoteRepos(cwd, (args, dir) => runGit(args, dir, git)),
   });

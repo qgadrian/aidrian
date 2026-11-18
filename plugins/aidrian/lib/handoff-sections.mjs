@@ -5,6 +5,7 @@
 //     A heading matches by its first words in any case, so `## Next steps (ordered)` is Next steps; a heading or a line
 //     inside a code fence counts for nothing.
 //   - supersedesOf: the header's `Supersedes:` value, which says whether the brief supersedes another.
+//   - branchOf: the `Branch:` value of the Current state section, which the background route's progress check reads.
 // Imports only lib/markdown-sections.mjs.
 
 import { headingOf, unfencedLines } from './markdown-sections.mjs';
@@ -54,6 +55,26 @@ export function sectionProblems(text) {
     }
     return section.holds(lines) ? [] : [`${section.name}: the section ${section.missing}: add ${section.add}`];
   });
+}
+
+const CURRENT_STATE = REQUIRED.find((section) => section.name === 'Current state').heading;
+
+// `Branch:`, the spaces and `*` that close a bold label, then a backticked name, or the text up to a `|` or the line's end.
+const BRANCH_VALUE = /(?<![\p{L}\p{N}_-])Branch:[ \t*]*(?:`([^`\n]+)`|([^|\n]*))/iu;
+
+// The first `Branch:` value of the brief's Current state section, or null when it has none. A backticked name is taken
+// whole, `|` and every space in it; a bare one loses only the spaces, tabs, and `*` at its end. Git allows underscores,
+// `|`, and other spaces in a branch name, so nothing else is trimmed.
+export function branchOf(text) {
+  let inState = false;
+  for (const line of unfencedLines(String(text ?? ''))) {
+    const title = headingOf(line);
+    if (title !== null) inState = CURRENT_STATE.test(title);
+    const match = inState && title === null ? BRANCH_VALUE.exec(line) : null;
+    const value = match ? (match[1] ?? match[2].replace(/[ \t*]+$/u, '')) : '';
+    if (value) return value;
+  }
+  return null;
 }
 
 // The header's `Supersedes:` value, trimmed of spaces and emphasis marks, in the text above the first `## `: from the

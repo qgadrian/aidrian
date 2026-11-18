@@ -4,7 +4,8 @@
 //   checked-<brief name>.json  { sha256, at }                                       the brief that passed the check
 //   armed-<session>.json       { route, session, brief, slug, chain, sha256, armed_at }
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
-//   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
+//   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session;
+//                              a background hop's adds { tree, done, stalls }, the progress it starts from
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 //   ending-<session>.json      { shell, id, next, host_pid | own, at }   a session that ends itself once its turn ends,
@@ -56,7 +57,7 @@ const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, sta
 const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued|ending|follow)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
-const CHAIN_CEILING = 10_000;
+export const CHAIN_CEILING = 10_000;
 // A short id a floor may be filed under: what a host prints before its listing names the session's full id.
 const SHORT_FROM = /^from-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 const SHORT_FOLLOW = /^follow-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
@@ -85,14 +86,19 @@ export function slugOf(name) {
   return BRIEF_FILE.exec(base)?.[2] ?? base.replace(/\.md$/u, '');
 }
 
+// The number of continuations in a row session.handoff.maxChain allows: Infinity for "unlimited", where only the
+// background route's progress check (lib/handoff-continue.mjs) bounds a chain.
+export const chainLimit = (maxChain) => (maxChain === 'unlimited' ? Infinity : maxChain);
+
 // The store of the state folder `state`: { dir, handoffs, maxChain, uid, refused }. `dir` is the real path of the
 // store's folder. `refused` says why no marker may be written or read there, or is null: the store's folder is a
 // symlink; it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the
 // case it was spelled in; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
 // writable by every user, where the system has user ids. A folder its group may write passes: a umask of 002 is common. A folder not made yet passes,
-// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds the
-// chain of an armed or ready marker; a chain floor or a start record is bounded by CHAIN_CEILING alone. `uid` is
-// this process's user, null where the system has none, and every read refuses a marker or a brief another user owns.
+// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, as chainLimit reads
+// it, which bounds the chain of an armed or ready marker; a chain floor or a start record is bounded by CHAIN_CEILING
+// alone. `uid` is this process's user, null where the system has none, and every read refuses a marker or a brief
+// another user owns.
 export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
   const real = resolvedPath(storePath(state));
@@ -105,7 +111,7 @@ export function openStore(state, { checkouts = [], maxChain, uid = processUid() 
     const loose = [state, handoffs, storePath(state)].map((dir) => [dir, looseFolder(dir, uid)]).find(([, why]) => why);
     if (loose) refused = `the folder ${loose[0]} of the continuation store ${loose[1]}, so no continuation marker is kept there; make it the user's own, writable by that user alone`;
   }
-  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain, uid, refused });
+  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain: chainLimit(maxChain), uid, refused });
 }
 
 // Whether a stat names a file of another user than `uid`; never where the system has no user ids.
@@ -204,6 +210,23 @@ function isArmed(value, maxChain) {
 
 const isReady = (value, maxChain) => isArmed(value, maxChain) && Number.isFinite(value.ended_at) && isPid(value.host_pid);
 
+// A floor's progress, which only the background route records: the tree of the brief's branch (null when git could not
+// say), the Done items the brief held, and how many hops in a row before it showed neither moving.
+const isProgress = (value) => (value.tree === null || (typeof value.tree === 'string' && /^[0-9a-f]{40,64}$/u.test(value.tree)))
+  && whole(value.done, 0, CHAIN_CEILING) && whole(value.stalls, 0, CHAIN_CEILING);
+const noProgress = (value) => value.tree === undefined && value.done === undefined && value.stalls === undefined;
+
+// The progress a chain floor read from the store records, { tree, done, stalls }, or null when it records none, or a
+// shape this version does not read, such as an earlier one's: the floor's chain and route still hold, and the progress
+// check counts from 0 again.
+export const floorProgress = (floor) => (floor && !noProgress(floor) && isProgress(floor) ? { tree: floor.tree, done: floor.done, stalls: floor.stalls } : null);
+
+// Whether a chain floor can record a hop to `chain` with `done` Done items: both at most CHAIN_CEILING. The background
+// route asks it before it starts a session, since a floor it cannot record stops the session it started.
+export const floorFits = ({ chain, done = 0 }) => whole(chain, 0, CHAIN_CEILING) && whole(done, 0, CHAIN_CEILING);
+
+// A chain floor as the store reads it: its progress fields are not read here (floorProgress), so a floor whose progress
+// has another shape still holds its chain and route.
 const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
   && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at);
 
@@ -353,11 +376,12 @@ export function clearPending(store, { now = Date.now() } = {}) {
   return { listed, armed };
 }
 
-// Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to.
+// Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to, and
+// the background route's `progress`, { tree, done, stalls }, when it is given; a progress of another shape writes nothing.
 // `session` may be the short id a host printed for a session it started, which readFrom matches by prefix.
-export function noteFrom(store, session, { slug, chain, brief, route }, { now = Date.now() } = {}) {
-  const value = { slug, chain, brief, route, at: now };
-  return isFrom(value) ? writeMarker(store, sessionFile('from', session), value) : null;
+export function noteFrom(store, session, { slug, chain, brief, route, progress }, { now = Date.now() } = {}) {
+  const value = { slug, chain, brief, route, ...progress, at: now };
+  return isFrom(value) && (noProgress(value) || isProgress(value)) ? writeMarker(store, sessionFile('from', session), value) : null;
 }
 
 // The chain floor `session` was given, or null: the highest of its own and every one filed under a short id it starts

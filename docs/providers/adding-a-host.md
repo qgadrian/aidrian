@@ -106,8 +106,10 @@ under the session id of the hook's payload ([Session ledger](../hooks.md#session
 | Codex | The PostToolUse Bash hook, under the payload's `session_id` | None: Codex declares no continue route, so it has no floor and no parent | The hook on `test/fixtures/hosts/codex/bash-post.json`, built from Codex's source; fixture only, not live |
 | A host that names no session | None | None | `links` is null with `links` in `errors` |
 
-`test/adapters.test.mjs` feeds each host in `HOSTS` its `bash-post.json` with an `aidrian worktree new` command, and a
-row must land under the payload's session id; a host added without that fixture fails it.
+`test/adapters.test.mjs` feeds each host in `HOSTS` its `bash-post.json` with an `aidrian worktree new` command, and
+the command's `status: "created"` result where the host's response holds the call's output, and a row must land under
+the payload's session id; a host added without that fixture fails it. The hook reads that output only through the
+host's `shellOutput`: a host whose adapter gives none records no worktree.
 
 Why the hook and not `aidrian worktree new` itself: the command would file its row under the session id its shell's
 environment names, and on Codex that id is not the hook's. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own

@@ -112,6 +112,16 @@ export function remoteRepos(folder, read = runGit) {
   return out;
 }
 
+// The repository the remote `name` of `folder` fetches from, `{ host, path }`, read as remoteRepos reads every remote,
+// from the same `git config --get-regexp` with constant arguments, so a writer that records it and a reader that
+// compares it with remoteRepos spell it alike, with no `url.<base>.insteadOf` rewrite on either side; null for none or
+// a failed read. `read` runs git, which a test may replace.
+export function remoteRepository(folder, name, read = runGit) {
+  const { status, stdout } = read(['config', '--get-regexp', CONFIG_KEYS], folder);
+  const repo = status === 0 ? readConfig(stdout).remotes.get(name)?.fetch ?? null : null;
+  return repo && { host: repo.host, path: repo.path };
+}
+
 const sameRepo = (a, b) => Boolean(a && b) && a.host === b.host && a.path === b.path;
 
 // The distinct repositories on a host in `hosts` that the remotes of `folder` fetch from.

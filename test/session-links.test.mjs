@@ -12,7 +12,7 @@ import test, { after } from 'node:test';
 import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
 import { noteFrom, openStore, readFrom, readHop, storeNames } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { keyOfBranch, lineage, linksOf, MAX_ANCESTORS, prefixList, rowReader, ticketOf } from '../plugins/aidrian/lib/session-links.mjs';
-import { isWorktreeRow, recordLinks, worktreeBranches, worktreeRows } from '../plugins/aidrian/lib/session-links-writer.mjs';
+import { createdWorktrees, isWorktreeRow, recordLinks, worktreeBranches, worktreeRows } from '../plugins/aidrian/lib/session-links-writer.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { remoteRepos } from '../plugins/aidrian/lib/session-prs.mjs';
 import { readRows } from '../plugins/aidrian/lib/session-rows.mjs';
@@ -313,22 +313,37 @@ test('a worktree row has exactly its six checked fields; the reader drops one th
   }
 });
 
-test('worktreeBranches reads aidrian worktree new through the shared lexer: a shell-filled word, a leading dash, or --plan records none', () => {
-  assert.deepEqual(worktreeBranches('aidrian worktree new feat/x'), ['feat/x']);
-  assert.deepEqual(worktreeBranches('cd /repo && aidrian worktree new --base origin/main feat/x --slug x --fetch'), ['feat/x']);
-  assert.deepEqual(worktreeBranches('node /p/plugins/aidrian/lib/cli.mjs worktree new feat/y --reuse-existing'), ['feat/y']);
+test('worktreeBranches reads aidrian worktree new through the shared lexer, with the folder each runs in', () => {
+  const branches = (command) => worktreeBranches(command, '/here').map(({ branch }) => branch);
+  assert.deepEqual(worktreeBranches('aidrian worktree new feat/x', '/here'), [{ branch: 'feat/x', folder: '/here' }]);
+  assert.deepEqual(worktreeBranches('cd /repo && aidrian worktree new --base origin/main feat/x --slug x --fetch', '/here'), [{ branch: 'feat/x', folder: '/repo' }]);
+  assert.deepEqual(branches('node /p/plugins/aidrian/lib/cli.mjs worktree new feat/y --reuse-existing'), ['feat/y']);
   for (const command of ['aidrian worktree new "$B"', 'aidrian worktree new -x', 'aidrian worktree new feat/x --plan', 'aidrian worktree new --plan=1 feat/x',
-    'aidrian worktree new', 'aidrian worktree new a b', 'aidrian worktree cleanup', 'echo aidrian worktree new feat/x', 'aidrian worktree new $(echo x)', 'aidrian worktree new a..b']) {
-    assert.deepEqual(worktreeBranches(command), [], command);
+    'aidrian worktree new', 'aidrian worktree new a b', 'aidrian worktree cleanup', 'echo aidrian worktree new feat/x', 'aidrian worktree new $(echo x)', 'aidrian worktree new a..b',
+    'cd "$X" && aidrian worktree new feat/x']) {
+    assert.deepEqual(branches(command), [], command);
+  }
+  assert.deepEqual(worktreeBranches('aidrian worktree new feat/x', null), [], 'no folder to start from');
+});
+
+test('createdWorktrees reads the created results the command printed, and nothing else', () => {
+  const line = (fields) => JSON.stringify({ status: 'created', worktree_path: '/w/feat-x', branch: 'feat/x', ...fields });
+  assert.deepEqual(createdWorktrees(`noise\n${line({})}\n`), [{ branch: 'feat/x', path: '/w/feat-x' }]);
+  for (const output of [null, '', line({ status: 'planned' }), line({ status: 'blocked' }), line({ worktree_path: 'w/rel' }), line({ branch: 'a..b' }), `x ${line({})}`, '{"status":"created"']) {
+    assert.deepEqual(createdWorktrees(output), [], String(output));
   }
 });
 
-test('worktreeRows takes cwd as git spells the listed path, and writes none for a branch git lists no worktree for', () => {
-  const list = () => [{ path: '/repo', branch: 'main', prunable: false }, { path: '/w/feat-x', branch: 'feat/x', prunable: false }, { path: '/w/old', branch: 'old', prunable: true }];
-  const rows = worktreeRows({ branches: ['feat/x', 'none', 'old'], main: '/repo', origin: { host: 'github.com', path: 'acme/notes' }, at: at(0), list });
-  assert.deepEqual(rows, [{ at: at(0), kind: 'worktree', host: 'github.com', path: 'acme/notes', branch: 'feat/x', cwd: '/w/feat-x' }]);
-  assert.deepEqual(worktreeRows({ branches: ['feat/x'], main: '/repo', origin: null, at: at(0), list }).map(({ host, path: repo }) => [host, repo]), [[null, null]], 'no origin');
-  assert.deepEqual(worktreeRows({ branches: ['feat/x'], main: '/repo', origin: null, list: () => { throw new Error('git'); } }), [], 'a list that fails');
+test('worktreeRows writes a row only for a worktree the call created: git`s path, at the path the result names', () => {
+  const list = () => [{ path: '/repo', branch: 'main', main: true, prunable: false }, { path: '/w/feat-x', branch: 'feat/x', main: false, prunable: false }, { path: '/w/old', branch: 'old', main: false, prunable: true }];
+  const created = [{ branch: 'feat/x', path: '/w/feat-x' }, { branch: 'old', path: '/w/old' }, { branch: 'main', path: '/repo' }];
+  const rows = worktreeRows({ branches: ['feat/x', 'none', 'old', 'main'], created, main: '/repo', origin: { host: 'github.com', path: 'acme/notes' }, at: at(0), list });
+  assert.deepEqual(rows, [{ at: at(0), kind: 'worktree', host: 'github.com', path: 'acme/notes', branch: 'feat/x', cwd: '/w/feat-x' }], 'not prunable, not the main checkout');
+  assert.deepEqual(worktreeRows({ branches: ['feat/x'], created, main: '/repo', origin: null, at: at(0), list }).map(({ host, path: repo }) => [host, repo]), [[null, null]], 'no origin');
+  assert.deepEqual(worktreeRows({ branches: ['feat/x'], created: [], main: '/repo', origin: null, list }), [], 'no created result');
+  assert.deepEqual(worktreeRows({ branches: ['feat/x'], created: [{ branch: 'feat/x', path: '/elsewhere' }], main: '/repo', origin: null, list }), [], 'another path');
+  assert.deepEqual(worktreeRows({ branches: ['feat/x'], created: [{ branch: 'feat/x', path: '/link/feat-x' }], main: '/repo', origin: null, list, same: (a, b) => a === b.replace('/link', '/w') }).length, 1, 'a path the caller resolves');
+  assert.deepEqual(worktreeRows({ branches: ['feat/x'], created, main: '/repo', origin: null, list: () => { throw new Error('git'); } }), [], 'a list that fails');
 });
 
 test('the links section: the newest row of each key whose cwd git still lists, own first, then the parent`s as cut', { skip: !POSIX }, () => {

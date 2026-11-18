@@ -1311,13 +1311,23 @@ name, written at or before the hop, and it reads no further ledger once it holds
 ahead of the snapshot's clock, of any ledger, is dropped when read.
 
 The same hook records the worktree a session creates, in a second file, `<state>/sessions/<session id>/links.jsonl`:
-one row `{ at, kind: "worktree", host, path, branch, cwd }` for each `aidrian worktree new <branch>` a shell call ran.
-It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the shell fills in, a branch or an option it does not know
-that starts with `-`, or `--plan`, records nothing. `cwd` is the worktree's path as `git worktree list` prints it in
-the project's main checkout, read after the call, so the snapshot compares two spellings by git; a branch git lists no
-worktree for, or lists as prunable, records nothing. `host` and `path` are origin's repository as `remoteIdentity`
-reads it, both null with no origin. Every field is checked as the reader checks it, and the row is filed under the
-payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
+one row `{ at, kind: "worktree", host, path, branch, cwd }` for each worktree an `aidrian worktree new <branch>` of a
+shell call created. It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the
+shell fills in, a branch or an option it does not know that starts with `-`, or `--plan`, records nothing. A row also
+needs the command's own result in the call's output: the JSON line `aidrian worktree new` prints with
+`status: "created"`, that branch, and an absolute `worktree_path`. So a call that was skipped, as after `false &&`,
+refused, as for a branch already checked out, or printed nothing records nothing, and an existing worktree is never
+recorded as one the session made. Each command is looked up in the project of the folder it ran in, as the shell
+walk follows a `cd`, and filed in that project's session folder; one after a `cd` the walk cannot follow, or in a
+folder with no project, records nothing. `cwd` is the worktree's path as `git worktree list` prints it in that
+project's main checkout, read after the call, so the snapshot compares two spellings by git; it must be the folder
+the result names, through any symlink, and a branch git lists no worktree for, lists as prunable, or holds in the main
+checkout records nothing. `host` and `path` are origin's repository read from the raw `remote.origin.url`, as the
+snapshot reads the remotes it hands rows down on, so a `url.<base>.insteadOf` rewrite applies on neither side; both
+null with no origin. The links' git reads share a 1-second budget, each stopped by SIGKILL at its share, and run after
+the ledger's row is written and apart from it, so a worktree list that stalls neither passes the host's 5-second hook
+timeout nor loses the call's ledger row. Every field is checked as the reader checks it, and the row is filed under
+the payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
 output and exit code are its own ([Session links](providers/adding-a-host.md#session-links) says why the hook and not
 the command is the writer). `links.jsonl` keeps to 64 KB under the ledger's rules, through the same append
 (`appendRows` in `lib/session-rows.mjs`), but with no key: every row is appended, and the reader settles repeats. Its

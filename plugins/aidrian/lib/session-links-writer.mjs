@@ -1,17 +1,16 @@
 // The writer's half of the session links: the rows of `links.jsonl`, which the ledger's PostToolUse Bash hook
-// (scripts/hook-bash-post.mjs) writes for each `aidrian worktree new` a shell call ran, and the one check a row passes
+// (scripts/hook-bash-post.mjs) writes for each worktree an `aidrian worktree new` of a shell call created, and the one check a row passes
 // before it is written and again before lib/session-links.mjs reads it. Display data only: no hook, gate, skill, or
 // agent decides anything from it, and the hook prints nothing. This file names no host, forge, or tracker.
 
-import { remoteIdentity } from './forges/index.mjs';
 import { isRefName, runGit } from './git.mjs';
 import { hasHidden } from './hidden-text.mjs';
-import { isRepository, validCwd } from './session-prs.mjs';
-import { appendRows } from './session-rows.mjs';
+import { isRepository, outputTail, remoteRepository, validCwd } from './session-prs.mjs';
+import { appendRows, parsed } from './session-rows.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
 // The worktree a session creates: `links.jsonl` in its folder, one row `{ at, kind: "worktree", host, path, branch, cwd }`
-// for each `aidrian worktree new` a shell call of the session ran (docs/hooks.md#session-ledger). Every row is appended,
+// for each worktree an `aidrian worktree new` of a shell call of the session created (docs/hooks.md#session-ledger). Every row is appended,
 // with no key: the reader settles repeats, the newest row of each key deciding.
 export const LINKS = 'links.jsonl';
 export const LINKS_MAX_BYTES = 64 * 1024;
@@ -29,15 +28,31 @@ export const isWorktreeRow = (row) => row !== null && typeof row === 'object' &&
 const VALUE_OPTIONS = new Set(['--base', '--slug']);
 const FLAG_OPTIONS = new Set(['--fetch', '--reuse-existing']);
 
-// The branch of each `aidrian worktree new` the shell line `command` runs, read with lib/shell-lex.mjs: none for a call
-// with a word the shell fills in, `--plan`, an option it does not know, a branch that starts with `-`, or other than
-// one branch.
-export function worktreeBranches(command) {
-  if (typeof command !== 'string' || !/\bworktree\b/u.test(command)) return [];
-  return [...new Set(walkCommands(command, null).flatMap(({ invocation }) => {
-    const branch = invocation.dynamic ? null : newBranch(aidrianArgs(invocation));
-    return branch === null ? [] : [branch];
-  }))];
+// Each `aidrian worktree new` the shell line `command` runs from the folder `cwd`, read with lib/shell-lex.mjs:
+// [{ branch, folder }], `folder` the folder it runs in as walkCommands follows a `cd`, once each. None for a call with a
+// word the shell fills in, `--plan`, an option it does not know, a branch that starts with `-`, other than one branch,
+// or a folder walkCommands cannot know, as after a `cd "$X"`.
+export function worktreeBranches(command, cwd) {
+  if (typeof command !== 'string' || typeof cwd !== 'string' || !/\bworktree\b/u.test(command)) return [];
+  const found = new Map();
+  for (const { invocation, folder } of walkCommands(command, cwd)) {
+    const branch = invocation.dynamic || typeof folder !== 'string' ? null : newBranch(aidrianArgs(invocation));
+    if (branch !== null) found.set(JSON.stringify([branch, folder]), { branch, folder });
+  }
+  return [...found.values()];
+}
+
+// What `aidrian worktree new` printed for each worktree it created in the call's output `output`: [{ branch, path }],
+// from each line that is its JSON result with `status: "created"`, a branch, and an absolute `worktree_path`. A call
+// that was skipped, refused (`status: "blocked"`), or only planned prints none, so it records nothing.
+export function createdWorktrees(output) {
+  if (typeof output !== 'string') return [];
+  return outputTail(output).split('\n').flatMap((line) => {
+    if (!line.includes('"created"')) return [];
+    const result = parsed(line.trim());
+    const { status, branch, worktree_path: made } = result ?? {};
+    return status === 'created' && typeof branch === 'string' && isRefName(branch) && validCwd(made) ? [{ branch, path: made }] : [];
+  });
 }
 
 function newBranch(args) {
@@ -57,32 +72,33 @@ function newBranch(args) {
   return positionals.length === 1 && isRefName(branch) && !hasHidden(branch) ? branch : null;
 }
 
-// The rows of the worktrees `branches` name, at `at`: each branch's entry of the worktree list of the main checkout
-// `main`, not prunable, gives `cwd` as git spells its path; `origin`, the repository origin names as remoteIdentity
-// reads it, or null, gives `host` and `path`. A branch git lists no worktree for gives none, and so does a row that fails
-// isWorktreeRow, and a list that fails gives none. `list` is listWorktrees, which a test may replace.
-export function worktreeRows({ branches, main, origin, at = new Date().toISOString(), list }) {
-  if (branches.length === 0) return [];
+// The rows of the worktrees `branches` name, at `at`, each only as `created`, what createdWorktrees read of the call's
+// output, says the call created it: the branch's entry of the worktree list of the main checkout `main`, not the main
+// checkout, not prunable, and at the path the result names (`same(listed, printed)`, string equality unless a caller
+// gives one that resolves links), gives `cwd` as git spells its path; `origin`, the repository origin names as
+// originRepository reads it, or null, gives `host` and `path`. A branch with no such result or entry gives none, and so
+// does a row that fails isWorktreeRow; a list that fails gives none. `list` is listWorktrees, which a test may replace.
+export function worktreeRows({ branches, created, main, origin, at = new Date().toISOString(), list, same = (a, b) => a === b }) {
+  const made = branches.flatMap((branch) => created.filter((each) => each.branch === branch));
+  if (made.length === 0) return [];
   let listed;
   try {
     listed = list(main);
   } catch {
     return [];
   }
-  return branches.flatMap((branch) => {
-    const entry = listed.find((each) => each.branch === branch && !each.prunable);
-    const row = entry && { at, kind: 'worktree', host: origin?.host ?? null, path: origin ? origin.path : null, branch, cwd: entry.path };
-    return row && isWorktreeRow(row) ? [row] : [];
+  return [...new Set(made.map(({ branch }) => branch))].flatMap((branch) => {
+    const entry = listed.find((each) => each.branch === branch && !each.main && !each.prunable);
+    if (!entry || !made.some((each) => each.branch === branch && same(entry.path, each.path))) return [];
+    const row = { at, kind: 'worktree', host: origin?.host ?? null, path: origin ? origin.path : null, branch, cwd: entry.path };
+    return isWorktreeRow(row) ? [row] : [];
   });
 }
 
-// The repository origin names in the main checkout `main`, as remoteIdentity reads its URL, or null: one
-// `git remote get-url origin` with constant arguments. `git` options are runGit's.
-export function originRepository(main, git = {}) {
-  const origin = runGit(['remote', 'get-url', 'origin'], main, git);
-  const repo = origin.status === 0 ? remoteIdentity(origin.stdout.trim()) : null;
-  return repo && { host: repo.host, path: repo.path };
-}
+// The repository origin names in the main checkout `main`, or null: session-prs.mjs remoteRepository, the read the
+// snapshot's remotes take (remoteRepos), so a row's repository and the reader's spell it alike, `url.<base>.insteadOf`
+// rewrites left out on both sides. `git` options are runGit's.
+export const originRepository = (main, git = {}) => remoteRepository(main, 'origin', (args, dir) => runGit(args, dir, git));
 
 // Appends the worktree rows `rows` to the links of the session folder `folder`, through appendRows with no key: every
 // row is written, and the reader settles repeats. Returns whether it wrote. Never throws.

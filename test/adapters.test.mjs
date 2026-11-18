@@ -497,7 +497,11 @@ test('each host`s PostToolUse Bash payload of aidrian worktree new files a links
       const file = path.resolve(import.meta.dirname, 'fixtures/hosts', host.id, 'bash-post.json');
       assert.ok(existsSync(file), `${host.id} has no bash-post.json fixture`);
       const fixture = JSON.parse(readFileSync(file, 'utf8'));
-      const input = { ...fixture.post, cwd: dir, tool_input: { ...fixture.post.tool_input, command: 'aidrian worktree new feat/linked' } };
+      // The result `aidrian worktree new` prints, in the place the host's response holds the call's output: the whole
+      // response when it is the output as one string, else its stdout.
+      const printed = `${JSON.stringify({ status: 'created', worktree_path: path.join(root, 'tree'), branch: 'feat/linked' })}\n`;
+      const response = typeof fixture.post.tool_response === 'string' ? printed : { ...fixture.post.tool_response, stdout: printed };
+      const input = { ...fixture.post, cwd: dir, tool_input: { ...fixture.post.tool_input, command: 'aidrian worktree new feat/linked' }, tool_response: response };
       const ran = spawnSync(process.execPath, [hook], { input: JSON.stringify(input), encoding: 'utf8', env: { ...env, ...fixture.env, CLAUDECODE: fixture.env?.CLAUDECODE ?? '' } });
       assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', ''], host.id);
       const projects = path.join(state, 'aidrian/projects');

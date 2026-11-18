@@ -251,4 +251,5 @@ How a flow on the screens, as in the review doc's config, sits with each recipe:
   `quorum.product.autoStart` off: every product decision already goes to the Human, and the quorum would add dispatches
   before each question.
 
-The persona walk runs at the persona's own device width only; the captures cover the other widths.
+The persona walk runs at the persona's own device width, unless [`review.productFeedback.allWidths`](config.md#walking-every-width)
+lists a changed file; the captures cover the other widths.

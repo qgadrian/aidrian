@@ -185,6 +185,14 @@ Before the first walk, a run checks that it can reach each persona's width and e
 through, and tells the Human before walking when it cannot. A browser that will not resize falls back to device
 emulation, then to a window opened at a set size; a width or host still out of reach is a `Not reached` line.
 
+With [`review.productFeedback.allWidths`](config.md#walking-every-width) set, off by default, and a changed file it lists,
+a pull request run walks each in-scope browser task once per width of `walk_widths`, in place of the persona's width,
+and checks each of those widths before the first walk. A task walked another way, such as an API call or a CLI, is
+walked once, and no question is asked first: the committed key is the consent. The walks then number personas x tasks
+x widths. Each finding walked in a browser names the widths it was seen at in a `Width:` line, the task table has a row per task and
+width, the `Reached:` line names the widths walked, and a width out of reach is a `Not reached` line naming the task and
+the width while the other widths are still walked. The sidecar holds no width.
+
 A defect seen more than once whose cause the run did not trace is marked `needs_trace`. After the walk, and only with
 the Human's yes, a read-only `explorer` trace may add a likely cause, labeled as likely and never confirmed.
 
@@ -238,6 +246,12 @@ each as confirmed or reopened at the current head with `aidrian pr product-feedb
 starts from the last posted body in the state folder's `tmp` and changes only the lines of items whose state changed.
 When that file is gone, it keeps the earlier comment, posts nothing new, and says so.
 `--full` runs everything again. `persona-audit` itself stays read-only and posts nothing, with or without this skill.
+
+With [`review.productFeedback.allWidths`](config.md#walking-every-width) set, off by default, and a changed file it lists,
+the walk of step 1 covers every width of `walk_widths` for each browser task, at a cost of personas x tasks x widths walks. In the comment,
+the "seen" label names the widths each item was seen at, such as "(seen at 390 px)", "How it was checked" names the widths
+walked, and "Not checked" names a width not reached. A re-check walks a persona item at the widths it was seen at, and
+confirms it only when it shows at none of them.
 
 With `review.productFeedback.auto` on, the flows run this skill themselves, after a draft opens and again before marking it
 ready, as [review.md](review.md#product-feedback-in-the-rounds) says, and the [ready hold](hooks.md#ready-hold) keeps the draft

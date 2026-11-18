@@ -594,7 +594,9 @@ review. Four settings together give that, with no rule pasted into a session:
   "every action is reachable at 390 px", citing `capture:<key>` images of the head. A `violated` or uncited invariant
   stops the review; product feedback alone never does.
 - **Tried by hand**: `productFeedback.auto` runs the `pr-product-feedback` skill after the draft opens. A persona
-  walks the tasks the diff touches in the running app, at that persona's own device width, and the ready hold waits
+  walks the tasks the diff touches in the running app, at that persona's own device width unless
+  [`review.productFeedback.allWidths`](config.md#walking-every-width) lists a changed file, and then at each width of
+  `viewports`, and the ready hold waits
   for the feedback. The walk needs a persona doc for the staff role ([Personas](personas.md)).
 - **Every UI file owes feedback**: `productFeedback.files` lists the whole UI surface, not only the captured routes:
   every screen component, the hooks and helpers beside them, the locales, and the styles. Unset, it falls back to the

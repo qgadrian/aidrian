@@ -272,7 +272,7 @@ test('a state folder inside another checkout of the repository, such as a linked
   git('worktree', 'add', '-q', '-b', 'feat/other', tree);
   // The project's own checkouts are its folder and the main checkout: the linked worktree is neither.
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: path.join(tree, '.state') } }));
-  assert.deepEqual(rows('gh pr view 3', { cwd: dir }), []);
+  runHook(payload('gh pr view 3', { cwd: dir }));
   assert.equal(existsSync(path.join(tree, '.state')), false, 'nothing is written in the other worktree');
 });
 

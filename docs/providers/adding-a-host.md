@@ -255,7 +255,8 @@ and a bare `owner/repo` as a repository on the default forge's host, github.com.
 `remoteIdentity(url)`, beside it, reads a remote URL alone: it is null for a URL git reads as a folder on disk, a bare
 `vendor/mirror.git` included, so a local path's parts never reach a forge as an owner and a name.
 Both read any `file:` URL as a local path, one that names a host, such as `file://github.com/acme/notes`, included.
-`aidrian session snapshot` reads origin with it, and `aidrian pr checks` each remote it matches `-R` against,
+`aidrian session snapshot` reads origin with it, `aidrian pr checks` each remote it matches `-R` against,
+and the [session ledger hook](../hooks.md#session-ledger) each remote's URL and push URL in the folder a command ran in,
 so a local remote names no host there.
 
 The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names, but for `changesState`, which answers the forge-neutral row above.

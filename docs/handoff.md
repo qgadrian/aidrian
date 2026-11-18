@@ -509,7 +509,7 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | --- | --- |
 | `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
 | `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
-| `prs` | Always `null`. `errors` names it only for a session id that fails `SESSION_ID`, or a state folder inside a checkout. |
+| `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names: the forge's entries newest first, then the unsupported ones, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`, below. |
 | `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout. |
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
@@ -566,6 +566,49 @@ a reservation a killed snapshot left blocks only its own minute. The call has 4 
 past it, and the cached count then shows with `stale: true`, or as null with `worktrees` in `errors` when there is none.
 A value too large for the cache's 1 MiB read is not stored, but the attempt is, so the minute still holds.
 
+**Pull requests.** `prs` reads the session's [ledger](hooks.md#session-ledger), its last 256 KB, no-follow and
+non-blocking, only while it is a regular file this user alone owns and reads, dropping a first line the cut fell
+inside and a last line still being written. It keeps the rows on a host the forge adapter declares (github.com today)
+whose fields pass the adapter's `changeRef` and whose folder is absolute, and dedupes them by repository and number,
+else by repository and branch, `touched` rows as well as `pushed`. It orders them by each one's latest row, newest
+first, and keeps 25 refs at most, each a number or a branch, counted before branches resolve: a branch with no pull
+request uses one, and so does a row of an unsupported host. The adapter reads them all in one call (`changesState`),
+started in the session's folder, never in one a row names: a number is its own pull request; a branch whose newest row
+is `touched` is, as the `gh pr` call it records looked it up, an open pull request first, then the newest; any other
+branch is, among the pull requests whose head is that branch of the row's repository, in that repository or its parent, the one the
+signed-in user wrote first (`viewerDidAuthor`), then one by an owner, member, or collaborator of the repository
+(`authorAssociation`), then an open one, then the newest, so a fork's pull request from a branch of the same name never
+answers for it, another author's newer one from the same branch never replaces the user's, an outsider's newer open one
+never replaces a collaborator's merged one, and a branch pushed to a fork finds its pull request on the parent.
+It reads the 5 newest pull requests of the branch's name in each of the two repositories,
+so a name that 5 or more newer pull requests from forks share can crowd out the row's own, which then shows nothing.
+On a page GitHub says has more (`pageInfo.hasNextPage`) an older, better one may lie past it, so there the branch shows
+only a pick of the top class its row asks for, an open one for a `touched` row and the signed-in user's own open one for
+any other, and otherwise nothing. A page of exactly 5 with no more, or with no `pageInfo`, is read as whole.
+A branch with none gives no entry and no error. Two rows that answer the same pull request give one entry.
+Each entry is the forge-neutral row the adapter fills ([Adding a forge](providers/adding-a-host.md#adding-a-forge)):
+`forge` the adapter's `id`, `host` and `repo` the repository, `state` `open`, `closed`, or `merged`, `isDraft` a
+boolean, `mergeable` true, false, or null while the forge has not worked it out, `reviewDecision` `approved`,
+`changes_requested`, `review_required`, or null, `unresolvedThreads` the unresolved among the first 100 review threads,
+`checks` `{ passed, failed, pending, skipped }` counted over every check of the head commit with no check-name rule, and `url` the pull request's link on
+github.com, or null when the forge answered any other; a cached `url` shows only when it is the link the adapter's
+`changeUrl` builds for the entry's forge, repository, and number, else null. A row on a host no adapter declares, such as gitlab.com, passes
+the snapshot's own checks (a host name, an absolute folder, a positive number, a branch git takes) and shows with
+`unsupported: true`, no `forge`, and null for what the forge would answer; it starts no forge call. The ledger hook
+records rows only on a declared host, so such a row appears only from a ledger written another way, such as by a later
+adapter.
+The answer is cached for a minute in `prs-cache.json`, with the refs it answered, under the merged heads' rules: one
+forge call a minute at most, a 1 MiB read, and the 4 s budget, which the two reads share, this one first. A cached
+answer shows only for the refs the ledger still selects, so a pull request pushed out of the newest 25 leaves, and the
+section never holds more than 25 entries, unsupported ones counted. When a selected ref has no cached answer, as when
+the session touched a new pull request inside the minute, the entries show with `stale: true` until the next refresh.
+When none of them has one, inside the minute or past the deadline, `prs` is null with `prs` in `errors`, never an empty
+list that reads as no pull requests.
+Past the deadline the cached entries show with `stale: true`, or `prs` is null with `prs` in `errors` when there is none. An answer that holds errors still gives the
+pull requests that resolved; only one that does not parse, or the deadline, fails the read, and its text never shows.
+A ledger with no row, or whose rows resolve to none, gives `[]`. A ledger that cannot be read, such as a named pipe or
+a symlink there, makes `prs` null with `prs` in `errors`.
+
 **Run time.** Every git call the snapshot starts is killed at git's 2 s limit, and once one is, the later ones of the
 same run give up at once, but for the worktree list, which has its own 2 s. With the 4 s forge budget, a run takes at
 most about 8 s past its own reading. A caller, such as a status line command, sets its timeout above that, or kills
@@ -574,8 +617,11 @@ the snapshot's whole process group, since a forge command it started may outlive
 **The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
 line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,
 `2.3x · handoff due, pays back in ~24 calls` at `due` and `reminded`, `handoff now` at `ceiling`, and ` · armed 1/3`
-while a continuation is armed), then `📥 1 P1 · ⚖️ 2 decisions · 🧹 1 worktree · 🔎 3 findings`, each part only above 0.
-Every string from a file name, a cache, or a forge loses its control, format, separator, and surrogate characters and is
+while a continuation is armed), then the pull requests, `3 PRs · ✓2 ✗0 ⏳1`, when `prs` holds an entry, then
+`📥 1 P1 · ⚖️ 2 decisions · 🧹 1 worktree · 🔎 3 findings`, each part only above 0. The pull request summary counts pull
+requests, not checks: `✗` one with a failed check, `⏳` one with a pending check and none failed, `✓` one whose checks
+all passed or were skipped; one with no check counts in none.
+Every string from a file name, a cache, the ledger, or a forge loses its control, format, separator, and surrogate characters and is
 cut by code point, and neither output writes an escape sequence or any C0, C1, or DEL character but the final line feed.
 
 ## The cost model

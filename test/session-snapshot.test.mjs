@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,7 +10,7 @@ import { arm, noteFrom, noteStarted, openStore } from '../plugins/aidrian/lib/ha
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { cachedValue } from '../plugins/aidrian/lib/session-cached-value.mjs';
 import { reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
-import { DISPLAY_CAPS, displayText, MERGED_HEADS, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
+import { DISPLAY_CAPS, displayText, MERGED_HEADS, PRS_CACHE, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
@@ -89,7 +89,7 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   assert.deepEqual(quiet.json.session, { id: ID, transcript, cwd: cost.dir });
   assert.deepEqual(Object.keys(quiet.json.handoff), ['ratio', 'breakEven', 'level', 'nextRatio', 'context', 'ceiling', 'chain', 'maxChain', 'continueArmed', 'lastBrief']);
   assert.equal(quiet.json.handoff.level, 'quiet');
-  assert.equal(quiet.json.prs, null);
+  assert.deepEqual(quiet.json.prs, [], 'a session with no ledger: no pull request, and no failure');
   assert.deepEqual(quiet.json.errors, [], 'no origin a forge serves: no merged count, and no failure');
   assert.deepEqual(quiet.json.worktrees, { owned: 0, mergedNotCleaned: null });
   assert.match(quietLine.stdout, /^\d\.\dx\n$/u);
@@ -622,7 +622,7 @@ test('SessionEnd goes on to the session row when the marker cannot be removed', 
   assert.equal(existsSync(path.join(marker, 'keep')), true);
 });
 
-test('cachedValue records its attempt before the refresh, and with no folder refreshes nothing', (t) => {
+test('cachedValue records its attempt before the refresh, and with no folder refreshes nothing', () => {
   const folder = scratch();
   chmodSync(folder, 0o700);
   const name = MERGED_HEADS.name;
@@ -693,4 +693,243 @@ test('processes that start together on an expired cache start one refresh betwee
   const answers = done.map(({ out }) => JSON.parse(out));
   assert.equal(answers.filter((each) => each.stale === false).length, 1);
   assert.ok(answers.every((each) => each.stale === false || each.value[0] === 'old'), 'the others give the stored value, stale');
+});
+
+// The prs section. A project whose origin no forge serves, so the merged-heads read starts no call, with a fake gh that
+// logs each call's arguments, folder, stdin, and GH_HOST to `calls()`, and answers what `answer` last set.
+function withLedger(t, options = {}) {
+  const env = setup(t, options);
+  const answerFile = path.join(env.base, 'answer.json');
+  const gh = path.join(env.base, 'bin', 'gh');
+  writeFileSync(gh, `#!${process.execPath}\nconst fs = require('node:fs');\n` +
+    `const input = process.argv.includes('--input') ? fs.readFileSync(0, 'utf8') : null;\n` +
+    `fs.appendFileSync(${JSON.stringify(env.log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), input, ghHost: process.env.GH_HOST ?? null }) + '\\n');\n` +
+    `const { text, status, delay } = JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\n` +
+    `setTimeout(() => { process.stdout.write(text); process.exitCode = status; }, delay);\n`);
+  chmodSync(gh, 0o755);
+  const answer = (value, { status = 0, delay = 0 } = {}) => writeFileSync(answerFile, JSON.stringify({ text: typeof value === 'string' ? value : JSON.stringify(value), status, delay }));
+  answer({ data: {} });
+  env.run(['--session', ID]);
+  const folder = path.join(env.projectState(), 'sessions', ID);
+  const ledger = (rows) => writeFileSync(path.join(folder, 'prs.jsonl'), rows.map((row) => `${JSON.stringify(row)}\n`).join(''), { mode: 0o600 });
+  return { ...env, folder, answer, ledger, calls: () => ghCalls(env.log) };
+}
+
+// One ledger row, `minute` minutes past a fixed hour, in the project's folder unless it names another.
+const ledgerRow = (dir, fields, minute = 0) => ({
+  at: new Date(Date.UTC(2026, 10, 18, 10, minute)).toISOString(), agentId: null, kind: 'pushed', forge: 'github', host: 'github.com',
+  path: 'acme/notes', number: null, branch: null, cwd: dir, ...fields,
+});
+const prNode = (number, fields = {}) => ({
+  number, title: `Change ${number}`, url: `https://github.com/acme/notes/pull/${number}`, isDraft: false, state: 'OPEN', mergeable: 'MERGEABLE', reviewDecision: 'APPROVED',
+  createdAt: '2026-11-18T09:00:00Z', headRefName: 'feat/x', headRepository: { name: 'notes', owner: { login: 'acme' } }, repository: { name: 'notes', owner: { login: 'acme' } },
+  reviewThreads: { nodes: [] }, commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { checkRunCountsByState: [{ state: 'SUCCESS', count: 2 }], statusContextCountsByState: [] } } } }] },
+  ...fields,
+});
+const PR_ROW = { forge: 'github', host: 'github.com', repo: 'acme/notes', number: 7, title: 'Change 7', url: 'https://github.com/acme/notes/pull/7', isDraft: false, state: 'open',
+  mergeable: true, reviewDecision: 'approved', unresolvedThreads: 0, checks: { passed: 2, failed: 0, pending: 0, skipped: 0 } };
+
+test('prs: a pushed and a created row of one pull request give one entry and 1 PR; three touched rows of one branch send one ref', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  const transcript = path.join(env.base, 'session.jsonl');
+  writeFileSync(transcript, turnsOf('handoff-cost')[0]);
+  const madeUp = path.join(env.base, 'made', 'up');
+  env.ledger([
+    ledgerRow(env.dir, { kind: 'pushed', branch: 'feat/x' }, 1),
+    ledgerRow(env.dir, { kind: 'created', number: 7 }, 2),
+    ...[3, 4, 5].map((minute) => ledgerRow(minute === 4 ? madeUp : env.dir, { kind: 'touched', branch: 'feat/y' }, minute)),
+  ]);
+  env.answer({ data: { r0: { pullRequests: { nodes: [] }, parent: null }, r1: { pullRequest: prNode(7) }, r2: { pullRequests: { nodes: [prNode(7)] }, parent: null } } });
+  const { json } = env.run(['--session', ID, '--transcript', transcript], { extraEnv: { GH_HOST: 'ghe.example.test' } });
+  assert.deepEqual(json.prs, [PR_ROW]);
+  assert.deepEqual(json.errors, []);
+  const [call, ...more] = env.calls();
+  assert.deepEqual(more, [], 'one forge call for the whole ledger');
+  assert.deepEqual(call.args, ['api', 'graphql', '--hostname', 'github.com', '--input', '-'], 'the constant host, whatever GH_HOST says');
+  assert.equal(call.ghHost, 'ghe.example.test');
+  assert.ok(!call.args.includes('ghe.example.test'));
+  assert.equal(call.cwd, env.dir, 'the forge runs in the session`s folder, never in one a ledger row names');
+  assert.equal(existsSync(madeUp), false);
+  assert.deepEqual(JSON.parse(call.input).variables, { o0: 'acme', n0: 'notes', b0: 'feat/y', o1: 'acme', n1: 'notes', p1: 7, o2: 'acme', n2: 'notes', b2: 'feat/x' });
+  assert.match(env.run(['--session', ID, '--transcript', transcript, '--line']).stdout, /^\d\.\dx · 1 PR · ✓1 ✗0 ⏳0\n$/u);
+  assert.equal(env.calls().length, 1, 'the second snapshot reads the cache');
+  for (const name of [PRS_CACHE.name, 'usage.json']) assert.equal(statSync(path.join(env.folder, name)).mode & 0o777, 0o600, name);
+  assert.deepEqual(readdirSync(env.folder).filter((name) => name.endsWith('.tmp')), [], 'written by a temporary file and a rename');
+});
+
+test('prs on answers recorded from GitHub: one repository that does not resolve leaves the other rows and no error', { skip: !POSIX }, (t) => {
+  const recorded = JSON.parse(readFileSync(path.join(ROOT, 'test/fixtures/forges/github/changes-state.json'), 'utf8'));
+  const env = withLedger(t);
+  env.ledger(recorded.refs.map(({ path: repo, number, branch }, index) => ledgerRow(env.dir, { kind: number === null ? 'pushed' : 'touched', path: repo, number, branch }, 50 - index)));
+  env.answer(recorded.answer, { status: recorded.status });
+  const { json } = env.run(['--session', ID]);
+  assert.deepEqual(json.prs.map(({ repo, number }) => `${repo}#${number}`), ['cli/cli#15035', 'nodejs/node#66655'], 'the fork`s branch and the number give one entry');
+  assert.deepEqual(json.errors, []);
+  assert.ok(!JSON.stringify(json).includes('Could not resolve'), 'no error text');
+  assert.equal(env.calls().length, 1);
+});
+
+test('prs: rows on gitlab.com or a made-up host show as unsupported, with no gh call, after the snapshot`s own checks', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([
+    ledgerRow(env.dir, { host: 'gitlab.com', number: 3 }, 1),
+    ledgerRow(env.dir, { host: 'git.example.test', path: 'team/sub/notes', branch: 'feat/x' }, 2),
+    ledgerRow('relative/folder', { host: 'gitlab.com', number: 4 }, 3),
+    ledgerRow(env.dir, { host: 'gitlab.com', number: 0 }, 4),
+    ledgerRow(env.dir, { host: 'gitlab.com', branch: 'a..b' }, 5),
+  ]);
+  const { json } = env.run(['--session', ID]);
+  const unknown = { title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null, unsupported: true };
+  assert.deepEqual(json.prs, [{ host: 'git.example.test', repo: 'team/sub/notes', number: null, ...unknown }, { host: 'gitlab.com', repo: 'acme/notes', number: 3, ...unknown }]);
+  assert.deepEqual([json.errors, env.calls()], [[], []]);
+  assert.equal(env.run(['--session', ID, '--line']).stdout, '2 PRs · ✓0 ✗0 ⏳0\n');
+});
+
+test('prs: a forge title and check state holding control, bidi, zero-width, and tag characters reach neither --json nor --line', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  const hostile = '\u001b]52;c;eA==\u0007\u001b[2J\u202e\u200f\u200b\u2060\ufeff\u{E0041}\u0085\u2028';
+  const rollup = { checkRunCountsByState: [{ state: `RUN${hostile}`, count: 1 }], statusContextCountsByState: [{ state: 'FAILURE', count: 1 }] };
+  env.answer({ data: { r0: { pullRequest: prNode(7, { title: `Fix ${hostile}it`, commits: { nodes: [{ commit: { statusCheckRollup: { contexts: rollup } } }] } }) } } });
+  const json = env.run(['--session', ID]);
+  const line = env.run(['--session', ID, '--line']);
+  assert.equal(json.json.prs[0].title, 'Fix ]52;c;eA==[2Jit');
+  assert.equal(line.stdout, '1 PR · ✓0 ✗1 ⏳0\n');
+  for (const out of [json.stdout, line.stdout]) {
+    assert.match(out, CLEAN);
+    assert.doesNotMatch(out, /[\u202e\u200f\u200b\u2060\ufeff\u2028]|\u{E0041}/u);
+  }
+});
+
+test('prs: a cached row`s key the docs do not name, at the top or inside checks, never reaches --json', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7) } } });
+  assert.deepEqual(env.run(['--session', ID]).json.prs, [PR_ROW]);
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  const stored = JSON.parse(readFileSync(cache, 'utf8'));
+  const hostile = 'x\u202e\u009b2J';
+  const [row] = stored.value.rows;
+  writeFileSync(cache, JSON.stringify({ ...stored, value: { ...stored.value, rows: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile }, stale: hostile, unsupported: hostile }] } }), { mode: 0o600 });
+  const { json, stdout } = env.run(['--session', ID]);
+  assert.deepEqual(json.prs, [{ ...PR_ROW, stale: false, unsupported: false }], 'the documented keys alone, checks its four counts, and each flag a boolean');
+  assert.equal(env.calls().length, 1, 'the cached row was read, with no new forge call');
+  assert.ok(!stdout.includes('smuggled') && !/[\u202e\u009b]/u.test(stdout), 'neither key nor its text shows');
+});
+
+test('prs: a warm cache shows its rows only for refs the ledger still selects, stale when one has no answer, and 25 entries at most', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  const numbered = [1, 2, 3, 4, 5].map((number) => ledgerRow(env.dir, { kind: 'created', number }, number));
+  env.ledger(numbered);
+  env.answer({ data: Object.fromEntries([5, 4, 3, 2, 1].map((number, index) => [`r${index}`, { pullRequest: prNode(number) }])) });
+  assert.deepEqual(env.run(['--session', ID]).json.prs.map(({ number }) => number), [5, 4, 3, 2, 1]);
+  // 23 rows of an unsupported host and one new pull request, newer than all five: the newest 25 keep #5 alone of them.
+  const unsupported = Array.from({ length: 23 }, (_, index) => ledgerRow(env.dir, { host: 'gitlab.com', number: 100 + index }, 10 + index));
+  env.ledger([...numbered, ...unsupported, ledgerRow(env.dir, { kind: 'created', number: 6 }, 40)]);
+  const { json } = env.run(['--session', ID]);
+  assert.equal(env.calls().length, 1, 'inside the window: the cache, with no new forge call');
+  const shown = json.prs.filter((each) => !each.unsupported);
+  assert.deepEqual(shown.map(({ number, stale }) => [number, stale]), [[5, true]], 'the evicted #1 to #4 are not shown; #6 has no answer yet, so #5 shows stale');
+  assert.ok(json.prs.length <= 25, `${json.prs.length} entries`);
+  assert.deepEqual(json.errors, []);
+});
+
+test('prs: a cache that answers none of the refs the ledger selects fails the section, inside the window and past a deadline', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 1 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(1) } } });
+  assert.deepEqual(env.run(['--session', ID]).json.prs.map(({ number }) => number), [1]);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 6 }, 1)]);
+  const inside = env.run(['--session', ID]).json;
+  assert.deepEqual([inside.prs, inside.errors, env.calls().length], [null, ['prs'], 1], 'inside the window: no call, and no answer for #6');
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), attemptAt: Date.now() - 120_000 }));
+  env.answer({ data: {} }, { delay: 5000 });
+  const late = env.run(['--session', ID, '--deadline-ms', '200']).json;
+  assert.deepEqual([late.prs, late.errors], [null, ['prs']], 'a refresh past the deadline');
+});
+
+test('prs: a cached url other than the one the adapter builds for the row shows as null', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7, { url: 'https://github.com/Acme/Notes/pull/7', repository: { name: 'Notes', owner: { login: 'Acme' } } }) } } });
+  assert.equal(env.run(['--session', ID]).json.prs[0].url, 'https://github.com/Acme/Notes/pull/7', 'GitHub`s own, in its own letter case');
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  const stored = JSON.parse(readFileSync(cache, 'utf8'));
+  const tampered = (url) => {
+    writeFileSync(cache, JSON.stringify({ ...stored, value: { ...stored.value, rows: [{ ...stored.value.rows[0], url }] } }), { mode: 0o600 });
+    return env.run(['--session', ID]).json.prs[0].url;
+  };
+  assert.equal(tampered('https://evil.example/acme/notes/pull/7'), null, 'another host');
+  assert.equal(tampered('https://github.com/acme/notes/pull/8'), null, 'another number');
+  assert.equal(tampered('https://github.com/acme/notes/pull/7\u202e'), null, 'a hidden character');
+  assert.equal(tampered('https://github.com/acme/notes/pull/7'), 'https://github.com/acme/notes/pull/7');
+  assert.equal(env.calls().length, 1, 'each read the cache');
+});
+
+test('prs: results cache 60s; past the deadline the cached rows are stale, and with no cache the section fails; no row gives []', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7) } } });
+  assert.deepEqual(env.run(['--session', ID]).json.prs, [PR_ROW]);
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  const stored = JSON.parse(readFileSync(cache, 'utf8'));
+  writeFileSync(cache, JSON.stringify({ ...stored, attemptAt: Date.now() - 120_000 }));
+  env.answer({ data: {} }, { delay: 5000 });
+  const late = env.run(['--session', ID, '--deadline-ms', '200']);
+  assert.ok(late.ms < 4000, `${late.ms} ms`);
+  assert.deepEqual(late.json.prs, [{ ...PR_ROW, stale: true }]);
+  assert.deepEqual(late.json.errors, []);
+  assert.equal(env.calls().length, 2);
+  assert.deepEqual(env.run(['--session', ID]).json.prs, [{ ...PR_ROW, stale: true }]);
+  assert.equal(env.calls().length, 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
+  rmSync(cache);
+  const cold = env.run(['--session', ID, '--deadline-ms', '200']);
+  assert.deepEqual([cold.json.prs, cold.json.errors], [null, ['prs']], 'no cache: the section fails');
+  rmSync(cache);
+  env.ledger([]);
+  assert.deepEqual([env.run(['--session', ID]).json.prs, env.calls().length], [[], 3], 'a ledger with no row: no call');
+  env.ledger([ledgerRow(env.dir, { branch: 'feat/none' })]);
+  env.answer({ data: { r0: { pullRequests: { nodes: [] }, parent: null } } });
+  const none = env.run(['--session', ID]).json;
+  assert.deepEqual([none.prs, none.errors], [[], []], 'rows that resolve to no pull request');
+  env.answer('not json', { status: 1 });
+  writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), attemptAt: Date.now() - 120_000 }));
+  const broken = env.run(['--session', ID]).json;
+  assert.deepEqual([broken.prs, broken.errors], [[], []], 'an answer that does not parse keeps the cached value, stale');
+});
+
+test('prs: a named pipe at prs.jsonl fails the section, one at prs-cache.json is no cache, each without waiting', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  spawnSync('mkfifo', [path.join(env.folder, 'prs.jsonl')]);
+  const piped = env.run(['--session', ID]);
+  assert.ok(piped.ms < 10_000, `${piped.ms} ms`);
+  assert.deepEqual([piped.json.prs, piped.json.errors], [null, ['prs']]);
+  rmSync(path.join(env.folder, 'prs.jsonl'));
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7) } } });
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  spawnSync('mkfifo', [cache]);
+  const discarded = env.run(['--session', ID]);
+  assert.ok(discarded.ms < 10_000, `${discarded.ms} ms`);
+  assert.deepEqual(discarded.json.prs, [PR_ROW], 'read as no cache, so the forge is asked');
+  assert.equal(lstatSync(cache).isFile(), true, 'replaced by the session`s own file');
+});
+
+test('prs: a symlinked prs.jsonl and a symlinked session folder receive no write', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  const target = path.join(env.base, 'elsewhere.jsonl');
+  writeFileSync(target, `${JSON.stringify(ledgerRow(env.dir, { kind: 'created', number: 7 }))}\n`, { mode: 0o600 });
+  symlinkSync(target, path.join(env.folder, 'prs.jsonl'));
+  env.answer({ data: { r0: { pullRequest: prNode(7) } } });
+  const linked = env.run(['--session', ID]).json;
+  assert.deepEqual([linked.prs, linked.errors], [null, ['prs']]);
+  assert.deepEqual([readFileSync(target, 'utf8').split('\n').length, env.calls().length], [2, 0]);
+  const elsewhere = path.join(env.base, 'folder-elsewhere');
+  mkdirSync(elsewhere, { mode: 0o700 });
+  writeFileSync(path.join(elsewhere, 'prs.jsonl'), readFileSync(target), { mode: 0o600 });
+  symlinkSync(elsewhere, path.join(env.projectState(), 'sessions', 'linked-1'));
+  const folder = env.run(['--session', 'linked-1']).json;
+  assert.deepEqual([folder.prs, folder.errors.includes('prs')], [null, true]);
+  assert.deepEqual(readdirSync(elsewhere), ['prs.jsonl'], 'no cache or temporary file is written through the symlink');
 });

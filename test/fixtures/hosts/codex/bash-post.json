@@ -1,0 +1,19 @@
+{
+  "live": false,
+  "provenance": "NOT LIVE: no hook has received this payload, because a hook on Codex runs only after a person trusts it. Built from the source of Codex rust-v0.169.0: codex-rs/hooks/src/schema.rs (PostToolUseCommandInput), codex-rs/core/src/tools/handlers/unified_exec.rs (post_unified_exec_tool_use_payload, which names the tool Bash), and codex-rs/core/src/tools/context.rs (ExecCommandToolOutput: tool_input is { command }, and tool_response is the command's output as one string).",
+  "env": { "PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0", "CLAUDE_PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0" },
+  "number": 12,
+  "post": {
+    "session_id": "01a1f000-0000-7000-8000-000000000001",
+    "turn_id": "01a1f000-0000-7000-8000-000000000002",
+    "transcript_path": null,
+    "cwd": "<cwd>",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5.5",
+    "permission_mode": "default",
+    "tool_name": "Bash",
+    "tool_input": { "command": "gh pr create --draft --title 'feat: a title' --body-file /nowhere/body.md" },
+    "tool_response": "\nCreating draft pull request for me:feat into main in acme/widgets\n\nhttps://github.com/acme/widgets/pull/12\n",
+    "tool_use_id": "call_shell"
+  }
+}

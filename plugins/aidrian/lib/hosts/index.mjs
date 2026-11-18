@@ -23,6 +23,11 @@ export const UNKNOWN_HOST = Object.freeze({
   nativeToolName: (standard) => standard,
   rawToolName: (standard) => standard,
   toolResponse: (response) => HOSTS.flatMap((host) => host.toolResponse(response)),
+  // Every adapter's reading of a shell call's response: the first output one reads, and interrupted when any says so.
+  shellOutput: (response) => {
+    const read = HOSTS.map((host) => host.shellOutput?.(response) ?? { output: null, interrupted: false });
+    return { output: read.find((each) => typeof each.output === 'string')?.output ?? null, interrupted: read.some((each) => each.interrupted === true) };
+  },
   hookInput: (input) => HOSTS.reduce((each, host) => host.hookInput(each), input),
   capabilities: Object.freeze({}),
 });

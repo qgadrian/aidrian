@@ -52,3 +52,14 @@ test('repoIdentity reads ssh.github.com, GitHub\'s SSH endpoint on port 443, as 
   }
   assert.deepEqual(repoIdentity('ssh://git@ssh.ghe.acme.io:443/acme/notes'), { host: 'ssh.ghe.acme.io', path: 'acme/notes' }, 'only the alias it knows');
 });
+
+test('repoIdentity refuses a value past REPO_IDENTITY_MAX at once, and trims the slashes of a value within it', () => {
+  const started = Date.now();
+  for (const value of [`https://github.com/a/${'/'.repeat(60_000)}x`, `a${'/'.repeat(60_000)}x`, `git@github.com:a/b${'/'.repeat(60_000)}`]) assert.equal(repoIdentity(value), null);
+  assert.ok(Date.now() - started < 100, `${Date.now() - started} ms`);
+  const within = Date.now();
+  assert.deepEqual(repoIdentity(`https://github.com/acme/notes${'/'.repeat(900)}`), { host: 'github.com', path: 'acme/notes' });
+  assert.equal(repoIdentity(`acme/${'/'.repeat(900)}x`), null);
+  assert.ok(Date.now() - within < 100, `${Date.now() - within} ms`);
+  assert.equal(repoIdentity(`https://github.com/acme/${'n'.repeat(1100)}`), null, 'past the cap');
+});

@@ -11,7 +11,16 @@ const SCP_LIKE = /^(?:[^@/]+@)?([^:/]+):(?!\/\/)(.+)$/u;
 // A remote on this machine's disk, which names no forge: `/srv/git/x`, `./x`, `../x`, `~/x`, `C:/x`, `C:\x`.
 const LOCAL_PATH = /^(?:[/.~\\]|[a-z]:[/\\])/iu;
 
-const clean = (value) => value.toLowerCase().replace(/\/+$/u, '').replace(/\.git$/u, '').replace(/\/+$/u, '').replace(/^\/+/u, '');
+// The longest value repoIdentity reads: a longer one names no repository it serves, and reading it would cost time on
+// text from a command line.
+const REPO_IDENTITY_MAX = 1024;
+// `value` without its trailing slashes, in one pass from the end: a regular expression for it backtracks on a long run.
+const trimEnd = (value) => {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+};
+const clean = (value) => trimEnd(trimEnd(value.toLowerCase()).replace(/\.git$/u, '')).replace(/^\/+/u, '');
 const identity = (host, rest) => {
   const repoPath = clean(rest);
   if (!host || !repoPath.includes('/') || repoPath.split('/').includes('')) return null;
@@ -24,9 +33,9 @@ const identity = (host, rest) => {
 // port or a user name is no part of it. A bare `owner/repo` is on the default forge's host, github.com; three parts are
 // `host/owner/repo`, as gh reads `-R`, and a longer path is accepted for a namespaced forge, which gh itself refuses.
 // An aliased host is read as its canonical one (HOST_ALIASES).
-// Anything else is null: one bare name, and a local remote (an absolute, relative, or home path, a drive letter, file://).
+// Anything else is null: a value past REPO_IDENTITY_MAX, one bare name, and a local remote (an absolute, relative, or home path, a drive letter, file://).
 export function repoIdentity(value) {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string' || value.length > REPO_IDENTITY_MAX) return null;
   const text = value.trim();
   if (LOCAL_PATH.test(text)) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(text)) {

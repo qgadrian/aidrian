@@ -1,11 +1,11 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { appendSessionFile, APPENDED_FILES, readSessionTail, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
@@ -260,4 +260,60 @@ test('the sweep deletes a reservation only when it is a regular file', { skip: !
   utimesSync(old, then, then);
   assert.notEqual(sessionFolder(state, 'new', NONE), null);
   assert.equal(lstatSync(linked).isSymbolicLink(), true);
+});
+
+test('appendSessionFile appends the ledger in place, within its cap, and only the ledger', { skip: !POSIX }, () => {
+  const { state } = stateWithSessions();
+  const folder = sessionFolder(state, 'appender', NONE);
+  assert.deepEqual(APPENDED_FILES, ['prs.jsonl']);
+  assert.ok(SESSION_FILES.includes('prs.jsonl'), 'the sweep deletes it too');
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'a\n', { maxBytes: 10 }), true);
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'b\n', { maxBytes: 10 }), true);
+  assert.equal(readFileSync(path.join(folder, 'prs.jsonl'), 'utf8'), 'a\nb\n');
+  assert.equal(statSync(path.join(folder, 'prs.jsonl')).mode & 0o777, 0o600);
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'c'.repeat(7), { maxBytes: 10 }), false, 'past the cap: nothing written');
+  assert.equal(readFileSync(path.join(folder, 'prs.jsonl'), 'utf8'), 'a\nb\n');
+  assert.equal(appendSessionFile(folder, 'usage.json', 'x', { maxBytes: 10 }), false, 'a renamed file is never appended');
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'x'), false, 'no cap, no write');
+  assert.equal(existsSync(path.join(folder, 'usage.json')), false);
+});
+
+test('appendSessionFile writes nothing in a symlinked or group-readable folder', { skip: !POSIX }, () => {
+  const { state, sessions } = stateWithSessions();
+  const target = path.join(scratch(), 'target');
+  mkdirSync(target, { mode: 0o700 });
+  symlinkSync(target, path.join(sessions, 'linked'));
+  assert.equal(appendSessionFile(path.join(sessions, 'linked'), 'prs.jsonl', 'x\n', { maxBytes: 100 }), false);
+  assert.deepEqual(readdirSync(target), []);
+  const open = path.join(sessions, 'open');
+  mkdirSync(open, { mode: 0o700 });
+  chmodSync(open, 0o750);
+  assert.equal(appendSessionFile(open, 'prs.jsonl', 'x\n', { maxBytes: 100 }), false);
+  assert.deepEqual(readdirSync(open), []);
+  assert.equal(sessionFolder(state, 'fine', NONE) !== null, true);
+});
+
+test('readSessionTail reads the ledger no-follow: missing is empty, any size is its tail, and a link or a shared file is refused', { skip: !POSIX }, () => {
+  const { state } = stateWithSessions();
+  const folder = sessionFolder(state, 'reader', NONE);
+  const file = path.join(folder, 'prs.jsonl');
+  const tail = (maxBytes = 100) => readSessionTail(folder, 'prs.jsonl', { maxBytes });
+  assert.deepEqual(tail(), { text: '', cut: false });
+  appendSessionFile(folder, 'prs.jsonl', 'row\n', { maxBytes: 100 });
+  assert.deepEqual(tail(), { text: 'row\n', cut: false });
+  assert.deepEqual(tail(3), { text: 'ow\n', cut: true }, 'past the cap: the tail, never a refusal');
+  chmodSync(file, 0o644);
+  assert.equal(tail(), null, 'readable by others');
+  chmodSync(file, 0o600);
+  const other = path.join(scratch(), 'other.txt');
+  writeFileSync(other, 'x\n', { mode: 0o600 });
+  rmSync(file);
+  linkSync(other, file);
+  assert.equal(tail(), null, 'a hard link');
+  rmSync(file);
+  symlinkSync(other, file);
+  assert.equal(tail(), null, 'a symlink');
+  rmSync(file);
+  mkdirSync(file);
+  assert.equal(tail(), null, 'no regular file');
 });

@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import {
   alertText, bandSegments, changeRows, changesParts, COLORS, DISPLAY_CAPS, displayText, FORGES, handoffParts, harnessParts,
-  isIssueLink, noticeOf, plainText, ticketRow,
+  isIssueLink, NOTICES, noticeOf, plainText, ticketRow,
 } from '../plugins/aidrian-claude-mod/lib/format.mjs';
 import { DISPLAY_CAPS as SNAPSHOT_CAPS, displayText as snapshotText, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
 
@@ -243,16 +243,25 @@ test('a Linear link`s slug holds only letters, digits, and dashes', () => {
 });
 
 test('the pane`s notice for each result that holds no snapshot', () => {
-  for (const kind of ['missing', 'failed', 'timed-out', 'off']) assert.match(noticeOf({ kind }), /aidrian/u, kind);
-  assert.match(noticeOf({ kind: 'failed' }), /update it/u);
-  assert.match(noticeOf({ kind: 'timed-out' }), /timed out/u);
-  assert.match(noticeOf({ kind: 'off' }), /off in this project/u);
+  // The product words, each in full. A plugin that is installed is never called not installed: node not found, and an
+  // entry that failed the safety checks, say so.
+  assert.deepEqual(Object.keys(NOTICES).sort(), ['failed', 'missing', 'no-node', 'off', 'refused', 'timed-out']);
+  const words = {
+    missing: 'The aidrian plugin is not installed for this folder: install it to see the handoff verdict, the changes this session touched, and the harness signals.',
+    'no-node': "The aidrian plugin is installed, but no node was found in a PATH folder outside this session's folder, the only place the mod runs programs from: install Node, or start Claude Code with Node's folder on PATH.",
+    refused: "The aidrian plugin installed for this folder failed the mod's safety checks (its files are missing, a link, or outside Claude Code's plugin cache), so the mod does not run it: reinstall it.",
+    failed: 'The aidrian plugin returned no snapshot: update it to the latest release.',
+    'timed-out': 'The aidrian snapshot took longer than 10 seconds and was stopped: the band shows the model, limits, and cache until the next try, at the next turn or within a minute.',
+    off: "The aidrian plugin is off for this folder: turn it on in Claude Code's plugin settings to see the handoff verdict, the changes this session touched, and the harness signals.",
+  };
+  for (const [kind, text] of Object.entries(words)) assert.equal(noticeOf({ kind }), text, kind);
+  for (const kind of ['no-node', 'refused']) assert.doesNotMatch(noticeOf({ kind }), /not installed/u, kind);
   for (const result of [{ kind: 'ok', snapshot: {} }, { kind: 'toString' }, null]) assert.equal(noticeOf(result), null);
 });
 
 test('no file of the Claude mod`s lib imports a Node built-in or uses process', () => {
   const files = readdirSync(MOD_LIB).filter((name) => name.endsWith('.mjs'));
-  assert.deepEqual(files.sort(), ['format.mjs', 'servers.mjs', 'snapshot-client.mjs']);
+  assert.deepEqual(files.sort(), ['format.mjs', 'pane-data.mjs', 'servers.mjs', 'snapshot-client.mjs']);
   for (const name of files) {
     const text = readFileSync(path.join(MOD_LIB, name), 'utf8');
     const code = text.split('\n').filter((line) => !/^\s*\/\//u.test(line)).join('\n');

@@ -7,7 +7,7 @@
 //   env             { PATH, HOME, CLAUDE_CONFIG_DIR }: the values the mod read, each by its own name, with $.env.get
 //   pluginRoot      $.plugin.root
 //   enabledPlugins  () => $.settings.read({ key: 'enabledPlugins' })
-// Every process the mod starts, this snapshot, the focus check, and any git or tail, goes through one resolver,
+// Every process the mod starts, this snapshot, the focus check, and the band's git reads, goes through one resolver,
 // runnerFor: a program of its allowlist by an absolute argv[0], never a shell, env PATH set to the entries it checked,
 // and a time limit.
 
@@ -21,9 +21,10 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 export const OSASCRIPT = '/usr/bin/osascript';
 export const FOCUS_SCRIPT = 'tell application "System Events" to get name of first process whose frontmost is true';
 const FOCUS_TIMEOUT_MS = 2_000;
-// The programs the resolver runs, and the ones it only looks up on PATH: aidrian is found to reach its lib/cli.mjs,
-// which runs by node, never by the command's own shell script.
-const RUNNABLE = new Set(['node', 'git', 'tail']);
+// The programs the resolver runs: node for the snapshot and git for the band's branch. The mod reads files through
+// $.fs, so it runs no program to read one. aidrian is only looked up on PATH, to reach its lib/cli.mjs, which runs by
+// node, never by the command's own shell script.
+const RUNNABLE = new Set(['node', 'git']);
 const LOOKED_UP = new Set([...RUNNABLE, 'aidrian']);
 const MARKETPLACE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
@@ -150,18 +151,20 @@ async function pathCli(io, runner) {
   return held && runner.outside(cli.realPath) ? cli.realPath : null;
 }
 
-// Where the aidrian cli is: `{ kind: 'plugin' | 'path', cli, place }`, `{ kind: 'off' }` when the own marketplace is
-// known and enabledPlugins does not hold `aidrian@<marketplace>` true, or `{ kind: 'missing', place }`. An installed
-// entry for the folder that fails a check refuses, with no PATH fallback; only with no such entry is PATH tried.
+// Where the aidrian cli is: `{ kind: 'plugin' | 'path', cli, place }`, or `{ kind, place }` of `off`, `refused`, or
+// `missing`. When the own marketplace is known, nothing runs unless enabledPlugins holds `aidrian@<marketplace>` true:
+// an entry installed for the folder is then `off`, and no entry is `missing`, with no PATH fallback. An enabled entry
+// that fails a check is `refused`, with no PATH fallback. Only with no entry for the folder is PATH tried.
 export async function findCli(io, { cwd, runner }) {
   const place = await ownPlace(io);
   if (place) {
     const enabled = await Promise.resolve().then(() => io.enabledPlugins()).catch(() => undefined);
-    if (own(enabled, `aidrian@${place.marketplace}`) !== true) return { kind: 'off', place };
+    const isOn = own(enabled, `aidrian@${place.marketplace}`) === true;
     const entry = await installedEntry(io, place, cwd);
+    if (!isOn) return { kind: entry === null ? 'missing' : 'off', place };
     if (entry !== null) {
       const cli = await installedCli(io, place, entry);
-      return cli ? { kind: 'plugin', cli, place } : { kind: 'missing', place, refused: true };
+      return cli ? { kind: 'plugin', cli, place } : { kind: 'refused', place };
     }
   }
   const cli = await pathCli(io, runner);
@@ -219,13 +222,15 @@ const parsedObject = (text) => {
   }
 };
 
-// One snapshot for `{ session, cwd, root }`: `{ kind: 'ok', snapshot }`, or `{ kind }` of `missing` (no cli, or no
-// node), `off`, `failed` (a non-zero exit, or output that is not one JSON object), or `timed-out`.
+// One snapshot for `{ session, cwd, root }`: `{ kind: 'ok', snapshot, transcript }`, or `{ kind }` of `missing` (no
+// cli), `refused` (the entry installed for the folder failed a check), `no-node` (a cli, and no node on a checked PATH
+// entry), or `off`, or `{ kind, transcript }` of `failed` (a non-zero exit, or output that is not one JSON object) or
+// `timed-out`. `transcript` is the checked transcript the run was given, or null: the mod reads its cache from it.
 export async function runSnapshot(io, { session, cwd, root, ticketPrefixes = '' }) {
   const runner = await runnerFor(io, { cwd, root });
   const found = await findCli(io, { cwd, runner });
-  if (found.kind === 'off' || found.kind === 'missing') return { kind: found.kind };
-  if ((await runner.which('node')) === null) return { kind: 'missing' };
+  if (found.kind !== 'plugin' && found.kind !== 'path') return { kind: found.kind };
+  if ((await runner.which('node')) === null) return { kind: 'no-node' };
   const transcript = await findTranscript(io, { configDir: configDirOf(io, found.place), session });
   const started = await io.now();
   let ran;
@@ -233,10 +238,11 @@ export async function runSnapshot(io, { session, cwd, root, ticketPrefixes = '' 
     ran = await runner.run('node', snapshotArgs({ cli: found.cli, session, transcript, ticketPrefixes }), { cwd, timeoutMs: SNAPSHOT_TIMEOUT_MS });
   } catch {
     const late = (await io.now()) - started >= SNAPSHOT_TIMEOUT_MS;
-    return { kind: late ? 'timed-out' : 'failed' };
+    const kind = late ? 'timed-out' : 'failed';
+    return { kind, transcript };
   }
   const snapshot = ran?.exitCode === 0 ? parsedObject(String(ran.stdout)) : null;
-  return snapshot ? { kind: 'ok', snapshot } : { kind: 'failed' };
+  return snapshot ? { kind: 'ok', snapshot, transcript } : { kind: 'failed', transcript };
 }
 
 // One snapshot in flight at a time. `trigger()` starts a run for `target()`, `{ session, cwd, root }`, now; one that
@@ -273,6 +279,3 @@ export function poller({ target, snapshot, draw }) {
     },
   };
 }
-
-// The mod's snapshot client: a poller over runSnapshot.
-export const snapshotClient = (io, { target, draw, ticketPrefixes = '' }) => poller({ target, draw, snapshot: (asked) => runSnapshot(io, { ...asked, ticketPrefixes }) });

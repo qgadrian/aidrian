@@ -199,10 +199,13 @@ export function ticketRow(ticket, issue = null) {
 export const alertText = ({ text = '', title = '' } = {}) => ({ text: textOf(text, DISPLAY_CAPS.title), title: textOf(title, DISPLAY_CAPS.name) });
 
 // What the pane says when the snapshot client's result (lib/snapshot-client.mjs) holds no snapshot; null for `ok`.
+// A plugin that is installed is never called missing: `no-node` and `refused` name what stood in the way.
 export const NOTICES = Object.freeze({
-  missing: 'The aidrian plugin is missing: install it to see the handoff, pull requests, and harness signals.',
-  failed: 'The aidrian plugin installed for this folder returned no snapshot: update it.',
-  'timed-out': 'The aidrian snapshot timed out.',
-  off: 'The aidrian plugin is off in this project.',
+  missing: 'The aidrian plugin is not installed for this folder: install it to see the handoff verdict, the changes this session touched, and the harness signals.',
+  'no-node': "The aidrian plugin is installed, but no node was found in a PATH folder outside this session's folder, the only place the mod runs programs from: install Node, or start Claude Code with Node's folder on PATH.",
+  refused: "The aidrian plugin installed for this folder failed the mod's safety checks (its files are missing, a link, or outside Claude Code's plugin cache), so the mod does not run it: reinstall it.",
+  failed: 'The aidrian plugin returned no snapshot: update it to the latest release.',
+  'timed-out': 'The aidrian snapshot took longer than 10 seconds and was stopped: the band shows the model, limits, and cache until the next try, at the next turn or within a minute.',
+  off: "The aidrian plugin is off for this folder: turn it on in Claude Code's plugin settings to see the handoff verdict, the changes this session touched, and the harness signals.",
 });
 export const noticeOf = (result) => (isObject(result) && Object.hasOwn(NOTICES, result.kind) ? NOTICES[result.kind] : null);

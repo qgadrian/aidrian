@@ -28,7 +28,8 @@ test('both marketplaces publish the same plugin, and both plugin manifests agree
   const claudeMarket = json('.claude-plugin/marketplace.json');
   const codexMarket = json('.agents/plugins/marketplace.json');
   assert.equal(claudeMarket.name, codexMarket.name);
-  assert.deepEqual(claudeMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', './plugins/aidrian']]);
+  // The Claude mod is a Claude Code mod: only the Claude Code marketplace lists it.
+  assert.deepEqual(claudeMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', './plugins/aidrian'], ['aidrian-mod', './plugins/aidrian-claude-mod']]);
   assert.deepEqual(codexMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', { source: 'local', path: './plugins/aidrian' }]]);
 
   const claude = json('plugins/aidrian/.claude-plugin/plugin.json');
@@ -269,7 +270,10 @@ test('no tracked file names a source project, its tracker keys, a person, or a t
   const { repository } = json('plugins/aidrian/plugin.json');
   const slug = new URL(repository).pathname.replace(/^\/|\.git$/g, '');
   const owner = slug.split('/')[0];
-  const installFiles = ['README.md', 'NOTICE', 'docs/adopting.md', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'];
+  const installFiles = [
+    'README.md', 'NOTICE', 'docs/adopting.md', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json',
+    'plugins/aidrian/plugin.json', 'plugins/aidrian-claude-mod/.claude-plugin/plugin.json',
+  ];
   const banned = bannedPatterns(ROOT);
   const hits = [];
   for (const file of execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean)) {
@@ -1639,4 +1643,119 @@ test('the pr-review skill posts no comment of its own, and names the engine`s su
   assert.match(step, /This skill posts nothing on the pull request\. The comment a reader looks at there is the summary comment that `aidrian pr review` writes/);
   assert.match(step, /When the manifest holds a `comment_id`, an earlier release of this skill posted that comment\. Delete it once/);
   assert.match(readFileSync(path.resolve(PLUGIN, '../../docs/agents-and-skills.md'), 'utf8'), /\| `pr-review` \| [^\n]*Posts no comment/);
+});
+
+// The Claude mod, plugins/aidrian-claude-mod: a Claude Code mod whose hooks (hooks/*.ts, hooks/*.tsx) run inside Claude
+// Code and are tested there by `claude plugin test`; these tests hold what its sources may and may not do.
+const MOD = path.join(ROOT, 'plugins/aidrian-claude-mod');
+const MOD_HOOKS = ['hooks/register.ts', 'hooks/pane.tsx'];
+const MOD_LIBS = ['lib/format.mjs', 'lib/pane-data.mjs', 'lib/servers.mjs', 'lib/snapshot-client.mjs'];
+const modText = (rel) => readFileSync(path.join(MOD, rel), 'utf8');
+// A source without its whole-line comments.
+const modCode = (rel) => modText(rel).split('\n').filter((line) => !/^\s*\/\//u.test(line)).join('\n');
+
+test('the Claude mod`s manifest is 0.1.0 with its settings, the aidrian manifest`s author and repository, and its marketplace entry', () => {
+  const mod = json('plugins/aidrian-claude-mod/.claude-plugin/plugin.json');
+  const aidrian = json('plugins/aidrian/.claude-plugin/plugin.json');
+  assert.equal(mod.name, 'aidrian-mod');
+  assert.equal(mod.version, '0.1.0');
+  for (const key of ['author', 'repository']) assert.deepEqual(mod[key], aidrian[key], key);
+  assert.deepEqual(Object.keys(mod.userConfig), ['mode', 'notifyMinTurnSeconds', 'focusCheck', 'focusApp', 'sounds', 'volume', 'ticketPrefixes', 'cacheTtlSeconds']);
+  assert.equal(mod.userConfig.focusApp.default, 'kitty');
+  assert.equal(mod.userConfig.ticketPrefixes.default, '', 'no team key is written into plugin text');
+  const entry = json('.claude-plugin/marketplace.json').plugins.find((plugin) => plugin.name === 'aidrian-mod');
+  assert.equal(entry.category, 'development');
+  assert.match(entry.description, /^Optional\b[^.]*requires the aidrian plugin/u);
+});
+
+test('the Claude mod`s only MCP call is get_issue with the { id } issueLookup gives', () => {
+  const code = MOD_HOOKS.map(modCode).join('\n');
+  const calls = [...code.matchAll(/\$\.mcp\.(\w+)\(([^)]*)\)/gu)].map((match) => `${match[1]}(${match[2].trim()})`);
+  assert.deepEqual(calls, ['call(server, ISSUE_TOOL, lookup)']);
+  assert.match(code, /const lookup = snapshot\.kind === 'ok' \? issueLookup\(/u);
+  assert.deepEqual([...code.matchAll(/\baskLinear\(([^)]*)\)/gu)].map((match) => match[1]), ['$, lookup', '$: EngineInterface, lookup: { id: string }']);
+  for (const rel of MOD_LIBS) assert.doesNotMatch(modCode(rel), /\bmcp\b/u, rel);
+});
+
+test('no Claude mod hook starts a process: $.process.run is named once, in the io the lib`s resolver runs it through', () => {
+  const code = MOD_HOOKS.map(modCode).join('\n');
+  // The engine takes a noun of $ only as a call, so the io hands run over as a function that passes its arguments through.
+  assert.deepEqual([...code.matchAll(/\$\.process\.\w+[^\n]*/gu)].map((match) => match[0]), ['$.process.run(argv, init),']);
+  assert.match(modCode('hooks/pane.tsx'), /export async function engineIo\(\$: EngineInterface\) \{[\s\S]*?\n {4}run: \(argv: readonly string\[\], init: [^\n]*\) => \$\.process\.run\(argv, init\),\n[\s\S]*?\n\}/u);
+  // Every git read is runner.run of a fixed argv the file names as a constant; no shell, and osascript only through the lib.
+  const runs = [...code.matchAll(/\brunner\.run\(([^,]+), ([^,)]+)/gu)].map((match) => [match[1], match[2]]);
+  assert.ok(runs.length > 0);
+  for (const [program, args] of runs) {
+    assert.equal(program, "'git'");
+    assert.match(args, /^GIT_[A-Z]+$/u);
+  }
+  // Those are the hooks' only .run( call sites: runner.run of git, and the io's pass-through to $.process.run.
+  const sites = [...code.matchAll(/[\w$.]*\.run\(/gu)].map((match) => match[0]);
+  assert.deepEqual([...new Set(sites)].sort(), ['$.process.run(', 'runner.run(']);
+  assert.equal(sites.filter((site) => site === '$.process.run(').length, 1);
+  assert.doesNotMatch(code, /['"`](?:sh|bash|zsh|tail)['"`]|osascript|\.spawn\(/u);
+});
+
+test('the Claude mod holds no forge-specific call, and format.mjs`s forge table alone names a forge', () => {
+  const files = [...MOD_HOOKS, ...MOD_LIBS];
+  for (const rel of files) {
+    assert.doesNotMatch(modCode(rel), /['"`](?:gh|glab)['"`]/u, `${rel} names the program gh or glab`);
+    assert.doesNotMatch(modText(rel), /api\.github\.com|gitlab\.com\/api|\/api\/v[34]\b|graphql|\/repos\/|\/merge_requests/iu, `${rel} holds a forge API host or route`);
+  }
+  // The forge table: from its link pattern to the entry of a row with no forge.
+  const format = modCode('lib/format.mjs');
+  const start = format.indexOf('const GITHUB_PULL');
+  const end = format.indexOf('const NO_FORGE');
+  assert.ok(start > 0 && end > start);
+  assert.match(format.slice(start, end), /github: Object\.freeze\(\{\n {4}change: 'pull request', one: 'PR', many: 'PRs',/u);
+  const outside = { 'lib/format.mjs': format.slice(0, start) + format.slice(end) };
+  for (const rel of files.filter((file) => file !== 'lib/format.mjs')) outside[rel] = modCode(rel);
+  for (const [rel, code] of Object.entries(outside)) {
+    assert.doesNotMatch(code, /github|gitlab|pull request|merge request/iu, `${rel} names a forge outside the forge table`);
+    assert.doesNotMatch(code, /\b(?:PRs?|MRs?)\b/u, `${rel} names a forge's word for a change outside the forge table`);
+  }
+});
+
+test('every alert of the Claude mod passes alertText, title included', () => {
+  const register = modCode('hooks/register.ts');
+  const shows = [...register.matchAll(/\$\.ui\.(toast|notify|log)\(([^\n]*)/gu)].map((match) => [match[1], match[2]]);
+  assert.ok(shows.length >= 3);
+  for (const [kind, args] of shows) assert.match(args, /^(?:alertText\(|shown\.text\b)/u, `$.ui.${kind}(${args}`);
+  assert.deepEqual([...register.matchAll(/\bshown = ([^\n]*)/gu)].map((match) => match[1]), ['alertText({ text: alert.text, title: folder })']);
+  assert.match(register, /\$\.ui\.notify\(shown\.text, \{ title: shown\.title \}\)/u);
+  // The focus check compares the setting with what the lib's constant script prints; the setting reaches no process.
+  assert.match(register, /return front !== null && front === focusApp/u);
+  assert.doesNotMatch(modCode('hooks/pane.tsx'), /\$\.ui\.(toast|notify|log)\(/u);
+});
+
+test('nothing the Claude mod reads reaches the model, and its pane command answers with constant text', () => {
+  const code = MOD_HOOKS.map(modCode).join('\n');
+  assert.doesNotMatch(code, /prompt\.compose|prompt\.submit|session\.append|\$\.session\.send|\$\.model\b|\$\.tool\.register|\bcontext:|attachments|additionalContext|systemMessage/u);
+  // The one call on subagents reads their states for the pane: none sends a subagent a word.
+  assert.deepEqual([...new Set([...code.matchAll(/\$\.agent\.(\w+)/gu)].map((match) => match[1]))], ['list']);
+  const texts = [...code.matchAll(/return \{ text: ([^}]*) \}/gu)].map((match) => match[1].trim());
+  assert.equal(texts.length, 2);
+  for (const text of texts) assert.match(text, /^'[^'$`]*'$/u);
+});
+
+test('the Claude mod`s sounds are named CC0 1.0 samples of one Freesound pack, in CREDITS.md, NOTICE, and the README, naming no person', () => {
+  const source = /CC0 1\.0[^.]*Freesound pack 44741/u;
+  const texts = {
+    'sounds/CREDITS.md': modText('sounds/CREDITS.md'),
+    NOTICE: readFileSync(path.join(ROOT, 'NOTICE'), 'utf8'),
+    'README.md': modText('README.md'),
+  };
+  for (const [name, text] of Object.entries(texts)) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.match(flat, source, name);
+    assert.doesNotMatch(flat, /\bMIT\b|Permission is hereby granted|peon-ping|\bby [A-Z]/u, name);
+  }
+  assert.match(texts['sounds/CREDITS.md'], /https:\/\/freesound\.org\b/u);
+  for (const sound of ['attention', 'done', 'error', 'limit']) assert.match(texts['sounds/CREDITS.md'], new RegExp(`\`${sound}\\.wav\``, 'u'));
+});
+
+test('the Claude mod ignores the types Claude Code writes when it loads it', () => {
+  assert.match(modText('.gitignore'), /^\.claude-plugin\/types\/$/mu);
+  const ignored = spawnSync('git', ['check-ignore', '-q', 'plugins/aidrian-claude-mod/.claude-plugin/types/claude-code/index.d.ts'], { cwd: ROOT });
+  assert.equal(ignored.status, 0);
 });

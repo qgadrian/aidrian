@@ -10,6 +10,12 @@
       "source": "./plugins/aidrian",
       "description": "An engineering crew of agents (orchestrator, planning, architecture, product, development, review, security, design, support, and marketing), the skills that drive it from plan to pull request, safety hooks, and the aidrian command. Each project supplies its rules and settings in one project folder.",
       "category": "development"
+    },
+    {
+      "name": "aidrian-mod",
+      "source": "./plugins/aidrian-claude-mod",
+      "description": "Optional Claude Code mod that requires the aidrian plugin: a band above the prompt and an aidrian-mod pane with the handoff verdict, the session's pull requests, and harness signals, plus notifications.",
+      "category": "development"
     }
   ]
 }

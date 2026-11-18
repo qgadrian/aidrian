@@ -1,0 +1,13 @@
+// The types of pane-data.mjs, for the hooks' type check.
+
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | number
+export type Issue = { key: string; title: string; status: string; url: string }
+export type Repo = { label: string; isWorktree: boolean; isDirty: boolean }
+
+export function issueOf(key: string, content: unknown): Issue | null
+export function cacheTtlOf(tail: unknown): number | null
+export function repoOf(answers: { branch: unknown; gitDir: unknown; status: unknown }): Repo
+export function modelVersion(id: string): { family: string; major: number; minor: number } | null
+export function effortOf(inputs: { seen?: Effort | null; fromEnv: unknown; model: string; settings: unknown }): Effort | null
+export function cleanModel(model: string): string
+export function formatDuration(ms: number): string

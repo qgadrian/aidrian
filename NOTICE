@@ -2,3 +2,6 @@ aidrian
 Copyright 2026 the aidrian authors, https://github.com/qgadrian/aidrian
 
 Licensed under the Apache License, Version 2.0. See LICENSE.
+
+The sounds in plugins/aidrian-claude-mod/sounds/ are CC0 1.0 samples from Freesound pack 44741
+(https://freesound.org), in the public domain. See plugins/aidrian-claude-mod/sounds/CREDITS.md.

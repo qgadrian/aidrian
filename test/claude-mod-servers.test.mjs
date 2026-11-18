@@ -13,7 +13,7 @@ import test from 'node:test';
 import { bandSegments, changesParts } from '../plugins/aidrian-claude-mod/lib/format.mjs';
 import { ISSUE_TOOL, issueLookup, LINEAR_SERVERS, ticketPrefixes } from '../plugins/aidrian-claude-mod/lib/servers.mjs';
 import {
-  findCli, findTranscript, OSASCRIPT, poller, runnerFor, runSnapshot, SESSION_ID, SNAPSHOT_TIMEOUT_MS, snapshotArgs, snapshotClient,
+  findCli, findTranscript, OSASCRIPT, poller, runnerFor, runSnapshot, SESSION_ID, SNAPSHOT_TIMEOUT_MS, snapshotArgs,
 } from '../plugins/aidrian-claude-mod/lib/snapshot-client.mjs';
 import { SESSION_ID as AIDRIAN_SESSION_ID } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
@@ -150,20 +150,20 @@ test('an install outside the marketplace`s aidrian cache, or a linked cli.mjs, i
   const outside = path.join(env.base, 'elsewhere/aidrian');
   write(path.join(outside, 'lib/cli.mjs'));
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: outside }] });
-  assert.equal((await cliOf(env.io(), env.project)).kind, 'missing');
+  assert.equal((await cliOf(env.io(), env.project)).kind, 'refused');
   const linked = path.join(env.cache, 'aidrian/link');
   symlinkSync(path.join(env.base, 'elsewhere/aidrian'), linked);
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: linked }] });
-  assert.equal((await cliOf(env.io(), env.project)).kind, 'missing', 'a link in the cache that leaves it');
+  assert.equal((await cliOf(env.io(), env.project)).kind, 'refused', 'a link in the cache that leaves it');
   const other = path.join(env.cache, 'aidrian/3.0.0');
   mkdirSync(path.join(other, 'lib'), { recursive: true });
   symlinkSync(env.cli, path.join(other, 'lib/cli.mjs'));
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: other }] });
-  assert.equal((await cliOf(env.io(), env.project)).kind, 'missing', 'a symlinked lib/cli.mjs');
+  assert.equal((await cliOf(env.io(), env.project)).kind, 'refused', 'a symlinked lib/cli.mjs');
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: path.join(env.cache, 'aidrian') }] });
-  assert.equal((await cliOf(env.io(), env.project)).kind, 'missing', 'the cache folder itself');
+  assert.equal((await cliOf(env.io(), env.project)).kind, 'refused', 'the cache folder itself');
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: 'config/plugins/cache/market/aidrian/1.0.0' }] });
-  assert.equal((await cliOf(env.io(), env.project)).kind, 'missing', 'a relative installPath');
+  assert.equal((await cliOf(env.io(), env.project)).kind, 'refused', 'a relative installPath');
 });
 
 test('a config dir reached through a symlink still resolves', async () => {
@@ -214,6 +214,19 @@ test('enabledPlugins with aidrian@<own marketplace> false, or unset, starts no p
   }
 });
 
+test('off only for an entry installed for the folder; with no entry and no enabledPlugins key, missing, and no PATH fallback', async () => {
+  const env = layout();
+  const fallback = pathPlugin(path.join(env.base, 'aidrian'));
+  installs(env, {});
+  for (const enabled of [{}, null, { [`aidrian@${MARKET}`]: false }]) {
+    const io = env.io({ enabled, PATH: `${env.bin}:${fallback}` });
+    assert.deepEqual(await runSnapshot(io, { session: ID, cwd: env.project, root: env.project }), { kind: 'missing' }, JSON.stringify(enabled));
+    assert.deepEqual(io.calls, []);
+  }
+  installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'local', projectPath: path.join(env.base, 'nowhere'), installPath: env.install }] });
+  assert.deepEqual(await runSnapshot(env.io({ enabled: {} }), { session: ID, cwd: env.project, root: env.project }), { kind: 'missing' }, 'another folder`s entry');
+});
+
 test('every process starts by an absolute argv[0], never a shell, with PATH of checked entries only', async () => {
   const env = layout();
   const inside = path.join(env.project, 'node_modules/.bin');
@@ -224,11 +237,11 @@ test('every process starts by an absolute argv[0], never a shell, with PATH of c
   assert.equal((await runSnapshot(io, { session: ID, cwd: env.project, root })).kind, 'ok');
   const runner = await runnerFor(io, { cwd: env.project, root });
   await runner.run('git', ['status']);
-  await runner.run('tail', ['-c', '100', env.transcript]);
+  await assert.rejects(runner.run('tail', ['-c', '100', env.transcript]), 'tail is no program of the resolver');
   await runner.frontmostApp();
   for (const shell of ['sh', 'bash', 'zsh', '/bin/sh', 'node; sh']) await assert.rejects(runner.run(shell, ['-c', 'true']), shell);
-  assert.equal(io.calls.length, 4);
-  assert.equal(io.calls[3].argv[0], OSASCRIPT);
+  assert.equal(io.calls.length, 3);
+  assert.equal(io.calls[2].argv[0], OSASCRIPT);
   for (const { argv, init } of io.calls) {
     assert.ok(path.isAbsolute(argv[0]), argv[0]);
     assert.ok(!SHELLS.has(path.basename(argv[0])), argv[0]);
@@ -262,11 +275,13 @@ test('the result is ok, failed, or timed out, from what the run gave', async () 
       throw new Error('timed out');
     }, 'timed-out'],
   ];
-  for (const [run, kind] of cases) assert.deepEqual(await runSnapshot(env.io({ run }), { session: ID, cwd: env.project, root: env.project }), { kind }, kind);
+  // Each run that started carries the transcript it was given, which the mod reads its cache from.
+  const transcript = realpathSync(env.transcript);
+  for (const [run, kind] of cases) assert.deepEqual(await runSnapshot(env.io({ run }), { session: ID, cwd: env.project, root: env.project }), { kind, transcript }, kind);
   const ok = await runSnapshot(env.io({ run: async () => ({ exitCode: 0, stdout: '{"prs":[]}\n', stderr: '' }) }), { session: ID, cwd: env.project, root: env.project });
-  assert.deepEqual(ok, { kind: 'ok', snapshot: { prs: [] } });
+  assert.deepEqual(ok, { kind: 'ok', snapshot: { prs: [] }, transcript });
   const noNode = layout();
-  assert.deepEqual(await runSnapshot(noNode.io({ PATH: '' }), { session: ID, cwd: noNode.project, root: noNode.project }), { kind: 'missing' });
+  assert.deepEqual(await runSnapshot(noNode.io({ PATH: '' }), { session: ID, cwd: noNode.project, root: noNode.project }), { kind: 'no-node' });
 });
 
 test('the transcript is passed only for a regular file below the config dir`s projects folder', async () => {
@@ -425,13 +440,15 @@ test('a case alias of a folder inside the session`s folder is no PATH entry, and
   assert.equal(await viaLink.which('node'), null, 'a program whose real path is a case alias inside the cwd');
 });
 
-test('the resolver runs only node, git, and tail, looks aidrian up, and runs osascript with its own focus script', async () => {
+test('the resolver runs only node and git, looks aidrian up, and runs osascript with its own focus script', async () => {
   const env = layout();
   for (const name of ['git', 'tail', 'python3', 'sh', 'aidrian', 'curl']) write(path.join(env.bin, name));
   const io = env.io();
   const runner = await runnerFor(io, { cwd: env.project, root: env.project });
-  for (const name of ['node', 'git', 'tail']) await runner.run(name, ['x']);
-  for (const name of ['python3', 'sh', 'aidrian', 'curl', 'osascript', 'env']) await assert.rejects(runner.run(name, ['-c', 'true']), name);
+  for (const name of ['node', 'git']) await runner.run(name, ['x']);
+  // The mod reads files through $.fs: tail, though on a checked PATH entry, is refused like any other program.
+  for (const name of ['tail', 'python3', 'sh', 'aidrian', 'curl', 'osascript', 'env']) await assert.rejects(runner.run(name, ['-c', 'true']), name);
+  assert.equal(await runner.which('tail'), null);
   assert.equal(await runner.which('aidrian'), realpathSync(path.join(env.bin, 'aidrian')));
   assert.equal(await runner.which('python3'), null);
   const before = io.calls.length;
@@ -480,7 +497,7 @@ test('an installed lib/cli.mjs that is a link is refused, though it points insid
   write(path.join(other, 'lib/real-cli.mjs'));
   symlinkSync(path.join(other, 'lib/real-cli.mjs'), path.join(other, 'lib/cli.mjs'));
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: other }] });
-  assert.equal((await cliOf(env.io(), env.project)).kind, 'missing');
+  assert.equal((await cliOf(env.io(), env.project)).kind, 'refused');
 });
 
 test('an installed entry that fails its checks refuses with no PATH fallback; with no entry the fallback runs', async () => {
@@ -490,11 +507,25 @@ test('an installed entry that fails its checks refuses with no PATH fallback; wi
   const outside = path.join(env.base, 'elsewhere/aidrian');
   write(path.join(outside, 'lib/cli.mjs'));
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: outside }] });
-  assert.equal((await cliOf(io(), env.project)).kind, 'missing', 'an entry outside the cache: refused, and PATH not tried');
+  assert.equal((await cliOf(io(), env.project)).kind, 'refused', 'an entry outside the cache: refused, and PATH not tried');
   installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'local', projectPath: path.join(env.base, 'nowhere'), installPath: env.install }] });
   assert.equal((await cliOf(io(), env.project)).kind, 'path', 'no entry for this folder');
   installs(env, { 'aidrian@elsewhere': [{ scope: 'user', installPath: env.install }] });
   assert.equal((await cliOf(io(), env.project)).kind, 'path', 'no key for this marketplace');
+});
+
+test('a refused entry and a missing node each give their own result, and start no process', async () => {
+  const env = layout();
+  const outside = path.join(env.base, 'elsewhere/aidrian');
+  write(path.join(outside, 'lib/cli.mjs'));
+  installs(env, { [`aidrian@${MARKET}`]: [{ scope: 'user', installPath: outside }] });
+  const refused = env.io();
+  assert.deepEqual(await runSnapshot(refused, { session: ID, cwd: env.project, root: env.project }), { kind: 'refused' });
+  assert.deepEqual(refused.calls, []);
+  const noNode = layout();
+  const io = noNode.io({ PATH: '' });
+  assert.deepEqual(await runSnapshot(io, { session: ID, cwd: noNode.project, root: noNode.project }), { kind: 'no-node' });
+  assert.deepEqual(io.calls, []);
 });
 
 test('of two local entries holding the cwd, the one with the longer projectPath is chosen', async () => {
@@ -519,7 +550,7 @@ test('every run passes the newest copy of the session`s transcript', async () =>
   at(newer, 2_000);
   const io = env.io();
   const where = { session: ID, cwd: env.project, root: env.project };
-  const client = snapshotClient(io, { target: async () => where, draw: () => undefined });
+  const client = poller({ target: async () => where, draw: () => undefined, snapshot: (asked) => runSnapshot(io, asked) });
   await client.trigger();
   assert.equal(flags(io.calls.at(-1)).at(-1), `--transcript=${realpathSync(newer)}`);
   at(older, 3_000);
@@ -548,7 +579,7 @@ test('a program on a checked entry whose real path lies inside the session`s fol
   const runner = await runnerFor(io, { cwd: env.project, root: env.project });
   assert.deepEqual(runner.entries, [realpathSync(out)]);
   assert.equal(await runner.which('node'), null);
-  assert.deepEqual(await runSnapshot(io, { session: ID, cwd: env.project, root: env.project }), { kind: 'missing' });
+  assert.deepEqual(await runSnapshot(io, { session: ID, cwd: env.project, root: env.project }), { kind: 'no-node' });
   assert.deepEqual(io.calls, []);
 });
 
@@ -556,6 +587,6 @@ test('a non-zero exit is failed, whatever the output', async () => {
   const env = layout();
   for (const exitCode of [1, 2, -1, null]) {
     const io = env.io({ run: async () => ({ exitCode, stdout: '{"prs":[]}', stderr: '' }) });
-    assert.deepEqual(await runSnapshot(io, { session: ID, cwd: env.project, root: env.project }), { kind: 'failed' }, String(exitCode));
+    assert.deepEqual(await runSnapshot(io, { session: ID, cwd: env.project, root: env.project }), { kind: 'failed', transcript: realpathSync(env.transcript) }, String(exitCode));
   }
 });

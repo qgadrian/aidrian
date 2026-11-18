@@ -167,6 +167,12 @@ test('git push records the branch of each refspec on the repository of the remot
   for (const [command, expected, why] of cases) assert.deepEqual(rows(command), expected, why ?? command);
 });
 
+test('git push`s tag keyword pushes a tag, so `tag <name>` records no branch', () => {
+  assert.deepEqual(rows('git push origin tag v1'), []);
+  assert.deepEqual(rows('git push origin tag v1 feat/a'), [pushed('acme/widgets', 'feat/a')], 'a branch beside the tag still records');
+  assert.deepEqual(rows('git push origin feat/a tag'), [], 'a tag keyword with no name, which git refuses');
+});
+
 test('a push in a fork checkout records the remote it names, origin when it names none', () => {
   assert.deepEqual(rows('git push', { cwd: FORK }), [pushed('me/widgets', 'fix/fork', FORK)]);
   assert.deepEqual(rows('git push upstream fix/fork', { cwd: FORK }), [pushed('acme/widgets', 'fix/fork', FORK)]);

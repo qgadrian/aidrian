@@ -32,6 +32,18 @@ function refspecBranch(text) {
   return dst.startsWith('refs/') ? NOTHING : dst;
 }
 
+// The branch each refspec of `specs` pushes, as refspecBranch reads it, with git's `tag <name>` form, which pushes the
+// tag refs/tags/<name>, giving none for both words. Null for a `tag` with no name after it, which git refuses.
+function tagFree(specs) {
+  const refs = [];
+  for (let i = 0; i < specs.length; i += 1) {
+    if (specs[i] !== 'tag') refs.push(refspecBranch(specs[i]));
+    else if (i + 1 < specs.length) i += 1;
+    else return null;
+  }
+  return refs;
+}
+
 // The option word `text` of a push: 'stop' for one that pushes no branch, 'value' for one whose value is the next word,
 // `{ repo }` for `--repo=<remote>`, else null.
 function pushOption(text) {
@@ -91,7 +103,8 @@ export function readPush(entry) {
   if (words === null) return null;
   const [remote = words.repo, ...specs] = words.operands;
   if (remote?.startsWith('-')) return null;
-  const refs = specs.map(refspecBranch);
+  const refs = tagFree(specs);
+  if (refs === null) return null;
   if (specs.length > 0 && refs.every((ref) => ref === NOTHING)) return null;
   return { remote, refs: refs.filter((ref) => ref !== NOTHING) };
 }

@@ -135,7 +135,8 @@ A run that walks, with a non-empty `walk_widths` (reaching-the-product.md § Eve
 Any other run keeps the shape above, with no width in it.
 
 - A finding of a task walked in a browser gets a `- Width:` bullet after its first line, naming the widths it was seen at and the
-  widths walked without it, such as `- Width: 390 px. Not at 1024 or 1440 px.`, or `- Width: every width walked.`
+  widths walked without it, such as `- Width: 390 px. Not at 1024 or 1440 px.`, or `- Width: 390, 1024, and 1440 px.`
+  It always lists each width in px, never a word for all of them: the re-check walks only the widths it names.
   The first line stays `- Persona: ... Task: ... Evidence: ... Label: ...`. Any other finding, walked another way or not
   walked, has none.
 - Seen at several widths, it is one finding naming each, as one finding two personas share is written once and names both.
@@ -144,6 +145,9 @@ Any other run keeps the shape above, with no width in it.
 - The `Reached:` line names the widths walked, such as `walked at 390, 1024, and 1440 px`.
 - A width the browser could not reach is a `## Not reached` line naming the task and the width, such as
   `Seat a walk-in party at 390 px: the browser would not go below 1024 px.`; its row is `not walked`.
+- A task none of whose widths was reached is walked once at the session's width (reaching-the-product.md § Environment
+  check). That walk gets its own row, with the session's width in the Width column, and its findings' `Width:` bullet
+  names that width, such as `- Width: 1280 px.`
 - The sidecar holds no width: the `Width:` bullet is the one record.
 
 ```markdown

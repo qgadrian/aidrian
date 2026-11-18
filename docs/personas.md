@@ -191,7 +191,8 @@ and checks each of those widths before the first walk. A task walked another way
 walked once, and no question is asked first: the committed key is the consent. The walks then number personas x tasks
 x widths. Each finding walked in a browser names the widths it was seen at in a `Width:` line, the task table has a row per task and
 width, the `Reached:` line names the widths walked, and a width out of reach is a `Not reached` line naming the task and
-the width while the other widths are still walked. The sidecar holds no width.
+the width while the other widths are still walked. A task none of whose widths is reached is walked once at the
+session's width, which gets its own row and is the width its findings name. The sidecar holds no width.
 
 A defect seen more than once whose cause the run did not trace is marked `needs_trace`. After the walk, and only with
 the Human's yes, a read-only `explorer` trace may add a likely cause, labeled as likely and never confirmed.
@@ -250,8 +251,9 @@ When that file is gone, it keeps the earlier comment, posts nothing new, and say
 With [`review.productFeedback.allWidths`](config.md#walking-every-width) set, off by default, and a changed file it lists,
 the walk of step 1 covers every width of `walk_widths` for each browser task, at a cost of personas x tasks x widths walks. In the comment,
 the "seen" label names the widths each item was seen at, such as "(seen at 390 px)", "How it was checked" names the widths
-walked, and "Not checked" names a width not reached. A re-check walks a persona item at the widths it was seen at, and
-confirms it only when it shows at none of them.
+walked, and "Not checked" names a width not reached; a label and a `Width:` line always list each width in px.
+A re-check walks a persona item at the widths it was seen at. It reopens the item when the finding shows at any width
+reached, confirms it only when it shows at none and every width was reached, and else leaves it unrecorded, saying so.
 
 With `review.productFeedback.auto` on, the flows run this skill themselves, after a draft opens and again before marking it
 ready, as [review.md](review.md#product-feedback-in-the-rounds) says, and the [ready hold](hooks.md#ready-hold) keeps the draft

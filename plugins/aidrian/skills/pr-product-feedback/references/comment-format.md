@@ -57,7 +57,8 @@ Leave out a section with nothing in it, except "Not checked", which always says 
 - Label each item "seen" when its evidence level was `walked` or `seen`, else "from reading". A product-manager item is
   always "from reading".
 - When the report's findings carry a `Width:` bullet, the "seen" label names its widths: "(seen at 390 px)",
-  "(seen at 390 and 1024 px)", or "(seen at every width walked)". "How it was checked" then names the widths walked,
+  "(seen at 390 and 1024 px)", or "(seen at 390, 1024, and 1440 px)", each in px as the bullet lists them, never a word
+  for all of them. "How it was checked" then names the widths walked,
   and "Not checked" names each width not reached, as its `Not reached` line says.
 - The head line names `recorded_head` from `items --json`, the head the walk and the read covered, never `head`, which
   is gh's head now.

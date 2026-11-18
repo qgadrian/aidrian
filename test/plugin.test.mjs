@@ -1362,18 +1362,27 @@ test('persona-audit walks each browser task at every width walk_widths lists, an
   assert.match(report, /The `Reached:` line names the widths walked/u);
   assert.match(report, /A width the browser could not reach is a `## Not reached` line naming the task and the width/u);
   assert.match(report, /The sidecar holds no width: the `Width:` bullet is the one record\./u);
+  // The bullet lists each width in px, since the re-check walks only the widths it names: no word stands for them all.
+  assert.match(report, /or `- Width: 390, 1024, and 1440 px\.` It always lists each width in px, never a word for all of them: the re-check walks only the widths it names\./u);
+  assert.doesNotMatch(report, /Width: every width/u);
+  // A task none of whose widths was reached: its one walk at the session's width has its own row, and its findings name that width.
+  assert.match(report, /A task none of whose widths was reached is walked once at the session's width \(reaching-the-product\.md § Environment check\)\. That walk gets its own row, with the session's width in the Width column, and its findings' `Width:` bullet names that width, such as `- Width: 1280 px\.`/u);
   // The example report of a run with no walk_widths keeps today's shape.
   const example = /## The report[\s\S]*?```markdown\n([\s\S]*?)```/u.exec(readFileSync(path.join(PLUGIN, 'skills/persona-audit/references/report-format.md'), 'utf8'))[1];
   assert.match(example, /\| Persona \| Task \| Evidence \| Outcome \|/u);
   assert.doesNotMatch(example, /Width/u);
 
   // The comment names the widths each item was seen at, and those walked or not reached.
-  assert.match(format, /When the report's findings carry a `Width:` bullet, the "seen" label names its widths: "\(seen at 390 px\)", "\(seen at 390 and 1024 px\)", or "\(seen at every width walked\)"\./u);
+  assert.match(format, /When the report's findings carry a `Width:` bullet, the "seen" label names its widths: "\(seen at 390 px\)", "\(seen at 390 and 1024 px\)", or "\(seen at 390, 1024, and 1440 px\)", each in px as the bullet lists them, never a word for all of them\./u);
+  assert.doesNotMatch(format, /seen at every width/u);
   assert.match(format, /"How it was checked" then names the widths walked, and "Not checked" names each width not reached/u);
   // The re-check walks at the finding's widths, and confirms only when it shows at none.
   assert.match(recheck, /A persona finding whose entry in the report, found by its title, has a `Width:` bullet \(the sidecar holds no width\) is walked at each width that bullet says it was seen at, and only at those, whatever `walk_widths` says now\./u);
-  assert.match(recheck, /A seen-at width the re-check cannot reach leaves the item unrecorded: say so in the reply\./u);
-  assert.match(recheck, /a finding with a `Width:` bullet is confirmed only when it shows at none of its widths/u);
+  // Reopened when it shows at any width reached; confirmed only when it shows at none and every width was reached;
+  // else left unrecorded.
+  assert.match(recheck, /A finding with a `Width:` bullet is reopened as soon as it shows at any width the re-check reached\./u);
+  assert.match(recheck, /It is confirmed only when it shows at none of them and every seen-at width was reached\./u);
+  assert.match(recheck, /When it shows at none of the reached widths and a seen-at width was out of reach, leave the item unrecorded: say so in the reply, naming that width\./u);
 
   // The docs: off by default, what it changes, its cost, and the link to the key.
   const key = /\[`review\.productFeedback\.allWidths`\]\(config\.md#walking-every-width\)/u;
@@ -1389,6 +1398,9 @@ test('persona-audit walks each browser task at every width walk_widths lists, an
   assert.match(whatARunDoes, /Each finding walked in a browser names the widths it was seen at in a `Width:` line/u);
   assert.match(feedback, /covers every width of `walk_widths` for each browser task/u);
   assert.match(feedback, /the "seen" label names the widths each item was seen at/u);
+  assert.match(feedback, /a label and a `Width:` line always list each width in px\./u);
+  assert.match(feedback, /It reopens the item when the finding shows at any width reached, confirms it only when it shows at none and every width was reached, and else leaves it unrecorded, saying so\./u);
+  assert.match(whatARunDoes, /A task none of whose widths is reached is walked once at the session's width, which gets its own row and is the width its findings name\./u);
   const config = flat('docs/config.md');
   assert.match(config, /`review\.productFeedback\.allWidths` \| `null`, the default, or `\{ "files": \[\.\.\.\] \}`/u);
   assert.match(config, /the walk count is personas x tasks x widths/u);

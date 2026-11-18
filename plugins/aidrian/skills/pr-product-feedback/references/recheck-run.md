@@ -11,9 +11,10 @@ nothing else. `<pr>`, `<number>`, and `<state>` are what the skill names them; s
    says it was seen at, and only at those, whatever `walk_widths` says now. A product-manager item: run `diff` again, and dispatch
    `product-manager` as step 2 briefs it, with that item alone.
 3. Record each with `aidrian pr product-feedback recheck '<pr>' <id> confirmed --note '<what showed>'` when the finding
-   no longer shows at the level it was found at or a better one, else `reopened`; a finding with a `Width:` bullet is
-   confirmed only when it shows at none of its widths. A seen-at width the re-check cannot reach leaves the item
-   unrecorded: say so in the reply.
+   no longer shows at the level it was found at or a better one, else `reopened`. A finding with a `Width:` bullet is
+   reopened as soon as it shows at any width the re-check reached. It is confirmed only when it shows at none of them
+   and every seen-at width was reached. When it shows at none of the reached widths and a seen-at width was out of
+   reach, leave the item unrecorded: say so in the reply, naming that width.
 4. Start from the last posted body at `<state>/tmp/product-feedback-<number>.md`, and change only the lines of items
    whose state changed, as [comment-format.md](comment-format.md) words them. When that file is gone, keep the earlier comment and post nothing
    new: say so in the reply. Else post it as step 5 says: it edits the same comment.

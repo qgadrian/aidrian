@@ -219,9 +219,11 @@ the absolute folders of PATH alone, so an empty or relative entry never runs a `
    listed session, which files the pending mark that holds every other session until the new one's id is listed;
    when that fails, nothing starts.
 2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] <prompt>` there,
-   where the name is that session's, else the brief's slug, `<n>` the continuation's number, the agent
-   `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter accepts, the mode the
-   handing-off session's (below), and the prompt the continuation. It reads the short id from its
+   where the name is that session's, else the brief's slug. A name that ends in ` · <n - 1>` loses that count and
+   any before it that count down by one, so a second hop names `widget-work · 2`, not `widget-work · 1 · 2`;
+   any other name stays whole, such as `release · 2026`. `<n>` is the continuation's number; the agent is
+   `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter accepts, the mode is the
+   handing-off session's (below), and the prompt is the continuation. It reads the short id from its
    `backgrounded · <id> · <name>` line.
 3. `claude agents --json` again, every half second for about 5 seconds, for the one background session in that folder
    whose `sessionId` the first listing did not hold, by that short id, or by the name when the output printed none.
@@ -253,17 +255,26 @@ Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rath
 - Neither the shell of the session's Bash tool nor `claude agents --json` gives the session's permission mode: the
   listing's rows hold `pid`, `cwd`, `kind`, `startedAt`, `sessionId`, `name`, `status`, `id`, and `state`. The
   transcript does, `~/.claude/projects/<start folder, each character but a letter or digit as ->/<session id>.jsonl`
-  (under `CLAUDE_CONFIG_DIR` when set), with a `{"type":"permission-mode","permissionMode":"<mode>","sessionId":"<id>"}`
-  entry; `claude --help` lists `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, and `plan` for
-  `--permission-mode`.
+  (under `CLAUDE_CONFIG_DIR` when set). It may hold `{"type":"permission-mode","permissionMode":"<mode>","sessionId":"<id>"}`
+  entries, and the `user` entry of each prompt carries the mode as a top-level `"permissionMode":"<mode>"` field
+  beside `sessionId`; the `user` entries that hold tool results do not. Some transcripts, checked on 2026-11-17, hold
+  only the prompt entries' field. `claude --help` lists `acceptEdits`, `auto`,
+  `bypassPermissions`, `manual`, `dontAsk`, and `plan` for `--permission-mode`.
 
 So the adapter passes the handing-off session's permission mode with `--permission-mode`, so an unattended chain does
-not stop at a prompt the old session would not have shown. It reads the last `permission-mode` entry of that session's
-transcript, in the start folder's project folder, else in any project folder, from its last 16 MB, and passes it only
+not stop at a prompt the old session would not have shown. It reads the last entry of that session's transcript with
+a top-level `permissionMode`, of either shape, in the start folder's project folder, else in any project folder.
+It reads backwards from the end in 1 MB chunks until one names the mode, so it finds one however far back it is.
+It skips a subagent's sidechain entry and any entry whose `sessionId` is not the session's. A line over 32 MB is not
+parsed: one that holds the `"permissionMode"` key reads as no mode, and one without it is skipped. A
+`permissionMode` that is not a string reads as no mode either. It passes the mode only
 when it is `acceptEdits`, `auto`, `dontAsk`, `manual`, or `plan`; a transcript's `default` is passed as `manual`.
 A session that runs in `bypassPermissions` starts nothing, and the handoff goes on by the clear route: a session no
 Human attends never runs without permission checks. With no mode it can read, none starts either, since the host's
 default may be `bypassPermissions`, and the fallback line says the mode could not be read.
+Accepted residual: in a transcript that carries the mode only on prompt entries, a mode changed in the middle of a
+turn shows only at the next prompt, so a handoff in that turn passes the mode the turn started in. A background
+session of the chain seldom has a Human attached to change its mode, and `bypassPermissions` is never passed.
 Not verified live: a background start with `--permission-mode`.
 - `claude agents --json` also lists interactive sessions, with `sessionId`, `name`, `kind: "interactive"`, and `cwd`,
   the folder the session was started in; `claude --help` lists `stop|kill <id>` and `attach <id|name>`.

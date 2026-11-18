@@ -18,7 +18,7 @@ import test from 'node:test';
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundPrompt, continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { noteFollow, noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { claudeOnPath, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
@@ -737,6 +737,117 @@ test('the new session starts in the permission mode of the handing-off session, 
   assert.equal(moved.flag, 'dontAsk');
 });
 
+// Entries shaped like a Claude Code 2.1.326 transcript that holds no `permission-mode` entry: each `user` entry carries
+// the session's mode as a top-level `permissionMode` field, between its `message` and its `sessionId`, and long
+// `assistant` entries carry none.
+const userEntry = (mode, extra = {}) => ({ parentUuid: null, isSidechain: false, promptId: 'p', type: 'user', message: { role: 'user', content: 'go on' }, uuid: 'u', timestamp: '2026-11-17T20:00:00.000Z', permissionMode: mode, origin: 'cli', userType: 'external', entrypoint: 'cli', cwd: '/w', sessionId: SESSION, version: '2.1.326', gitBranch: 'main', ...extra });
+const assistantEntry = (size) => ({ parentUuid: 'u', isSidechain: false, type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(size) }] }, uuid: 'a', sessionId: SESSION });
+const transcript = (setting, entries) => writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${entries.map((each) => (typeof each === 'string' ? each : JSON.stringify(each))).join('\n')}\n`);
+
+test('a transcript with no permission-mode entry gives the mode of its last user entry, however far back it is', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The last entry that names the mode wins, more than 3 MB before the end, behind a line longer than a read chunk.
+  transcript(setting, [userEntry('manual'), userEntry('auto'), assistantEntry(1_500_000), ...Array.from({ length: 40 }, () => assistantEntry(50_000))]);
+  assert.equal(read(), 'auto');
+  // Only a top-level field counts: one nested in a message, quoted in its text, or on a subagent's entry, another
+  // session's, or one with no session id does not.
+  transcript(setting, [
+    userEntry('plan'),
+    { type: 'user', message: { content: [{ type: 'tool_result', content: { permissionMode: 'bypassPermissions' } }] }, sessionId: SESSION },
+    { ...assistantEntry(0), message: { content: '{"permissionMode":"bypassPermissions"}' } },
+    userEntry('bypassPermissions', { isSidechain: true }),
+    userEntry('bypassPermissions', { sessionId: 'someone-else' }),
+    userEntry('bypassPermissions', { sessionId: undefined }),
+    '{"permissionMode":"bypassPermissions", not json',
+  ]);
+  assert.equal(read(), 'plan');
+  // The last entry wins over an earlier one of either shape, and a bypassed mode is read as it is.
+  transcript(setting, [{ type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }, userEntry('bypassPermissions')]);
+  assert.equal(read(), 'bypassPermissions');
+  transcript(setting, [userEntry('bypassPermissions'), { type: 'permission-mode', permissionMode: 'dontAsk', sessionId: SESSION }]);
+  assert.equal(read(), 'dontAsk');
+  // No entry names a mode: none is read. A last line with no newline is read too.
+  transcript(setting, [assistantEntry(10), assistantEntry(2_100_000)]);
+  assert.equal(read(), null);
+  writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(assistantEntry(10))}\n${JSON.stringify(userEntry('acceptEdits'))}`);
+  assert.equal(read(), 'acceptEdits');
+});
+
+const MB = 1024 * 1024;
+
+test('a line too long to parse that holds the mode key fails closed; one without it is skipped', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The key near the line's end, read before the line is known to be too long.
+  transcript(setting, [userEntry('auto'), { ...assistantEntry(33 * MB), permissionMode: 'bypassPermissions' }, assistantEntry(10)]);
+  assert.equal(read(), null);
+  // The key more than 32 MB from the line's end, split across two read chunks: 8 of its bytes before a chunk edge.
+  const before = '{"type":"assistant","a":"x","permissionMode":"manual","b":"';
+  const after = `","sessionId":"${SESSION}"}`;
+  const key = '"permissionMode":"manual","b":"';
+  const fill = 34 * MB + 8 - key.length - after.length - 1;
+  writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(userEntry('auto'))}\n${before}${'x'.repeat(fill)}${after}\n`);
+  const text = readFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
+  const at = text.lastIndexOf('"permissionMode"');
+  assert.ok(text.length - at === 34 * MB + 8, 'the key straddles a chunk edge');
+  assert.equal(read(), null);
+  // A line too long to parse with no key in it is skipped, and the entry before it still gives the mode.
+  transcript(setting, [userEntry('auto'), assistantEntry(33 * MB), assistantEntry(10)]);
+  assert.equal(read(), 'auto');
+});
+
+test('a newline on a read chunk edge splits the lines there', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The bytes after the mode line's newline are exactly 1 MB, so that newline is the last byte of the second chunk
+  // read; then 1 MB minus one, so it is the first byte of the first chunk read.
+  for (const tail of [MB, MB - 1]) {
+    const pad = JSON.stringify(assistantEntry(0)).length;
+    const filler = JSON.stringify(assistantEntry(tail - 1 - pad));
+    assert.equal(filler.length + 1, tail);
+    writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(userEntry('manual'))}\n${JSON.stringify(userEntry('plan'))}\n${filler}\n`);
+    assert.equal(read(), 'plan', `${tail} bytes after the newline`);
+  }
+});
+
+test('the gate passes on the mode a transcript gives only on its user entries, and refuses when that mode is bypassed or not a string', (t) => {
+  const start = (mode, earlier = []) => {
+    const setting = setup(t, { mode: null });
+    transcript(setting, [...earlier, userEntry(mode), ...Array.from({ length: 30 }, () => assistantEntry(100_000))]);
+    passCheck(setting);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    return { result: gate(setting, { run }), args: bgCalls(calls)[0]?.args ?? null };
+  };
+  const auto = start('auto');
+  assert.equal(auto.result.out[0], 'continue: background');
+  assert.equal(auto.args[auto.args.indexOf('--permission-mode') + 1], 'auto');
+  const bypass = start('bypassPermissions');
+  assert.equal(bypass.args, null, 'no session started');
+  assert.match(bypass.result.out[1], /this session runs with permission checks bypassed/u);
+  // The session's own entry whose mode is not a string refuses, whatever an earlier entry says.
+  for (const odd of [42, null, ['auto'], { mode: 'auto' }]) {
+    const unread = start(odd, [userEntry('auto')]);
+    assert.equal(unread.args, null, `${JSON.stringify(odd)}: no session started`);
+    assert.match(unread.result.out[1], /the permission mode of this session could not be read/u);
+  }
+});
+
+test('a session a hop started and named is named again by its base name and the new count, never a second count', (t) => {
+  const setting = setup(t);
+  const named = (own, chain) => startBackground({ session: SESSION, slug: 'widget', chain, efforts: [], prompt: 'p', env: setting.env, hold: () => true, wait: noWait, run: fakeRun({ name: own, own: setting.dir }).run }).name;
+  assert.equal(named('widget-work · 1', 2), 'widget-work · 2');
+  assert.equal(named('widget-work · 1 · 2', 3), 'widget-work · 3');
+  assert.equal(named('widget-work ·  4', 5), 'widget-work · 5');
+  assert.equal(named('7 · 1', 2), '7 · 2');
+  // A count that is not the last hop's is part of the name the Human gave, and stays.
+  assert.equal(named('release · 2026', 1), 'release · 2026 · 1');
+  assert.equal(named('release · 2026', 3), 'release · 2026 · 3');
+  assert.equal(named('release · 2026 · 1', 2), 'release · 2026 · 2');
+  assert.equal(named('widget-work · 3', 2), 'widget-work · 3 · 2');
+  assert.equal(named('v · 2 docs', 3), 'v · 2 docs · 3');
+});
+
 // The environment of a session the shell function started, in shell 4242, as `claude` process 4343, attended, and a
 // stand-in for `run` that answers `ps` with `line` for that process.
 const WRAPPED = { AIDRIAN_SHELL_PID: '4242', CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' };
@@ -806,4 +917,3 @@ test('a background session the terminal follows asks to end its own session once
     assert.deepEqual(request, ends ? { own: SESSION, shell: 4242, id: 'abcd1234', next: NEW_SESSION } : null, name);
   }
 });
-

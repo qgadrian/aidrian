@@ -11,7 +11,8 @@
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 //   ending-<session>.json      { shell, id, next, host_pid | own, at }   a session that ends itself once its turn ends,
 //                              so the terminal of the shell `shell` opens the background session `id`, whose full id is
-//                              `next` or null; an attended one by its host process, a background one as the session `own`
+//                              `next` or null; an attended one by its host process, a background one as the session `own`,
+//                              whose `shell` is null when no terminal follows it: it then only stops, once `id` started
 //   follow-<session>.json      { shell, at }   a background session the terminal of the shell `shell` follows, written
 //                              when the session before it ended itself (lib/terminal-replace.mjs)
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
@@ -455,15 +456,18 @@ export function readStarted(store, session, { now = Date.now() } = {}) {
 }
 
 const idOrNull = (value) => value === null || (typeof value === 'string' && SESSION_ID.test(value));
-// A request names exactly one way to end: the host process of an attended session, or the id of a background session.
-const isEnding = (value) => isObject(value) && isPid(value.shell) && typeof value.id === 'string' && SESSION_ID.test(value.id)
+// A request names exactly one way to end: the host process of an attended session, with the shell that started it, or
+// the id of a background session, with the shell whose terminal follows it or null.
+const isEnding = (value) => isObject(value) && typeof value.id === 'string' && SESSION_ID.test(value.id)
   && idOrNull(value.next) && Number.isFinite(value.at)
-  && (isPid(value.host_pid) !== (typeof value.own === 'string' && SESSION_ID.test(value.own)));
+  && (isPid(value.host_pid)
+    ? value.own === undefined && isPid(value.shell)
+    : typeof value.own === 'string' && SESSION_ID.test(value.own) && (value.shell === null || isPid(value.shell)));
 
 // Records that `session` ends itself once its turn ends, and that the shell `shell` then opens the background session
 // `id`, whose full id is `next` or null. An attended session names its host process `hostPid`, which the shell started;
-// a background session the shell's terminal follows names its own id `own`, as the host listed it. Returns the file, or
-// null when the store is refused or a value has a wrong shape.
+// a background session names its own id `own`, as the host listed it, and `shell` null when no terminal follows it, so
+// it only stops once `id` started. Returns the file, or null when the store is refused or a value has a wrong shape.
 export function noteEnding(store, session, { hostPid, own, shell, id, next = null }, { now = Date.now() } = {}) {
   const value = { shell, id, next, ...(hostPid === undefined ? {} : { host_pid: hostPid }), ...(own === undefined ? {} : { own }), at: now };
   return isEnding(value) ? writeMarker(store, sessionFile('ending', session), value) : null;

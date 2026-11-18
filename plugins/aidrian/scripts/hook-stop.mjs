@@ -21,9 +21,9 @@
 // `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
 // sent back, so nothing can loop: each stop sends back at most once, for one of the three.
 // - The terminal hand-over (lib/terminal-replace.mjs endAfterTurn): on a stop no check sends back, sent back before or
-//   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it opens
-//   the background session that took the work (docs/handoff.md#replacing-the-terminal). It skips the session-length
-//   reminder: the work has moved.
+//   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it, or
+//   follows it, opens the background session that took the work; a background session no terminal follows only stops
+//   (docs/handoff.md#replacing-the-terminal). It skips the session-length reminder: the work has moved.
 
 import { randomBytes } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';

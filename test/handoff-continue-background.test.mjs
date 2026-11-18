@@ -16,10 +16,12 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS, UNHOOKED } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS, UNHOOKED, unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { CHAIN_CEILING, noteFollow, noteFrom, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { END_DELAY, endAfterTurn, terminalFolder } from '../plugins/aidrian/lib/terminal-replace.mjs';
 import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -32,6 +34,7 @@ const SESSION = 'session-1';
 const NEW_SESSION = 'abcd1234-0000-4000-8000-000000000001';
 const SWITCH_ON = { handoff: { background: 'on' } };
 const noWait = () => {};
+const claudeCode = HOSTS.find((host) => host.id === 'claude-code');
 
 // A git repository whose committed config asks for `committed`, its working copy for `handoff` when it differs, its
 // state folder outside it, this machine's local file `local`, a fresh brief, a `claude` on PATH that only exits, and a
@@ -1082,12 +1085,30 @@ test('in auto mode, an attended session its shell function did not start says wh
   }
 });
 
-test('a background session the terminal follows asks to end its own session once its turn ends, in auto mode only', (t) => {
-  for (const [name, handoff, follows, ends, attended = {}] of [
-    ['followed, auto mode', { mode: 'auto' }, true, true],
-    ['no terminal follows it', { mode: 'auto' }, false, false],
-    ['ask mode', { mode: 'ask', continue: 'background' }, true, false],
-    ['a Human attends it, as a former background session resumed', { mode: 'auto' }, true, false, { CLAUDE_CODE_SESSION_ATTENDED: '1' }],
+// A stand-in for `run` that answers `ps -A` with `rows`, each `pid ppid comm`, and passes every other call to `run`.
+const withClients = (run, rows) => (command, args, options) => (command === '/bin/ps' && args[0] === '-A'
+  ? { status: 0, stdout: `${rows.join('\n')}\n`, stderr: '' }
+  : run(command, args, options));
+const ATTACHED = ['1 0 launchd', '4242 900 -zsh', '5000 4242 claude'];
+const STOPS = 'This session has ended its work and stops once this turn ends; the new one is `harness-handoff · 1`, open it with `claude attach abcd1234`.';
+
+// Writes the shell function's record that the terminal of `shell` opened the session `id`, at `seconds`, under `env`.
+function followsRecord(env, shell, id, seconds = Math.floor(Date.now() / 1000)) {
+  const folder = terminalFolder(env);
+  mkdirSync(folder, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(folder, `follows-${shell}`), `${id} ${seconds}\n`, { mode: 0o600 });
+}
+
+test('a background session the gate started ends itself once its turn ends, in auto mode: its terminal switches when one follows, else it stops', (t) => {
+  for (const [name, handoff, follows, ending, { attended = {}, rows = ATTACHED } = {}] of [
+    ['followed in the store, auto mode', { mode: 'auto' }, 'store', 'switch'],
+    ['the shell function opened it by its id', { mode: 'auto' }, 'shell', 'switch'],
+    ['the shell function opened it by a short id it starts with', { mode: 'auto' }, 'short', 'switch'],
+    ['followed, but the shell runs no client any more', { mode: 'auto' }, 'store', 'stop', { rows: ['1 0 launchd', '4242 900 -zsh'] }],
+    ['the shell function\'s record names another session', { mode: 'auto' }, 'other', 'stop'],
+    ['no terminal follows it', { mode: 'auto' }, null, 'stop'],
+    ['ask mode', { mode: 'ask', continue: 'background' }, 'store', null],
+    ['a Human attends it, as a former background session resumed', { mode: 'auto' }, 'store', null, { attended: { CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
   ]) {
     const setting = setup(t, { handoff });
     passCheck(setting);
@@ -1095,11 +1116,58 @@ test('a background session the terminal follows asks to end its own session once
     t.after(() => rmSync(xdg, { recursive: true, force: true }));
     const env = { ...setting.env, XDG_STATE_HOME: xdg, ...attended };
     assert.ok(markUnattended(SESSION, { root: setting.dir, env }), name);
-    if (follows) assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
-    const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });
+    if (follows === 'store') assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
+    if (follows === 'shell') followsRecord(env, 4242, SESSION);
+    if (follows === 'short') followsRecord(env, 4242, 'sess');
+    if (follows === 'other') followsRecord(env, 4242, 'zzzz9999');
+    const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir }).run, rows), env });
     assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
-    assert.ok(result.out[1].endsWith(ends ? SWITCHES : PLAIN), `${name}: ${result.out[1]}`);
-    const request = takeEnding(setting.store, SESSION);
-    assert.deepEqual(request, ends ? { own: SESSION, shell: 4242, id: 'abcd1234', next: NEW_SESSION } : null, name);
+    assert.ok(result.out[1].endsWith({ switch: SWITCHES, stop: STOPS }[ending] ?? PLAIN), `${name}: ${result.out[1]}`);
+    const own = follows === 'short' ? 'sess' : SESSION;
+    const expected = { switch: { own, shell: 4242 }, stop: { own: SESSION, shell: null } }[ending];
+    assert.deepEqual(takeEnding(setting.store, SESSION), expected ? { ...expected, id: 'abcd1234', next: NEW_SESSION } : null, name);
+  }
+});
+
+test('the terminal follows a chain of background hops the shell function attached: each hop switches it, and stops itself', (t) => {
+  const hops = ['1111aaaa', '2222bbbb', '3333cccc', '4444dddd', '5555eeee'].map((short, index) => ({ short, full: `${short}-0000-4000-8000-00000000000${index + 1}` }));
+  const setting = setup(t, { handoff: { mode: 'auto', maxChain: 5 } });
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const base = { ...setting.env, XDG_STATE_HOME: xdg, CLAUDE_CODE_SESSION_ATTENDED: '0' };
+  // The first hop runs in the background, and the Human typed `claude attach 1111aaaa` in the shell 4242.
+  assert.ok(markUnattended(hops[0].full, { root: setting.dir, env: base }));
+  followsRecord(base, 4242, hops[0].short);
+  const shellRecord = path.join(terminalFolder(base), '4242');
+  for (let at = 0; at < hops.length - 1; at += 1) {
+    const [hop, next] = [hops[at], hops[at + 1]];
+    writeFileSync(path.join(setting.transcripts, `${hop.full}.jsonl`), `${JSON.stringify({ type: 'permission-mode', permissionMode: 'acceptEdits', sessionId: hop.full })}\n`);
+    writeFileSync(setting.file, brief(at).replace('## Next steps', `## Done\n${Array.from({ length: at + 1 }, (_, item) => `- step ${item}`).join('\n')}\n\n## Next steps`));
+    passCheck(setting);
+    const env = { ...base, CLAUDE_CODE_SESSION_ID: hop.full };
+    const listing = (started) => [{ id: hop.short, sessionId: hop.full, name: `widget · ${at}`, kind: 'background', cwd: setting.dir }, ...(started ? [{ id: next.short, sessionId: next.full, name: `widget · ${at + 1}`, kind: 'background', cwd: setting.dir }] : [])];
+    let started = false;
+    const run = withClients((command, args) => {
+      if (args[0] === 'agents') return { status: 0, stdout: JSON.stringify(listing(started)), stderr: '' };
+      started = true;
+      return { status: 0, stdout: `backgrounded · ${next.short} · widget · ${at + 1}\n`, stderr: '' };
+    }, ATTACHED);
+    const result = gate(setting, { run, env });
+    assert.equal(result.out[0], 'continue: background', `hop ${at + 1}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(`this terminal switches to the new one, \`widget · ${at + 1}\`, once this turn ends.`), `hop ${at + 1}: ${result.out[1]}`);
+    assert.doesNotMatch(result.out[1], /open it with/u, `hop ${at + 1}: no attach by hand`);
+
+    // Its Stop hook: the shell's record names the next hop, the terminal follows it, and this hop stops itself.
+    const helpers = [];
+    const ended = endAfterTurn({
+      host: claudeCode, session: hop.full, take: () => takeEnding(setting.store, hop.full), unattended: () => unattendedHere(hop.full, { store: setting.store, env, now: Date.now() }),
+      follow: ({ session, shell }) => noteFollow(setting.store, session, { shell }), env, run, start: (each) => helpers.push(each),
+    });
+    assert.equal(ended, true, `hop ${at + 1}`);
+    assert.deepEqual(helpers, [{ host: 'claude-code', own: at === 0 ? hop.short : hop.full, session: hop.full, delay: END_DELAY }], `hop ${at + 1} stops itself`);
+    assert.match(readFileSync(shellRecord, 'utf8'), new RegExp(`^${next.short} \\d+\\n$`, 'u'), `hop ${at + 1}`);
+    // The client exits, and the shell function reads the record and attaches the next hop, as it does in a shell.
+    rmSync(shellRecord);
+    followsRecord(base, 4242, next.short);
   }
 });

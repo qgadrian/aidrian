@@ -323,8 +323,9 @@ folder and a trivial prompt:
 - The interactive `claude` shows as `claude` in `ps -o comm=`, a child of the program that started it. A background
   session's process shows as `claude bg-spare` under `claude bg-pty-host`, so it never passes the check.
 
-A background session the terminal follows ends itself with `replaceTerminal.endOwn` (`stopOwnBackground` in
-`lib/hosts/claude-code-background.mjs`). It reads `claude agents --json` and runs `claude stop <id>` only when exactly
+A background session the gate started ends itself with `replaceTerminal.endOwn` (`stopOwnBackground` in
+`lib/hosts/claude-code-background.mjs`) once its own handoff started the next one, whether or not a terminal follows it.
+It reads `claude agents --json` and runs `claude stop <id>` only when exactly
 one background row has that `id`, or a `sessionId` that starts with it, and its `sessionId` is the session's own.
 It never signals a process: the supervisor owns the background session's process.
 

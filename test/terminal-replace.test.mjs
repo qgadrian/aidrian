@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -20,7 +20,7 @@ import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { shellInit } from '../plugins/aidrian/lib/shell-init.mjs';
-import { END_DELAY, endAfterTurn, endHost, NEXT_WINDOW, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
+import { END_DELAY, endAfterTurn, endHost, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
@@ -209,6 +209,7 @@ function inShell(t, { shell = 'zsh', next = null, chain = {}, script = 'claude -
     '#!/bin/sh',
     `echo "$AIDRIAN_SHELL_PID $*" >> '${log}'`,
     `dir='${records}'`,
+    `printf '%s\\n' "$(cat "$dir/follows-$AIDRIAN_SHELL_PID" 2>/dev/null)" >> '${log}.follows'`,
     'mkdir -p "$dir"',
     'if [ "$1" = attach ]; then',
     chained || ':',
@@ -224,7 +225,9 @@ function inShell(t, { shell = 'zsh', next = null, chain = {}, script = 'claude -
   });
   const pid = /shell=(\d+)/u.exec(result.stdout)?.[1];
   const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
-  return { result, shell: pid, calls, record: path.join(records, String(pid)), records };
+  // What this shell's `follows-` record held while each program ran: its id, or '' when there was none.
+  const follows = existsSync(`${log}.follows`) ? readFileSync(`${log}.follows`, 'utf8').split('\n').slice(0, -1).map((line) => line.split(' ')[0]) : [];
+  return { result, shell: pid, calls, follows, record: path.join(records, String(pid)), records };
 }
 
 const later = () => Math.floor(Date.now() / 1000) + 60;
@@ -307,6 +310,10 @@ test('a request names one way to end, and the store says which shell follows a s
   assert.equal(noteEnding(store, BG_SESSION, { own: 'abcd1234', hostPid: 4343, shell: 4242, id: 'efgh5678' }), null, 'never both');
   assert.equal(noteEnding(store, BG_SESSION, { shell: 4242, id: 'efgh5678' }), null, 'never neither');
   assert.equal(noteEnding(store, BG_SESSION, { own: 'a b', shell: 4242, id: 'efgh5678' }), null);
+  assert.ok(noteEnding(store, BG_SESSION, { own: 'abcd1234', shell: null, id: 'efgh5678' }), 'a background session no terminal follows only stops');
+  assert.deepEqual(takeEnding(store, BG_SESSION), { own: 'abcd1234', shell: null, id: 'efgh5678', next: null });
+  assert.equal(noteEnding(store, SESSION, { hostPid: 4343, shell: null, id: 'efgh5678' }), null, 'an attended session ends only for a shell');
+  assert.equal(noteEnding(store, BG_SESSION, { own: 'abcd1234', id: 'efgh5678' }), null, 'no shell is null, never missing');
 
   assert.equal(readFollow(store, BG_SESSION), null);
   assert.ok(noteFollow(store, 'abcd1234', { shell: 4242 }));
@@ -319,6 +326,63 @@ test('a request names one way to end, and the store says which shell follows a s
   assert.ok(noteFollow(store, BG_SESSION, { shell: 4242 }));
   assert.deepEqual(readFollow(store, BG_SESSION), { shell: 4242, id: BG_SESSION });
   assert.equal(readFollow(store, BG_SESSION, { now: later }), null, 'under the full id, past FOLLOW_AGE');
+});
+
+test('the shell function\'s record says which shell shows a session, under its id or a short one, while fresh and its own', (t) => {
+  const env = { ...process.env, XDG_STATE_HOME: folder(t, 'aidrian-xdg-') };
+  const records = terminalFolder(env);
+  const now = Date.now();
+  const seconds = (ms = now) => Math.floor(ms / 1000);
+  assert.equal(readFollows(BG_SESSION, { env, now }), null, 'no folder');
+  mkdirSync(records, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(records, 'follows-4242'), `abcd1234 ${seconds(now - 60_000)}\n`);
+  writeFileSync(path.join(records, 'follows-4343'), `${BG_SESSION} ${seconds()}\n`);
+  writeFileSync(path.join(records, 'follows-4444'), `efgh5678 ${seconds()}\n`);
+  writeFileSync(path.join(records, '4545'), `abcd1234 ${seconds()}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4343, id: BG_SESSION }, 'the latest of those that name it');
+  assert.deepEqual(readFollows(NEXT_SESSION, { env, now }), { shell: 4444, id: 'efgh5678' }, 'a short id the session starts with');
+  assert.equal(readFollows('zzzz0000-0000', { env, now }), null, 'another session');
+  assert.equal(readFollows(BG_SESSION, { env, now: now + FOLLOW_AGE + 120_000 }), null, 'past FOLLOW_AGE');
+  rmSync(path.join(records, 'follows-4343'));
+  assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4242, id: 'abcd1234' });
+
+  for (const [name, text] of [['a wrong line', 'abcd1234\n'], ['an id that is no plain id', `ab;cd ${seconds()}\n`], ['a time ahead', `abcd1234 ${seconds(now + 60_000)}\n`]]) {
+    writeFileSync(path.join(records, 'follows-4242'), text);
+    assert.equal(readFollows(BG_SESSION, { env, now }), null, name);
+  }
+  const target = path.join(folder(t, 'aidrian-target-'), 'line');
+  writeFileSync(target, `abcd1234 ${seconds()}\n`);
+  rmSync(path.join(records, 'follows-4242'));
+  symlinkSync(target, path.join(records, 'follows-4242'));
+  assert.equal(readFollows(BG_SESSION, { env, now }), null, 'a symlink is never read');
+  rmSync(path.join(records, 'follows-4242'));
+  writeFileSync(path.join(records, 'follows-4242'), `abcd1234 ${seconds()}\n`);
+  chmodSync(records, 0o777);
+  assert.equal(readFollows(BG_SESSION, { env, now }), null, 'a folder others may write');
+  chmodSync(records, 0o700);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4242, id: 'abcd1234' });
+});
+
+test('the shell function records the session it opens by a plain id, typed or from a record, while that program runs', { skip: !ZSH }, (t) => {
+  for (const shell of ['zsh', ...(BASH ? ['bash'] : [])]) {
+    const typed = inShell(t, { shell, script: 'claude attach abcd1234; echo rc=$?' });
+    assert.deepEqual(typed.calls, [`${typed.shell} attach abcd1234`], `${shell}: typed`);
+    assert.deepEqual(typed.follows, ['abcd1234'], `${shell}: typed`);
+    assert.match(typed.result.stdout, /rc=5$/mu, `${shell}: the exit code stays the program's`);
+    assert.equal(existsSync(path.join(typed.records, `follows-${typed.shell}`)), false, `${shell}: deleted once the program exits`);
+    assert.equal((statSync(typed.records).mode & 0o777), 0o700, `${shell}: the folder is the user's alone`);
+
+    const chained = inShell(t, { shell, next: `first-id ${later()}`, chain: { 'first-id': `second-id ${later()}` } });
+    assert.deepEqual(chained.calls.slice(1), [`${chained.shell} attach first-id`, `${chained.shell} attach second-id`], `${shell}: chained`);
+    assert.deepEqual(chained.follows, ['', 'first-id', 'second-id'], `${shell}: chained`);
+    assert.equal(existsSync(path.join(chained.records, `follows-${chained.shell}`)), false, `${shell}: chained`);
+
+    for (const script of ['claude attach "ab;cd"', 'claude attach \'harness · 2\'', 'claude agents', 'set -eu; claude attach']) {
+      const plain = inShell(t, { shell, script });
+      assert.equal(plain.calls.length, 1, `${shell}: ${script}: ${plain.result.stderr}`);
+      assert.deepEqual(plain.follows, [''], `${shell}: ${script}`);
+    }
+  }
 });
 
 test('a background session the terminal follows ends only its own session, and passes the terminal on to the next', (t) => {
@@ -341,14 +405,26 @@ test('a background session the terminal follows ends only its own session, and p
     ['a session a Human attends ends by its process alone', { unattended: () => false }],
     ['a host that cannot end its own session', { host: noEndOwn }],
     ['a session the host says a Human attends, as a resumed one', { env: { ...env, CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
+  ]) {
+    started.length = 0;
+    follows.length = 0;
+    assert.equal(step(overrides), false, name);
+    assert.deepEqual([started, follows], [[], []], name);
+  }
+  // With no terminal that follows it, the session still stops itself, and hands no shell a record.
+  for (const [name, overrides] of [
+    ['no shell follows it', { take: () => ({ ...request, shell: null }) }],
     ['the shell is gone', { run: psAll(['1 0 launchd', '5000 1 claude']) }],
     ['the shell runs no claude client', { run: psAll(['1 0 launchd', '4242 900 -zsh', '5000 4242 vim']) }],
     ['ps cannot list', { run: () => ({ status: 1, stdout: '' }) }],
   ]) {
     started.length = 0;
     follows.length = 0;
-    assert.equal(step(overrides), false, name);
-    assert.deepEqual([started, follows], [[], []], name);
+    rmSync(path.join(terminalFolder(env), '4242'), { force: true });
+    assert.equal(step(overrides), true, name);
+    assert.deepEqual(started, [{ host: 'claude-code', own: 'abcd1234', session: BG_SESSION, delay: END_DELAY }], `${name}: it stops itself`);
+    assert.deepEqual(follows, [], `${name}: no terminal follows the next session`);
+    assert.equal(existsSync(path.join(terminalFolder(env), '4242')), false, `${name}: no shell record`);
   }
   started.length = 0;
   follows.length = 0;
@@ -408,6 +484,31 @@ test('the Stop hook of a background session the terminal follows stops that sess
   assert.equal(result.status, 0, result.stderr);
   assert.match(readFileSync(path.join(terminalFolder(env), String(shell)), 'utf8'), /^efgh5678 \d+\n$/u);
   assert.deepEqual(readFollow(store, NEXT_SESSION), { shell, id: NEXT_SESSION });
+  const deadline = Date.now() + END_DELAY + 5000;
+  while (!existsSync(log) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(readFileSync(log, 'utf8'), 'stop abcd1234\n');
+});
+
+test('the Stop hook of a background session no terminal follows stops that session, and writes no shell record', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = folder(t, 'aidrian-stop-alone-');
+  spawnSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const project = findProject(dir);
+  const store = projectStore(project, loadConfig(project).config);
+  const bin = folder(t, 'aidrian-fake-bin-');
+  const log = path.join(bin, 'log');
+  const listing = JSON.stringify([{ kind: 'background', id: 'abcd1234', sessionId: BG_SESSION }]);
+  writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nif [ "$1" = agents ]; then echo '${listing}'; exit 0; fi\necho "$*" >> '${log}'\n`, { mode: 0o755 });
+  const env = { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ATTENDED: '0', PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  assert.ok(markUnattended(BG_SESSION, { root: dir, env }));
+  assert.ok(noteEnding(store, BG_SESSION, { own: BG_SESSION, shell: null, id: 'efgh5678', next: NEXT_SESSION }));
+  const records = () => (existsSync(terminalFolder(env)) ? readdirSync(terminalFolder(env)).sort() : []);
+  const before = records();
+  const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: 'Stop', session_id: BG_SESSION, cwd: dir, stop_hook_active: false }), env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(records(), before, 'no shell record');
+  assert.equal(readFollow(store, NEXT_SESSION), null, 'no terminal follows the next session');
   const deadline = Date.now() + END_DELAY + 5000;
   while (!existsSync(log) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(readFileSync(log, 'utf8'), 'stop abcd1234\n');

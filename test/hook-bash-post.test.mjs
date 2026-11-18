@@ -264,6 +264,18 @@ test('nothing is written for an interrupted call, a bad session id, a folder wit
   assert.deepEqual(files.filter((name) => !/^session-\d+$/u.test(name)), [], 'no folder for a session id that fails SESSION_ID');
 });
 
+test('a state folder inside another checkout of the repository, such as a linked worktree, gets no ledger', () => {
+  const dir = checkout('linked-state', { origin: 'git@github.com:acme/widgets.git' });
+  const git = (...args) => assert.equal(spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { cwd: dir, env: ENV }).status, 0, args.join(' '));
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  const tree = path.join(ROOT, 'linked-state-tree');
+  git('worktree', 'add', '-q', '-b', 'feat/other', tree);
+  // The project's own checkouts are its folder and the main checkout: the linked worktree is neither.
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: path.join(tree, '.state') } }));
+  assert.deepEqual(rows('gh pr view 3', { cwd: dir }), []);
+  assert.equal(existsSync(path.join(tree, '.state')), false, 'nothing is written in the other worktree');
+});
+
 test('the session folder is 0700 and prs.jsonl 0600, appended line by line', { skip: !POSIX }, () => {
   const session = nextSession();
   runHook(payload('gh pr view feat/a', { session }));
@@ -497,7 +509,8 @@ test('the output tail keeps a first line the cut did not split', () => {
 });
 
 test('a remote git reads as a local path names no repository, so its calls and pushes record nothing', () => {
-  for (const url of ['archive/widgets', 'file:///srv/acme/widgets']) {
+  // As remoteIdentity reads a remote: a `file:` URL with a host, and a drive path, are folders on disk too.
+  for (const url of ['archive/widgets', 'file:///srv/acme/widgets', 'file://github.com/acme/widgets', 'C:\\srv\\widgets']) {
     assert.deepEqual(unit('gh pr view 3', '/w', fakeGit({ origin: url }).read), [], url);
     assert.deepEqual(unit('git push', '/w', fakeGit({ origin: url }, 'feat', [], pushedCommon(['origin/feat'])).read), [], url);
   }

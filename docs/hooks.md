@@ -1216,7 +1216,7 @@ After a Bash command, `scripts/hook-bash-post.mjs` appends a row to the session'
 A subagent's call carries its parent's session id, so a dispatched slice lands in the same ledger, with its `agentId`.
 
 A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, and never a link, command text, or output.
-`forge` is the forge adapter's `id`, `host` and `path` the repository as `repoIdentity` reads it, and `cwd` the folder
+`forge` is the forge adapter's `id`, `host` and `path` the repository as `repoIdentity` reads it, or `remoteIdentity` for a remote's URL, and `cwd` the folder
 the call ran in. A row is written only for a host the adapter declares (`hosts`, github.com today), and only when the
 adapter's `changeRef` takes its fields: a path of exactly `owner/name`, a positive number, and a branch that passes
 git's ref-name rules within 255 bytes and holds no hidden character. `cwd` is absolute, within 1,024 bytes, with no
@@ -1231,7 +1231,8 @@ snapshot's `displayText` removes). One call writes at most 32 rows and has git r
 
 A bare `owner/name` in `-R` or `GH_REPO` names nothing while `GH_HOST` is set, since gh then reads it on that host.
 A remote whose URL git reads as a path on this machine, a `file:` URL or one with neither a scheme nor git's `host:path`
-form, such as `archive/widgets`, names no repository, so no call or push records it.
+form, such as `archive/widgets`, names no repository (`remoteIdentity`, as the snapshot reads origin), so no call or
+push records it.
 
 The call's folder holds under either reading of the payload's `cwd`, the folder the line started in or the one it
 ended in, which no host documents for a Bash call ([Claude Code](providers/claude-code.md)): it is the absolute folder
@@ -1261,9 +1262,12 @@ Code's `stdout`, and Codex's one string of output. A response the adapter cannot
 a payload folder with no project, and input the hook cannot read write nothing. The hook never refuses, always exits 0,
 and prints nothing on stdout or stderr.
 
-The folder and its file follow [the session folder's rules](project-folder.md): `lib/session-folder.mjs` makes the
-folder 0700, refuses a symlink, and, when it makes one, sweeps the session folders untouched for 30 days. Its
-`appendSessionFile` checks the folder again, then opens the ledger write-only, append, create, no-follow, and
+The folder and its file follow [the session folder's rules](project-folder.md#local-state): `lib/session-folder.mjs` makes the
+folder 0700, refuses a symlink, and, when it makes one, sweeps the session folders untouched for 30 days. As for the
+snapshot, a state folder inside any checkout of the repository, or one git could not list the checkouts for, or one
+that, with a folder above it, fails the rule `heldFolder` sets, gets no folder, so the call records nothing. Its
+`appendSessionFile` checks the folder again, as every write does (`boundFolder`), so a folder above it swapped for a
+symlink since gets nothing, then opens the ledger write-only, append, create, no-follow, and
 non-blocking, mode 0600, and writes only when the open file is a regular file with one link that this user owns and no
 other user may read or write. Before a write it reads the ledger's last 256 KB, no-follow, as the snapshot does, and leaves out a row whose folder
 is not a folder on disk, and a row whose fields, all but `at` and `agentId`, the newest row of its pull request or

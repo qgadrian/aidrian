@@ -76,7 +76,8 @@ It writes nothing at all when a symlink would take a write outside the project, 
 `aidrian check` validates the whole folder. Run it locally and in CI. It prints `ok`, or one line per problem and exits 1:
 
 - `.aidrian.json`, when present: valid JSON, no key but `dir`, and `dir` inside the project.
-- `config.json`: the version first, then every key and value.
+- `config.json`: the version first, then every key and value. With `github.autoMerge.allow` true and `review.visual`
+  unset, a screen file git tracks is a warning, not a failure: [Auto-merge](config.md#auto-merge).
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes,
   `models`, as [config.md](config.md#models) describes, `names`, as [config.md](config.md#names) describes,

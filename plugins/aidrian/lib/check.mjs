@@ -14,19 +14,26 @@ import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
 import { ROUTED_DOMAINS } from './quorum.mjs';
 import { insideCheckout } from './review/in-force.mjs';
+import { unseenScreenWarnings } from './screen-check.mjs';
 import { trackerWarnings } from './tracker-check.mjs';
 import { loadTerms } from './terms.mjs';
 import { bannedFileProblems } from './banned-terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
 
-// The warnings for `decisions.escalateDocs` entries no tracked path matches. Outside git, or when git fails, nothing
-// says what is tracked, so there are none. `-z` keeps a path git would otherwise quote as it is on disk.
+// The paths git tracks under the project root, or null outside git or when git fails, since nothing then says what is
+// tracked. `-z` keeps a path git would otherwise quote as it is on disk.
+function trackedFiles(project) {
+  const listed = runGit(['ls-files', '-z'], project.root, { maxBuffer: 64 * 1024 * 1024 });
+  return listed.status === 0 ? listed.stdout.split('\0').filter(Boolean) : null;
+}
+
+// The warnings for `decisions.escalateDocs` entries no tracked path matches; none when nothing says what is tracked.
 function untrackedDocs(project, config) {
   const entries = config.decisions.escalateDocs;
   if (!entries.length) return [];
-  const listed = runGit(['ls-files', '-z'], project.root, { maxBuffer: 64 * 1024 * 1024 });
-  return listed.status === 0 ? escalateDocWarnings(entries, listed.stdout.split('\0').filter(Boolean)) : [];
+  const tracked = trackedFiles(project);
+  return tracked ? escalateDocWarnings(entries, tracked) : [];
 }
 
 // The warnings for `quorum.product` settings that have no effect. "Set" reads the file itself, since a key set to its
@@ -45,6 +52,19 @@ function quorumProductWarnings(project, { quorum: { product }, decisions }) {
   for (const key of ['approval', 'maxAutoRuns']) {
     if (Object.hasOwn(written, key)) warnings.push(`quorum.product.${key} is set, but quorum.product.autoStart is off, so it has no effect`);
   }
+  return warnings;
+}
+
+// The warnings about the checkout and this machine's switches.
+function checkoutWarnings(project, config) {
+  const warnings = [];
+  // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. Outside
+  // a repository there is nothing to warn about; when git fails inside one, the check stays silent.
+  const inside = insideCheckout(project, config, () => ({}));
+  if (inside.problem && !inside.unread) warnings.push(inside.problem);
+  // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
+  if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
+  if (project.localUnattendedWaiver === 'on' && !config.github.unattendedWaiver.allow) warnings.push('unattended waiver is on locally but the team does not allow it');
   return warnings;
 }
 
@@ -71,17 +91,13 @@ export const commands = {
         const move = state && config.state.dir ? `in ${project.paths.config} set "state": { "dir": null } to move the state folder out of the repository, or while it stays ` : '';
         errors.push(`${line} is not git-ignored: ${move}add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
-      // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. Outside
-      // a repository there is nothing to warn about; when git fails inside one, the check stays silent.
-      const inside = insideCheckout(project, config, () => ({}));
-      if (inside.problem && !inside.unread) warnings.push(inside.problem);
-      // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
-      if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
-      if (project.localUnattendedWaiver === 'on' && !config.github.unattendedWaiver.allow) warnings.push('unattended waiver is on locally but the team does not allow it');
+      warnings.push(...checkoutWarnings(project, config));
       const tags = tagWarnings(buckets);
       // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
-      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker)];
+      // Only with no errors too: a `review.visual` with an error reads as unset, and its error already says what to fix.
+      const screens = errors.length ? [] : unseenScreenWarnings(project, config, () => trackedFiles(project));
+      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker), ...screens];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {

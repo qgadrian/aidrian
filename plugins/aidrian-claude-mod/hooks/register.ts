@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import { alertText } from '../lib/format.mjs'
+import { formatDuration, untilText } from '../lib/pane-data.mjs'
 import { runnerFor } from '../lib/snapshot-client.mjs'
 import { alertsOn, engineIo, recordCacheBucket, recordTurnEnd, recordUsage, registerPane } from './pane'
 
@@ -120,7 +121,8 @@ export const register: Register = (on, options) => {
 
       if (step > previousStep) {
         const label = WINDOW_LABELS[window.kind] ?? window.kind
-        const resets = window.resetsAt ? `, resets in ${formatDuration(Date.parse(window.resetsAt) - now)}` : ''
+        const untilReset = untilText(window.resetsAt, now)
+        const resets = untilReset ? `, resets in ${untilReset}` : ''
         await deliverAlert($, settings, { cue: 'limit', text: `${label} at ${Math.round(window.percentUsed)}%${resets}`, isDesktop: false })
       }
     }
@@ -174,20 +176,4 @@ const firstLine = (text: string) => {
   const line = text.trim().split('\n')[0] ?? ''
 
   return line.length > 120 ? `${line.slice(0, 119)}…` : line
-}
-
-const formatDuration = (ms: number) => {
-  const minutes = Math.max(0, Math.round(ms / 60000))
-
-  if (ms < 60000) {
-    return `${Math.max(0, Math.round(ms / 1000))}s`
-  }
-
-  if (minutes < 60) {
-    return `${minutes}m`
-  }
-
-  const rest = minutes % 60 > 0 ? `${minutes % 60}m` : ''
-
-  return `${Math.floor(minutes / 60)}h${rest}`
 }

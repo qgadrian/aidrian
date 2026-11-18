@@ -19,9 +19,9 @@ It needs the `aidrian` plugin installed and enabled for the folder, and draws on
   clean, and untriaged persona findings. Each part shows only when it holds something.
 - `/aidrian-mod`: the same data in a pane, with one row per pull request and a link to it, the ticket's link, and one
   row per subagent. `/aidrian-mod hide` closes it. When the snapshot cannot be read, the pane says why.
-- Notifications, in an interactive terminal session only: a long turn done, an approval or a question waiting, a
-  failed Bash command, a compaction, and the rate limits at 85% and 90%. Desktop notifications are skipped while the
-  terminal app is in front.
+- Notifications, in an interactive terminal session only: a long turn done, a turn stopped on an API error, an
+  approval or a question waiting, Claude Code's other notifications, a failed Bash command, a compaction, and the rate
+  limits at 85% and 90%. Desktop notifications are skipped while the terminal app is in front.
 
 ## Install
 
@@ -30,7 +30,8 @@ claude plugin install aidrian@aidrian-harness
 claude plugin install aidrian-mod@aidrian-harness
 ```
 
-Then remove `statusLine` from `~/.claude/settings.json`, or the band and the status line show the same data.
+A status line that runs the aidrian status line fallback shows the same data as the band: remove that `statusLine`
+from `~/.claude/settings.json`. Any other status line can stay.
 
 ## Settings
 
@@ -55,8 +56,10 @@ Each is a row of Claude Code's config menu:
   status read.
 - The focus check asks macOS for the app in front through System Events, which needs the terminal app's Automation
   permission for System Events. Without it the check finds no app, and every desktop notification is sent.
-- The mod runs the `aidrian` plugin installed for the folder, from Claude Code's plugin cache, and only while it is
-  enabled there.
+- The mod runs the `lib/cli.mjs` of the `aidrian` plugin installed for the folder, from Claude Code's plugin cache,
+  and only while it is enabled there. With the plugin enabled but no entry for the folder, or when the mod runs outside
+  a plugin cache, as with `--plugin-dir`, it runs instead the `lib/cli.mjs` beside an `aidrian` command on a checked
+  PATH folder: a regular file, not a link, below that plugin folder, and outside the session's folder.
 - Every text it draws or notifies passes one filter that removes control, format, and bidi characters. A link is drawn
   only for a pull request URL that matches its row, or the Linear page of the ticket looked up.
 - Its one MCP call is `get_issue` with the ticket key. Nothing it reads reaches the model.

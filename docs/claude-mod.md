@@ -16,12 +16,14 @@ gives the snapshot's line without it.
 ```
 
 - **The band.** The model and effort, context use, the prompt cache time left, the 5-hour and 7-day limits, the branch
-  or worktree, the branch's ticket with its title and state, and the running subagents. Its last row is
-  `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): the handoff verdict the Stop hook would give,
+  or linked worktree (`detached` with no branch), the branch's ticket with its title and state, and the running
+  subagents. A row below them is `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): the handoff verdict the Stop hook would give,
   the pull requests the session touched with their checks, and the harness signals to act on, P1 lessons,
-  provisional decisions, merged worktrees to clean, and untriaged persona findings. Each part shows only when it holds
-  something, in the words of the snapshot's `--line`, but for one: an armed chain above its limit draws `armed <n>`
-  with no fraction.
+  provisional decisions, merged worktrees to clean, and untriaged persona findings. At 70% context or more, a context
+  alert row follows it. Each part shows only when it holds something, in the words of the snapshot's `--line`, but
+  for three: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws
+  `armed <n>` where the line prints `<n>/unlimited`; and pull requests from mixed forges, or from a forge with no
+  entry in the mod's table, count as `changes` where the line says `PRs`.
 - **The pane.** `/aidrian-mod` shows the same data with one row per pull request and a link to it, the ticket's
   link, and one row per subagent; `/aidrian-mod hide` closes it. When there is no snapshot, the pane says why, in
   one of six notices: the `aidrian` plugin is not installed for the folder, is off for it, or failed the mod's safety

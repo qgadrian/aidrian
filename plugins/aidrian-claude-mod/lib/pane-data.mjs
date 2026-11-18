@@ -45,14 +45,17 @@ export function cacheTtlOf(tail) {
   return null;
 }
 
+// A linked worktree's git folder: `<repository>/.git/worktrees/<name>`, the name at the end.
+const LINKED_WORKTREE_DIR = /\/\.git\/worktrees\/([^/]+)$/u;
+
 // The checkout from git's answers: `branch --show-current`, `rev-parse --absolute-git-dir`, and `status --porcelain`.
-// A linked worktree is labelled by its folder name, and every label passes displayText.
+// A linked worktree is labelled by its folder name, a detached checkout (no branch) as `detached`, and every label
+// passes displayText.
 export function repoOf({ branch, gitDir, status }) {
-  const dir = String(gitDir).trim();
-  const isWorktree = dir.includes('/worktrees/');
-  const name = isWorktree ? (dir.split('/').pop() ?? '') : '';
-  const label = displayText(name || String(branch).trim());
-  return { label, isWorktree, isDirty: String(status).trim().length > 0 };
+  const worktree = LINKED_WORKTREE_DIR.exec(String(gitDir).trim());
+  const name = worktree?.[1] ?? String(branch).trim();
+  const label = displayText(name || 'detached');
+  return { label, isWorktree: worktree !== null, isDirty: String(status).trim().length > 0 };
 }
 
 const EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -90,9 +93,10 @@ export function effortOf({ seen = null, fromEnv, model, settings }) {
   return defaultEffort(version);
 }
 
-// The model as a person reads it: `claude-opus-5-5[1m]` and `Opus 5.5 (1M context)` both as `Opus 5.5`.
+// The model as a person reads it: `claude-opus-5-5[1m]` and `Opus 5.5 (1M context)` both as `Opus 5.5`; any other
+// name as it is, through displayText.
 export function cleanModel(model) {
-  const bare = String(model).replace(/\s*\(1M context\)/iu, '').replace(/\s*\[1m\]/iu, '');
+  const bare = displayText(String(model).replace(/\s*\(1M context\)/iu, '').replace(/\s*\[1m\]/iu, ''));
   const id = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/iu.exec(bare);
   if (id === null) return bare;
   const family = id[1].charAt(0).toUpperCase() + id[1].slice(1);
@@ -109,4 +113,10 @@ export function formatDuration(ms) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h${String(minutes % 60).padStart(2, '0')}m`;
   return `${Math.floor(hours / 24)}d${hours % 24}h`;
+}
+
+// The time from `now` to the date `at` names, as formatDuration writes it, or '' when `at` is not a date string.
+export function untilText(at, now) {
+  const ms = typeof at === 'string' ? Date.parse(at) - now : Number.NaN;
+  return Number.isFinite(ms) ? formatDuration(ms) : '';
 }

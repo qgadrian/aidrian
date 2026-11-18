@@ -16,6 +16,10 @@ npm run check    # what CI runs
 
 `make` lists the same tasks.
 
+A change under `plugins/aidrian-claude-mod/` also passes `claude plugin validate plugins/aidrian-claude-mod` and
+`claude plugin test plugins/aidrian-claude-mod` before a push. CI does not run them, so they are the local gate for
+the [Claude mod](claude-mod.md).
+
 Every test file imports `scripts/test-state.mjs` first, and `test/test-state.test.mjs` fails on one that does not.
 It gives the run its own state folder, temporary folder, and fake `gh`, so a file run alone, `node --test test/<name>.test.mjs`,
 writes no fixture lesson or state folder into this machine's own state folder.

@@ -375,8 +375,9 @@ describe('aidrian-mod cache', () => {
     expect((await drawing.find({ type: 'Text', text: /^cache $/ }))?.props.color).toBe('inactive')
   })
 
-  // A ten-minute lifetime, so the countdown crosses each line in few ticks of the band's one-second clock.
-  const TEN_MINUTES = { options: { cacheTtlSeconds: 600 } }
+  // A ten-minute lifetime, so the countdown crosses each line in few ticks of the band's one-second clock. Each
+  // advance still runs hundreds of ticks, which outlast the kit's 5000 ms default on a loaded machine: 20 s each.
+  const TEN_MINUTES = { timeoutMs: 20_000, options: { cacheTtlSeconds: 600 } }
 
   test('25% or less left: warning; 10% or less: error', TEN_MINUTES, async ($, on) => {
     const clock = await startIn($, on, world({}))

@@ -4,7 +4,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cacheTtlOf, cleanModel, effortOf, formatDuration, issueOf, modelVersion, repoOf } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
+import { cacheTtlOf, cleanModel, effortOf, formatDuration, issueOf, modelVersion, repoOf, untilText } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
 
 const text = (value) => [{ type: 'text', text: JSON.stringify(value) }];
 
@@ -34,6 +34,11 @@ test('the checkout is the branch, or a linked worktree`s folder name, with a dot
   assert.deepEqual(repoOf({ branch: 'main\n', gitDir: '/w/tiger/.git\n', status: '' }), { label: 'main', isWorktree: false, isDirty: false });
   assert.deepEqual(repoOf({ branch: 'feat/x', gitDir: '/w/tiger/.git/worktrees/feature\n', status: ' M a.js\n' }), { label: 'feature', isWorktree: true, isDirty: true });
   assert.deepEqual(repoOf({ branch: 'evil\u001b]52;x\u0007\u202e', gitDir: '/w/.git', status: '\n' }).label, 'evil]52;x');
+  const inWorktreesFolder = repoOf({ branch: 'main\n', gitDir: '/w/worktrees/tiger/.git\n', status: '' });
+  assert.deepEqual(inWorktreesFolder, { label: 'main', isWorktree: false, isDirty: false }, 'a main checkout under a worktrees folder');
+  const submodule = repoOf({ branch: 'main', gitDir: '/w/tiger/.git/worktrees/feature/modules/lib', status: '' });
+  assert.equal(submodule.isWorktree, false, 'only the end of the path names a linked worktree');
+  assert.equal(repoOf({ branch: '\n', gitDir: '/w/tiger/.git', status: '' }).label, 'detached', 'a detached checkout');
 });
 
 test('the effort is the one Claude Code picks, in its order', () => {
@@ -55,6 +60,7 @@ test('the model reads as a person names it', () => {
   assert.equal(cleanModel('Opus 5.5 (1M context)'), 'Opus 5.5');
   assert.equal(cleanModel('claude-haiku-4'), 'Haiku 4');
   assert.equal(cleanModel('custom-model'), 'custom-model');
+  assert.equal(cleanModel('evil\u001b[31m\u202emodel\u0007'), 'evil[31mmodel', 'no hidden character reaches the band or the pane');
 });
 
 test('a duration shows its two largest units', () => {
@@ -63,4 +69,10 @@ test('a duration shows its two largest units', () => {
   assert.equal(formatDuration(185_000), '3m05s');
   assert.equal(formatDuration(3 * 3_600_000), '3h00m');
   assert.equal(formatDuration(50 * 3_600_000), '2d2h');
+});
+
+test('the time until a reset is a duration, or empty for a date that does not parse', () => {
+  assert.equal(untilText(new Date(185_000).toISOString(), 0), '3m05s');
+  assert.equal(untilText(new Date(0).toISOString(), 5_000), '0s');
+  for (const at of ['not a date', '', undefined, null, 7]) assert.equal(untilText(at, 0), '', String(at));
 });

@@ -302,9 +302,15 @@ and `strategy` and the cleanup stay the team's. The older `"on"` and `"off"` sti
 With `default: "on"`, every machine with no local setting merges without having chosen to, so a team sets it knowingly.
 A local file with an error, or one git tracks, counts as `enabled: false`.
 `aidrian check` warns when the machine opts in and the team does not allow it.
-It also warns, while `allow` is true and [`review.visual`](review.md#visual-review) is unset, when git tracks a screen
-file, since a session could then merge a screen change no capture checked; setting `review.visual.targets` to the project's
-screens ends it ([Screens checked on every device](config-recipes.md#screens-checked-on-every-device)).
+It fails when git tracks `.aidrian.local.json`, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
+The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
+Read from a worktree, the main checkout's file gets every check it gets when read there, and its errors are reported the same:
+an error anywhere in it reads an unset switch `"off"`, so it never follows a team default of on, whatever the worktree's copy holds.
+A subagent may not write `autoMerge` into that file: [the config guard](hooks.md#agent-gates).
+
+`aidrian check` also warns, while `allow` is true and [`review.visual`](review.md#visual-review) is unset, when git
+tracks a screen file, since a session could then merge a screen change no capture checked; setting
+`review.visual.targets` to the project's screens ends it ([Screens checked on every device](config-recipes.md#screens-checked-on-every-device)).
 A screen file is a `.tsx`, `.jsx`, `.vue`, `.svelte`, or `.html` file that git tracks under the project folder, outside any
 `docs`, `examples`, `vendor`, `node_modules`, `test`, `tests`, `__tests__`, `e2e`, `fixtures`, or `__fixtures__` folder
 and any folder whose name starts with a dot, and not a `.test.`, `.spec.`, or `.stories.` file. The guess leaves out
@@ -312,11 +318,6 @@ screens in other files, such as `.ts` or server templates: there the check stays
 These are web screens, since `review.visual.platform` takes only `"web"` today: when the project's `package.json`
 depends on `react-native` and not on `react-dom`, its `.tsx` and `.jsx` files do not count, so a native-only app is not
 asked for targets no capture could reach. Only the project root's `package.json` is read.
-It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
-The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
-Read from a worktree, the main checkout's file gets every check it gets when read there, and its errors are reported the same:
-an error anywhere in it reads an unset switch `"off"`, so it never follows a team default of on, whatever the worktree's copy holds.
-A subagent may not write `autoMerge` into that file: [the config guard](hooks.md#agent-gates).
 
 A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
 since an older plugin rejects the key.

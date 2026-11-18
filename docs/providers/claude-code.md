@@ -290,6 +290,41 @@ Not verified: a background continuation from a real brief, end to end, with the 
 whether the session-continue skill runs from the first message as intended, and whether a second continuation in a
 row reads the floor the gate wrote.
 
+### Replacing the terminal
+
+The adapter's `replaceTerminal` (`lib/hosts/claude-code-terminal.mjs`) lets a session that handed off end itself, so
+the terminal that ran it opens the new session ([handoff.md](../handoff.md#replacing-the-terminal)). The shell function
+`aidrian shell-init zsh` prints wraps `claude`, opens the next session with `command claude attach <id>`, and gives
+`claude` the shell's pid as `AIDRIAN_SHELL_PID`. A session is attended when `CLAUDE_CODE_SESSION_ATTENDED` is `1`.
+Its host process is `CLAUDE_PID`, when it is attended and `ps -o pid=,ppid=,comm= -p <pid>` shows a process named
+`claude` whose parent is that shell; it reads no process's arguments. It ends that process with SIGTERM.
+
+Checked by hand on Claude Code 2.1.326 on 2026-11-17, in a pseudo-terminal, with throwaway sessions in a trusted
+folder and a trivial prompt:
+
+- SIGTERM, SIGHUP, and SIGINT each end an interactive session within about 2 seconds, idle and in the middle of a turn.
+  Each time the transcript holds the last answer, the terminal is restored, and the session prints
+  `Resume this session with: claude --resume <id>`. The session exits 143 on SIGTERM, 129 on SIGHUP, and 0 on SIGINT.
+  The adapter sends SIGTERM, the signal whose meaning is to end.
+- Each runs the SessionEnd hooks, reason `other`, within the same short time a normal exit gives them: a hook that
+  takes 3 seconds is cancelled, with `failed: Hook cancelled`, under all three signals.
+- The Bash tool's shell and every hook carry `CLAUDE_PID`, the session's `claude` process, the parent of the Bash tool's
+  shell and of a hook's shell. They carry `CLAUDE_CODE_SESSION_ATTENDED=1` in an interactive session and `0` in a
+  background one, and a variable the starting shell exported, such as `AIDRIAN_SHELL_PID`.
+- The interactive `claude` shows as `claude` in `ps -o comm=`, a child of the program that started it. A background
+  session's process shows as `claude bg-spare` under `claude bg-pty-host`, so it never passes the check.
+
+A background session the terminal follows ends itself with `replaceTerminal.endOwn` (`stopOwnBackground` in
+`lib/hosts/claude-code-background.mjs`). It reads `claude agents --json` and runs `claude stop <id>` only when exactly
+one background row has that `id`, or a `sessionId` that starts with it, and its `sessionId` is the session's own.
+It never signals a process: the supervisor owns the background session's process.
+
+Checked by hand on Claude Code 2.1.326, in a pseudo-terminal: `claude attach <id>` on a live background session exits 0
+about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the next session.
+
+Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
+function.
+
 ## Limits
 
 Claude Code enforces each agent's tool limits.

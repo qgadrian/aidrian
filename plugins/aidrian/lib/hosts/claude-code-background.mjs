@@ -307,6 +307,20 @@ function startProblem(result, list, before) {
   return { problem: '`claude --bg` printed no session id, and `claude agents` lists no session it started', uncertain: true };
 }
 
+// Stops the background session `session` this process runs in, listed under the id `id`, with `claude stop`: whether it
+// exited 0. It stops nothing unless the listing names exactly one background session whose `sessionId` is `session` and
+// whose `id` is `id`, or which starts with `id`: a session ends only itself, never another.
+export function stopOwnBackground({ id, session, env, run = runCommand, resolve = claudeOnPath }) {
+  const claude = resolve(env);
+  if (!claude || typeof id !== 'string' || !ID.test(id) || typeof session !== 'string' || !ID.test(session)) return false;
+  const own = (listed(run, claude, undefined) ?? []).filter((each) => each.kind === 'background' && each.sessionId === session
+    && (each.id === id || session.startsWith(id)));
+  if (own.length !== 1) return false;
+  const target = typeof own[0].id === 'string' && ID.test(own[0].id) ? own[0].id : session;
+  const result = run(claude, ['stop', target], { cwd: undefined, timeout: LIST_TIMEOUT });
+  return !result.error && result.status === 0;
+}
+
 // How the Human finds and stops a session a start may have made, when the gate cannot name it.
 export const findLine = () => '`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one';
 

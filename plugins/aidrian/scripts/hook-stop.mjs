@@ -18,6 +18,10 @@
 //   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff.
 // `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
 // sent back, so nothing can loop: each stop sends back at most once, for one of the three.
+// - The terminal hand-over (lib/terminal-replace.mjs endAfterTurn): on a stop no check sends back, sent back before or
+//   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it opens
+//   the background session that took the work (docs/handoff.md#replacing-the-terminal). It skips the session-length
+//   reminder: the work has moved.
 
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,21 +37,26 @@ import { handBack } from '../lib/stop-handback.mjs';
 import { readText } from '../lib/transcript.mjs';
 
 await runHook(async (input) => {
-  if (input.stop_hook_active !== false) return;
+  const settled = input.stop_hook_active === false;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
   const { names, session } = config;
   const host = detectHost({ input });
-  const text = typeof input.transcript_path === 'string' ? readText(input.transcript_path) : null;
-  const transcriptText = host.capabilities.transcripts === false ? null : text;
-  const announced = announcedWork(input, transcriptText, {
-    ai: names.ai ?? host.ai, human: names.human, questionTool: host.nativeToolName(QUESTION_TOOL),
-  });
-  if (announced) deny(announced);
-  const handedBack = handBack(input, transcriptText, { human: names.human });
-  if (handedBack) deny(handedBack);
+  // Only a stop no hook sent back reads the transcript: the checks and the reminder are its only readers.
+  const text = settled && typeof input.transcript_path === 'string' ? readText(input.transcript_path) : null;
+  if (settled) {
+    const transcriptText = host.capabilities.transcripts === false ? null : text;
+    const announced = announcedWork(input, transcriptText, {
+      ai: names.ai ?? host.ai, human: names.human, questionTool: host.nativeToolName(QUESTION_TOOL),
+    });
+    if (announced) deny(announced);
+    const handedBack = handBack(input, transcriptText, { human: names.human });
+    if (handedBack) deny(handedBack);
+  }
   if (typeof input.session_id !== 'string' || !/^[\w-]+$/.test(input.session_id)) return;
+  if (await endsTerminal(host, project, config, input.session_id)) return;
+  if (!settled) return;
   const { handoff } = session;
   if (handoff.mode === 'off' || !text) return;
   const marker = path.join(tmpdir(), `aidrian-session-length-${input.session_id}`);
@@ -58,3 +67,25 @@ await runHook(async (input) => {
   writeFileSync(marker, `${JSON.stringify(reminder.marker)}\n`);
   deny(reminder.reason);
 });
+
+// Whether this stop ends the session `id` so its terminal opens the background session it handed off to. The modules
+// load only on a host that can replace a terminal.
+async function endsTerminal(host, project, config, id) {
+  const replace = host.capabilities.handoffContinue?.replaceTerminal;
+  if (!replace) return false;
+  // An attended session the shell function did not start has nothing to end, and pays for no import: the gate notes a
+  // request only for one it started, as AIDRIAN_SHELL_PID (lib/terminal-replace.mjs SHELL_VAR) tells, or for a session
+  // no Human attends.
+  if (replace.attended(process.env) && !process.env.AIDRIAN_SHELL_PID) return false;
+  const { endAfterTurn } = await import('../lib/terminal-replace.mjs');
+  const { projectStore, unattendedHere } = await import('../lib/handoff-continue.mjs');
+  const { noteFollow, takeEnding } = await import('../lib/handoff-markers.mjs');
+  const store = projectStore(project, config);
+  return endAfterTurn({
+    host,
+    session: id,
+    take: () => takeEnding(store, id),
+    unattended: () => unattendedHere(id, { store, env: process.env, now: Date.now() }),
+    follow: ({ session, shell }) => noteFollow(store, session, { shell }),
+  });
+}

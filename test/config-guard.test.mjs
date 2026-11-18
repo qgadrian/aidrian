@@ -100,6 +100,8 @@ test('a subagent may still read those files and write anything else, and the mai
       `cp notes.md ${dir}`,
       'cd src && echo x > notes.md',
       'cd "$TMPDIR" && echo x > notes.md',
+      // A file named like a handoff store record outside the store: `follow-` and `ending-` are common words.
+      'cd "$OUT" && echo {} > follow-up.json',
       "bash -c 'echo x > notes.md'",
       'python3 -c "print(1)"',
       "node -e \"require('fs').writeFileSync('tsconfig.json', '{}')\"",
@@ -815,6 +817,13 @@ test('a subagent may not write in the handoff continuation store, with or withou
         'cd "$X" && cp /tmp/x.md continued-*',
         'cd "$X" && echo {} > .continue/started-s1.json',
         'cd "$X" && cp /tmp/x.md .continue/continued-x.md',
+        // A request to end a session, or a record that a terminal follows one, by the id shape the store writes, in a
+        // folder no path gives, and by a glob that may grow into one.
+        'cd "$STORE" && printf xxx > ending-0c5bd1a2-7f3e-4b8a-9d10-2e4f6a8b0c1d.json',
+        'cd "$STORE" && printf xxx > follow-ed95a7db.json',
+        'cd "$X" && cp /tmp/x.json FOLLOW-ED95A7DB.json',
+        'cd "$STORE" && tee ending-*',
+        'cd "$STORE" && cp /tmp/x.json follow-ed9*.json',
         // A glob in the first path part, right below the root.
         'rm -rf /*',
         `rm -rf /${state.split('/')[1].slice(0, 2)}*/${state.split('/').slice(2).join('/')}/handoffs/.continue`,
@@ -851,6 +860,11 @@ test('a subagent may not write in the handoff continuation store, with or withou
       // A chain floor's or task record's name is a common word: only the path rules cover them.
       ['Bash', { command: 'cd "$OUT" && echo {} > from-api.json' }],
       ['Bash', { command: 'cd "$OUT" && echo [] > tasks-list.json' }],
+      // So are names that only start like a request to end or a follow record: their id is no session's shape.
+      ['Bash', { command: 'cd "$OUT" && echo {} > follow-up.json' }],
+      ['Bash', { command: 'cd "$OUT" && echo {} > follow-ups.json' }],
+      ['Bash', { command: 'cd "$OUT" && echo {} > ending-notes.json' }],
+      ['Bash', { command: 'cd "$OUT" && rm -f follow-up*' }],
       ['Bash', { command: 'rm build/[a-z]*.o' }],
       ['Bash', { command: 'touch src/[z-a].js' }],
       ['Bash', { command: `rm -rf ${handoffs}/[0-9]*.md` }],

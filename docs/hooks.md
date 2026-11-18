@@ -33,7 +33,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
+| The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)); the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
 | A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
@@ -63,6 +63,13 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
   the session never asks the Human whether to hand off or keep going; it judges by itself and runs the
   `session-handoff` skill when a handoff is worth it. `"ask"` and `"off"` print nothing;
+- in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), one
+  `Handoff terminal:` line while this machine's `handoff.background` is `"on"` and config.json resolves
+  `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
+  not start, unless a startup file already holds the current block: after a background handoff its terminal stays on
+  the old session, and the line names
+  `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older copy of the plugin,
+  which answers `unknown command: shell-init`, with the host's update command (`claude plugin update aidrian@aidrian-harness`);
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
@@ -152,6 +159,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Git amend | `git commit --amend`; the deny names a follow-up commit, which a squash merge folds in, and `aidrian lint` fails a skill or agent that asks for an amend | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
+| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny names a copy with its own offline install from the lockfile | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
@@ -458,7 +466,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
+`shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
@@ -898,7 +906,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   cannot read, or one that names no listing, holds every session but the gate's.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
-  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
+  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds
+  for the shell records' folder, `handoff-terminals/` beside it, which names the session a shell opens in its terminal
+  next ([Replacing the terminal](handoff.md#replacing-the-terminal)).
 - With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
   a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
   `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,
@@ -930,7 +940,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   checks, so a call they refuse by name, such as a write of `.aidrian.local.json`, is refused before any link walk.
   It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
   and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
-  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
+  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. A request to end a session
+  or a record that a terminal follows one ([Replacing the terminal](handoff.md#replacing-the-terminal)) is matched only
+  with the id shape the store writes, `ending-` or `follow-` and 8 hex digits or a whole UUID, so a common name such as
+  `follow-up.json` stays allowed. That is an accepted limit
   of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule

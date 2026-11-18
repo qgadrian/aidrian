@@ -17,10 +17,10 @@ import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundPrompt, continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { noteFollow, noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
-import { readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const PROMPT_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-prompt.mjs');
@@ -111,7 +111,7 @@ test('the background route starts the new session in this session\'s folder, rec
   const result = gate(setting, { run, env });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.equal(result.out[0], 'continue: background');
-  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. It resumes from ${setting.file}; this session stops here.`);
+  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. It resumes from ${setting.file}. This session has ended its work; the new one is \`harness-handoff · 1\`, open it with \`claude attach abcd1234\`.`);
 
   const [started] = bgCalls(calls);
   assert.equal(started.command, path.join(setting.bin, 'claude'), 'claude by its absolute path');
@@ -846,4 +846,74 @@ test('a session a hop started and named is named again by its base name and the 
   assert.equal(named('release · 2026 · 1', 2), 'release · 2026 · 2');
   assert.equal(named('widget-work · 3', 2), 'widget-work · 3 · 2');
   assert.equal(named('v · 2 docs', 3), 'v · 2 docs · 3');
+});
+
+// The environment of a session the shell function started, in shell 4242, as `claude` process 4343, attended, and a
+// stand-in for `run` that answers `ps` with `line` for that process.
+const WRAPPED = { AIDRIAN_SHELL_PID: '4242', CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' };
+const withPs = (run, line = '4343 4242 claude') => (command, args, options) => (command === '/bin/ps'
+  ? { status: 0, stdout: args.at(-1) === '4343' ? `${line}\n` : '', stderr: '' }
+  : run(command, args, options));
+const SWITCHES = 'This session has ended its work; this terminal switches to the new one, `harness-handoff · 1`, once this turn ends.';
+const PLAIN = 'This session has ended its work; the new one is `harness-handoff · 1`, open it with `claude attach abcd1234`.';
+
+test('in auto mode, a session the shell function started asks to end once its turn ends, and the say line says the terminal switches', (t) => {
+  const setting = setup(t, { handoff: { mode: 'auto' } });
+  passCheck(setting);
+  const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env: { ...setting.env, ...WRAPPED } });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.ok(result.out[1].endsWith(SWITCHES), result.out[1]);
+  assert.deepEqual(takeEnding(setting.store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: NEW_SESSION });
+  assert.equal(takeEnding(setting.store, SESSION), null, 'the request acts once');
+});
+
+test('a session ends itself only in auto mode, from the shell function\'s own claude process, attended, and never unattended', (t) => {
+  const cases = [
+    ['continue: background with mode ask', { handoff: { mode: 'ask', continue: 'background' } }, WRAPPED, undefined],
+    ['no shell function', {}, { CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' }, undefined],
+    ['a Human does not attend it', {}, { ...WRAPPED, CLAUDE_CODE_SESSION_ATTENDED: '0' }, undefined],
+    ['another shell started it', {}, WRAPPED, '4343 4100 claude'],
+    ['a background session\'s process', {}, WRAPPED, '4343 4242 claude bg-spare'],
+    ['ps cannot read it', {}, WRAPPED, ''],
+    ['the shell pid is not a pid', {}, { ...WRAPPED, AIDRIAN_SHELL_PID: '42x' }, undefined],
+  ];
+  for (const [name, options, wrapped, line] of cases) {
+    const setting = setup(t, { handoff: { mode: 'auto' }, ...options });
+    passCheck(setting);
+    const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run, line), env: { ...setting.env, ...wrapped } });
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(PLAIN), `${name}: ${result.out[1]}`);
+    assert.equal(takeEnding(setting.store, SESSION), null, name);
+  }
+  const setting = setup(t, { handoff: { mode: 'auto' } });
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, ...WRAPPED, XDG_STATE_HOME: xdg };
+  assert.ok(markUnattended(SESSION, { root: setting.dir, env }));
+  const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env });
+  assert.ok(result.out[1].endsWith(PLAIN), `a session no Human attends: ${result.out[1]}`);
+  assert.equal(takeEnding(setting.store, SESSION), null, 'a session no Human attends never ends a process');
+});
+
+test('a background session the terminal follows asks to end its own session once its turn ends, in auto mode only', (t) => {
+  for (const [name, handoff, follows, ends, attended = {}] of [
+    ['followed, auto mode', { mode: 'auto' }, true, true],
+    ['no terminal follows it', { mode: 'auto' }, false, false],
+    ['ask mode', { mode: 'ask', continue: 'background' }, true, false],
+    ['a Human attends it, as a former background session resumed', { mode: 'auto' }, true, false, { CLAUDE_CODE_SESSION_ATTENDED: '1' }],
+  ]) {
+    const setting = setup(t, { handoff });
+    passCheck(setting);
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    t.after(() => rmSync(xdg, { recursive: true, force: true }));
+    const env = { ...setting.env, XDG_STATE_HOME: xdg, ...attended };
+    assert.ok(markUnattended(SESSION, { root: setting.dir, env }), name);
+    if (follows) assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
+    const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(ends ? SWITCHES : PLAIN), `${name}: ${result.out[1]}`);
+    const request = takeEnding(setting.store, SESSION);
+    assert.deepEqual(request, ends ? { own: SESSION, shell: 4242, id: 'abcd1234', next: NEW_SESSION } : null, name);
+  }
 });

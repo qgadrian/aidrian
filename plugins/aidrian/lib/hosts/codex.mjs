@@ -281,6 +281,8 @@ export default {
     return { shape: 'patch', text, files: patchFiles(text), targets: [...text.matchAll(PATCH_TARGET)].map((match) => match[1].trim()) };
   },
   projectFolders: {},
+  // No host file of a checkout is protected beyond what every host's are: its config is the user's, in CODEX_HOME.
+  protectedPaths: [],
   // The instruction files and folder it loads from the folders between the project root and the folder a session
   // starts in, and its own user folder, CODEX_HOME. A project run refuses a start under any other such file a review did
   // not see (lib/project-run-gate.mjs).

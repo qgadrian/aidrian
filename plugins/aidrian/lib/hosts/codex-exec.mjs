@@ -36,6 +36,9 @@ const STOP_WAIT = 3_000;
 // (unattended-mark.mjs PENDING_AGE; test/project-start-codex.test.mjs holds the two apart).
 export const START_CAP = SESSION_WAIT + FIRST_TOOL_WAIT + BEACON_GRACE + 2 * STOP_WAIT;
 const PS_TIMEOUT = 10_000;
+// The most output a process table listing may print: every process's whole command line, which on a busy machine is
+// past spawnSync's 1 MiB default, so a listing cut there would find no process.
+export const PS_BUFFER = 64 * 1024 * 1024;
 // The most of the run log read for an event.
 const LOG_CAP = 8 * 1024 * 1024;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
@@ -77,7 +80,7 @@ const psProgram = () => (ps ??= ['/bin/ps', '/usr/bin/ps'].find((file) => exists
 export function processState(pid, run = runCommand) {
   const program = psProgram();
   if (!program || !Number.isInteger(pid) || pid < 1) return null;
-  const result = run(program, ['-o', 'stat=', '-o', 'lstart=', '-p', String(pid)], { cwd: undefined, timeout: PS_TIMEOUT, env: PS_ENV() });
+  const result = run(program, ['-o', 'stat=', '-o', 'lstart=', '-p', String(pid)], { cwd: undefined, timeout: PS_TIMEOUT, env: PS_ENV(), maxBuffer: PS_BUFFER });
   if (result.error) return null;
   const text = String(result.stdout ?? '').trim();
   if (text === '') return result.status === 0 ? null : { gone: true };
@@ -142,7 +145,7 @@ export function stopProcess({ id, started, run = runCommand, wait = pauseSync })
 export function findProcesses({ cwd, run = runCommand }) {
   const program = psProgram();
   if (!program || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
-  const result = run(program, ['-A', '-ww', '-o', 'pid=', '-o', 'stat=', '-o', 'command='], { cwd: undefined, timeout: PS_TIMEOUT, env: PS_ENV() });
+  const result = run(program, ['-A', '-ww', '-o', 'pid=', '-o', 'stat=', '-o', 'command='], { cwd: undefined, timeout: PS_TIMEOUT, env: PS_ENV(), maxBuffer: PS_BUFFER });
   if (result.error || result.status !== 0) return null;
   let real = cwd;
   try {

@@ -32,6 +32,8 @@ const bash = (command, more = {}) => ({ tool_name: 'Bash', tool_input: { command
 // are the test's own, and HOME is the fixture's home folder.
 const runHook = (hook, input, env) => spawnSync(process.execPath, [hook], { input: JSON.stringify(input), cwd: input.cwd, env: { ...env, HOME: path.join(path.dirname(env.XDG_STATE_HOME), '..') }, encoding: 'utf8' });
 const attended = () => false;
+// The clone the fixture's first start makes for issue ENG-1, where its session works.
+const clone = (fx) => path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
 const unattended = () => true;
 
 test('a subagent runs only aidrian project next, whatever its session id', (t) => {
@@ -167,10 +169,10 @@ test('the copies of the run id, issue key, and command word patterns match their
   assert.ok(PROJECT_SUB.test('stop-action') && PROJECT_WORD.test('Project'));
 });
 
-test('an issue session whose worktree config moves state.dir still cannot write the run ledger the base branch names', (t) => {
+test('an issue session whose clone\'s config moves state.dir still cannot write the run ledger the base branch names', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  const worktree = path.join(fx.worktrees, 'launch-eng-1');
+  const worktree = clone(fx);
   const elsewhere = path.join(fx.root, 'elsewhere');
   const committed = JSON.parse(readFileSync(path.join(worktree, '.aidrian/config.json'), 'utf8'));
   writeFileSync(path.join(worktree, '.aidrian/config.json'), JSON.stringify({ ...committed, state: { dir: elsewhere } }));
@@ -223,7 +225,7 @@ test('the hook scripts hold the new guards: a subagent\'s project start, an unat
 
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   const child = STARTED[0].session;
-  const stop = (active) => runHook(STOP_HOOK, { session_id: child, stop_hook_active: active, last_assistant_message: 'Done.', cwd: path.join(fx.worktrees, 'launch-eng-1') }, fx.env);
+  const stop = (active) => runHook(STOP_HOOK, { session_id: child, stop_hook_active: active, last_assistant_message: 'Done.', cwd: clone(fx) }, fx.env);
   const held = stop(false);
   assert.equal(held.status, 2, held.stderr);
   assert.match(held.stderr, /This session works the issue ENG-1 of the project run launch/u);
@@ -231,9 +233,10 @@ test('the hook scripts hold the new guards: a subagent\'s project start, an unat
 });
 
 test('when the base branch\'s config cannot be read, a held session\'s write outside every checkout is refused; the main checkout\'s config folder stays guarded', (t) => {
+  // A linked worktree of the main checkout, as a session the background handoff route started may run in.
   const fx = runFixture(t);
-  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   const worktree = path.join(fx.worktrees, 'launch-eng-1');
+  fx.git('worktree', 'add', '-q', '-b', 'feat/eng-1-export', worktree);
   const committed = JSON.parse(readFileSync(path.join(worktree, '.aidrian/config.json'), 'utf8'));
   writeFileSync(path.join(worktree, '.aidrian/config.json'), JSON.stringify({ ...committed, state: { dir: path.join(fx.root, 'elsewhere') } }));
   // Every ref the base is read through is gone, as a session that deleted them would leave it.
@@ -287,11 +290,12 @@ test('the agent gate hook reads the base branch\'s config at most once a call, a
   assert.throws(() => withinDeadline(performance.now() - 1, () => baseReader(fx.project)()), PastDeadline);
 });
 
+// A session the background handoff route starts runs in the handing-off session's folder, which may be a linked worktree.
 test('a subagent and an unattended session may not write the main checkout\'s host paths a worktree session reads, in either layout', (t) => {
   for (const inRepo of [false, true]) {
     const fx = runFixture(t, { inRepo });
-    assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
     const worktree = path.join(fx.worktrees, 'launch-eng-1');
+    fx.git('worktree', 'add', '-q', '-b', 'feat/eng-1-export', worktree);
     const project = findProject(worktree);
     const ask = (input, who, runSession) => mainCheckoutWriteDenial({ session_id: STARTED[0].session, cwd: worktree, ...input }, project, fx.config, { unattended: who, runSession });
     for (const file of ['.claude/settings.local.json', '.claude/skills/merge-it/SKILL.md', '.claude/agents/merger.md', '.claude/commands/ship.md']) {

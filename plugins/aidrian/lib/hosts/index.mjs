@@ -154,6 +154,14 @@ export function mainCheckoutPaths(hosts = HOSTS) {
 export const configCommands = (hosts = HOSTS) => hosts.map((host) => host.configCommands)
   .filter((each) => Array.isArray(each?.programs) && Array.isArray(each.subcommands));
 
+// The host files of a checkout no session no Human attends writes, from its root, as every host declares them
+// (`protectedPaths`): their union, so a session of one host cannot plant what another loads.
+export const protectedPaths = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.protectedPaths ?? []))];
+
+// Whether the path whose parts from a confined attempt's clone root are `segments` is a host file some host loads from
+// any depth (`nestedProtected`), which no session no Human attends writes there.
+export const nestedProtected = (segments, hosts = HOSTS) => hosts.some((host) => typeof host.nestedProtected === 'function' && host.nestedProtected(segments) === true);
+
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];
 

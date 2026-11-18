@@ -64,13 +64,15 @@ export function expand(text, env, command) {
 }
 
 // What the Bash call `command`, run in `cwd`, writes that writeTargets leaves out, read once:
-// { dynamic, links, programs, manifests, text }.
+// { dynamic, links, programs, manifests, removed, text }.
 //   - dynamic: each target built from a variable or a command, { text, folder }, `text` as expand gives it.
 //   - links: each path a link the command makes points at, { from, to, folder }.
 //   - programs: each write a program makes to its own config, { file, folder, text } or { what, text }.
-//   - manifests: each target that may be a review manifest's name, { text, folder, how, sources }.
+//   - manifests: each target that may be a review manifest's name, { text, folder, how, sources }, with `mode` true for
+//     a `mkdir` that sets the folder's mode.
+//   - removed: each folder `rmdir` removes, { text, folder }, which no other reader names.
 export function shellWrites(command, cwd, env) {
-  const found = { dynamic: [], links: [], programs: [], manifests: [], text: command };
+  const found = { dynamic: [], links: [], programs: [], manifests: [], removed: [], text: command };
   for (const { segment, invocation, folder } of walkCommands(command, cwd)) {
     checkDeadline();
     const { program, args } = invocation;
@@ -81,9 +83,16 @@ export function shellWrites(command, cwd, env) {
       else found.manifests.push({ text: next.text, folder, how: 'redirect' });
     });
     if (WRITERS.has(program)) {
+      const mode = program === 'mkdir' && setsMode(args);
       for (const token of written(program, args)) {
         if (token.dynamic && /[$`]/u.test(token.text)) found.dynamic.push({ text: expand(token.text, env, command), folder });
-        else found.manifests.push({ text: token.text, folder, how: program, sources: copySources(program, args) });
+        else found.manifests.push({ text: token.text, folder, how: program, sources: copySources(program, args), ...(mode ? { mode } : {}) });
+      }
+    }
+    if (program === 'rmdir') {
+      for (const token of operandTokens(args)) {
+        if (token.dynamic && /[$`]/u.test(token.text)) found.dynamic.push({ text: expand(token.text, env, command), folder });
+        else found.removed.push({ text: expand(token.text, env, token.dynamic ? command : ''), folder });
       }
     }
     found.links.push(...linksOf(program, args, folder, env, command));
@@ -92,6 +101,18 @@ export function shellWrites(command, cwd, env) {
     }
   }
   return found;
+}
+
+// Whether a `mkdir` call's arguments set the mode of what it makes: -m, or --mode, alone or in a cluster such as -pm.
+const setsMode = (args) => plainWords(args).some((text) => (/^-[A-Za-z]*m/u.test(text) && !text.startsWith('--')) || /^--mode(?:=|$)/u.test(text))
+  || args.some((token) => token.dynamic && /^-/u.test(token.text));
+
+// The operands of a call whose options take no value, as rmdir's: every word after `--`, and each one before it that is
+// no option.
+function operandTokens(args) {
+  const at = args.findIndex((token) => !token.dynamic && token.text === '--');
+  const before = (at < 0 ? args : args.slice(0, at)).filter((token) => token.dynamic || !token.text.startsWith('-'));
+  return at < 0 ? before : [...before, ...args.slice(at + 1)];
 }
 
 // The operands `program`, mv or cp, moves or copies: all but its destination.

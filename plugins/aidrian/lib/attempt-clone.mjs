@@ -16,7 +16,9 @@
 // (anchorReaders, which lib/project.mjs calls on load), so this file imports node built-ins only, as lib/git.mjs, which
 // loads it, does; with none given, no clone links.
 // It also refuses a call in a clone whose `.git` pointer names another git folder than the attempt's own, or whose git
-// folder holds a `commondir` or `config.worktree` file, through which git would read another config.
+// folder holds a `commondir` or a `config.worktree` other than the gate's placeholder (GIT_PLACEHOLDERS), through which
+// git would read another config; lib/git.mjs runGit asks it before every git call of the plugin in a clone
+// (cloneGitProblem), and so does every other git call of the plugin there (lib/config-committed.mjs).
 
 import { spawnSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
@@ -197,23 +199,47 @@ function pointerProblem(at) {
   return target !== null && target === real(at.git) ? null : `the attempt clone's ${file} points at another git folder than its own, ${at.git}, so no call runs there until it is restored`;
 }
 
-// The files of a git folder through which git reads another folder's config, or a worktree's own: `commondir` names a
-// shared git folder, and `config.worktree` adds keys on top of the attempt's config.
-const EXTRAS = Object.freeze(['commondir', 'config.worktree']);
+// The files of a git folder through which git reads another folder's config, or a worktree's own, each with the one
+// text a clone's may hold, the gate's placeholder: `commondir` names the shared git folder, and `config.worktree` adds
+// keys on top of the attempt's config once extensions.worktreeConfig is set. The gate puts both in each clone's git
+// folder before its session starts (lib/project-start.mjs placeHolders), so a sandbox that denies writes only to a path
+// there at launch, as on Linux, holds each by its path: an empty `config.worktree` adds nothing, and a `commondir` of
+// `.` and a newline names the git folder itself as the common one, which git reads as no other folder
+// (test/unattended-write-allowlist.test.mjs runs git status, commit, fetch, and push in such a clone). An empty
+// `commondir`, the host's own placeholder for a denied absent file on Linux, makes git die.
+export const GIT_PLACEHOLDERS = Object.freeze({ commondir: '.\n', 'config.worktree': '' });
 
-// Why the attempt `at`'s git folder may send git elsewhere, or null: it holds one of EXTRAS, of any kind, or one cannot
-// be checked.
+// Why the attempt `at`'s git folder may send git elsewhere, or null: it holds a `commondir` or a `config.worktree` that
+// is not the gate's placeholder (GIT_PLACEHOLDERS), a regular file with one link and exactly that text, read without
+// following a link; or one cannot be checked. A missing one adds nothing.
 function gitExtraProblem(at) {
-  for (const name of EXTRAS) {
+  for (const [name, text] of Object.entries(GIT_PLACEHOLDERS)) {
     const file = path.join(at.git, name);
-    try {
-      lstatSync(file);
-      return `the attempt clone's git folder holds ${file}, through which git reads another config, so no call runs there until it is removed`;
-    } catch (error) {
-      if (error.code !== 'ENOENT') return `the attempt clone's ${file} cannot be checked`;
-    }
+    const held = placeholderHeld(file, text);
+    if (held === true || held === 'missing') continue;
+    if (held === 'unreadable') return `the attempt clone's ${file} cannot be checked`;
+    return `the attempt clone's git folder holds ${file}, through which git reads another config, so no call runs there until it is removed`;
   }
   return null;
+}
+
+// Whether the file `file` is the placeholder whose text is `text`: true; 'missing'; 'unreadable' when it cannot be
+// checked; or false for a link, a folder, a file with a second link, or any other text.
+function placeholderHeld(file, text) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size !== Buffer.byteLength(text)) return false;
+    const buffer = Buffer.alloc(stat.size);
+    return buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8') === text;
+  } catch (error) {
+    if (error.code === 'ENOENT') return 'missing';
+    // A link opened with O_NOFOLLOW fails with ELOOP, or EMLINK on some systems; a folder may fail with EISDIR.
+    return ['ELOOP', 'EMLINK', 'EISDIR', 'ENOTDIR'].includes(error.code) ? false : 'unreadable';
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 // Why a call in the folder `cwd` may not run because the attempt clone it lies in sets, in its own git config, a key
@@ -241,4 +267,19 @@ export function cloneConfigProblem(cwd) {
     if (refused) return `the attempt clone's own git config sets ${key}, which makes git run a program or send elsewhere, so no git runs there until it is removed`;
   }
   return null;
+}
+
+// Why the plugin may not run git with `cwd` in an attempt clone's work or git folder, or null: cloneConfigProblem for
+// that clone. A folder elsewhere, the attempt's own folder, where the gate makes the clone, and its drop folder are no
+// clone's, and answer null. lib/git.mjs runGit asks it first, so every hook and command runs git in a clone only while
+// its git folder holds no `commondir` and its own config no key that runs a program.
+export function cloneGitProblem(cwd) {
+  if (typeof cwd !== 'string' || cwd === '') return null;
+  const resolved = real(cwd) ?? path.resolve(cwd);
+  if (!resolved.includes('/runs/')) return null;
+  const at = attemptOf(resolved);
+  if (!at) return null;
+  const inside = (folder) => resolved === folder || resolved.startsWith(`${folder}/`);
+  if (!inside(at.work) && !inside(at.git)) return null;
+  return cloneConfigProblem(at.work);
 }

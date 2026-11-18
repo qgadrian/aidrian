@@ -30,8 +30,10 @@
 // A file that sets the configuration but is there and cannot be read leaves the gates unknown, so a subagent may then
 // only read (agent-gates.mjs unreadableConfigDenial); the main session keeps every tool, to fix it. So does a snapshot
 // that is there and cannot be read, and an `agents` entry whose allow or deny is no list.
-// In a project run's attempt clone, a key of the clone's own git config that makes git run a program refuses every call,
-// first, before any git call of this hook runs there (lib/attempt-clone.mjs cloneConfigProblem).
+// In a project run's attempt clone, a key of the clone's own git config that makes git run a program, a `.git` that does
+// not point at the attempt's own git folder, or a `commondir` or `config.worktree` there other than the start gate's
+// placeholder refuses every call, first, before any git call of this hook runs there (lib/attempt-clone.mjs
+// cloneConfigProblem).
 // Anything else this hook cannot read lets the call run, except a subagent's call in a session that started with gates:
 // an error there keeps the subagent to reading, as an unreadable snapshot does.
 
@@ -72,7 +74,8 @@ async function gate(input) {
   // Every attempt clone this call reads is linked only for the session the payload names (lib/attempt-clone.mjs).
   anchorClones({ session: input.session_id });
   // In a project run's attempt clone, before any git call there: a key of the clone's own git config that makes git run
-  // a program refuses every call, so neither the session's git nor a hook's runs it (lib/attempt-clone.mjs).
+  // a program, or a git folder file that is not the gate's placeholder, refuses every call, so neither the session's git
+  // nor a hook's reads it (lib/attempt-clone.mjs).
   const planted = cloneConfigProblem(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (planted) await block(input, 'config-guard', projectRuleReason(input, planted, DEFAULTS.names.human, 'that the attempt clone\'s git config must be checked'), { match: 'attempt clone git config' });
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;

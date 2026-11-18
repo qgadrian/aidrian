@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
+import { accessProblem, cloneProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote } from './claude-code-sandbox.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -147,6 +148,12 @@ export default {
     return { shape: 'notebook', file: given.notebook_path, targets };
   },
   projectFolders: { skills: '.claude/skills', agents: '.claude/agents' },
+  // The host files of a checkout a session no Human attends never writes, from its root: the settings, skills, agents,
+  // commands, hooks, scheduled work, and MCP servers a later session there would load (lib/unattended-write.mjs).
+  protectedPaths: PROTECTED_PATHS,
+  // Whether a path, by its parts from a confined clone's root, is a host file it loads from any depth: a `.claude`
+  // folder or its skills, agents, commands, hooks, workflows, or settings, or any SKILL.md (lib/unattended-write.mjs).
+  nestedProtected,
   // The instruction files and folder it loads from the folder a session starts in and from each folder above it
   // (code.claude.com/docs/en/memory), and its own user folder, which it reads for every session wherever it starts. A
   // project run refuses a start under any other such file a review did not see (lib/project-run-gate.mjs).
@@ -201,17 +208,31 @@ export default {
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),
       hookHostPid: (pid = process.ppid) => (Number.isInteger(pid) && pid > 1 ? pid : null),
     },
-    // How `aidrian project start` starts the session of one issue (lib/project-run-gate.mjs): `claude --bg` in the issue's
-    // worktree, under the name `<run> · <issue> · <attempt>`, with no agent and the driver session's permission mode and
-    // effort, through the launch the background route uses; `stop` is that route's. `ended` counts a session the host
-    // lists as stopped or failed as ended too, where the handoff route's counts only done (sessionFinished). `find` lists the
-    // background sessions in a folder under an exact name, for a start whose outcome was unknown.
-    // `verified`: the launch, listing, and stop are the background route's, checked live on 2.1.326; the project prompt
-    // and the run's own flow are checked on fixtures only.
+    // How `aidrian project start` starts the session of one issue (lib/project-run-gate.mjs): Claude Code is `confined`,
+    // as Codex is. The session works in a fresh clone made for its attempt, never a linked worktree, whose shared .git the
+    // host's sandbox would let it write, and starts with `claude --bg --setting-sources user --settings <sandbox>
+    // --strict-mcp-config --mcp-config <servers>` (hosts/claude-code-sandbox.mjs, claude-code-background.mjs), under the
+    // name `<run> · <issue> · <attempt>`, with no agent and the driver session's permission mode and effort. A start holds
+    // the session only once the agent gate hook's beacon shows the plugin's hooks run for it. `access` halts on user
+    // settings that would weaken the sandbox or run a command outside it, this plugin not enabled for the user, any other
+    // plugin, a user skill, agent, or command with frontmatter hooks or MCP servers, an SSH origin, git's `store` helper,
+    // and a Linux without bubblewrap or socat; `cloneProblem` on such a skill, agent, or command of the clone at any
+    // depth, or a link out of one's folder; `placeholders` are the protected host files made empty before launch. `ended` counts a
+    // session the host lists as stopped or failed as ended too (sessionFinished); `find` lists the background sessions in a
+    // folder under an exact name, for a start whose outcome was unknown. `verified`: the launch, listing, and stop are the
+    // background route's, checked live on 2.1.326; the sandbox settings, their key names, and the beacon under
+    // --setting-sources user come from the host's docs and fixtures, with no live run, so a run starts it only where the
+    // default branch sets projectRun.unverifiedHosts (docs/providers/claude-code.md#project-start lists the live checks).
     projectStart: {
-      verified: 'fixtures',
-      start: ({ session, cwd, name, prompt, env, hold, run, wait }) => startProject({
-        session, cwd, name, prompt, env, hold, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      verified: 'unverified',
+      evidence: 'fixtures and the host docs; no live run',
+      confined: true,
+      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
+      cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
+      placeholders: PLACEHOLDERS,
+      sessionNote,
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, git, grants, domains, main, mainGit, tokens, mcp, home, platform, run, wait }) => startProject({
+        session, cwd, name, prompt, env, hold, identify, beacon, sandbox: { git, grants, domains, main, mainGit, tokens }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

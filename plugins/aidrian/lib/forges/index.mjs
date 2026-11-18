@@ -5,7 +5,7 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { changeNotFound, CONFIG_COMMANDS, createGithubForge, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE } from './github.mjs';
+import { changeNotFound, CONFIG_COMMANDS, createGithubForge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE, TOKEN_VARS } from './github.mjs';
 import { repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
@@ -21,6 +21,13 @@ export { changeNotFound };
 // One adapter today; a second adds its list here.
 const ADAPTER_CONFIG_COMMANDS = Object.freeze([CONFIG_COMMANDS]);
 export const forgeConfigCommands = () => ADAPTER_CONFIG_COMMANDS.flat();
+
+// The network hosts a session must reach to push to, and read from, the forge serving `repository`, { host, ... } as a
+// project run pins it: the allowlist of a confined session's sandbox. Today every repository is served by GitHub.
+export const forgeDomains = (repository) => domains(repository?.host);
+
+// The environment variables the forge's CLI reads its token from: the one credential a confined session's sandbox keeps.
+export const forgeTokenVars = () => [...TOKEN_VARS];
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };

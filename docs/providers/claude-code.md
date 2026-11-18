@@ -289,6 +289,196 @@ Not verified: a background continuation from a real brief, end to end, with the 
 whether the session-continue skill runs from the first message as intended, and whether a second continuation in a
 row reads the floor the gate wrote.
 
+## Project start
+
+`aidrian project start` starts an issue's session on Claude Code confined, as on [Codex](codex.md#project-start), but
+no live Claude Code has run it this way: the host declares it `verified: 'unverified'`, and a run starts it only where
+the default branch, on the forge and by its local ref, sets [`projectRun.unverifiedHosts`](../config.md#project-run).
+Every start then prints an `unverified:` line. The sandbox's key names come from the host's settings reference and
+sandboxing page, read on 2026-11-18; a value the host does not validate in a session no Human attends is silently
+ignored, so the live checks below must show each one holds.
+
+- Each attempt works in a fresh clone, never a linked worktree: in a linked worktree, the host's sandbox lets a
+  session write the main repository's whole shared `.git` but its `hooks/` and `config`.
+  `<state>/runs/<run>/attempts/<issue>.<attempt>/` holds `work/`, the clone, `git/`, its own git folder, which borrows
+  the main checkout's objects read-only, and `drop/`, where the session hands its result over, as on Codex. A first
+  attempt cuts the issue's branch from the base tip, and is refused when the forge has that branch already. A clone
+  that could not be made, or is refused so, leaves no attempt folder.
+- The session starts with `claude --bg --name '<run> · <issue> · <attempt>' --permission-mode <the driver's>
+  --setting-sources user --settings '<sandbox JSON>' --strict-mcp-config --mcp-config '<servers JSON>' <prompt>`, in the
+  clone, with no agent. The settings are inline: no settings file is written.
+- Before the launch, the start makes placeholders for the protected host files that can be there harmlessly, since on
+  Linux a sandbox write denial holds only on a path there at launch: in the clone's git folder, an empty
+  `config.worktree`, which git reads only once `extensions.worktreeConfig` is set in the config the sandbox denies, and
+  a `commondir` of `.` and a newline, which git reads as "the common folder is this git folder", so status, commit,
+  fetch, and push work as before (a test runs each with real git; an empty `commondir`, the host's own placeholder for
+  a denied absent file on Linux, makes git die);
+  `.claude/settings.json`, `.claude/settings.local.json`, and `.mcp.json` as `{}`, which `--setting-sources user` and
+  `--strict-mcp-config` never load, each excluded through the git folder's `info/exclude`; and empty `.claude/skills`,
+  `agents`, `commands`, `hooks`, and `workflows` folders. A file the base branch tracks stays as it is.
+  `.claude/scheduled_tasks.json` is left out, as its shape is the host's. No placeholder is written through a link:
+  each part of its path below the clone is checked, and one that is a link, as a `.claude` that leads elsewhere,
+  refuses the start and leaves the link's target untouched. Any other `commondir` or `config.worktree`, a second
+  link to either, or a link in their place, would lead git to another config: every git call of the plugin in such a
+  clone runs no git, and the agent gate hook refuses every call there ([hooks](../hooks.md#agent-gates)).
+- The start holds the session only once the plugin's agent gate hook files its beacon on the session's first tool
+  call, within 180 seconds, as on Codex: it shows the plugin's hooks still load under `--setting-sources user`. The
+  session's floor and mark are filed first, as soon as the host lists its id. A session whose beacon never comes is
+  stopped, gives its attempt back, and halts the run until an attended `aidrian project resume`.
+- An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
+  `aidrian handoff route` `route: none`, before any store or mark write. It pushes its work and records its result.
+
+The settings the session starts with (`sandboxSettings` in `lib/hosts/claude-code-sandbox.mjs`, which the tests pin
+whole). A scalar passed with `--settings` wins over the user's settings; a list merges with theirs, which the start checks.
+
+| Key | Value |
+| --- | --- |
+| `sandbox.enabled`, `sandbox.failIfUnavailable` | `true`: no sandbox, no run |
+| `sandbox.allowUnsandboxedCommands` | `false`: no command runs outside it, and the sandbox's own escape is off |
+| `sandbox.autoAllowBashIfSandboxed` | `true`: a sandboxed command needs no prompt, since no Human answers one |
+| `sandbox.enableWeakerNestedSandbox` | `false` |
+| `sandbox.enableWeakerNetworkIsolation` | `true` on macOS only, where git and gh need it |
+| `sandbox.allowAppleEvents`, `sandbox.allowNestedUserNamespaces` | `false`: no sandboxed command launches another application, or a user namespace of its own |
+| `sandbox.filesystem.allowWrite` | the clone's git folder, the drop folder, the state work folders `plans`, `reviews`, `tmp`, and `dispatch`, the real `/tmp`, and the host's temporary folder; never the dispatch log |
+| `sandbox.filesystem.denyWrite` | the clone's `.git` pointer, its git folder's `config`, `hooks`, `commondir`, and `config.worktree`, on every platform, each a placeholder there at launch; each protected host file of the clone: `.claude/settings.json`, `.claude/settings.local.json`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`, `.claude/scheduled_tasks.json`, and `.mcp.json`; and, as `**` globs, any `.claude` folder itself at any depth, so none is made or made a link, those of each, its `settings*.json`, and any `SKILL.md` |
+| `sandbox.filesystem.denyRead` | the user's credential stores, below, and the main checkout, whose git-ignored files, such as env files, a session never reads |
+| `sandbox.filesystem.allowRead` | the main checkout's git folder, when it lies in the main checkout: the clone borrows its objects |
+| `sandbox.network` | `strictAllowlist: true`, `allowedDomains` the forge's hosts only (`github.com` and its API host for GitHub), `allowAllUnixSockets: false`, `allowLocalBinding: false`; no `allowUnixSockets` |
+| `sandbox.credentials.envVars` | `{ name, mode: "deny" }`, so the variable is unset before each sandboxed command, for each variable of the driver's environment whose name says it holds a credential (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AUTH`, and the like) and the well-known ones, such as `AWS_SECRET_ACCESS_KEY`, `NPM_TOKEN`, and `SSH_AUTH_SOCK`, but the forge CLI's own token variables (`GH_TOKEN`, `GITHUB_TOKEN`, and their Enterprise forms) |
+| `permissions.deny` | `Read(//<path>)` and `Read(//<path>/**)` for each credential store and the main checkout, since the file tools run outside the sandbox |
+| `disableClaudeAiConnectors` | `true`: the claude.ai connectors, which `--strict-mcp-config` leaves on, neither load nor connect; a `true` from any source wins |
+| `worktree.bgIsolation` | `"none"`, so `claude --bg` stays in the clone instead of moving into `.claude/worktrees` |
+
+`allowLocalBinding: false` has a cost on macOS, where it is the switch for localhost: a test that listens on a local
+port, or connects to one, fails in a confined session. On Linux it has no effect, and the network namespace keeps a
+sandboxed command off the host's localhost.
+
+No `sandbox.excludedCommands` is passed. Three conditions hold on top of the sandbox:
+
+- **Only this plugin's hooks and command keys load.** `--setting-sources user` drops the project's and the local
+  settings, with their hooks, `apiKeyHelper`, `statusLine`, and every other key that runs a command. So the start halts,
+  recording nothing, unless the user's settings load this plugin: `enabledPlugins` holds `aidrian@<marketplace>: true`,
+  or the host records it installed at user scope and no user setting turns it off. A plugin only a project's settings
+  enable, or a project-scope install, never loads under `--setting-sources user`, and the start would wait 180 seconds
+  for a beacon that never comes; install it at user scope, `claude plugin install aidrian@<marketplace> --scope user`,
+  or add the `enabledPlugins` entry to `~/.claude/settings.json`. The user's own settings still load, so the start also
+  halts when they set `hooks`, `apiKeyHelper`, `statusLine`, `subagentStatusLine`, `awsAuthRefresh`,
+  `awsCredentialExport`, `gcpAuthRefresh`, `otelHeadersHelper`, `fileSuggestion`, `policyHelper`, `processWrapper`, or
+  `sshHostCommands`; when any plugin other than this one counts as enabled, since a plugin's hooks, MCP and LSP
+  servers, and monitors all run outside the sandbox: every plugin the host records installed, or `enabledPlugins`
+  names, counts unless `enabledPlugins` sets it `false` and no enabled plugin depends on it, and one enabled with no
+  install record counts too; when a skill, agent, or command of the user's config folder (`~/.claude/skills`,
+  `agents`, `commands`) declares `hooks` or `mcpServers` in its frontmatter, bare or quoted; and when the clone holds
+  such a skill, agent, or command under a `.claude` folder at any depth, or a link under one of those folders that
+  leads out of it, as `.claude/skills/foo -> ../../.agents/skills/foo` does. Each one the base branch's
+  [`projectRun.outsideSandbox`](../config.md#project-run) names passes. An entry named `.claude`, in any case, that is
+  itself a link, at the clone's root or at any depth, as `pkg/.claude -> ../shared`, halts whatever the team names:
+  the host would load its skills and settings from wherever it leads, which the walk never reads; replace the link with
+  the folder. A later attempt whose branch changed a host
+  file of the clone, such as `.claude/settings.json`, `CLAUDE.md`, or anything under `.claude/`, against the base tip
+  is refused before anything starts.
+- **Only the team's MCP servers load.** `--strict-mcp-config --mcp-config` passes only the servers the base branch's
+  [`projectRun.mcpServers`](../config.md#project-run) names, none by default; a project's `.mcp.json`, the user's own
+  servers, and the claude.ai connectors (`disableClaudeAiConnectors`) never load. Each listed server, and the helper
+  command it starts, runs outside the sandbox with the user's full access, and its definition travels in the session's
+  command line, which any process of the user can read in the process list.
+- **The user's credentials are unreadable**, by a sandboxed command and by Read: `~/.ssh`, `~/.gnupg`, `~/.aws`,
+  `~/.netrc`, `~/.docker`, `~/.kube`, `~/.config/gcloud`, `~/.azure`, `~/.oci`, `~/Library/Keychains`,
+  `~/.password-store`, `~/.config/op`, `~/.1password`, the Chrome, Firefox, Brave, and Edge folders of
+  `~/Library/Application Support`, `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`,
+  `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml` and `~/.cargo/credentials`,
+  `~/.gem/credentials`, `~/.vault-token`, `~/.config/hub`, the host's own `~/.claude.json`,
+  `~/.claude/.credentials.json`, and `~/.claude/ide` (and those of `CLAUDE_CONFIG_DIR` when it moves them), the
+  keyrings in `~/.local/share/keyrings`, and the shell histories `~/.bash_history`, `~/.zsh_history`, and
+  `~/.local/share/fish`. Credential-named environment variables are unset in the sandbox, as the table says, and the
+  main checkout is unreadable but its git folder. The forge CLI's login, `~/.config/gh`, and its token variables stay:
+  the session pushes and opens pull requests through them. Git's `store` credential helper keeps the push token in
+  `~/.git-credentials`, which the sandbox hides, so a main checkout whose git config names it halts the start: use the
+  forge CLI's helper, `gh auth setup-git`.
+
+The start also halts, recording nothing, when the user's settings are not a JSON object; set any `sandbox` key but
+those that only narrow it (`filesystem.denyRead`, `filesystem.denyWrite`, `network.deniedDomains`, and
+`credentials.files` and `credentials.envVars` entries whose mode is `deny` or `mask`), the scalars the session's own
+settings override (`enabled`, `failIfUnavailable`, `allowUnsandboxedCommands`, `autoAllowBashIfSandboxed`,
+`enableWeakerNestedSandbox`, `enableWeakerNetworkIsolation`, `allowAppleEvents`, `allowNestedUserNamespaces`,
+`network.strictAllowlist`, `network.allowAllUnixSockets`, and `network.allowLocalBinding`), and
+`network.allowedDomains`, an accepted residual; so `excludedCommands`, `filesystem.allowWrite`, `allowRead`, and
+`disabled`, `network.allowUnixSockets`, `allowMachLookup`, `httpProxyPort`, `socksProxyPort`, and `tlsTerminate`,
+`ripgrep`, `bwrapPath`, `socatPath`, `ignoreViolations`, which silences the sandbox's reports of what it refused, and any
+key added later all halt, and no `projectRun.outsideSandbox` name lifts them; or grant a write, through
+`permissions.additionalDirectories` or an `Edit` or `Write` allow rule that starts `//` or `~`, cut at its first glob,
+to a folder that holds, is, or lies in the main checkout's `.git`, the state root, a mark folder, or the runs folder.
+The clone pushes to origin's URL as the main checkout has it, never its `pushurl`; the sandbox hides `~/.ssh` and
+refuses SSH, so an SSH URL halts the start on every platform: `git remote set-url origin
+https://<host>/<owner>/<name>.git`, and remove any `url.<base>.insteadOf` rule in the git config that rewrites the
+HTTPS URL to SSH, as git applies it to the URL it reports. A clone whose push URL is not that URL, as a `pushInsteadOf` in the user's git
+config makes it, halts too. On Linux, `bwrap` and `socat` must be on an absolute folder of PATH. A state folder that
+lies in the main checkout starts nothing, since the session may not read the main checkout.
+
+In a folder the host has not trusted, `claude --bg` exits with `Workspace not trusted` and starts nothing; the start
+says to trust the project's runs folder, `<state>/runs`, once, by running `claude` there and accepting its trust
+question. Trust there covers every attempt's clone, and nothing else of the state folder.
+
+Residual risks, each known and left for a later change:
+
+- WebFetch, Read, Edit, and Write run outside the sandbox. Edit and Write are held by the agent gate hook's write
+  allowlist alone, and WebFetch reaches any host the permission rules allow.
+- The forge CLI's token in `~/.config/gh` is readable, and reaches every repository the user can. A token scoped to
+  the repository, passed in the session's environment, is the follow-up.
+- On macOS, `~/Library/Keychains` is unreadable to sandboxed commands; whether gh's token in the keychain and git's
+  `osxkeychain` helper still answer through the keychain service is live check 7.
+- The host's own git calls in the clone, such as for its status line or its view of changes, run outside the sandbox
+  without the plugin's hardened settings. The `commondir` placeholder is there at launch, so the sandbox denies its
+  write by path on every platform, and the hook refuses it too; should either fail, the host's own calls would follow a
+  `commondir` a session wrote, though every plugin git call refuses that clone.
+- A `.claude` link a session's git makes, as by checking out a branch that holds one, is denied by the `**/.claude`
+  glob, and the hook refuses a write through it or, while git's index lists it, to the folder it leads to; a link git
+  does not list is judged by the path as written alone.
+- `allowedDomains` holds no package registry unless the user's own settings add one, and a fresh clone has no
+  `node_modules`; sandboxed commands can reach no registry and cannot write `~/.npm`, so most projects cannot install
+  their dependencies in a confined session yet.
+- A script the session runs can write any record in `reviews` and `dispatch`, which the sandbox grants for the review
+  commands; merge trust that rests on the forge alone closes that for the merge.
+- A subagent's handoff file can be overwritten after that subagent stopped.
+- For a few seconds between the launch and the session's own mark, only the pending mark holds it.
+- No start proves itself beyond the beacon: no per-start proof that the sandbox holds.
+- The product quorum parks in a confined session, which starts no other session.
+- The agent gate hook refuses a confined session's write to any `SKILL.md` in its clone, and to any glob that may name
+  one, such as `docs/*.md`; a session edits such a file with a literal path, and a skill with the Edit tool only where
+  the hook allows it.
+
+Before `verified` changes, a live Claude Code must show every one of these, each on a named version:
+
+1. `claude --bg --settings` starts in the clone; the runs folder needs the trust step; `claude agents --json` lists
+   the session's `cwd` as the clone.
+2. `touch ~/probe` fails, and also with `dangerouslyDisableSandbox`.
+3. A script and `npm test` cannot write `~/.zshrc`, `~/.gitconfig`, the main checkout's `.git/config` or hooks, the
+   ledger, the marks, or the continuation store.
+4. Writes pass in the clone, `git commit`, the drop folder, `plans`, `reviews`, `tmp`, `dispatch`, `TMPDIR`, and
+   `/tmp`.
+5. Writes fail to the clone's `.git`, its git config and hooks, the `commondir` and `config.worktree` placeholders,
+   `.claude/settings*.json`, a skill, `.mcp.json`, and the same under a nested `.claude` folder and a nested
+   `SKILL.md`, through the `**` globs, and making a nested `.claude` folder or link; each such path absent at launch,
+   on Linux; and git status, commit, fetch, and push work in the clone on both platforms with the `commondir`
+   placeholder denied.
+6. A `settings.local.json` put in the clone mid-session changes none of 2 to 5.
+7. An HTTPS push, `gh api user`, and `gh pr create` work on macOS and on Linux, with `~/Library/Keychains` denied on
+   macOS; an unlisted host is refused with no prompt in every permission mode.
+8. The same from a subagent, a background Bash command, and Monitor.
+9. With no `bwrap`, nothing runs.
+10. An invalid `--settings` value: what the host does with it.
+11. `claude --bg` or `claude -p` from inside the sandbox starts nothing outside it.
+12. The plugin's hooks still run under `--setting-sources user`, with the plugin installed at user scope.
+13. A sandboxed process cannot connect to a localhost listener outside the sandbox, on macOS with
+    `allowLocalBinding: false`.
+14. `cat ~/.ssh/*` and a Read of it fail, and so do `cat ~/.git-credentials`, a read of the main checkout's `.env`,
+    and `echo $NPM_TOKEN` with it set in the driver's environment.
+15. The session lists no claude.ai connector and no other plugin's MCP server, and only the `projectRun.mcpServers`
+    tools.
+16. No other plugin's LSP server or monitor runs.
+17. A skill with frontmatter hooks written mid-session, at the clone's root and under a nested `.claude` folder, never
+    runs: the write is refused, and the host does not load it.
+
 ## Limits
 
 Claude Code enforces each agent's tool limits.

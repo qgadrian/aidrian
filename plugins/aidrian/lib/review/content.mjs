@@ -28,7 +28,7 @@
 
 import { spawnSync } from 'node:child_process';
 
-import { hardenedEnv } from '../git.mjs';
+import { cloneGitProblem, hardenedEnv } from '../git.mjs';
 import { isolate } from './env.mjs';
 import { pathPattern } from './plan.mjs';
 import { acquiredVars, callsWith, EXTENSIONS_RE, importWord, parse } from './trace-js.mjs';
@@ -52,6 +52,9 @@ const gitProblem = (out) => out.error?.message ?? (out.signal ? `killed by ${out
 // and a fixed-string `grep`. Any git run that fails throws an Error that names the git command.
 function headRepo({ root, head, roots, spawn }) {
   // Hardened through the environment, as every plugin git call is (lib/git.mjs hardenedEnv): its arguments stay as given.
+  // In a project run's attempt clone that runGit would refuse, no git runs (lib/attempt-clone.mjs cloneGitProblem).
+  const refused = cloneGitProblem(root);
+  if (refused) throw new Error(`git ls-tree at ${head} failed: ${refused}`);
   const options = { cwd: root, env: hardenedEnv(isolate({ ...process.env })), maxBuffer: MAX_BUFFER };
   const cache = new Map();
   const listed = spawn('git', ['ls-tree', '-r', '--name-only', '-z', head, '--', ...roots.map(pathspec)], { ...options, encoding: 'utf8' });

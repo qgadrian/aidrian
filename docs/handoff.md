@@ -156,6 +156,10 @@ says so in its `fallback:` line. A route the host does not list falls back the s
 decides it from `--route` or `session.handoff.continue` and the host's routes. A route the host does not run prints
 `route: none` and the `fallback:` line, as with `"compact"` on Claude Code in this release or any route on Codex.
 A background route either switch keeps off prints `route: clear` and the `fallback:` line that names the switch.
+A session whose unattended mark names an issue of a [project run](config.md#project-run) prints `route: none` for the
+background route, with the `fallback:` line `a confined issue session starts no continuation; push the work and hand
+the result over`: every host starts such a session confined, in a clone under its sandbox, and a continuation would
+start outside both.
 It reads the config, the machine's local file, and the base branch's config, writes nothing, and exits 2 on an
 unknown `--route` or a config with errors.
 The `session-handoff` skill runs it in its first step, so it settles every running agent only when a continuation can
@@ -179,6 +183,9 @@ whatever the config says, and `background` only when the config says `"backgroun
    it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
    user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
    is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5.
+   On the background route, a confined issue session, one whose unattended mark names an issue of a project run, starts
+   no continuation, before any store or mark write: `continue: none` and the `fallback:` line `a confined issue session
+   starts no continuation; push the work and hand the result over`. It pushes its work and records its result instead.
    On the background route, a switch that is off, a working copy whose `state.dir` differs from the base branch's,
    a session that did not start, and a started session the gate could not hold to a chain floor and stopped fall back
    to the clear route instead where the host has it: `continue: clear`, the `fallback:` line, and the clear route's

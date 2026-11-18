@@ -4,15 +4,18 @@
 // `--bg` ignores `--session-id`, so the new session's id is read back from that listing, which may lag the start.
 // `startIn` starts a session in a given folder with a given first message and name, for any gate; `startBackground` is
 // the handoff's wrapper of the same launch, which takes the folder, name, and mode from the handing-off session, and
-// `startProject` a project run's, which starts in the issue's worktree under the driver session's permission mode.
+// `startProject` a project run's, which starts in the attempt's clone under the driver session's permission mode, under
+// the host's sandbox (lib/hosts/claude-code-sandbox.mjs), and holds the session only once the plugin's agent gate hook
+// files its beacon on the session's first tool call.
 // Every call goes through `run`, spawnSync's shape, which a test replaces, so no test starts a real session. `claude` is
 // found on the absolute folders of PATH alone: an empty or relative entry would run whatever `claude` the folder holds.
 
 import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
+import { configFolder, mcpConfig, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
 import { programNames, programOnPath, runCommand } from './process.mjs';
 
 // `claude --bg` may first start the supervisor, which takes a few seconds.
@@ -46,6 +49,22 @@ const MODE_ENTRY = /^\{"type":"permission-mode".*$/gmu;
 const NOT_RUN = new Set(['ENOENT', 'EACCES']);
 const REFUSED = /\bWorkspace not trusted\b/u;
 const NO_CLAUDE = '`claude` is not on PATH, in an absolute folder';
+// How long a project start waits for the beacon the agent gate hook files on the session's first tool call, and the
+// step between reads. The pending mark must outlive the start up to the session's own mark, which `identify` files
+// before this wait (IDENTIFY_CAP; test/project-start-sandbox.test.mjs holds the two apart).
+export const BEACON_WAIT = 180_000;
+const BEACON_STEP = 1_000;
+export const IDENTIFY_CAP = START_TIMEOUT + LIST_TRIES * (LIST_TIMEOUT + LIST_PAUSE) + LIST_TIMEOUT;
+// A network host the sandbox's allowlist takes: a host name, or `*.` and a host name.
+const DOMAIN = /^(?:\*\.)?[a-z0-9.-]+$/iu;
+// What a start the host refused for an untrusted folder tells the Human to do once: trust the run's runs folder, the
+// folder of every attempt's clone, `<state>/runs`, four folders above the clone `work`
+// (`runs/<run>/attempts/<issue>.<attempt>/work`), never the whole state folder.
+const trustStep = (work) => {
+  const runs = path.resolve(work, '../../../..');
+  const named = path.basename(runs) === 'runs' ? `the project's runs folder, ${runs},` : 'the folder that holds the run\'s attempts';
+  return `trust ${named} once by running \`claude\` there and accepting its trust question, then start again`;
+};
 
 export { runCommand };
 const pause = pauseSync;
@@ -159,9 +178,12 @@ export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
 // as startBackground's. `mode` must be one of PERMISSION_MODES: a session no Human attends never runs without permission
 // checks, and the host's default may. `cwd` is an absolute path of plain text, `name` plain text that cannot read as a
 // flag, and `prompt` text that does not start with a dash or a slash; `agent` and `effort` are passed on when they are valid.
+// `settings`, an object, starts the session with `--setting-sources user --settings <its JSON>`, so only the user's
+// settings and these load, and `mcp`, an object, with `--strict-mcp-config --mcp-config <its JSON>`, so only its servers
+// load; a start that passes neither, as the handoff's, loads every source as the host does.
 // `hold`, `run`, `wait`, and `resolve` are startBackground's. It names no brief: lib/session-start-gate.mjs startHeld
 // holds what it starts.
-export function startIn({ cwd, prompt, name, mode, agent, effort, efforts = [], env, hold, run = runCommand, wait = pause, resolve = claudeOnPath }) {
+export function startIn({ cwd, prompt, name, mode, agent, effort, efforts = [], settings = null, mcp = null, env, hold, run = runCommand, wait = pause, resolve = claudeOnPath }) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || CONTROL.test(cwd)) return { problem: 'the folder to start the session in is not an absolute path of plain text' };
   if (typeof name !== 'string' || !NAME.test(name)) return { problem: 'the session\'s name is not plain text of at most 100 characters that cannot read as a flag' };
   if (typeof prompt !== 'string' || prompt.trim() === '' || /^\s*[-/]/u.test(prompt)) {
@@ -179,7 +201,7 @@ export function startIn({ cwd, prompt, name, mode, agent, effort, efforts = [], 
   if (!claude) return { problem: NO_CLAUDE };
   const before = listed(run, claude, undefined);
   if (!before) return { problem: '`claude agents --json` did not answer, so the sessions listed before the start are unknown' };
-  return launch({ claude, before, cwd: real, prompt, name, mode, agent, effort, efforts, hold, run, wait });
+  return launch({ claude, before, cwd: real, prompt, name, mode, agent, effort, efforts, settings, mcp, hold, run, wait });
 }
 
 // The permission mode the session `session`, as `list` names it, runs in: { mode } or { problem }. A session whose mode is
@@ -196,19 +218,117 @@ function ownMode({ session, list, env, readMode }) {
   return { mode, own };
 }
 
-// Starts the session of one issue of a project run, in the background, in the issue's worktree `cwd`, under the name
+// Starts the session of one issue of a project run, in the background, in the attempt's clone `cwd`, under the name
 // `name`, whose first message is `prompt`, as startIn does, in the permission mode the driver session `session` runs in
-// (`readMode`, sessionMode by default; never bypassPermissions). No agent is passed, so the session runs as the host's
-// main agent and no agent's own permission mode can stand in for the one passed; the driver's effort is passed on.
-// Returns startIn's answer. `hold`, `run`, `wait`, and `resolve` are startBackground's.
-export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+// (`readMode`, sessionMode by default; never bypassPermissions), under the host's sandbox: `--setting-sources user`,
+// the settings sandboxSettings gives for `sandbox`, { git, grants, domains, main, mainGit, tokens }, and
+// `--strict-mcp-config` with only the servers `mcp` names. `sandbox.git` is the clone's git folder, which `sandbox.grants`
+// must hold, each an absolute path of plain text that resolves; `sandbox.domains` the forge's network hosts;
+// `sandbox.main` the main checkout, which the session may not read but its git folder `sandbox.mainGit`, and in which
+// neither the clone nor a granted folder may lie; `sandbox.tokens` the forge's token variables, the one credential kept
+// (secretVars). Any miss runs no `claude --bg`. No agent is
+// passed, so the session runs as the host's main agent and no agent's own permission mode can stand in for the one
+// passed; the driver's effort is passed on. `home` and `platform` are the user's home folder and the operating system
+// the settings name.
+// Once the host names the session, `identify({ id, session })` files its floor and mark, and the start holds it only once
+// `beacon(session)`, the agent gate hook's beacon, shows the plugin's hooks run for it, within BEACON_WAIT: else the
+// session is stopped, and the answer names the failed proof (`proof`). Returns startIn's answer, or { problem,
+// uncertain, proof }. `hold`, `run`, `wait`, and `resolve` are startBackground's.
+export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, identify, beacon, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+  const box = sandboxInputs(sandbox);
+  if (box.problem) return { problem: box.problem };
+  if (typeof beacon !== 'function') return { problem: 'the gate gave no way to read the agent gate hook\'s beacon' };
+  let work;
+  try {
+    work = realpathSync(cwd);
+  } catch (error) {
+    return { problem: `the folder to start the session in cannot be resolved (${error.code ?? 'no code'})` };
+  }
   const claude = resolve(env);
   if (!claude) return { problem: NO_CLAUDE };
   const before = listed(run, claude, undefined);
   if (!before) return { problem: '`claude agents --json` did not answer, so the permission mode of the driver session is unknown' };
   const read = ownMode({ session, list: before, env, readMode });
   if (read.problem) return { problem: read.problem.replace('this session', 'the driver session') };
-  return startIn({ cwd, prompt, name, mode: read.mode, effort, efforts, env, hold, run, wait, resolve: () => claude });
+  if (box.main && [work, ...box.grants].some((each) => within(box.main, each) && !(box.mainGit && within(box.mainGit, each)))) {
+    return { problem: `the attempt's clone or a folder the gate grants the session lies in the main checkout ${box.main}, which a confined session may not read; set state.dir to a folder outside it` };
+  }
+  const user = home ?? homedir();
+  const settings = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens) });
+  const started = startIn({ cwd: work, prompt, name, mode: read.mode, effort, efforts, settings, mcp: mcpConfig(mcp), env, hold, run, wait, resolve: () => claude });
+  if (started.problem) return REFUSED.test(started.problem) && started.uncertain === false ? { ...started, problem: `${started.problem}; ${trustStep(work)}` } : started;
+  return proveHooks({ started, identify, beacon, env, run, wait, claude });
+}
+
+const within = (folder, file) => file === folder || file.startsWith(`${folder}${path.sep}`);
+
+// The checked folders and hosts of a project start's sandbox, { git, grants, domains, main, mainGit, tokens } with real
+// paths, or { problem }. `main` and `mainGit` are optional, and each, when given, an absolute path that resolves.
+function sandboxInputs(sandbox) {
+  const plain = (each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each);
+  if (sandbox === null || typeof sandbox !== 'object') return { problem: 'the gate named no sandbox for the session: its git folder, granted folders, and network hosts' };
+  const { git, grants, domains } = sandbox;
+  if (!plain(git) || !Array.isArray(grants) || !grants.every(plain)) return { problem: 'a folder the gate grants the session is not an absolute path of plain text' };
+  if (!Array.isArray(domains) || domains.length === 0 || !domains.every((each) => typeof each === 'string' && DOMAIN.test(each))) {
+    return { problem: 'the network hosts the gate grants the session are not host names' };
+  }
+  let real;
+  try {
+    real = [git, ...grants].map((each) => realpathSync(each));
+  } catch (error) {
+    return { problem: `a folder the gate grants the session cannot be resolved (${error.code ?? 'no code'})` };
+  }
+  if (real.some((each) => CONTROL.test(each))) return { problem: 'a folder the gate grants the session resolves to a path that is not plain text' };
+  const [own, ...granted] = real;
+  if (!granted.includes(own)) return { problem: 'the clone\'s git folder is not among the folders the gate grants the session' };
+  const optional = {};
+  for (const key of ['main', 'mainGit']) {
+    if (sandbox[key] === undefined || sandbox[key] === null) continue;
+    if (!plain(sandbox[key])) return { problem: `the ${key === 'main' ? 'main checkout' : 'main checkout\'s git folder'} the gate names is not an absolute path of plain text` };
+    try {
+      optional[key] = realpathSync(sandbox[key]);
+    } catch (error) {
+      return { problem: `the ${key === 'main' ? 'main checkout' : 'main checkout\'s git folder'} the gate names cannot be resolved (${error.code ?? 'no code'})` };
+    }
+  }
+  const tokens = Array.isArray(sandbox.tokens) ? sandbox.tokens.filter((each) => typeof each === 'string') : [];
+  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens };
+}
+
+// The temporary folders a sandboxed command may write, by their real paths: /tmp and the host's own.
+function tempFolders() {
+  const folders = [];
+  for (const each of ['/tmp', tmpdir()]) {
+    try {
+      folders.push(realpathSync(each));
+    } catch {
+      // No such folder here.
+    }
+  }
+  return [...new Set(folders)];
+}
+
+// The proofs of a started project session: its full id, its floor and mark, then the beacon of the plugin's hooks. The
+// session `started` names is stopped when one fails.
+function proveHooks({ started, identify, beacon, env, run, wait, claude }) {
+  const stopped = (why, proof = null) => {
+    if (!stopBackground({ id: started.id, env, run, resolve: () => claude })) return { problem: `${why}, and the session ${started.id} could not be stopped`, uncertain: true };
+    return { problem: `${why}; the session was stopped`, uncertain: false, ...(proof ? { proof } : {}) };
+  };
+  const own = started.session;
+  if (typeof own !== 'string') return stopped('`claude agents --json` never named the new session\'s full id, so whether the plugin\'s hooks run for it cannot be shown', 'session');
+  if (typeof identify === 'function' && identify({ id: started.id, session: own }) !== true) return stopped('the gate could not file the new session\'s floor and mark');
+  for (let step = 0; step <= BEACON_WAIT / BEACON_STEP; step += 1) {
+    if (step > 0) wait(BEACON_STEP);
+    let seen = false;
+    try {
+      seen = beacon(own) === true;
+    } catch {
+      seen = false;
+    }
+    if (seen) return started;
+  }
+  return stopped(`the plugin's agent gate hook did not run on the session's first tool call within ${BEACON_WAIT / 1000} seconds, so the host may not run the plugin's hooks under --setting-sources user`, 'beacon');
 }
 
 // The background sessions `claude agents --json --all` lists in the folder `cwd` under the exact name `name`, as [{ id,
@@ -249,7 +369,7 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
 
 // The start itself, once `before`, the listing read before it, is known: `hold` files the pending mark with the ids that
 // listing names, then `claude --bg` starts the session in `cwd`, and the listing is read until it names the new one.
-function launch({ claude, before, cwd, prompt, name, mode, agent, effort, efforts, hold, run, wait }) {
+function launch({ claude, before, cwd, prompt, name, mode, agent, effort, efforts, settings = null, mcp = null, hold, run, wait }) {
   const known = before.map((each) => each.sessionId).filter((id) => typeof id === 'string' && ID.test(id));
   if (typeof hold !== 'function' || !hold({ cwd, known })) {
     return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
@@ -258,6 +378,8 @@ function launch({ claude, before, cwd, prompt, name, mode, agent, effort, effort
   if (typeof agent === 'string' && AGENT.test(agent)) args.push('--agent', agent);
   if (efforts.includes(effort)) args.push('--effort', effort);
   args.push('--permission-mode', mode);
+  if (settings !== null) args.push('--setting-sources', 'user', '--settings', JSON.stringify(settings));
+  if (mcp !== null) args.push('--strict-mcp-config', '--mcp-config', JSON.stringify(mcp));
   const result = run(claude, [...args, prompt], { cwd, timeout: START_TIMEOUT });
   const printed = STARTED.exec(String(result.stdout ?? ''))?.[1] ?? null;
   const want = { before: new Set(before.map((each) => each.sessionId)), cwd, id: printed, name };

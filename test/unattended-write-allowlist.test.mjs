@@ -10,15 +10,18 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { anchorClones, cloneConfigProblem } from '../plugins/aidrian/lib/attempt-clone.mjs';
+import { anchorClones, cloneConfigProblem, cloneGitProblem, GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
+import { committedConfig } from '../plugins/aidrian/lib/config-committed.mjs';
+import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../plugins/aidrian/lib/unattended-write.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
@@ -572,12 +575,265 @@ test('a call in an attempt clone whose git folder holds a commondir or config.wo
   const { attempt, work } = clone({ state, main });
   assert.equal(cloneConfigProblem(work), null);
   assert.equal(switches(work).main, realpathSync(main), 'linked before the plant');
-  for (const [name, text] of [['commondir', `${path.join(main, '.git')}\n`], ['config.worktree', '[core]\n\thooksPath = /x\n']]) {
+  for (const [name, text] of [['commondir', `${path.join(main, '.git')}\n`], ['commondir', ''], ['commondir', '.'], ['commondir', './\n'], ['commondir', '..\n'], ['commondir', '.\n\n'],
+    ['config.worktree', '[core]\n\thooksPath = /x\n']]) {
     const planted = path.join(attempt, 'git', name);
     writeFileSync(planted, text);
     anchorClones({ session: SESSION, env, home });
-    assert.match(cloneConfigProblem(work) ?? '', /through which git reads another config/u, name);
-    assert.equal(switches(work).main, realpathSync(work), `${name}: no link`);
+    assert.match(cloneConfigProblem(work) ?? '', /through which git reads another config/u, `${name} ${JSON.stringify(text)}`);
+    assert.equal(switches(work).main, realpathSync(work), `${name} ${JSON.stringify(text)}: no link`);
     rmSync(planted);
   }
+  // The gate's placeholders, an empty config.worktree and a commondir of `.` and a newline, each a regular file with one
+  // link, add nothing and pass; a second link, a symbolic link, a folder, or any other text refuses.
+  for (const [name, text] of Object.entries(GIT_PLACEHOLDERS)) {
+    const placeholder = path.join(attempt, 'git', name);
+    writeFileSync(placeholder, text);
+    anchorClones({ session: SESSION, env, home });
+    assert.equal(cloneConfigProblem(work), null, `the ${name} placeholder`);
+    assert.equal(switches(work).main, realpathSync(main), `${name}: still linked`);
+    linkSync(placeholder, path.join(root, 'second-link'));
+    assert.match(cloneConfigProblem(work) ?? '', /through which git reads another config/u, `${name}: a second hard link`);
+    rmSync(path.join(root, 'second-link'));
+    rmSync(placeholder);
+    writeFileSync(path.join(root, 'same-text'), text);
+    symlinkSync(path.join(root, 'same-text'), placeholder);
+    assert.match(cloneConfigProblem(work) ?? '', /through which git reads another config/u, `${name}: a symbolic link to the same text`);
+    rmSync(placeholder);
+    mkdirSync(placeholder);
+    assert.match(cloneConfigProblem(work) ?? '', /through which git reads another config/u, `${name}: a folder`);
+    rmSync(placeholder, { recursive: true });
+  }
+});
+
+test('git reads a commondir of `.` and a newline as the git folder itself: status, commit, fetch, and push work in a clone the gate makes, and an empty one makes git die', (t) => {
+  const root = tempRoot(t, 'aidrian-commondir-');
+  const origin = path.join(root, 'origin.git');
+  const main = path.join(root, 'main');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { stdio: 'pipe' });
+  onMain(main);
+  const inMain = gitIn(main);
+  writeFileSync(path.join(main, 'README.md'), '# widgets\n');
+  inMain('add', 'README.md');
+  inMain('commit', '-q', '-m', 'one');
+  inMain('push', '-q', origin, 'HEAD:refs/heads/main');
+  // The clone as lib/project-start.mjs prepareAttempt makes it, in an attempt's folder, with the git folder's placeholders.
+  const attempt = path.join(root, 'state', 'runs', 'r1', 'attempts', 'ENG-1.1');
+  const [work, git] = ['work', 'git'].map((name) => path.join(attempt, name));
+  mkdirSync(attempt, { recursive: true });
+  execFileSync('git', ['clone', '-q', '--shared', '--no-checkout', '--separate-git-dir', git, main, work], { stdio: 'pipe' });
+  const inWork = gitIn(work);
+  inWork('remote', 'set-url', 'origin', origin);
+  inWork('checkout', '-q', '-b', 'feat/eng-1', 'origin/main');
+  assert.equal(placeHolders({ work, git }), null);
+  assert.equal(readFileSync(path.join(git, 'commondir'), 'utf8'), '.\n');
+  assert.equal(inWork('rev-parse', '--path-format=absolute', '--git-common-dir').trim(), realpathSync(git), 'the common folder is the git folder itself');
+  assert.equal(inWork('rev-parse', '--path-format=absolute', '--git-dir').trim(), realpathSync(git));
+  writeFileSync(path.join(work, 'x.txt'), 'x\n');
+  assert.equal(inWork('status', '--porcelain'), '?? x.txt\n');
+  inWork('add', 'x.txt');
+  inWork('commit', '-q', '-m', 'two');
+  inWork('fetch', '-q', 'origin');
+  inWork('push', '-q', 'origin', 'HEAD:refs/heads/feat/eng-1');
+  assert.equal(execFileSync('git', ['-C', origin, 'rev-parse', 'refs/heads/feat/eng-1'], { encoding: 'utf8' }), inWork('rev-parse', 'HEAD'), 'the push landed');
+  assert.equal(inWork('worktree', 'list', '--porcelain').match(/^worktree /gmu)?.length, 1, 'git sees one checkout, no linked worktree');
+  // The plugin's own git calls there pass the clone check.
+  assert.equal(cloneConfigProblem(work), null);
+  assert.equal(runGit(['status', '--porcelain'], work).status, 0);
+  // The host's placeholder for a denied absent file on Linux is empty, and git dies on it.
+  writeFileSync(path.join(git, 'commondir'), '');
+  assert.throws(() => inWork('status'), /failed to read .*commondir/u);
+});
+
+test('the agent gate hook refuses every call in an attempt clone whose commondir is not the gate\'s placeholder, before any git runs there', (t) => {
+  const root = tempRoot(t, 'aidrian-hook-commondir-');
+  const state = path.join(root, 'state');
+  const main = path.join(root, 'main');
+  onMain(main, { version: 1, state: { dir: state } });
+  const { attempt, work } = clone({ state, main });
+  const env = { ...process.env, XDG_STATE_HOME: path.join(root, 'marks') };
+  const run = () => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: SESSION, cwd: work, tool_name: 'Read', tool_input: { file_path: path.join(work, 'x') } }), cwd: work, env, encoding: 'utf8' });
+  const commondir = path.join(attempt, 'git', 'commondir');
+  writeFileSync(commondir, GIT_PLACEHOLDERS.commondir);
+  const passed = run();
+  assert.equal(passed.status, 0, passed.stderr);
+  for (const text of [`${path.join(main, '.git')}\n`, '', '../git\n']) {
+    writeFileSync(commondir, text);
+    const refused = run();
+    assert.equal(refused.status, 2, JSON.stringify(text));
+    assert.match(refused.stderr, /holds .*commondir, through which git reads another config/u, JSON.stringify(text));
+  }
+});
+
+test('every plugin git call in an attempt clone whose git folder holds a commondir, or whose config runs a program, runs no git', (t) => {
+  const root = tempRoot(t, 'aidrian-rungit-');
+  const state = path.join(root, 'state');
+  const main = path.join(root, 'main');
+  onMain(main, { version: 1, state: { dir: state } });
+  const { attempt, work } = clone({ state, main });
+  mkdirSync(path.join(work, 'src'));
+  for (const cwd of [work, path.join(work, 'src'), path.join(attempt, 'git')]) assert.equal(runGit(['rev-parse', '--git-dir'], cwd).status, 0, cwd);
+  const planted = path.join(attempt, 'git', 'commondir');
+  writeFileSync(planted, `${path.join(main, '.git')}\n`);
+  for (const cwd of [work, path.join(work, 'src'), path.join(attempt, 'git')]) {
+    const refused = runGit(['rev-parse', '--git-dir'], cwd);
+    assert.deepEqual([refused.status, refused.error?.code], [null, 'EREFUSED'], cwd);
+    assert.match(refused.stderr, /holds .*commondir, through which git reads another config/u);
+  }
+  // The attempt's own folder, where the gate makes the clone, and its drop folder are no clone's.
+  assert.equal(cloneGitProblem(attempt), null);
+  assert.equal(cloneGitProblem(path.join(attempt, 'drop')), null);
+  rmSync(planted);
+  execFileSync('git', ['config', '--file', path.join(attempt, 'git', 'config'), 'core.hooksPath', path.join(root, 'hooks')]);
+  assert.match(runGit(['status'], work).stderr, /sets core\.hookspath, which makes git run a program/u);
+  assert.equal(cloneGitProblem(path.join(root, 'elsewhere')), null, 'a folder of no attempt');
+  execFileSync('git', ['config', '--file', path.join(attempt, 'git', 'config'), '--unset', 'core.hooksPath']);
+  // The committed config, read through git show, runs no git there either, and throws as when git fails.
+  const project = { root: work, paths: { config: '.aidrian/config.json' } };
+  assert.doesNotThrow(() => committedConfig(project, 'HEAD'), 'no commondir: git runs');
+  writeFileSync(planted, `${path.join(main, '.git')}\n`);
+  assert.throws(() => committedConfig(project, 'HEAD'), /git show HEAD:\.\/\.aidrian\/config\.json failed: .*commondir, through which git reads another config/u);
+  writeFileSync(planted, GIT_PLACEHOLDERS.commondir);
+  assert.equal(runGit(['rev-parse', '--git-dir'], work).status, 0, 'the gate\'s placeholder passes');
+  assert.doesNotThrow(() => committedConfig(project, 'HEAD'));
+});
+
+test('a confined session never writes a host file its clone loads from any depth, by the write tool, the shell, a link, or a glob', (t) => {
+  const fx = fixture(t);
+  const own = () => fx.attempt;
+  const work = path.join(fx.attempt, 'work');
+  for (const file of ['pkg/.claude/skills/x/SKILL.md', 'a/b/.claude/agents/x.md', 'a/.claude/commands/c.md', 'a/.claude/settings.local.json', 'a/.claude/settings.json',
+    'a/.claude/hooks/h.sh', 'docs/SKILL.md', '.agents/skills/foo/SKILL.md']) {
+    const target = path.join(work, file);
+    for (const input of [write(target), bash(`echo x > ${target}`), bash(`cp /dev/null ${target}`)]) {
+      assert.match(fx.ask(input, { own })?.reason ?? '', /a host file a later session in that clone loads from any depth/u, `${input.tool_name} ${file}`);
+    }
+  }
+  assert.match(fx.ask(bash(`rm -rf ${path.join(work, 'pkg', '.claude')}`), { own })?.reason ?? '', /from any depth/u, 'a nested .claude folder itself');
+  // A skill folder that links out of .claude/skills: a write through the link, or to its target, refuses.
+  mkdirSync(path.join(work, '.agents', 'skills', 'foo'), { recursive: true });
+  mkdirSync(path.join(work, '.claude', 'skills'), { recursive: true });
+  symlinkSync('../../.agents/skills/foo', path.join(work, '.claude', 'skills', 'foo'));
+  for (const target of [path.join(work, '.claude/skills/foo/SKILL.md'), path.join(work, '.agents/skills/foo/SKILL.md')]) {
+    assert.match(fx.ask(write(target), { own })?.reason ?? '', /a host file a later session/u, target);
+    assert.match(fx.ask(bash(`echo x > ${target}`), { own })?.reason ?? '', /a host file a later session/u, target);
+  }
+  // A glob that may reach one.
+  for (const command of [`rm -f ${work}/*/.claude/skills/x.md`, `rm -f ${work}/pkg/.c*/settings.json`, `cp x ${work}/docs/*.md`]) {
+    assert.match(fx.ask(bash(command), { own })?.reason ?? '', /a host file a later session in that c(?:heckout|lone) loads/u, command);
+  }
+  for (const file of ['pkg/src/x.js', 'a/.claude/notes.md', 'a/claude/skills/x.md', 'docs/README.md']) {
+    assert.equal(fx.ask(write(path.join(work, file)), { own }), null, file);
+    assert.equal(fx.ask(bash(`echo x > ${path.join(work, file)}`), { own }), null, file);
+  }
+  assert.equal(fx.ask(bash(`rm -f ${work}/src/*.js`), { own }), null, 'a glob that names no host file');
+});
+
+test('a write through a .claude link of the clone, or to the folder it leads to, is refused as the host file it is; one past no link passes', (t) => {
+  const fx = fixture(t);
+  const own = () => fx.attempt;
+  const work = path.join(fx.attempt, 'work');
+  // The clone, with pkg/.claude a link to shared, committed, as a branch a session checked out could hold it.
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', path.join(fx.attempt, 'git'), work], { stdio: 'pipe' });
+  mkdirSync(path.join(work, 'shared', 'commands'), { recursive: true });
+  mkdirSync(path.join(work, 'pkg'));
+  writeFileSync(path.join(work, 'shared', 'commands', 'ok.md'), '---\nhooks: {}\n---\n');
+  symlinkSync('../shared', path.join(work, 'pkg', '.claude'));
+  gitIn(work)('add', '.');
+  gitIn(work)('commit', '-q', '-m', 'link');
+  const nested = /a host file a later session in that clone loads from any depth/u;
+  for (const file of ['pkg/.claude/commands/evil.md', 'shared/commands/evil.md', 'pkg/.claude/settings.local.json', 'shared/settings.json', 'shared/skills/x/run.sh']) {
+    const target = path.join(work, file);
+    for (const input of [write(target), bash(`echo x > ${target}`)]) assert.match(fx.ask(input, { own })?.reason ?? '', nested, `${input.tool_name} ${file}`);
+  }
+  for (const file of ['shared/notes.md', 'pkg/.claude/notes.md', 'pkg/src/x.js']) assert.equal(fx.ask(write(path.join(work, file)), { own }), null, file);
+  // A link git does not know of is judged by its spelled path alone.
+  rmSync(path.join(work, 'pkg', '.claude'));
+  gitIn(work)('rm', '-q', '--cached', 'pkg/.claude');
+  symlinkSync('../shared', path.join(work, 'pkg', '.claude'));
+  assert.match(fx.ask(write(path.join(work, 'pkg/.claude/commands/evil.md')), { own })?.reason ?? '', nested, 'through an untracked link, as spelled');
+  assert.match(fx.ask(bash(`ln -s ../shared ${path.join(work, 'lib', '.claude')}`), { own })?.reason ?? '', nested, 'making a .claude link');
+});
+
+test('a clone whose whole git index lists more than 1 MiB still lets writes pass, and its indexed .claude link still refuses one to its target', (t) => {
+  const fx = fixture(t);
+  const own = () => fx.attempt;
+  const work = path.join(fx.attempt, 'work');
+  const inWork = gitIn(work);
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', path.join(fx.attempt, 'git'), work], { stdio: 'pipe' });
+  mkdirSync(path.join(work, 'shared', 'commands'), { recursive: true });
+  mkdirSync(path.join(work, 'pkg'));
+  mkdirSync(path.join(work, 'src'));
+  writeFileSync(path.join(work, 'shared', 'commands', 'ok.md'), 'ok\n');
+  symlinkSync('../shared', path.join(work, 'pkg', '.claude'));
+  inWork('add', '.');
+  // 12,000 index entries with long names, put in the index straight, as a large repository tracks them.
+  const blob = execFileSync('git', ['-C', work, 'hash-object', '-w', '--stdin'], { input: 'x\n', encoding: 'utf8' }).trim();
+  const long = 'a'.repeat(80);
+  const entries = Array.from({ length: 12_000 }, (_, at) => `100644 ${blob}\tsrc/generated/${long}-${at}.js\n`).join('');
+  execFileSync('git', ['-C', work, 'update-index', '--index-info'], { input: entries, stdio: ['pipe', 'pipe', 'pipe'] });
+  const whole = execFileSync('git', ['-C', work, 'ls-files', '--stage', '-z'], { maxBuffer: 64 * 1024 * 1024 });
+  assert.ok(whole.length > 1024 * 1024, `the whole index lists ${whole.length} bytes`);
+  assert.equal(fx.ask(write(path.join(work, 'src', 'x.js')), { own }), null, 'Write src/x.js');
+  assert.equal(fx.ask(bash(`echo x > ${path.join(work, 'src', 'y.js')}`), { own }), null, 'a Bash write');
+  assert.match(fx.ask(write(path.join(work, 'shared', 'commands', 'evil.md')), { own })?.reason ?? '', /a host file a later session in that clone loads from any depth/u, 'the indexed link\'s target');
+});
+
+test('the host files a later session loads stay refused in its own worktree and its attempt\'s clone, by the write tool and the shell', (t) => {
+  const fx = fixture(t);
+  const own = () => fx.attempt;
+  for (const top of [fx.worktree, path.join(fx.attempt, 'work')]) {
+    for (const file of ['.claude/settings.json', '.claude/settings.local.json', '.claude/skills/x/SKILL.md', '.claude/agents/a.md', '.claude/commands/c.md', '.claude/hooks/h.sh', '.claude/workflows/w.md', '.claude/scheduled_tasks.json', '.mcp.json']) {
+      const target = path.join(top, file);
+      for (const input of [write(target), bash(`echo x > ${target}`), bash(`mkdir -p ${path.dirname(target)} && touch ${target}`)]) {
+        assert.match(fx.ask(input, { own })?.reason ?? '', /a host file a later session in that checkout loads/u, `${input.tool_name} ${file} in ${top}`);
+      }
+    }
+    assert.match(fx.ask(bash(`rm -rf ${path.join(top, '.claude')}`), { own })?.reason ?? '', /a host file a later session/u, 'a folder that holds them');
+    assert.equal(fx.ask(write(path.join(top, '.claude', 'notes.md')), { own }), null, 'another file of .claude, which the next start compares with the base tip');
+    assert.equal(fx.ask(write(path.join(top, 'src', 'x.js')), { own }), null);
+  }
+});
+
+test('a target built at run time refuses when the whole command names a refused path, a startup file, a home dot entry, or a git folder; a loop or mktemp passes', (t) => {
+  const fx = fixture(t);
+  for (const command of [
+    'd=~/.ssh; echo x > "$d/k"',
+    'p=.git/hooks; echo x > "$p/pre-commit"',
+    `f=${fx.dir}/.git/config; echo x >> "$f"`,
+    `g=${fx.home}/.gitconfig; cp x "$g"`,
+    'cat ~/.zshrc > "$out"',
+    'repo=x/.git; echo x > "$repo/HEAD"',
+  ]) {
+    const denial = fx.ask(bash(command));
+    assert.match(denial?.reason ?? '', /a path built at run time.*write to a literal path instead/u, command);
+  }
+  for (const command of ['for f in a.md b.md; do echo x > "$f"; done', 'out=$(mktemp); npm test > "$out"', 'echo x > "$out" && cat .gitignore']) {
+    assert.equal(fx.ask(bash(command)), null, command);
+  }
+  // A bare variable from a call folder outside every place is judged by its names alone.
+  const outside = path.join(fx.root, 'outside');
+  mkdirSync(outside);
+  assert.equal(fx.ask(bash('echo x > "$out"'), { cwd: outside }), null);
+});
+
+test('mkdir of the reviews or dispatch folder itself passes; below it, with a mode, or rm, rmdir, or mv of it refuse', (t) => {
+  const fx = fixture(t);
+  const [reviews, dispatch] = ['reviews', 'dispatch'].map((name) => path.join(fx.state, name));
+  for (const command of [`mkdir -p ${reviews}`, `mkdir ${dispatch}`, `mkdir -p ${reviews} ${dispatch}`, `mkdir -p ${reviews} && echo '{}' > ${reviews}/pr-7.json.tmp`]) {
+    assert.equal(fx.ask(bash(command)), null, command);
+  }
+  for (const [command, reason] of [
+    [`mkdir -p ${reviews}/sub`, /the review and attest records/u],
+    [`mkdir -m 777 ${reviews}`, /the review and attest records/u],
+    [`mkdir -pm 777 ${dispatch}`, /the dispatch records/u],
+    [`mkdir --mode=777 ${dispatch}`, /the dispatch records/u],
+    [`mkdir -p ${reviews} && touch ${reviews}`, /the review and attest records/u],
+    [`rm -rf ${reviews}`, /the review and attest records/u],
+    [`rmdir ${dispatch}`, /the dispatch records/u],
+    [`mv ${reviews} ${fx.temp}/old`, /the review and attest records/u],
+  ]) {
+    assert.match(fx.ask(bash(command))?.reason ?? '', reason, command);
+  }
+  assert.match(fx.ask(write(reviews))?.reason ?? '', /the review and attest records/u, 'the write tool on the folder itself');
 });

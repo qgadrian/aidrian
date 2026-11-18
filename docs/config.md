@@ -126,7 +126,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
   "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
-  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false }
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "outsideSandbox": [], "mcpServers": {} }
 }
 ```
 
@@ -1726,7 +1726,9 @@ The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's sta
 | `projectRun.issueHours` | `6` | How long one issue may run, in hours, from 1 to 24. |
 | `projectRun.blockedStatus` | `null` | The tracker status a blocked issue moves to; `null` moves none. |
 | `projectRun.decisionLabel` | `"needs-decision"` | The label an issue parked on a decision gets. |
-| `projectRun.unverifiedHosts` | `false` | Whether a run starts sessions on a host whose project start no live run has verified, such as Codex: setting it opts into a sandbox boundary no live run has checked ([Project start](providers/codex.md#project-start)). Read from the default branch on the forge; a local ref only refuses. Each such start prints an `unverified:` line. |
+| `projectRun.unverifiedHosts` | `false` | Whether a run starts sessions on a host whose project start no live run has verified, which today is both hosts, Claude Code and Codex: setting it opts into a sandbox boundary no live run has checked ([Claude Code](providers/claude-code.md#project-start), [Codex](providers/codex.md#project-start)). Read from the default branch on the forge; a local ref only refuses. Each such start prints an `unverified:` line. |
+| `projectRun.outsideSandbox` | `[]` | The names a confined session may still run outside its host's sandbox, each one the team has reviewed: a key of the user's host settings that runs a command, such as `hooks`, `statusLine`, or `apiKeyHelper`; any plugin other than this one that is installed or enabled, by its id, such as `name@marketplace`, since a plugin's hooks, MCP and LSP servers, and monitors all run outside the sandbox; a skill, agent, or command of the user's config folder whose frontmatter declares hooks or MCP servers, by its path spelled from `~/.claude/`, such as `~/.claude/skills/deploy/SKILL.md`; or one of the repository's, at any depth, by its path, such as `.claude/skills/deploy/SKILL.md`, or a link under a skills, agents, or commands folder that leads out of it, such as `.claude/skills/foo`. Any other such command halts the start. It never lifts a halt on the user's `sandbox` settings. Only the names both the default branch on the forge and the local ref list count. |
+| `projectRun.mcpServers` | `{}` | The MCP servers a confined session loads, as the host's `mcpServers` object takes them, each name to its definition. The session starts with only these: a project's `.mcp.json`, the user's own servers, and the host's claude.ai connectors never load. Each listed server, and the helper command it starts, runs outside the sandbox with the user's full access, so list only a server the team trusts with that; its definition travels in the session's command line, which any process of the user can read in the process list, so it holds no secret. Only the servers both the forge and the local ref define alike count. |
 
 A start that cannot go on safely halts: `aidrian project start` exits 1, its first line is `halt <cause>`, and no issue
 is parked. Most halts record nothing, such as a user the forge does not let push, a sandbox with no network, or a
@@ -1736,7 +1738,8 @@ again) and writes a `halt` row: every later start refuses, however long ago it w
 or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
 row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
 Each start is written ahead: a start row with `pending: true` before the host starts anything, then one row that
-settles it, so a gate killed mid-start leaves a row `wait` finds and settles. A confined host's session hands its
+settles it, so a gate killed mid-start leaves a row `wait` finds and settles. Every start is confined to a fresh
+clone under its host's sandbox, and a host that is not halts the start. The session hands its
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.

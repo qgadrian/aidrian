@@ -1,0 +1,605 @@
+// `aidrian project start` on Claude Code under the host's sandbox (lib/hosts/claude-code-sandbox.mjs,
+// lib/hosts/claude-code-background.mjs startProject): the session works in a fresh clone of its attempt, starts with
+// `--setting-sources user`, the sandbox settings inline, and only the team's MCP servers, and holds only once the agent
+// gate hook's beacon arrives. A start halts on user settings that weaken the sandbox or run a command outside it, on this
+// plugin not enabled for the user, on any other plugin, on a user or clone skill whose frontmatter declares hooks or MCP
+// servers, on a link out of a skill folder, on an SSH origin, on git's `store` credential helper, on a clone that pushes
+// elsewhere, and on a Linux with no bubblewrap or socat. Checked on fixtures only: no test starts a real session. The
+// fixture is test/project-start-fixture.mjs, whose platform is Linux.
+
+import '../scripts/test-state.mjs';
+import assert from 'node:assert/strict';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import { forgeDomains, forgeTokenVars } from '../plugins/aidrian/lib/forges/index.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import { BEACON_WAIT, IDENTIFY_CAP, startBackground, startProject } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { accessProblem, cloneProblem, configFolder, CREDENTIAL_PATHS, mcpConfig, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { nestedProtected as anyHostNested, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
+import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
+import { PENDING_AGE } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { DRIVER, fakeClaude, OWN_PLUGIN, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
+
+const work = (fx, attempt = 1) => path.join(runsFolder(fx.state), 'launch', 'attempts', `ENG-1.${attempt}`, 'work');
+// The host's user settings of the fixture, written as `value`.
+const userSettings = (fx, value) => {
+  mkdirSync(fx.env.CLAUDE_CONFIG_DIR, { recursive: true });
+  writeFileSync(path.join(fx.env.CLAUDE_CONFIG_DIR, 'settings.json'), typeof value === 'string' ? value : JSON.stringify(value));
+};
+// The host's record of installed plugins in the fixture, `plugins` by id.
+const installed = (fx, plugins) => writeFileSync(path.join(fx.env.CLAUDE_CONFIG_DIR, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins }));
+const OWN = { scope: 'user', installPath: path.resolve(import.meta.dirname, '../plugins/aidrian') };
+// A halted start: exit 1, `halt <cause>` first, no session started, and nothing recorded.
+function halted(fx, result, cause) {
+  assert.equal(result.exitCode, 1, result.out.join('\n'));
+  assert.match(result.out[0], /^halt /u);
+  assert.match(result.out[0], cause);
+  assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
+  assert.deepEqual(fx.rows(), [], 'nothing recorded');
+}
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+
+// Folders for the adapter's start outside the gate: a clone, its git folder, and a granted folder, by their real paths,
+// laid out as a run's attempt is, `<root>/runs/launch/attempts/ENG-1.1/`.
+function folders(t) {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sandbox-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const attempt = path.join(root, 'runs', 'launch', 'attempts', 'ENG-1.1');
+  const [cwd, git, drop] = ['work', 'git', 'drop'].map((name) => path.join(attempt, name));
+  for (const each of [cwd, git, drop]) mkdirSync(each, { recursive: true });
+  return { root, cwd, git, drop };
+}
+
+test('Claude Code declares an unverified, confined project start, and the host files it protects, at the root and at any depth', () => {
+  const cap = claudeCode.capabilities.projectStart;
+  assert.deepEqual([cap.verified, cap.evidence, cap.confined], ['unverified', 'fixtures and the host docs; no live run', true]);
+  for (const field of ['start', 'stop', 'ended', 'find', 'access', 'cloneProblem', 'attachLine', 'stopLine', 'sessionNote']) assert.equal(typeof cap[field], 'function', field);
+  assert.equal(cap.placeholders, PLACEHOLDERS);
+  assert.match(cap.sessionNote({ work: '/w', branch: 'feat/x' }), /Claude Code's sandbox, in \/w.*work only in that folder.*git push origin HEAD:refs\/heads\/feat\/x.*--head feat\/x.*starts no other session/su);
+  assert.deepEqual(PROTECTED_PATHS, ['.claude/settings.json', '.claude/settings.local.json', '.claude/skills', '.claude/agents', '.claude/commands', '.claude/hooks', '.claude/workflows', '.claude/scheduled_tasks.json', '.mcp.json']);
+  assert.deepEqual(protectedPaths(), PROTECTED_PATHS, 'the union of every host\'s; Codex protects none of its own');
+  for (const each of ['pkg/.claude/skills/x/SKILL.md', 'a/b/.claude/agents/x.md', 'a/.CLAUDE/Commands/x.md', 'a/.claude/settings.local.json', 'a/.claude/settings.json',
+    'a/.claude/hooks/x.sh', 'a/.claude/workflows/x', 'docs/skill.md', 'a/.claude', '.claude/skills']) {
+    assert.equal(nestedProtected(each.split('/')), true, each);
+    assert.equal(anyHostNested(each.split('/')), true, each);
+  }
+  for (const each of ['a/.claude/CLAUDE.md', 'a/claude/skills/x.md', 'src/settings.json', 'a/.claude/notes.md', 'SKILLS.md']) assert.equal(nestedProtected(each.split('/')), false, each);
+  // The placeholders: the settings files and .mcp.json as `{}`, the folders empty, and no scheduled tasks file.
+  assert.deepEqual(PLACEHOLDERS.map((each) => [each.path, each.folder ? 'folder' : each.text]), [
+    ['.claude/settings.json', '{}\n'], ['.claude/settings.local.json', '{}\n'], ['.mcp.json', '{}\n'], ['.claude/skills', 'folder'], ['.claude/agents', 'folder'],
+    ['.claude/commands', 'folder'], ['.claude/hooks', 'folder'], ['.claude/workflows', 'folder'],
+  ]);
+});
+
+test('the identify step ends well before a pending mark lapses, and the beacon wait is bounded', () => {
+  assert.ok(IDENTIFY_CAP <= PENDING_AGE - 30_000, `${IDENTIFY_CAP} against ${PENDING_AGE}`);
+  assert.equal(BEACON_WAIT, 180_000);
+});
+
+test('the sandbox settings are pinned whole: the sandbox on and required, writes to the grants and temporary folders only, credentials and the main checkout unreadable, connectors off, and a strict network allowlist', () => {
+  const home = '/home/u';
+  const settings = sandboxSettings({
+    work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
+    config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'],
+  });
+  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json'];
+  const unread = [...stores, '/m'];
+  const nested = ['/s/w/**/.claude', ...['skills', 'agents', 'commands', 'hooks', 'workflows', 'scheduled_tasks.json'].flatMap((name) => [`/s/w/**/.claude/${name}`, `/s/w/**/.claude/${name}/**`])];
+  assert.deepEqual(settings, {
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      autoAllowBashIfSandboxed: true,
+      enableWeakerNestedSandbox: false,
+      enableWeakerNetworkIsolation: false,
+      allowAppleEvents: false,
+      allowNestedUserNamespaces: false,
+      filesystem: {
+        allowWrite: ['/s/g', '/s/d', '/st/plans', '/private/tmp'],
+        denyWrite: [
+          '/s/w/.git', '/s/g/config', '/s/g/hooks', '/s/g/commondir', '/s/g/config.worktree', ...PROTECTED_PATHS.map((each) => `/s/w/${each}`),
+          ...nested, '/s/w/**/.claude/settings*.json', '/s/w/**/SKILL.md',
+        ],
+        denyRead: unread,
+        allowRead: ['/m/.git'],
+      },
+      network: { strictAllowlist: true, allowedDomains: ['github.com', 'api.github.com'], allowAllUnixSockets: false, allowLocalBinding: false },
+      credentials: { envVars: [{ name: 'NPM_TOKEN', mode: 'deny' }, { name: 'AWS_SECRET_ACCESS_KEY', mode: 'deny' }] },
+    },
+    permissions: { deny: unread.flatMap((each) => [`Read(/${each})`, `Read(/${each}/**)`]) },
+    disableClaudeAiConnectors: true,
+    worktree: { bgIsolation: 'none' },
+  });
+  assert.equal(settings.sandbox.excludedCommands, undefined);
+  assert.equal(settings.sandbox.network.allowUnixSockets, undefined);
+  assert.ok(!settings.sandbox.filesystem.allowWrite.some((each) => each.endsWith('dispatch-log.jsonl')));
+  assert.match(settings.permissions.deny[0], /^Read\(\/\/home\/u\/\.ssh\)$/u, 'an absolute Read rule takes //');
+  const plain = sandboxSettings({ work: '/w', git: '/g', grants: ['/g'], domains: ['github.com'], temp: [], home, platform: 'darwin' });
+  assert.equal(plain.sandbox.enableWeakerNetworkIsolation, true, 'only on macOS');
+  // The git folder's placeholders and the nested .claude folder itself stay denied on every platform: on Linux a denial
+  // holds a path there at launch, and the gate puts both placeholders there first.
+  for (const each of [settings, plain]) {
+    const [work, git] = each === plain ? ['/w', '/g'] : ['/s/w', '/s/g'];
+    for (const denied of [`${git}/commondir`, `${git}/config.worktree`, `${work}/**/.claude`]) assert.ok(each.sandbox.filesystem.denyWrite.includes(denied), denied);
+  }
+  assert.equal(plain.sandbox.filesystem.allowRead, undefined, 'no main checkout named, nothing opened again');
+  assert.ok(plain.sandbox.filesystem.denyRead.includes(path.join(home, '.claude', '.credentials.json')), 'the default config folder');
+  assert.equal(sandboxSettings({ work: '/w', git: '/g', grants: ['/g'], domains: ['github.com'], temp: [], home, platform: 'linux', main: '/m', mainGit: '/elsewhere/git' }).sandbox.filesystem.allowRead, undefined,
+    'a git folder outside the main checkout is not denied, so nothing is opened again');
+  assert.deepEqual(CREDENTIAL_PATHS, [
+    '.ssh', '.gnupg', '.aws', '.netrc', '.docker', '.kube', '.config/gcloud', '.azure', '.oci', 'Library/Keychains', '.password-store',
+    '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
+    'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
+    '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
+    '.vault-token', '.config/hub', '.claude.json', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
+    '.bash_history', '.zsh_history', '.local/share/fish',
+  ]);
+  assert.ok(!CREDENTIAL_PATHS.includes('.config/gh'), 'the forge CLI\'s login stays readable');
+});
+
+test('every credential-named variable is unset in the sandbox, and the well-known ones, but the forge\'s own token', () => {
+  const env = { PATH: '/bin', HOME: '/h', GH_TOKEN: 'x', GITHUB_TOKEN: 'x', STRIPE_SECRET_KEY: 'x', DB_PASSWORD: 'x', MY_API_KEY: 'x', SENTRY_AUTH_TOKEN: 'x', LANG: 'C', 'BAD-NAME_TOKEN': 'x' };
+  const unset = secretVars(env, forgeTokenVars());
+  for (const name of ['STRIPE_SECRET_KEY', 'DB_PASSWORD', 'MY_API_KEY', 'SENTRY_AUTH_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'NPM_TOKEN', 'ANTHROPIC_API_KEY', 'SSH_AUTH_SOCK']) assert.ok(unset.includes(name), name);
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'PATH', 'HOME', 'LANG', 'BAD-NAME_TOKEN']) assert.ok(!unset.includes(name), name);
+  assert.deepEqual(forgeTokenVars(), ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']);
+});
+
+test('the forge\'s network hosts: github.com and its API host, or an Enterprise host alone', () => {
+  assert.deepEqual(forgeDomains({ host: 'github.com', owner: 'a', name: 'b' }), ['github.com', 'api.github.com']);
+  assert.deepEqual(forgeDomains({ host: 'git.example.com', owner: 'a', name: 'b' }), ['git.example.com']);
+});
+
+test('the adapter starts claude --bg under the sandbox settings and only the team\'s MCP servers, and holds the session on its beacon', (t) => {
+  const fx = runFixture(t, { init: false });
+  const { root, cwd, git, drop } = folders(t);
+  const calls = [];
+  let beacons = 0;
+  const claude = fakeClaude({ dir: fx.dir });
+  const run = (command, args, options) => {
+    calls.push(args);
+    return claude.run(command, args, options);
+  };
+  const identified = [];
+  const env = { ...fx.env, STRIPE_SECRET_KEY: 's', GH_TOKEN: 't' };
+  const main = path.join(root, 'main');
+  mkdirSync(path.join(main, '.git'), { recursive: true });
+  const start = (more = {}) => startProject({
+    session: DRIVER, cwd, prompt: 'Project run launch, issue ENG-1: work it.', name: 'launch · ENG-1 · 1', env, hold: () => true,
+    identify: (each) => identified.push(each) > 0, beacon: () => {
+      beacons += 1;
+      return beacons > 3;
+    }, sandbox: { git, grants: [git, drop], domains: ['github.com', 'api.github.com'], main, mainGit: path.join(main, '.git'), tokens: forgeTokenVars() },
+    mcp: { tracker: { command: 'tracker-mcp' } }, home: fx.home, platform: 'linux', run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits', ...more,
+  });
+  const started = start();
+  assert.equal(started.problem, undefined, started.problem);
+  assert.equal(started.session, STARTED[0].session);
+  assert.deepEqual(identified, [{ id: STARTED[0].id, session: STARTED[0].session }], 'filed before the beacon wait');
+  const args = calls.find((each) => each[0] === '--bg');
+  const prompt = args.at(-1);
+  assert.equal(prompt, 'Project run launch, issue ENG-1: work it.');
+  const at = (flag) => args.indexOf(flag);
+  for (const flag of ['--setting-sources', '--settings', '--strict-mcp-config', '--mcp-config']) assert.ok(at(flag) > 0 && at(flag) < args.length - 1, `${flag} before the prompt`);
+  assert.equal(args[at('--setting-sources') + 1], 'user');
+  const passed = JSON.parse(args[at('--settings') + 1]);
+  assert.deepEqual(passed, sandboxSettings({
+    work: cwd, git, grants: [git, drop], domains: ['github.com', 'api.github.com'], temp: passed.sandbox.filesystem.allowWrite.slice(2), home: fx.home,
+    config: configFolder(env, fx.home), platform: 'linux', main, mainGit: path.join(main, '.git'), secrets: secretVars(env, forgeTokenVars()),
+  }));
+  assert.ok(passed.sandbox.filesystem.allowWrite.includes(realpathSync('/tmp')), 'the real /tmp');
+  assert.ok(passed.sandbox.credentials.envVars.some((each) => each.name === 'STRIPE_SECRET_KEY'), 'a secret of the driver\'s environment');
+  assert.ok(!passed.sandbox.credentials.envVars.some((each) => each.name === 'GH_TOKEN'), 'the forge token stays');
+  assert.equal(passed.disableClaudeAiConnectors, true);
+  assert.deepEqual(JSON.parse(args[at('--mcp-config') + 1]), mcpConfig({ tracker: { command: 'tracker-mcp' } }));
+  assert.deepEqual(mcpConfig(undefined), { mcpServers: {} });
+
+  // A clone in the main checkout, which the session may not read, starts nothing.
+  const inside = fakeClaude({ dir: fx.dir });
+  const refused = startProject({
+    session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env, hold: () => true, identify: () => true, beacon: () => true,
+    sandbox: { git, grants: [git, drop], domains: ['github.com'], main: root }, home: fx.home, platform: 'linux', run: inside.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits',
+  });
+  assert.match(refused.problem, /lies in the main checkout .*which a confined session may not read; set state\.dir to a folder outside it/u);
+  assert.deepEqual(inside.starts(), []);
+});
+
+test('a start whose beacon never comes stops the session and names the proof; one with bad folders runs no claude --bg', (t) => {
+  const fx = runFixture(t, { init: false });
+  const { cwd, git, drop, root } = folders(t);
+  const claude = fakeClaude({ dir: fx.dir });
+  const base = {
+    session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => false,
+    sandbox: { git, grants: [git, drop], domains: ['github.com'] }, mcp: {}, home: fx.home, platform: 'linux', run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits',
+  };
+  const silent = startProject(base);
+  assert.equal(silent.proof, 'beacon');
+  assert.equal(silent.uncertain, false);
+  assert.match(silent.problem, /the plugin's agent gate hook did not run on the session's first tool call within 180 seconds.*the session was stopped/u);
+  assert.deepEqual(claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[0].id]);
+
+  for (const [sandbox, why] of [
+    [{ git, grants: [drop], domains: ['github.com'] }, /the clone's git folder is not among the folders the gate grants/u],
+    [{ git: 'relative/git', grants: [git], domains: ['github.com'] }, /not an absolute path of plain text/u],
+    [{ git, grants: [git, path.join(root, 'missing')], domains: ['github.com'] }, /cannot be resolved \(ENOENT\)/u],
+    [{ git, grants: [git], domains: ['github.com; rm -rf /'] }, /are not host names/u],
+    [{ git, grants: [git], domains: [] }, /are not host names/u],
+    [{ git, grants: [git], domains: ['github.com'], main: 'relative' }, /the main checkout the gate names is not an absolute path/u],
+    [{ git, grants: [git], domains: ['github.com'], main: path.join(root, 'gone') }, /the main checkout the gate names cannot be resolved/u],
+    [undefined, /named no sandbox/u],
+  ]) {
+    const fresh = fakeClaude({ dir: fx.dir });
+    const result = startProject({ ...base, sandbox, run: fresh.run });
+    assert.match(result.problem, why, JSON.stringify(sandbox));
+    assert.deepEqual(fresh.calls, [], 'no claude call at all');
+  }
+});
+
+test('a start the host refuses for an untrusted folder names the trust step: the runs folder, never the whole state folder', (t) => {
+  const fx = runFixture(t, { init: false });
+  const { root, cwd, git } = folders(t);
+  const claude = fakeClaude({ dir: fx.dir, start: () => ({ status: 1, stdout: '', stderr: 'Error: Workspace not trusted', listed: false }) });
+  const result = startProject({
+    session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true,
+    sandbox: { git, grants: [git], domains: ['github.com'] }, home: fx.home, platform: 'linux', run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits',
+  });
+  assert.equal(result.uncertain, false);
+  assert.match(result.problem, new RegExp(`Workspace not trusted; trust the project's runs folder, ${escaped(path.join(root, 'runs'))}, once by running \`claude\` there`, 'u'));
+});
+
+test('the handoff\'s background start passes no sandbox, setting sources, or MCP flags', (t) => {
+  const fx = runFixture(t, { init: false });
+  const claude = fakeClaude({ dir: fx.dir });
+  const started = startBackground({ session: DRIVER, slug: 'brief', chain: 1, efforts: [], prompt: 'Resume the brief.', env: fx.env, hold: () => true, run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits' });
+  assert.equal(started.problem, undefined);
+  const [args] = claude.starts().map((call) => call.args);
+  for (const flag of ['--setting-sources', '--settings', '--strict-mcp-config', '--mcp-config']) assert.ok(!args.includes(flag), flag);
+});
+
+test('a start on Claude Code works in a fresh clone with a drop and its placeholders, never a linked worktree, and prints the unverified line', (t) => {
+  const fx = runFixture(t);
+  const before = fx.git('worktree', 'list', '--porcelain');
+  const result = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  assert.match(result.out[0], /^unverified: this host's project start is checked on fixtures only \(fixtures and the host docs; no live run\)/u);
+  const row = fx.rows().find((each) => each.event === 'start' && each.outcome === 'started');
+  assert.deepEqual([row.cwd, row.drop], [work(fx), path.join(path.dirname(work(fx)), 'drop')]);
+  assert.equal(fx.git('worktree', 'list', '--porcelain'), before, 'git worktree list is unchanged');
+  // The placeholders, made before the launch, so a sandbox that denies only a path there at launch holds each.
+  const git = path.join(path.dirname(work(fx)), 'git');
+  assert.equal(lstatSync(path.join(git, 'config.worktree')).size, 0, 'an empty config.worktree');
+  for (const file of ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json']) assert.equal(readFileSync(path.join(work(fx), file), 'utf8'), '{}\n', file);
+  for (const folder of ['skills', 'agents', 'commands', 'hooks', 'workflows']) assert.ok(lstatSync(path.join(work(fx), '.claude', folder)).isDirectory(), folder);
+  assert.throws(() => lstatSync(path.join(work(fx), '.claude/scheduled_tasks.json')), /ENOENT/u, 'no scheduled tasks file');
+  // A commondir that names the git folder itself, which git reads as no other folder, so the denial holds it by path.
+  assert.equal(readFileSync(path.join(git, 'commondir'), 'utf8'), GIT_PLACEHOLDERS.commondir);
+  assert.equal(GIT_PLACEHOLDERS.commondir, '.\n');
+  assert.equal(lstatSync(path.join(git, 'commondir')).nlink, 1);
+  assert.equal(fx.git('-C', work(fx), 'rev-parse', '--path-format=absolute', '--git-common-dir').trim(), realpathSync(git), 'git reads the git folder itself as the common one');
+  assert.equal(fx.git('-C', work(fx), 'status', '--porcelain', '--untracked-files=all'), '', 'no placeholder shows as a change');
+  // A tracked settings file is the base branch's own, and stays as it is.
+  const tracked = runFixture(t, { files: { '.claude/settings.json': '{"permissions":{}}' } });
+  assert.equal(tracked.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.equal(readFileSync(path.join(work(tracked), '.claude/settings.json'), 'utf8'), '{"permissions":{}}');
+});
+
+test('a start halts unless the default branch sets projectRun.unverifiedHosts', (t) => {
+  const fx = runFixture(t, { projectRun: { allow: true } });
+  const result = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(result.out[0], /^halt this host's project start is not verified on a live host/u);
+  assert.match(result.out[1], /^unverified: /u);
+  assert.deepEqual(fx.claude.starts(), []);
+});
+
+test('a host whose project start is not confined halts', (t) => {
+  const cap = claudeCode.capabilities.projectStart;
+  cap.confined = false;
+  t.after(() => {
+    cap.confined = true;
+  });
+  const fx = runFixture(t);
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /not confined to a fresh clone under its own sandbox/u);
+});
+
+test('a start whose session never files the beacon gives the attempt back and halts the run', (t) => {
+  const fx = runFixture(t);
+  const claude = fakeClaude({ dir: fx.dir, env: fx.env, beacon: false });
+  const result = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.out.find((line) => line.startsWith('halt ')), /failed its proof: the plugin's agent gate hook did not run/u);
+  const rows = fx.rows();
+  assert.deepEqual([rows.at(-3).outcome, rows.at(-3).proof, rows.at(-2).state, rows.at(-1).event], ['void', true, 'open', 'halt']);
+  assert.deepEqual(claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[0].id]);
+});
+
+test('a start halts, recording nothing, unless the user\'s settings enable this plugin or install it at user scope', (t) => {
+  const project = runFixture(t);
+  installed(project, { [OWN_PLUGIN]: [{ scope: 'project', projectPath: project.dir, installPath: OWN.installPath }] });
+  halted(project, project.cmd(['start', 'launch', 'ENG-1']), /this plugin is not enabled in the host's user settings.*`claude plugin install aidrian@<marketplace> --scope user`.*"enabledPlugins": \{ "aidrian@<marketplace>": true \}/u);
+  const none = runFixture(t);
+  installed(none, {});
+  halted(none, none.cmd(['start', 'launch', 'ENG-1']), /this plugin is not enabled/u);
+  const off = runFixture(t);
+  userSettings(off, { enabledPlugins: { [OWN_PLUGIN]: false } });
+  halted(off, off.cmd(['start', 'launch', 'ENG-1']), /this plugin is not enabled/u);
+  const enabled = runFixture(t);
+  installed(enabled, { [OWN_PLUGIN]: [{ scope: 'project', projectPath: enabled.dir, installPath: OWN.installPath }] });
+  userSettings(enabled, { enabledPlugins: { [OWN_PLUGIN]: true } });
+  assert.equal(enabled.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'enabled in the user\'s settings');
+});
+
+test('user settings that run a command outside the sandbox, or any other plugin, halt the start unless projectRun.outsideSandbox names them', (t) => {
+  for (const [settings, cause, name] of [
+    [{ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'true' }] }] } }, /user settings set hooks, a command the host runs outside the sandbox/u, 'hooks'],
+    [{ apiKeyHelper: '/bin/key' }, /set apiKeyHelper/u, 'apiKeyHelper'],
+    [{ statusLine: { type: 'command', command: 'x' } }, /set statusLine/u, 'statusLine'],
+  ]) {
+    const fx = runFixture(t);
+    userSettings(fx, settings);
+    halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), cause);
+    const allowed = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, outsideSandbox: [name] } });
+    userSettings(allowed, settings);
+    assert.equal(allowed.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, name);
+  }
+  // Listed only in a working copy, not by the forge: nothing is widened.
+  const local = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, outsideSandbox: ['hooks'] }, forgeConfig: { version: 1, projectRun: { allow: true, unverifiedHosts: true } } });
+  userSettings(local, { hooks: { PreToolUse: [{}] } });
+  halted(local, local.cmd(['start', 'launch', 'ENG-1']), /set hooks/u);
+
+  // Any other plugin counts, hooks or none: its LSP servers, monitors, and MCP servers run outside the sandbox too.
+  const plugin = (fx, manifest, flags = { 'x@market': true }) => {
+    const place = path.join(fx.root, 'plugin-x');
+    mkdirSync(path.join(place, '.claude-plugin'), { recursive: true });
+    writeFileSync(path.join(place, '.claude-plugin', 'plugin.json'), JSON.stringify(manifest));
+    installed(fx, { 'x@market': [{ scope: 'user', installPath: place }], [OWN_PLUGIN]: [OWN] });
+    userSettings(fx, { enabledPlugins: { ...flags, [OWN_PLUGIN]: true } });
+  };
+  const hooked = runFixture(t);
+  plugin(hooked, { name: 'x', hooks: './hooks.json' });
+  halted(hooked, hooked.cmd(['start', 'launch', 'ENG-1']), /the plugin x@market is enabled, and a plugin's hooks, MCP and LSP servers, and monitors run outside the sandbox/u);
+  const quiet = runFixture(t);
+  plugin(quiet, { name: 'x', lspServers: { ts: { command: 'tsserver' } } });
+  halted(quiet, quiet.cmd(['start', 'launch', 'ENG-1']), /the plugin x@market is enabled/u);
+  const unflagged = runFixture(t);
+  plugin(unflagged, { name: 'x' }, {});
+  halted(unflagged, unflagged.cmd(['start', 'launch', 'ENG-1']), /the plugin x@market is enabled/u, 'no entry follows its default, which is on');
+  const off = runFixture(t);
+  plugin(off, { name: 'x', hooks: './hooks.json' }, { 'x@market': false });
+  assert.equal(off.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'a plugin the user turned off');
+  const listed = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, outsideSandbox: ['x@market'] } });
+  plugin(listed, { name: 'x', hooks: './hooks.json' });
+  assert.equal(listed.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'a plugin the team names');
+  // A plugin turned off that a named, enabled plugin depends on still loads.
+  const needed = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, outsideSandbox: ['x@market'] } });
+  plugin(needed, { name: 'x', dependencies: ['y'] });
+  const records = JSON.parse(readFileSync(path.join(needed.env.CLAUDE_CONFIG_DIR, 'plugins', 'installed_plugins.json'), 'utf8')).plugins;
+  installed(needed, { ...records, 'y@market': [{ scope: 'user', installPath: path.join(needed.root, 'plugin-y') }] });
+  userSettings(needed, { enabledPlugins: { 'x@market': true, 'y@market': false, [OWN_PLUGIN]: true } });
+  halted(needed, needed.cmd(['start', 'launch', 'ENG-1']), /the plugin y@market is enabled/u);
+  // Enabled with no install record: what it runs cannot be told.
+  const ghost = runFixture(t);
+  userSettings(ghost, { enabledPlugins: { 'ghost@market': true, [OWN_PLUGIN]: true } });
+  halted(ghost, ghost.cmd(['start', 'launch', 'ENG-1']), /the plugin ghost@market is enabled in the host's user settings with no install record/u);
+  assert.equal(userSettingsProblem({}, { folder: path.join(ghost.root, 'nowhere') }), null, 'no plugins at all');
+  assert.equal(userSettingsProblem({ statusLine: null }, { folder: path.join(ghost.root, 'nowhere') }), null, 'a key set to null is unset');
+});
+
+test('a user skill, agent, or command whose frontmatter declares hooks or MCP servers halts the start unless the team names it', (t) => {
+  const write = (fx, file, text) => {
+    const full = path.join(fx.env.CLAUDE_CONFIG_DIR, file);
+    mkdirSync(path.dirname(full), { recursive: true });
+    writeFileSync(full, text);
+  };
+  for (const [file, text] of [
+    ['skills/deploy/SKILL.md', '---\nname: deploy\nhooks:\n  PreToolUse: []\n---\n'],
+    ['agents/x.md', '---\n"mcpServers": {}\n---\n'],
+    ['commands/ship.md', '---\n  "hooks" : {}\n---\n'],
+  ]) {
+    const fx = runFixture(t);
+    write(fx, file, text);
+    halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), new RegExp(`~/\\.claude/${escaped(file)}, in the host's user config folder, declares hooks or MCP servers`, 'u'));
+    const named = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, outsideSandbox: [`~/.claude/${file}`] } });
+    write(named, file, text);
+    assert.equal(named.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, file);
+  }
+  const body = runFixture(t);
+  write(body, 'skills/x/SKILL.md', '---\nname: x\n---\nhooks: in the body only\n');
+  assert.equal(body.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'only the frontmatter counts');
+});
+
+test('a skill, agent, or command of the clone, at any depth, whose frontmatter declares hooks or MCP servers, or a link out of its folder, halts the start unless the team names it', (t) => {
+  const skill = { '.claude/skills/deploy/SKILL.md': '---\nname: deploy\nhooks:\n  PreToolUse: []\n---\nDeploy it.\n' };
+  const fx = runFixture(t, { files: skill });
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /\.claude\/skills\/deploy\/SKILL\.md in the attempt's clone declares hooks or MCP servers in its frontmatter/u);
+  const named = runFixture(t, { files: skill, projectRun: { allow: true, unverifiedHosts: true, outsideSandbox: ['.claude/skills/deploy/SKILL.md'] } });
+  assert.equal(named.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const body = runFixture(t, { files: { '.claude/agents/x.md': '---\nname: x\n---\nhooks: are named in the body only\n' } });
+  assert.equal(body.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'only the frontmatter counts');
+  const nested = runFixture(t, { files: { 'packages/web/.claude/agents/x.md': '---\nname: x\n"hooks": {}\n---\n' } });
+  halted(nested, nested.cmd(['start', 'launch', 'ENG-1']), /packages\/web\/\.claude\/agents\/x\.md in the attempt's clone declares hooks/u);
+
+  const { cwd } = folders(t);
+  const put = (file, text) => {
+    mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
+    writeFileSync(path.join(cwd, file), text);
+  };
+  put('.claude/commands/ship.md', '---\nhooks: {}\n---\n');
+  assert.match(cloneProblem({ work: cwd }), /\.claude\/commands\/ship\.md/u);
+  rmSync(path.join(cwd, '.claude'), { recursive: true });
+  put('a/b/.claude/skills/x/SKILL.md', "---\n'mcpServers' : { db: {} }\n---\n");
+  assert.match(cloneProblem({ work: cwd }), /a\/b\/\.claude\/skills\/x\/SKILL\.md in the attempt's clone declares hooks or MCP servers/u, 'a quoted, spaced key at any depth');
+  rmSync(path.join(cwd, 'a'), { recursive: true });
+  // A skill folder that links out of .claude/skills, as to a shared .agents folder a session may write.
+  put('.agents/skills/foo/SKILL.md', '---\nname: foo\n---\n');
+  mkdirSync(path.join(cwd, '.claude/skills'), { recursive: true });
+  symlinkSync('../../.agents/skills/foo', path.join(cwd, '.claude/skills/foo'));
+  assert.match(cloneProblem({ work: cwd }), /\.claude\/skills\/foo in the attempt's clone is a link that leads out of its folder/u);
+  assert.equal(cloneProblem({ work: cwd, allowed: ['.claude/skills/foo'] }), null, 'a link the team names');
+  put('.claude/skills/baz/SKILL.md', '---\nname: baz\n---\n');
+  symlinkSync('baz', path.join(cwd, '.claude/skills/bar'));
+  assert.equal(cloneProblem({ work: cwd, allowed: ['.claude/skills/foo'] }), null, 'a link inside its folder passes');
+  symlinkSync('foo', path.join(cwd, '.claude/skills/qux'));
+  assert.match(cloneProblem({ work: cwd, allowed: ['.claude/skills/foo'] }), /\.claude\/skills\/qux in the attempt's clone is a link that leads out/u, 'a link through a named link still leads out');
+});
+
+test('a .claude that is a link, at the clone\'s root or at any depth, halts the start whatever the team names, and no placeholder is written through a link', (t) => {
+  const { root, cwd, git } = folders(t);
+  const linked = /is a link, and the host loads the skills, agents, commands, hooks, and settings of a \.claude folder from wherever it leads.*replace the link with the folder/u;
+  // A nested link to a folder whose commands declare hooks: no walk of .claude folders would read it.
+  mkdirSync(path.join(cwd, 'shared', 'commands'), { recursive: true });
+  writeFileSync(path.join(cwd, 'shared', 'commands', 'ok.md'), '---\nhooks: {}\n---\n');
+  mkdirSync(path.join(cwd, 'pkg'));
+  symlinkSync('../shared', path.join(cwd, 'pkg', '.claude'));
+  assert.match(cloneProblem({ work: cwd }) ?? '', new RegExp(`^pkg/\\.claude in the attempt's clone ${linked.source}`, 'u'));
+  assert.match(cloneProblem({ work: cwd, allowed: ['pkg/.claude', 'shared/commands/ok.md'] }) ?? '', linked, 'no name lifts it');
+  rmSync(path.join(cwd, 'pkg', '.claude'));
+  symlinkSync('../shared', path.join(cwd, 'pkg', '.Claude'));
+  assert.match(cloneProblem({ work: cwd }) ?? '', /^pkg\/\.Claude in the attempt's clone is a link/u, 'any case, as a disk that folds case reads it');
+  rmSync(path.join(cwd, 'pkg'), { recursive: true });
+  assert.equal(cloneProblem({ work: cwd }), null, 'shared alone is no .claude folder');
+  // A root link that leads out of the clone: the start halts, and the placeholders leave its target untouched.
+  const outside = path.join(root, 'outside');
+  mkdirSync(outside);
+  symlinkSync(outside, path.join(cwd, '.claude'));
+  assert.match(cloneProblem({ work: cwd }) ?? '', new RegExp(`^\\.claude in the attempt's clone ${linked.source}`, 'u'));
+  assert.match(placeHolders({ work: cwd, git, placeholders: PLACEHOLDERS })?.problem ?? '', /holds \.claude, a link, where its placeholder \.claude\/settings\.json goes.*replace the link with the folder/u);
+  assert.deepEqual(readdirSync(outside), [], 'the link\'s target is untouched');
+  // A link deeper in the path, as .claude/skills, is refused part by part as well.
+  rmSync(path.join(cwd, '.claude'));
+  mkdirSync(path.join(cwd, '.claude'));
+  symlinkSync(outside, path.join(cwd, '.claude', 'skills'));
+  assert.match(placeHolders({ work: cwd, git, placeholders: PLACEHOLDERS })?.problem ?? '', /holds \.claude\/skills, a link, where its placeholder \.claude\/skills goes/u);
+  assert.deepEqual(readdirSync(outside), [], 'still untouched');
+  rmSync(path.join(cwd, '.claude', 'skills'));
+  // With no link, each placeholder goes in, and the git folder's own two.
+  assert.equal(placeHolders({ work: cwd, git, placeholders: PLACEHOLDERS }), null);
+  assert.equal(readFileSync(path.join(git, 'commondir'), 'utf8'), '.\n');
+  assert.equal(readFileSync(path.join(git, 'config.worktree'), 'utf8'), '');
+  assert.ok(lstatSync(path.join(cwd, '.claude', 'skills')).isDirectory());
+});
+
+test('a start whose clone holds a nested .claude link halts through the gate', (t) => {
+  const fx = runFixture(t, { files: { 'shared/commands/ok.md': '---\nhooks: {}\n---\n' }, links: { 'pkg/.claude': '../shared' } });
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /pkg\/\.claude in the attempt's clone is a link/u);
+});
+
+test('the user\'s sandbox settings pass only with keys that narrow it, and network.allowedDomains; a grant into a guarded folder, or settings that cannot be read, halt the start', (t) => {
+  const fx = runFixture(t, { init: false });
+  const guarded = [path.join(fx.home, '.local', 'state'), fx.state];
+  const ask = (settings, more = {}) => {
+    userSettings(fx, settings);
+    return accessProblem({ env: fx.env, home: fx.home, guarded, pushUrl: 'https://github.com/acme/widgets.git', platform: 'linux', ...more });
+  };
+  assert.equal(ask({}), null);
+  assert.equal(ask({ sandbox: {
+    enabled: false, failIfUnavailable: false, allowUnsandboxedCommands: true, autoAllowBashIfSandboxed: false, enableWeakerNestedSandbox: true,
+    enableWeakerNetworkIsolation: true, allowAppleEvents: true, allowNestedUserNamespaces: true,
+    filesystem: { denyRead: ['~/secret'], denyWrite: ['/etc'] },
+    network: { allowedDomains: ['registry.npmjs.org'], deniedDomains: ['evil.example'], strictAllowlist: false, allowAllUnixSockets: true, allowLocalBinding: true },
+    credentials: { files: [{ path: '~/.x', mode: 'deny' }], envVars: [{ name: 'X', mode: 'mask' }] },
+  } }), null, 'scalars --settings overrides, lists that narrow, and allowedDomains');
+  for (const [settings, key] of [
+    [{ excludedCommands: ['docker'] }, 'excludedCommands'],
+    [{ filesystem: { allowWrite: ['~/'] } }, 'filesystem.allowWrite'],
+    [{ filesystem: { allowRead: ['~/.ssh'] } }, 'filesystem.allowRead'],
+    [{ filesystem: { disabled: true } }, 'filesystem.disabled'],
+    [{ ignoreViolations: { '*': ['/x'] } }, 'ignoreViolations'],
+    [{ network: { allowUnixSockets: ['/var/run/docker.sock'] } }, 'network.allowUnixSockets'],
+    [{ network: { httpProxyPort: 8080 } }, 'network.httpProxyPort'],
+    [{ network: { socksProxyPort: 1080 } }, 'network.socksProxyPort'],
+    [{ network: { allowMachLookup: ['com.apple.x'] } }, 'network.allowMachLookup'],
+    [{ network: { tlsTerminate: true } }, 'network.tlsTerminate'],
+    [{ ripgrep: { command: '/bin/rg' } }, 'ripgrep'],
+    [{ bwrapPath: '/opt/bwrap' }, 'bwrapPath'],
+    [{ credentials: { envVars: [{ name: 'X', mode: 'allow' }] } }, 'credentials.envVars'],
+    [{ someFutureKey: true }, 'someFutureKey'],
+  ]) {
+    assert.match(ask({ sandbox: settings }) ?? 'null', new RegExp(`user settings set sandbox\\.${escaped(key)}, which does not only narrow the sandbox`, 'u'), key);
+  }
+  assert.match(ask({ sandbox: true }), /user settings set sandbox to a value that is not an object/u);
+  assert.match(ask({ permissions: { additionalDirectories: [fx.state] } }), new RegExp(`grant ${escaped(fx.state)}, which reaches`, 'u'));
+  assert.match(ask({ permissions: { additionalDirectories: [path.join(fx.state, 'runs')] } }), /which reaches/u, 'a folder in a guarded one');
+  assert.match(ask({ permissions: { allow: [`Edit(/${fx.home}/**)`] } }), /which reaches/u, 'an Edit rule cut at its glob');
+  assert.match(ask({ permissions: { additionalDirectories: ['relative'] } }), /a path the gate cannot place/u);
+  assert.equal(ask({ permissions: { allow: ['Edit(src/**)', 'Bash(npm test)'] } }), null, 'a rule from the session\'s folder');
+  assert.match(ask('{ not json'), /cannot be read: it is not JSON/u);
+  assert.match(ask('[]'), /are not a JSON object/u);
+  for (const platform of ['darwin', 'linux']) {
+    assert.match(ask({}, { platform, pushUrl: 'git@github.com:acme/widgets.git' }), /origin's URL, which the attempt's clone pushes to, goes over SSH.*`git remote set-url origin https:\/\/<host>\/<owner>\/<name>\.git`/u, platform);
+    assert.match(ask({}, { platform, pushUrl: 'ssh://git@github.com/acme/widgets.git' }), /goes over SSH/u, platform);
+  }
+  assert.match(ask({}, { pushUrl: null }), /git names no URL origin pushes to/u);
+  assert.equal(ask({}, { platform: 'darwin' }), null, 'HTTPS on macOS');
+  assert.match(ask({}, { helpers: ['store'] }), /git's credential helper `store` keeps the push token in ~\/\.git-credentials.*`gh auth setup-git`/u);
+  assert.match(ask({}, { helpers: ['store --file ~/.creds'] }), /credential helper `store`/u);
+  assert.equal(ask({}, { helpers: ['!gh auth git-credential', 'osxkeychain'] }), null, 'the forge CLI\'s helper and the keychain');
+  assert.match(ask({}, { env: { ...fx.env, PATH: '/nowhere' } }), /bwrap is not on PATH/u);
+  assert.equal(ask({}, { env: { ...fx.env, PATH: '/nowhere' }, platform: 'darwin' }), null);
+});
+
+test('an origin that pushes over SSH halts the start on every platform, through the gate, and the remedy names set-url', (t) => {
+  for (const platform of ['darwin', 'linux']) {
+    const fx = runFixture(t);
+    fx.git('remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git');
+    halted(fx, fx.cmd(['start', 'launch', 'ENG-1'], { platform }), /origin's URL, which the attempt's clone pushes to, goes over SSH/u);
+  }
+  // The clone takes origin's URL, not its pushurl: an SSH URL with an HTTPS pushurl still halts, and the reverse passes.
+  const fetchSsh = runFixture(t);
+  fetchSsh.git('remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git');
+  fetchSsh.git('config', 'remote.origin.pushurl', 'https://github.com/acme/widgets.git');
+  halted(fetchSsh, fetchSsh.cmd(['start', 'launch', 'ENG-1']), /goes over SSH/u);
+  const pushSsh = runFixture(t);
+  pushSsh.git('config', 'remote.origin.pushurl', 'git@github.com:acme/widgets.git');
+  const passed = pushSsh.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(passed.exitCode, 0, passed.err.join('\n'));
+  assert.equal(pushSsh.git('-C', work(pushSsh), 'remote', 'get-url', '--push', 'origin').trim(), 'https://github.com/acme/widgets.git', 'the clone pushes over HTTPS');
+});
+
+test('an HTTPS origin that the user\'s git config rewrites to SSH with url.<base>.insteadOf halts the start, and the halt names the rule', (t) => {
+  const global = testGlobalConfig(t);
+  writeFileSync(global, '[url "git@github.com:"]\n\tinsteadOf = https://github.com/\n');
+  const fx = runFixture(t);
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /goes over SSH \(git@github\.com:acme\/widgets\.git\).*remove any url\.<base>\.insteadOf rule in the git config that rewrites it to SSH/u);
+});
+
+test('a clone that would push to another URL than the access check read, through the user\'s pushInsteadOf, halts the start', (t) => {
+  const global = testGlobalConfig(t);
+  writeFileSync(global, '[url "git@github.com:acme/"]\n\tpushInsteadOf = https://github.com/acme/\n');
+  const fx = runFixture(t);
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /the attempt's clone pushes to git@github\.com:acme\/widgets\.git, not https:\/\/github\.com\/acme\/widgets\.git, the URL the host's access check read/u);
+});
+
+test('git\'s store credential helper in the user\'s git config halts the start through the gate', (t) => {
+  const global = testGlobalConfig(t);
+  writeFileSync(global, '[credential "https://github.com"]\n\thelper = store\n');
+  const fx = runFixture(t);
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /credential helper `store`/u);
+});
+
+test('the session loads only the MCP servers both the local ref and the forge name alike, never a project .mcp.json', (t) => {
+  const servers = { tracker: { command: 'tracker-mcp', args: ['--read-only'] }, docs: { type: 'http', url: 'https://docs.example.com/mcp' } };
+  const fx = runFixture(t, {
+    projectRun: { allow: true, unverifiedHosts: true, mcpServers: servers },
+    forgeConfig: { version: 1, projectRun: { allow: true, unverifiedHosts: true, mcpServers: { tracker: servers.tracker, docs: { type: 'http', url: 'https://evil.example.com/mcp' } } } },
+    files: { '.mcp.json': JSON.stringify({ mcpServers: { planted: { command: 'sh' } } }) },
+  });
+  const result = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  const [{ args }] = fx.claude.starts();
+  assert.deepEqual(JSON.parse(args[args.indexOf('--mcp-config') + 1]), { mcpServers: { tracker: servers.tracker } });
+  assert.ok(args.includes('--strict-mcp-config'));
+  assert.equal(JSON.parse(args[args.indexOf('--settings') + 1]).disableClaudeAiConnectors, true, 'no claude.ai connector either');
+  const none = runFixture(t);
+  none.cmd(['start', 'launch', 'ENG-1']);
+  const [{ args: plain }] = none.claude.starts();
+  assert.equal(plain[plain.indexOf('--mcp-config') + 1], '{"mcpServers":{}}', 'none by default');
+  const settings = JSON.parse(plain[plain.indexOf('--settings') + 1]);
+  assert.equal(settings.sandbox.filesystem.denyRead.at(-1), none.dir, 'the main checkout is unreadable');
+  assert.equal(settings.sandbox.filesystem.allowRead[0], path.join(none.dir, '.git'), 'but its git folder, whose objects the clone borrows');
+});

@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, constants, cpSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, cpSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -304,6 +304,56 @@ test('the stop hook writes the handoff from the report of the stop it lets end, 
   assert.equal(stop(corrected, true).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { written_by: 'stop-hook', report: corrected });
   assert.deepEqual(log().map((row) => [row.handoffs_written, row.sent_back]), [[0, true], [1, false]]);
+});
+
+// A handoff file counts only when this run wrote it: a regular file changed at or after the subagent's transcript began.
+// One an earlier dispatch of the same name left, a link, or a folder is stale: the stop hook replaces it with the report,
+// through a new file renamed over it, so a link is never followed. A transcript with no timestamp keeps the old test.
+test('the stop hook replaces a stale handoff file, a link, but keeps one this run wrote, byte for byte', async (t) => {
+  const { base, dir, state, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  mkdirSync(dispatch, { recursive: true });
+  const transcriptFor = (id, file, timestamp) => {
+    const transcript = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(transcript, JSON.stringify({ type: 'user', ...(timestamp ? { timestamp } : {}), message: { role: 'user', content: `Write your machine handoff to ${file}.` } }));
+    return transcript;
+  };
+  const stop = (id, transcript) => hook('hook-subagent-stop.mjs', {
+    cwd: dir, agent_id: id, agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: '{"status":"done","role":"product-manager"}', stop_hook_active: false,
+  });
+  const report = { status: 'done', role: 'product-manager' };
+
+  // Left by an earlier dispatch, before this run began: replaced.
+  const older = path.join(dispatch, 'docs-S1-product-manager.json');
+  writeFileSync(older, '{"status":"done","role":"earlier"}');
+  await sleep(30);
+  assert.equal(stop('s1', transcriptFor('s1', older, new Date().toISOString())).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(older, 'utf8')), report);
+
+  // Written by this run, after its transcript began: kept as it is.
+  const newer = path.join(dispatch, 'docs-S2-product-manager.json');
+  const began = new Date(Date.now() - 60_000).toISOString();
+  writeFileSync(newer, '{ "by": "the agent itself" }');
+  assert.equal(stop('s2', transcriptFor('s2', newer, began)).status, 0);
+  assert.equal(readFileSync(newer, 'utf8'), '{ "by": "the agent itself" }');
+
+  // A link, even a fresh one, is no handoff: the link is replaced, and the file it named is untouched.
+  const target = path.join(base, 'elsewhere.json');
+  writeFileSync(target, '{"keep":true}');
+  const linked = path.join(dispatch, 'docs-S3-product-manager.json');
+  symlinkSync(target, linked);
+  assert.equal(stop('s3', transcriptFor('s3', linked, began)).status, 0);
+  assert.equal(lstatSync(linked).isFile(), true, 'a regular file now');
+  assert.deepEqual(JSON.parse(readFileSync(linked, 'utf8')), report);
+  assert.equal(readFileSync(target, 'utf8'), '{"keep":true}');
+
+  // No timestamp in the transcript: a file that is there counts, as before.
+  const plain = path.join(dispatch, 'docs-S4-product-manager.json');
+  writeFileSync(plain, '{"by":"dispatcher"}');
+  await sleep(30);
+  assert.equal(stop('s4', transcriptFor('s4', plain, null)).status, 0);
+  assert.equal(readFileSync(plain, 'utf8'), '{"by":"dispatcher"}');
+  assert.deepEqual(readdirSync(dispatch).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
 });
 
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {

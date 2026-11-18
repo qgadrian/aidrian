@@ -16,7 +16,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { BACKGROUND_HOPS, backgroundPrompt, continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, routeOf } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { CLAIM_AGE, claimStart, keepClaim, noteFrom, noteStarted, openStore, readArmed, readFrom, readStarted, startedInBackground } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionEnded, startBackground, startIn } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
@@ -149,7 +150,9 @@ test('the background route marks the new session unattended under the state root
   assert.equal(readUnattendedMark('plain-session', { env, home }), null, 'another session has none');
 });
 
-test('the background route copies an issue session\'s run and issue into its continuation\'s mark, and starts nothing from tags it cannot read', (t) => {
+// Every host's project start is confined, so an issue's session works in a clone under its host's sandbox: a continuation
+// would start outside both, and the gate starts none, before any store or mark write.
+test('an issue session starts no continuation on any host, and one whose tags cannot be read starts none either', (t) => {
   const marks = (setting) => {
     const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
     t.after(() => rmSync(xdg, { recursive: true, force: true }));
@@ -159,9 +162,14 @@ test('the background route copies an issue session\'s run and issue into its con
   passCheck(tagged);
   const one = marks(tagged);
   assert.ok(markUnattended(SESSION, { root: tagged.dir, env: one.env, tags: { project: 'launch', issue: 'ENG-1' } }));
-  const result = gate(tagged, { run: fakeRun({ own: tagged.dir }).run, env: one.env });
-  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
-  assert.deepEqual(readUnattendedMark(NEW_SESSION, { env: one.env, home: one.home }), { root: tagged.dir, cwd: tagged.dir, project: 'launch', issue: 'ENG-1' }, 'the continuation is the same issue\'s session');
+  const issueRun = fakeRun({ own: tagged.dir });
+  const result = gate(tagged, { run: issueRun.run, env: one.env });
+  assert.deepEqual(result.out, ['continue: none', 'fallback: a confined issue session starts no continuation; push the work and hand the result over'], result.err.join('\n'));
+  assert.deepEqual(bgCalls(issueRun.calls), [], 'nothing started');
+  assert.equal(readUnattendedMark(NEW_SESSION, { env: one.env, home: one.home }), null, 'no mark written');
+  assert.equal(readStarted(tagged.store, SESSION), null, 'no start recorded');
+  assert.deepEqual(routeOf({ env: one.env, cwd: tagged.dir }).out, ['route: none', 'fallback: a confined issue session starts no continuation; push the work and hand the result over'], 'the route says the same');
+  assert.deepEqual(routeOf({ env: tagged.env, cwd: tagged.dir }).out, ['route: background'], 'a session that works no issue');
 
   const broken = setup(t);
   passCheck(broken);
@@ -170,9 +178,22 @@ test('the background route copies an issue session\'s run and issue into its con
   writeFileSync(path.join(two.folder, `${SESSION}.json`), JSON.stringify({ root: broken.dir, at: Date.now(), project: 'launch', issue: 'not a key' }), { mode: 0o600 });
   const { run, calls } = fakeRun({ own: broken.dir });
   const refused = gate(broken, { run, env: two.env });
-  assert.equal(refused.out[0], 'continue: none');
-  assert.match(refused.out[1], /^fallback: this session's unattended mark names a project run's issue in a shape the gate cannot read, so it starts no background session that would lose it/u);
+  assert.deepEqual(refused.out, ['continue: none', 'fallback: a confined issue session starts no continuation; push the work and hand the result over'], 'a mark naming an issue in a shape that cannot be read counts as one');
   assert.deepEqual(bgCalls(calls), [], 'nothing started');
+
+  // Whatever the host declares of its project start: the check reads the mark alone.
+  const cap = claudeCode.capabilities.projectStart;
+  cap.confined = false;
+  t.after(() => {
+    cap.confined = true;
+  });
+  const plain = setup(t);
+  passCheck(plain);
+  const three = marks(plain);
+  assert.ok(markUnattended(SESSION, { root: plain.dir, env: three.env, tags: { project: 'launch', issue: 'ENG-1' } }));
+  const third = fakeRun({ own: plain.dir });
+  assert.deepEqual(gate(plain, { run: third.run, env: three.env }).out, ['continue: none', 'fallback: a confined issue session starts no continuation; push the work and hand the result over']);
+  assert.deepEqual(bgCalls(third.calls), [], 'nothing started');
 });
 
 test('a start the gate cannot mark unattended is stopped and falls back, as one it cannot hold to a floor', (t) => {

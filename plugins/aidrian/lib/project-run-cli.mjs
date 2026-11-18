@@ -3,7 +3,7 @@
 //   aidrian project init RUN --file PATH   # validate the driver's snapshot input and start run RUN; the attended main session only
 //   aidrian project next RUN [--json]      # the next issue or issues to start, `wait N running`, or `done`
 //   aidrian project summary RUN            # write and print summary.md from the ledger
-//   aidrian project start RUN ISSUE        # the driver starts the issue's session in its worktree (lib/project-run-gate.mjs)
+//   aidrian project start RUN ISSUE        # the driver starts the issue's session in a fresh clone (lib/project-run-gate.mjs)
 //   aidrian project wait RUN [--max-wait S] # the driver waits for an issue's session to settle, at most S seconds
 //   aidrian project result RUN ISSUE --file PATH   # the issue's own session records how it ended
 //   aidrian project handoff RUN BRIEF      # the driver records the brief its background continuation starts from
@@ -46,8 +46,9 @@ export const commands = {
 // read in the home folder of the user this process runs as, which no variable of a command's environment moves, so only
 // an in-process caller can point it elsewhere. So are `forge`, the forge facade the team's policy and a merge are read
 // through, `spawn` and `wait`, the host adapter's stand-ins for its command and its pause, `pause`, wait's pause between
-// reads, and `now`. Throws what parseArgs and commandConfig throw, which lib/cli.mjs reports.
-export function projectCommand(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now } = {}) {
+// reads, `now`, and `platform`, the operating system a start's host sandbox runs on. Throws what parseArgs and
+// commandConfig throw, which lib/cli.mjs reports.
+export function projectCommand(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform } = {}) {
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
   const word = { type: 'string' };
@@ -74,7 +75,7 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
     return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home });
   }
   const gate = { project, config, run, env, home, ...(now === undefined ? {} : { now }), ...(forge ? { forge } : {}) };
-  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait });
+  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, ...(platform ? { platform } : {}) });
   if (action === 'result') {
     if (!values.file) return fail('project result needs --file');
     return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });

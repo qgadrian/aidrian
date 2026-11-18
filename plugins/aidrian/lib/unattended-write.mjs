@@ -12,7 +12,7 @@
 // (lib/unattended-shell.mjs shellWrites): a target built from a variable, a link a command makes, and a program that
 // writes its own config.
 
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -21,10 +21,10 @@ import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { foldCase, isWithin } from './fs.mjs';
-import { gitConfigFiles, gitFolders } from './git.mjs';
+import { gitConfigFiles, gitFolders, runGit } from './git.mjs';
 import { GLOB_WORD, sameFile } from './glob-links.mjs';
 import { globPaths, globReaches, modeTargets, stateFolders } from './handoff-guard.mjs';
-import { fileEditOf, opaqueShellCommand } from './hosts/index.mjs';
+import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { shellWrites } from './unattended-shell.mjs';
 
@@ -55,6 +55,8 @@ const ATTEST_KEY = /["']reviewer["']\s*:/u;
 const ESCAPED_KEY = /["'][^"'\n]*\\[^"'\n]*["']\s*:/u;
 // A text that names a git folder through git itself, as `$(git rev-parse --git-common-dir)` does.
 const GIT_FOLDER_WORD = /--(?:git-common-dir|git-dir|absolute-git-dir|git-path)\b|\$\{?GIT_(?:DIR|COMMON_DIR)\b/u;
+// A text that names a git folder or pointer by its own name, `.git`, as a word or a path's part.
+const GIT_WORD = /(?<![\w.-])\.git(?![\w.-])/u;
 // A file a subagent writes by hand in the dispatch folder: its handoff, `<branch>-<slice>-<agent>.json`.
 const HANDOFF = /^[^/]+\.json$/u;
 const MANIFEST = /^pr-\d+\.json$/u;
@@ -90,7 +92,7 @@ export function unattendedPlaces({ cwd, mark, project, config, base, own = null,
   if (!limited && !project) return null;
   try {
     const user = home ?? userInfo().homedir;
-    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, temp: [], refused: [], home: real(user) };
+    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, temp: [], refused: [], nested: [], home: real(user) };
     const refuse = refuser(places.refused);
     userRefused(refuse, user, env);
     let named;
@@ -154,10 +156,13 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
   if (start && real(start.common) === real(repo.common)) {
     places.worktree = real(start.top);
     gitRefused(refuse, start);
+    hostRefused(refuse, start.top);
   }
   const attempt = typeof own === 'function' ? own() : null;
   if (attempt) {
     places.specific.push(real(path.join(attempt, 'work')), real(path.join(attempt, 'drop')));
+    hostRefused(refuse, path.join(attempt, 'work'));
+    places.nested.push({ root: real(path.join(attempt, 'work')), work: path.join(attempt, 'work'), links: null });
     refuse(path.join(attempt, 'git', 'config'), 'the attempt clone\'s git config');
     refuse(path.join(attempt, 'git', 'hooks'), 'the attempt clone\'s git hooks', true);
     refuse(path.join(attempt, 'git'), 'the attempt clone\'s git folder, which only git writes', true);
@@ -165,6 +170,125 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
   }
   stateWork(places, { project, config, base, home }, refuse);
   places.temp = (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
+}
+
+// The host files of the checkout at `top` every host protects (hosts/index.mjs protectedPaths): the settings, skills,
+// agents, commands, hooks, scheduled work, and MCP servers a later session there loads. A `.json` name is a file; any
+// other is a folder, refused with all it holds.
+function hostRefused(refuse, top) {
+  for (const each of protectedPaths()) refuse(path.join(top, each), 'a host file a later session in that checkout loads, such as its settings, skills, agents, hooks, or MCP servers', !each.endsWith('.json'));
+}
+
+// What a confined session never writes at any depth of its clone (hosts/index.mjs nestedProtected): a host file it
+// loads from a nested folder, such as a `.claude` folder's skills or settings, or any SKILL.md.
+const NESTED = { what: 'a host file a later session in that clone loads from any depth, such as a nested .claude folder\'s skills, agents, commands, hooks, or settings, or a SKILL.md' };
+
+// The NESTED entry a write to the real, case-folded path `target`, spelled `spelled`, meets in one of the clones
+// `nested` ({ root, work, links }, root real and case-folded), or null: by the target's parts from the clone's root; by
+// the spelled path's parts past each of its leading parts that resolves into a clone, so a write through a link named as
+// a host file, as `pkg/.claude/commands/x.md` where `pkg/.claude` links to `shared`, is judged as spelled; and, for a
+// target such a link leads to, by its parts past that link (nestedLinkHit).
+function nestedHit(target, nested, spelled = null) {
+  const roots = nested.map((each) => each.root);
+  for (const root of roots) {
+    if (target !== root && isWithin(root, target) && nestedProtected(path.relative(root, target).split(path.sep))) return NESTED;
+  }
+  if (typeof spelled === 'string' && path.isAbsolute(spelled) && roots.length) {
+    const parts = path.normalize(spelled).split(path.sep).filter(Boolean);
+    for (let count = 1; count < parts.length; count += 1) {
+      const at = real(path.join(path.sep, ...parts.slice(0, count)));
+      const root = roots.find((each) => isWithin(each, at));
+      if (root && nestedProtected([...path.relative(root, at).split(path.sep), ...parts.slice(count)])) return NESTED;
+    }
+  }
+  return nestedLinkHit(target, nested);
+}
+
+// The NESTED entry the real, case-folded path `target` meets through a link of a clone's git index whose own path is a
+// host file some host loads from any depth (nestedProtected), as a `.claude` that links to a plain folder: a write to
+// that folder is a write to the host file. git lists the links once a call, in the clone the target lies in; a clone
+// whose links git cannot list in time refuses, and a folder with no `.git` holds none.
+function nestedLinkHit(target, nested) {
+  for (const clone of nested) {
+    if (!isWithin(clone.root, target)) continue;
+    clone.links ??= indexLinks(clone.work);
+    if (clone.links === null) return { what: `${NESTED.what}, as git could not list the clone's links to tell whether one leads there` };
+    for (const { at, parts } of clone.links) {
+      if (isWithin(at, target) && nestedProtected([...parts, ...path.relative(at, target).split(path.sep).filter(Boolean)])) return NESTED;
+    }
+  }
+  return null;
+}
+
+// The pathspecs of the index entries that can be a host file a host loads from any depth: a `.claude` entry, anything
+// below one, and a SKILL.md, in any case.
+const INDEX_LINKS = Object.freeze([':(glob,icase)**/.claude', ':(glob,icase)**/.claude/**', ':(glob,icase)**/SKILL.md']);
+// The most output that listing may print.
+const INDEX_BUFFER = 64 * 1024 * 1024;
+
+// The links of the git index of the clone `work` whose path is a host file (nestedProtected): { at, parts }, the real,
+// case-folded folder each leads to and its own parts; none when `work` holds no `.git`; null when git fails. git lists
+// only the entries that can be such a link (INDEX_LINKS), which its glob magic matches at the root too, and its answer
+// may run to INDEX_BUFFER bytes, so a clone that tracks many host files still answers.
+function indexLinks(work) {
+  try {
+    lstatSync(path.join(work, '.git'));
+  } catch {
+    return [];
+  }
+  const listed = runGit(['ls-files', '--stage', '-z', '--', ...INDEX_LINKS], work, { ...gitBudget(), maxBuffer: INDEX_BUFFER });
+  if (listed.status !== 0) return null;
+  const links = [];
+  for (const entry of listed.stdout.split('\0')) {
+    const tab = entry.indexOf('\t');
+    if (tab < 0 || !entry.startsWith('120000 ')) continue;
+    const parts = entry.slice(tab + 1).split('/');
+    if (nestedProtected(parts)) links.push({ at: real(path.join(work, ...parts)), parts });
+  }
+  return links;
+}
+
+// A glob part as a regular expression over one name, any case: `*`, `?`, a bracket class, and braces. One it cannot
+// build matches every name.
+function partPattern(part) {
+  let text = '';
+  let depth = 0;
+  for (let i = 0; i < part.length; i += 1) {
+    const char = part[i];
+    if (char === '*') text += '[^/]*';
+    else if (char === '?') text += '[^/]';
+    else if (char === '[') {
+      const end = part.indexOf(']', i + 1);
+      if (end < 0) text += '\\[';
+      else {
+        text += `[${part.slice(i + 1, end).replace(/^!/u, '^').replace(/\\/gu, '\\\\')}]`;
+        i = end;
+      }
+    } else if (char === '{') {
+      depth += 1;
+      text += '(?:';
+    } else if (char === '}' && depth > 0) {
+      depth -= 1;
+      text += ')';
+    } else if (char === ',' && depth > 0) text += '|';
+    else text += char.replace(/[.*+?^${}()|[\]\\]/u, '\\$&');
+  }
+  try {
+    return new RegExp(`^${text}$`, 'iu');
+  } catch {
+    return /^/u;
+  }
+}
+
+// Whether a glob, by its folder `prefix` and its later parts `rest`, may reach a NESTED entry of one of the clones
+// `nested`: it lies in one and a later part may name a `.claude` folder, a glob whose own text starts with a dot or is a
+// class or a brace, since a shell's `*` skips dot names, or its last part may name a SKILL.md.
+function nestedGlob(prefix, rest, nested) {
+  if (!nested.some(({ root }) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
+  if (nestedHit(prefix, nested)) return true;
+  const may = (part, name) => (GLOB_WORD.test(part) ? /^[.[{]/u.test(part) && partPattern(part).test(name) : part.toLowerCase() === name);
+  const last = rest.at(-1) ?? '';
+  return rest.some((part) => may(part, '.claude')) || (GLOB_WORD.test(last) ? partPattern(last).test('skill.md') : last.toLowerCase() === 'skill.md');
 }
 
 // The places of a session a pending mark, or a mark that cannot be read, holds (unattendedPlaces): the shared git
@@ -230,7 +354,7 @@ function refusedHit(target, spelled, entries, { own, holds }) {
 // still writes itself; a target that would pass meets the git config files git names (`later`) too.
 function placeOf(target, spelled, places, { holds = true } = {}) {
   const own = [...places.specific, places.worktree, ...places.temp].includes(target);
-  const hit = refusedHit(target, spelled, places.refused, { own, holds });
+  const hit = refusedHit(target, spelled, places.refused, { own, holds }) ?? nestedHit(target, places.nested ?? [], spelled);
   if (hit) return { refused: hit };
   const passes = () => {
     const late = refusedHit(target, spelled, places.later(), { own, holds });
@@ -339,7 +463,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const shell = command === null ? null : shellWrites(command, cwd, env);
-  const any = [files, names, globs, modes, shell?.dynamic ?? [], shell?.links ?? [], shell?.programs ?? []].some((list) => list.length > 0);
+  const any = [files, names, globs, modes, shell?.dynamic ?? [], shell?.links ?? [], shell?.programs ?? [], shell?.removed ?? []].some((list) => list.length > 0);
   if (!any) return null;
   const say = sayer(input, human, opaqueShellCommand(input) !== null);
   const found = places();
@@ -347,8 +471,11 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   say.hold(found);
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   const placedModes = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder }) => path.resolve(folder ?? '/', text));
-  const texts = [...names, ...unplaced.map(({ text }) => text), ...globs.filter((each) => each.unsure || each.opaque).map(({ text }) => text)];
-  return pathDenial([...files, ...placedModes], found, say)
+  const removed = (shell?.removed ?? []).filter(({ text, folder }) => folder !== null || path.isAbsolute(text));
+  const texts = [...names, ...unplaced.map(({ text }) => text), ...globs.filter((each) => each.unsure || each.opaque).map(({ text }) => text),
+    ...(shell?.removed ?? []).filter((each) => !removed.includes(each)).map(({ text }) => text)];
+  const made = madeFolders(files, shell);
+  return pathDenial([...files.filter((each) => !madeOnly(each, made, found)), ...placedModes, ...removed.map(({ text, folder }) => path.resolve(folder ?? '/', text))], found, say)
     ?? shellDenial(shell, found, say, texts)
     ?? globDenial(globs.filter((each) => !each.unsure), found, say)
     ?? manifestDenial(input, shell, found, say)
@@ -380,6 +507,24 @@ function sayer(input, human, opaque) {
   };
 }
 
+// The paths of `files`, as the call spells them, that only a `mkdir` with no mode writes: each one that shellWrites read
+// as written by such a `mkdir` as often as the lexer read it written at all, by any program.
+function madeFolders(files, shell) {
+  if (!shell) return new Set();
+  const resolved = (each) => path.resolve(each.folder ?? '/', each.text);
+  const plain = shell.manifests.filter((each) => each.how === 'mkdir' && each.mode !== true && (each.folder !== null || path.isAbsolute(each.text)));
+  const other = new Set(shell.manifests.filter((each) => !plain.includes(each)).map(resolved));
+  const count = (list, file) => list.filter((each) => each === file).length;
+  const writes = files.map((each) => path.resolve(each));
+  const made = plain.map(resolved);
+  return new Set(made.filter((file) => !other.has(file) && count(made, file) >= count(writes, file)));
+}
+
+// Whether a write to `spelled` is only a `mkdir` of a reviews or dispatch folder itself (`made`), which passes: the
+// review commands and a subagent's handoff write there, and the folder may not be there yet. Below it, and any other
+// write of it, such as rm, rmdir, or mv, the folder's own rule judges.
+const madeOnly = (spelled, made, found) => made.has(path.resolve(spelled)) && found.reviews.includes(real(spelled));
+
 function pathDenial(spelled, found, say) {
   for (const each of spelled) {
     const denial = say.meets(placed(each, found), each);
@@ -395,8 +540,11 @@ function shellDenial(shell, found, say, texts) {
 }
 
 // Each target built from a variable or a command, once expand has read it: a literal path is placed, and one it could
-// not expand is judged by unexpandedDenial.
+// not expand is judged by unexpandedDenial, after the whole command is judged once (builtDenial).
 function dynamicDenial(shell, found, say, texts) {
+  const built = shell.dynamic.find(({ text }) => /[$`]/u.test(text));
+  const whole = built ? builtDenial(shell.text, built.text, found, say) : null;
+  if (whole) return whole;
   for (const { text, folder } of shell.dynamic) {
     let denial = null;
     if (/[$`]/u.test(text)) denial = unexpandedDenial(text, folder, found, say, texts);
@@ -405,6 +553,24 @@ function dynamicDenial(shell, found, say, texts) {
     else denial = pathDenial([path.resolve(folder ?? '/', text)], found, say);
     if (denial) return denial;
   }
+  return null;
+}
+
+// The whole text of a command that writes a target still built at run time, `target`, judged once, for a session its
+// own mark holds: where such a target lands cannot be told, so a command that names a literal path that meets a refused
+// entry, a startup file or a git config (REFUSED_NAME), a dot entry of the home folder (HOME_DOT), or a git folder
+// through git (GIT_FOLDER_WORD) or by its name (GIT_WORD), anywhere in its text, refuses. A loop over plain words or
+// a target from mktemp names none of them, and passes.
+function builtDenial(text, target, found, say) {
+  if (found.limited) return null;
+  const deny = (what) => say.deny('unattended write to a path built at run time', `it ${say.verb} \`${target.slice(0, 80)}\`, a path built at run time, in a command that names ${what}, and no Human attends this session; write to a literal path instead`);
+  for (const [word] of text.matchAll(PATH_IN_TEXT)) {
+    const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
+    const met = placed(spelled, found, { holds: false });
+    if (met?.refused) return deny(`${spelled.slice(0, 120)}, ${met.refused.what}`);
+  }
+  if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return deny('a shell startup file, a git config, or a dot entry of the home folder');
+  if (GIT_FOLDER_WORD.test(text) || GIT_WORD.test(text)) return deny('a git folder git names for it, or a git folder by its name');
   return null;
 }
 
@@ -462,6 +628,7 @@ function globDenial(globs, found, say) {
       // A refused folder the glob's folder already lies in, and allows, is no entry it reaches.
       const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix)).find((entry) => globReaches(spelling, entry.path));
       if (reached) return say.refused(reached, glob.text);
+      if (nestedGlob(spelling.prefix, spelling.rest, found.nested ?? [])) return say.refused(NESTED, glob.text);
     }
   }
   return null;

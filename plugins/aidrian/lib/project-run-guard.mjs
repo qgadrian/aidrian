@@ -10,7 +10,7 @@
 // scripts/hook-agent-gates.mjs asks projectCommandDenial before every Bash call that names `aidrian project`, with the
 // host's own session id, and scripts/hook-stop.mjs asks resultHoldReason when a session stops.
 
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
@@ -25,6 +25,10 @@ import { findProject } from './project.mjs';
 import { activeRuns, attendedProblem, ISSUE_KEY, readRun, RUN_ID, runPlace } from './project-run.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 import { marksNaming, readUnattendedMark } from './unattended-mark.mjs';
+
+// The file a confined session hands its result over in, in its drop folder: project-result.mjs's DROP_FILE, which
+// imports this module, so it is spelled again here; test/project-result.test.mjs holds the two equal.
+export const DROP_FILE = 'result.json';
 
 const DAY = 24 * 60 * 60 * 1000;
 // How far back a start record of an issue's chain is read: the window of a chain floor.
@@ -371,6 +375,8 @@ export function resultHoldReason(input, { home, env = process.env } = {}) {
     if (found.problem || found.states.get(mark.issue)?.state !== 'running') return null;
     const start = latestStart(found, mark.issue);
     if (!start) return null;
+    // A confined session handed its result over in its drop folder, which the driver's wait takes in: it has recorded it.
+    if (typeof start.drop === 'string' && existsSync(path.join(start.drop, DROP_FILE))) return null;
     // Only the newest session of the chain: one that handed the work on stops on purpose.
     if (!newest(issueChain(runStore(project, config, place.state), start), session)) return null;
     return `This session works the issue ${mark.issue} of the project run ${mark.project}, and it has not recorded the issue's result, which the run's driver waits on. ` +

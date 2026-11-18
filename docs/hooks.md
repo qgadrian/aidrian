@@ -975,16 +975,23 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   reads the run's main checkout as its own.
 - In a project run's attempt clone, every call is refused while the clone's own git config sets a key that makes git
   run a program or send elsewhere, while its work folder's `.git` is not the pointer file to the attempt's own git
-  folder, or while that git folder holds a `commondir` or `config.worktree` file, before any git call of the hook runs
-  there. Every git call of the plugin, in a hook or a command, runs with `core.fsmonitor`, `core.hooksPath`, submodule
-  recursion, the `ext::` transport, and signature display turned off (`lib/git.mjs`).
+  folder, or while that git folder holds a `commondir` or a `config.worktree` other than the placeholder the start
+  gate puts there (`commondir` holding exactly `.` and a newline, the git folder itself, and an empty
+  `config.worktree`, each a regular file with one link), before any git call of the hook runs there. The same check
+  stands before every git call of the plugin, in a hook or a command, whose folder lies in a clone's work or git folder:
+  `lib/git.mjs runGit` and `gateGit`, the committed config's `git show` (`lib/config-committed.mjs`), the review
+  selector's reads (`lib/review/content.mjs`), and `aidrian worktree` (`lib/worktree.mjs`), each through
+  `lib/attempt-clone.mjs cloneGitProblem`; while it fails, the call runs no git and answers as git failing. Every git
+  call of the plugin runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and
+  signature display turned off (`lib/git.mjs`); another `commondir` would lead git to a config those settings do not
+  cover.
 - An attempt clone stands linked to its run's main checkout only for the session whose unattended mark names that run,
   that issue, and that main checkout, or, before the gate files that mark, whose pending mark names that main checkout
   and that clone as the folder it starts the session in. A hook reads the session from its payload's id; a command
   reads it from its caller's environment, which is acceptable while no hook relies on a command's answer. The clone's
   state folder must also be one the project at that main checkout names, so a ledger and a main checkout a session
   builds in its temporary folder or a state work folder link nothing; so must its git folder hold no `commondir` or
-  `config.worktree`. Any other reader, and a clone that fails a check, read every machine switch off.
+  `config.worktree` but the gate's placeholders. Any other reader, and a clone that fails a check, read every machine switch off.
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
   mark holds, read by the hook payload's session id, and every subagent of it, writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
@@ -1007,7 +1014,18 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
   the shell startup files in the home folder and in `ZDOTDIR`; the user's macOS launch agents, `~/Library/LaunchAgents`;
   the review and attest records in `reviews`, by a write or a delete; any other path in `dispatch`, and the dispatch log
-  beside it, `<state>/dispatch-log.jsonl`; and any other dot file or folder of the home folder, such as a host's user-level
+  beside it, `<state>/dispatch-log.jsonl`; the host files every host's adapter protects (`protectedPaths`), in the
+  session's own worktree and its attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,
+  `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`,
+  `.claude/scheduled_tasks.json`, and `.mcp.json`, which a later session there loads, whichever host the session runs
+  on; at any depth of the attempt's clone, the host files a host loads from a nested folder (`nestedProtected`): a
+  `.claude` folder itself, the `skills`, `agents`, `commands`, `hooks`, `workflows`, `scheduled_tasks.json`, and
+  `settings*.json` of any `.claude` folder, and any `SKILL.md`, by the write tool, the shell, a link's target, or a glob
+  that may reach one, such as a part that may name `.claude` or a last part that may name `SKILL.md` (`*.md`); judged
+  by the real path's parts, by the path as written past each leading part that resolves into the clone, so a write
+  through a `.claude` link counts as one to that host file, and by the parts past each link git's index lists whose own
+  path is such a host file, so a write to the folder `pkg/.claude -> ../shared` leads to counts as one under
+  `pkg/.claude` (git lists only the index entries named `.claude`, below one, or `SKILL.md`, and a clone whose links git cannot list then refuses); and any other dot file or folder of the home folder, such as a host's user-level
   settings and instruction files, unless it lies in the session's own worktree, a state folder above, or its attempt
   folders. A repository under a dot folder, such as `~/.dotfiles`, still writes itself when it is the session's worktree.
   A write through a hard link to a refused file counts as one to it, and a link a command makes (`ln`, `ln -s`,
@@ -1017,7 +1035,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     backtick is judged by its names (a startup file, a git config, a dot entry of the home folder), by a git folder it
     asks git for, as `"$(git rev-parse --git-common-dir)/hooks/x"` does, and by its literal path before the first `$`,
     which must not meet a refused entry or lie outside the places. A bare `"$f"`, `"$out"`, or `"$dir"` has no such
-    path and passes on its names.
+    path and passes on its names. For a session its own mark holds, such a target first has the whole command judged
+    once: a literal path anywhere in it that meets a refused entry, a startup file or a git config by its name, a dot
+    entry of the home folder, a git folder git names, or a `.git` word refuses it as a write to a path built at run
+    time, and the refusal says to write to a literal path instead. So `d=~/.ssh; echo x > "$d/k"` and
+    `p=.git/hooks; cp x "$p/pre-commit"` refuse, and a loop over plain words or a target from `mktemp` passes.
+  - `mkdir` of the `reviews` or `dispatch` folder itself, with no `-m` or `--mode` and no other write of it in the call,
+    passes: the review commands and a subagent's handoff write there, and the folder may not be there yet. A folder
+    below it, a mode, and `rm`, `rmdir`, or `mv` of it refuse, as does any write of it by a file tool. `rmdir` is read
+    as a write of each folder it names.
   - A program that writes its own config is refused: a `git config` write (anything but a read, a list, or a key alone)
     to the user's, the system's, the shared, or the worktree's config, or with `--file` to a file outside the places;
     a key that makes git run a program at any scope, and `git config --edit`; the folders `git worktree add`,
@@ -1036,13 +1062,24 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     temporary copy whose command names one; and any shell write to `pr-<n>.json` itself but a delete, or a rename or
     copy of a file on disk with no such key that the same call does not write.
 
+  The two ways a session writes are read differently, so a refused path is refused through both:
+
+  | What the guard reads | Bash | The file tools (Edit, Write, NotebookEdit, apply_patch) |
+  | --- | --- | --- |
+  | Literal targets of redirections and writing programs | placed by path | placed by the path the tool names |
+  | A target built from a variable or a substitution | expanded where it can be, else judged by its names and the whole command | none: a file tool names a literal path |
+  | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its text | none |
+  | Links a command makes, and a program's own config | judged by what they point at or change | none |
+  | Text written into a review manifest | the command must not name a `reviewer` key | the text must not give it one |
+  | Where the host's sandbox stands | outside the guard: a confined session's Bash also runs in the host's sandbox | the file tools run outside the sandbox, held by this hook alone |
+
   A session a pending mark holds, while a gate starts a session, or whose mark cannot be read, may be one a Human opened
   in another repository: it keeps only the entries refused wherever they lie (the shared git config and hooks of the
   mark's main checkout and of the call's folder, the user's and the system's git config, the startup files, the home
   folder's dot entries outside the project's state folders, and the programs' config writes above), with no refusal for
-  a write outside the places, and a variable it cannot expand is judged only by those names. Its refusal says a project
-  start is in progress. When its own mark names a main checkout with no project the hook can read, every write is
-  refused. An attended session and its subagents are never held. The block is [recorded](#recorded-blocks) as
+  a write outside the places, and a variable it cannot expand is judged only by those names, never by the whole
+  command. Its refusal says a project start is in progress. When its own mark names a main checkout with no project the
+  hook can read, every write is refused. An attended session and its subagents are never held. The block is [recorded](#recorded-blocks) as
   `config-guard`.
 
   The guard reads what the shared lexer reads, and like the other guards it is for agents that cooperate. It does not
@@ -1193,7 +1230,11 @@ for `code-reviewer`. A branch name that holds the agent's name does not make ano
 the hook writes the agent's final report there: the message of its last handback call (Claude Code's `SubagentHandback`)
 when no text follows it, else its last message. A report that is a JSON object, alone or as its one fenced block, is
 written as that object; any other report as `{ "written_by": "stop-hook", "report": "<text>" }`. A file that appeared
-in the meantime, such as one its dispatcher wrote, is kept. So a brief that names the file for an agent with no file tool
+in the meantime, such as one its dispatcher wrote, is kept. A file counts as written by this dispatch only when it is a
+regular file changed at or after the subagent's transcript began, by the timestamp of its first entry: one an earlier
+dispatch of the same name left, a link, or a folder is stale and owed, and the hook replaces it with the report through
+a new temporary file renamed over it, so a link is replaced, never followed, and the file it named stays as it was; a
+folder stays owed. A transcript with no timestamp keeps the older test, that the file is there. So a brief that names the file for an agent with no file tool
 or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
 The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write,
 or while a background task of its own still runs, since that stop is no end of its work. It writes the file only on a

@@ -69,6 +69,12 @@ export const TYPES = {
   parallelCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 4, 'a whole number from 1 to 4'],
   startCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 1000, 'a whole number from 1 to 1000'],
   hourCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 24, 'a whole number from 1 to 24'],
+  // The MCP servers a confined project session loads, as the host's `mcpServers` object takes them: each name a word,
+  // each definition an object (docs/config.md#project-run).
+  mcpServers: [
+    (value) => isObject(value) && Object.entries(value).every(([name, server]) => /^[\w.-]{1,64}$/u.test(name) && isObject(server)),
+    'an object of MCP server names, each letters, digits, ".", "_", or "-", to the server\'s definition as an object',
+  ],
   budgetEnforce: [(value) => ['warn', 'fail'].includes(value), '"warn" or "fail"'],
   docBytes: [
     (value) => isObject(value) && Object.entries(value).every(([doc, bytes]) => isText(doc) && Number.isInteger(bytes) && bytes > 0),

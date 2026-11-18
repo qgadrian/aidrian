@@ -86,6 +86,19 @@ const namesItem = (apiUrl, kind, repo, n) => {
 // gh's default host, which a call names only when it is another.
 const DEFAULT_HOST = 'github.com';
 
+// The network hosts a session pushing to and reading from the forge at `host` must reach: the host itself, for git over
+// HTTPS, and, for github.com, its API host, which gh calls; a GitHub Enterprise host serves its API under its own name.
+// A sandbox's allowlist of a confined project session holds these and nothing else (lib/hosts/claude-code-sandbox.mjs).
+export function domains(host) {
+  const named = String(host ?? '').toLowerCase();
+  return named === DEFAULT_HOST ? [named, 'api.github.com'] : [named];
+}
+
+// The environment variables gh reads its token from (`gh help environment`): the one credential a confined project
+// session keeps in its sandbox, since it pushes and opens pull requests through gh; every other credential-named
+// variable is unset there (lib/hosts/claude-code-sandbox.mjs).
+export const TOKEN_VARS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']);
+
 // A pull request or comment number as a route takes it: a safe positive integer, given as a number or as digits alone.
 // Anything else throws before any call, so no route is built from text a pull request supplies.
 const idOf = (value, what) => {

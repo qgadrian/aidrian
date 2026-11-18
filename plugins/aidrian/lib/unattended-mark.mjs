@@ -21,8 +21,8 @@
 // until it lapses. A pending file it cannot read holds every session but none: the session it names cannot be told
 // apart from another.
 // A session a project run starts for an issue (lib/project-run-gate.mjs) carries the run and the issue in its mark,
-// { root, at, project, issue }, and the background route copies them into the mark of each continuation it starts, so
-// the issue's whole chain of sessions is known as that issue's wherever it runs.
+// { root, at, project, issue }, so it is known as that issue's wherever it runs; such a session starts no continuation
+// (lib/handoff-continue.mjs), so its chain is that one session.
 // While a pending mark holds a session, the agent gate hook files its beacon, `beacon.<session>.json`, on its first tool
 // call (noteBeacon): a host adapter that cannot otherwise tell whether the host runs this plugin's hooks for the session
 // it started waits on it (lib/hosts/codex-exec.mjs). It lapses with the pending mark, at PENDING_AGE.

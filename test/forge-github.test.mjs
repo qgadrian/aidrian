@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { createGithubForge, domains, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
 import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
@@ -167,7 +167,7 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeConfigCommands', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeTokenVars', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
   // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
   const commands = facade.forgeConfigCommands();
   assert.ok(commands.every((each) => each.programs.includes('gh') && typeof each.what === 'string'));
@@ -828,4 +828,13 @@ test('runGh hands a request body to a real gh child on its stdin, and gives a ca
   const sha = 'a'.repeat(40);
   assert.deepEqual(forge.postReview('o/r', 7, { commitId: sha, body: '@/etc/passwd', comments: [{ path: '@a.js', line: 2, side: 'RIGHT', body: 'true' }] }), { refused: false, id: 5, login: null, comments: [] });
   assert.deepEqual(JSON.parse(read()[2]), { commit_id: sha, body: '@/etc/passwd', event: 'COMMENT', comments: [{ path: '@a.js', line: 2, side: 'RIGHT', body: 'true' }] });
+});
+
+// The hosts a confined project session's sandbox may reach (lib/hosts/claude-code-sandbox.mjs): git over HTTPS to the
+// host, and gh's API host for github.com; an Enterprise host serves its API under its own name.
+test('the forge\'s network hosts are the host and, for github.com, its API host', () => {
+  assert.deepEqual(domains('github.com'), ['github.com', 'api.github.com']);
+  assert.deepEqual(domains('GitHub.com'), ['github.com', 'api.github.com']);
+  assert.deepEqual(domains('ghe.example.com'), ['ghe.example.com']);
+  assert.deepEqual(facade.forgeDomains({ host: 'github.com', owner: 'o', name: 'r' }), ['github.com', 'api.github.com']);
 });

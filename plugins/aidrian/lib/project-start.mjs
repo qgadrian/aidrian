@@ -7,19 +7,21 @@
 //     `halt` row (lib/project-run-gate.mjs), which only an attended `aidrian project resume` lifts.
 //   - linkTripwire: a ledger, snapshot, continuation store file, unattended mark, or the repository's git config with a
 //     second hard link, which a session could change through, halts the start.
-//   - A confined host (`capabilities.projectStart.confined`, as Codex) works in a fresh clone made for each attempt, never
-//     in a linked worktree: `runs/<run>/attempts/<issue>.<attempt>/` holds `work/`, the clone, `git/`, its separate git
-//     folder, which borrows the main checkout's objects read-only through alternates, and `drop/`, where the session
-//     hands its result over (lib/project-result.mjs). The branch comes from the forge: the first attempt cuts it from
-//     the base tip, a later one fetches it. The main repository never fetches from the clone, the gate never runs git
+//   - Every host's project start is confined (`capabilities.projectStart.confined`, as Codex and Claude Code declare it),
+//     each to its own sandbox, and a host that is not halts the start (lib/project-run-gate.mjs). Its session works in a
+//     fresh clone made for each attempt, never in a linked worktree: `runs/<run>/attempts/<issue>.<attempt>/` holds
+//     `work/`, the clone, `git/`, its separate git folder, which borrows the main checkout's objects read-only through
+//     alternates, and `drop/`, where the session hands its result over (lib/project-result.mjs). The branch comes from
+//     the forge: the first attempt cuts it from the base tip, a later one fetches it. The main repository never fetches from the clone, the gate never runs git
 //     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
 //     user directly in the state folder that holds no guarded folder and lies in none.
 // Every git call goes through gateGit (lib/git.mjs).
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { GIT_PLACEHOLDERS } from './attempt-clone.mjs';
 import { isWithin, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
 import { stateRoot } from './project.mjs';
@@ -65,9 +67,13 @@ export function hostStartProblem(cap, policy, env) {
 }
 
 // What stands between a session started now and pushing its branch: { halt } when the forge, asked through gh, does not
-// let this user push to the pinned `repository`, or the host's `access({ env, guarded })` says its session could not
-// push, reach the forge, or would be let write one of `guarded`; { refuse } when the forge cannot be asked now; null.
-export function accessProblem({ cap, forge, repository, env, guarded }) {
+// let this user push to the pinned `repository`, or the host's `access({ env, home, guarded, pushUrl, platform,
+// allowed, helpers })` says its session could not push, reach the forge, or run as confined as it is meant to, or would
+// be let write one of `guarded`; { refuse } when the forge cannot be asked now; null, or { pushUrl } when the host was
+// asked. `main` is the main checkout, whose origin URL the attempt's clone takes (prepareAttempt), so it is the URL the
+// session pushes to (`pushUrl`, which confinedRoom holds the clone to); `helpers` are the git credential helpers its
+// config names; `platform` the operating system, and `allowed` the base branch's projectRun.outsideSandbox.
+export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [] }) {
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
   let view;
   try {
@@ -76,8 +82,19 @@ export function accessProblem({ cap, forge, repository, env, guarded }) {
     return { refuse: `the forge cannot say now whether this user may push to ${named} (${String(error.message).split('\n')[0]}); start again` };
   }
   if (view?.permissions?.push !== true) return { halt: `the forge does not let this user push to ${named}` };
-  const host = typeof cap.access === 'function' ? safely(() => cap.access({ env, guarded })) : null;
-  return host ? { halt: host } : null;
+  if (typeof cap.access !== 'function') return null;
+  const url = gateGit(['remote', 'get-url', 'origin'], main, { timeout: 30_000 });
+  const pushUrl = url.status === 0 ? url.stdout.trim() : null;
+  const listed = gateGit(['config', '--get-regexp', '^credential\\..*helper$'], main, { timeout: 30_000 });
+  const helpers = listed.status === 0 ? listed.stdout.split('\n').filter(Boolean).map((line) => line.slice(line.indexOf(' ') + 1)) : [];
+  // An access check that throws halts: a check the gate cannot run is no check passed.
+  let host;
+  try {
+    host = cap.access({ env, home, guarded, pushUrl, platform, allowed, helpers });
+  } catch (error) {
+    host = `the host's access check failed (${String(error?.message ?? error).split('\n')[0]})`;
+  }
+  return host ? { halt: host } : { pushUrl };
 }
 
 // The folders no session no Human attends may be let write, as real paths: the main checkout's git folder, the state
@@ -151,10 +168,11 @@ export function stateWorkFolders(state, { env, home }) {
   return { folders };
 }
 
-// The fresh clone of attempt `attempt` of issue `key` for a confined host: { work, git, drop } or { problem }. Any
-// folder the attempt had is removed first. The clone borrows the main checkout's objects read-only, takes origin's URL
-// from the main checkout, which pushProblem checked, and checks out `branch`: from the base tip `tip` on the first
-// attempt, or from the forge on a later one when the forge has it. `env` is the environment of its network calls.
+// The fresh clone of attempt `attempt` of issue `key` for a confined host: { work, git, drop } or { problem }, which
+// leaves no attempt folder. Any folder the attempt had is removed first. The clone borrows the main checkout's objects
+// read-only, takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the
+// base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. `env` is the environment
+// of its network calls.
 export function prepareAttempt({ project, state, run, key, attempt, branch, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, git, drop] = ['work', 'git', 'drop'].map((name) => path.join(folder, name));
@@ -166,7 +184,12 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   } catch (error) {
     return { problem: `the attempt's folder ${folder} cannot be made (${error.code ?? 'no code'})` };
   }
-  const failed = (what, result) => ({ problem: `the attempt's clone could not be made (${what}: ${String(result.stderr ?? '').trim().split('\n').at(-1) || `exit ${result.status}`})` });
+  // A clone that could not be made leaves no folder: no start row names it for the sweep to remove.
+  const gone = (problem) => {
+    rmSync(folder, { recursive: true, force: true });
+    return { problem };
+  };
+  const failed = (what, result) => gone(`the attempt's clone could not be made (${what}: ${String(result.stderr ?? '').trim().split('\n').at(-1) || `exit ${result.status}`})`);
   const url = gateGit(['remote', 'get-url', 'origin'], main, { timeout: 30_000 });
   if (url.status !== 0) return failed('origin', url);
   const cloned = gateGit(['clone', '--quiet', '--shared', '--no-checkout', '--separate-git-dir', git, main, work], folder, { env });
@@ -174,8 +197,11 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   const origin = gateGit(['remote', 'set-url', 'origin', url.stdout.trim()], work);
   if (origin.status !== 0) return failed('origin', origin);
   let from = tip;
+  const listed = gateGit(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`], work, { env });
+  // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work.
+  if (attempt === 1 && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
+  if (attempt === 1 && listed.status !== 2) return failed('ls-remote', listed);
   if (attempt > 1) {
-    const listed = gateGit(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`], work, { env });
     if (listed.status === 0) {
       const fetched = gateGit(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], work, { env });
       if (fetched.status !== 0) return failed('fetch', fetched);
@@ -185,7 +211,66 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   const checkout = gateGit(['checkout', '--quiet', '-b', branch, from], work);
   if (checkout.status !== 0) return failed('checkout', checkout);
   const plain = plainFolderProblem(drop);
-  return plain ? { problem: plain } : { work, git, drop };
+  return plain ? gone(plain) : { work, git, drop };
+}
+
+// Puts the host's placeholders in the fresh clone `work` whose git folder is `git`, before its session starts, where
+// none is there: the git folder's own (attempt-clone.mjs GIT_PLACEHOLDERS), an empty `config.worktree`, which git reads
+// only once extensions.worktreeConfig is set in the config the sandbox denies, and a `commondir` that names the git
+// folder itself; and each of the host's `placeholders`, a folder or a file with its text, from the clone's root, each
+// file excluded through the git folder's info/exclude so it never shows as a change. A sandbox that denies writes only
+// to a path there at launch, as on Linux, then holds each. A placeholder whose path passes a link below the clone, as a
+// `.claude` that links elsewhere, is never written through it: { problem }, as when one cannot be made.
+export function placeHolders({ work, git, placeholders = [] }) {
+  const missing = (file) => {
+    try {
+      lstatSync(file);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  try {
+    for (const [name, text] of Object.entries(GIT_PLACEHOLDERS)) {
+      if (missing(path.join(git, name))) writeFileSync(path.join(git, name), text, { flag: 'wx', mode: 0o600 });
+    }
+    const excluded = [];
+    for (const each of placeholders) {
+      const linked = linkedPart(work, each.path);
+      if (linked) return { problem: `the attempt's clone holds ${linked}, a link, where its placeholder ${each.path} goes, so a write there would land wherever it leads; replace the link with the folder, then start again` };
+      const file = path.join(work, each.path);
+      if (!missing(file)) continue;
+      if (each.folder) mkdirSync(file, { recursive: true, mode: 0o700 });
+      else {
+        mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        writeFileSync(file, each.text ?? '', { flag: 'wx', mode: 0o600 });
+        excluded.push(`/${each.path}`);
+      }
+    }
+    if (excluded.length) {
+      mkdirSync(path.join(git, 'info'), { recursive: true, mode: 0o700 });
+      appendFileSync(path.join(git, 'info', 'exclude'), `\n# aidrian: the placeholders of a confined session's protected host files\n${excluded.join('\n')}\n`);
+    }
+  } catch (error) {
+    return { problem: `the placeholders of the attempt's clone could not be made (${error.code ?? 'no code'})` };
+  }
+  return null;
+}
+
+// The first part of the path `relative` below the folder `top`, as a path from `top`, that is a link, read with lstat
+// part by part, or null; the parts below one that is not there yet are made as plain folders.
+function linkedPart(top, relative) {
+  const parts = relative.split('/').filter(Boolean);
+  for (let count = 1; count <= parts.length; count += 1) {
+    const shown = parts.slice(0, count).join('/');
+    try {
+      if (lstatSync(path.join(top, ...parts.slice(0, count))).isSymbolicLink()) return shown;
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+  return null;
 }
 
 // Removes the folder of each confined attempt of `found` whose session runs no more: an attempt that is not its issue's

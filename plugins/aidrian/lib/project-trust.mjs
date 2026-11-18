@@ -1,12 +1,9 @@
 // What a project run's start gate checks of the repository before a session no Human attends starts beside it
-// (lib/project-run-gate.mjs): the repository's own git state, the files a host would load, and the link of a reused
-// worktree. Every git call goes through gateGit (lib/git.mjs), and an object it compares against is read through
+// (lib/project-run-gate.mjs): the repository's own git state, and the files a host would load. Every git call goes through gateGit (lib/git.mjs), and an object it compares against is read through
 // `git cat-file --batch` and its hash checked here, from the commit the forge reported, so neither a replace ref, a
 // graft, an index flag, nor a filter can stand in for what a review saw.
 //   - repositoryProblem: a stateless halt for a repository whose git state could run a program or move a fetch: replace
 //     refs, grafts, or a config key of REFUSED_KEYS in a scope git reads for the folder.
-//   - worktreeLinkProblem: a reused issue worktree whose .git pointer, commondir, back-link, or listing is not the one
-//     `git worktree add` made.
 //   - trustProblem, ancestorProblem, mainCheckoutProblem: the host files a session in the worktree would load.
 
 import { createHash } from 'node:crypto';
@@ -107,37 +104,6 @@ export function repositoryProblem(dirs, repository) {
       if (moved) return tampering(moved, dir);
     }
   }
-  return null;
-}
-
-// Why the gate may not run git in the reused issue worktree `dir` of the main checkout `main`, or null: its .git must be
-// a file naming a folder `<common>/worktrees/<name>` of the main checkout's git folder, whose `commondir` leads back to
-// that folder and whose `gitdir` names this .git, and `git worktree list` in the main checkout must list it. Read
-// before any git call in it, so a pointer a session moved never sends the gate's git elsewhere.
-export function worktreeLinkProblem(dir, main) {
-  const why = (what) => `the worktree ${dir} is not linked to the main checkout as git made it: ${what}; remove it (git worktree remove --force), then start again`;
-  const common = gateGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], main, { timeout: 30_000 });
-  const commonReal = common.status === 0 ? resolvedPath(common.stdout.trim()) : null;
-  if (!commonReal) return why('the main checkout\'s git folder cannot be named');
-  const pointer = path.join(dir, '.git');
-  let text;
-  try {
-    if (!lstatSync(pointer).isFile()) return why('its .git is not a file');
-    text = readFileSync(pointer, 'utf8');
-  } catch {
-    return why('its .git cannot be read');
-  }
-  const named = /^gitdir: (.+)\n?$/u.exec(text)?.[1];
-  const gitdir = named ? resolvedPath(path.resolve(dir, named)) : null;
-  if (!gitdir || path.dirname(gitdir) !== path.join(commonReal, 'worktrees')) return why('its .git does not name a folder of the main checkout\'s worktrees');
-  const back = (file) => safely(() => readFileSync(path.join(gitdir, file), 'utf8').trim());
-  const commondir = back('commondir');
-  if (!commondir || resolvedPath(path.resolve(gitdir, commondir)) !== commonReal) return why('its commondir does not lead back to the main checkout\'s git folder');
-  const link = back('gitdir');
-  if (!link || resolvedPath(path.resolve(gitdir, link)) !== resolvedPath(pointer)) return why('its git folder does not name it back');
-  const listing = gateGit(['worktree', 'list', '--porcelain'], main, { timeout: 30_000 });
-  const real = resolvedPath(dir);
-  if (listing.status !== 0 || !listing.stdout.split('\n').some((line) => line.startsWith('worktree ') && resolvedPath(line.slice('worktree '.length)) === real)) return why('git does not list it as a worktree of the main checkout');
   return null;
 }
 

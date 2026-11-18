@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util';
 
 import { CONFIG_ERROR, commandConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { checkoutRoots, hardenedArgs, isIgnored } from './git.mjs';
+import { checkoutRoots, cloneGitProblem, hardenedArgs, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
 import { sweepDrafts } from './review/drafts.mjs';
 import { usageLines } from './usage.mjs';
@@ -74,8 +74,14 @@ function print(result) {
 const blocked = (phase, reason, nextStep) => Object.assign(new Error(reason), { phase, nextStep });
 
 // The raw result of a command; `status` is 1 when it could not start. git runs hardened, as every plugin git call does
-// (lib/git.mjs hardenedArgs).
+// (lib/git.mjs hardenedArgs), and not at all in a project run's attempt clone that runGit would refuse, in the call's
+// folder or the one `-C` names (lib/attempt-clone.mjs cloneGitProblem).
 function run(command, args, options = {}) {
+  if (command === 'git') {
+    const folder = path.resolve(options.cwd ?? process.cwd(), args[0] === '-C' ? args[1] : '.');
+    const refused = cloneGitProblem(folder);
+    if (refused) return { status: 1, stdout: '', stderr: refused };
+  }
   const hardened = command === 'git' ? { args: hardenedArgs(args), env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } } : { args, env: options.env };
   const result = spawnSync(command, hardened.args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...options, ...(hardened.env ? { env: hardened.env } : {}) });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? result.error?.message ?? '' };

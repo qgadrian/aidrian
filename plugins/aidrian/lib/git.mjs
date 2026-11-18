@@ -4,7 +4,10 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-import { attemptClone } from './attempt-clone.mjs';
+import { attemptClone, cloneGitProblem } from './attempt-clone.mjs';
+
+// The clone check every git call of the plugin asks first, for the modules that spawn git themselves.
+export { cloneGitProblem };
 
 // How long one git call may take. Hooks run git on every tool call, inside the host's hook timeout; a git that hangs, on
 // a stalled file system or an fsmonitor, is stopped and counts as git not answering. Once one call is stopped, the later
@@ -47,9 +50,14 @@ export function hardenedEnv(env = process.env) {
 
 // The raw spawn result: { status, stdout, stderr, error }. Some git commands use exit 1 as an answer, not a failure.
 // A git stopped by the timeout, and every later call that does not set its own timeout, has `status` null. Every call
-// runs hardened (hardenedArgs), with GIT_NO_REPLACE_OBJECTS=1.
+// runs hardened (hardenedArgs), with GIT_NO_REPLACE_OBJECTS=1. A call in a project run's attempt clone whose git folder
+// holds a `commondir`, or whose own config sets a key that runs a program (attempt-clone.mjs cloneGitProblem), runs no
+// git: it answers `status` null with the reason on stderr and an `error` whose code is EREFUSED, as git not answering.
+// The -c settings override core.fsmonitor and core.hooksPath, but not a config a commondir leads git to.
 export function runGit(args, cwd, options = {}) {
   if (stalled && options.timeout === undefined) return stalled;
+  const refused = cloneGitProblem(cwd ?? process.cwd());
+  if (refused) return { status: null, signal: null, stdout: '', stderr: refused, error: Object.assign(new Error(refused), { code: 'EREFUSED' }) };
   const result = spawnSync('git', hardenedArgs(args), { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...options, env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } });
   if (result.error?.code === 'ETIMEDOUT' && options.timeout === undefined) stalled = { status: null, stdout: '', stderr: '', error: result.error };
   return result;

@@ -217,7 +217,8 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   `gpg.program` with `log.showSignature`, or a credential helper, and every git call of the plugin runs with
   fsmonitor, hooks, and signature display off.
 - A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
-  time is the one recorded.
+  time is the one recorded. The table is read whole, up to 64 MiB of command lines, so a busy machine's listing still
+  finds a start by its folder.
 
 Before `verified` changes, a live Codex must show every one of these:
 

@@ -19,7 +19,7 @@ import { resolveAutoMerge } from '../plugins/aidrian/lib/config.mjs';
 import { machineSwitch } from '../plugins/aidrian/lib/config-local.mjs';
 import { pauseSync, resolvedPath } from '../plugins/aidrian/lib/fs.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { BEACON_GRACE, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
+import { BEACON_GRACE, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, PS_BUFFER, runCommand, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -178,6 +178,28 @@ test('the process table reads the same start time whatever the time zone or lang
   }
 });
 
+test('a process table listing past 1 MiB, as on a busy machine, is still read whole and finds the start by its folder', () => {
+  const cwd = path.join(tmpdir(), 'aidrian-busy-table', 'work');
+  // A stand-in for ps, run through the real runCommand with the options the adapter passes: 2 MiB of other processes'
+  // command lines, then the start's codex exec; the start time for the pid alone.
+  const listing = `const filler = '9 S /usr/bin/other ' + 'x'.repeat(1000) + '\\n'; process.stdout.write(filler.repeat(2048) + '4242 S /usr/local/bin/codex exec --json --cd ${cwd} prompt\\n');`;
+  const seen = [];
+  const run = (program, args, options) => {
+    seen.push(options.maxBuffer);
+    const script = args.includes('-A') ? listing : "process.stdout.write('S Mon Jan  5 10:00:00 2026\\n')";
+    return runCommand(process.execPath, ['-e', script], options);
+  };
+  const found = findProcesses({ cwd, run });
+  assert.ok(Array.isArray(found), 'the listing is read, not cut at 1 MiB');
+  assert.equal(found.length, 1);
+  assert.match(found[0].id, /^pid-4242-[0-9a-f]{16}$/u);
+  assert.ok(seen.every((each) => each === PS_BUFFER), 'every process table call passes the larger buffer');
+  assert.ok(PS_BUFFER >= 64 * 1024 * 1024);
+  // Without it, spawnSync stops the listing at its 1 MiB default.
+  const cut = runCommand(process.execPath, ['-e', listing], {});
+  assert.equal(cut.error?.code, 'ENOBUFS');
+});
+
 test('the adapter runs codex exec with the sandbox pinned and each granted folder, and holds the session on its id, its first tool call, and the beacon', (t) => {
   const fx = runFixture(t);
   const fake = fakeCodex(t, fx.bin, { event: 'thread', hook: false });
@@ -333,7 +355,7 @@ test('a forge that cannot say now whether this user may push refuses the start p
   } };
   const result = fx.cmd(['start', 'launch', 'ENG-1'], { forge: flaky });
   assert.equal(result.exitCode, 1);
-  assert.deepEqual(result.out, []);
+  assert.ok(result.out.every((line) => line.startsWith('unverified: ')), 'nothing but the unverified line of the host\'s start');
   assert.match(result.err[0], /^aidrian project start: the forge cannot say now whether this user may push to github\.com\/acme\/widgets \(gh: could not resolve host\); start again$/u);
   assert.ok(reads > 1);
   assert.deepEqual(fx.rows(), []);
@@ -355,7 +377,7 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   // The clone: at the base tip, on the issue's branch, with the pinned origin and a git folder of its own.
   assert.equal(fx.git('-C', work, 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim());
   assert.equal(fx.git('-C', work, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'feat/eng-1-export');
-  assert.equal(fx.git('-C', work, 'remote', 'get-url', 'origin').trim(), 'git@github.com:acme/widgets.git');
+  assert.equal(fx.git('-C', work, 'remote', 'get-url', 'origin').trim(), 'https://github.com/acme/widgets.git');
   assert.equal(resolvedPath(fx.git('-C', work, 'rev-parse', '--path-format=absolute', '--git-common-dir').trim()), git);
   assert.equal(statSync(drop).mode & 0o777, 0o700);
   assert.equal(fx.git('worktree', 'list').trim().split('\n').length, 1, 'no worktree of the main checkout');
@@ -630,6 +652,8 @@ test('an attempt clone reads its machine switches and decisions from the run\'s 
   assert.deepEqual([unlinked.localAutoMerge, unlinked.localHandoffBackground, unlinked.localDecisions], ['off', 'off', undefined]);
 });
 
+// Every host's protected host files stay refused in the clone (lib/hosts/index.mjs protectedPaths), so the folder made
+// here is a plain one.
 test('an attempt clone is no shared main checkout: the main-checkout rule lets its session edit and commit there', (t) => {
   const scripts = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts');
   const patch = '*** Begin Patch\n*** Update File: README.md\n@@\n-# widgets\n+# widgets, exported\n*** End Patch';
@@ -639,7 +663,7 @@ test('an attempt clone is no shared main checkout: the main-checkout rule lets i
       { script: path.join(scripts, 'hook-write.mjs'), input: { tool_name: 'apply_patch', tool_input: { command: patch } } },
       { script: path.join(scripts, 'hook-agent-gates.mjs'), input: { tool_name: 'apply_patch', tool_input: { command: patch } } },
       { script: path.join(scripts, 'hook-bash.mjs'), input: { tool_name: 'Bash', tool_input: { command: 'git commit -am "export"' } } },
-      { script: path.join(scripts, 'hook-agent-gates.mjs'), input: { tool_name: 'Bash', tool_input: { command: 'mkdir -p .claude/skills/x && echo x > .claude/skills/x/SKILL.md' } } },
+      { script: path.join(scripts, 'hook-agent-gates.mjs'), input: { tool_name: 'Bash', tool_input: { command: 'mkdir -p docs/x && echo x > docs/x/notes.md' } } },
     ] },
   });
   const results = path.join(fx.bin, 'hook-results.json');

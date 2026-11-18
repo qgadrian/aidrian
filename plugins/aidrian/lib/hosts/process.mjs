@@ -7,8 +7,11 @@ import { accessSync, constants, statSync } from 'node:fs';
 import path from 'node:path';
 
 // Runs `command` with `args`, in `cwd`, at most `timeout` milliseconds, under `env` (this process's by default): the
-// spawnSync result, with text output.
-export const runCommand = (command, args, { cwd, timeout, env } = {}) => spawnSync(command, args, { cwd, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}) });
+// spawnSync result, with text output. Output past `maxBuffer` bytes, spawnSync's 1 MiB by default, stops the command
+// and answers an ENOBUFS error; a caller that reads a long listing, as the process table, passes a larger one.
+export const runCommand = (command, args, { cwd, timeout, env, maxBuffer } = {}) => spawnSync(command, args, {
+  cwd, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}), ...(maxBuffer ? { maxBuffer } : {}),
+});
 
 // The first executable regular file of `names` in the absolute folders of `env.PATH`, in order, or null.
 export function programOnPath(env, names) {

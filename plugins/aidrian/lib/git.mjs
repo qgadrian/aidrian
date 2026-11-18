@@ -104,6 +104,27 @@ export function checkoutRoots(cwd, options) {
   return { main: gitDir === commonDir ? current : path.dirname(commonDir), current };
 }
 
+// The git folders of the checkout `cwd` is in, as absolute paths: { common, gitDir, top }, the folder every worktree
+// shares, this checkout's own, and its top folder; null when git cannot answer. `options` are runGit's.
+export function gitFolders(cwd, options) {
+  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir', '--show-toplevel'], cwd, options)?.split('\n');
+  if (lines?.length !== 3) return null;
+  const [common, gitDir, top] = lines;
+  return { common, gitDir, top };
+}
+
+// The config files git reads beside a repository's own, as git itself resolves them under `env`: the user's
+// (`git var GIT_CONFIG_GLOBAL`, one a line) and the system's (`git var GIT_CONFIG_SYSTEM`, wherever git was built to
+// keep it, such as a package manager's prefix), each an absolute path. Neither is read. None of a kind git cannot name,
+// as with GIT_CONFIG_NOSYSTEM set. `options` are runGit's.
+export function gitConfigFiles({ env = process.env, ...options } = {}) {
+  const named = (name) => {
+    const { status, stdout } = runGit(['var', name], path.parse(process.cwd()).root, { ...options, env });
+    return status === 0 ? stdout.split('\n').map((line) => line.trim()).filter((line) => path.isAbsolute(line)) : [];
+  };
+  return { user: named('GIT_CONFIG_GLOBAL'), system: named('GIT_CONFIG_SYSTEM') };
+}
+
 // Every worktree of the repository `cwd` is in, the main checkout first, from `git worktree list`; none outside git.
 export function worktreePaths(cwd) {
   const { status, stdout } = runGit(['worktree', 'list', '--porcelain'], cwd);

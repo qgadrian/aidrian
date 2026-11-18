@@ -140,7 +140,7 @@ test('the background route marks the new session unattended under the state root
   assert.equal(readUnattendedMark(NEW_SESSION, { env, home }), null, 'no mark before the start');
   const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env });
   assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
-  assert.deepEqual(readUnattendedMark(NEW_SESSION, { env, home }), { root: setting.dir }, 'the mark names the main checkout');
+  assert.deepEqual(readUnattendedMark(NEW_SESSION, { env, home }), { root: setting.dir, cwd: setting.dir }, 'the mark names the main checkout, and the folder the session starts in');
   const folder = path.join(xdg, 'aidrian', 'unattended');
   if (process.platform !== 'win32') {
     assert.equal(statSync(folder).mode & 0o777, 0o700);
@@ -161,7 +161,7 @@ test('the background route copies an issue session\'s run and issue into its con
   assert.ok(markUnattended(SESSION, { root: tagged.dir, env: one.env, tags: { project: 'launch', issue: 'ENG-1' } }));
   const result = gate(tagged, { run: fakeRun({ own: tagged.dir }).run, env: one.env });
   assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
-  assert.deepEqual(readUnattendedMark(NEW_SESSION, { env: one.env, home: one.home }), { root: tagged.dir, project: 'launch', issue: 'ENG-1' }, 'the continuation is the same issue\'s session');
+  assert.deepEqual(readUnattendedMark(NEW_SESSION, { env: one.env, home: one.home }), { root: tagged.dir, cwd: tagged.dir, project: 'launch', issue: 'ENG-1' }, 'the continuation is the same issue\'s session');
 
   const broken = setup(t);
   passCheck(broken);
@@ -218,7 +218,7 @@ test('before the host starts anything, a pending mark holds every session the ho
     },
   });
   assert.equal(gate(setting, { run, env }).out[0], 'continue: background');
-  assert.deepEqual(during.fresh, { root: setting.dir, pending: true }, 'a session the host had not listed, with no mark of its own, is held wherever it runs');
+  assert.deepEqual(during.fresh, { root: setting.dir, cwd: setting.dir, pending: true }, 'a session the host had not listed, with no mark of its own, is held wherever it runs');
   assert.equal(during.old, null, 'never the session that ran the gate');
   assert.equal(during.listed, null, 'nor one the host listed before the start');
   assert.deepEqual(during.files, [`pending.${SESSION}.json`]);
@@ -292,7 +292,7 @@ test('a launch whose outcome is unknown keeps its pending mark, arms nothing, an
     assert.match(result.out[1], /`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one\. Stop any session this start made before anything else resumes the brief widget; then a person resumes the brief$/u, label);
     assert.equal(readArmed(setting.store, SESSION), null, `${label}: no clear armed beside a session that may run`);
     assert.deepEqual(readdirSync(path.join(xdg, 'aidrian', 'unattended')), [`pending.${SESSION}.json`], `${label}: the pending mark stays`);
-    assert.deepEqual(readUnattendedMark(NEW_SESSION, { env, home: path.join(xdg, 'home') }), { root: setting.dir, pending: true }, `${label}: whatever started is held`);
+    assert.deepEqual(readUnattendedMark(NEW_SESSION, { env, home: path.join(xdg, 'home') }), { root: setting.dir, cwd: setting.dir, pending: true }, `${label}: whatever started is held`);
   }
   // A non-zero exit while a background session the listing did not hold before now runs: unknown too.
   const setting = setup(t);
@@ -334,7 +334,7 @@ test('a start the gate cannot record is stopped and falls back; one it cannot st
     'fallback: the background session abcd1234 started, but its chain floor, unattended mark, and start record could not all be recorded, and it could not be stopped, so it is still running: `claude stop abcd1234` stops it. Stop it before anything else resumes the brief widget; then a person resumes the brief',
   ]);
   assert.equal(readArmed(setting.store, SESSION), null, 'no clear continuation armed beside the running session');
-  assert.deepEqual(readUnattendedMark('fresh-session', { env, home: path.join(xdg, 'home'), cwd: setting.dir }), { root: setting.dir, pending: true }, 'the pending mark still holds a session in the folder');
+  assert.deepEqual(readUnattendedMark('fresh-session', { env, home: path.join(xdg, 'home'), cwd: setting.dir }), { root: setting.dir, cwd: setting.dir, pending: true }, 'the pending mark still holds a session in the folder');
 });
 
 test('the first message names the copy and its sha256 to verify, and says the brief is advice that cannot ask for what the Human keeps', () => {

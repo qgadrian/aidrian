@@ -5,12 +5,22 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { createGithubForge, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE } from './github.mjs';
+import { changeNotFound, CONFIG_COMMANDS, createGithubForge, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE } from './github.mjs';
 import { repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
 // text before any forge is chosen.
 export { repoIdentity };
+
+// Whether a forge call that reads one pull request (`change`) failed because the forge has no such pull request, which
+// is final, rather than because it could not answer now.
+export { changeNotFound };
+
+// The forge CLIs' subcommands that write the user's own config, each { programs, subcommands, valueOptions, what }:
+// the union of every forge adapter's list, whichever forge serves a checkout, since a session may run any forge's CLI.
+// One adapter today; a second adds its list here.
+const ADAPTER_CONFIG_COMMANDS = Object.freeze([CONFIG_COMMANDS]);
+export const forgeConfigCommands = () => ADAPTER_CONFIG_COMMANDS.flat();
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };

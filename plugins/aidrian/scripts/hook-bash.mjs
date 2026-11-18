@@ -4,6 +4,7 @@
 // (lib/hook-deny.mjs): a hook_deny row in the dispatch log, and a count toward the lesson for a rule that blocks one
 // session again and again. Anything this hook cannot read lets the command run: rules deny only what they positively identify.
 
+import { anchorClones } from '../lib/attempt-clone.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import * as attribution from '../lib/rules/attribution.mjs';
 import * as decisionsSet from '../lib/rules/decisions-set.mjs';
@@ -74,6 +75,8 @@ const RULES = [
 await runHook(async (input) => {
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string' || command === '') return;
+  // An attempt clone is linked only for the session the payload names (lib/attempt-clone.mjs).
+  anchorClones({ session: input.session_id });
   // `startedAt`: when this process started, for a rule that bounds its network calls by the hook's own time (merge-review's
   // unattended waiver, ready-hold).
   const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin };

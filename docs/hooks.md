@@ -974,9 +974,82 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the runs folder. A project run's attempt clone is no shared main checkout: the [main-checkout rule](#main-checkout)
   reads the run's main checkout as its own.
 - In a project run's attempt clone, every call is refused while the clone's own git config sets a key that makes git
-  run a program or send elsewhere, before any git call of the hook runs there. Every git call of the plugin, in a hook or
-  a command, runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and signature
-  display turned off (`lib/git.mjs`).
+  run a program or send elsewhere, while its work folder's `.git` is not the pointer file to the attempt's own git
+  folder, or while that git folder holds a `commondir` or `config.worktree` file, before any git call of the hook runs
+  there. Every git call of the plugin, in a hook or a command, runs with `core.fsmonitor`, `core.hooksPath`, submodule
+  recursion, the `ext::` transport, and signature display turned off (`lib/git.mjs`).
+- An attempt clone stands linked to its run's main checkout only for the session whose unattended mark names that run,
+  that issue, and that main checkout, or, before the gate files that mark, whose pending mark names that main checkout
+  and that clone as the folder it starts the session in. A hook reads the session from its payload's id; a command
+  reads it from its caller's environment, which is acceptable while no hook relies on a command's answer. The clone's
+  state folder must also be one the project at that main checkout names, so a ledger and a main checkout a session
+  builds in its temporary folder or a state work folder link nothing; so must its git folder hold no `commondir` or
+  `config.worktree`. Any other reader, and a clone that fails a check, read every machine switch off.
+- **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
+  mark holds, read by the hook payload's session id, and every subagent of it, writes only:
+  - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
+    folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
+    is outside. A mark filed before the start folder was recorded names no worktree;
+  - its issue's running attempt folders `work` and `drop`, under `<state>/runs/<run>/attempts/`;
+  - the state folders it writes by hand, each when it is no link, of every state folder of the project its mark names:
+    `plans`, `tmp`, `handoffs` (the continuation store in it stays refused, as above), and `quorum`, where the product
+    quorum runs under auto decisions; in `reviews`, only a review manifest, `pr-<n>.json` or a temporary copy of it,
+    and a capture under `pr-<n>/captures/`; and in `dispatch`, only a subagent's handoff file, a `.json` file directly
+    in it. A confined host is granted `plans`, `reviews`, `tmp`, and `dispatch` for the programs it runs, such as the
+    review commands, which write the records there;
+  - the temporary folder, this process's `TMPDIR` and `/tmp`;
+  - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
+
+  Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the
+  shared one, the worktree's own, and the attempt's; only git writes there, and git running is no write this guard
+  sees), and a worktree's or the attempt clone's `.git` pointer; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
+  and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
+  the shell startup files in the home folder and in `ZDOTDIR`; the user's macOS launch agents, `~/Library/LaunchAgents`;
+  the review and attest records in `reviews`, by a write or a delete; any other path in `dispatch`, and the dispatch log
+  beside it, `<state>/dispatch-log.jsonl`; and any other dot file or folder of the home folder, such as a host's user-level
+  settings and instruction files, unless it lies in the session's own worktree, a state folder above, or its attempt
+  folders. A repository under a dot folder, such as `~/.dotfiles`, still writes itself when it is the session's worktree.
+  A write through a hard link to a refused file counts as one to it, and a link a command makes (`ln`, `ln -s`,
+  `cp -s`, `cp -l`) is judged by the path it points at: it is refused when that path is refused or outside the places.
+  - A target built from a variable is read with `$HOME`, `${HOME}`, `$XDG_CONFIG_HOME`, `$ZDOTDIR`, and `$TMPDIR`
+    expanded from the hook's environment, unless the command sets that variable itself. One that still holds `$` or a
+    backtick is judged by its names (a startup file, a git config, a dot entry of the home folder), by a git folder it
+    asks git for, as `"$(git rev-parse --git-common-dir)/hooks/x"` does, and by its literal path before the first `$`,
+    which must not meet a refused entry or lie outside the places. A bare `"$f"`, `"$out"`, or `"$dir"` has no such
+    path and passes on its names.
+  - A program that writes its own config is refused: a `git config` write (anything but a read, a list, or a key alone)
+    to the user's, the system's, the shared, or the worktree's config, or with `--file` to a file outside the places;
+    a key that makes git run a program at any scope, and `git config --edit`; the folders `git worktree add`,
+    `git clone`, and `git init` make, when outside the places; the forge CLI's, which its adapter declares
+    (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
+    GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
+    `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,
+    `codex login`, and `codex logout` for Codex, and their removals); `npm`, `pnpm`, and `yarn config set`, `npm set`,
+    `npm login`, `npm adduser`, `crontab` but `-l`, `launchctl` but its reads, and `defaults write`, `delete`, `import`,
+    and `rename`. A subcommand is found past the program's global options that take a value, as in
+    `codex --profile p login` or `gh -R o/r config set`, and through a package runner: `npx`, `pnpm dlx`, `bunx`, and
+    `yarn dlx`.
+  - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
+    a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
+    reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a
+    temporary copy whose command names one; and any shell write to `pr-<n>.json` itself but a delete, or a rename or
+    copy of a file on disk with no such key that the same call does not write.
+
+  A session a pending mark holds, while a gate starts a session, or whose mark cannot be read, may be one a Human opened
+  in another repository: it keeps only the entries refused wherever they lie (the shared git config and hooks of the
+  mark's main checkout and of the call's folder, the user's and the system's git config, the startup files, the home
+  folder's dot entries outside the project's state folders, and the programs' config writes above), with no refusal for
+  a write outside the places, and a variable it cannot expand is judged only by those names. Its refusal says a project
+  start is in progress. When its own mark names a main checkout with no project the hook can read, every write is
+  refused. An attended session and its subagents are never held. The block is [recorded](#recorded-blocks) as
+  `config-guard`.
+
+  The guard reads what the shared lexer reads, and like the other guards it is for agents that cooperate. It does not
+  see a write by `xargs`, `eval` of a built string, `tar -C`, `curl -o`, or another program's own output option; by a
+  program or script the session wrote, or one of the project's own scripts; or by an MCP tool that writes files. An
+  unsandboxed Claude Code issue session can still write anywhere through a program it runs. A ledger a session forges in
+  the `quorum` folder, which it may write, could shape a later quorum run on the same plan.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule
   above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
 - A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:

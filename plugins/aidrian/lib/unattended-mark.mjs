@@ -107,16 +107,17 @@ function writeMark(folder, name, value) {
   return file;
 }
 
-// Files the mark of `session`, { root, at }, in markFolder(env), where `root` is the main checkout of the project the gate
-// ran in, after sweeping marks past MARK_AGE. `tags`, { project, issue }, adds a project run's id and an issue key; a tag
-// of a wrong shape writes nothing. Returns the file, or null when the session id cannot name a file, or the folder is a
+// Files the mark of `session`, { root, cwd, at }, in markFolder(env), where `root` is the main checkout of the project the
+// gate ran in and `cwd`, when absolute, the folder it started the session in, after sweeping marks past MARK_AGE. `tags`,
+// { project, issue }, adds a project run's id and an issue key; a tag of a wrong shape writes nothing. Returns the file, or null when the session id cannot name a file, or the folder is a
 // symlink, not a folder, or another user's, or the write fails. Never throws.
-export function markUnattended(session, { root, env = process.env, now = Date.now(), tags = null } = {}) {
+export function markUnattended(session, { root, cwd = null, env = process.env, now = Date.now(), tags = null } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof root !== 'string' || !path.isAbsolute(root)) return null;
   const tagged = tags === null ? {} : tagsOf(tags);
   if (tagged === null) return null;
   try {
-    return writeMark(ownFolder(env, now), `${session}.json`, { root, at: now, ...tagged });
+    const start = typeof cwd === 'string' && path.isAbsolute(cwd) ? { cwd } : {};
+    return writeMark(ownFolder(env, now), `${session}.json`, { root, ...start, at: now, ...tagged });
   } catch {
     return null;
   }
@@ -153,12 +154,13 @@ function tagsOf(value) {
   return ok ? { project: value.project, issue: value.issue } : null;
 }
 
-// The mark of `session`, { root } where `root` is the main checkout the gate named, or null when it named none that can
-// be read; null when no mark holds. A mark that carries a project run's tags adds `project` and `issue`; one whose tags
-// have a wrong shape adds `issue: null` and `project: null`, so a reader that refuses any session with an issue refuses it. It reads each of markFolders the session's own mark and every mark under a short id
-// it starts with. A mark of another user, or one past MARK_AGE, does not hold; an entry or a folder it cannot check does.
-// With no mark of its own, a pending mark holds the session, wherever its call runs, as { root, pending: true }, unless it
-// ran the gate or the host listed it before the start.
+// The mark of `session`, { root, cwd }, where `root` is the main checkout the gate named, or null when it named none
+// that can be read, and `cwd` the folder it started the session in, when the mark names one; null when no mark holds.
+// A mark that carries a project run's tags adds `project` and `issue`; one whose tags have a wrong shape adds
+// `issue: null` and `project: null`, so a reader that refuses any session with an issue refuses it. It reads each of
+// markFolders the session's own mark and every mark under a short id it starts with. A mark of another user, or one past MARK_AGE, does not hold; an entry or a folder it cannot check does.
+// With no mark of its own, a pending mark holds the session, wherever its call runs, as { root, cwd, pending: true }, with
+// `cwd` the folder the gate starts the new session in, unless it ran the gate or the host listed it before the start.
 export function readUnattendedMark(session, { env = process.env, home, now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const uid = processUid();
@@ -264,12 +266,12 @@ function pendingHold(files, session, uid, now) {
     if (found === null) continue;
     if (found === 'unchecked') return { root: null, pending: true };
     if (found.session === session || found.known?.includes(session)) continue;
-    return { root: found.root, pending: true };
+    return { root: found.root, cwd: found.cwd, pending: true };
   }
   return null;
 }
 
-// One pending mark: { session, root, known } when it holds, null when it does not, or 'unchecked' when it holds and
+// One pending mark: { session, root, cwd, known } when it holds, null when it does not, or 'unchecked' when it holds and
 // cannot be read. `known` is null when the mark names none.
 function readPending(file, uid, now) {
   let stat;
@@ -284,7 +286,7 @@ function readPending(file, uid, now) {
   const fits = isObject(value) && value.pending === true && typeof value.session === 'string'
     && [value.cwd, value.root].every((each) => typeof each === 'string' && path.isAbsolute(each))
     && (value.known === undefined || (Array.isArray(value.known) && value.known.every((id) => typeof id === 'string')));
-  return fits ? { session: value.session, root: value.root, known: value.known ?? null } : 'unchecked';
+  return fits ? { session: value.session, root: value.root, cwd: value.cwd, known: value.known ?? null } : 'unchecked';
 }
 
 // One mark file: { root } when it holds, null when it does not, or 'unchecked' when it cannot be checked.
@@ -301,13 +303,15 @@ function readMark(file, uid, now) {
   return markOf(readJson(file));
 }
 
-// What a mark's value names: { root } with the main checkout or null, plus its tags when it carries any. A reader that
-// must know whether the session works an issue counts `root: null` as one it cannot tell.
+// What a mark's value names: { root } with the main checkout or null, `cwd` when it names the folder the gate started the
+// session in, plus its tags when it carries any. A reader that must know whether the session works an issue counts
+// `root: null` as one it cannot tell.
 function markOf(value) {
   if (!isObject(value)) return { root: null };
   const root = typeof value.root === 'string' && path.isAbsolute(value.root) ? value.root : null;
+  const start = root !== null && typeof value.cwd === 'string' && path.isAbsolute(value.cwd) ? { cwd: value.cwd } : {};
   const tags = tagsOf(value);
-  return { root, ...(tags ?? { project: null, issue: null }) };
+  return { root, ...start, ...(tags ?? { project: null, issue: null }) };
 }
 
 // The JSON value of the regular file `file`, read without following a link, or null.

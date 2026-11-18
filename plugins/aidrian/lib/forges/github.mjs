@@ -22,6 +22,17 @@ export const GITHUB_JSON = 'application/vnd.github+json';
 export const REVIEWS_PAGE = 100;
 // The longest body GitHub takes for a comment, a review, or a review comment, in characters.
 export const MAX_BODY = 65_536;
+
+// The forge CLI's subcommands that write the user's own config, which the agent gates hook refuses to a session no Human
+// attends (lib/unattended-write.mjs): gh's config, its extensions, and its login, and `gh auth setup-git`, which writes
+// the user's git config. Each is { programs, subcommands, valueOptions, what }, `valueOptions` gh's global options that
+// take the next word.
+const GH_VALUES = Object.freeze(['-R', '--repo', '--hostname', '-h']);
+export const CONFIG_COMMANDS = Object.freeze([
+  { programs: ['gh'], subcommands: [['config', 'set'], ['extension', 'install']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own config' },
+  { programs: ['gh'], subcommands: [['auth', 'login'], ['auth', 'logout'], ['auth', 'switch'], ['auth', 'refresh']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own login' },
+  { programs: ['gh'], subcommands: [['auth', 'setup-git']], valueOptions: GH_VALUES, what: 'the user\'s git config' },
+]);
 const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -87,6 +98,10 @@ const idOf = (value, what) => {
 const clientError = (error) => /\(HTTP 4\d\d\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
 // Whether gh failed on GitHub's 404.
 const notFound = (error) => /\(HTTP 404\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
+// Whether a `change` call failed because GitHub has no such pull request: a 404 from REST, or GraphQL's answer that it
+// could not resolve the number, which `gh pr view` gives. Any other failure, such as a network error, may pass.
+export const changeNotFound = (error) => notFound(error)
+  || /Could not resolve to a PullRequest with the number/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
 
 // One `gh pr checks` row in the forge's shape: its name and state, the workflow, event, and run that reported it, and
 // `workflowId`, the workflow file's id (filled in by workflowIds), null until it is read. `host` and `repo` name the

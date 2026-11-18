@@ -207,8 +207,11 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   within 30 seconds, its first tool call within 180 seconds, and the agent gate hook's beacon a few seconds after it.
   A failed proof stops the process at once, gives the attempt back, and halts the run until the Human's own shell, or
   another attended session that never drove the run, runs `aidrian project resume <run>`. Only a shell command, a file
-  change, or an MCP tool's call counts as a tool call; a `turn.failed` or error event before one names its cause.
-- The clone is no shared main checkout: its machine switches and decisions come from the run's main checkout, its own
+  change, or an MCP tool's call counts as a tool call; a `turn.failed` event before one names its cause.
+  A top-level `error` event does not end the wait: which of them are fatal is not shown yet, so the wait goes on
+  to a tool call, a `turn.failed`, or its limit.
+- The clone is no shared main checkout for the issue's own session, whose unattended mark names the run, the issue, and
+  the main checkout: its machine switches and decisions come from the run's main checkout, its own
   `.aidrian.local.json` is never read, and the main-checkout rule lets the session edit and commit there. A hook refuses
   every call in the clone while its own git config sets a key that makes git run a program, such as `core.fsmonitor`,
   `gpg.program` with `log.showSignature`, or a credential helper, and every git call of the plugin runs with
@@ -228,6 +231,7 @@ Before `verified` changes, a live Codex must show every one of these:
 7. What `network_access` covers: git over SSH and HTTPS, and `gh`.
 8. Whether `codex exec` loads a project's `.codex/config.toml` from a clone of a trusted repository.
 9. Which environment hook processes get.
+10. Which top-level `error` events are fatal, so a start may halt on them as it halts on `turn.failed`.
 
 ## Limits
 

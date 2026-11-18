@@ -167,7 +167,18 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeConfigCommands', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
+  const commands = facade.forgeConfigCommands();
+  assert.ok(commands.every((each) => each.programs.includes('gh') && typeof each.what === 'string'));
+  assert.deepEqual(commands.flatMap((each) => each.subcommands.map((sub) => sub.join(' '))).sort(), ['auth login', 'auth logout', 'auth refresh', 'auth setup-git', 'auth switch', 'config set', 'extension install']);
+  assert.ok(commands.every((each) => each.valueOptions.includes('-R')), 'gh\'s repository option is skipped before the subcommand');
+  // A pull request the forge has not: final. A forge that could not answer: not.
+  const failed = (text) => Object.assign(new Error(text), { stderr: text });
+  assert.equal(facade.changeNotFound(failed('gh: Not Found (HTTP 404)')), true);
+  assert.equal(facade.changeNotFound(failed('GraphQL: Could not resolve to a PullRequest with the number of 999. (repository.pullRequest)')), true);
+  assert.equal(facade.changeNotFound(failed('error connecting to api.github.com')), false);
+  assert.equal(facade.changeNotFound(failed('gh: Server Error (HTTP 502)')), false);
   assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
   assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);

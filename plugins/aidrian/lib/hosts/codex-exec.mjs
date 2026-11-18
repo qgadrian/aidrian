@@ -199,13 +199,15 @@ export function firstEvent(log) {
   return first.type === 'thread.started' && typeof first.thread_id === 'string' && THREAD.test(first.thread_id) ? first.thread_id : null;
 }
 
-// Whether the log `log` holds the session's first tool call: true; { failed } with the message of a `turn.failed` or a
-// top-level `error` event before any, which ends the wait; or undefined while it holds neither.
+// Whether the log `log` holds the session's first tool call: true; { failed } with the message of a `turn.failed` event
+// before any, which ends the wait; or undefined while it holds neither. A top-level `error` event is no cause to halt:
+// which of them are fatal no live run has shown yet (docs/providers/codex.md), and Codex goes on after some, such as a
+// retried stream, so the wait reads on to a tool call, a `turn.failed`, or its own limit.
 export function firstTool(log) {
   for (const event of logEvents(log) ?? []) {
     if (typeof event.type !== 'string') continue;
     if (event.type.startsWith('item.') && TOOLS.has(event.item?.type)) return true;
-    if (event.type === 'turn.failed' || event.type === 'error') {
+    if (event.type === 'turn.failed') {
       const message = event.error?.message ?? event.message;
       return { failed: String(typeof message === 'string' ? message : event.type).replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ').slice(0, 200) };
     }

@@ -9,15 +9,17 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { anchorClones } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { resolveAutoMerge } from '../plugins/aidrian/lib/config.mjs';
 import { machineSwitch } from '../plugins/aidrian/lib/config-local.mjs';
 import { pauseSync, resolvedPath } from '../plugins/aidrian/lib/fs.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { BEACON_GRACE, FIRST_TOOL_WAIT, findProcesses, firstEvent, launchCommand, processEnded, processState, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
+import { BEACON_GRACE, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -360,7 +362,7 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   const [, , start] = fx.rows();
   assert.deepEqual([start.event, start.outcome, start.child, start.drop], ['start', 'started', THREAD, path.join(fx.attempt(), 'drop')]);
   assert.match(start.id, new RegExp(`^pid-${pid}-[0-9a-f]{16}$`, 'u'));
-  assert.deepEqual(readUnattendedMark(THREAD, { env: fx.env, home: fx.home }), { root: fx.dir, project: 'launch', issue: 'ENG-1' });
+  assert.deepEqual(readUnattendedMark(THREAD, { env: fx.env, home: fx.home }), { root: fx.dir, cwd: path.join(fx.attempt(), 'work'), project: 'launch', issue: 'ENG-1' }, 'the mark names the attempt\'s work folder it starts in');
   assert.equal(statSync(path.dirname(fx.log())).mode & 0o777, 0o700);
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['running ENG-1']);
 });
@@ -609,6 +611,9 @@ test('an attempt clone reads its machine switches and decisions from the run\'s 
   writeFileSync(path.join(fx.dir, '.aidrian.local.json'), JSON.stringify({ handoff: { background: 'on' }, github: { autoMerge: 'off', unattendedWaiver: 'off' }, decisions: { mode: 'ask' } }));
   // The session writes its own local file in the clone, turning everything on.
   writeFileSync(path.join(work, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on', unattendedWaiver: 'on' }, unattendedSignoff: 'on', decisions: { mode: 'auto' } }));
+  // Read as the issue's own session, whose mark names the run, the issue, and the main checkout.
+  anchorClones({ session: THREAD, env: fx.env, home: fx.home });
+  t.after(() => anchorClones(null));
   const clone = projectAt(work);
   assert.equal(resolvedPath(clone.checkouts.at(-1)), resolvedPath(fx.dir), 'the run\'s main checkout stands as the clone\'s');
   assert.deepEqual([clone.localAutoMerge, clone.localUnattendedWaiver, clone.localUnattendedSignoff], ['off', 'off', 'unset']);
@@ -665,4 +670,46 @@ test('a program a session names in its clone\'s git config runs neither through 
     run('hook-bash.mjs', command);
   }
   assert.equal(existsSync(marker), false, 'no hook ran the program');
+});
+
+test('a dropped result naming a pull request the forge does not have ends the attempt bad_result at once, never a retry', (t) => {
+  const fx = codexRun(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
+  writeFileSync(path.join(fx.attempt(), 'drop', 'result.json'), JSON.stringify({ run: 'launch', key: 'ENG-1', attempt: 1, status: 'pr_open', pr: 999, decisions: [], stop: null }));
+  // The fake forge has no pull request 999: it answers 404.
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.equal(waited.out[0], 'ended ENG-1 bad_result -> open');
+  const ended = fx.rows().find((row) => row.event === 'ended');
+  assert.deepEqual([ended.reason, ended.attempt], ['bad_result', 1]);
+  assert.match(ended.why, /no pull request #999/u);
+});
+
+test('a dropped result the forge cannot confirm past issueHours ends bad_result, and its session is stopped', (t) => {
+  const fx = codexRun(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
+  const { pid } = fx.fake.call();
+  writeFileSync(path.join(fx.attempt(), 'drop', 'result.json'), JSON.stringify({ run: 'launch', key: 'ENG-1', attempt: 1, status: 'pr_open', pr: 7, decisions: [], stop: null }));
+  const forge = { ...fx.forge, change: () => {
+    throw new Error('gh: could not resolve host');
+  } };
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { forge }).out, ['running ENG-1'], 'within issueHours, the next wait reads it again');
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '0'], { forge, now: Date.now() + 25 * 60 * 60 * 1000 });
+  assert.deepEqual(waited.out, ['ended ENG-1 bad_result -> open', 'idle']);
+  const ended = fx.rows().find((row) => row.event === 'ended');
+  assert.match(ended.why, /did not confirm the handed-over result within \d+ hours/u);
+  assert.ok(gone(pid), 'its session was stopped');
+});
+
+test('a top-level error event before the first tool call ends no wait; a failed turn does', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'aidrian-events-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = path.join(root, 'issue.1.jsonl');
+  const events = (...each) => writeFileSync(log, each.map((event) => `${JSON.stringify(event)}\n`).join(''));
+  const thread = { type: 'thread.started', thread_id: THREAD };
+  events(thread, { type: 'error', message: 'Reconnecting... 1/5' });
+  assert.equal(firstTool(log), undefined, 'a bare error event: the wait reads on');
+  events(thread, { type: 'error', message: 'Reconnecting... 1/5' }, { type: 'item.started', item: { id: 'c1', type: 'command_execution', command: 'git status' } });
+  assert.equal(firstTool(log), true);
+  events(thread, { type: 'error', message: 'stream lost' }, { type: 'turn.failed', error: { message: 'You have hit your usage limit.' } });
+  assert.deepEqual(firstTool(log), { failed: 'You have hit your usage limit.' });
 });

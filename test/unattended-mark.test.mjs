@@ -263,7 +263,18 @@ test('a subagent and a marked session may not repoint a git remote or gh\'s defa
       assert.equal(result.status, 2, `${who}: ${command}`);
       assert.match(result.stderr, /changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo/u, `${who}: ${command}`);
     }
-    for (const command of allowed) assert.equal(run(session, command, options).status, 0, `${who}: ${command}`);
+    for (const command of allowed) {
+      const result = run(session, command, options);
+      // A marked session's write of the repository's own git config is the write allowlist's to refuse
+      // (lib/unattended-write.mjs), never this guard's.
+      if (command === 'git config user.name t' && session === marked) {
+        assert.equal(result.status, 2, `${who}: ${command}`);
+        assert.match(result.stderr, /the repository's shared git config/u, `${who}: ${command}`);
+        assert.doesNotMatch(result.stderr, /changes which repository/u, `${who}: ${command}`);
+        continue;
+      }
+      assert.equal(result.status, 0, `${who}: ${command}`);
+    }
   }
   for (const command of refused) assert.equal(run('plain-session', command).status, 0, `attended: ${command}`);
 });

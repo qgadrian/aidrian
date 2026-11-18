@@ -131,6 +131,14 @@ export default {
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   sessionStart: { programs: ['claude'], starts: startsSession },
+  // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
+  // its global options that take the next word. The agent gate hook refuses them to a session no Human attends
+  // (lib/unattended-write.mjs).
+  configCommands: {
+    programs: ['claude'],
+    subcommands: [['mcp', 'add'], ['mcp', 'add-json'], ['mcp', 'add-from-claude-desktop'], ['mcp', 'remove'], ['config', 'set'], ['config', 'add'], ['config', 'remove'], ['plugin', 'install'], ['plugin', 'marketplace', 'add']],
+    valueOptions: ['--settings', '--setting-sources', '--model', '--fallback-model', '--add-dir', '--mcp-config', '--permission-mode', '--agents', '--agent', '--session-id', '--append-system-prompt', '--system-prompt', '--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--output-format', '--input-format', '--plugin-dir', '-r', '--resume', '-n', '--name'],
+  },
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];

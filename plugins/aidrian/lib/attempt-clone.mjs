@@ -7,7 +7,16 @@
 // shared main checkout for the main-checkout rule. A clone whose link cannot be read reads every switch off.
 // It also reads the clone's own git config, from its git folder beside it, for a key that makes git run a program
 // (cloneConfigProblem): a hook refuses a call there while one is set, before any git call of its own runs there.
-// It imports node built-ins only, as lib/git.mjs, which loads it, does.
+// The link is anchored on the unattended mark of the session that reads it: a session could build a ledger and a main
+// checkout of its own in a folder it may write, so the link holds only for a session whose mark names the clone's run and
+// issue, and the ledger's main checkout as its root, and only while the clone's state folder is one the project at that
+// main checkout names. A folder a sandbox may write, such as the temporary folder or a state work folder, is never one
+// unless that project's own config names it. A hook names the session by its payload's id (anchorClones); a command
+// reads it from its host's environment. The readers of the mark and of the project's state folders are given in
+// (anchorReaders, which lib/project.mjs calls on load), so this file imports node built-ins only, as lib/git.mjs, which
+// loads it, does; with none given, no clone links.
+// It also refuses a call in a clone whose `.git` pointer names another git folder than the attempt's own, or whose git
+// folder holds a `commondir` or `config.worktree` file, through which git would read another config.
 
 import { spawnSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
@@ -60,26 +69,93 @@ function ledgerRows(file) {
   }
 }
 
+// The readers the link is anchored with, { sessionOf, readMark, namedStates }, from anchorReaders: `sessionOf(env)`, the
+// session the host names in an environment; `readMark(session, { env, home })`, the session's unattended mark
+// (lib/unattended-mark.mjs readUnattendedMark); and `namedStates(main, { env, home })`, the state folders the project at
+// the main checkout `main` names. Null until given: then no clone links.
+let readers = null;
+// The session a clone's link is checked against, { session, env, home }: what anchorClones set, or the session the host
+// names in this process's environment.
+let anchor = null;
+// Each root's answer, for the anchor it was read under: a hook asks several times a call.
+const answers = new Map();
+
+// Sets the readers every clone link is anchored with (lib/project.mjs gives them on load).
+export function anchorReaders(given) {
+  readers = given ?? null;
+  answers.clear();
+}
+
+// Sets the session whose unattended mark anchors every clone link this process reads: a hook passes its payload's
+// session id, and a test its own `env` and `home` (unattended-mark.mjs markFolders). Null goes back to the host's
+// environment.
+export function anchorClones(given) {
+  anchor = given ?? null;
+  answers.clear();
+}
+
+const anchorOf = () => anchor ?? { session: readers?.sessionOf?.(process.env) ?? null, env: process.env };
+
 // What the checkout root `root` is as an attempt clone: null when its real path is no attempt's work folder; else the
 // attempt (attemptOf) with `main`, the run's main checkout the ledger's init row names, when the ledger holds a start
-// row for that issue and attempt naming this folder, and that main checkout is a git checkout outside the state folder;
-// or with `unlinked: true` when any of that cannot be read.
+// row for that issue and attempt naming this folder, that main checkout is a git checkout outside the state folder, the
+// attempt's git folder holds no file that sends git elsewhere (gitExtraProblem), the anchored session's mark names the
+// run, the issue, and that main checkout (anchoredBy), and the state folder is one the project there names
+// (namedState); or with `unlinked: true` when any of that does not hold or cannot be read.
 export function attemptClone(root) {
   const at = attemptOf(root);
   if (!at || real(root) !== at.work) return null;
+  if (!answers.has(at.work)) answers.set(at.work, linkOf(at));
+  return answers.get(at.work);
+}
+
+function linkOf(at) {
   const rows = ledgerRows(path.join(at.state, 'runs', at.run, 'ledger.jsonl'));
   const [init] = rows ?? [];
   const named = (row) => [row.drop && real(row.drop) === at.drop, row.cwd && real(row.cwd) === at.work].some(Boolean);
   const started = (rows ?? []).some((row) => row?.event === 'start' && row.key === at.key && row.attempt === at.attempt && named(row));
   const main = init?.event === 'init' && init.run === at.run && typeof init.main === 'string' && path.isAbsolute(init.main) ? real(init.main) : null;
-  const linked = started && main !== null && main !== at.work && !(`${main}/`.startsWith(`${at.state}/`)) && real(path.join(main, '.git')) !== null;
+  const linked = started && main !== null && main !== at.work && !(`${main}/`.startsWith(`${at.state}/`)) && real(path.join(main, '.git')) !== null
+    && gitExtraProblem(at) === null && anchoredBy(at, main) && namedState(at, main);
   return linked ? { ...at, main } : { ...at, unlinked: true };
+}
+
+// Whether the anchored session's own mark names the clone's run and issue, and `main` as its root; or, before the gate
+// has filed that mark, the gate's pending mark that holds it names `main` as its root and this work folder as the folder
+// it starts the session in, as a confined start's first tool call may come first.
+function anchoredBy(at, main) {
+  const { session, env, home } = anchorOf();
+  if (typeof session !== 'string' || typeof readers?.readMark !== 'function') return false;
+  let mark;
+  try {
+    mark = readers.readMark(session, { env: env ?? process.env, ...(home ? { home } : {}) });
+  } catch {
+    return false;
+  }
+  if (!mark || typeof mark.root !== 'string' || real(mark.root) !== main) return false;
+  if (mark.pending) return typeof mark.cwd === 'string' && real(mark.cwd) === at.work;
+  return mark.project === at.run && mark.issue === at.key;
+}
+
+// Whether the clone's state folder is one the project at `main` names (readers.namedStates): its state.dir, as the
+// environment and as the user's own home resolve it. A folder a session made, such as one in the temporary folder, is
+// none of them.
+function namedState(at, main) {
+  const { env, home } = anchorOf();
+  if (typeof readers?.namedStates !== 'function') return false;
+  const state = real(at.state);
+  try {
+    return readers.namedStates(main, { env: env ?? process.env, ...(home ? { home } : {}) })
+      .some((folder) => typeof folder === 'string' && state !== null && real(folder) === state);
+  } catch {
+    return false;
+  }
 }
 
 // The keys that make git run a program, or send where it should not, in a clone's own config, as patterns over the
 // lower-case key, each with the values that refuse (any, by default): the repository check's (lib/project-trust.mjs
 // REFUSED_KEYS, all of which a clone's own config may not set) and the signature programs git runs to show a signature.
-const PROGRAM_KEYS = [
+export const PROGRAM_KEYS = Object.freeze([
   [/^core\.(?:sshcommand|gitproxy|askpass|alternaterefscommand|worktree|hookspath|editor|pager)$/u],
   [/^core\.fsmonitor$/u, (value) => !/^(?:true|false|yes|no|on|off|1|0)$/iu.test(value)],
   [/^credential\.(?:.+\.)?helper$/u],
@@ -93,7 +169,52 @@ const PROGRAM_KEYS = [
   [/^gpg\.(?:.+\.)?program$/u],
   [/^(?:log\.showsignature|commit\.gpgsign|tag\.gpgsign|push\.gpgsign)$/u, (value) => /^(?:true|yes|on|1|if-asked)$/iu.test(value)],
   [/^(?:sequence\.editor|pager\..+|alias\..+)$/u],
-];
+]);
+
+// The longest `.git` pointer file read.
+const POINTER_CAP = 4096;
+
+// Why the work folder's `.git` of the attempt `at` does not point at the attempt's own git folder, or null: it must be
+// a regular file, read without following a link, whose `gitdir:` line names that folder, by its real path, from the work
+// folder when relative. A folder, a link, a missing file, or a pointer elsewhere refuses: git would read another config.
+function pointerProblem(at) {
+  const file = path.join(at.work, '.git');
+  let fd;
+  let text;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > POINTER_CAP) return `the attempt clone's ${file} is not a pointer file to its own git folder, ${at.git}`;
+    const buffer = Buffer.alloc(stat.size);
+    text = buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8');
+  } catch {
+    return `the attempt clone's ${file} is not a pointer file to its own git folder, ${at.git}`;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  const named = /^gitdir: (.+?)\r?\n?$/u.exec(text)?.[1];
+  const target = named ? real(path.resolve(at.work, named)) : null;
+  return target !== null && target === real(at.git) ? null : `the attempt clone's ${file} points at another git folder than its own, ${at.git}, so no call runs there until it is restored`;
+}
+
+// The files of a git folder through which git reads another folder's config, or a worktree's own: `commondir` names a
+// shared git folder, and `config.worktree` adds keys on top of the attempt's config.
+const EXTRAS = Object.freeze(['commondir', 'config.worktree']);
+
+// Why the attempt `at`'s git folder may send git elsewhere, or null: it holds one of EXTRAS, of any kind, or one cannot
+// be checked.
+function gitExtraProblem(at) {
+  for (const name of EXTRAS) {
+    const file = path.join(at.git, name);
+    try {
+      lstatSync(file);
+      return `the attempt clone's git folder holds ${file}, through which git reads another config, so no call runs there until it is removed`;
+    } catch (error) {
+      if (error.code !== 'ENOENT') return `the attempt clone's ${file} cannot be checked`;
+    }
+  }
+  return null;
+}
 
 // Why a call in the folder `cwd` may not run because the attempt clone it lies in sets, in its own git config, a key
 // that makes git run a program (PROGRAM_KEYS), or null. The config is the file in the attempt's git folder, beside the
@@ -102,6 +223,8 @@ export function cloneConfigProblem(cwd) {
   if (typeof cwd !== 'string' || cwd === '') return null;
   const at = attemptOf(cwd);
   if (!at) return null;
+  const pointer = pointerProblem(at) ?? gitExtraProblem(at);
+  if (pointer) return pointer;
   const file = path.join(at.git, 'config');
   try {
     if (!lstatSync(file).isFile()) return `the attempt clone's git config, ${file}, is not a regular file`;

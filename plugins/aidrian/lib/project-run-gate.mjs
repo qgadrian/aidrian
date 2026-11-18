@@ -553,6 +553,8 @@ function waitPass({ state, run, store, cap, env, spawn, policy, forge, now }) {
 }
 
 // The issues of run `run` whose session ended with no result, or ran past `policy.issueHours`: recorded, with a line each.
+// A handed-over result the forge could not confirm yet is read again by the next wait, never ended as no result; past
+// issueHours, its sessions are stopped and it ends `bad_result`, as the forge never confirmed it in time.
 function endedLines({ state, run, store, cap, env, spawn, policy, now }) {
   const found = readRun(state, run);
   if (found.problem) return [];
@@ -560,11 +562,12 @@ function endedLines({ state, run, store, cap, env, spawn, policy, now }) {
   for (const key of planRun(found.snapshot, found.states, { maxParallel: SERIAL }).running) {
     const start = latestStart(found, key);
     if (!start || startsOf(found, key).at(-1) !== start) continue;
-    // A handed-over result the forge could not confirm yet is read again by the next wait, never ended as no result.
-    if (typeof start.drop === 'string' && existsSync(path.join(start.drop, DROP_FILE))) continue;
-    const ended = chainEnded({ cap, store, id: start.id, session: start.child, env, spawn, now });
+    const dropped = typeof start.drop === 'string' && existsSync(path.join(start.drop, DROP_FILE));
+    const overdue = now - timeOf(start) > policy.issueHours * HOUR;
+    if (dropped && !overdue) continue;
+    const ended = dropped ? false : chainEnded({ cap, store, id: start.id, session: start.child, env, spawn, now });
     let reason = ended === true ? 'no_result' : null;
-    if (!reason && now - timeOf(start) > policy.issueHours * HOUR) {
+    if (!reason && overdue) {
       const { chain } = issueChain(store, start, { now });
       const stopped = chain.every((member) => safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn })) === true
         || safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) === true);
@@ -572,12 +575,13 @@ function endedLines({ state, run, store, cap, env, spawn, policy, now }) {
         lines.push(`overdue ${key} attempt ${start.attempt}: a session of it could not be stopped`);
         continue;
       }
-      reason = 'timeout';
+      reason = dropped ? 'bad_result' : 'timeout';
     }
     if (!reason) continue;
     const next = afterFailure(key, start.attempt);
+    const why = reason === 'bad_result' ? { why: `the forge did not confirm the handed-over result within ${policy.issueHours} hours` } : {};
     const written = safely(() => appendToRun(state, run, (fresh) => (fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt
-      ? { rows: [{ event: 'ended', key, attempt: start.attempt, reason, at: iso(now) }, { ...next, at: iso(now) }] }
+      ? { rows: [{ event: 'ended', key, attempt: start.attempt, reason, ...why, at: iso(now) }, { ...next, at: iso(now) }] }
       : { rows: [] })));
     if (written?.rows?.length) lines.push(`ended ${key} ${reason} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`);
   }

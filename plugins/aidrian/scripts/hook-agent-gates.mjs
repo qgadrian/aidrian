@@ -38,7 +38,7 @@
 import path from 'node:path';
 
 import { gateDenial, projectRuleReason, readOnlyDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
-import { cloneConfigProblem } from '../lib/attempt-clone.mjs';
+import { anchorClones, cloneConfigProblem } from '../lib/attempt-clone.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
@@ -50,6 +50,7 @@ import { findProject, openProject } from '../lib/project.mjs';
 import { ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
 import { noteBeacon, readUnattendedMark } from '../lib/unattended-mark.mjs';
+import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
 
 // The milliseconds from the hook's start the guards may take. AIDRIAN_GUARD_BUDGET_MS may only lower it, as a test does.
 const GUARD_BUDGET_MS = 2500;
@@ -68,6 +69,8 @@ await runHook(async (input) => {
 });
 
 async function gate(input) {
+  // Every attempt clone this call reads is linked only for the session the payload names (lib/attempt-clone.mjs).
+  anchorClones({ session: input.session_id });
   // In a project run's attempt clone, before any git call there: a key of the clone's own git config that makes git run
   // a program refuses every call, so neither the session's git nor a hook's runs it (lib/attempt-clone.mjs).
   const planted = cloneConfigProblem(typeof input.cwd === 'string' ? input.cwd : process.cwd());
@@ -95,7 +98,10 @@ async function gate(input) {
     try {
       outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended })
         ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended })
-        ?? projectCommandDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended }));
+        ?? projectCommandDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended })
+        // A session its own mark holds, with no project it can read, cannot tell its own places, so it writes nothing; a
+        // pending or unreadable hold keeps only the entries refused wherever they lie (lib/unattended-write.mjs).
+        ?? unattendedWriteDenial(input, DEFAULTS, { mark, places: () => unattendedPlaces({ cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), mark, project: null }) }));
     } catch (error) {
       if (!(error instanceof PastDeadline)) throw error;
       outside = deadlineDenial(input, DEFAULTS, { unattended });
@@ -126,7 +132,16 @@ async function gate(input) {
     // The attempt folder of the issue a confined session works, whose work, git, and drop folders it may write
     // (handoff-guard.mjs projectRunWriteDenial): the running start row's, read only when a write reaches the runs folder.
     const own = mark?.project && mark?.issue ? () => ownAttemptFolder(marked ?? project, loadConfig(marked ?? project).config, mark, marked ? {} : { base }) : null;
-    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, marked, unattended, base, own));
+    // The places a session no Human attends may write, read once, only for a marked session's write
+    // (lib/unattended-write.mjs unattendedPlaces): in the project its mark names.
+    let places;
+    const held = marked ?? project;
+    const placesOf = () => (places ??= unattendedPlaces({
+      cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), mark, project: held,
+      config: held === project ? config : loadConfig(held).config, base: held === project ? base : baseReader(held), own,
+    }));
+    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, marked, unattended, base, own)
+      ?? unattendedWriteDenial(input, config, { mark, places: placesOf }));
   } catch (error) {
     if (!(error instanceof PastDeadline)) throw error;
     denial = deadlineDenial(input, config, { unattended });

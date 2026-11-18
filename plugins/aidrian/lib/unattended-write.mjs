@@ -1,0 +1,490 @@
+// The write allowlist of a session no Human attends: a session an unattended or pending mark holds
+// (lib/unattended-mark.mjs readUnattendedMark), and its subagents, which the agent gate hook asks on every call
+// (scripts/hook-agent-gates.mjs). docs/hooks.md#agent-gates says what passes and what refuses.
+//   - Its own mark: it writes only its own worktree (the checkout of the folder its mark says it started in), its
+//     attempt's work and drop folders, the state folders it writes by hand (HAND_FOLDERS), a review manifest or capture,
+//     and the temporary folder. Wherever it lies, it never writes a git folder, the user's or the system's git config, a
+//     shell startup file, another dot entry of the home folder, a review or attest record, or the dispatch records.
+//   - A pending mark, held while a gate starts a session, or a mark that cannot be read: only the entries refused
+//     wherever they lie hold (the shared git config and hooks, the user's and the system's git config, the startup files,
+//     and the home folder's dot entries), since the session may be one a Human opened in another repository.
+// It reads what the shared lexer reads (config-guard.mjs writeTargets), plus what the other guards leave out
+// (lib/unattended-shell.mjs shellWrites): a target built from a variable, a link a command makes, and a program that
+// writes its own config.
+
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { tmpdir, userInfo } from 'node:os';
+import path from 'node:path';
+
+import { projectRuleReason } from './agent-gates.mjs';
+import { bashCall, writeTargets } from './config-guard.mjs';
+import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
+import { isManifestPath } from './finding-disposition.mjs';
+import { foldCase, isWithin } from './fs.mjs';
+import { gitConfigFiles, gitFolders } from './git.mjs';
+import { GLOB_WORD, sameFile } from './glob-links.mjs';
+import { globPaths, globReaches, modeTargets, stateFolders } from './handoff-guard.mjs';
+import { fileEditOf, opaqueShellCommand } from './hosts/index.mjs';
+import { canonical } from './rules/main-checkout.mjs';
+import { shellWrites } from './unattended-shell.mjs';
+
+// The state folders a confined host is granted besides its attempt's (lib/project-start.mjs): the plans, reviews, and
+// dispatch records an issue's work leaves, and its temporary files. Its programs, such as the review engine, write the
+// records there; the hook holds what the session writes by hand to HAND_FOLDERS.
+export const WORK_FOLDERS = Object.freeze(['plans', 'reviews', 'tmp', 'dispatch']);
+// The state folders a session no Human attends writes by hand: its plans, temporary files, handoff briefs (the
+// continuation store inside stays held by its own guard), and the quorum folder, where decisions.md's product quorum
+// runs under auto decisions. In `reviews`, only a manifest or a capture (reviewAllows).
+const HAND_FOLDERS = Object.freeze(['plans', 'tmp', 'handoffs', 'quorum']);
+// The shell startup files in the home folder, and in ZDOTDIR for zsh, which every later shell of the user runs.
+const STARTUP = Object.freeze(['.profile', '.login', '.logout', '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.kshrc', '.cshrc', '.tcshrc', '.inputrc']);
+const ZSH_STARTUP = Object.freeze(['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout']);
+// A text from a folder no path gives that names a file always refused: a startup file, the user's git config, or a
+// repository's git config or hooks.
+const REFUSED_NAME = new RegExp(String.raw`(?<![\w.-])(?:${[...STARTUP, ...ZSH_STARTUP, '.gitconfig'].map((name) => name.replace('.', '\\.')).join('|')}|\.git/(?:config|hooks)|\.config/git|git/config)(?![\w.-])`, 'iu');
+// A text that names a dot entry of the home folder.
+const HOME_DOT = /(?:^|[^\w$])(?:~|\$HOME\b|\$\{HOME\})\/\./u;
+// A path in a text, such as code an interpreter runs: absolute, or from the home folder.
+const PATH_IN_TEXT = /(?<![\w.$-])(?:~(?=\/|$)|\/)[^\s'"`;|&()<>,=]*/gu;
+// The devices a write may always name, by their spelled path, before any is resolved.
+const DEVICE = /^\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)$/u;
+// A text a manifest write must not hold: the key that makes the review gate read a file as an attest record
+// (lib/review-gate.mjs readRecordFile), whose old name, pr-<n>.json, is the manifest's; and, in a text that does not
+// parse, a quoted key with an escape in it, which may spell that key.
+const ATTEST_KEY = /["']reviewer["']\s*:/u;
+const ESCAPED_KEY = /["'][^"'\n]*\\[^"'\n]*["']\s*:/u;
+// A text that names a git folder through git itself, as `$(git rev-parse --git-common-dir)` does.
+const GIT_FOLDER_WORD = /--(?:git-common-dir|git-dir|absolute-git-dir|git-path)\b|\$\{?GIT_(?:DIR|COMMON_DIR)\b/u;
+// A file a subagent writes by hand in the dispatch folder: its handoff, `<branch>-<slice>-<agent>.json`.
+const HANDOFF = /^[^/]+\.json$/u;
+const MANIFEST = /^pr-\d+\.json$/u;
+// The longest file a manifest rename is read from.
+const SOURCE_CAP = 4 * 1024 * 1024;
+const real = (file) => {
+  checkDeadline();
+  return foldCase(canonical(file));
+};
+const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
+// The time a git call may take: what the guards' budget leaves, or git's own default outside one.
+const gitBudget = () => (Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : undefined);
+// A function that adds a refused entry to `list`: { path, spelled, what, folder, allows }, `allows(target, folder)` the
+// paths inside a refused folder that pass.
+const refuser = (list) => (file, what, folder = false, allows = null) => list.push({ path: real(file), spelled: file, what, folder, allows });
+
+// The places a session no Human attends may write, for the session whose mark is `mark`, or null when they cannot be
+// told: { limited, pending, specific, reviews, worktree, temp, refused, later, home }, each path real and case-folded.
+// `reviews` holds each state's reviews and dispatch folders, refused but for the files reviewAllows and dispatchAllows
+// pass.
+//   - limited: a pending mark or one with no main checkout; only `refused`, `later`, and the home folder's dot entries
+//     hold, with `specific` the state folders of `project` that pass among those.
+//   - specific: its attempt's work and drop folders (`own()`, project-run-guard.mjs ownAttemptFolder), and HAND_FOLDERS of
+//     every state folder of `project`, the project the mark names, that is no link; `reviews`, each state's reviews folder.
+//   - worktree: the checkout of the folder its mark says it started in, when it shares its git folder with the mark's
+//     main checkout; never the call's folder. `temp`: the temporary folders, this process's and /tmp by default.
+//   - refused, each refused wherever it lies, and `later()`, the user's and the system's git config as git names them
+//     (git.mjs gitConfigFiles), read only for a target that would pass.
+// Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's.
+export function unattendedPlaces({ cwd, mark, project, config, base, own = null, env = process.env, home, temp } = {}) {
+  if (!mark) return null;
+  const limited = mark.pending === true || typeof mark.root !== 'string';
+  if (!limited && !project) return null;
+  try {
+    const user = home ?? userInfo().homedir;
+    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, temp: [], refused: [], home: real(user) };
+    const refuse = refuser(places.refused);
+    userRefused(refuse, user, env);
+    let named;
+    places.later = () => (named ??= laterRefused(env));
+    if (limited) limitedPlaces(places, { cwd, mark, project, config, base, home }, refuse);
+    else ownPlaces(places, { mark, project, config, base, own, home, temp }, refuse);
+    return places;
+  } catch (error) {
+    if (error instanceof PastDeadline) throw error;
+    return null;
+  }
+}
+
+// The user's git config, startup files, and macOS launch agents, which no path git or the environment gives moves.
+function userRefused(refuse, user, env) {
+  refuse(path.join(user, '.gitconfig'), 'the user\'s git config');
+  refuse(path.join(user, '.config', 'git'), 'the user\'s git config', true);
+  if (absolute(env.XDG_CONFIG_HOME)) refuse(path.join(env.XDG_CONFIG_HOME, 'git'), 'the user\'s git config', true);
+  for (const name of [...STARTUP, ...ZSH_STARTUP]) refuse(path.join(user, name), 'a shell startup file');
+  if (absolute(env.ZDOTDIR)) for (const name of ZSH_STARTUP) refuse(path.join(env.ZDOTDIR, name), 'a shell startup file');
+  refuse(path.join(user, 'Library', 'LaunchAgents'), 'the user\'s launch agents, which macOS runs at every login', true);
+}
+
+// The user's and the system's git config files git names under `env`: a git call each, so read only when needed.
+function laterRefused(env) {
+  const list = [];
+  const refuse = refuser(list);
+  checkDeadline();
+  const named = gitConfigFiles({ env, ...gitBudget() });
+  for (const file of named.user) refuse(file, 'the user\'s git config');
+  for (const file of named.system) refuse(file, 'the system\'s git config');
+  return list;
+}
+
+// A repository's shared git config and hooks, refused for every hold.
+function sharedRefused(refuse, common) {
+  refuse(path.join(common, 'config'), 'the repository\'s shared git config');
+  refuse(path.join(common, 'config.worktree'), 'the repository\'s shared git config');
+  refuse(path.join(common, 'hooks'), 'the repository\'s shared git hooks', true);
+}
+
+// A checkout's git folders, refused whole for a session's own mark: only git writes there, and git running is no write
+// this guard sees. Its config and hooks come first, so a refusal names them.
+function gitRefused(refuse, { common, gitDir, top }) {
+  sharedRefused(refuse, common);
+  refuse(common, 'the repository\'s shared git folder, which only git writes', true);
+  if (real(gitDir) !== real(common)) refuse(gitDir, 'the worktree\'s own git folder, which only git writes', true);
+  if (real(path.join(top, '.git')) !== real(gitDir)) refuse(path.join(top, '.git'), 'the checkout\'s pointer to its git folder');
+}
+
+// The options stateFolders takes: the call's base-branch reader and home folder, when given.
+const stateOptions = (base, home) => ({ ...(base ? { base } : {}), ...(home ? { home } : {}) });
+
+// The places of a session its own mark holds (unattendedPlaces).
+function ownPlaces(places, { mark, project, config, base, own, home, temp }, refuse) {
+  checkDeadline();
+  const repo = gitFolders(mark.root, gitBudget());
+  if (repo) gitRefused(refuse, repo);
+  checkDeadline();
+  const start = repo && absolute(mark.cwd) ? gitFolders(mark.cwd, gitBudget()) : null;
+  if (start && real(start.common) === real(repo.common)) {
+    places.worktree = real(start.top);
+    gitRefused(refuse, start);
+  }
+  const attempt = typeof own === 'function' ? own() : null;
+  if (attempt) {
+    places.specific.push(real(path.join(attempt, 'work')), real(path.join(attempt, 'drop')));
+    refuse(path.join(attempt, 'git', 'config'), 'the attempt clone\'s git config');
+    refuse(path.join(attempt, 'git', 'hooks'), 'the attempt clone\'s git hooks', true);
+    refuse(path.join(attempt, 'git'), 'the attempt clone\'s git folder, which only git writes', true);
+    refuse(path.join(attempt, 'work', '.git'), 'the attempt clone\'s pointer to its git folder');
+  }
+  stateWork(places, { project, config, base, home }, refuse);
+  places.temp = (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
+}
+
+// The places of a session a pending mark, or a mark that cannot be read, holds (unattendedPlaces): the shared git
+// config and hooks of the mark's main checkout and of the call's folder, and, as places among the home folder's dot
+// entries, the state folders of the project the mark names.
+function limitedPlaces(places, { cwd, mark, project, config, base, home }, refuse) {
+  for (const dir of [mark.root, cwd].filter(absolute)) {
+    checkDeadline();
+    const repo = gitFolders(dir, gitBudget());
+    if (repo) sharedRefused(refuse, repo.common);
+  }
+  if (!project) return;
+  for (const state of stateFolders(project, config, stateOptions(base, home))) places.specific.push(real(state));
+}
+
+// Each state folder's HAND_FOLDERS that is no link, as `specific`; its reviews folder, refused but for a manifest or
+// a capture (reviewAllows); its dispatch folder, refused but for a handoff file in it (dispatchAllows); and the dispatch
+// log beside them, refused.
+function stateWork(places, { project, config, base, home }, refuse) {
+  for (const state of stateFolders(project, config, stateOptions(base, home))) {
+    const root = canonical(state);
+    // A folder that is a link, as `tmp -> ~`, could lead anywhere: it is no place of the session's.
+    const plain = (name) => canonical(path.join(root, name)) === path.join(root, name);
+    for (const name of HAND_FOLDERS.filter(plain)) places.specific.push(foldCase(path.join(root, name)));
+    refuse(path.join(root, 'reviews'), 'the review and attest records, which only the review commands write', true, reviewAllows);
+    if (plain('reviews')) places.reviews.push(foldCase(path.join(root, 'reviews')));
+    refuse(path.join(root, 'dispatch'), 'the dispatch records, where a session writes only its handoff file', true, dispatchAllows);
+    if (plain('dispatch')) places.reviews.push(foldCase(path.join(root, 'dispatch')));
+    refuse(path.join(root, 'dispatch-log.jsonl'), 'the dispatch log, which only the plugin writes');
+  }
+}
+
+// Whether `target` inside the reviews folder `folder` is one a session writes by hand: a review manifest, or a temporary
+// copy of one, in the folder itself (finding-disposition.mjs isManifestPath), or a file in a capture folder,
+// pr-<n>/captures/.
+function reviewAllows(target, folder) {
+  const parts = path.relative(folder, target).split(path.sep).filter(Boolean);
+  if (parts.length === 1) return isManifestPath(target);
+  return parts.length >= 2 && /^pr-\d+$/u.test(parts[0]) && parts[1] === 'captures';
+}
+
+// Whether `target` inside the dispatch folder `folder` is a handoff file a subagent writes by hand: a `.json` file in
+// the folder itself.
+function dispatchAllows(target, folder) {
+  return HANDOFF.test(path.relative(folder, target));
+}
+
+// The refused entry of `entries` a write to `target`, spelled `spelled`, meets, or null: the entry, a path in a refused
+// folder it does not allow, or, with `holds`, an entry the target holds, as `rm -rf` of a folder above one does, unless
+// the target is a place itself (`own`); a file entry is also met through a hard link to it.
+function refusedHit(target, spelled, entries, { own, holds }) {
+  for (const entry of entries) {
+    checkDeadline();
+    const inside = (entry.path === target || (entry.folder && isWithin(entry.path, target))) && !entry.allows?.(target, entry.path);
+    if (inside || (holds && !own && target !== entry.path && isWithin(target, entry.path)) || (!entry.folder && sameFile(entry.spelled, spelled))) return entry;
+  }
+  return null;
+}
+
+// What a write to the real, case-folded path `target`, spelled `spelled`, meets among `places`: { refused } naming the
+// entry, { outside: true } when it lies in no place the session may write, or null when it passes. The refused entries
+// come first, then the session's places, its own worktree before the home folder's dot entries, so a repository there
+// still writes itself; a target that would pass meets the git config files git names (`later`) too.
+function placeOf(target, spelled, places, { holds = true } = {}) {
+  const own = [...places.specific, places.worktree, ...places.temp].includes(target);
+  const hit = refusedHit(target, spelled, places.refused, { own, holds });
+  if (hit) return { refused: hit };
+  const passes = () => {
+    const late = refusedHit(target, spelled, places.later(), { own, holds });
+    return late ? { refused: late } : null;
+  };
+  if ([...places.specific, ...places.reviews].some((dir) => isWithin(dir, target))) return passes();
+  if (places.worktree && isWithin(places.worktree, target)) return passes();
+  const below = isWithin(places.home, target) ? path.relative(places.home, target).split(path.sep)[0] : '';
+  if (below.startsWith('.')) return { refused: { what: 'a dot file or folder of the user\'s home folder', spelled } };
+  if (places.limited || places.temp.some((dir) => isWithin(dir, target))) return passes();
+  return { outside: true };
+}
+
+// A spelled path as placeOf meets it: a device always passes, before any path is resolved.
+function placed(spelled, places, options) {
+  if (DEVICE.test(path.normalize(spelled))) return null;
+  return placeOf(real(spelled), spelled, places, options);
+}
+
+// The text a file edit tool writes to each file it names, { file, texts }, for the manifest check.
+function editedTexts(input) {
+  const edit = fileEditOf(input);
+  if (!edit) return [];
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  if (edit.shape === 'patch') return (edit.files ?? []).map(({ file, added }) => ({ file: path.resolve(cwd, file), texts: [String(added ?? '')] }));
+  const texts = [edit.content, edit.newText, ...(Array.isArray(edit.edits) ? edit.edits.flatMap((each) => Object.values(each ?? {})) : [])];
+  return [{ file: path.resolve(cwd, edit.file ?? ''), texts: texts.filter((each) => typeof each === 'string') }];
+}
+
+// The text of the regular file `file`, read without following a link, or null.
+function fileText(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > SOURCE_CAP) return null;
+    const buffer = Buffer.alloc(stat.size);
+    return buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// Whether a manifest's text may make it an attest record: parsed as JSON, an object with a top-level `reviewer` key,
+// as the review gate reads it; a text that does not parse, such as an edit's fragment, holds such a key (ATTEST_KEY) or
+// a quoted key with an escape in it (ESCAPED_KEY).
+function attestShaped(text) {
+  try {
+    const value = JSON.parse(text);
+    return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'reviewer');
+  } catch {
+    return ATTEST_KEY.test(text) || ESCAPED_KEY.test(text);
+  }
+}
+
+// Why a write to a review manifest name may make it an attest record, or null. A file edit tool's text must not be
+// attest-shaped (attestShaped). A shell write to a temporary copy must not name a `reviewer` either; one to the manifest
+// itself, pr-<n>.json, is only a delete, or a rename or copy of a file whose text is not attest-shaped and that the same
+// call does not write, read before the call runs.
+function manifestProblem(input, shell, places) {
+  const isManifest = (file) => isManifestPath(file) && places.reviews.some((dir) => isWithin(dir, real(file)));
+  for (const { file, texts } of editedTexts(input)) {
+    if (isManifest(file) && texts.some(attestShaped)) return file;
+  }
+  if (!shell) return null;
+  const files = writeTargets(input).files.map((each) => path.resolve(each));
+  for (const write of shell.manifests) {
+    if (write.folder === null && !path.isAbsolute(write.text)) continue;
+    const file = path.resolve(write.folder ?? '/', write.text);
+    if (!isManifest(file)) continue;
+    if (!MANIFEST.test(path.basename(file))) {
+      if (/reviewer/iu.test(shell.text)) return file;
+      continue;
+    }
+    if (renameProblem(write, file, files)) return file;
+  }
+  return null;
+}
+
+// Whether the shell write `write` to the manifest `file` itself may forge it (manifestProblem). `files` are every path
+// the call writes.
+function renameProblem(write, file, files) {
+  const from = (each) => path.resolve(write.folder ?? '/', each);
+  const sources = (write.sources ?? []).map(from);
+  if (['rm', 'unlink'].includes(write.how) || (write.how === 'mv' && sources.includes(file))) return false;
+  if (!['mv', 'cp'].includes(write.how) || sources.length === 0) return true;
+  const ownWrites = write.how === 'mv' ? 1 : 0;
+  return sources.some((source) => {
+    const text = fileText(source);
+    return text === null || attestShaped(text) || files.filter((each) => each === source).length > ownWrites;
+  });
+}
+
+// Why the call in `input` may not run because a session no Human attends, one `mark` names (lib/unattended-mark.mjs
+// readUnattendedMark, read through the hook payload's session id), writes outside the places it may write
+// (unattendedPlaces, which `places()` gives, or null when they cannot be told), or null: { match, reason }. It holds only
+// for such a session and its subagents; an attended session, and its subagents, are never asked. `env` is the hook's
+// environment, from which a target's variables are expanded. Like the other guards, it sees only what the shared lexer
+// sees, plus what shellWrites reads.
+export function unattendedWriteDenial(input, { names: { human } }, { mark = null, places = () => null, env = process.env } = {}) {
+  if (!mark) return null;
+  const { files, names, globs } = writeTargets(input);
+  const modes = modeTargets(input);
+  const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const shell = command === null ? null : shellWrites(command, cwd, env);
+  const any = [files, names, globs, modes, shell?.dynamic ?? [], shell?.links ?? [], shell?.programs ?? []].some((list) => list.length > 0);
+  if (!any) return null;
+  const say = sayer(input, human, opaqueShellCommand(input) !== null);
+  const found = places();
+  if (!found) return say.unknown();
+  say.hold(found);
+  const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
+  const placedModes = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder }) => path.resolve(folder ?? '/', text));
+  const texts = [...names, ...unplaced.map(({ text }) => text), ...globs.filter((each) => each.unsure || each.opaque).map(({ text }) => text)];
+  return pathDenial([...files, ...placedModes], found, say)
+    ?? shellDenial(shell, found, say, texts)
+    ?? globDenial(globs.filter((each) => !each.unsure), found, say)
+    ?? manifestDenial(input, shell, found, say)
+    ?? nameDenial(texts, found, say);
+}
+
+// The denials of unattendedWriteDenial, which say what the call does, to whom, and why.
+function sayer(input, human, opaque) {
+  const verb = opaque ? 'may change' : 'writes';
+  let suffix = '';
+  let list = 'its own worktree or its attempt\'s folders, the state folders it writes by hand (plans, tmp, handoffs, quorum, and a review manifest or capture), and the temporary folder';
+  const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead') });
+  return {
+    verb,
+    hold(found) {
+      if (found.pending) suffix = '; a project start is in progress, and until the gate files the new session\'s own mark, every session it did not list before the start is held this way';
+      else if (found.limited) suffix = '; its unattended mark cannot be read, so it is held this way';
+      if (found.limited) list = 'anywhere but the entries refused wherever they lie';
+    },
+    unknown: () => deny('unattended write with no known places', `it ${verb} a file, and the places this session may write cannot be told: its unattended mark names no main checkout or project that can be read, and no Human attends this session, so it writes nothing until they can`),
+    refused: (entry, shown) => deny(`unattended write to ${entry.what}`, `it ${verb} ${shown}, ${entry.what}, which a session no Human attends never changes; only ${human} does`),
+    outside: (shown) => deny('unattended write outside its places', `it ${verb} ${shown}, outside the places a session no Human attends may write: ${list}`),
+    meets(met, shown) {
+      if (met?.refused) return deny(`unattended write to ${met.refused.what}`, `it ${verb} ${shown}, ${met.refused.what}, which a session no Human attends never changes; only ${human} does`);
+      if (met?.outside) return deny('unattended write outside its places', `it ${verb} ${shown}, outside the places a session no Human attends may write: ${list}`);
+      return null;
+    },
+    deny,
+  };
+}
+
+function pathDenial(spelled, found, say) {
+  for (const each of spelled) {
+    const denial = say.meets(placed(each, found), each);
+    if (denial) return denial;
+  }
+  return null;
+}
+
+// The shell's own writes (shellWrites): a target from a variable, a link, and a program's config.
+function shellDenial(shell, found, say, texts) {
+  if (!shell) return null;
+  return dynamicDenial(shell, found, say, texts) ?? linkDenial(shell, found, say, texts) ?? programDenial(shell, found, say);
+}
+
+// Each target built from a variable or a command, once expand has read it: a literal path is placed, and one it could
+// not expand is judged by unexpandedDenial.
+function dynamicDenial(shell, found, say, texts) {
+  for (const { text, folder } of shell.dynamic) {
+    let denial = null;
+    if (/[$`]/u.test(text)) denial = unexpandedDenial(text, folder, found, say, texts);
+    else if (folder === null && !path.isAbsolute(text)) texts.push(text);
+    else if (GLOB_WORD.test(text)) denial = globDenial([{ text: path.resolve(folder ?? '/', text), dirs: [], unsure: false }], found, say);
+    else denial = pathDenial([path.resolve(folder ?? '/', text)], found, say);
+    if (denial) return denial;
+  }
+  return null;
+}
+
+// A target that still holds a variable or a command: judged by its names (nameDenial, from `texts`), by a git folder
+// it asks git for, and, for a session its own mark holds, by its literal path before the first `$` or backtick, which
+// must not meet a refused entry or lie outside the places. One with no such prefix, as `"$out"`, passes on its names.
+function unexpandedDenial(text, folder, found, say, texts) {
+  texts.push(text);
+  if (GIT_FOLDER_WORD.test(text)) return say.deny('unattended write to a git folder', `it ${say.verb} \`${text.slice(0, 80)}\`, a path in a git folder git names for it, which only git writes, and no Human attends this session`);
+  const prefix = text.slice(0, text.search(/[$`]/u));
+  if (found.limited || prefix === '' || (folder === null && !path.isAbsolute(prefix))) return null;
+  return say.meets(placed(path.resolve(folder ?? '/', prefix), found, { holds: false }), `\`${text.slice(0, 80)}\``);
+}
+
+// Each path a link the command makes points at: refused when that path is refused or outside the places.
+function linkDenial(shell, found, say, texts) {
+  for (const { from, to } of shell.links) {
+    for (const each of to) {
+      if (/[$`]/u.test(each) || !path.isAbsolute(each)) {
+        if (!found.limited) return say.deny('unattended link to a path built at run time', `it makes a link to \`${from.slice(0, 80)}\`, which cannot be told before it runs, and no Human attends this session; link a literal path instead`);
+        texts.push(each);
+        continue;
+      }
+      const met = placed(each, found);
+      if (!met) continue;
+      const where = met.refused ? `is ${met.refused.what}` : 'lies outside the places a session no Human attends may write';
+      return say.deny('unattended link outside its places', `it makes a link to ${each}, which ${where}, so a write through the link would change it, and no Human attends this session`);
+    }
+  }
+  return null;
+}
+
+// Each write a program makes to its own config: refused by what it changes, or placed by the file it names.
+function programDenial(shell, found, say) {
+  for (const write of shell.programs) {
+    if (write.what) return say.refused(write, `\`${write.text}\``);
+    if (write.folder === null && !path.isAbsolute(write.file)) {
+      if (!found.limited) return say.deny('unattended write to a path built at run time', `it runs \`${write.text}\` in a folder that cannot be told, and no Human attends this session`);
+      continue;
+    }
+    const file = path.resolve(write.folder ?? '/', write.file);
+    const denial = say.meets(placed(file, found), `${file} (\`${write.text}\`)`);
+    if (denial) return denial;
+  }
+  return null;
+}
+
+// Each glob from a known folder, by its spelled folder and what it may reach among the refused entries.
+function globDenial(globs, found, say) {
+  for (const glob of globs) {
+    for (const spelling of globPaths(glob)) {
+      if (spelling.rest.includes('..')) return say.deny('unattended write outside its places', `it ${say.verb} ${glob.text}, a glob that climbs with \`..\`, so where it writes cannot be told, and no Human attends this session`);
+      const denial = say.meets(placeOf(spelling.prefix, spelling.prefix, found, { holds: false }), glob.text);
+      if (denial) return denial;
+      // A refused folder the glob's folder already lies in, and allows, is no entry it reaches.
+      const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix)).find((entry) => globReaches(spelling, entry.path));
+      if (reached) return say.refused(reached, glob.text);
+    }
+  }
+  return null;
+}
+
+function manifestDenial(input, shell, found, say) {
+  if (found.limited) return null;
+  const file = manifestProblem(input, shell, found);
+  if (!file) return null;
+  return say.deny('unattended write that may forge an attest record', `it ${say.verb} ${file}, a review manifest, in a way that may give it a \`reviewer\` key, which the review gate reads as an attest record under the manifest's own name, pr-<n>.json; write a temporary copy with the file tool, with no such key, then rename it`);
+}
+
+// What no path places, judged by name: a startup file or a git config (REFUSED_NAME), a home dot entry (HOME_DOT), or
+// a path in the text that meets a refused entry.
+function nameDenial(texts, found, say) {
+  for (const text of texts) {
+    checkDeadline();
+    if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a shell startup file, a git config, or a dot entry of the home folder, and no Human attends this session`);
+    for (const [word] of text.matchAll(PATH_IN_TEXT)) {
+      const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
+      const met = placed(spelled, found, { holds: false });
+      if (met?.refused) return say.refused(met.refused, spelled);
+    }
+  }
+  return null;
+}

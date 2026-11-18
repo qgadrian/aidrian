@@ -61,7 +61,7 @@ export function safely(act) {
 // outcome then says, as `intended`, whether it ran, so the caller knows whether a record of the start is there to settle.
 // The background handoff route gives none, and its outcomes are as they were.
 export function startHeld({ session, launch, stop, ended, store, root, floor, record, tags = null, env, now, intent }) {
-  const state = { pending: null, claimed: false, refusal: null, ended: false, intended: false, identified: null };
+  const state = { pending: null, claimed: false, refusal: null, ended: false, intended: false, identified: null, cwd: null };
   const answer = held({ session, launch, stop, ended, store, root, floor, record, tags, env, now, intent }, state);
   return typeof intent === 'function' ? { ...answer, intended: state.intended } : answer;
 }
@@ -93,7 +93,7 @@ function held({ session, launch, stop, ended, store, root, floor, record, tags, 
   }
   const id = started.session ?? started.id;
   const marker = { ...record, id: started.id, session: started.session, name: started.name, cwd: started.cwd, mode: started.mode };
-  const kept = state.pending !== null && (state.identified === id || (safely(() => noteFrom(store, id, floor, { now })) && safely(() => markUnattended(id, { root, env, now, tags }))))
+  const kept = state.pending !== null && (state.identified === id || (safely(() => noteFrom(store, id, floor, { now })) && safely(() => markUnattended(id, { root, cwd: state.cwd, env, now, tags }))))
     && safely(() => noteStarted(store, session, marker, { now }));
   if (!kept) return unheld({ started, stop, release, settle });
   release();
@@ -106,7 +106,7 @@ function identifyFor({ store, root, floor, tags, env, now }, state) {
   return ({ id, session } = {}) => {
     const own = session ?? id;
     if (state.pending === null || typeof own !== 'string') return false;
-    const filed = Boolean(safely(() => noteFrom(store, own, floor, { now })) && safely(() => markUnattended(own, { root, env, now, tags })));
+    const filed = Boolean(safely(() => noteFrom(store, own, floor, { now })) && safely(() => markUnattended(own, { root, cwd: state.cwd, env, now, tags })));
     if (filed) state.identified = own;
     return filed;
   };
@@ -133,6 +133,8 @@ function holdFor({ session, ended, store, root, env, intent }, state) {
     }
     state.ended = Boolean(earlier);
     state.pending = safely(() => markPending(session, { cwd, root, known, env, now: Date.now() }));
+    // The folder the session starts in, which its own mark records too: the session's own worktree (unattended-write.mjs).
+    state.cwd = cwd;
     if (state.pending === null) return false;
     // Kept before the start: a gate killed mid-start leaves a claim that holds for a day. No kept claim, no start; and
     // no write-ahead record, no start.

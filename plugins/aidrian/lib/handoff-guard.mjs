@@ -296,26 +296,42 @@ const REMOTE_TEXTS = [
   [/\balias\b/iu, /(?<![\w-])(?:set|import)(?![\w-])/iu],
 ];
 
-// Whether the words after `git config` write: any form in CONFIG_ANY; else, when they name a POLICY_KEY, a form in
-// CONFIG_WRITES, or no read form and a value after the key.
-function configWrites(words) {
-  if (words.some((text) => CONFIG_ANY.has(text))) return true;
+// What the words after `git config` do: { any, explicit, reads, named, scope }. `any` when they write keys they do not
+// name (CONFIG_ANY), `explicit` when they name a form that writes (CONFIG_WRITES), `reads` when they name one that only
+// reads, `named` the words that are no option, and `scope` the config file they choose: { global, system, worktree,
+// file }, with `file` the word after `-f` or `--file`, or null. `writes` is any of the first two, or a key with a value
+// and no read form: everything but a read, a list, or a key alone.
+export function configForm(words) {
   const named = [];
+  const scope = { global: false, system: false, worktree: false, file: null };
   let reads = false;
   for (let i = 0; i < words.length; i += 1) {
     const text = words[i];
     // git config stops reading options at its first word that is none: a later `--get` or `-l` is a value pattern, and
     // `get` or `list` is an action only as that first word.
     if (named.length === 0 && text.startsWith('-') && CONFIG_READS.has(text)) reads = true;
-    if (CONFIG_VALUES.has(text)) i += 1;
-    else if (!text.startsWith('-')) {
+    if (['--global', '--system', '--worktree'].includes(text)) scope[text.slice(2)] = true;
+    if (text.startsWith('--file=')) scope.file = text.slice('--file='.length);
+    if (CONFIG_VALUES.has(text)) {
+      if (text === '-f' || text === '--file') scope.file = words[i + 1] ?? '';
+      i += 1;
+    } else if (!text.startsWith('-')) {
       if (named.length === 0 && (text === 'get' || text === 'list')) reads = true;
       named.push(text);
     }
   }
-  if (!named.some((text) => POLICY_KEY.test(text))) return false;
-  if (words.some((text) => CONFIG_WRITES.has(text))) return true;
-  return !reads && named.length >= 2;
+  const any = words.some((text) => CONFIG_ANY.has(text));
+  const explicit = words.some((text) => CONFIG_WRITES.has(text));
+  return { any, explicit, reads, named, scope, writes: any || explicit || (!reads && named.length >= 2) };
+}
+
+// Whether the words after `git config` write: any form in CONFIG_ANY; else, when they name a POLICY_KEY, a form in
+// CONFIG_WRITES, or no read form and a value after the key (configForm).
+function configWrites(words) {
+  const form = configForm(words);
+  if (form.any) return true;
+  if (!form.named.some((text) => POLICY_KEY.test(text))) return false;
+  return form.writes;
 }
 
 // Whether git's global options set an alias for the one command: `-c alias.<name>=...`, attached or not, or
@@ -413,7 +429,7 @@ const MODE_PROGRAMS = new Set(['chmod', 'chown', 'chgrp']);
 // The operands of each change of mode or owner the Bash call in `input` runs: { text, folder, recursive }, where `folder`
 // is the folder it runs in, or null when it cannot be known. A mode such as `755` reads as one more operand, which names
 // no file of the store. One with a word built from a variable is left out: a known limit, as for every path built so.
-function modeTargets(input) {
+export function modeTargets(input) {
   if (!bashCall(input) || typeof input.tool_input?.command !== 'string') return [];
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   return walkCommands(input.tool_input.command, cwd).filter(({ invocation }) => MODE_PROGRAMS.has(invocation.program)).flatMap(({ invocation, folder }) => {
@@ -441,12 +457,12 @@ const STORE_TAIL = path.join('handoffs', '.continue');
 
 // Each spelling of a glob write from a known folder, as { prefix, rest }: `prefix` is the real, case-folded path of its
 // parts before the first glob, and `rest` the parts from there on, a glob or a plain name each (globStarts).
-const globPaths = (glob) => globStarts(glob).map(({ start, rest }) => ({ prefix: real(start), rest }));
+export const globPaths = (glob) => globStarts(glob).map(({ start, rest }) => ({ prefix: real(start), rest }));
 
 // Whether a glob write reaches the store: each part it spells matches the store's part at that depth, so it names the
 // store, a file in it, or a folder that holds it. A part that is only stars, such as zsh's `**`, matches any number of
 // parts, none included (partsReach, which never recurses, so no glob of many parts can run the guard out of stack).
-function globReaches({ prefix, rest }, store) {
+export function globReaches({ prefix, rest }, store) {
   // The root splits to two empty parts: only the first stands for it.
   const split = (file) => file.split(path.sep).filter((part, i) => i === 0 || part !== '');
   checkDeadline();

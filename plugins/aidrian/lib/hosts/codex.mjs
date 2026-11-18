@@ -267,6 +267,14 @@ export default {
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },
   sessionStart: { programs: ['codex'], starts: startsSession },
+  // The subcommands of its program that write its own user config: MCP servers and the login it keeps, and its global
+  // options that take the next word. The agent gate hook refuses them to a session no Human attends
+  // (lib/unattended-write.mjs).
+  configCommands: {
+    programs: ['codex'],
+    subcommands: [['mcp', 'add'], ['mcp', 'remove'], ['login'], ['logout']],
+    valueOptions: ['-p', '--profile', '-c', '--config', '-m', '--model', '-C', '--cd', '-s', '--sandbox', '-a', '--ask-for-approval', '-i', '--image', '--enable', '--disable', '--add-dir', '--local-provider'],
+  },
   fileEditTools: ['apply_patch'],
   fileEdit(_tool, given) {
     const text = String(given.command ?? given.input ?? '');

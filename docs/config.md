@@ -1738,9 +1738,12 @@ row. The driver never runs it, and the hooks and the command refuse it to every 
 Each start is written ahead: a start row with `pending: true` before the host starts anything, then one row that
 settles it, so a gate killed mid-start leaves a row `wait` finds and settles. A confined host's session hands its
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
-attempt `bad_result`; a result the forge cannot confirm yet waits for the next `wait`. Its attempt clone takes the run's
+attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
+confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
+For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
 main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
-checkout's `.aidrian.local.json`, never the clone's, and a clone whose link cannot be read reads every switch off.
+checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose
+state folder the project does not name, reads every switch off.
 
 `init` and `next` read none of these keys: `init` does not check `allow`, and `next` names one issue at a time; `start` and `wait` read them from the default branch.
 

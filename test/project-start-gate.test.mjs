@@ -7,14 +7,17 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, projectPrompt, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
+import { attemptFolder, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -49,7 +52,7 @@ test('the driver starts the issue next lists in a new worktree from the base tip
 
   const { session } = STARTED[0];
   assert.deepEqual({ ...readFrom(fx.store, session), at: 0 }, { slug: 'project-launch', chain: 0, brief: null, route: 'background', at: 0 }, 'chain floor 0, no brief');
-  assert.deepEqual(readUnattendedMark(session, { env: fx.env, home: fx.home }), { root: fx.dir, project: 'launch', issue: 'ENG-1' });
+  assert.deepEqual(readUnattendedMark(session, { env: fx.env, home: fx.home }), { root: fx.dir, cwd: worktree, project: 'launch', issue: 'ENG-1' }, 'the mark names the folder the session starts in, its own worktree');
   const record = readStarted(fx.store, DRIVER);
   assert.deepEqual([record.project, record.sha256, record.brief, record.session], [{ run: 'launch', issue: 'ENG-1', attempt: 1 }, null, null, session]);
 
@@ -570,4 +573,37 @@ test('a start the cheap checks refuse fetches nothing from the forge or origin',
   assert.match(fx.cmd(['start', 'launch', 'ENG-4']).err[0], /has not ended as the host lists it/u);
   assert.equal(fx.forge.calls.filter(([kind]) => kind === 'branchHead').length, before, 'no forge read of the head');
   assert.equal(fx.git('rev-parse', 'refs/remotes/origin/main').trim(), fetchedAt, 'no fetch');
+});
+
+test('the write-ahead row is dated when it is written, just before the launch, never by the time the command was given', (t) => {
+  const fx = runFixture(t);
+  const before = Date.now();
+  const given = before - 60 * 60 * 1000;
+  const result = fx.cmd(['start', 'launch', 'ENG-1'], { now: given });
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  const ahead = fx.rows().find((row) => row.event === 'start' && row.pending === true);
+  assert.ok(Date.parse(ahead.at) >= before, `${ahead.at} is no earlier than ${new Date(before).toISOString()}`);
+  assert.ok(Date.parse(ahead.at) <= Date.now());
+});
+
+test('the sweep keeps the folder of an attempt no longer current while its drop holds a result no row took in', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sweep-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const state = path.join(root, 'state');
+  const at = new Date().toISOString();
+  const start = (attempt) => ({
+    event: 'start', key: 'ENG-1', attempt, session: DRIVER, name: `launch · ENG-1 · ${attempt}`, cwd: path.join(attemptFolder(state, 'launch', 'ENG-1', attempt), 'work'),
+    branch: 'feat/eng-1-export', drop: path.join(attemptFolder(state, 'launch', 'ENG-1', attempt), 'drop'), at, outcome: 'started', id: STARTED[attempt - 1].id, child: STARTED[attempt - 1].session,
+  });
+  for (const attempt of [1, 2]) mkdirSync(start(attempt).drop, { recursive: true });
+  writeFileSync(path.join(start(1).drop, DROP_FILE), JSON.stringify({ run: 'launch', key: 'ENG-1', attempt: 1, status: 'failed', pr: null, decisions: [], stop: 'x' }));
+  // Attempt 2 runs now; attempt 1's session ended.
+  const found = { rows: [start(1), start(2)], states: new Map([['ENG-1', { state: 'running' }]]) };
+  const cap = { ended: () => true };
+  sweepAttempts({ state, run: 'launch', found, cap, env: {}, spawn: null });
+  assert.ok(existsSync(attemptFolder(state, 'launch', 'ENG-1', 1)), 'its unread drop keeps it');
+  rmSync(path.join(start(1).drop, DROP_FILE));
+  sweepAttempts({ state, run: 'launch', found, cap, env: {}, spawn: null });
+  assert.equal(existsSync(attemptFolder(state, 'launch', 'ENG-1', 1)), false, 'removed once no result waits there');
+  assert.ok(existsSync(attemptFolder(state, 'launch', 'ENG-1', 2)), 'the current attempt stays');
 });

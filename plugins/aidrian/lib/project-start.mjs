@@ -28,10 +28,11 @@ import { runFolder, runsFolder } from './project-run.mjs';
 import { latestStart, startRows } from './project-run-guard.mjs';
 import { safely } from './session-start-gate.mjs';
 import { markFolders } from './unattended-mark.mjs';
+import { WORK_FOLDERS } from './unattended-write.mjs';
 
 // The folders of the state folder a confined session may write besides its attempt's: the plans, reviews, and dispatch
-// records an issue's work leaves, and its temporary files.
-export const WORK_FOLDERS = Object.freeze(['plans', 'reviews', 'tmp', 'dispatch']);
+// records an issue's work leaves, and its temporary files (unattended-write.mjs, which keeps the list).
+export { WORK_FOLDERS };
 // The verified values a start no live run has checked is not.
 const CHECKED = new Set(['fixtures', 'live']);
 

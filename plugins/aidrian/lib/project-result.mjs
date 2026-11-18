@@ -9,6 +9,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
+import { changeNotFound } from './forges/index.mjs';
 import { appendToRun, runFolder } from './project-run.mjs';
 import { ISSUE_ATTEMPTS, latestStart } from './project-run-guard.mjs';
 import { defaultBranch } from './pr-auto-merge.mjs';
@@ -206,7 +207,8 @@ export function readDrop(drop) {
 // Why the forge does not show the pull request of a handed-over `result` as the issue's own work, null when it does,
 // or { retry } when the forge cannot answer now. Only merged and pr_open name one: it must be in the pinned
 // `repository`, from the issue's `branch`; an open one's head must be the branch's head on the forge, and a merged one
-// must pass mergeProblem.
+// must pass mergeProblem. A forge that answers it has no such pull request (forges/index.mjs changeNotFound) has
+// answered: that is final, never a retry.
 function droppedPullProblem({ forge, repository, result, branch, since }) {
   if (!['merged', 'pr_open'].includes(result.status)) return null;
   if (!Number.isInteger(result.pr)) return 'the result names no pull request';
@@ -214,8 +216,8 @@ function droppedPullProblem({ forge, repository, result, branch, since }) {
   let view;
   try {
     view = forge.change(String(result.pr), 'state,headRefName,headRefOid,url,isCrossRepository', { repo: `${repository.host}/${named}` });
-  } catch {
-    return { retry: true };
+  } catch (error) {
+    return changeNotFound(error) ? `the forge has no pull request #${result.pr} in ${repository.host}/${named}` : { retry: true };
   }
   if (repoName(view?.url) !== named.toLowerCase() || hostOf(view.url)?.toLowerCase() !== repository.host.toLowerCase()) return `pull request #${result.pr} is not in ${repository.host}/${named}`;
   if (view.isCrossRepository !== false || view.headRefName !== branch) return `pull request #${result.pr} is not from the issue's branch ${branch}`;

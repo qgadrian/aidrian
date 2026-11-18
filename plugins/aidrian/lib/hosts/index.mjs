@@ -148,6 +148,12 @@ export function mainCheckoutPaths(hosts = HOSTS) {
   };
 }
 
+// The host programs' subcommands that write the host's own config, as { programs, subcommands, valueOptions }, from
+// each adapter's `configCommands`: each subcommand a list of words, as `['mcp', 'add']`, and `valueOptions` the global
+// options that take the next word, skipped before it. A host that names none adds none.
+export const configCommands = (hosts = HOSTS) => hosts.map((host) => host.configCommands)
+  .filter((each) => Array.isArray(each?.programs) && Array.isArray(each.subcommands));
+
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];
 

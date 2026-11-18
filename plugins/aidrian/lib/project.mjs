@@ -9,9 +9,33 @@ import { realpathSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 
+import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
 import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, runGit } from './git.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
+import { readUnattendedMark } from './unattended-mark.mjs';
+
+// The readers an attempt clone's link is anchored with (lib/attempt-clone.mjs): the session the host names, its
+// unattended mark, and the state folders the project at a main checkout names, its state.dir as the environment and as
+// the user's own home resolve it. Given here, where every command and hook loads them, so attempt-clone.mjs, which
+// lib/git.mjs loads, imports no local module. Each is called only when a link is read, never on load.
+anchorReaders({
+  sessionOf: (env) => sessionIdentity(env).session,
+  readMark: (session, options) => readUnattendedMark(session, options),
+  namedStates(main, { env, home } = {}) {
+    const project = findProject(main);
+    if (!project) return [];
+    const reads = [() => stateDir(project, { env }), () => defaultStateDir(project, home ? { home } : {})];
+    return reads.flatMap((read) => {
+      try {
+        return [read()];
+      } catch {
+        return [];
+      }
+    });
+  },
+});
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
@@ -42,7 +66,7 @@ const GUARDED_LIB = [
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
   'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-trust', 'remotes', 'review-gate', 'session-length',
   'session-start-gate', 'shell-lex', 'solo',
-  'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage',
+  'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell', 'unattended-write', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with

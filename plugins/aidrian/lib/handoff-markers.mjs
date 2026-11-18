@@ -122,7 +122,7 @@ const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 // Both checks hold only where the system has user ids: Windows has none, and Node reports its writable folders with the
 // other-write bit set, so there the mode tells nothing.
 // A folder that is not there, or cannot be read, gives null: the store's own checks then refuse what they cannot read.
-// lib/session-folder.mjs holds its folders to the same rule.
+// lib/session-folder.mjs holds its state folder, and every folder above it, to a stricter rule (heldFolder).
 export function looseFolder(dir, uid) {
   if (!Number.isInteger(uid)) return null;
   let stat;

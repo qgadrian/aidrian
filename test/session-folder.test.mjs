@@ -1,17 +1,21 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { stateRoot } from '../plugins/aidrian/lib/project.mjs';
-import { boundFolder, readSessionFile, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { boundFolder, heldFolder, readSessionFile, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { cachedSessionUsage } from '../plugins/aidrian/lib/session-usage-cache.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
 const NONE = { checkouts: [] };
+
+// A primary group no folder in these tests has, so a group-writable folder is in a shared group whatever the machine.
+const SHARED = POSIX ? process.getuid() + 1 : null;
 
 const scratch = () => realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-session-folder-')));
 
@@ -102,7 +106,7 @@ test('a state folder below one its group or other users may write gets no sessio
   const state = path.join(open, 'state');
   for (const mode of [0o777, 0o775, 0o757]) {
     chmodSync(open, mode);
-    assert.equal(sessionFolder(state, 'abc', NONE), null, mode.toString(8));
+    assert.equal(sessionFolder(state, 'abc', { ...NONE, gid: SHARED }), null, mode.toString(8));
   }
   // A shared folder like /tmp: every user may write it, but only an entry's owner may rename or remove that entry.
   chmodSync(open, 0o1777);
@@ -117,6 +121,84 @@ test('a state folder below one its group or other users may write gets no sessio
   chmodSync(open, 0o700);
   // The default location, under the state root, which the test run keeps in a temporary folder of its own.
   assert.ok(sessionFolder(path.join(stateRoot(), 'projects', 'session-folder-test'), 'abc', NONE));
+});
+
+// Runs `run` while every folder under `root` reads, through lstat, as in the group `gid`: a test cannot chgrp a folder to
+// a group it is not in, such as a user private group on a machine that has none.
+function inGroup(root, gid, run) {
+  const real = fs.lstatSync;
+  fs.lstatSync = (file, ...rest) => {
+    const stat = real(file, ...rest);
+    if (!stat || (file !== root && !String(file).startsWith(`${root}${path.sep}`))) return stat;
+    return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { gid });
+  };
+  syncBuiltinESMExports();
+  try {
+    return run();
+  } finally {
+    fs.lstatSync = real;
+    syncBuiltinESMExports();
+  }
+}
+
+// A state folder below a folder its group may write, both mode 0775, as a umask of 002 makes them.
+function groupChain() {
+  const root = scratch();
+  const state = path.join(root, 'open', 'state');
+  mkdirSync(state, { recursive: true });
+  chmodSync(path.dirname(state), 0o775);
+  chmodSync(state, 0o775);
+  return { root, state };
+}
+
+test('a 0775 state folder and the one above it, in a user private group, get a session folder and its writes', { skip: !POSIX }, () => {
+  const { root, state } = groupChain();
+  const ids = { uid: process.getuid(), gid: process.getuid() };
+  inGroup(root, ids.uid, () => {
+    const folder = sessionFolder(state, 'abc', { ...NONE, ...ids });
+    assert.equal(folder, path.join(state, 'sessions', 'abc'));
+    assert.equal(boundFolder(folder, ids), true);
+    assert.ok(writeSessionFile(folder, 'usage.json', '{}\n', ids));
+    assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024, ...ids })?.text, '{}\n');
+  });
+});
+
+test('the same 0775 chain in a shared group gets no session folder, and nothing is made', { skip: !POSIX }, () => {
+  const { root, state } = groupChain();
+  const uid = process.getuid();
+  // The user's primary group, whose id is not the uid, so other users are in it.
+  inGroup(root, SHARED, () => assert.equal(sessionFolder(state, 'abc', { ...NONE, uid, gid: SHARED }), null));
+  // A group whose id is the uid, but not the user's primary group.
+  inGroup(root, uid, () => assert.equal(sessionFolder(state, 'abc', { ...NONE, uid, gid: SHARED }), null));
+  // Another group, while the user's primary group is a user private group.
+  inGroup(root, SHARED, () => assert.equal(sessionFolder(state, 'abc', { ...NONE, uid, gid: uid }), null));
+  assert.equal(existsSync(path.join(state, 'sessions')), false);
+  // A state folder not there yet is checked by the nearest folder above it that is, before anything is made.
+  const missing = path.join(path.dirname(state), 'missing', 'state');
+  inGroup(root, SHARED, () => assert.equal(sessionFolder(missing, 'abc', { ...NONE, uid, gid: SHARED }), null));
+  assert.equal(existsSync(path.dirname(missing)), false);
+});
+
+test('a group-writable state folder never yields a session folder that boundFolder refuses', { skip: !POSIX }, () => {
+  const { root, state } = groupChain();
+  // The state folder alone: the check before a session folder is made then reads no group-writable folder above it.
+  chmodSync(path.dirname(state), 0o700);
+  const folder = sessionFolder(state, 'abc', NONE);
+  assert.ok(folder === null || boundFolder(folder), 'in this machine\'s own groups');
+  inGroup(root, SHARED, () => {
+    const shared = sessionFolder(state, 'def', { ...NONE, gid: SHARED });
+    assert.ok(shared === null || boundFolder(shared, { gid: SHARED }), 'in a shared group');
+  });
+});
+
+test('a folder that is a symlink fails heldFolder, even to a folder that passes it', { skip: !POSIX }, () => {
+  const root = scratch();
+  const target = path.join(root, 'target');
+  mkdirSync(target, { mode: 0o700 });
+  symlinkSync(target, path.join(root, 'link'));
+  assert.equal(heldFolder(target, { above: true }), true);
+  assert.equal(heldFolder(path.join(root, 'link'), { above: true }), false);
+  assert.equal(heldFolder(path.join(root, 'link')), false);
 });
 
 test('a session or sessions folder any other user may read or write gives no folder', { skip: !POSIX }, () => {

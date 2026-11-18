@@ -71,6 +71,8 @@ export function checkoutHolding(real, checkouts) {
 
 // This process's user id, or null where the system has none, as on Windows.
 export const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
+// This process's group id, its user's primary group, or null where the system has none.
+export const processGid = () => (typeof process.getgid === 'function' ? process.getgid() : null);
 
 // `base` and `rel` joined as POSIX-style relative paths, or null when the text escapes `base`. It reads no disk, so it
 // also checks a path in a tree that is not checked out, such as a base branch read through GitHub.

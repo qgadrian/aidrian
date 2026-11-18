@@ -173,9 +173,13 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
   mode 0700, no bit for the group or others, checked before every write, read, and sweep, which also checks that the
   session folder's real path is still the one it was made at, so a folder above it swapped for a symlink gets none, and
-  that no folder above the state folder or the session folder is owned by another user than the user or root, or may be
-  written by its group or others without the sticky bit, as OpenSSH's StrictModes holds the folders above a key, so no
-  other user can swap a folder between a check and the write that follows; `/tmp`, root's and sticky, passes. Each file is written as a
+  that the state folder and every folder above it pass one rule (`heldFolder`), as OpenSSH's StrictModes holds the
+  folders above a key, so no other user can swap a folder between a check and the write that follows: read with
+  `lstat`, it is no symlink; the user owns it, or root does above the state folder; others may write it only with the
+  sticky bit; and its group only with the sticky bit, or when it is the user's own folder in a user private group, its
+  group the user's primary group whose id is the user's id, as Debian, Ubuntu, and Fedora give each user, whose umask
+  002 makes folders 0775. `/tmp`, root's and sticky, passes. A state folder not there yet is checked by the nearest
+  folder above it before anything is made. Each file is written as a
   temporary file, mode 0600, renamed over it, under the cache names alone; a cache's reservation for one fixed window,
   `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so

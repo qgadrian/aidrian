@@ -64,8 +64,8 @@ const CHANGES_HOST = 'github.com';
 // The pull requests of one head branch read, newest first, in the ref's repository and again in its parent's.
 // SHORTCUT: GitHub filters pullRequests(headRefName:) by the branch's name alone, from any head repository, so 5 or more
 // newer pull requests from forks' branches of the same name crowd out the row's own, which then shows nothing; and on a
-// full page an older, better-ranked one may lie past it, so there answeredChange takes only a pick of the top class and
-// shows nothing otherwise. Enough for display data; paging until the row's own head repository answers would replace it.
+// page GitHub says has more (hasNextPage) an older, better-ranked one may lie past it, so there answeredChange takes only
+// a pick of the top class and shows nothing otherwise. Enough for display data; paging until the row's own head repository answers would replace it.
 // (Ref.associatedPullRequests lists other forks' pull requests too, and ignores orderBy, so it is no fix.)
 const HEAD_CHANGES = 5;
 // What changesState reads of one pull request. statusCheckRollup's counts by state cover every check of the head commit,
@@ -75,7 +75,7 @@ const HEAD_CHANGES = 5;
 const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName viewerDidAuthor authorAssociation '
   + 'headRepository { name owner { login } } repository { name owner { login } } reviewThreads(first: 100) { nodes { isResolved } } '
   + 'commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } } }';
-const headChanges = (index) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change } }`;
+const headChanges = (index) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change } pageInfo { hasNextPage } }`;
 
 // The one query operation for `refs`, as changeRef gave them: its text is built from each ref's index and kind alone, a
 // number or a branch, and every value is a variable (changesVariables). No root field: a non-null one a token cannot
@@ -124,16 +124,18 @@ const byOpen = (a, b) => open(b) - open(a) || createdAt(b) - createdAt(a);
 // head is that branch of the ref's repository, in the repository or its parent, so a fork's pull request from a branch of
 // the same name never resolves it, a branch pushed to a fork resolves to its pull request on the parent, and another
 // author's newer pull request from the same branch never replaces the token's user's, nor an outsider's a member's;
-// with `order` byOpen, as gh's own lookup ranks them. Else null. When either page is full (HEAD_CHANGES nodes), an
-// older, better one may lie past it, so the pick must be of the top class its order gives, an open one for byOpen and
-// the token user's own open one for byRank, else it is null: it fails closed, as the crowding SHORTCUT does.
+// with `order` byOpen, as gh's own lookup ranks them. Else null. When either page is cut off, its pageInfo.hasNextPage
+// true, an older, better one may lie past it, so the pick must be of the top class its order gives, an open one for
+// byOpen and the token user's own open one for byRank, else it is null: it fails closed, as the crowding SHORTCUT does.
+// A page with no pageInfo is read as whole.
 function answeredChange(ref, alias, order = byRank) {
   if (ref.number !== null) return alias?.pullRequest ?? null;
-  const pages = [alias?.pullRequests?.nodes, alias?.parent?.pullRequests?.nodes].map((list) => (Array.isArray(list) ? list : []));
+  const connections = [alias?.pullRequests, alias?.parent?.pullRequests];
+  const pages = connections.map((each) => (Array.isArray(each?.nodes) ? each.nodes : []));
   const heads = pages.flat().filter((node) => sameName(node?.headRepository?.owner?.login, ref.owner) && sameName(node?.headRepository?.name, ref.name) && node?.headRefName === ref.branch);
   const best = heads.sort(order)[0] ?? null;
   const top = (node) => open(node) === 1 && (order === byOpen || own(node) === 1);
-  return best && pages.some((page) => page.length >= HEAD_CHANGES) && !top(best) ? null : best;
+  return best && connections.some((each) => each?.pageInfo?.hasNextPage === true) && !top(best) ? null : best;
 }
 
 const STATES = Object.freeze({ OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' });

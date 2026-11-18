@@ -579,8 +579,9 @@ answers for it, another author's newer one from the same branch never replaces t
 never replaces a collaborator's merged one, and a branch pushed to a fork finds its pull request on the parent.
 It reads the 5 newest pull requests of the branch's name in each of the two repositories,
 so a name that 5 or more newer pull requests from forks share can crowd out the row's own, which then shows nothing.
-On a full page an older, better one may lie past it, so there the branch shows only a pick of the top class its row
-asks for, an open one for a `touched` row and the signed-in user's own open one for any other, and otherwise nothing.
+On a page GitHub says has more (`pageInfo.hasNextPage`) an older, better one may lie past it, so there the branch shows
+only a pick of the top class its row asks for, an open one for a `touched` row and the signed-in user's own open one for
+any other, and otherwise nothing. A page of exactly 5 with no more, or with no `pageInfo`, is read as whole.
 A branch with none gives no entry and no error. Two rows that answer the same pull request give one entry.
 Each entry is the forge-neutral row the adapter fills ([Adding a forge](providers/adding-a-host.md#adding-a-forge)):
 `forge` the adapter's `id`, `host` and `repo` the repository, `state` `open`, `closed`, or `merged`, `isDraft` a

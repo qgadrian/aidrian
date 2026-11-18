@@ -875,7 +875,8 @@ test('runGh hands a request body to a real gh child on its stdin, and gives a ca
 
 // changesState's batched read. test/fixtures/forges/github/changes-state.json records one answer GitHub gave to it,
 // read-only, against public repositories, on 2026-11-18, with the query that ranks by viewerDidAuthor and
-// authorAssociation and reads no root field: gh exited 1 on it, since one alias did not resolve.
+// authorAssociation and reads no root field: gh exited 1 on it, since one alias did not resolve. It was recorded before
+// the query asked for pageInfo, so its pages hold none and read as whole.
 const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/forges/github/changes-state.json', import.meta.url), 'utf8'));
 const replay = (answer, status = 0) => recorded(() => {
   if (status === 0) return JSON.stringify(answer);
@@ -924,25 +925,16 @@ test('changesState asks nothing for refs that fail changeRef, and answers null f
   assert.deepEqual(calls, []);
 });
 
-// The recorded answer with the last node of each full page dropped, so the ranking alone decides.
-const unfilled = () => {
-  const answer = structuredClone(RECORDED.answer);
-  answer.data.r0.parent.pullRequests.nodes.pop();
-  answer.data.r1.pullRequests.nodes.pop();
-  return answer;
-};
-
 test('changesState on recorded answers: a branch pushed to a fork resolves to its pull request on the parent, the newest of them', () => {
-  const [fork] = replay(unfilled(), RECORDED.status).forge.changesState(RECORDED.refs);
+  const [fork] = replay(RECORDED.answer, RECORDED.status).forge.changesState(RECORDED.refs);
   assert.deepEqual(RECORDED.refs[0], branchRef('leonxljx/cli', 'fix/11247-pr-create-json'));
   assert.equal(RECORDED.answer.data.r0.parent.pullRequests.nodes.length, 5, 'the branch has five pull requests on the parent');
+  assert.equal(RECORDED.answer.data.r0.parent.pullRequests.pageInfo, undefined, 'recorded before the query asked for pageInfo: a page with none is whole');
   assert.deepEqual([fork.repo, fork.number, fork.url], ['cli/cli', 15035, 'https://github.com/cli/cli/pull/15035']);
-  const [full] = replay(RECORDED.answer, RECORDED.status).forge.changesState(RECORDED.refs);
-  assert.equal(full, null, 'on the full page, none of them the token user`s open one: an older, better one may lie past it');
 });
 
 test('changesState on recorded answers: a newer pull request from a fork with a branch of the same name does not resolve the row', () => {
-  const rows = replay(unfilled(), RECORDED.status).forge.changesState(RECORDED.refs);
+  const rows = replay(RECORDED.answer, RECORDED.status).forge.changesState(RECORDED.refs);
   const nodes = RECORDED.answer.data.r1.pullRequests.nodes;
   assert.notEqual(nodes[0].headRepository.owner.login, 'nodejs', 'the newest pull request on that branch name comes from a fork');
   assert.ok(Date.parse(nodes[0].createdAt) > Date.parse(nodes[1].createdAt));
@@ -1003,18 +995,30 @@ test('changesState: a branch resolves to the token user`s own pull request, then
   assert.equal(noViewer.forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number, 4, 'no root viewer is read, so an answer without one still resolves');
 });
 
-test('changesState: on a full page a branch resolves only to the top class its rank asks for, since a better one may lie past it', () => {
+test('changesState: on a page with more a branch resolves only to the top class its rank asks for, since a better one may lie past it', () => {
   const node = (number, { mine = false, state = 'CLOSED', owner = 'acme' } = {}) => ({
     ...PR_NODE, number, createdAt: `2026-11-${10 + number}T00:00:00Z`, state, viewerDidAuthor: mine, authorAssociation: 'COLLABORATOR',
     url: `https://github.com/acme/notes/pull/${number}`, headRepository: { name: 'notes', owner: { login: owner } },
   });
   const forks = [1, 2, 3, 4].map((number) => node(number, { state: 'OPEN', owner: `fork${number}` }));
-  const resolve = (nodes, rank) => replay({ data: { r0: { pullRequests: { nodes }, parent: null } } }).forge.changesState([{ ...branchRef('acme/notes', 'feat/x'), rank }])[0]?.number ?? null;
-  assert.equal(resolve([node(9), ...forks], 'open'), null, 'a touched branch: its only closed one on a full page');
-  assert.equal(resolve([node(9), ...forks.slice(1)], 'open'), 9, 'the same with room left on the page');
+  const resolve = (nodes, rank, more = true) => replay({ data: { r0: { pullRequests: { nodes, pageInfo: { hasNextPage: more } }, parent: null } } })
+    .forge.changesState([{ ...branchRef('acme/notes', 'feat/x'), rank }])[0]?.number ?? null;
+  assert.equal(resolve([node(9), ...forks], 'open'), null, 'a touched branch: its only closed one on a page with more');
+  assert.equal(resolve([node(9), ...forks], 'open', false), 9, 'exactly five, and GitHub says no more: the page is whole');
+  assert.equal(resolve([node(9), ...forks.slice(1)], 'open', false), 9, 'the same with room left on the page');
   assert.equal(resolve([node(9, { state: 'OPEN' }), ...forks], 'open'), 9, 'an open one is the top class');
-  assert.equal(resolve([node(9, { mine: true, state: 'MERGED' }), ...forks], 'own'), null, 'a pushed branch: the user`s merged one on a full page');
+  assert.equal(resolve([node(9, { mine: true, state: 'MERGED' }), ...forks], 'own'), null, 'a pushed branch: the user`s merged one on a page with more');
+  assert.equal(resolve([node(9, { mine: true, state: 'MERGED' }), ...forks], 'own', false), 9, 'the same on a whole page of exactly five');
   assert.equal(resolve([node(9, { mine: true, state: 'OPEN' }), ...forks], 'own'), 9, 'the user`s own open one is the top class');
+  const parentMore = replay({ data: { r0: { pullRequests: { nodes: [node(9)], pageInfo: { hasNextPage: false } }, parent: { pullRequests: { nodes: forks, pageInfo: { hasNextPage: true } } } } } });
+  assert.equal(parentMore.forge.changesState([{ ...branchRef('acme/notes', 'feat/x'), rank: 'open' }])[0], null, 'either page with more fails closed');
+});
+
+test('changesState asks GitHub whether each branch page has more', () => {
+  const { forge, calls } = recorded(() => '{"data":{}}');
+  forge.changesState([branchRef('acme/notes', 'feat/x')]);
+  const { query } = bodyOf(calls[0]);
+  assert.equal(query.match(/pullRequests\(headRefName: \$b0, first: 5, [^)]*\) \{ nodes \{ \.\.\.change \} pageInfo \{ hasNextPage \} \}/gu)?.length, 2, 'the repository`s page and its parent`s');
 });
 
 test('a pull request number past GraphQL`s Int is refused before any call: the batch still resolves the others, and no read sends it', () => {

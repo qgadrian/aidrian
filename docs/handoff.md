@@ -7,6 +7,7 @@ costs more, and lets it hand off, ask, or carry on. This page is the feature in 
 - The [session-length reminder](#the-reminder): the Stop hook, at the end of a main-session turn.
 - The [plan handoff offer](#the-plan-offer): when the Human approves a plan.
 - The [continuation](#continue): how the session goes on once the brief is written.
+- The [snapshot](#the-snapshot): `aidrian session snapshot`, the same numbers for a status line.
 - The [cost model](#the-cost-model) both use, with its measured constants.
 - The [config](#config): `session.handoff` in config.json.
 - The [skills](#the-skills) that write and read the brief: `session-handoff` and `session-continue`.
@@ -76,6 +77,9 @@ their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at eac
 ceiling fired, and the compactions seen. A firing changes only what its own trigger holds: a cost firing records its
 ratio, and a ceiling firing raises its count past every doubling the context already reached, so a jump of two
 doublings in one turn is not reminded again at the next.
+`stopMarkerPath` in `lib/session-length.mjs` builds the path, for the hook and the [snapshot](#the-snapshot) alike, and
+gives none for a session id that fails `SESSION_ID`. The hook reads the marker only when it is a regular file this user
+owns, under 64 KiB, opened without following a symlink, and writes it as a new temporary file, mode 0600, renamed over it.
 A marker older versions wrote reads as follows. A mode word or one count is one firing of each trigger, the cost one
 at `costRatio`, at the session's current compactions. A marker from v0.28.0 to v0.47.0,
 `{"ratio": n, "tokens": n, "compactions": n}`, keeps its own `tokens` and `compactions`; a `ratio` above 0 is a cost
@@ -483,6 +487,90 @@ Limits:
   open a session by a plain id, within its minute, the next time a program the shell function ran exits.
 - A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
   mid-turn. Its transcript is kept, and the work goes on in the new session.
+
+## The snapshot
+
+`aidrian session snapshot` prints what a status line shows about the session and the project at the current folder.
+The caller passes the session: it reads no host variable and no stdin.
+
+```text
+aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A|B] [--deadline-ms N] [--json|--line]
+```
+
+`--json`, the default, prints one object:
+
+| Key | What it holds |
+| --- | --- |
+| `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
+| `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
+| `prs` | Always `null`. `errors` names it only for a session id that fails `SESSION_ID`, or a state folder inside a checkout. |
+| `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout. |
+| `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
+| `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
+| `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout. |
+| `ticket` | `{ key, source: "branch" }` or null: a key of `--ticket-prefixes` in the branch name, such as `ABC-123`, else `#42` from a branch named `fix/42-slug`. |
+| `errors` | The names of the sections that failed, never their error text. |
+
+Each section fails open: one that fails is null with its name in `errors`, and the command exits 0 whenever its
+arguments parse, so a status line never breaks. In a folder with no project every section but `session` is null,
+`errors` is empty, and nothing is written. Without `--session`, `handoff`, `prs`, and `worktrees.mergedNotCleaned` are
+null and `errors` does not name them, since their caches are kept per session; without `--transcript`, `handoff` is
+null the same way. A session id that fails `SESSION_ID` writes nothing, and names `handoff`, `prs`, and `worktrees` in
+`errors`.
+More than 32 ticket prefixes, or one that is not a letter and up to 15 letters or digits, make `ticket` null.
+
+**The shared decision.** `handoffStatus` in `lib/session-length.mjs` decides the level, and the Stop hook's reminder
+calls it for its own trigger, so the two never disagree. The first that holds wins:
+
+| `level` | When |
+| --- | --- |
+| `ceiling` | The token ceiling fires now. |
+| `due` | The cost trigger fires now. |
+| `reminded` | The reminder fired and still stands: the marker records a firing since the last compaction, no trigger fires now, and the trigger that fired still holds at its first threshold. The hook writes the marker on the turn it reminds, so this is what a snapshot reads during that turn. |
+| `offer` | The [plan offer](#the-plan-offer)'s threshold holds. |
+| `quiet` | None does. Under `mode: "off"` the hook never reminds, so the level is always `quiet`, and the numbers stay. |
+
+The snapshot is `due` or `ceiling` on exactly the turns the Stop hook reminds. It reads the hook's marker at the hook's
+own path, and the transcript through the usage cache, so each call reads only the lines written since the last one
+([Local state](project-folder.md#local-state)). Like the reminder, the handoff section is verified on Claude Code
+transcripts only. It needs the session's folder in the state folder, so when the state folder is inside a checkout,
+as with `state.dir` set to a folder in the repository, the snapshot gives no handoff, lessons, or audits section, and
+names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
+gives no handoff section either, and names `handoff` and `worktrees`.
+`chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
+armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
+from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's
+`maxChain`, at most 5, so the `chain` of a session the [background route](#the-background-route) started may be above
+`maxChain`: a floor is read whatever the limit. A background start arms nothing, so in the session that handed off
+`continueArmed` stays false and its level stands; the prompt hook names the session that owns the work now.
+`lastBrief` is the slug of the newest brief in the handoffs folder, whichever session wrote it: a regular file this
+user owns, never a symlink or a folder. A store the gate refuses leaves `chain`, `continueArmed`, and `lastBrief` null; `maxChain` still shows.
+
+**Worktrees.** `owned` counts the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is
+the head commit of a merged pull request of their branch, before [worktree cleanup](project-folder.md#task-worktrees)'s own tree and age
+checks: a worktree it counts may still hold work that cleanup asks about. The merged heads come from the forge for
+origin's repository alone, when the forge adapter serves it (github.com today), and are cached for a minute in the
+session's folder. With no origin, or one on a host the adapter does not serve, `mergedNotCleaned` is null and `errors`
+does not name `worktrees`: that repository is unsupported, not failed. One session starts at most one forge call a
+minute, whatever became of the last and however many snapshots start at once: a snapshot records its attempt under the
+cache's reservation for the current fixed minute, a lock file only one process can create, and one that finds the
+reservation held, or an attempt another snapshot recorded first, starts no call and shows the cached count as stale.
+The minutes are fixed, so two snapshots that start together either side of a minute's boundary can each start a call;
+a reservation a killed snapshot left blocks only its own minute. The call has 4 s, or `--deadline-ms`, and is killed
+past it, and the cached count then shows with `stale: true`, or as null with `worktrees` in `errors` when there is none.
+A value too large for the cache's 1 MiB read is not stored, but the attempt is, so the minute still holds.
+
+**Run time.** Every git call the snapshot starts is killed at git's 2 s limit, and once one is, the later ones of the
+same run give up at once, but for the worktree list, which has its own 2 s. With the 4 s forge budget, a run takes at
+most about 8 s past its own reading. A caller, such as a status line command, sets its timeout above that, or kills
+the snapshot's whole process group, since a forge command it started may outlive it.
+
+**The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
+line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,
+`2.3x · handoff due, pays back in ~24 calls` at `due` and `reminded`, `handoff now` at `ceiling`, and ` · armed 1/3`
+while a continuation is armed), then `📥 1 P1 · ⚖️ 2 decisions · 🧹 1 worktree · 🔎 3 findings`, each part only above 0.
+Every string from a file name, a cache, or a forge loses its control, format, separator, and surrogate characters and is
+cut by code point, and neither output writes an escape sequence or any C0, C1, or DEL character but the final line feed.
 
 ## The cost model
 

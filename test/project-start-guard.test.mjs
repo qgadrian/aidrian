@@ -247,11 +247,12 @@ test('when the base branch\'s config cannot be read, a held session\'s write out
   const ledger = path.join(runsFolder(fx.state), 'launch', 'ledger.jsonl');
   const write = (file, who) => projectRunWriteDenial({ tool_name: 'Write', tool_input: { file_path: file, content: '{}' }, session_id: STARTED[0].session, cwd: worktree }, project, config, () => folders, { unattended: who, base });
   assert.match(write(ledger, unattended)?.reason ?? '', /the folder of the project runs/u);
-  assert.match(write(path.join(fx.root, 'anywhere.txt'), unattended)?.reason ?? '', /wherever the base branch's config, which cannot be read, keeps it/u, 'any write outside every checkout');
+  assert.match(write(path.join(fx.root, 'anywhere.txt'), unattended)?.reason ?? '', /it writes outside every checkout of this project, which keeps a project run or a session no Human attends, and the base branch's config\.json.*cannot be read/u, 'any write outside every checkout');
   assert.equal(write(path.join(worktree, 'notes.md'), unattended), null, 'a write inside the checkout');
   assert.equal(write(path.join(fx.root, 'anywhere.txt'), attended), null, 'an attended session');
   const store = continueStoreWriteDenial({ tool_name: 'Write', tool_input: { file_path: path.join(fx.root, 'anywhere.txt'), content: 'x' }, session_id: STARTED[0].session, cwd: worktree }, project, config, () => folders, { unattended, base });
-  assert.match(store?.reason ?? '', /the handoff continuation store/u);
+  assert.match(store?.reason ?? '', /it writes outside every checkout of this project/u);
+  assert.doesNotMatch(store.reason, /continuation store/u, 'a write that names no store is not said to change it');
 });
 
 test('the remote-tracking ref guard covers branch deletions with --remotes and fetch or push refspecs into refs/remotes/', (t) => {
@@ -292,12 +293,13 @@ test('a subagent and an unattended session may not write the main checkout\'s ho
     assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
     const worktree = path.join(fx.worktrees, 'launch-eng-1');
     const project = findProject(worktree);
-    const ask = (input, who) => mainCheckoutWriteDenial({ session_id: STARTED[0].session, cwd: worktree, ...input }, project, fx.config, { unattended: who });
+    const ask = (input, who, runSession) => mainCheckoutWriteDenial({ session_id: STARTED[0].session, cwd: worktree, ...input }, project, fx.config, { unattended: who, runSession });
     for (const file of ['.claude/settings.local.json', '.claude/skills/merge-it/SKILL.md', '.claude/agents/merger.md', '.claude/commands/ship.md']) {
       const target = path.join(fx.dir, file);
       for (const input of [{ tool_name: 'Write', tool_input: { file_path: target, content: '{}' } }, bash(`echo x > ${target}`)]) {
         assert.match(ask(input, unattended)?.reason ?? '', /which the host reads from the main checkout in every worktree session/u, `${inRepo}: ${file}`);
-        assert.ok(ask({ ...input, agent_id: 'agent-7' }, attended), `${inRepo}: ${file} (subagent)`);
+        assert.ok(ask({ ...input, agent_id: 'agent-7' }, attended, () => true), `${inRepo}: ${file} (a subagent of the run's driver)`);
+        assert.equal(ask({ ...input, agent_id: 'agent-7' }, attended, () => false), null, `${inRepo}: ${file} (a subagent of a session that drives no run)`);
         assert.equal(ask(input, attended), null, `${inRepo}: ${file} (attended)`);
       }
     }

@@ -369,11 +369,15 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   return withLocks([runsLock(state)], () => {
     if (entryAt(runFolder(state, run))) return refuse(`the run ${run} exists already in ${runFolder(state, run)}; pick another run id`);
     const active = activeRuns(state, { except: run });
+    if (active.length && active[0].run === null) return refuse(`the folder of the project runs, ${runsFolder(state)}, cannot be read, so whether a run is still active cannot be told`);
     if (active.length) return refuse(`the run ${active[0].run} is still active in ${runFolder(state, active[0].run)}; finish it, or remove its folder, before another starts`);
     mkdirSync(runFolder(state, run), { mode: 0o700 });
     const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...read.snapshot })}\n`;
     writeFileSync(snapshotFile(state, run), text, { mode: 0o600, flag: 'wx' });
-    const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
+    // `main`: the run's main checkout, by its real path, which an attempt clone of a confined host stands for
+    // (lib/attempt-clone.mjs): its machine switches and decisions are read there.
+    const main = resolvedPath(project.checkouts.at(-1)) ?? project.checkouts.at(-1);
+    const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
     // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (recordIssue).
     appendRow(ledgerFile(state, run), row);
     return {
@@ -456,6 +460,18 @@ const isInit = (row, run) => isObject(row) && row.event === 'init' && row.run ==
   && typeof row.repository.owner === 'string' && row.repository.owner.split('/').every(plainPart)
   && Number.isInteger(row.issues) && row.issues > 0 && typeof row.sha256 === 'string' && /^[0-9a-f]{64}$/u.test(row.sha256);
 
+// Why the run `found` (readRun) is halted, or null: the cause of its latest `halt` row, unless a `resume` row an attended
+// session wrote with `aidrian project resume` comes after it. A start whose proof failed writes the halt row
+// (lib/project-run-gate.mjs); nothing lifts it but a resume.
+export function haltOf(found) {
+  let halt = null;
+  for (const row of found.rows) {
+    if (row.event === 'halt') halt = typeof row.cause === 'string' && row.cause !== '' ? row.cause.slice(0, 300) : 'a start failed its proof';
+    else if (row.event === 'resume') halt = null;
+  }
+  return halt;
+}
+
 // Records in the ledger of run `run` that issue `key` is now `issueState`, one of ISSUE_STATES, with `decision`, the id
 // of the decision a parked issue waits on. Before it takes the ledger's lock, the run's folder must be a folder holding
 // snapshot.json, so a missing run gets no folder or lock file; under the lock it reads the run whole and appends. It throws
@@ -493,13 +509,14 @@ export function appendToRun(state, run, build) {
   });
 }
 
-// The runs in `state` other than `except` that are still active, as [{ run }]: a run whose files cannot be read counts.
+// The runs in `state` other than `except` that are still active, as [{ run }]: a run whose files cannot be read counts,
+// and a folder of runs that is there and cannot be listed gives [{ run: null }], a run whose driver cannot be told.
 export function activeRuns(state, { except } = {}) {
   let names;
   try {
     names = readdirSync(runsFolder(state));
-  } catch {
-    return [];
+  } catch (error) {
+    return error.code === 'ENOENT' ? [] : [{ run: null }];
   }
   return names.filter((name) => RUN_ID.test(name) && name !== except).filter((name) => {
     const found = readRun(state, name);
@@ -684,8 +701,9 @@ function topological(issues, byId, cycles, isDone) {
 
 // The lines `aidrian project next` prints for `plan`: one `next KEY BRANCH` line for each issue to start, or `wait N
 // running`, or `done`; then a line for each issue that runs, waits, or is skipped.
-export function nextLines(plan) {
+export function nextLines(plan, { halt = null } = {}) {
   return [
+    ...(halt ? [`halted ${halt}`] : []),
     ...verdictLines(plan),
     ...plan.running.map((key) => `running ${key}`),
     ...plan.blocked.map(({ key, reason, on }) => `blocked ${key} ${reason} ${on.join(',')}`),

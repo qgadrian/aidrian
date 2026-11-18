@@ -10,7 +10,11 @@
 //    pending mark (lib/unattended-mark.mjs), so the hooks hold every session the host had not listed, from its first
 //    call, wherever it runs. No pending mark, no start. The checks run at the hold, just before the start, so a start
 //    the adapter refuses earlier says why as it always did.
-// 2. start: `launch(hold)`, the caller's call into its host adapter, which knows the prompt, the name, and the folder.
+//    Once the claim is kept, `intent()`, the caller's write-ahead record of the start, runs before the host starts
+//    anything: one that fails starts nothing.
+// 2. start: `launch(hold, identify)`, the caller's call into its host adapter, which knows the prompt, the name, and
+//    the folder. An adapter that learns the new session's id before it returns, and waits on it further, calls
+//    `identify({ id, session })`, which files steps 3 and 4 at once, so the hooks hold the session by its own mark.
 // 3. floor: the new session's chain floor, `floor`, under its full id or the short one the host printed.
 // 4. mark: its unattended mark, under the same id, with the caller's `tags` (lib/unattended-mark.mjs).
 // 5. record: the start record of `session`, the session that ran the gate: `record` with the started session's fields.
@@ -53,8 +57,16 @@ export function safely(act) {
 // beside the started session's own, { sha256, slug, brief, chain, project }, as noteStarted takes them. `tags`, the
 // unattended mark's { project, issue } or null, are written into the new session's mark. `now` dates what it writes;
 // every read of the claim and the start record takes the time afresh, so a record written after `now` holds.
-export function startHeld({ session, launch, stop, ended, store, root, floor, record, tags = null, env, now }) {
-  const state = { pending: null, claimed: false, refusal: null, ended: false };
+// `intent()`, when given, is the caller's write-ahead record, which must return true for the start to go on; each
+// outcome then says, as `intended`, whether it ran, so the caller knows whether a record of the start is there to settle.
+// The background handoff route gives none, and its outcomes are as they were.
+export function startHeld({ session, launch, stop, ended, store, root, floor, record, tags = null, env, now, intent }) {
+  const state = { pending: null, claimed: false, refusal: null, ended: false, intended: false, identified: null };
+  const answer = held({ session, launch, stop, ended, store, root, floor, record, tags, env, now, intent }, state);
+  return typeof intent === 'function' ? { ...answer, intended: state.intended } : answer;
+}
+
+function held({ session, launch, stop, ended, store, root, floor, record, tags, env, now, intent }, state) {
   const release = () => state.pending && safely(() => dropPending(state.pending));
   const settle = (result, keep = false) => {
     if (keep) safely(() => keepClaim(store, session, { now: Date.now() }));
@@ -63,7 +75,7 @@ export function startHeld({ session, launch, stop, ended, store, root, floor, re
   };
   let started;
   try {
-    started = launch(holdFor({ session, ended, store, root, env }, state));
+    started = launch(holdFor({ session, ended, store, root, env, intent }, state), identifyFor({ store, root, floor, tags, env, now }, state));
   } catch (error) {
     // Thrown after the hold, the start may have run.
     started = { problem: `the host's start failed (${error?.code ?? error?.message ?? 'no message'})`, uncertain: true };
@@ -81,11 +93,23 @@ export function startHeld({ session, launch, stop, ended, store, root, floor, re
   }
   const id = started.session ?? started.id;
   const marker = { ...record, id: started.id, session: started.session, name: started.name, cwd: started.cwd, mode: started.mode };
-  const held = state.pending !== null && safely(() => noteFrom(store, id, floor, { now })) && safely(() => markUnattended(id, { root, env, now, tags }))
+  const kept = state.pending !== null && (state.identified === id || (safely(() => noteFrom(store, id, floor, { now })) && safely(() => markUnattended(id, { root, env, now, tags }))))
     && safely(() => noteStarted(store, session, marker, { now }));
-  if (!held) return unheld({ started, stop, release, settle });
+  if (!kept) return unheld({ started, stop, release, settle });
   release();
   return settle({ outcome: 'started', marker });
+}
+
+// The identify startHeld gives the adapter: files the floor and the mark of the session `{ id, session }` names, under
+// its full id or the id the host printed, while the pending mark still holds it: whether both were filed.
+function identifyFor({ store, root, floor, tags, env, now }, state) {
+  return ({ id, session } = {}) => {
+    const own = session ?? id;
+    if (state.pending === null || typeof own !== 'string') return false;
+    const filed = Boolean(safely(() => noteFrom(store, own, floor, { now })) && safely(() => markUnattended(own, { root, env, now, tags })));
+    if (filed) state.identified = own;
+    return filed;
+  };
 }
 
 // The hold startHeld gives the adapter: the claim, then one start per session, then the pending mark. It notes in
@@ -93,7 +117,7 @@ export function startHeld({ session, launch, stop, ended, store, root, floor, re
 // whether it passed a live start record because the host listed that session as ended. Once the pending mark is filed,
 // it keeps the claim for a day (keepClaim), so a gate killed mid-start fails closed; startHeld drops it again on every
 // outcome that knows no session runs unheld.
-function holdFor({ session, ended, store, root, env }, state) {
+function holdFor({ session, ended, store, root, env, intent }, state) {
   return ({ cwd, known } = {}) => {
     const claim = safely(() => claimStart(store, session, { now: Date.now() })) ?? { busy: 'unknown' };
     if (claim.busy) {
@@ -110,8 +134,12 @@ function holdFor({ session, ended, store, root, env }, state) {
     state.ended = Boolean(earlier);
     state.pending = safely(() => markPending(session, { cwd, root, known, env, now: Date.now() }));
     if (state.pending === null) return false;
-    // Kept before the start: a gate killed mid-start leaves a claim that holds for a day. No kept claim, no start.
-    if (safely(() => keepClaim(store, session, { now: Date.now(), starting: true })) !== null) return true;
+    // Kept before the start: a gate killed mid-start leaves a claim that holds for a day. No kept claim, no start; and
+    // no write-ahead record, no start.
+    if (safely(() => keepClaim(store, session, { now: Date.now(), starting: true })) !== null) {
+      state.intended = typeof intent !== 'function' || safely(() => intent()) === true;
+      if (state.intended) return true;
+    }
     safely(() => dropPending(state.pending));
     state.pending = null;
     return false;

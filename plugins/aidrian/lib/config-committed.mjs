@@ -8,7 +8,7 @@ import { handoffContinueDefault, legacyHandoff, merge } from './config-merge.mjs
 import { NO_REVIEWER, SCHEMA } from './config-schema.mjs';
 import { versionProblem } from './config-version.mjs';
 import { isObject } from './fs.mjs';
-import { runGit } from './git.mjs';
+import { hardenedArgs, hardenedEnv, runGit } from './git.mjs';
 
 // The project config as committed at `commit`, with no machine settings: what a pull request cannot change from its
 // own working copy, such as github.maxReviewRounds. A commit with no config, or one that does not parse, gives
@@ -16,7 +16,7 @@ import { runGit } from './git.mjs';
 // passes that list. `options` overrides the spawn's, such as a hook's shorter timeout.
 export function committedConfig(project, commit, errors = [], options = {}) {
   // `./`: the path from project.root, where git runs, so a project below the repository root reads its own file.
-  const shown = spawnSync('git', ['show', `${commit}:./${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000, ...options });
+  const shown = spawnSync('git', hardenedArgs(['show', `${commit}:./${project.paths.config}`]), { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000, ...options, env: hardenedEnv(options.env) });
   if (shown.error || shown.signal) throw new Error(`git show ${commit}:./${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
   return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config, errors);
 }

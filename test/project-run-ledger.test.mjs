@@ -76,7 +76,7 @@ const ledgerPath = (state, run) => path.join(runFolder(state, run), 'ledger.json
 const ledgerRows = (state, run) => readFileSync(ledgerPath(state, run), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
 
 test('init keeps the snapshot without tracker text but the branch, and pins the repository, session, and snapshot hash', (t) => {
-  const { state, input, init } = setup(t);
+  const { dir, state, input, init } = setup(t);
   const result = init('launch', input(SNAPSHOT));
   assert.deepEqual([result.exitCode, result.err], [0, []]);
   assert.deepEqual(result.out.slice(0, 3), ['run: launch', 'issues: 4', 'repository: github.com/acme/widgets']);
@@ -88,7 +88,8 @@ test('init keeps the snapshot without tracker text but the branch, and pins the 
   const [first, ...rest] = ledgerRows(state, 'launch');
   assert.deepEqual(rest, []);
   const hash = execFileSync('shasum', ['-a', '256', path.join(runFolder(state, 'launch'), 'snapshot.json')], { encoding: 'utf8' }).split(' ')[0];
-  assert.deepEqual({ ...first, at: null }, { event: 'init', run: 'launch', at: null, session: SESSION, repository: { host: 'github.com', owner: 'acme', name: 'widgets' }, issues: 4, sha256: hash });
+  // `main`: the run's main checkout by its real path, which an attempt clone stands for (lib/attempt-clone.mjs).
+  assert.deepEqual({ ...first, at: null }, { event: 'init', run: 'launch', at: null, session: SESSION, repository: { host: 'github.com', owner: 'acme', name: 'widgets' }, main: realpathSync(dir), issues: 4, sha256: hash });
   assert.match(first.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
 });
 
@@ -347,7 +348,7 @@ test('summary.md holds each issue\'s status, the parked decisions, and the skipp
 });
 
 test('projectRun: its keys and defaults, as docs/config.md shows them', () => {
-  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision' });
+  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false });
   assert.deepEqual(Object.keys(SCHEMA.projectRun), Object.keys(DEFAULTS.projectRun));
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
   const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/u)[1]);

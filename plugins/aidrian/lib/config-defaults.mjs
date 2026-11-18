@@ -151,7 +151,7 @@ export const DEFAULTS = deepFreeze({
   tracker: { enabled: false, workspace: null, readTools: [], writeTools: [], team: null, project: null },
   // The keys of a project run (docs/config.md#project-run). `aidrian project` (lib/project-run.mjs) reads none of them:
   // init checks no `allow`, and `next` names one issue at a time.
-  projectRun: { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision' },
+  projectRun: { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false },
   reviewEngine: 'auto',
   reviewVisual: { baseUrl: null },
 });

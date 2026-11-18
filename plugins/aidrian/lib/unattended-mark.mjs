@@ -23,6 +23,9 @@
 // A session a project run starts for an issue (lib/project-run-gate.mjs) carries the run and the issue in its mark,
 // { root, at, project, issue }, and the background route copies them into the mark of each continuation it starts, so
 // the issue's whole chain of sessions is known as that issue's wherever it runs.
+// While a pending mark holds a session, the agent gate hook files its beacon, `beacon.<session>.json`, on its first tool
+// call (noteBeacon): a host adapter that cannot otherwise tell whether the host runs this plugin's hooks for the session
+// it started waits on it (lib/hosts/codex-exec.mjs). It lapses with the pending mark, at PENDING_AGE.
 
 import { randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -41,7 +44,9 @@ const SHORT = /^([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 const MARK = /^[\w-]{1,128}\.json$/u;
 // A pending mark, named for the session that ran the gate; the dot keeps it apart from a mark under a short id.
 const PENDING = /^pending\.[\w-]{1,128}\.json$/u;
-const TEMPORARY = /^\.(?:pending\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
+const TEMPORARY = /^\.(?:pending\.|beacon\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
+// The beacon of a session a pending mark holds, which the agent gate hook files on its first call (noteBeacon).
+const BEACON = /^beacon\.[\w-]{1,128}\.json$/u;
 const DAY = 24 * 60 * 60 * 1000;
 // How long a mark holds, as long as the chain floor beside it.
 export const MARK_AGE = 30 * DAY;
@@ -181,6 +186,77 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   return pendingHold(pending, session, uid, now);
 }
 
+// Whether an unattended mark, or a pending one, that holds names one of `roots`, the checkouts of a project, as its main
+// checkout: a session no Human attends, or one a gate is starting, belongs to that project. A mark or a folder that
+// cannot be read counts. lib/handoff-guard.mjs asks it only while the base branch's config cannot be read.
+export function marksNaming(roots, { env = process.env, home, now = Date.now() } = {}) {
+  const wanted = new Set(roots.filter((each) => typeof each === 'string').map((each) => path.resolve(each)));
+  const uid = processUid();
+  for (const folder of markFolders({ env, home })) {
+    let names;
+    try {
+      names = readdirSync(folder);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+      return true;
+    }
+    for (const name of names) {
+      const file = path.join(folder, name);
+      let found = null;
+      if (PENDING.test(name)) found = readPending(file, uid, now);
+      else if (MARK.test(name)) found = readMark(file, uid, now);
+      if (found === 'unchecked' || (found && found.root === null)) return true;
+      if (found && wanted.has(path.resolve(found.root))) return true;
+    }
+  }
+  return false;
+}
+
+// Files the beacon of `session`, `beacon.<session>.json`, { session, at }, in markFolder(env), once, when a pending mark
+// there holds the session or its own mark there names an issue of a project run: the proof a host's start adapter waits
+// on that the host runs this plugin's hooks for the session it started, since the agent gate hook files it on that
+// session's first tool call (scripts/hook-agent-gates.mjs), before or after the gate has filed its mark. Only the folder
+// the gate files marks in counts, so a call never writes in another folder. Returns the file, or null when neither holds
+// the session there, the beacon is there already, or the write fails. Never throws.
+export function noteBeacon(session, { env = process.env, now = Date.now() } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  try {
+    const folder = markFolder(env);
+    const stat = lstatSync(folder);
+    const uid = processUid();
+    if (!stat.isDirectory() || (Number.isInteger(uid) && stat.uid !== uid)) return null;
+    const names = readdirSync(folder);
+    const name = `beacon.${session}.json`;
+    if (names.includes(name)) return null;
+    const pending = names.filter((each) => PENDING.test(each)).map((each) => path.join(folder, each));
+    const own = names.includes(`${session}.json`) ? readMark(path.join(folder, `${session}.json`), uid, now) : null;
+    if (!pendingHold(pending, session, uid, now) && !(own && own !== 'unchecked' && own.issue)) return null;
+    return writeMark(folder, name, { session, at: now });
+  } catch {
+    return null;
+  }
+}
+
+// Whether a beacon of `session` (noteBeacon) written at `since` or later is in one of markFolders: a regular file of
+// this user, under MARK_CAP, that names the session. `home` is a test's, as in markFolders.
+export function readBeacon(session, { env = process.env, home, since = 0 } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  const uid = processUid();
+  for (const folder of markFolders({ env, home })) {
+    const file = path.join(folder, `beacon.${session}.json`);
+    let stat;
+    try {
+      stat = lstatSync(file);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile() || stat.size >= MARK_CAP || (Number.isInteger(uid) && stat.uid !== uid)) continue;
+    const value = readJson(file);
+    if (isObject(value) && value.session === session && Number.isFinite(value.at) && value.at >= since) return true;
+  }
+  return false;
+}
+
 // The hold of the first of the pending marks `files` that holds `session`, or null.
 function pendingHold(files, session, uid, now) {
   for (const file of files) {
@@ -257,7 +333,7 @@ function sweepMarks(folder, now) {
   } catch {
     return;
   }
-  const ages = [[MARK, MARK_AGE], [PENDING, PENDING_AGE], [TEMPORARY, DAY]];
+  const ages = [[MARK, MARK_AGE], [PENDING, PENDING_AGE], [BEACON, PENDING_AGE], [TEMPORARY, DAY]];
   for (const name of names) {
     const age = ages.find(([pattern]) => pattern.test(name))?.[1];
     if (age === undefined) continue;

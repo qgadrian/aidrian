@@ -907,6 +907,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   new session may change folder before its id is listed; the gate removes it once the new session's own mark is
   written, or when nothing started, and a start whose outcome is unknown leaves it to lapse. A pending mark the hook
   cannot read, or one that names no listing, holds every session but the gate's.
+  A session such a pending mark holds, or one whose own mark names an issue of a project run, files its beacon on its
+  first call, `beacon.<session id>.json` in the folder the gate files marks in, once: a host adapter that cannot
+  otherwise tell whether its host runs this plugin's hooks for the session it started, as Codex's under `codex exec`,
+  waits on it ([Project start](providers/codex.md#project-start)). A beacon lapses with the pending mark.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
@@ -956,6 +960,23 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
   of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
+- When the base branch's config.json cannot be read in a repository with a remote, as when origin was added and never
+  fetched, a subagent's or an unattended session's write outside every checkout is refused only where the project keeps
+  a project run or a held session: a run or a continuation store entry in a state folder the guard can find, or an
+  unattended or pending mark naming one of its checkouts. The folder that keeps them is then unknown. A project with
+  neither writes outside its checkout as before; the refusal says what failed, not which store.
+- A session no Human attends may not write the main checkout's paths a session in a linked worktree reads, such as
+  Claude Code's `.claude/skills`, `agents`, `commands`, and `.claude/settings.local.json`, and while the project has a
+  project run under way, an active run in any of its state folders, a folder of runs that cannot be listed, or a live
+  unattended or pending mark naming it, no subagent may either, whichever session it belongs to. In a project with no
+  run, a subagent writes them as before. A confined session, as Codex's, writes the `work`, `git`, and `drop` folders of
+  its issue's running attempt under `<state>/runs/<run>/attempts/`, as the run's ledger names it, and nothing else in
+  the runs folder. A project run's attempt clone is no shared main checkout: the [main-checkout rule](#main-checkout)
+  reads the run's main checkout as its own.
+- In a project run's attempt clone, every call is refused while the clone's own git config sets a key that makes git
+  run a program or send elsewhere, before any git call of the hook runs there. Every git call of the plugin, in a hook or
+  a command, runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and signature
+  display turned off (`lib/git.mjs`).
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule
   above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
 - A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:

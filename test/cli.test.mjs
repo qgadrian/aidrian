@@ -1814,11 +1814,12 @@ test('project is a command with its forms, and init refuses a session the host n
   assert.ok(lines.includes('  aidrian project wait RUN [--max-wait SECONDS] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project result RUN ISSUE --file PATH [--project DIR]'));
   assert.ok(lines.includes('  aidrian project handoff RUN BRIEF [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project resume RUN [--project DIR]'));
   const { dir } = projectRun(t, [runIssue('ENG-1')]);
   writeFileSync(path.join(dir, 'other.json.input'), JSON.stringify({ issues: [runIssue('ENG-2')] }));
   const init = run(['project', 'init', 'second', '--file', 'other.json.input'], dir);
   assert.deepEqual([init.status, init.stdout, init.stderr], [1, '', 'aidrian project init: this host tells the command no session id, so the run cannot record its driver; run init from the attended main session\n']);
-  for (const [args, problem] of [[['project'], 'project takes init, next, summary, start, wait, result, or handoff'], [['project', 'begin', 'launch'], 'project takes init, next, summary, start, wait, result, or handoff, not "begin"'], [['project', 'next'], 'project next takes one run id'], [['project', 'start', 'launch'], 'project start takes a run id and an issue key'], [['project', 'init', 'launch'], 'project init needs --file'], [['project', 'result', 'launch', 'ENG-1'], 'project result needs --file']]) {
+  for (const [args, problem] of [[['project'], 'project takes init, next, summary, start, wait, result, handoff, or resume'], [['project', 'begin', 'launch'], 'project takes init, next, summary, start, wait, result, handoff, or resume, not "begin"'], [['project', 'next'], 'project next takes one run id'], [['project', 'start', 'launch'], 'project start takes a run id and an issue key'], [['project', 'init', 'launch'], 'project init needs --file'], [['project', 'result', 'launch', 'ENG-1'], 'project result needs --file']]) {
     const misuse = run(args, dir);
     assert.equal(misuse.status, 1, args.join(' '));
     assert.match(misuse.stderr, /^usage: aidrian project init RUN --file PATH \[--project DIR\]\n/u);

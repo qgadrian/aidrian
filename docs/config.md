@@ -126,7 +126,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
   "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
-  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision" }
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false }
 }
 ```
 
@@ -1726,8 +1726,23 @@ The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's sta
 | `projectRun.issueHours` | `6` | How long one issue may run, in hours, from 1 to 24. |
 | `projectRun.blockedStatus` | `null` | The tracker status a blocked issue moves to; `null` moves none. |
 | `projectRun.decisionLabel` | `"needs-decision"` | The label an issue parked on a decision gets. |
+| `projectRun.unverifiedHosts` | `false` | Whether a run starts sessions on a host whose project start no live run has verified, such as Codex: setting it opts into a sandbox boundary no live run has checked ([Project start](providers/codex.md#project-start)). Read from the default branch on the forge; a local ref only refuses. Each such start prints an `unverified:` line. |
 
-`aidrian project` reads none of these keys: `init` does not check `allow`, and `next` names one issue at a time.
+A start that cannot go on safely halts: `aidrian project start` exits 1, its first line is `halt <cause>`, and no issue
+is parked. Most halts record nothing, such as a user the forge does not let push, a sandbox with no network, or a
+repository whose git config could run a program; fix the cause and start again. A start whose proof failed, as a
+session that never named itself or whose hooks never ran, gives its attempt back (a `void` start row, the issue open
+again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
+or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
+row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
+Each start is written ahead: a start row with `pending: true` before the host starts anything, then one row that
+settles it, so a gate killed mid-start leaves a row `wait` finds and settles. A confined host's session hands its
+result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
+attempt `bad_result`; a result the forge cannot confirm yet waits for the next `wait`. Its attempt clone takes the run's
+main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
+checkout's `.aidrian.local.json`, never the clone's, and a clone whose link cannot be read reads every switch off.
+
+`init` and `next` read none of these keys: `init` does not check `allow`, and `next` names one issue at a time; `start` and `wait` read them from the default branch.
 
 The snapshot input is one JSON object, at most 1 MiB, read as a regular file and never through a symlink:
 

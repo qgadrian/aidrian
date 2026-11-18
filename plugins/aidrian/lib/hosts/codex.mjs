@@ -1,9 +1,10 @@
 // Codex's adapter. docs/providers/adding-a-host.md lists the fields; docs/providers/codex.md says what was checked here.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { attachLine, findProcesses, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
 import { responseObjects } from './response.mjs';
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -114,6 +115,89 @@ function hookTrust(env) {
   return states.every((state) => state !== null && holdsHash(state)) ? 'trusted' : 'untrusted';
 }
 
+// Whether Codex would run every hook of this plugin, for a project run's session: the answer hookTrust gives, but over
+// every handler hooks.json lists, of every event and group, each matched by this plugin's own id as its `[plugins."<id>"]`
+// table names it: a session no Human attends is held by many hooks, not by the tracker hooks alone.
+function allHooksTrust(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    return 'absent';
+  }
+  const ids = lines.map((line) => /^\[plugins\."(aidrian@[^"]+)"\]\s*$/u.exec(line.trimEnd())?.[1]).filter(Boolean);
+  if (ids.length === 0) return 'absent';
+  const answers = ids.map((id) => {
+    if (turnedOff(section(lines, (line) => line.trimEnd() === `[plugins."${id}"]`))) return 'off';
+    const states = allHookKeys().map((key) => section(lines, (line) => line.trimEnd() === `[hooks.state."${id}:hooks/hooks.json:${key}"]`));
+    if (states.some((state) => state !== null && turnedOff(state))) return 'off';
+    return states.every((state) => state !== null && holdsHash(state)) ? 'trusted' : 'untrusted';
+  });
+  if (answers.includes('trusted')) return 'trusted';
+  return answers.includes('off') ? 'off' : 'untrusted';
+}
+
+// The trust key of every handler hooks.json lists, `<event>:<group>:<handler>`, with the event in Codex's snake case.
+function allHookKeys() {
+  const { hooks } = JSON.parse(readFileSync(new URL('../../hooks/hooks.json', import.meta.url), 'utf8'));
+  const snake = (event) => event.replace(/[A-Z]/gu, (letter, at) => `${at ? '_' : ''}${letter.toLowerCase()}`);
+  return Object.entries(hooks).flatMap(([event, groups]) => groups.flatMap((group, at) => group.hooks.map((_hook, handler) => `${snake(event)}:${at}:${handler}`)));
+}
+
+// The folders `[sandbox_workspace_write] writable_roots` names in Codex's config.toml, each as written, or [] when it
+// names none. A value it cannot read gives [null].
+function writableRoots(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    return [];
+  }
+  const sandbox = section(lines, (line) => /^\[sandbox_workspace_write\]\s*(?:#.*)?$/u.test(line)) ?? [];
+  const text = sandbox.join('\n');
+  const at = text.search(/^\s*writable_roots\s*=/mu);
+  if (at < 0) return [];
+  const rest = text.slice(at);
+  const end = rest.indexOf(']');
+  if (end < 0) return [null];
+  return [...rest.slice(0, end).matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/gu)].map((match) => match[1] ?? match[2]);
+}
+
+// Why the writable roots of Codex's config would let a session write in one of `guarded`, real absolute paths such as
+// the main checkout's git folder, the state root, the mark folders, and the runs folder, or null.
+function writableRootsProblem(env, guarded) {
+  for (const root of writableRoots(env)) {
+    if (typeof root !== 'string') return 'Codex\'s config.toml sets writable_roots for its workspace-write sandbox in a form the gate cannot read';
+    const home = env.HOME || homedir();
+    const spelled = root.startsWith('~/') ? path.join(home, root.slice(2)) : root;
+    if (!path.isAbsolute(spelled)) return `Codex's config.toml makes ${root} writable, a path that is not absolute`;
+    let real = path.resolve(spelled);
+    try {
+      real = realpathSync(real);
+    } catch {
+      // Not there yet: its spelling.
+    }
+    const reaches = guarded.find((folder) => real === folder || real.startsWith(`${folder}${path.sep}`) || folder.startsWith(`${real}${path.sep}`));
+    if (reaches) return `Codex's config.toml makes ${root} writable in its workspace-write sandbox, which reaches ${reaches}, a folder a session no Human attends must not write`;
+  }
+  return null;
+}
+
+// Why a session `codex exec --sandbox workspace-write` starts could neither push nor reach the forge, or null: that
+// sandbox turns the network off unless config.toml sets `network_access = true` under `[sandbox_workspace_write]`
+// (Codex's config reference). Read from the same file as hookTrust, and no value of it leaves this function.
+function sandboxNetworkProblem(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    lines = [];
+  }
+  const sandbox = section(lines, (line) => /^\[sandbox_workspace_write\]\s*(?:#.*)?$/u.test(line)) ?? [];
+  if (sandbox.some((line) => /^\s*network_access\s*=\s*true\b/u.test(line))) return null;
+  return 'Codex runs the session in its workspace-write sandbox, whose network is off unless its config.toml sets network_access = true under [sandbox_workspace_write], so the session could neither push its branch nor reach the forge';
+}
+
 // The trust keys of the tracker hooks, `<event>:<group>:<handler>`, read from hooks.json so a reordered file cannot go stale.
 // Trust is per hook, so trust in another of this plugin's hooks says nothing about these.
 function trackerHookKeys() {
@@ -215,5 +299,28 @@ export default {
     },
     // No handoff continue route runs here: session.handoff.continue falls back to none on Codex.
     handoffContinue: { routes: [] },
+    // A project run's issue session, through a detached `codex exec` in a fresh clone made for its attempt
+    // (hosts/codex-exec.mjs, lib/project-start.mjs): Codex is `confined` to its workspace-write sandbox, with `--add-dir`
+    // for what the gate grants. Codex lists no sessions, so a session is known by its process, and a start holds it only
+    // once its id, its first tool call, and the agent gate hook's beacon arrive. `verified`: fixtures only, with a fake
+    // `codex`; no live Codex has run it, so a run starts it only where the default branch sets projectRun.unverifiedHosts
+    // (docs/providers/codex.md#project-start lists the live checks). `hookTrust` must answer 'trusted' for every hook of
+    // the plugin, and `access` says why a session it starts could not push or reach the forge, or could write a folder
+    // the gate guards.
+    projectStart: {
+      verified: 'unverified',
+      evidence: 'fixtures with a fake codex that runs the real agent gate hook; codex exec --json, --add-dir, and the sandbox flags are from Codex\'s docs, not a live run',
+      confined: true,
+      hookTrust: allHooksTrust,
+      trustStep: 'open Codex and trust every hook of this plugin in its hooks panel, /hooks, after each install and update',
+      access: ({ env, guarded = [] }) => sandboxNetworkProblem(env) ?? writableRootsProblem(env, guarded),
+      sessionNote,
+      start: ({ cwd, name, prompt, env, hold, identify, run, wait, log, beacon, grants }) => startProject({ cwd, name, prompt, env, hold, identify, log, beacon, grants, run, wait }),
+      stop: ({ id, started, run }) => stopProcess({ id, started, run }),
+      ended: ({ id, run }) => processEnded({ id, run }),
+      find: ({ cwd, run }) => findProcesses({ cwd, run }),
+      attachLine,
+      stopLine,
+    },
   },
 };

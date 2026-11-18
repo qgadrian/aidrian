@@ -12,6 +12,9 @@ const BREAK_GLASS = new Set([
   'lib/review-gate.mjs',
   'lib/review/in-force.mjs',
   'lib/review/visual.mjs',
+  // A project run's halt: only the Human's own shell, or another session a person attends, lifts it, never a session's answer.
+  'lib/project-run-gate.mjs',
+  'lib/project-run-guard.mjs',
   'lib/rules/attribution.mjs',
   'lib/rules/dependency-link.mjs',
   'lib/rules/git-amend.mjs',

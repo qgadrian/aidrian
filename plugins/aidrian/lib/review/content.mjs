@@ -28,6 +28,7 @@
 
 import { spawnSync } from 'node:child_process';
 
+import { hardenedEnv } from '../git.mjs';
 import { isolate } from './env.mjs';
 import { pathPattern } from './plan.mjs';
 import { acquiredVars, callsWith, EXTENSIONS_RE, importWord, parse } from './trace-js.mjs';
@@ -50,7 +51,8 @@ const gitProblem = (out) => out.error?.message ?? (out.signal ? `killed by ${out
 // The head commit through git in `root`: the files tracked under `roots`, a cached `contentOf`, a one-call `prefetch`,
 // and a fixed-string `grep`. Any git run that fails throws an Error that names the git command.
 function headRepo({ root, head, roots, spawn }) {
-  const options = { cwd: root, env: isolate({ ...process.env }), maxBuffer: MAX_BUFFER };
+  // Hardened through the environment, as every plugin git call is (lib/git.mjs hardenedEnv): its arguments stay as given.
+  const options = { cwd: root, env: hardenedEnv(isolate({ ...process.env })), maxBuffer: MAX_BUFFER };
   const cache = new Map();
   const listed = spawn('git', ['ls-tree', '-r', '--name-only', '-z', head, '--', ...roots.map(pathspec)], { ...options, encoding: 'utf8' });
   if (gitFailed(listed)) throw new Error(`git ls-tree at ${head} failed: ${gitProblem(listed)}`);

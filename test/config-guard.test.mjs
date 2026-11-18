@@ -607,12 +607,12 @@ test('a main session the background route started, and a subagent, may not run t
     for (const command of moved) {
       const result = run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
-      assert.match(result.stderr, /it runs `aidrian handoff` with \w+ set or unset by the command itself, which would move the continuation store, the session, or the host command the gate reads/u, command);
+      assert.match(result.stderr, /it runs `aidrian handoff` or `aidrian project` with \w+ set or unset by the command itself, which would move the continuation store, the session, or the host command the gate reads, or the policy it reads/u, command);
     }
     for (const command of other) {
       const result = run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
-      assert.match(result.stderr, /it runs `aidrian handoff` with FOO set or unset by the command itself, and the gate runs with no variable a command sets/u, command);
+      assert.match(result.stderr, /it runs `aidrian handoff` or `aidrian project` with FOO set or unset by the command itself, and the gate runs with no variable a command sets/u, command);
     }
     for (const command of plain) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
   }

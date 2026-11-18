@@ -176,6 +176,59 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 - A call without `agent_id` counts as the main session's: `main` gates apply,
   and neither the config guard, the [`decisions-set` rule](../hooks.md#bash-rules), nor the [session's gates](../hooks.md#the-sessions-gates) does.
 
+## Project start
+
+`aidrian project start` can start an issue's session on Codex, but no live Codex has run it: the host declares it
+`verified: 'unverified'`, and a run starts it only where the default branch, on the forge and by its local ref, sets
+[`projectRun.unverifiedHosts`](../config.md#project-run). Every start then prints an `unverified:` line.
+
+- Codex is a confined host. Each attempt works in a fresh clone, never a linked worktree of the main checkout:
+  `<state>/runs/<run>/attempts/<issue>.<attempt>/` holds `work/`, the clone, `git/`, its own git folder, which borrows
+  the main checkout's objects read-only, and `drop/`, owner-only, where the session hands its result over.
+  The first attempt cuts the issue's branch from the base tip; a later one fetches it from the forge.
+  The main repository never fetches from a clone, and the driver's `wait` removes an attempt's folder once its session ended.
+- The session runs `codex exec --json --sandbox workspace-write --cd <work>`, with `--add-dir` for exactly its git
+  folder, its drop folder, and the state work folders `plans`, `reviews`, `tmp`, and `dispatch`, each a plain folder
+  of the user directly in the state folder. No flag that bypasses the sandbox or the approvals is ever passed.
+  Its events go to `logs/<issue>.<attempt>.jsonl` in the run's folder.
+- Git cannot reach the main checkout from there: nothing under its `.git` is granted, the clone's origin is the
+  pinned forge URL, and work moves only through the forge. The session pushes with a full refspec and names the branch
+  to every forge command, as its prompt says.
+- Its `aidrian project result` writes `result.json` in the drop folder and prints `handed <issue> <status>`; it writes
+  no ledger row and calls no forge. The driver's `wait` reads the file without following a link, as a regular file of
+  the user with one link, checks every field again, and, for `merged` or `pr_open`, that the pull request is the
+  issue's own on the forge. Anything else ends the attempt `bad_result`.
+- Codex must run every hook of this plugin unasked: each handler hooks.json lists, of every event, needs a trusted
+  `[hooks.state]` entry for this plugin's id in `config.toml`, not turned off. Trust them in `/hooks` after each install
+  and update. `[sandbox_workspace_write] network_access = true` must be set, or the session could neither push nor
+  reach the forge, and `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
+  folders, nor the runs folder. Each failure halts the start, and records nothing.
+- A start holds the session only after three proofs, each in a bounded wait: its session id in the first JSON event
+  within 30 seconds, its first tool call within 180 seconds, and the agent gate hook's beacon a few seconds after it.
+  A failed proof stops the process at once, gives the attempt back, and halts the run until the Human's own shell, or
+  another attended session that never drove the run, runs `aidrian project resume <run>`. Only a shell command, a file
+  change, or an MCP tool's call counts as a tool call; a `turn.failed` or error event before one names its cause.
+- The clone is no shared main checkout: its machine switches and decisions come from the run's main checkout, its own
+  `.aidrian.local.json` is never read, and the main-checkout rule lets the session edit and commit there. A hook refuses
+  every call in the clone while its own git config sets a key that makes git run a program, such as `core.fsmonitor`,
+  `gpg.program` with `log.showSignature`, or a credential helper, and every git call of the plugin runs with
+  fsmonitor, hooks, and signature display off.
+- A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
+  time is the one recorded.
+
+Before `verified` changes, a live Codex must show every one of these:
+
+1. A hard link from the workspace to a file outside it is refused.
+2. A write through a symlink to a file outside the writable roots is refused.
+3. Whether a `.git` folder or pointer in a writable root is writable, and whether `--add-dir` can grant one.
+4. `--add-dir` grants exactly the named folders, and no folder above or beside them.
+5. PreToolUse fires for shell, `apply_patch`, and MCP calls, with `session_id` equal to the `thread_id` of
+   `thread.started`.
+6. Hooks run outside the sandbox, so the beacon can be written in the state folder.
+7. What `network_access` covers: git over SSH and HTTPS, and `gh`.
+8. Whether `codex exec` loads a project's `.codex/config.toml` from a clone of a trusted repository.
+9. Which environment hook processes get.
+
 ## Limits
 
 - Codex cannot make one agent read-only.

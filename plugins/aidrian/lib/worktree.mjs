@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util';
 
 import { CONFIG_ERROR, commandConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { checkoutRoots, isIgnored } from './git.mjs';
+import { checkoutRoots, hardenedArgs, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
 import { sweepDrafts } from './review/drafts.mjs';
 import { usageLines } from './usage.mjs';
@@ -73,17 +73,20 @@ function print(result) {
 
 const blocked = (phase, reason, nextStep) => Object.assign(new Error(reason), { phase, nextStep });
 
-// The raw result of a command; `status` is 1 when it could not start.
+// The raw result of a command; `status` is 1 when it could not start. git runs hardened, as every plugin git call does
+// (lib/git.mjs hardenedArgs).
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...options });
+  const hardened = command === 'git' ? { args: hardenedArgs(args), env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } } : { args, env: options.env };
+  const result = spawnSync(command, hardened.args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...options, ...(hardened.env ? { env: hardened.env } : {}) });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? result.error?.message ?? '' };
 }
 
-const git = (root, args) => run('git', ['-C', root, ...args]);
+const gitIn = (root, args) => run('git', ['-C', root, ...args]);
+const git = gitIn;
 const failure = (result) => result.stderr.trim() || result.stdout.trim() || `exited ${result.status}`;
 
 // The repository context every step needs: the main checkout, the current checkout, the config, and the base ref.
-function context(cwd) {
+function context(cwd, git = gitIn) {
   const roots = checkoutRoots(cwd);
   if (!roots) throw blocked('preconditions', `${cwd} is not inside a git repository`);
   const project = projectAt(cwd);
@@ -106,9 +109,11 @@ function projectConfig(project) {
 
 // Plans or creates the worktree for `branch`. A new branch starts at `base` (origin/<defaultBranch>, or the local
 // default branch without one) with no upstream, so a bare `git push` cannot target the default branch. An existing
-// local or remote branch is reused only with `reuseExisting`, after a person approved the plan that named it.
-export function createWorktree({ branch, slug, base, fetch = false, plan = false, reuseExisting = false }, { cwd = process.cwd() } = {}) {
-  const ctx = context(cwd);
+// local or remote branch is reused only with `reuseExisting`, after a person approved the plan that named it. `git`,
+// `(root, args)` in spawnSync's shape, runs its git calls: a caller with git settings of its own, as a project run's
+// start gate (lib/git.mjs gateGit), passes it.
+export function createWorktree({ branch, slug, base, fetch = false, plan = false, reuseExisting = false }, { cwd = process.cwd(), git = gitIn } = {}) {
+  const ctx = context(cwd, git);
   if (run('git', ['check-ref-format', '--branch', branch]).status !== 0) throw blocked('validate', `invalid branch name: ${branch}`);
   const name = slug ?? branch.split('/').pop();
   if (!SLUG.test(name)) throw blocked('validate', `invalid worktree folder name: ${name}`, 'Pass --slug with letters, digits, ".", "_", "+", or "-".');

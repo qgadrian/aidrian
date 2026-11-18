@@ -8,12 +8,12 @@
 // Every call goes through `run`, spawnSync's shape, which a test replaces, so no test starts a real session. `claude` is
 // found on the absolute folders of PATH alone: an empty or relative entry would run whatever `claude` the folder holds.
 
-import { spawnSync } from 'node:child_process';
-import { accessSync, closeSync, constants, fstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
+import { programNames, programOnPath, runCommand } from './process.mjs';
 
 // `claude --bg` may first start the supervisor, which takes a few seconds.
 const START_TIMEOUT = 60_000;
@@ -47,27 +47,14 @@ const NOT_RUN = new Set(['ENOENT', 'EACCES']);
 const REFUSED = /\bWorkspace not trusted\b/u;
 const NO_CLAUDE = '`claude` is not on PATH, in an absolute folder';
 
-export const runCommand = (command, args, { cwd, timeout }) => spawnSync(command, args, { cwd, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+export { runCommand };
 const pause = pauseSync;
 
 // The first line of a command's message, on one line and at most 200 characters, for a fallback line.
 const firstLine = (text) => String(text ?? '').trim().split('\n')[0].replace(new RegExp(CONTROL, 'gu'), ' ').slice(0, 200);
 
 // The `claude` executable on the absolute folders of `env.PATH`, or null.
-export function claudeOnPath(env) {
-  const names = process.platform === 'win32' ? ['claude.exe', 'claude.cmd'] : ['claude'];
-  const folders = String(env.PATH ?? '').split(path.delimiter).filter((dir) => dir !== '' && path.isAbsolute(dir));
-  for (const file of folders.flatMap((dir) => names.map((name) => path.join(dir, name)))) {
-    try {
-      if (!statSync(file).isFile()) continue;
-      accessSync(file, constants.X_OK);
-      return file;
-    } catch {
-      // Not there, or not executable: the next folder.
-    }
-  }
-  return null;
-}
+export const claudeOnPath = (env) => programOnPath(env, programNames('claude'));
 
 // The sessions `claude agents --json` lists, with `extra` its further options, or null when it cannot answer.
 function listed(run, claude, cwd, extra = []) {

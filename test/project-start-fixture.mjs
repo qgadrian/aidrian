@@ -34,16 +34,16 @@ export const noWait = () => {};
 const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8', stdio: 'pipe' });
 
 // A stand-in for the forge facade: the default branch `main` at the commit `head()` gives, the committed config at
-// `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, and the pull requests in `views`, by number. `calls`
-// records each call.
-export function fakeForge(config, head, views = {}) {
+// `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, and the push
+// permission `push()` gives. `calls` records each call.
+export function fakeForge(config, head, views = {}, { push = () => true } = {}) {
   const calls = [];
   const missing = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
   return {
     calls,
     repository: (repo, options) => {
       calls.push(['repository', repo, options]);
-      return { default_branch: 'main' };
+      return { default_branch: 'main', permissions: { pull: true, push: push() } };
     },
     contents: (repo, file, ref, options) => {
       calls.push(['contents', repo, file, ref, options]);
@@ -98,8 +98,9 @@ export function fakeClaude({ dir, start = null, hidden = false } = {}) {
 // The project, run, and helpers. `projectRun` is the committed projectRun; `working` a working copy config.json
 // written over the committed one; `local` the machine's git-ignored file; `forgeConfig` the config the forge answers
 // with, the committed one by default; `bootstrap` the worktrees' bootstrap command; `ignore` more .gitignore lines;
-// `files` more files committed with the config, by path; `inRepo` keeps the worktrees in `.worktrees` of the checkout.
-export function runFixture(t, { projectRun = { allow: true }, solo, local = { handoff: { background: 'on' } }, forgeConfig, bootstrap, ignore = [], issues = ISSUES, init = true, files = {}, inRepo = false } = {}) {
+// `files` more files committed with the config, by path; `inRepo` keeps the worktrees in `.worktrees` of the checkout;
+// `config` more keys of the committed config.json, its `git` group merged with the worktrees folder.
+export function runFixture(t, { projectRun = { allow: true }, solo, local = { handoff: { background: 'on' } }, forgeConfig, bootstrap, ignore = [], issues = ISSUES, init = true, files = {}, inRepo = false, config: extra = {} } = {}) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'project');
@@ -109,7 +110,7 @@ export function runFixture(t, { projectRun = { allow: true }, solo, local = { ha
   const bin = path.join(root, 'bin');
   const claudeConfig = path.join(root, 'claude-config');
   for (const each of [dir, state, ...(inRepo ? [] : [worktrees]), home, bin]) mkdirSync(each, { recursive: true, mode: 0o700 });
-  const committed = { version: 1, state: { dir: state }, projectRun, ...(solo === undefined ? {} : { solo }), git: { worktrees: { dir: inRepo ? '.worktrees' : worktrees, ...(bootstrap ? { bootstrap } : {}) } } };
+  const committed = { version: 1, state: { dir: state }, projectRun, ...(solo === undefined ? {} : { solo }), ...extra, git: { ...extra.git, worktrees: { dir: inRepo ? '.worktrees' : worktrees, ...(bootstrap ? { bootstrap } : {}) } } };
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify(committed));
   writeFileSync(path.join(dir, '.gitignore'), ['.aidrian.local.json', '*.input', ...(inRepo ? ['.worktrees/'] : []), ...ignore, ''].join('\n'));
@@ -124,12 +125,12 @@ export function runFixture(t, { projectRun = { allow: true }, solo, local = { ha
   git('add', '.');
   git('commit', '-q', '-m', 'config');
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
-  // The remote answers from a local bare copy: git's SSH command runs its upload-pack, so origin's URL stays the pinned one.
+  // The remote answers from a local bare copy: the `ssh` the environment's PATH finds first runs its upload-pack or
+  // receive-pack, so origin's URL stays the pinned one and no git config of the repository names a program, which the
+  // start gate refuses (lib/project-trust.mjs repositoryProblem).
   const bare = path.join(root, 'remote.git');
   execFileSync('git', ['clone', '-q', '--bare', dir, bare], { stdio: 'pipe' });
-  const ssh = path.join(bin, 'fake-ssh');
-  writeFileSync(ssh, `#!/bin/sh\nexec git upload-pack '${bare}'\n`, { mode: 0o755 });
-  git('config', 'core.sshCommand', ssh);
+  writeFileSync(path.join(bin, 'ssh'), `#!/bin/sh\ncase "$*" in *git-receive-pack*) exec git receive-pack '${bare}' ;; *) exec git upload-pack '${bare}' ;; esac\n`, { mode: 0o755 });
   if (local) writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(local));
   writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const transcripts = path.join(claudeConfig, 'projects', dir.replace(/[^A-Za-z0-9]/gu, '-'));

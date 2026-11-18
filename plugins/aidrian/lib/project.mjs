@@ -35,12 +35,12 @@ const defaultRead = () => undefined;
 // change them.
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
-  'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
+  'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
   'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'remotes', 'review-gate', 'session-length',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-trust', 'remotes', 'review-gate', 'session-length',
   'session-start-gate', 'shell-lex', 'solo',
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage',
 ].join('|');
@@ -166,8 +166,9 @@ export function openProject(root, roots) {
   const unreadable = [];
   const dir = folderDir(root, errors, unreadable);
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
-  const checkouts = checkoutsOf(root, roots);
-  const local = readLocal(checkouts, errors, unreadable);
+  const found = roots === undefined ? safeRoots(root) : roots;
+  const checkouts = checkoutsOf(root, found);
+  const local = cloneLocal(found, checkouts, errors, unreadable);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
   return {
     root,
@@ -280,6 +281,24 @@ export function strictConfigPathIn(read) {
 }
 
 // `root`, then, when it is in a git worktree, the same folder in the main checkout.
+// checkoutRoots for `root`, or null when it is no folder.
+function safeRoots(root) {
+  try {
+    return checkoutRoots(root);
+  } catch {
+    return null;
+  }
+}
+
+// The local settings of the checkouts `checkouts` whose roots are `roots`: readLocal's, but for a project run's attempt
+// clone (lib/attempt-clone.mjs), whose session writes its folder, only the run's main checkout's file counts, the
+// clone's own never; and one whose link cannot be read reads every switch off and no decisions.
+function cloneLocal(roots, checkouts, errors, unreadable) {
+  if (!roots?.attempt) return readLocal(checkouts, errors, unreadable);
+  if (roots.unlinked) return { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...OFF_SWITCHES };
+  return readLocal([checkouts.at(-1)], errors, unreadable);
+}
+
 function checkoutsOf(root, roots) {
   const main = inMainCheckout(root, roots);
   return main && main !== realpathSync(root) ? [root, main] : [root];
@@ -339,6 +358,7 @@ function mainLocal(main, errors) {
 }
 
 const UNSET_SWITCHES = Object.freeze({ autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset', handoffBackground: 'unset' });
+const OFF_SWITCHES = Object.freeze({ autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off', handoffBackground: 'off' });
 
 // This machine's switches, from the main checkout's file as checkedLocal read it: each "unset" when there is no file,
 // and "off" when it cannot be read. An error anywhere in the file, a tracked-file one too, reads an unset auto-merge

@@ -7,6 +7,7 @@
 //   aidrian project wait RUN [--max-wait S] # the driver waits for an issue's session to settle, at most S seconds
 //   aidrian project result RUN ISSUE --file PATH   # the issue's own session records how it ended
 //   aidrian project handoff RUN BRIEF      # the driver records the brief its background continuation starts from
+//   aidrian project resume RUN             # an attended session lifts the halt a failed start proof put on the run
 //
 // The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder as lib/project-run.mjs
 // runPlace resolves and checks it. `--project` on init must name the project of the current folder's main checkout.
@@ -19,22 +20,23 @@ import { commandConfig } from './config.mjs';
 import { resolvedPath } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { projectAt } from './project.mjs';
-import { initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
-import { recordHandoff, recordResult, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
+import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
+import { recordHandoff, recordResult, resumeRun, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
-  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR]';
+  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
-export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff'];
+export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume'];
 // The positionals each action takes after its name.
-const POSITIONALS = { init: ['one run id'], next: ['one run id'], summary: ['one run id'], start: ['a run id', 'an issue key'], wait: ['one run id'], result: ['a run id', 'an issue key'], handoff: ['a run id', 'a brief'] };
+const POSITIONALS = { init: ['one run id'], next: ['one run id'], summary: ['one run id'], start: ['a run id', 'an issue key'], wait: ['one run id'], result: ['a run id', 'an issue key'], handoff: ['a run id', 'a brief'], resume: ['one run id'] };
 
 export const commands = {
   project: {
     usage: USAGE,
     about: 'keep the record of a project run that works through a tracker project: init validates the snapshot input the driver session wrote from the tracker and starts run RUN, from the attended main session only; next prints the issue or issues to start, by blockers, then priority, then key, or done; summary writes the run\'s summary.md from its ledger; ' +
-      'start, for the run\'s driver, starts the issue\'s own session in the background in its worktree, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with',
+      'start, for the run\'s driver, starts the issue\'s own session in the background in its worktree, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
+      'resume, from an attended session only, lifts the halt a failed start proof put on the run',
     run: (args) => print(projectCommand(args)),
   },
 };
@@ -78,6 +80,7 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
     return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });
   }
   if (action === 'handoff') return recordHandoff({ ...gate, brief: path.resolve(cwd, second) });
+  if (action === 'resume') return resumeRun(gate);
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);
     if (!/^\d{1,4}$/u.test(given) || Number(given) > WAIT_CEILING) return fail(`project wait takes --max-wait as whole seconds from 0 to ${WAIT_CEILING}`);
@@ -89,7 +92,8 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
   if (found.problem) return refused(action, found.problem);
   if (action === 'next') {
     const plan = planRun(found.snapshot, found.states);
-    return { exitCode: 0, out: values.json ? [JSON.stringify(plan, null, 2)] : nextLines(plan), err: [] };
+    const halt = haltOf(found);
+    return { exitCode: 0, out: values.json ? [JSON.stringify({ ...plan, halt }, null, 2)] : nextLines(plan, { halt }), err: [] };
   }
   const written = writeSummary(place.state, run);
   if (written.problem) return refused('summary', written.problem);

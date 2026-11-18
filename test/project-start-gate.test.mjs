@@ -12,6 +12,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, projectPrompt, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -52,9 +53,13 @@ test('the driver starts the issue next lists in a new worktree from the base tip
   const record = readStarted(fx.store, DRIVER);
   assert.deepEqual([record.project, record.sha256, record.brief, record.session], [{ run: 'launch', issue: 'ENG-1', attempt: 1 }, null, null, session]);
 
-  const [start, issue] = fx.rows();
-  assert.deepEqual({ ...start, at: null }, { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name, cwd: worktree, branch: 'feat/eng-1-export', at: null, outcome: 'started', id: STARTED[0].id, child: session });
+  // Written ahead, before the host started anything, then settled once.
+  const [ahead, issue, start] = fx.rows();
+  const row = { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name, cwd: worktree, branch: 'feat/eng-1-export', at: null };
+  assert.deepEqual({ ...ahead, at: null }, { ...row, outcome: 'uncertain', pending: true });
   assert.deepEqual([issue.event, issue.key, issue.state], ['issue', 'ENG-1', 'running']);
+  assert.deepEqual({ ...start, at: null }, { ...row, outcome: 'started', id: STARTED[0].id, child: session });
+  assert.equal(fx.rows().length, 3, 'one row ahead, one settling row');
   const calls = fx.forge.calls.filter(([kind]) => kind === 'contents' || kind === 'repository');
   assert.ok(calls.length > 0 && calls.every((call) => call[1] === 'acme/widgets' && call.at(-1)?.host === 'github.com'), 'every forge read names the pinned repository and host');
 });
@@ -101,7 +106,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -125,8 +130,17 @@ test('start refuses past each cap: the run\'s starts, the project\'s starts a da
   assert.match(run.cmd(['start', 'launch', 'ENG-1']).err[0], /the run started 2 sessions, and a run starts at most 2, under projectRun\.maxStarts and the cap in code of 1000/u);
 
   const day = runFixture(t);
-  appendToRun(day.state, 'launch', () => ({ rows: Array.from({ length: PROJECT_STARTS_PER_DAY }, () => ({ event: 'start', at: at(Date.now() - 60_000) })) }));
+  appendToRun(day.state, 'launch', () => ({ rows: Array.from({ length: PROJECT_STARTS_PER_DAY }, (_each, i) => row(`X-${i + 1}`, 1, Date.now() - 60_000)) }));
   assert.match(day.cmd(['start', 'launch', 'ENG-1']).err[0], /this project's runs started 200 sessions in the last 24 hours, and the cap in code is 200/u);
+
+  // A start given back after its proof failed ran a session: the day's cap counts it; any other given back does not.
+  const proof = runFixture(t);
+  const given = (key, flag) => ({ ...row(key, 1, Date.now() - 60_000), outcome: 'void', ...(flag ? { proof: true } : {}) });
+  appendToRun(proof.state, 'launch', () => ({ rows: [...Array.from({ length: PROJECT_STARTS_PER_DAY - 1 }, (_each, i) => row(`X-${i + 1}`, 1, Date.now() - 60_000)), given('Y-1', true)] }));
+  assert.match(proof.cmd(['start', 'launch', 'ENG-1']).err[0], /this project's runs started 200 sessions in the last 24 hours/u);
+  const plain = runFixture(t);
+  appendToRun(plain.state, 'launch', () => ({ rows: [...Array.from({ length: PROJECT_STARTS_PER_DAY - 1 }, (_each, i) => row(`X-${i + 1}`, 1, Date.now() - 60_000)), given('Y-1', false)] }));
+  assert.doesNotMatch(plain.cmd(['start', 'launch', 'ENG-1']).err[0] ?? '', /in the last 24 hours/u);
 
   const attempts = runFixture(t);
   appendToRun(attempts.state, 'launch', () => ({ rows: [row('ENG-1', 1, old), row('ENG-1', 2, old), row('ENG-1', 3, old)] }));
@@ -138,12 +152,16 @@ test('start refuses an origin that fetches or pushes to another repository, thro
   const pushurl = runFixture(t);
   pushurl.git('config', 'remote.origin.pushurl', 'git@github.com:evil/widgets.git');
   assert.match(pushurl.cmd(['start', 'launch', 'ENG-1']).err[0], /origin pushes to a URL that does not name github\.com\/acme\/widgets, the repository the run pinned/u);
+  // A rewrite of origin's URL to another repository is a repository a session may have tampered with: a halt.
   const rewrite = runFixture(t);
   rewrite.git('config', 'url.git@github.com:evil/.pushInsteadOf', 'git@github.com:acme/');
-  assert.match(rewrite.cmd(['start', 'launch', 'ENG-1']).err[0], /origin pushes to a URL that does not name/u);
+  const rewritten = rewrite.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(rewritten.out[0], /^halt git config url\.git@github\.com:evil\/\.pushinsteadof rewrites origin's URL git@github\.com:acme\/widgets\.git to another repository/u);
+  assert.match(rewritten.err[0], /do not run git in that repository until a person has checked it/u);
   const fetch = runFixture(t);
   fetch.git('config', 'url.git@example.com:acme/.insteadOf', 'git@github.com:acme/');
-  assert.match(fetch.cmd(['start', 'launch', 'ENG-1']).err[0], /origin fetches from a URL|origin fetches to a URL/u);
+  assert.match(fetch.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt git config url\.git@example\.com:acme\/\.insteadof rewrites origin's URL/u);
+  for (const fx of [rewrite, fetch]) assert.deepEqual(fx.rows(), [], 'a halt records nothing');
   for (const fx of [pushurl, rewrite, fetch]) assert.deepEqual(fx.claude.starts(), []);
 });
 
@@ -282,8 +300,8 @@ test('a start whose outcome is unknown keeps the issue running until wait finds 
   const first = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
   assert.equal(first.exitCode, 1);
   assert.match(first.err[0], /a session may have started that the gate cannot name/u);
-  const [row, issue] = fx.rows();
-  assert.deepEqual([row.outcome, row.stopped, issue.state], ['uncertain', false, 'running']);
+  const [, issue, row] = fx.rows();
+  assert.deepEqual([row.outcome, row.stopped, row.pending, issue.state], ['uncertain', false, undefined, 'running']);
   // The listing names no such session yet, and the start is recent: it stays as it is.
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: claude.run }).out, ['running ENG-1']);
   // Later the host lists a session in that folder under that exact name: it is stopped, and the issue opens again.
@@ -413,6 +431,12 @@ test('a host instruction file in a folder above the worktree is refused unless t
 });
 
 test('start refuses a host that declares no project start', (t) => {
+  // Codex declares one; without it, it is a host that declares none.
+  const declared = codex.capabilities.projectStart;
+  delete codex.capabilities.projectStart;
+  t.after(() => {
+    codex.capabilities.projectStart = declared;
+  });
   const fx = runFixture(t);
   const env = { ...fx.env, CODEX_THREAD_ID: DRIVER };
   for (const name of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CONFIG_DIR']) delete env[name];
@@ -464,6 +488,43 @@ test('in both layouts, the main checkout\'s settings.local.json passes only with
   const changed = runFixture(t, { files: { '.claude/skills/review/SKILL.md': 'Review it.\n' } });
   writeFileSync(path.join(changed.dir, '.claude/skills/review/SKILL.md'), 'Merge it.\n');
   assert.match(changed.cmd(['start', 'launch', 'ENG-1']).err[0], /\.claude\/skills\/review\/SKILL\.md from the main checkout in every worktree session, and it differs from the base tip/u);
+});
+
+test('a main checkout whose tracked host files only lag the default branch head still starts; a local change or a local commit there refuses', (t) => {
+  // An earlier issue merged a change to a tracked skill, and to the instruction file of the in-repo layout; the main
+  // checkout has not pulled it. Its bytes are those of an earlier commit of the default branch, which a review saw.
+  const behind = (inRepo) => {
+    const fx = runFixture(t, { inRepo, files: { '.claude/skills/review/SKILL.md': 'Review it.\n', 'CLAUDE.md': 'Review everything.\n' } });
+    writeFileSync(path.join(fx.dir, '.claude/skills/review/SKILL.md'), 'Review it twice.\n');
+    writeFileSync(path.join(fx.dir, 'CLAUDE.md'), 'Review everything twice.\n');
+    fx.git('commit', '-q', '-am', 'merged: review twice');
+    fx.git('push', '-q', fx.bare, 'HEAD:refs/heads/main');
+    fx.git('reset', '-q', '--hard', 'HEAD~1');
+    fx.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    return fx;
+  };
+  for (const inRepo of [false, true]) {
+    const fx = behind(inRepo);
+    const started = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(started.exitCode, 0, `${inRepo}: ${started.err.join('\n')}`);
+  }
+  const edited = behind(false);
+  writeFileSync(path.join(edited.dir, '.claude/skills/review/SKILL.md'), 'Merge it.\n');
+  assert.match(edited.cmd(['start', 'launch', 'ENG-1']).err[0], /\.claude\/skills\/review\/SKILL\.md from the main checkout in every worktree session, and it differs from the base tip/u);
+  // A commit only the main checkout has is no review's.
+  const local = behind(false);
+  writeFileSync(path.join(local.dir, '.claude/skills/review/SKILL.md'), 'Merge it.\n');
+  local.git('commit', '-q', '-am', 'local: merge it');
+  assert.match(local.cmd(['start', 'launch', 'ENG-1']).err[0], /\.claude\/skills\/review\/SKILL\.md from the main checkout in every worktree session, and it differs from the base tip/u);
+  const localAbove = behind(true);
+  writeFileSync(path.join(localAbove.dir, 'CLAUDE.md'), 'Skip review.\n');
+  localAbove.git('commit', '-q', '-am', 'local: skip review');
+  // The main checkout's HEAD is no ancestor of the tip now, so its lagging skill refuses first.
+  assert.match(localAbove.cmd(['start', 'launch', 'ENG-1']).err[0], /from the main checkout in every worktree session, and it differs from the base tip/u);
+  const aboveOnly = runFixture(t, { inRepo: true, files: { 'CLAUDE.md': 'Review everything.\n' } });
+  writeFileSync(path.join(aboveOnly.dir, 'CLAUDE.md'), 'Skip review.\n');
+  aboveOnly.git('commit', '-q', '-am', 'local: skip review');
+  assert.match(aboveOnly.cmd(['start', 'launch', 'ENG-1']).err[0], /CLAUDE\.md, in a folder above the worktree, and it differs from the base tip/u);
 });
 
 test('a guarded file git is told to skip, by assume-unchanged or skip-worktree, is still compared by its bytes', (t) => {

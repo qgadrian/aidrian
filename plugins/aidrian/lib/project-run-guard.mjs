@@ -17,13 +17,14 @@ import { projectRuleReason } from './agent-gates.mjs';
 import { bashCall, opaqueTexts } from './config-guard.mjs';
 import { loadConfig } from './config.mjs';
 import { BACKGROUND_HOPS } from './handoff-continue.mjs';
-import { PROJECT_SUB, PROJECT_SUBCOMMANDS, PROJECT_WORD } from './handoff-guard.mjs';
+import { PROJECT_SUB, PROJECT_SUBCOMMANDS, PROJECT_WORD, stateFolders } from './handoff-guard.mjs';
 import { openStore, readStarted, readStartedDated, SESSION_ID } from './handoff-markers.mjs';
+import { resolvedPath } from './fs.mjs';
 import { opaqueShellCommand } from './hosts/index.mjs';
 import { findProject } from './project.mjs';
-import { attendedProblem, ISSUE_KEY, readRun, RUN_ID, runPlace } from './project-run.mjs';
+import { activeRuns, attendedProblem, ISSUE_KEY, readRun, RUN_ID, runPlace } from './project-run.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
-import { readUnattendedMark } from './unattended-mark.mjs';
+import { marksNaming, readUnattendedMark } from './unattended-mark.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 // How far back a start record of an issue's chain is read: the window of a chain floor.
@@ -34,9 +35,10 @@ export const ISSUE_ATTEMPTS = 3;
 export const SUBCOMMANDS = PROJECT_SUBCOMMANDS;
 // The subcommands a subagent may run.
 const SUBAGENT_MAY = new Set(['next']);
-// What a start row records of its start: a session held to its floor, one whose launch is unknown, or one that could
-// not be held.
-export const START_OUTCOMES = Object.freeze(['started', 'uncertain', 'unheld']);
+// What a start row records of its start: a session held to its floor, one whose launch is unknown, one that could not be
+// held, or a start that ran nothing, or stopped what it ran, and gave its attempt back (`void`). The gate writes each
+// start ahead, as `uncertain` with `pending: true`, before the host starts anything, then once more when it knows.
+export const START_OUTCOMES = Object.freeze(['started', 'uncertain', 'unheld', 'void']);
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 
@@ -54,6 +56,18 @@ export function driverOf(found) {
     if (Number.isFinite(at) && at >= driver.since) driver = { session: row.session, since: at };
   }
   return driver;
+}
+
+// Whether `project` has a project run under way: a run that has not ended (project-run.mjs activeRuns) in any state
+// folder its runs may be kept in (handoff-guard.mjs stateFolders, which takes `base`, the hook call's baseReader, and
+// `home`, a test's), a folder of runs that cannot be read, or a live unattended or pending mark that names one of its
+// checkouts (unattended-mark.mjs marksNaming). While one is, the agent gate hook holds every subagent to the main
+// checkout's host paths (handoff-guard.mjs mainCheckoutWriteDenial); a project with no run is not held.
+export function projectRunActive(project, config, { base, home } = {}) {
+  for (const state of stateFolders(project, config, { lazy: true, ...(base ? { base } : {}), ...(home ? { home } : {}) })) {
+    if (activeRuns(state).length > 0) return true;
+  }
+  return marksNaming(project.checkouts ?? [], home ? { home } : {});
 }
 
 // Whether the member of a chain, { id, session }, is the session `session`: its full id, or, when only the id the host
@@ -78,14 +92,53 @@ export function custody({ found, store, session, now = Date.now() }) {
   return { role: 'successor', driver, sha256: record.sha256 };
 }
 
+// Why `session` may not lift a halt of the run `found`, or null: it drives the run, drove it once (the init row's
+// session, or one a `driver` row named), or is the continuation custody would move to. Only another attended session, or
+// the Human's own shell, lifts a halt.
+export function resumerProblem({ found, store, session, now = Date.now() }) {
+  if (!isSession(session)) return null;
+  const members = new Set([found.init.session, ...found.rows.filter((row) => row.event === 'driver').flatMap((row) => [row.session, row.from])]);
+  if (members.has(session)) return `this session drives the run ${found.init.run}, or did, and a halt is lifted by another session a person attends, or by the Human's own shell`;
+  const held = custody({ found, store, session, now });
+  if (held.role) return `this session is the run ${found.init.run}'s ${held.role}, and a halt is lifted by another session a person attends, or by the Human's own shell`;
+  return null;
+}
+
+// The real path of the attempt folder a confined session works in, for the session whose unattended mark `mark` names
+// the run and issue: the folder of the drop the issue's latest start row names, started or written ahead, in a state folder of `project`
+// (handoff-guard.mjs stateFolders, with `base` and `home`), or null. The agent gate hook lets that session write only
+// there of the runs folder (handoff-guard.mjs projectRunWriteDenial).
+export function ownAttemptFolder(project, config, mark, { base, home } = {}) {
+  if (!mark?.project || !mark?.issue || !RUN_ID.test(mark.project)) return null;
+  for (const state of stateFolders(project, config, { lazy: true, ...(base ? { base } : {}), ...(home ? { home } : {}) })) {
+    const found = readRun(state, mark.project);
+    if (found.problem || found.states.get(mark.issue)?.state !== 'running') continue;
+    // The start written ahead counts as soon as it is: the session writes its folder before the gate settles the row.
+    const start = startsOf(found, mark.issue).at(-1);
+    if (typeof start?.drop !== 'string' || !['started', 'uncertain'].includes(start.outcome)) continue;
+    const folder = resolvedPath(path.dirname(start.drop));
+    const runs = resolvedPath(path.join(state, 'runs', mark.project, 'attempts'));
+    if (folder && runs && path.dirname(folder) === runs) return folder;
+  }
+  return null;
+}
+
 // Whether `row` is a start row as the gate writes it.
 export const isStartRow = (row) => row?.event === 'start' && typeof row.key === 'string' && ISSUE_KEY.test(row.key)
   && Number.isInteger(row.attempt) && row.attempt >= 1 && row.attempt <= ISSUE_ATTEMPTS && START_OUTCOMES.includes(row.outcome)
   && isSession(row.session) && Number.isFinite(timeOf(row)) && typeof row.cwd === 'string' && path.isAbsolute(row.cwd) && typeof row.name === 'string'
   && (row.outcome !== 'started' || (isSession(row.id) && (row.child === null || isSession(row.child))));
 
-// The start rows of issue `key`, in order.
-export const startsOf = (found, key) => found.rows.filter((row) => isStartRow(row) && row.key === key);
+// The start rows of the run `found`, the latest of each issue's attempt, in the order each attempt was first written:
+// the gate writes an attempt's row ahead of the start and once more after it, so each attempt counts once.
+export function startRows(found) {
+  const latest = new Map();
+  for (const row of found.rows) if (isStartRow(row)) latest.set(`${row.key}#${row.attempt}`, row);
+  return [...latest.values()];
+}
+
+// The start rows of issue `key`, one an attempt, in order.
+export const startsOf = (found, key) => startRows(found).filter((row) => row.key === key);
 
 // The latest start of issue `key` that held its session, or null.
 export const latestStart = (found, key) => startsOf(found, key).filter((row) => row.outcome === 'started').at(-1) ?? null;
@@ -258,6 +311,14 @@ const RULES = Object.freeze({
     const problem = attendedProblem({ input, session, project, config, state, ...(home ? { home } : {}) });
     return problem && `\`aidrian project init\` makes this session a project run's driver, and ${problem}`;
   },
+  // Lifts a halt: only an attended main session, by attendedProblem with the hook's own payload, as init.
+  resume: ({ input, session, project, config, state, home, run }) => {
+    const problem = attendedProblem({ input, session, project, config, state, ...(home ? { home } : {}) });
+    if (problem) return `\`aidrian project resume\` lifts a run's halt, which a person decides, and ${problem}`;
+    const found = RUN_ID.test(run ?? '') ? readRun(state, run) : null;
+    const member = found && !found.problem ? resumerProblem({ found, store: runStore(project, config, state), session }) : null;
+    return member && `\`aidrian project resume\` lifts a run's halt, which a person decides, and ${member}`;
+  },
   start: driverOnly,
   wait: driverOnly,
   handoff: driverOnly,
@@ -283,7 +344,7 @@ function authorize({ input, sub, rest, folder, home, rule }) {
   const place = runPlace(project, config, home ? { home } : {});
   if (place.problem) return null;
   const session = input.session_id;
-  if (sub === 'init') return rule({ input, session, project, config, state: place.state, home });
+  if (sub === 'init' || sub === 'resume') return rule({ input, session, project, config, state: place.state, home, run: rest.positionals[0] });
   const [run, key] = rest.positionals;
   if (typeof run !== 'string' || !RUN_ID.test(run)) return null;
   const found = readRun(place.state, run);

@@ -237,6 +237,27 @@ test('with the store inside a checkout of the repository, no hook reads or write
   assert.deepEqual(readdirSync(setting.continueDir).sort(), ['armed-old.json', 'ready-other.json']);
 });
 
+test('a project below the repository root with a relative state.dir, which resolves against that root, gets no marker read or written', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-continue-hooks-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'repo');
+  const dir = path.join(repo, 'sub');
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.state' }, session: { handoff: { continue: 'clear' } } }));
+  assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0);
+  // The folder state.dir names: the repository root's `.state`, not the project's.
+  const continueDir = path.join(repo, '.state/handoffs/.continue');
+  mkdirSync(continueDir, { recursive: true });
+  const value = { route: 'clear', session: 'old', brief: path.join(repo, '.state/handoffs/2026-11-15-widget.md'), slug: 'widget', chain: 1, sha256: sha(BRIEF), armed_at: Date.now() };
+  writeFileSync(value.brief, BRIEF);
+  writeFileSync(path.join(continueDir, 'armed-old.json'), JSON.stringify(value));
+  const setting = { dir };
+  assert.deepEqual(prompt(setting, { prompt: 'go on' }), { status: 0, stdout: '', stderr: '' });
+  assert.equal(end(setting).status, 0);
+  assert.deepEqual(readdirSync(continueDir), ['armed-old.json'], 'the session end promotes nothing into the repository');
+  assert.equal(start(setting).stdout, plain(setting));
+});
+
 test('a store that cannot be read leaves every hook as it is today', { skip: process.getuid?.() === 0 && 'root reads any folder' }, (t) => {
   const setting = setup(t);
   armMarker(setting);

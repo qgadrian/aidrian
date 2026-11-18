@@ -19,7 +19,7 @@
 // Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output, another repository, or a
 // config.json with errors).
 
-import { forgeFor, repoIdentity } from './forges/index.mjs';
+import { forgeFor, remoteIdentity, repoIdentity } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 
 const NON_TERMINAL = new Set(['IN_PROGRESS', 'QUEUED', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED']);
@@ -101,9 +101,10 @@ export function parseCliArgs(argv) {
 
 // One remote URL as `{ host, path }` to match a `-R` value against, or null. `host` is null when the remote names
 // no forge host to compare: a host with no dot is an SSH config alias (`git@github-work:acme/notes.git`), and a remote on
-// this machine's disk (a path, or file://) keeps only its last two path parts, as gh's `owner/repo`.
+// this machine's disk (a path git reads as a folder, a bare `vendor/mirror.git` included, or a file: URL) keeps only its
+// last two path parts, as gh's `owner/repo`: remoteIdentity reads a network remote alone.
 export function remoteRepo(url) {
-  const identity = repoIdentity(url);
+  const identity = remoteIdentity(url);
   if (identity) return identity.host.includes('.') ? identity : { ...identity, host: null };
   if (typeof url !== 'string') return null;
   const parts = url.trim().replace(/\/+$/u, '').replace(/\.git$/u, '').split(/[/:]/u).filter(Boolean);
@@ -133,16 +134,13 @@ export function namesRemote(given, remotes) {
   return remotes.some((remote) => remote.path === wanted.path && (bare || remote.host === null || remote.host === wanted.host));
 }
 
-// `host/owner/repo`, lowercased, from a remote URL: https, ssh, or `git@host:owner/repo.git`, with or without a slash
-// after the colon; null for anything else, such as a folder on disk, which names no host. `ssh.github.com`, GitHub's ssh
-// over port 443, is github.com. No other alias is resolved: `ssh -G` would read this machine's config, so a refusal says so.
+// `host/owner/repo`, lowercased, from a remote URL as remoteIdentity reads it: https, ssh, or `git@host:owner/repo.git`,
+// with or without a slash after the colon, and an owner and a name alone; null for anything else, such as a folder on
+// disk or a `file:` URL with a host, which name no host. `ssh.github.com`, GitHub's ssh over port 443, is github.com. No
+// other alias is resolved: `ssh -G` would read this machine's config, so a refusal says so.
 export function remoteKey(url) {
-  const match = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/@]*@)?([^/:@]+)(?::\d+)?\/(.+)$/iu.exec(url) ?? /^(?:[^/@:]*@)?([^/:@]+):\/?(?!\/)(.+)$/u.exec(url);
-  if (!match) return null;
-  const parts = match[2].replace(/\/+$/u, '').replace(/\.git$/u, '').split('/');
-  if (parts.length !== 2) return null;
-  const host = match[1].toLowerCase();
-  return `${host === 'ssh.github.com' ? 'github.com' : host}/${parts.join('/')}`.toLowerCase();
+  const identity = remoteIdentity(url);
+  return identity && identity.path.split('/').length === 2 ? `${identity.host}/${identity.path}` : null;
 }
 
 // The checkout's remotes as remoteKey values, `host/owner/repo`: the same owner and name on another host is another

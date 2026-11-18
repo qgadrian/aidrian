@@ -12,20 +12,15 @@ import { lstatSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { listAudits } from './audits.mjs';
-import { loadConfig } from './config.mjs';
 import { scanDecisions } from './decisions-cli.mjs';
-import { forgeFor, repoIdentity, servedRepository } from './forges/index.mjs';
-import { checkoutHolding, resolvedPath } from './fs.mjs';
-import { GIT_TIMEOUT_MS, mainRoot, runGit } from './git.mjs';
-import { projectStore } from './handoff-continue.mjs';
-import { latestBrief, MARKER_CAP, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
+import { forgeFor, remoteIdentity, servedRepository } from './forges/index.mjs';
+import { GIT_TIMEOUT_MS, killingGit, mainRoot, runGit } from './git.mjs';
+import { latestBrief, MARKER_CAP, openStore, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { HIDDEN } from './hidden-text.mjs';
-import { inboxPath, lessons, lessonStats } from './lesson-inbox.mjs';
-import { findProject, stateDir } from './project.mjs';
+import { findProject } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
 import { changesSummary, isChangeCache, readLedger, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
-import { sessionFolder } from './session-folder.mjs';
+import { auditsSection, KILL, lessonsSection, ownState, snapshotContext } from './session-snapshot-state.mjs';
 import { handoffStatus, stopMarkerPath } from './session-length.mjs';
 import { cachedSessionUsage } from './session-usage-cache.mjs';
 import { usageLines } from './usage.mjs';
@@ -34,17 +29,14 @@ import { listWorktrees, mergedHeads } from './worktree.mjs';
 export const SECTIONS = Object.freeze(['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket']);
 // How long the forge calls of one snapshot may take together, in milliseconds; `--deadline-ms` shortens it.
 export const FORGE_BUDGET_MS = 4000;
-// The merged-heads cache: refreshed at most once a minute, and never read past 1 MiB.
+// The merged heads' and the change requests' caches: each refreshed at most once a minute, and never read past 1 MiB.
 export const MERGED_HEADS = Object.freeze({ name: 'merged-heads-cache.json', windowMs: 60_000, cap: 1024 * 1024 });
-// The change requests' cache, under the same rule.
 export const PRS_CACHE = Object.freeze({ name: 'prs-cache.json', windowMs: 60_000, cap: 1024 * 1024 });
 // Ticket prefixes: at most 32, each a letter and up to 15 letters or digits.
 const PREFIX = /^[A-Za-z][A-Za-z0-9]{0,15}$/u;
 const MAX_PREFIXES = 32;
-// The git and gh calls this module starts, and the state folder read it asks for, hold no lock, so one past its limit
-// is killed outright. The git reads inside findProject, projectStore, and inboxPath keep git's own signal, under the same
-// 2 s limit.
-const KILL = { killSignal: 'SIGKILL' };
+// `git remote get-url`'s exit status when the remote is not configured.
+const NO_SUCH_REMOTE = 2;
 
 // The longest text displayText keeps, in code points: a title, a name (a branch, an owner, a repository, a check, a
 // slug, or a ticket key), and a path or URL.
@@ -80,7 +72,9 @@ export const commands = {
 
 // The snapshot of the folder `cwd`, for the session `session` whose transcript is `transcript` (each null when not
 // given). In a folder with no project every section is null, `errors` is empty, and nothing is written.
-export function snapshot({ cwd, session = null, transcript = null, ticketPrefixes = '', budgetMs = FORGE_BUDGET_MS }) {
+export const snapshot = (options) => killingGit(() => snapshotOf(options));
+
+function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '', budgetMs = FORGE_BUDGET_MS }) {
   const validId = typeof session === 'string' && SESSION_ID.test(session);
   const out = {
     session: { id: validId ? session : null, transcript: transcript === null ? null : displayText(transcript, DISPLAY_CAPS.path), cwd: displayText(cwd, DISPLAY_CAPS.path) },
@@ -99,7 +93,7 @@ export function snapshot({ cwd, session = null, transcript = null, ticketPrefixe
   try {
     const found = findProject(cwd);
     if (!found) return out;
-    ctx = context(found, { session, transcript, validId }, errors);
+    ctx = snapshotContext(found, { session, transcript, validId }, errors);
   } catch {
     return { ...out, errors: [...SECTIONS] };
   }
@@ -107,61 +101,32 @@ export function snapshot({ cwd, session = null, transcript = null, ticketPrefixe
   if (validId && transcript !== null) section('handoff', () => handoffSection(ctx, session, transcript));
   const forge = forgeBudget(budgetMs);
   if (validId) section('prs', () => prsSection(ctx, cwd, forge));
-  section('lessons', () => lessonCounts(lessonStats(lessons(inboxPath(project, outsideCheckout(ctx).config))).open));
+  section('lessons', () => lessonsSection(ctx));
   section('worktrees', () => worktreesSection(ctx, validId, forge, errors));
   section('decisions', () => ({ provisional: unconfirmed(scanDecisions(project, { unindexed: false, config: ctx.config })) }));
-  section('audits', () => ({ untriaged: listAudits(path.join(outsideCheckout(ctx).state, 'audits')).reduce((sum, each) => sum + Math.max(each.untriaged, 0), 0) }));
+  section('audits', () => auditsSection(ctx));
   section('ticket', () => ticketOf(cwd, ticketPrefixes));
   return { ...out, errors: SECTIONS.filter((name) => errors.has(name)) };
 }
-
-// What the sections share: { project, config, state, inside, folder }. `inside` says the state folder resolves inside a
-// checkout, or cannot be resolved. `folder` is the session's folder, or null; a session
-// that was given and has none, whether its id fails or its folder cannot be made, names the cached sections in `errors`:
-// `worktrees`, `handoff` when the id fails or a transcript was given, and `prs` when the id fails or the state folder is
-// inside a checkout.
-function context(project, { session, transcript, validId }, errors) {
-  const config = loadConfig(project).config;
-  let state = null;
-  try {
-    state = stateDir(project, { config, read: () => KILL });
-  } catch {
-    // Each section that needs the state folder fails on its own.
-  }
-  const real = state === null ? null : resolvedPath(state);
-  const inside = real === null || checkoutHolding(real, project.checkouts) !== undefined;
-  const folder = validId && state !== null ? sessionFolder(state, session, { checkouts: project.checkouts }) : null;
-  if (session !== null && folder === null) {
-    const named = [['prs', !validId || inside], ['worktrees', true], ['handoff', !validId || transcript !== null]];
-    for (const [name, failed] of named) if (failed) errors.add(name);
-  }
-  return { project, config, state, inside, folder };
-}
-
-// `ctx` when its state folder is outside every checkout, where its files are the user's own; else it throws.
-const outsideCheckout = (ctx) => {
-  if (ctx.inside) throw new Error('inside');
-  return ctx;
-};
 
 const needed = (value) => {
   if (value === null || value === undefined) throw new Error('missing');
   return value;
 };
 
-const lessonCounts = ({ count, tiers }) => ({ open: count, byTier: tiers });
 const unconfirmed = ({ decisions, unlisted }) => [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed').length;
 
 // The handoff numbers of the session, from its transcript through the usage cache, and the Stop hook's marker, at the
-// hook's own path. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay.
-function handoffSection({ project, config, folder }, session, transcript) {
+// hook's own path. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
+// store is opened at the state folder's real path the context resolved, the same path the session folder was made under.
+function handoffSection({ config, state, checkouts, folder }, session, transcript) {
   const usage = cachedSessionUsage({ transcript, cacheFile: path.join(needed(folder), 'usage.json') });
   const { handoff } = config.session;
   const status = handoffStatus(needed(usage), handoff, stopMarkerText(session));
   const { ratio, breakEven, nextRatio, context: tokens, ceiling } = status;
   return {
     ratio, breakEven, level: handoff.mode === 'off' ? 'quiet' : status.level, nextRatio, context: tokens, ceiling,
-    ...continuationOf(projectStore(project, config), session, handoff.maxChain),
+    ...continuationOf(openStore(state, { checkouts, maxChain: handoff.maxChain }), session, handoff.maxChain),
   };
 }
 
@@ -187,10 +152,10 @@ function continuationOf(store, session, maxChain) {
 
 // The change requests the session's ledger names (lib/session-prs.mjs), newest first: those on a host the forge adapter
 // declares from its one batched read, cached with its refs, as shownChanges shows them, then the rest, each
-// `unsupported: true`, which start no forge call. The forge runs in the session's folder `cwd`, never in one a ledger row
-// names. A ledger that cannot be read, or a read that fails with no cached value, throws.
+// `unsupported: true`, which start no forge call. The forge runs in the session's folder `cwd`, never in one a row names.
+// A state folder not the user's own (ownState), a ledger that cannot be read, or a failed read with no cache throws.
 function prsSection(ctx, cwd, forge) {
-  const folder = needed(outsideCheckout(ctx).folder);
+  const folder = needed(ownState(ctx) && ctx.folder);
   const { refs, unsupported } = sessionRefs(needed(readLedger(folder)), forgeFor(cwd));
   const refresh = () => forge((timeoutMs) => resolveSelection(forgeFor(cwd, { timeoutMs, ...KILL }), refs));
   const cached = refs.length ? needed(cachedValue({ folder, ...PRS_CACHE, isValue: isChangeCache, refresh })) : { value: { refs: [], rows: [] }, stale: false };
@@ -207,39 +172,46 @@ const shownChange = (row) => Object.fromEntries(SHOWN.filter(([key]) => Object.h
 
 // { owned, mergedNotCleaned }, and `stale: true` when the merged count is a cached value past its window. `owned` counts
 // the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is the head commit of a merged
-// pull request of their branch, without cleanup's tree and age checks; null without a session or for an origin the
-// forge does not serve, and null, naming the section in `errors`, when the read fails with no cached value.
+// pull request of their branch, without cleanup's tree and age checks; null without a session, with no origin, or for
+// an origin the forge does not serve, and null, naming the section in `errors`, when origin cannot be read or the
+// merged heads' read fails with no cached value.
 function worktreesSection({ project, folder }, validId, forge, errors) {
   const main = needed(mainRoot(project.root, KILL));
   const worktrees = listWorktrees(main, { timeoutMs: GIT_TIMEOUT_MS, ...KILL }).filter((each) => !each.main);
   const out = { owned: worktrees.length, mergedNotCleaned: null };
-  const origin = runGit(['config', '--get', 'remote.origin.url'], main, KILL);
-  const repo = origin.status === 0 ? servedRepository(repoIdentity(origin.stdout.trim())) : null;
-  if (!validId || repo === null) return out;
+  if (!validId) return out;
+  // As git fetches in the checkout that asks: the first URL, after any `url.<base>.insteadOf` rewrite, with that
+  // checkout's own config, such as a worktree's or an `includeIf "onbranch:"` one. Exit 2 is git's "No such remote".
+  const origin = runGit(['remote', 'get-url', 'origin'], project.root, KILL);
+  if (origin.status !== 0 && origin.status !== NO_SUCH_REMOTE) {
+    errors.add('worktrees');
+    return out;
+  }
+  const repo = origin.status === 0 ? servedRepository(remoteIdentity(origin.stdout.trim())) : null;
+  if (repo === null) return out;
   const heads = mergedHeadsOf(main, repo, folder, forge);
   if (heads === null) {
     errors.add('worktrees');
     return out;
   }
-  const merged = new Set(heads.value.map(([branch, head]) => `${branch}\n${head}`));
+  const merged = new Set(heads.value.pairs.map(([branch, head]) => `${branch}\n${head}`));
   out.mergedNotCleaned = worktrees.filter(({ branch, head }) => branch && head && merged.has(`${branch}\n${head}`)).length;
   return heads.stale ? { ...out, stale: true } : out;
 }
 
-// The merged pull requests' [branch, head] pairs of `repo`, as the forge's repository check named it, cached:
-// { value, stale }, or null.
+// The merged pull requests' [branch, head] pairs of `repo`, as the forge's repository check named it, cached with the
+// repository: { value: { repo, pairs }, stale }, or null. A cache of another repository, as after origin moved, is none.
 function mergedHeadsOf(main, repo, folder, forge) {
   const refresh = () => forge((timeoutMs) => {
     const heads = mergedHeads(main, { repo, timeoutMs, ...KILL });
-    return heads && [...heads].flatMap(([branch, oids]) => oids.map((oid) => [branch, oid]));
+    return heads && { repo, pairs: [...heads].flatMap(([branch, oids]) => oids.map((oid) => [branch, oid])) };
   });
-  return cachedValue({ folder, ...MERGED_HEADS, isValue: isPairs, refresh });
+  return cachedValue({ folder, ...MERGED_HEADS, isValue: (value) => value?.repo === repo && isPairs(value.pairs), refresh });
 }
 
 const isPairs = (value) => Array.isArray(value) && value.every((pair) => Array.isArray(pair) && pair.length === 2 && pair.every((part) => typeof part === 'string'));
 
-// The forge budget of one snapshot: the calls share `ms`, each gets what is left as its time limit, and none starts
-// once it is spent.
+// One snapshot's forge budget: the calls share `ms`, each gets what is left as its time limit, and none starts once spent.
 function forgeBudget(ms) {
   let left = ms;
   return (call) => {

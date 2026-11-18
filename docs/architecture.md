@@ -57,8 +57,8 @@ test/                               node --test suites
 - **Forges**: every command, hook, and step that reads or writes a pull request, its checks, or its repository on the
   forge does it through `forgeFor(cwd)` in `lib/forges/`, whose named methods hold gh's commands and routes; no other
   file runs gh. Shared code imports `lib/forges/index.mjs` alone, never an adapter: it gives `forgeFor` and the
-  helpers `repoIdentity` (`identity.mjs`), the facade's own, which reads a repository to its canonical host and full
-  path before any forge is chosen, `isTrustedCommenter`, which says who belongs to it, and `REVIEWS_PAGE`. The last two
+  helpers `repoIdentity` and `remoteIdentity` (`identity.mjs`), the facade's own, which read a repository to its
+  canonical host and full path before any forge is chosen, the second from a network remote URL alone, `isTrustedCommenter`, which says who belongs to it, and `REVIEWS_PAGE`. The last two
   are GitHub's today, as the payloads are, until a second forge reshapes them. An option bounds a hook's calls (`timeoutMs`, and `killSignal`, which stops one at that bound), `strictJson` reads an empty answer as null, as
   `aidrian pr await-review` always has, and `{ host }` names the host of a pull request's URL.
   Callers' tests stub those methods; `test/forge-github.test.mjs` holds the gh command behind each one, and

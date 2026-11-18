@@ -2,7 +2,7 @@
 // (lib/unattended-mark.mjs) under the state root, which the agent gates hook reads on every call, with no project at the
 // call's folder too, and the chain floor the hook also finds in the user's own store (lib/handoff-guard.mjs
 // startedUnattended). No test starts a real session. Temporary repositories are made with `git init` under mkdtemp and
-// driven with `git -C`; no test sets GIT_DIR.
+// driven with `git -C`. One test points GIT_DIR at a missing folder inside a temporary folder, never at a repository.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
@@ -15,7 +15,7 @@ import test, { after } from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { defaultStateDir, findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { dropPending, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 // The hooks this file runs record their blocks, and the gate's marks, in the state root; keep them in a folder of its own.
@@ -54,6 +54,24 @@ test('the floor is found in the user\'s own store too, where the gate keeps it, 
   assert.equal(startedUnattended(found, config, session, { home }), true);
   assert.equal(startedUnattended(found, config, session, { home: folder(t, 'aidrian-other-home-') }), false, 'no floor in another home');
   assert.equal(startedUnattended(found, config, 'plain-session', { home }), false);
+});
+
+test('with git unable to list the worktrees, the floor in the user\'s own store is still found', (t) => {
+  const dir = project(t);
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const home = folder(t, 'aidrian-home-');
+  const session = 'abcd1234-0000-4000-8000-000000000009';
+  floor(defaultStateDir(found, { config, home }), dir, session);
+  // A folder that holds no repository, inside a temporary folder of its own: git can list no worktree.
+  const saved = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(folder(t, 'aidrian-no-repository-'), 'missing');
+  t.after(() => {
+    if (saved === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = saved;
+  });
+  assert.equal(projectCheckouts(found), null, 'git cannot list the checkouts');
+  assert.equal(startedUnattended(found, config, session, { home }), true, 'a floor found only adds refusals, so it needs no list');
 });
 
 test('the floor is found in the user\'s own store of the base branch\'s state.dir, which a working copy moved', (t) => {

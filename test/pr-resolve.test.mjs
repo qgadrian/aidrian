@@ -374,7 +374,9 @@ test('remoteKey keeps the host of https, ssh, and scp-style remotes, and reads n
   }
   assert.equal(remoteKey('git@github-work:acme/notes.git'), 'github-work/acme/notes', 'another alias stays what it says: no ssh config is read');
   assert.equal(remoteKey('git@ssh.github.com.evil.example:acme/notes.git'), 'ssh.github.com.evil.example/acme/notes');
-  for (const url of ['/srv/git/acme/notes.git', '../notes', 'file:///srv/acme/notes.git', 'https://proxy.example/git/acme/notes', '']) {
+  // git's host ends at the first colon: an `@` in the path's first part never moves the host into the path.
+  assert.equal(remoteKey('evil.example:x@github.com:acme/notes.git'), 'evil.example/x@github.com:acme/notes');
+  for (const url of ['/srv/git/acme/notes.git', '../notes', 'file:///srv/acme/notes.git', 'file://github.com/acme/notes.git', 'vendor/mirror.git', 'https://proxy.example/git/acme/notes', '']) {
     assert.equal(remoteKey(url), null, url);
   }
 });
@@ -387,6 +389,8 @@ test('checkoutRemotes lists each remote with its host; outside a checkout, none'
   git('remote', 'add', 'origin', 'git@github.com:me/notes.git');
   git('remote', 'add', 'upstream', 'https://git.corp.example/acme/notes');
   git('remote', 'add', 'disk', '/srv/git/acme/notes.git');
+  // A file: URL with a host is a folder on this machine to git, never a repository on that host.
+  git('remote', 'add', 'mirror', 'file://github.com/example/mirror.git');
   assert.deepEqual(checkoutRemotes(dir).sort(), ['git.corp.example/acme/notes', 'github.com/me/notes']);
   assert.deepEqual(checkoutRemotes(tmpdir()), []);
 });

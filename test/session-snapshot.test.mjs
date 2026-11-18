@@ -7,10 +7,12 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { arm, noteFrom, noteStarted, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { cachedValue } from '../plugins/aidrian/lib/session-cached-value.mjs';
 import { reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { DISPLAY_CAPS, displayText, MERGED_HEADS, PRS_CACHE, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
+import { auditsSection, lessonsSection, snapshotContext } from '../plugins/aidrian/lib/session-snapshot-state.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
@@ -24,8 +26,10 @@ const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits
 const CLEAN = /^[^\u0000-\u0009\u000b-\u001f\u007f-\u009f]*\n?$/u;
 
 const scratch = () => realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-snapshot-')));
+// No global or system git config: a developer's own, such as a url.<base>.insteadOf rewrite, would change what origin names.
+const GIT_CONFIG_NONE = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (cwd, ...args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...GIT_CONFIG_NONE, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 };
@@ -57,7 +61,7 @@ function setup(t, { config = {}, origin = null, branch = 'main', name = 'project
   mkdirSync(temp);
   const log = path.join(base, 'gh.log');
   fakeGh(path.join(base, 'bin'), { log, ...gh });
-  const env = { ...process.env, XDG_STATE_HOME: state, TMPDIR: temp, PATH: `${path.join(base, 'bin')}${path.delimiter}${process.env.PATH}` };
+  const env = { ...process.env, ...GIT_CONFIG_NONE, XDG_STATE_HOME: state, TMPDIR: temp, PATH: `${path.join(base, 'bin')}${path.delimiter}${process.env.PATH}` };
   const run = (args = [], { cwd = dir, extraEnv = {} } = {}) => {
     const started = Date.now();
     const result = spawnSync(process.execPath, [CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
@@ -337,6 +341,22 @@ test('lessons, decisions, and audits count what their readers give; a marker out
   }
 });
 
+test('a state folder below a folder every user may write gives no lessons or audits section', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const add = spawnSync(process.execPath, [CLI, 'lesson', 'add', '--tier', 'P1'], { cwd: env.dir, env: env.env, input: 'title: first\nA note.\n', encoding: 'utf8' });
+  assert.equal(add.status, 0, add.stderr);
+  const audits = path.join(env.projectState(), 'audits');
+  mkdirSync(audits, { recursive: true });
+  writeFileSync(path.join(audits, 'front-desk-2026-06-01.md'), '## Findings\n\n### F1. polish: x\n');
+  assert.deepEqual([env.run().json.lessons?.open, env.run().json.audits], [1, { untriaged: 1 }]);
+  // The state root above the project's state folder, which stays the user's own and mode 0700.
+  chmodSync(env.state, 0o777);
+  t.after(() => chmodSync(env.state, 0o700));
+  const { json } = env.run();
+  assert.deepEqual([json.lessons, json.audits], [null, null]);
+  assert.deepEqual(json.errors, ['lessons', 'audits']);
+});
+
 // A project with one linked worktree on `feat/x`, whose origin is `origin`, and a fake gh that answers with `heads`.
 function withWorktree(t, { origin = 'https://github.com/acme/notes.git', gh = {}, merged = true } = {}) {
   const env = setup(t, { origin, gh });
@@ -409,7 +429,7 @@ test('the merged-heads cache is read under the Reads rule: a named pipe, a file 
     const folder = path.join(env.projectState(), 'sessions', ID);
     mkdirSync(folder, { recursive: true, mode: 0o700 });
     const cache = path.join(folder, MERGED_HEADS.name);
-    const fresh = JSON.stringify({ value: [['feat/x', env.head], ['feat/y', 'e'.repeat(40)]], valueAt: Date.now(), attemptAt: Date.now() });
+    const fresh = JSON.stringify({ value: { repo: 'github.com/acme/notes', pairs: [['feat/x', env.head], ['feat/y', 'e'.repeat(40)]] }, valueAt: Date.now(), attemptAt: Date.now() });
     const target = path.join(env.base, 'target.json');
     if (kind === 'pipe') spawnSync('mkfifo', [cache]);
     if (kind === 'large') writeFileSync(cache, fresh.replace('"feat/y"', `"${'y'.repeat(MERGED_HEADS.cap)}"`));
@@ -447,18 +467,23 @@ test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
   assert.ok(json.errors.includes('worktrees'), 'a read that failed with no cache is a failure');
 });
 
-test('a git that hangs only on the worktree list is stopped at git`s limit', { skip: !POSIX }, (t) => {
+test('a git that hangs only on the worktree list is stopped at git`s limit, and the unknown checkouts keep the state folder unread', { skip: !POSIX }, (t) => {
   const env = setup(t);
+  const transcript = path.join(env.base, 'session.jsonl');
+  writeFileSync(transcript, turnsOf('handoff-cost')[4]);
   const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
   const bin = path.join(env.base, 'hang');
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" worktree list "*) exec sleep 600;; esac\nexec ${real} "$@"\n`);
   chmodSync(path.join(bin, 'git'), 0o755);
-  const { status, ms, json } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
+  const { status, ms, json } = env.run(['--session', ID, '--transcript', transcript], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
   assert.equal(status, 0);
   assert.ok(ms < 10_000, `${ms} ms`);
   assert.equal(json.worktrees, null);
-  assert.ok(json.errors.includes('worktrees'));
+  // A list that timed out is no empty list: the state folder may be inside a checkout git did not name.
+  assert.deepEqual([json.handoff, json.lessons, json.audits], [null, null, null]);
+  for (const name of ['handoff', 'lessons', 'audits', 'worktrees']) assert.ok(json.errors.includes(name), name);
+  assert.equal(existsSync(path.join(env.projectState(), 'sessions')), false, 'no session folder is made');
 });
 
 test('the state folder read is killed at git`s limit, even by a git that ignores SIGTERM', { skip: !POSIX }, (t) => {
@@ -471,6 +496,29 @@ test('the state folder read is killed at git`s limit, even by a git that ignores
   const { status, ms } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
   assert.equal(status, 0);
   assert.ok(ms < 10_000, `${ms} ms`);
+});
+
+test('an origin read that fails keeps the owned count and names worktrees in errors; no origin is no failure', { skip: !POSIX }, (t) => {
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  // A read killed at git's limit, even by a git that ignores SIGTERM, and one that exits with an error of its own.
+  for (const [kind, act] of [['timeout', "trap '' TERM; exec sleep 20"], ['exit', 'echo broken >&2; exit 1']]) {
+    const env = withWorktree(t);
+    const bin = path.join(env.base, 'stub');
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" remote get-url origin "*) ${act};; esac\nexec ${real} "$@"\n`);
+    chmodSync(path.join(bin, 'git'), 0o755);
+    const { status, ms, json } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
+    assert.equal(status, 0, kind);
+    assert.ok(ms < 10_000, `${kind}: ${ms} ms`);
+    assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: null }, kind);
+    assert.ok(json.errors.includes('worktrees'), `${kind}: a failed read is no absent origin`);
+    assert.deepEqual(ghCalls(env.log), [], kind);
+  }
+  // No origin at all: git says there is no such remote, and the section is unsupported, not failed.
+  const none = withWorktree(t, { origin: null });
+  const { json } = none.run(['--session', ID]);
+  assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: null });
+  assert.equal(json.errors.includes('worktrees'), false);
 });
 
 test('a config.json with a bad value still gives the decisions count', (t) => {
@@ -564,7 +612,7 @@ test('a warm cache answers a 60 MB transcript fast, and a cold one stops gh at t
   assert.ok(cold.ms < baseline.ms + 200 + 1500, `with a cold merged-heads cache gh is stopped at the deadline: ${cold.ms} ms against ${baseline.ms} ms with a fast gh`);
   assert.equal(cold.json.worktrees.mergedNotCleaned, null);
   const cache = path.join(env.projectState(), 'sessions', ID, MERGED_HEADS.name);
-  writeFileSync(cache, JSON.stringify({ value: [['feat/x', env.head]], valueAt: Date.now(), attemptAt: Date.now() }));
+  writeFileSync(cache, JSON.stringify({ value: { repo: 'github.com/acme/notes', pairs: [['feat/x', env.head]] }, valueAt: Date.now(), attemptAt: Date.now() }));
   const calls = ghCalls(env.log).length;
   const warm = env.run(['--session', ID, '--transcript', transcript]);
   t.diagnostic(`warm snapshot of a 60 MB transcript: ${warm.ms} ms; cold: ${cold.ms} ms; cold with a fast gh: ${baseline.ms} ms`);
@@ -593,7 +641,10 @@ test('a value whose text passes the cap is not stored, but its attempt is, so th
   assert.deepEqual(cachedValue({ ...options, refresh: () => ['x'.repeat(500)] }), { value: ['x'.repeat(500)], stale: false });
   const stored = JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8'));
   assert.deepEqual([stored.value, stored.valueAt, typeof stored.attemptAt], [null, null, 'number']);
-  assert.equal(cachedValue({ ...options, refresh: () => assert.fail('inside the window') }), null);
+  // cachedValue catches what a refresh throws, so each callback records its calls, asserted once cachedValue returns.
+  let calls = 0;
+  assert.equal(cachedValue({ ...options, refresh: () => ++calls && ['y'] }), null);
+  assert.equal(calls, 0, 'inside the window');
 });
 
 test('SessionEnd removes the marker only by stopMarkerPath', (t) => {
@@ -627,16 +678,18 @@ test('cachedValue records its attempt before the refresh, and with no folder ref
   chmodSync(folder, 0o700);
   const name = MERGED_HEADS.name;
   const options = { folder, name, windowMs: 60_000, cap: 1024, isValue: Array.isArray };
-  let calls = 0;
+  // cachedValue catches what a refresh throws, so the callback records what it saw, asserted once cachedValue returns.
+  const seen = [];
   const refresh = () => {
-    calls += 1;
-    assert.equal(typeof JSON.parse(readFileSync(path.join(folder, name), 'utf8')).attemptAt, 'number', 'the attempt is on disk first');
+    seen.push(existsSync(path.join(folder, name)) ? JSON.parse(readFileSync(path.join(folder, name), 'utf8')).attemptAt : null);
     return null;
   };
   assert.equal(cachedValue({ ...options, refresh }), null);
   assert.equal(cachedValue({ ...options, refresh }), null);
-  assert.equal(calls, 1);
-  assert.equal(cachedValue({ ...options, folder: null, refresh: () => assert.fail('no folder, no call') }), null);
+  assert.equal(seen.length, 1);
+  assert.equal(typeof seen[0], 'number', 'the attempt is on disk first');
+  assert.equal(cachedValue({ ...options, folder: null, refresh: () => seen.push('no folder') && ['v'] }), null);
+  assert.equal(seen.length, 1, 'no folder, no call');
   assert.deepEqual(cachedValue({ ...options, now: Date.now() + 61_000, refresh: () => ['v'] }), { value: ['v'], stale: false });
   assert.deepEqual(cachedValue({ ...options, now: Date.now() + 62_000, refresh: () => assert.fail('inside the window') }), { value: ['v'], stale: false });
 });
@@ -654,7 +707,9 @@ test('cachedValue starts no refresh while another process holds this window`s re
   const { folder, options } = expiredCache(['old']);
   const now = Date.now();
   const held = reserveSessionFile(folder, MERGED_HEADS.name, { windowMs: 60_000, now });
-  assert.deepEqual(cachedValue({ ...options, now, refresh: () => assert.fail('another process is recording its attempt') }), { value: ['old'], stale: true });
+  let calls = 0;
+  assert.deepEqual(cachedValue({ ...options, now, refresh: () => ++calls && ['new'] }), { value: ['old'], stale: true });
+  assert.equal(calls, 0, 'another process is recording its attempt');
   assert.equal(JSON.parse(readFileSync(path.join(folder, MERGED_HEADS.name), 'utf8')).attemptAt < now - 60_000, true, 'no attempt recorded');
   const next = now + 60_000;
   assert.deepEqual(cachedValue({ ...options, now: next, refresh: () => ['new'] }), { value: ['new'], stale: false }, 'a killed process blocks only its own window');
@@ -693,6 +748,126 @@ test('processes that start together on an expired cache start one refresh betwee
   const answers = done.map(({ out }) => JSON.parse(out));
   assert.equal(answers.filter((each) => each.stale === false).length, 1);
   assert.ok(answers.every((each) => each.stale === false || each.value[0] === 'old'), 'the others give the stored value, stale');
+});
+
+test('a state folder in any checkout of the repository gets no session folder: a nested project`s, or one in another worktree', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const transcript = path.join(env.base, 'session.jsonl');
+  writeFileSync(transcript, turnsOf('handoff-cost')[4]);
+  const refused = (cwd) => {
+    const { json, status } = env.run(['--session', ID, '--transcript', transcript], { cwd });
+    assert.equal(status, 0);
+    assert.deepEqual([json.handoff, json.lessons, json.audits], [null, null, null]);
+    assert.deepEqual(json.errors, ['handoff', 'prs', 'lessons', 'worktrees', 'audits']);
+  };
+  // A project in a subfolder: a relative state.dir resolves against the repository root, inside the checkout.
+  const sub = path.join(env.dir, 'sub');
+  mkdirSync(path.join(sub, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(sub, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.state' } }));
+  refused(sub);
+  assert.equal(existsSync(path.join(env.dir, '.state')), false, 'nothing is written at the repository root');
+  // A state folder in a linked worktree, which is no checkout of the project's own.
+  const tree = path.join(env.base, 'tree');
+  git(env.dir, 'worktree', 'add', '-q', '-b', 'feat/x', tree);
+  writeFileSync(path.join(env.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: path.join(tree, '.state') } }));
+  refused(env.dir);
+  assert.equal(existsSync(path.join(tree, '.state')), false, 'nothing is written in the other worktree');
+});
+
+test('an origin git reads as a folder, such as vendor/mirror.git, starts no gh call', (t) => {
+  for (const origin of ['vendor/mirror.git', 'acme/notes']) {
+    const env = withWorktree(t, { origin });
+    const { json } = env.run(['--session', ID]);
+    assert.deepEqual(ghCalls(env.log), [], origin);
+    assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: null }, origin);
+    assert.deepEqual(json.errors, [], 'a local remote is unsupported, not failed');
+  }
+});
+
+test('worktrees reads origin as git fetches from it: its first URL, after an insteadOf rewrite', (t) => {
+  // Two URLs: git fetches from the first, and `git config --get` would give the last.
+  const two = withWorktree(t);
+  git(two.dir, 'config', '--add', 'remote.origin.url', 'https://github.com/acme/second.git');
+  assert.equal(two.run(['--session', ID]).json.worktrees.mergedNotCleaned, 1);
+  assert.deepEqual(ghCalls(two.log).at(-1).slice(-2), ['--repo', 'github.com/acme/notes'], 'the first URL');
+  // A rewrite git applies before it fetches: the repository it names, not the one written.
+  const rewritten = withWorktree(t);
+  git(rewritten.dir, 'config', 'url.https://github.com/acme/real.git.insteadOf', 'https://github.com/acme/notes.git');
+  assert.equal(rewritten.run(['--session', ID]).json.worktrees.mergedNotCleaned, 1);
+  assert.deepEqual(ghCalls(rewritten.log).at(-1).slice(-2), ['--repo', 'github.com/acme/real'], 'the rewritten URL');
+});
+
+test('worktrees reads origin in the checkout that asks, where that checkout`s own config applies', (t) => {
+  const env = withWorktree(t);
+  // A rewrite in the linked worktree's own config: git fetches there from acme/tree, and from acme/notes in main.
+  git(env.dir, 'config', 'extensions.worktreeConfig', 'true');
+  git(env.tree, 'config', '--worktree', 'url.https://github.com/acme/tree.git.insteadOf', 'https://github.com/acme/notes.git');
+  const { json } = env.run(['--session', ID], { cwd: env.tree });
+  assert.deepEqual(json.worktrees, { owned: 1, mergedNotCleaned: 1 });
+  assert.deepEqual(ghCalls(env.log).at(-1).slice(-2), ['--repo', 'github.com/acme/tree'], 'the worktree`s origin, not main`s');
+});
+
+test('the merged-heads cache is bound to origin`s repository: once origin moves, the heads it holds are none', (t) => {
+  const env = withWorktree(t);
+  // An explicit state folder, which origin's URL does not move, and the same session id.
+  const fixed = path.join(env.base, 'fixed-state');
+  writeFileSync(path.join(env.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: fixed } }));
+  assert.equal(env.run(['--session', ID]).json.worktrees.mergedNotCleaned, 1);
+  git(env.dir, 'remote', 'set-url', 'origin', 'https://github.com/acme/other.git');
+  const moved = env.run(['--session', ID]).json;
+  assert.deepEqual(moved.worktrees, { owned: 1, mergedNotCleaned: null }, 'inside the window, no other repository`s heads');
+  assert.ok(moved.errors.includes('worktrees'));
+  const cache = path.join(fixed, 'sessions', ID, MERGED_HEADS.name);
+  writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), attemptAt: Date.now() - 120_000 }));
+  fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
+  const failed = env.run(['--session', ID, '--deadline-ms', '200']).json;
+  assert.deepEqual(failed.worktrees, { owned: 1, mergedNotCleaned: null }, 'a failed refresh shows no other repository`s heads as stale');
+  assert.deepEqual(ghCalls(env.log).at(-1).slice(-2), ['--repo', 'github.com/acme/other']);
+});
+
+test('project discovery is killed at git`s limit, even by a git that ignores SIGTERM', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const bin = path.join(env.base, 'stubborn');
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" --git-common-dir "*) trap '' TERM; exec sleep 20;; esac\nexec ${real} "$@"\n`);
+  chmodSync(path.join(bin, 'git'), 0o755);
+  const { status, ms, json } = env.run(['--session', ID], { extraEnv: { PATH: `${bin}${path.delimiter}${env.env.PATH}` } });
+  assert.equal(status, 0);
+  assert.ok(ms < 10_000, `${ms} ms`);
+  assert.ok(json.errors.every((name) => SECTIONS.includes(name)));
+});
+
+test('a state folder every user may write gives no lessons or audits section, as it gives no session folder', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const state = env.projectState();
+  mkdirSync(path.join(state, 'lessons'), { recursive: true });
+  writeFileSync(path.join(state, 'lessons/inbox.jsonl'), '');
+  assert.deepEqual(env.run().json.errors, [], 'the user`s own folder is read');
+  chmodSync(state, 0o777);
+  t.after(() => chmodSync(state, 0o700));
+  const { json, status } = env.run();
+  assert.equal(status, 0);
+  assert.deepEqual([json.lessons, json.audits], [null, null]);
+  assert.deepEqual(json.errors, ['lessons', 'audits']);
+  const session = env.run(['--session', ID]).json;
+  assert.equal(session.prs, null, 'nor a pull request ledger read');
+  assert.deepEqual(session.errors, ['prs', 'lessons', 'worktrees', 'audits']);
+  assert.equal(existsSync(path.join(state, 'sessions', ID)), false);
+});
+
+test('a named pipe at the lesson inbox or the audits triage file fails that section alone, without waiting', { skip: !POSIX }, (t) => {
+  for (const [file, name] of [['lessons/inbox.jsonl', 'lessons'], ['audits/triage.json', 'audits']]) {
+    const env = setup(t);
+    const at = path.join(env.projectState(), file);
+    mkdirSync(path.dirname(at), { recursive: true });
+    spawnSync('mkfifo', [at]);
+    const { json, status, ms } = env.run();
+    assert.equal(status, 0, name);
+    assert.ok(ms < 10_000, `${name}: ${ms} ms`);
+    assert.equal(json[name], null);
+    assert.deepEqual(json.errors, [name]);
+  }
 });
 
 // The prs section. A project whose origin no forge serves, so the merged-heads read starts no call, with a fake gh that
@@ -932,4 +1107,72 @@ test('prs: a symlinked prs.jsonl and a symlinked session folder receive no write
   const folder = env.run(['--session', 'linked-1']).json;
   assert.deepEqual([folder.prs, folder.errors.includes('prs')], [null, true]);
   assert.deepEqual(readdirSync(elsewhere), ['prs.jsonl'], 'no cache or temporary file is written through the symlink');
+});
+
+// A project whose repository folder is named `name`, with a committed state.dir of "..": the state folder, the folder
+// that holds the checkout, lies outside it, but its own `name` folder is the checkout itself.
+function parentState(t, name) {
+  const env = setup(t, { name, config: { state: { dir: '..' } } });
+  assert.equal(path.resolve(env.projectState()), env.base, 'the state folder is the checkout`s parent');
+  return env;
+}
+
+test('a state.dir of ".." in a repository folder named lessons reads no inbox at the repository root', { skip: !POSIX }, (t) => {
+  const env = parentState(t, 'lessons');
+  const add = spawnSync(process.execPath, [CLI, 'lesson', 'add', '--tier', 'P1'], { cwd: env.dir, env: env.env, input: 'title: first\nA note.\n', encoding: 'utf8' });
+  assert.equal(add.status, 0, add.stderr);
+  assert.equal(existsSync(path.join(env.dir, 'inbox.jsonl')), true, 'the inbox lies at the repository root');
+  const { json, status } = env.run();
+  assert.equal(status, 0);
+  assert.equal(json.lessons, null);
+  assert.deepEqual(json.errors, ['lessons']);
+});
+
+test('a state.dir of ".." in a repository folder named audits reads no report in the work tree', { skip: !POSIX }, (t) => {
+  const env = parentState(t, 'audits');
+  writeFileSync(path.join(env.dir, 'front-desk-2026-06-01.md'), '## Findings\n\n### F1. polish: x\n');
+  const { json, status } = env.run();
+  assert.equal(status, 0);
+  assert.equal(json.audits, null);
+  assert.deepEqual(json.errors, ['audits']);
+});
+
+test('a state.dir of ".." in a repository folder named sessions makes no session folder in the work tree', { skip: !POSIX }, (t) => {
+  const env = parentState(t, 'sessions');
+  // A 0700 checkout passes the sessions folder's own rule, so only the checkout check keeps the session folder out.
+  chmodSync(env.dir, 0o700);
+  const { json, status } = env.run(['--session', ID]);
+  assert.equal(status, 0);
+  assert.equal(existsSync(path.join(env.dir, ID)), false, 'no session folder inside the work tree');
+  assert.equal(json.prs, null);
+  assert.deepEqual(json.errors, ['prs', 'worktrees']);
+});
+
+test('lessons and audits read the state folder the context resolved, though its symlink is repointed after', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const link = path.join(env.base, 'state-link');
+  const [first, second] = ['first', 'second'].map((name) => path.join(env.base, name));
+  const point = (target) => {
+    rmSync(link, { force: true });
+    symlinkSync(target, link);
+  };
+  writeFileSync(path.join(env.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: link } }));
+  const add = () => {
+    const added = spawnSync(process.execPath, [CLI, 'lesson', 'add', '--tier', 'P1'], { cwd: env.dir, env: env.env, input: 'title: one\nA note.\n', encoding: 'utf8' });
+    assert.equal(added.status, 0, added.stderr);
+  };
+  for (const [target, count] of [[first, 1], [second, 2]]) {
+    mkdirSync(path.join(target, 'audits'), { recursive: true });
+    point(target);
+    for (let n = 1; n <= count; n += 1) {
+      add();
+      writeFileSync(path.join(target, 'audits', `front-desk-2026-06-0${n}.md`), `## Findings\n\n### F${n}. polish: x\n`);
+    }
+  }
+  point(first);
+  const ctx = snapshotContext(findProject(env.dir), { session: null, transcript: null, validId: false }, new Set());
+  point(second);
+  assert.equal(lessonsSection(ctx).open, 1, 'the lessons come from the folder the context checked');
+  assert.deepEqual(auditsSection(ctx), { untriaged: 1 });
+  assert.equal(ctx.state, first, 'the context keeps the resolved path');
 });

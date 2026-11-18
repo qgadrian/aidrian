@@ -19,7 +19,7 @@ await runHook(async (input) => {
   if (typeof input.session_id !== 'string' || typeof input.cwd !== 'string' || !path.isAbsolute(input.cwd)) return;
   const response = detectHost({ input }).shellOutput?.(input.tool_response) ?? { output: null, interrupted: false };
   if (response.interrupted) return;
-  const [{ findProject, stateDir }, { sessionFolder }, { forgeFor }, { appendLedger, ledgerRows }, calls] = await Promise.all([
+  const [{ findProject, projectCheckouts, stateDir }, { sessionFolder }, { forgeFor }, { appendLedger, ledgerRows }, calls] = await Promise.all([
     import('../lib/project.mjs'),
     import('../lib/session-folder.mjs'),
     import('../lib/forges/index.mjs'),
@@ -32,6 +32,7 @@ await runHook(async (input) => {
   const readers = { [calls.FORGE]: calls };
   const rows = ledgerRows({ command, cwd: input.cwd, output: response.output, env: process.env, forge: forgeFor(input.cwd), readers, agentId: input.agent_id });
   if (rows.length === 0) return;
-  const folder = sessionFolder(stateDir(project), input.session_id, { checkouts: project.checkouts });
+  // The state folder lies outside every checkout of the repository, as the snapshot holds it; none when git cannot list them.
+  const folder = sessionFolder(stateDir(project), input.session_id, { checkouts: projectCheckouts(project) });
   if (folder) appendLedger(folder, rows);
 });

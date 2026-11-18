@@ -39,7 +39,7 @@ import { arm, cancelArmed, CHAIN_CEILING, chainLimit, checkedSha, clearPending, 
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
-import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
+import { committedConfigFile, defaultStateDir, projectAt, projectCheckouts, stateDir } from './project.mjs';
 import { OPEN_ID, replacer, shellPid, terminalOf } from './terminal-replace.mjs';
 import { dropPending, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
 
@@ -172,8 +172,8 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
   if (bad) return bad;
   const project = projectAt(cwd);
   const config = commandConfig(project, { exitCode: 2 });
-  const { continue: configured, maxChain } = config.session.handoff;
-  const store = openStore(stateDir(project, { config, env }), { checkouts: project.checkouts, maxChain });
+  const { continue: configured } = config.session.handoff;
+  const store = projectStore(project, config, env);
   const given = path.resolve(cwd, brief);
   const found = readContainedBrief(store, given);
   if (found.problem) return { exitCode: 2, out: [], err: [`${given} ${found.problem}`] };
@@ -438,9 +438,10 @@ function refuse(reason) {
   return { exitCode: 1, out: [], err: [`aidrian handoff continue: ${reason}`] };
 }
 
-// The continuation store of `project`, whose config is `config`, as a hook opens it.
+// The continuation store of `project`, whose config is `config`, as a hook and the gate open it: held outside every
+// checkout of the repository (projectCheckouts), and refused when git cannot list them.
 export function projectStore(project, config, env = process.env) {
-  return openStore(stateDir(project, { config, env }), { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
+  return openStore(stateDir(project, { config, env }), { checkouts: projectCheckouts(project), maxChain: config.session.handoff.maxChain });
 }
 
 // The id of the host process a hook of `host` runs under, the same before and after a clear, or null.

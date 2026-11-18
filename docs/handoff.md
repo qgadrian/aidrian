@@ -180,10 +180,12 @@ whatever the config says, and `background` only when the config says `"backgroun
 2. `none` prints `continue: none` and exits 0.
 3. A fallback prints `continue: none` and one `fallback:` line, exit 0: the host does not list the route, or tells the
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a
-   control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
-   it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
-   user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
-   is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
+   control character; the store resolves inside a checkout of the repository, the main checkout or any linked
+   worktree, as with `state.dir` set to a folder in it, or a relative `state.dir` of a project below the repository
+   root, which resolves against that root, or git cannot list those checkouts; the state, handoffs, or store folder
+   is owned by another user or writable by every user, where the system has user ids (not on Windows, where Node
+   reports every writable folder as writable by others); or the brief's chain is `maxChain` or more, on the
+   background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
    On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
    working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
    the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
@@ -509,11 +511,11 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | --- | --- |
 | `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
 | `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
-| `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names: the forge's entries newest first, then the unsupported ones, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`, below. |
-| `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout. |
+| `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names: the forge's entries newest first, then the unsupported ones, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`, below. Null, and in `errors`, when the session has no folder, as for a state folder inside a checkout, or not the user's own. |
+| `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
-| `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout. |
+| `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `ticket` | `{ key, source: "branch" }` or null: a key of `--ticket-prefixes` in the branch name, such as `ABC-123`, else `#42` from a branch named `fix/42-slug`. |
 | `errors` | The names of the sections that failed, never their error text. |
 
@@ -537,12 +539,30 @@ calls it for its own trigger, so the two never disagree. The first that holds wi
 | `quiet` | None does. Under `mode: "off"` the hook never reminds, so the level is always `quiet`, and the numbers stay. |
 
 The snapshot is `due` or `ceiling` on exactly the turns the Stop hook reminds. It reads the hook's marker at the hook's
-own path, and the transcript through the usage cache, so each call reads only the lines written since the last one
-([Local state](project-folder.md#local-state)). Like the reminder, the handoff section is verified on Claude Code
-transcripts only. It needs the session's folder in the state folder, so when the state folder is inside a checkout,
-as with `state.dir` set to a folder in the repository, the snapshot gives no handoff, lessons, or audits section, and
+own path, and the transcript through the usage cache, so each call folds only the lines written since the last one,
+after a hash of the first and the last 64 KiB it folded before shows they are unchanged: a transcript rewritten in
+place there, at the same length included, is folded again from the start ([Local state](project-folder.md#local-state)).
+A warm call reads those two windows, not every byte folded before, so it costs the same at any transcript size;
+a rewrite confined to the middle goes unseen, which display data allows, since a transcript is only appended to.
+Like the reminder, the handoff section is verified on Claude Code transcripts only.
+It needs the session's folder in the state folder, so when the state folder is inside a checkout of
+the repository, the main checkout or any linked worktree, as with `state.dir` set to a folder in the repository, or a
+relative `state.dir` of a project below the repository root, which resolves against that root,
+or when git cannot list the checkouts in time, the snapshot gives no handoff, lessons, or audits section, and
 names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
-gives no handoff section either, and names `handoff` and `worktrees`.
+gives no handoff section either, and names `handoff`, `prs`, and `worktrees`. A state folder that fails the session folder's
+rule for it and every folder above it ([Local state](project-folder.md#local-state)), such as one another user owns, or
+one below a folder every user may write, gives no lessons, audits, or pull requests section, as it gives no session folder.
+A state folder outside every checkout can still hold one: with `state.dir` set to `..` in a repository whose folder is
+named `lessons`, `audits`, or `sessions`, that folder below the state folder is the checkout itself. So each folder the
+snapshot reads or makes below the state folder, the lesson inbox, the audits folder, the sessions folder, and the
+session's own folder, is resolved again, and one inside a checkout gives no section that needs it, with its name in
+`errors`. The snapshot resolves the state folder's real path once and reads every section through that path, so a
+symlink at `state.dir` repointed after the check moves no read.
+The hooks that write or deliver a continuation marker, and the gate, hold the continuation store to every checkout of
+the repository, and keep no marker there when git cannot list them. The agent gates' unattended check is the exception:
+it looks for a background chain floor in any store outside the project's own checkouts, even when git cannot list the
+rest, since a floor it finds only adds refusals.
 `chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
 armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
 from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's
@@ -555,9 +575,15 @@ user owns, never a symlink or a folder. A store the gate refuses leaves `chain`,
 **Worktrees.** `owned` counts the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is
 the head commit of a merged pull request of their branch, before [worktree cleanup](project-folder.md#task-worktrees)'s own tree and age
 checks: a worktree it counts may still hold work that cleanup asks about. The merged heads come from the forge for
-origin's repository alone, when the forge adapter serves it (github.com today), and are cached for a minute in the
-session's folder. With no origin, or one on a host the adapter does not serve, `mergedNotCleaned` is null and `errors`
-does not name `worktrees`: that repository is unsupported, not failed. One session starts at most one forge call a
+origin's repository alone, read as git fetches from it in the checkout the snapshot runs in (its first URL, after any
+`url.<base>.insteadOf` rewrite, with that checkout's own config, such as a worktree's), when origin is a network remote
+and the forge adapter serves it (github.com today), and are
+cached for a minute in the session's folder, with the repository they were read for. With no origin, one git reads as a
+folder on disk, such as `vendor/mirror.git`, or one on a host the adapter does not serve, `mergedNotCleaned` is null and
+`errors` does not name `worktrees`: that repository is unsupported, not failed. An origin git cannot read, as when it
+times out or fails for another reason than no such remote, leaves `mergedNotCleaned` null with `worktrees` in `errors`,
+and `owned` still shows. A cache of another repository, as after
+origin moved under a fixed `state.dir`, counts as none, so its heads are never shown for the new one. One session starts at most one forge call a
 minute, whatever became of the last and however many snapshots start at once: a snapshot records its attempt under the
 cache's reservation for the current fixed minute, a lock file only one process can create, and one that finds the
 reservation held, or an attempt another snapshot recorded first, starts no call and shows the cached count as stale.
@@ -567,7 +593,8 @@ past it, and the cached count then shows with `stale: true`, or as null with `wo
 A value too large for the cache's 1 MiB read is not stored, but the attempt is, so the minute still holds.
 
 **Pull requests.** `prs` reads the session's [ledger](hooks.md#session-ledger), its last 256 KB, no-follow and
-non-blocking, only while it is a regular file this user alone owns and reads, dropping a first line the cut fell
+non-blocking, only while its session folder still passes that folder's rule ([Local state](project-folder.md#local-state))
+and it is a regular file this user alone owns and reads, dropping a first line the cut fell
 inside and a last line still being written. It keeps the rows on a host the forge adapter declares (github.com today)
 whose fields pass the adapter's `changeRef` and whose folder is absolute, and dedupes them by repository and number,
 else by repository and branch, `touched` rows as well as `pushed`. It orders them by each one's latest row, newest
@@ -609,10 +636,13 @@ pull requests that resolved; only one that does not parse, or the deadline, fail
 A ledger with no row, or whose rows resolve to none, gives `[]`. A ledger that cannot be read, such as a named pipe or
 a symlink there, makes `prs` null with `prs` in `errors`.
 
-**Run time.** Every git call the snapshot starts is killed at git's 2 s limit, and once one is, the later ones of the
+**Run time.** Every git call the snapshot starts, those of finding the project and its state folder included, is
+killed outright at git's 2 s limit, even one that ignores SIGTERM, and once one is, the later ones of the
 same run give up at once, but for the worktree list, which has its own 2 s. With the 4 s forge budget, a run takes at
 most about 8 s past its own reading. A caller, such as a status line command, sets its timeout above that, or kills
-the snapshot's whole process group, since a forge command it started may outlive it.
+the snapshot's whole process group, since a forge command it started may outlive it. No read of the state folder
+waits: a named pipe, or any other entry that is no regular file, at the lesson inbox or the audits triage file fails
+that section at once, as at a cache file or the ledger of the session's folder.
 
 **The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
 line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,

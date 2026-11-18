@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
 import { createGithubForge, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_CHANGE_REFS, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
-import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
+import { remoteIdentity, repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import { isRefName } from '../plugins/aidrian/lib/git.mjs';
@@ -168,12 +168,13 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity', 'servedRepository']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
   assert.equal(facade.servedRepository, servedRepository);
   assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
   assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
   assert.equal(facade.repoIdentity, repoIdentity);
+  assert.equal(facade.remoteIdentity, remoteIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
   assert.equal(facade.MAX_BODY, 65_536, 'the adapter names GitHub\'s longest body, and the facade gives it to shared code');
 });

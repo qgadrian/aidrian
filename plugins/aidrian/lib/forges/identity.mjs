@@ -6,10 +6,12 @@ const DEFAULT_HOST = 'github.com';
 // Hosts that reach the same repositories as another, read as that one so every caller compares canonical hosts:
 // GitHub's SSH endpoint on port 443, for networks that block port 22, on any port.
 const HOST_ALIASES = { 'ssh.github.com': 'github.com' };
-// `git@host:path`, git's scp-like form: no scheme, and a colon before the first slash.
-const SCP_LIKE = /^(?:[^@/]+@)?([^:/]+):(?!\/\/)(.+)$/u;
-// A remote on this machine's disk, which names no forge: `/srv/git/x`, `./x`, `../x`, `~/x`, `C:/x`, `C:\x`.
-const LOCAL_PATH = /^(?:[/.~\\]|[a-z]:[/\\])/iu;
+// `git@host:path`, git's scp-like form: no scheme, and a colon before the first slash. As git reads it, the host ends
+// at the first colon: the user name holds no colon or slash, so an `@` in the path never moves the host into it.
+const SCP_LIKE = /^(?:[^@/:]+@)?([^:/]+):(?!\/\/)(.+)$/u;
+// A remote on this machine's disk, which names no forge: `/srv/git/x`, `./x`, `../x`, `~/x`, `C:/x`, `C:\x`, and any
+// `file:` URL, one with a host such as `file://github.com/acme/notes` included, since git reads that host as no network one.
+const LOCAL_PATH = /^(?:[/.~\\]|[a-z]:[/\\]|file:)/iu;
 
 // The longest value repoIdentity reads: a longer one names no repository it serves, and reading it would cost time on
 // text from a command line.
@@ -51,4 +53,14 @@ export function repoIdentity(value) {
   const parts = clean(text).split('/');
   if (parts.length === 2) return identity(DEFAULT_HOST, parts.join('/'));
   return parts.length > 2 ? identity(parts[0], parts.slice(1).join('/')) : null;
+}
+
+// A remote URL's identity, as repoIdentity reads it, only when the URL names a network remote: a URL with a scheme, or
+// git's `host:path`. git reads anything else as a folder on disk, a bare `vendor/mirror.git` relative to the repository
+// included, so its path parts never reach a forge as an owner and a name: null. `-R` values keep repoIdentity.
+export function remoteIdentity(url) {
+  if (typeof url !== 'string') return null;
+  const text = url.trim();
+  const network = /^[a-z][a-z0-9+.-]*:\/\//iu.test(text) || (!LOCAL_PATH.test(text) && SCP_LIKE.test(text));
+  return network ? repoIdentity(text) : null;
 }

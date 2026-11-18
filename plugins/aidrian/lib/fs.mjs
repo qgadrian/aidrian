@@ -2,7 +2,7 @@
 // commands. Paths are relative to `root` where a function takes one. No dependencies: this file runs from the installed
 // plugin, which has no node_modules.
 
-import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason.
@@ -71,6 +71,8 @@ export function checkoutHolding(real, checkouts) {
 
 // This process's user id, or null where the system has none, as on Windows.
 export const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
+// This process's group id, its user's primary group, or null where the system has none.
+export const processGid = () => (typeof process.getgid === 'function' ? process.getgid() : null);
 
 // `base` and `rel` joined as POSIX-style relative paths, or null when the text escapes `base`. It reads no disk, so it
 // also checks a path in a tree that is not checked out, such as a base branch read through GitHub.
@@ -97,6 +99,24 @@ export function isFile(file) {
     return statSync(file).isFile();
   } catch {
     return false;
+  }
+}
+
+// The text of `file`, or null when it is missing. It is opened non-blocking and read only when it is a regular file, so a
+// named pipe there never makes the read wait: one, or any other entry that is no regular file, throws.
+export function readRegularFile(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) throw Object.assign(new Error(`${file}: not a regular file`), { code: 'ENOTREG' });
+    return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
   }
 }
 

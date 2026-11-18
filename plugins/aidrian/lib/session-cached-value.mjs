@@ -2,10 +2,7 @@
 // heads `aidrian session snapshot` reads from the forge. The file holds { value, valueAt, attemptAt }: the value, when it
 // was stored, and when the last refresh was attempted. Display data only.
 
-import path from 'node:path';
-
-import { readOwnFile } from './handoff-markers.mjs';
-import { reserveSessionFile, writeSessionFile } from './session-folder.mjs';
+import { readSessionFile, reserveSessionFile, writeSessionFile } from './session-folder.mjs';
 
 const EMPTY = Object.freeze({ value: null, valueAt: null, attemptAt: null });
 
@@ -22,10 +19,9 @@ const EMPTY = Object.freeze({ value: null, valueAt: null, attemptAt: null });
 // own window. Two readers that start together either side of a window boundary take different reservations, so two
 // refreshes can fall either side of it. `cap` bounds the file's read, and `isValue` checks the value's shape.
 export function cachedValue({ folder, name, windowMs, cap, isValue, refresh, now = Date.now() }) {
-  const file = folder ? path.join(folder, name) : null;
-  const stored = file ? readCached(file, cap, isValue) : EMPTY;
+  const stored = folder ? readCached(folder, name, cap, isValue) : EMPTY;
   if (inWindow(stored, now, windowMs)) return kept(stored, stored.valueAt < stored.attemptAt);
-  const attempt = file ? recordAttempt({ folder, name, file, cap, isValue, windowMs, now, seen: stored }) : null;
+  const attempt = folder ? recordAttempt({ folder, name, cap, isValue, windowMs, now, seen: stored }) : null;
   if (attempt === null) return kept(stored, true);
   if (attempt !== RECORDED) return kept(attempt, attempt.valueAt < attempt.attemptAt);
   let value;
@@ -49,11 +45,11 @@ const kept = (stored, stale) => (stored.valueAt === null ? null : { value: store
 
 // Records the attempt at `now` under the file's reservation: RECORDED when this call recorded it, the cache as read again
 // when another process recorded one after `seen` was read, or null when the reservation or the write failed.
-function recordAttempt({ folder, name, file, cap, isValue, windowMs, now, seen }) {
+function recordAttempt({ folder, name, cap, isValue, windowMs, now, seen }) {
   const release = reserveSessionFile(folder, name, { windowMs, now });
   if (!release) return null;
   try {
-    const current = readCached(file, cap, isValue);
+    const current = readCached(folder, name, cap, isValue);
     if (current.attemptAt !== seen.attemptAt) return current;
     return writeSessionFile(folder, name, cacheText({ ...current, attemptAt: now })) ? RECORDED : null;
   } finally {
@@ -64,9 +60,9 @@ function recordAttempt({ folder, name, file, cap, isValue, windowMs, now, seen }
 const cacheText = ({ value, valueAt, attemptAt }) => `${JSON.stringify({ value, valueAt, attemptAt })}\n`;
 const isTime = (value) => Number.isSafeInteger(value) && value >= 0;
 
-// The cache at `file` under the Reads rule (readOwnFile), or EMPTY; a value of the wrong shape reads as none.
-function readCached(file, cap, isValue) {
-  const read = readOwnFile(file, { cap });
+// The cache `name` in `folder` under the Reads rule (readSessionFile), or EMPTY; a value of the wrong shape reads as none.
+function readCached(folder, name, cap, isValue) {
+  const read = readSessionFile(folder, name, { cap });
   try {
     const { value, valueAt, attemptAt } = JSON.parse(read?.text ?? 'null');
     if (!isTime(attemptAt)) return EMPTY;

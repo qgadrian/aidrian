@@ -71,8 +71,8 @@ export const commands = {
         const move = state && config.state.dir ? `in ${project.paths.config} set "state": { "dir": null } to move the state folder out of the repository, or while it stays ` : '';
         errors.push(`${line} is not git-ignored: ${move}add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
-      // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. With the
-      // checkouts unlisted, as outside a repository, the check says nothing new.
+      // The record commands and the merge guard refuse this folder; everything else keeps using it, so a warning. Outside
+      // a repository there is nothing to warn about; when git fails inside one, the check stays silent.
       const inside = insideCheckout(project, config, () => ({}));
       if (inside.problem && !inside.unread) warnings.push(inside.problem);
       // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.

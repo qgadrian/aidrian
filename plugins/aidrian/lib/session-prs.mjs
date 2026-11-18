@@ -13,7 +13,7 @@
 import { lstatSync } from 'node:fs';
 import path from 'node:path';
 
-import { repoIdentity } from './forges/index.mjs';
+import { remoteIdentity } from './forges/index.mjs';
 import { isRefName, runGit } from './git.mjs';
 import { changesGitTarget, isPush, pushedRefs } from './git-push.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
@@ -36,13 +36,11 @@ export const MAX_ROWS = 32;
 export const MAX_REFS = 25;
 const CWD_MAX_BYTES = 1024;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
-// Whether git reads a remote's URL as a path on this machine: a `file:` URL, or one with neither a scheme nor git's
-// `host:path` form, such as `archive/widgets`. Such a remote names no repository, however its path reads.
-const isLocalPath = (url) => /^file:/iu.test(url) || !/^[a-z][a-z0-9+.-]*:\/\/|^[^/]*:/iu.test(url);
 
 // What git says of a folder, read once each and for MAX_FOLDERS folders at most: from one `git config` read, its remotes
-// by name, each `{ fetch, push }` as repoIdentity reads the first `remote.<name>.url` and the first
-// `remote.<name>.pushurl`, null for one it cannot read or that is a local path (isLocalPath) and absent for none, and
+// by name, each `{ fetch, push }` as remoteIdentity reads the first `remote.<name>.url` and the first
+// `remote.<name>.pushurl`, null for one it cannot read or that git reads as a path on this machine, such as a `file:`
+// URL or `archive/widgets`, and absent for none, and
 // each branch's `merge`; the current branch; and the remote-tracking refs a push updated to the folder's HEAD commit,
 // which one `git rev-parse HEAD` reads (pushedRefs), in the git common dir one `git rev-parse --git-common-dir` names.
 // A key git keeps one value of takes its last, as git does. No value of the ledger reaches git's argv.
@@ -57,7 +55,7 @@ function readConfig(stdout) {
     if (remote) {
       const each = config.remotes.get(remote[1]) ?? {};
       const key = remote[2] === 'url' ? 'fetch' : 'push';
-      if (!Object.hasOwn(each, key)) each[key] = isLocalPath(remote[3]) ? null : repoIdentity(remote[3]);
+      if (!Object.hasOwn(each, key)) each[key] = remoteIdentity(remote[3]);
       config.remotes.set(remote[1], each);
     } else if (branch) config.branches.set(branch[1], { merge: branch[2] });
   }

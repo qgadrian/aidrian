@@ -1,15 +1,21 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { appendSessionFile, APPENDED_FILES, readSessionTail, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { stateRoot } from '../plugins/aidrian/lib/project.mjs';
+import { appendSessionFile, APPENDED_FILES, boundFolder, heldFolder, readSessionFile, readSessionTail, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { cachedSessionUsage } from '../plugins/aidrian/lib/session-usage-cache.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
 const NONE = { checkouts: [] };
+
+// A primary group no folder in these tests has, so a group-writable folder is in a shared group whatever the machine.
+const SHARED = POSIX ? process.getuid() + 1 : null;
 
 const scratch = () => realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-session-folder-')));
 
@@ -92,6 +98,107 @@ test('a state folder every user may write gets no folder, no write, and no sweep
   chmodSync(fresh, 0o777);
   assert.equal(sessionFolder(fresh, 'new', NONE), null);
   assert.deepEqual(readdirSync(fresh), []);
+});
+
+test('a state folder below one its group or other users may write gets no session folder, unless that one is sticky', { skip: !POSIX }, () => {
+  const open = path.join(scratch(), 'open');
+  mkdirSync(open);
+  const state = path.join(open, 'state');
+  for (const mode of [0o777, 0o775, 0o757]) {
+    chmodSync(open, mode);
+    assert.equal(sessionFolder(state, 'abc', { ...NONE, gid: SHARED }), null, mode.toString(8));
+  }
+  // A shared folder like /tmp: every user may write it, but only an entry's owner may rename or remove that entry.
+  chmodSync(open, 0o1777);
+  const folder = sessionFolder(state, 'abc', NONE);
+  assert.equal(folder, path.join(state, 'sessions', 'abc'));
+  assert.ok(writeSessionFile(folder, 'usage.json', '{}\n'));
+  // Once it loses the sticky bit, the folder below is no longer bound: its files are neither written nor read.
+  chmodSync(open, 0o777);
+  assert.equal(boundFolder(folder), false);
+  assert.equal(writeSessionFile(folder, 'usage.json', 'x\n'), null);
+  assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024 }), null);
+  chmodSync(open, 0o700);
+  // The default location, under the state root, which the test run keeps in a temporary folder of its own.
+  assert.ok(sessionFolder(path.join(stateRoot(), 'projects', 'session-folder-test'), 'abc', NONE));
+});
+
+// Runs `run` while every folder under `root` reads, through lstat, as in the group `gid`: a test cannot chgrp a folder to
+// a group it is not in, such as a user private group on a machine that has none.
+function inGroup(root, gid, run) {
+  const real = fs.lstatSync;
+  fs.lstatSync = (file, ...rest) => {
+    const stat = real(file, ...rest);
+    if (!stat || (file !== root && !String(file).startsWith(`${root}${path.sep}`))) return stat;
+    return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { gid });
+  };
+  syncBuiltinESMExports();
+  try {
+    return run();
+  } finally {
+    fs.lstatSync = real;
+    syncBuiltinESMExports();
+  }
+}
+
+// A state folder below a folder its group may write, both mode 0775, as a umask of 002 makes them.
+function groupChain() {
+  const root = scratch();
+  const state = path.join(root, 'open', 'state');
+  mkdirSync(state, { recursive: true });
+  chmodSync(path.dirname(state), 0o775);
+  chmodSync(state, 0o775);
+  return { root, state };
+}
+
+test('a 0775 state folder and the one above it, in a user private group, get a session folder and its writes', { skip: !POSIX }, () => {
+  const { root, state } = groupChain();
+  const ids = { uid: process.getuid(), gid: process.getuid() };
+  inGroup(root, ids.uid, () => {
+    const folder = sessionFolder(state, 'abc', { ...NONE, ...ids });
+    assert.equal(folder, path.join(state, 'sessions', 'abc'));
+    assert.equal(boundFolder(folder, ids), true);
+    assert.ok(writeSessionFile(folder, 'usage.json', '{}\n', ids));
+    assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024, ...ids })?.text, '{}\n');
+  });
+});
+
+test('the same 0775 chain in a shared group gets no session folder, and nothing is made', { skip: !POSIX }, () => {
+  const { root, state } = groupChain();
+  const uid = process.getuid();
+  // The user's primary group, whose id is not the uid, so other users are in it.
+  inGroup(root, SHARED, () => assert.equal(sessionFolder(state, 'abc', { ...NONE, uid, gid: SHARED }), null));
+  // A group whose id is the uid, but not the user's primary group.
+  inGroup(root, uid, () => assert.equal(sessionFolder(state, 'abc', { ...NONE, uid, gid: SHARED }), null));
+  // Another group, while the user's primary group is a user private group.
+  inGroup(root, SHARED, () => assert.equal(sessionFolder(state, 'abc', { ...NONE, uid, gid: uid }), null));
+  assert.equal(existsSync(path.join(state, 'sessions')), false);
+  // A state folder not there yet is checked by the nearest folder above it that is, before anything is made.
+  const missing = path.join(path.dirname(state), 'missing', 'state');
+  inGroup(root, SHARED, () => assert.equal(sessionFolder(missing, 'abc', { ...NONE, uid, gid: SHARED }), null));
+  assert.equal(existsSync(path.dirname(missing)), false);
+});
+
+test('a group-writable state folder never yields a session folder that boundFolder refuses', { skip: !POSIX }, () => {
+  const { root, state } = groupChain();
+  // The state folder alone: the check before a session folder is made then reads no group-writable folder above it.
+  chmodSync(path.dirname(state), 0o700);
+  const folder = sessionFolder(state, 'abc', NONE);
+  assert.ok(folder === null || boundFolder(folder), 'in this machine\'s own groups');
+  inGroup(root, SHARED, () => {
+    const shared = sessionFolder(state, 'def', { ...NONE, gid: SHARED });
+    assert.ok(shared === null || boundFolder(shared, { gid: SHARED }), 'in a shared group');
+  });
+});
+
+test('a folder that is a symlink fails heldFolder, even to a folder that passes it', { skip: !POSIX }, () => {
+  const root = scratch();
+  const target = path.join(root, 'target');
+  mkdirSync(target, { mode: 0o700 });
+  symlinkSync(target, path.join(root, 'link'));
+  assert.equal(heldFolder(target, { above: true }), true);
+  assert.equal(heldFolder(path.join(root, 'link'), { above: true }), false);
+  assert.equal(heldFolder(path.join(root, 'link')), false);
 });
 
 test('a session or sessions folder any other user may read or write gives no folder', { skip: !POSIX }, () => {
@@ -202,6 +309,51 @@ test('a session file is not written into a folder another user may read, or thro
   assert.equal(writeSessionFile(linked, 'usage.json', '{}'), null);
   assert.deepEqual(readdirSync(target), []);
   assert.equal(writeSessionFile(path.join(root, 'missing'), 'usage.json', '{}'), null);
+});
+
+test('once a folder above a session folder is swapped for a symlink, its files are neither written, appended, reserved, read, nor swept there', { skip: !POSIX }, () => {
+  const { state, sessions } = stateWithSessions();
+  const folder = sessionFolder(state, 'abc', NONE);
+  assert.ok(writeSessionFile(folder, 'usage.json', 'mine\n'));
+  assert.ok(appendSessionFile(folder, 'prs.jsonl', 'mine\n', { maxBytes: 1024 }));
+  // Another user of a state folder moves the sessions folder away and links one elsewhere in its place, holding a
+  // private folder of the same name, as the user's own folders are, with a usage cache of the session's transcript
+  // whose fold no read of it gives, and an old session folder.
+  const elsewhere = path.join(path.dirname(state), 'elsewhere');
+  mkdirSync(path.join(elsewhere, 'abc'), { recursive: true, mode: 0o700 });
+  const transcript = path.join(path.dirname(state), 'transcript.jsonl');
+  writeFileSync(transcript, `${JSON.stringify({ message: { id: 'a', model: 'mine', usage: { input_tokens: 1, cache_read_input_tokens: 9 } } })}\n`);
+  const planted = path.join(elsewhere, 'abc', 'usage.json');
+  cachedSessionUsage({ transcript, cacheFile: planted });
+  const cache = JSON.parse(readFileSync(planted, 'utf8'));
+  const theirs = JSON.stringify({ ...cache, requests: cache.requests.map((each) => ({ ...each, model: 'theirs' })) });
+  writeFileSync(planted, theirs);
+  const then = new Date(Date.now() - 31 * DAY);
+  utimesSync(planted, then, then);
+  utimesSync(path.dirname(planted), then, then);
+  // And a ledger of rows the session never wrote.
+  const ledger = path.join(elsewhere, 'abc', 'prs.jsonl');
+  writeFileSync(ledger, 'theirs\n', { mode: 0o600 });
+  utimesSync(ledger, then, then);
+  utimesSync(path.dirname(planted), then, then);
+  const old = oldFolder(elsewhere, 'old', 31);
+  renameSync(sessions, path.join(state, 'moved'));
+  symlinkSync(elsewhere, sessions);
+  assert.equal(writeSessionFile(folder, 'usage.json', 'redirected\n'), null);
+  assert.equal(reserveSessionFile(folder, 'usage.json', { windowMs: WINDOW }), null);
+  assert.equal(readSessionFile(folder, 'usage.json', { cap: 1024 }), null);
+  assert.equal(readSessionTail(folder, 'prs.jsonl', { maxBytes: 1024 }), null, 'the planted ledger is not read');
+  assert.equal(appendSessionFile(folder, 'prs.jsonl', 'redirected\n', { maxBytes: 1024 }), false, 'nor appended to');
+  assert.equal(boundFolder(folder), false);
+  // The usage cache neither reads the planted usage.json nor writes over it.
+  assert.equal(cachedSessionUsage({ transcript, cacheFile: path.join(folder, 'usage.json') }).model, 'mine');
+  // A sweep from a new session's folder deletes nothing behind the symlink, however old.
+  sweepSessions(sessions, { current: 'new', uid: process.getuid(), now: Date.now() });
+  assert.deepEqual(readdirSync(elsewhere).sort(), ['abc', 'old']);
+  assert.deepEqual(readdirSync(path.join(elsewhere, 'abc')).sort(), ['prs.jsonl', 'usage.json']);
+  assert.deepEqual(readdirSync(old), ['usage.json']);
+  assert.equal(readFileSync(planted, 'utf8'), theirs);
+  assert.equal(readFileSync(ledger, 'utf8'), 'theirs\n');
 });
 
 const WINDOW = 60_000;

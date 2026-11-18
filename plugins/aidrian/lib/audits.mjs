@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFile
 import path from 'node:path';
 
 import { parseReport } from './audit-import.mjs';
-import { isFile, isObject } from './fs.mjs';
+import { isFile, isObject, readRegularFile } from './fs.mjs';
 import { withLocks } from './jsonl.mjs';
 
 export const SIDECAR_VERSION = 1;
@@ -307,10 +307,13 @@ const triageError = (message) => Object.assign(new Error(message), { code: TRIAG
 // A missing file is an empty record; an unreadable one throws, so a write never replaces decisions it could not read.
 export function readTriage(dir) {
   const file = path.join(dir, TRIAGE_FILE);
-  if (!existsSync(file)) return { version: 1, reports: {} };
   let value;
   try {
-    value = JSON.parse(readFileSync(file, 'utf8'));
+    // Non-blocking, so a named pipe there throws rather than making the read wait. One read, which alone says the file is
+    // missing: a folder that cannot be searched throws, never reads as no record.
+    const text = readRegularFile(file);
+    if (text === null) return { version: 1, reports: {} };
+    value = JSON.parse(text);
   } catch (error) {
     throw triageError(`${file}: invalid JSON (${error.message})`);
   }

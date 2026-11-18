@@ -154,7 +154,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── sessions/<session id>/  what aidrian session snapshot caches for one session, and its pull request ledger, for its user alone:
-│   ├── usage.json            the transcript read so far, as the handoff numbers fold it, saved step by step
+│   ├── usage.json            the transcript read so far, as the handoff numbers fold it, and a hash of its first and last 64 KiB, saved step by step
 │   ├── prs.jsonl             the session's pull request ledger, one row per pull request a Bash call touched (hooks.md#session-ledger)
 │   ├── prs-cache.json        the ledger's pull requests as the forge last answered, and when it was last asked
 │   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
@@ -173,7 +173,15 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of
   [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
-  mode 0700, no bit for the group or others, checked before every write, read, and sweep; each file is written as a
+  mode 0700, no bit for the group or others, checked before every write, read, and sweep, which also checks that the
+  session folder's real path is still the one it was made at, so a folder above it swapped for a symlink gets none, and
+  that the state folder and every folder above it pass one rule (`heldFolder`), as OpenSSH's StrictModes holds the
+  folders above a key, so no other user can swap a folder between a check and the write that follows: read with
+  `lstat`, it is no symlink; the user owns it, or root does above the state folder; others may write it only with the
+  sticky bit; and its group only with the sticky bit, or when it is the user's own folder in a user private group, its
+  group the user's primary group whose id is the user's id, as Debian, Ubuntu, and Fedora give each user, whose umask
+  002 makes folders 0775. `/tmp`, root's and sticky, passes. A state folder not there yet is checked by the nearest
+  folder above it before anything is made. Each file is written as a
   temporary file, mode 0600, renamed over it, under the cache names alone, with one exception, the ledger
   `prs.jsonl`, which `lib/session-prs.mjs` appends to in place through the helper's `appendSessionFile` for the
   [session ledger hook](hooks.md#session-ledger), no-follow, mode 0600, only while it is a regular file with one link
@@ -182,11 +190,14 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   write would pass that or finds it past that, the writer reading the same last 256 KB; a cache's reservation for one fixed window,
   `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
   created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so
-  one a killed process left blocks its own window alone. A state folder inside a checkout gets no
-  session folder, and neither does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
+  one a killed process left blocks its own window alone. A state folder inside a checkout of the repository, the
+  main checkout or any linked worktree, or one git could not list the checkouts for, gets no session folder,
+  and neither does one whose `sessions` folder or session folder resolves inside a checkout, as with `state.dir` set to
+  `..` in a repository whose folder is named `sessions`; the snapshot reads the lesson inbox and the audits folder under
+  the same rule. Nor does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
   the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
-  others untouched for 30 days, deleting only the cache files, their temporary files, and their reservations that are
-  regular files, then the folder once empty.
+  others untouched for 30 days, deleting only the cache files and the ledger, their temporary files, and their
+  reservations that are regular files, then the folder once empty.
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

@@ -54,6 +54,9 @@ export function startedUnattended(project, config, session, { home } = {}) {
       const state = read();
       if (typeof state !== 'string' || seen.has(state)) return false;
       seen.add(state);
+      // The project's own checkouts, not projectCheckouts as projectStore uses for a writer: that is null when git
+      // cannot list the worktrees, the store would refuse, and a floor never found would lift every refusal here.
+      // A floor found only adds refusals, so a store in another worktree of the repository may give one.
       return startedInBackground(openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain }), session);
     } catch {
       return false;

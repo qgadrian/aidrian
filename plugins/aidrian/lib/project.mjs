@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { loadConfig, pluginRepository } from './config.mjs';
 import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
-import { checkoutRoots, mainRoot, runGit } from './git.mjs';
+import { checkoutRoots, mainRoot, repositoryCheckouts, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
@@ -283,6 +283,15 @@ export function strictConfigPathIn(read) {
 function checkoutsOf(root, roots) {
   const main = inMainCheckout(root, roots);
   return main && main !== realpathSync(root) ? [root, main] : [root];
+}
+
+// The project's checkouts and every checkout of its repository (lib/git.mjs repositoryCheckouts): what a state folder
+// must lie outside of before a session folder or a continuation marker is kept there. A relative `state.dir` of a project
+// below the repository root resolves against that root, so the project's own checkouts are not enough. Null when git
+// could not list them, so the caller refuses. `read` gives each git call's options.
+export function projectCheckouts(project, read) {
+  const repository = repositoryCheckouts(project.root, read);
+  return repository && [...new Set([...project.checkouts, ...repository])];
 }
 
 const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff', 'handoff'];

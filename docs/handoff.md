@@ -598,6 +598,8 @@ forge call a minute at most, a 1 MiB read, and the 4 s budget, which the two rea
 answer shows only for the refs the ledger still selects, so a pull request pushed out of the newest 25 leaves, and the
 section never holds more than 25 entries, unsupported ones counted. When a selected ref has no cached answer, as when
 the session touched a new pull request inside the minute, the entries show with `stale: true` until the next refresh.
+When none of them has one, inside the minute or past the deadline, `prs` is null with `prs` in `errors`, never an empty
+list that reads as no pull requests.
 Past the deadline the cached entries show with `stale: true`, or `prs` is null with `prs` in `errors` when there is none. An answer that holds errors still gives the
 pull requests that resolved; only one that does not parse, or the deadline, fails the read, and its text never shows.
 A ledger with no row, or whose rows resolve to none, gives `[]`. A ledger that cannot be read, such as a named pipe or

@@ -838,6 +838,21 @@ test('prs: a warm cache shows its rows only for refs the ledger still selects, s
   assert.deepEqual(json.errors, []);
 });
 
+test('prs: a cache that answers none of the refs the ledger selects fails the section, inside the window and past a deadline', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 1 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(1) } } });
+  assert.deepEqual(env.run(['--session', ID]).json.prs.map(({ number }) => number), [1]);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 6 }, 1)]);
+  const inside = env.run(['--session', ID]).json;
+  assert.deepEqual([inside.prs, inside.errors, env.calls().length], [null, ['prs'], 1], 'inside the window: no call, and no answer for #6');
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), attemptAt: Date.now() - 120_000 }));
+  env.answer({ data: {} }, { delay: 5000 });
+  const late = env.run(['--session', ID, '--deadline-ms', '200']).json;
+  assert.deepEqual([late.prs, late.errors], [null, ['prs']], 'a refresh past the deadline');
+});
+
 test('prs: a cached url other than the one the adapter builds for the row shows as null', { skip: !POSIX }, (t) => {
   const env = withLedger(t);
   env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);

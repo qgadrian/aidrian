@@ -23,6 +23,8 @@ How to apply one:
    rejects keys it does not know.
 
 A recipe sets only the keys it changes; [config.md](config.md#keys) holds every key and its default.
+It sets no key that names the project's own files or screens, such as `review.visual`, `review.flows`, or
+`review.productFeedback`: [Screens checked on every device](#screens-checked-on-every-device) adds those on top of any recipe.
 It sets nothing about the host's own permissions: how often Claude Code or Codex asks before a tool runs is the host's
 setting, and the more autonomous recipes pay off only with a permission mode that does not stop each command.
 
@@ -160,3 +162,27 @@ What it turns on:
 - The review loop is offered, not started, and the author marks a pull request ready. Nothing merges unasked.
 - The session-length reminder asks before a handoff, and the handoff writes a brief only.
 - Persona-audit triage confirms each issue before creating it.
+
+## Screens checked on every device
+
+An add-on for any recipe, for a project whose staff use the same screens on a phone, a tablet, and a desktop:
+each change to those screens is captured at every width, checked against invariants that block the review, and walked
+by a persona in the running app. It names the project's routes and files, so no recipe can hold it.
+[Screens checked on every device](review.md#screens-checked-on-every-device) has the config and what each key does.
+
+It needs a persona doc for the staff role ([Personas](personas.md)), Playwright in the project's dependencies, and a
+base URL: `review.visual.baseUrl` in `.aidrian.local.json`, or a `preview` command.
+
+How it sits with each recipe:
+
+- **Full autonomy**: leave `signoff` on the flow unset. The flow's reviewers close its invariants from the captures,
+  and a disputed one goes to an [unattended ruling](review.md#unattended-rulings). `"signoff": "human"` makes every
+  pull request that touches the screens wait for a person, which this recipe exists to avoid. Its
+  `quorum.product.autoStart` is already on.
+- **Autopilot**: the same, with `"signoff": "human"` only on the one or two flows a person must try before a merge.
+  Its `quorum.product.autoStart` is already on.
+- **Hands-on**: `"signoff": "human"` fits, since the Human is there to try the screens. Leave
+  `quorum.product.autoStart` off: every product decision already goes to the Human, and the quorum would add dispatches
+  before each question.
+
+The persona walk runs at the persona's own device width only; the captures cover the other widths.

@@ -558,6 +558,50 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   itself to attaching or point the capture elsewhere, and a change to them triggers `harness-config`.
 - A presentation-only change, such as a class name, triggers the flow by its path like any other change.
 
+### Screens checked on every device
+
+A project whose staff use the same screens on a phone, a tablet, and a desktop often wants each change to those screens
+seen at every width and tried by hand, on top of its unit and end-to-end tests. Four settings together give that, with
+no rule pasted into a session:
+
+```json
+"review": {
+  "visual": {
+    "platform": "web",
+    "targets": [{ "files": ["src/app/staff/**", "src/components/staff/**"], "routes": ["/staff/floor", "/staff/bookings"] }],
+    "viewports": [390, 1024, 1440],
+    "reviewers": ["designer", "ux-specialist"],
+    "checklist": "docs/ui/staff-screens.md"
+  },
+  "flows": {
+    "staff-screens": {
+      "files": ["src/app/staff/**", "src/components/staff/**"],
+      "invariants": "docs/ui/staff-screens.md",
+      "require": ["agent:designer", "agent:ux-specialist"],
+      "tests": ["e2e/staff*"]
+    }
+  },
+  "productFeedback": { "auto": true }
+},
+"quorum": { "product": { "autoStart": true } }
+```
+
+- **Every width**: `review.visual` captures each touched staff route at the phone, tablet, and desktop widths, and
+  the visual reviewers check the images against the checklist.
+- **A broken screen blocks**: the `staff-screens` flow makes its reviewers answer each invariant of the doc, such as
+  "every action is reachable at 390 px", citing `capture:<key>` images of the head. A `violated` or uncited invariant
+  stops the review; product feedback alone never does.
+- **Tried by hand**: `productFeedback.auto` runs the `pr-product-feedback` skill after the draft opens. A persona
+  walks the tasks the diff touches in the running app, at that persona's own device width, and the ready hold waits
+  for the feedback. The walk needs a persona doc for the staff role ([Personas](personas.md)); `files` unset falls back
+  to the visual targets' files.
+- **A person looks too**: add `"signoff": "human"` to the flow when a person, not only agents, must try the screens
+  before the review passes ([Sign-off by the Human](#sign-off-by-the-human)). Keep it to the few flows that need it,
+  since every head that touches them waits for that person.
+- **Hard product calls**: `quorum.product.autoStart` runs a product quorum on a hard product or UX call the change
+  raises, with the staff persona as the end user; a small, clear call does not
+  ([Automatic product quorums](config.md#automatic-product-quorums)).
+
 ### Findings one by one
 
 Every agent pass, a visual reviewer's included, records with `--findings-file` rather than counts, so for an agent pass

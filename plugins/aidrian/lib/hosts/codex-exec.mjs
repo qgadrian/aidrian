@@ -13,7 +13,11 @@
 //     FIRST_TOOL_WAIT;
 //   - the beacon the plugin's agent gate hook files on that call (lib/unattended-mark.mjs noteBeacon), within
 //     BEACON_GRACE of it, since the hook runs before the tool: it shows Codex runs the plugin's hooks under `codex exec`.
-// The sandbox is pinned to workspace-write; no flag that bypasses the sandbox or the approvals is ever passed.
+// The sandbox is pinned to workspace-write; no flag that bypasses the sandbox or the approvals is ever passed. Its
+// network is one switch, `[sandbox_workspace_write] network_access`, which the host's access check requires on, and
+// which reaches every host: the gate's `domains`, the forge's and the registries projectRun.registries lists, narrow
+// nothing here, as they do on Claude Code. Codex's experimental network proxy (features.network_proxy.domains) could
+// hold a session to them; no live run has checked it, so the start does not turn it on.
 // Every process call goes through `run` (spawnSync's shape) or `launch`, which a test replaces or points at a fake
 // `codex`; the waits count their steps through `wait`, so a test passes a short one and never waits the full time.
 
@@ -23,6 +27,7 @@ import { closeSync, constants, existsSync, fstatSync, openSync, readSync, realpa
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
+import { varsProblem } from '../project-registries.mjs';
 import { programNames, programOnPath, runCommand } from './process.mjs';
 
 // How long a start waits for each proof, and the step between reads.
@@ -230,12 +235,13 @@ function poll(ms, wait, read, gone = () => false) {
   return undefined;
 }
 
-// The environment of the new session: the driver's, without the variables Codex sets for a session of its own.
-const childEnv = (env) => Object.fromEntries(Object.entries(env).filter(([name]) => !OWN_VARS.includes(name)));
+// The environment of the new session: the driver's, without the variables Codex sets for a session of its own, and with
+// `cacheVars`, which move the package managers' caches into the attempt's folder (lib/project-registries.mjs).
+const childEnv = (env, cacheVars = {}) => ({ ...Object.fromEntries(Object.entries(env).filter(([name]) => !OWN_VARS.includes(name))), ...cacheVars });
 
 // Why the start's inputs cannot start a session, or null: the folder, name, prompt, log, beacon read, and each folder
-// `grants` names, which must be absolute paths of plain text.
-function inputProblem({ cwd, name, prompt, log, beacon, grants }) {
+// `grants` names, which must be absolute paths of plain text, and the cache environment `cacheVars`.
+function inputProblem({ cwd, name, prompt, log, beacon, grants, cacheVars }) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || CONTROL.test(cwd)) return 'the folder to start the session in is not an absolute path of plain text';
   if (typeof name !== 'string' || !NAME.test(name)) return 'the session\'s name is not plain text of at most 100 characters that cannot read as a flag';
   if (typeof prompt !== 'string' || prompt.trim() === '' || /^\s*[-/]/u.test(prompt)) {
@@ -244,7 +250,7 @@ function inputProblem({ cwd, name, prompt, log, beacon, grants }) {
   if (typeof log !== 'string' || !path.isAbsolute(log) || CONTROL.test(log)) return 'the gate named no run log for the session\'s events';
   if (typeof beacon !== 'function') return 'the gate gave no way to read the agent gate hook\'s beacon';
   if (!Array.isArray(grants) || grants.some((each) => typeof each !== 'string' || !path.isAbsolute(each) || CONTROL.test(each))) return 'a folder the gate grants the session is not an absolute path of plain text';
-  return null;
+  return varsProblem(cacheVars);
 }
 
 // The real path of each of `folders`, or { problem }.
@@ -264,9 +270,11 @@ function realPaths(folders) {
 // the session id, after which `identify({ id, session })` files its floor and mark; its first tool call; and
 // `beacon(thread)`. Returns { id, session, name, cwd, mode: null }; { problem, uncertain: false } when nothing runs, with
 // `proof` naming the proof that failed when a process that started was stopped for it; or { problem, uncertain: true }
-// when it could not be stopped. `limits` is a test's { session, tool, beacon } in milliseconds of steps.
-export function startProject({ cwd, prompt, name, env, hold, identify, log, beacon, grants = [], run = runCommand, wait = pauseSync, launch = launchCommand, resolve = codexOnPath, limits = {} }) {
-  const bad = inputProblem({ cwd, name, prompt, log, beacon, grants });
+// when it could not be stopped. `cacheVars` join the session's environment, which every command it runs inherits
+// unless the user's shell_environment_policy filters them. `limits` is a test's { session, tool, beacon } in
+// milliseconds of steps.
+export function startProject({ cwd, prompt, name, env, hold, identify, log, beacon, grants = [], cacheVars = {}, run = runCommand, wait = pauseSync, launch = launchCommand, resolve = codexOnPath, limits = {} }) {
+  const bad = inputProblem({ cwd, name, prompt, log, beacon, grants, cacheVars });
   if (bad) return { problem: bad };
   const folders = realPaths([cwd, ...grants]);
   if (folders.problem) return { problem: folders.problem };
@@ -275,12 +283,13 @@ export function startProject({ cwd, prompt, name, env, hold, identify, log, beac
   if (!codex) return { problem: NO_CODEX };
   if (!psProgram()) return { problem: 'this system has no process table program at /bin/ps or /usr/bin/ps, so a Codex session could never be stopped safely' };
   if (typeof hold !== 'function' || !hold({ cwd: real, known: [] })) return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
-  const launched = launchIn({ codex, real, granted, prompt, env, log, launch });
+  const launched = launchIn({ codex, real, granted, prompt, env: childEnv(env, cacheVars), log, launch });
   if (launched.problem) return launched;
   return proveStart({ ...launched, real, name, log, beacon, identify, run, wait, limits });
 }
 
-// Runs `codex exec` with its output to `log`: { pid } of a process this one has not reaped, or { problem, uncertain }.
+// Runs `codex exec` under the session's environment `env` with its output to `log`: { pid } of a process this one has
+// not reaped, or { problem, uncertain }.
 function launchIn({ codex, real, granted, prompt, env, log, launch }) {
   let fd;
   try {
@@ -291,7 +300,7 @@ function launchIn({ codex, real, granted, prompt, env, log, launch }) {
   let started;
   try {
     const args = ['exec', '--json', '--sandbox', 'workspace-write', '--cd', real, ...granted.flatMap((each) => ['--add-dir', each]), prompt];
-    started = launch(codex, args, { cwd: real, env: childEnv(env), fd });
+    started = launch(codex, args, { cwd: real, env, fd });
   } catch (error) {
     started = { pid: undefined, error };
   } finally {

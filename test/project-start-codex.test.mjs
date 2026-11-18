@@ -21,6 +21,7 @@ import { pauseSync, resolvedPath } from '../plugins/aidrian/lib/fs.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { BEACON_GRACE, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, PS_BUFFER, runCommand, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { cacheVars } from '../plugins/aidrian/lib/project-registries.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -55,7 +56,8 @@ function codexConfig({ trusted = 'all', off = null, network = true, roots = null
   return `[plugins."${id}"]\nenabled = true\n${trusted === 'none' ? '' : trust}${sandbox}`;
 }
 
-// A fake `codex` in `bin`. It records its arguments, folder, pid, and inherited session id in `<bin>/codex-call.json`,
+// A fake `codex` in `bin`. It records its arguments, folder, pid, inherited session id, and the cache variables it got
+// (project-registries.mjs cacheVars) in `<bin>/codex-call.json`,
 // prints the first event `mode.event` names ('thread', 'other', or 'none'), a to-do list item first when `mode.todo`,
 // and a `turn.failed` event with the message `mode.failed`; then, unless `mode.tool` is false, after `mode.slow`
 // milliseconds, its first tool call's event and, when `mode.hook`, runs the agent gate hook as Codex runs it for that
@@ -69,7 +71,7 @@ function fakeCodex(t, bin, mode) {
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const mode = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(bin, 'codex-mode.json'))}, 'utf8'));
-fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: process.env.CODEX_THREAD_ID ?? null }));
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: process.env.CODEX_THREAD_ID ?? null, caches: Object.fromEntries(Object.entries(process.env).filter(([name]) => ${JSON.stringify(Object.keys(cacheVars('/c')))}.includes(name))) }));
 console.error('codex: reading the prompt');
 const say = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
 if (mode.event === 'thread') say({ type: 'thread.started', thread_id: ${JSON.stringify(THREAD)} });
@@ -131,7 +133,7 @@ function codexRun(t, { projectRun = { allow: true, unverifiedHosts: true }, forg
 }
 
 // An adapter's start outside the gate: a folder, a log, a grant, and a hold that files a real pending mark.
-function adapterStart(t, fx, { beacon = () => true, wait = shortWait, limits, identify = () => true } = {}) {
+function adapterStart(t, fx, { beacon = () => true, wait = shortWait, limits, identify = () => true, caches } = {}) {
   const cwd = path.join(fx.root, 'work');
   const grant = path.join(fx.root, 'grant');
   mkdirSync(cwd, { recursive: true });
@@ -140,7 +142,7 @@ function adapterStart(t, fx, { beacon = () => true, wait = shortWait, limits, id
   const hold = ({ cwd: folder, known }) => markPending(DRIVER, { cwd: folder, root: fx.dir, known, env: fx.env }) !== null;
   const prompt = 'Project run launch, issue ENG-1, attempt 1: work the issue.';
   const env = { ...fx.env, CODEX_THREAD_ID: DRIVER };
-  return { cwd, grant, log, prompt, result: startProject({ cwd, prompt, name: 'launch · ENG-1 · 1', env, hold, identify, log, beacon, grants: [grant], wait, limits }) };
+  return { cwd, grant, log, prompt, result: startProject({ cwd, prompt, name: 'launch · ENG-1 · 1', env, hold, identify, log, beacon, grants: [grant], cacheVars: caches, wait, limits }) };
 }
 
 test('Codex declares an unverified, confined project start behind its hook trust, its sandbox network, and its writable roots', () => {
@@ -198,6 +200,24 @@ test('a process table listing past 1 MiB, as on a busy machine, is still read wh
   // Without it, spawnSync stops the listing at its 1 MiB default.
   const cut = runCommand(process.execPath, ['-e', listing], {});
   assert.equal(cut.error?.code, 'ENOBUFS');
+});
+
+test('the adapter passes the cache variables into the session\'s environment, over the driver\'s, and refuses ones that are not plain text', (t) => {
+  const fx = runFixture(t);
+  const fake = fakeCodex(t, fx.bin, { event: 'thread', hook: false });
+  const caches = cacheVars(path.join(fx.root, 'attempt', 'cache'), { GOFLAGS: '-mod=mod' });
+  const { result } = adapterStart(t, fx, { caches });
+  assert.equal(result.problem, undefined, result.problem);
+  assert.deepEqual(fake.call().caches, caches);
+  assert.equal(caches.GOFLAGS, '-mod=mod -modcacherw', 'the driver\'s go flags, and the module cache left writable');
+  assert.equal(stopProcess({ id: THREAD, started: result.id, wait: shortWait }), true);
+
+  for (const bad of [{ npm_config_cache: '/c\n/x' }, { 'bad name': '/c' }, { npm_config_cache: 7 }, ['/c']]) {
+    const fresh = fakeCodex(t, fx.bin, { event: 'thread', hook: false });
+    const refused = adapterStart(t, fx, { caches: bad }).result;
+    assert.match(refused.problem ?? '', /the cache environment the gate passes the session is not variable names to plain text/u, JSON.stringify(bad));
+    assert.equal(fresh.call(), null, 'no codex ran');
+  }
 });
 
 test('the adapter runs codex exec with the sandbox pinned and each granted folder, and holds the session on its id, its first tool call, and the beacon', (t) => {
@@ -368,11 +388,14 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.match(result.out[0], /^unverified: this host's project start is checked on fixtures only/u);
   const folder = resolvedPath(fx.attempt());
-  const [work, git, drop] = ['work', 'git', 'drop'].map((name) => path.join(folder, name));
+  const [work, git, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const state = resolvedPath(fx.state);
-  const { argv, pid } = fx.fake.call();
+  const { argv, pid, caches } = fx.fake.call();
   assert.deepEqual(argv.slice(0, -1), ['exec', '--json', '--sandbox', 'workspace-write', '--cd', work,
-    '--add-dir', git, '--add-dir', drop, ...['plans', 'reviews', 'tmp', 'dispatch'].flatMap((name) => ['--add-dir', path.join(state, name)])]);
+    '--add-dir', git, '--add-dir', drop, '--add-dir', cache, ...['plans', 'reviews', 'tmp', 'dispatch'].flatMap((name) => ['--add-dir', path.join(state, name)])]);
+  // The package managers' caches go to the attempt's own cache folder, empty and owner-only, as on Claude Code.
+  assert.deepEqual(caches, cacheVars(path.join(fx.attempt(), 'cache'), fx.env));
+  assert.equal(statSync(cache).mode & 0o777, 0o700);
   assert.match(argv.at(-1), /work only in that folder/u, 'the session note');
   // The clone: at the base tip, on the issue's branch, with the pinned origin and a git folder of its own.
   assert.equal(fx.git('-C', work, 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim());

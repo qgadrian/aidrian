@@ -127,7 +127,7 @@ export const SCHEMA = {
   decisions: DECISIONS_SCHEMA,
   audits: { triage: { issueCreation: 'issueCreationMode', labels: 'auditLabels' } },
   tracker: 'tracker',
-  projectRun: { allow: 'boolean', maxParallel: 'parallelCap', maxStarts: 'startCap', issueHours: 'hourCap', blockedStatus: 'textOrNull', decisionLabel: 'text', unverifiedHosts: 'boolean', outsideSandbox: 'texts', mcpServers: 'mcpServers' },
+  projectRun: { allow: 'boolean', maxParallel: 'parallelCap', maxStarts: 'startCap', issueHours: 'hourCap', blockedStatus: 'textOrNull', decisionLabel: 'text', unverifiedHosts: 'boolean', outsideSandbox: 'texts', mcpServers: 'mcpServers', registries: 'registries' },
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".

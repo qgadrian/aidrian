@@ -184,12 +184,20 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 
 - Codex is a confined host. Each attempt works in a fresh clone, never a linked worktree of the main checkout:
   `<state>/runs/<run>/attempts/<issue>.<attempt>/` holds `work/`, the clone, `git/`, its own git folder, which borrows
-  the main checkout's objects read-only, and `drop/`, owner-only, where the session hands its result over.
+  the main checkout's objects read-only, `drop/`, owner-only, where the session hands its result over, and `cache/`,
+  owner-only, where its package managers keep their caches.
   The first attempt cuts the issue's branch from the base tip; a later one fetches it from the forge.
   The main repository never fetches from a clone, and the driver's `wait` removes an attempt's folder once its session ended.
 - The session runs `codex exec --json --sandbox workspace-write --cd <work>`, with `--add-dir` for exactly its git
-  folder, its drop folder, and the state work folders `plans`, `reviews`, `tmp`, and `dispatch`, each a plain folder
-  of the user directly in the state folder. No flag that bypasses the sandbox or the approvals is ever passed.
+  folder, its drop folder, its `cache` folder, and the state work folders `plans`, `reviews`, `tmp`, and `dispatch`,
+  each a plain folder of the user directly in the state folder. No flag that bypasses the sandbox or the approvals is
+  ever passed.
+- Its environment holds the variables that put each package manager's cache and global store in the attempt's
+  `cache` folder, the same as on Claude Code ([Dependency installs](claude-code.md#dependency-installs) lists them);
+  `HOME` stays as it is. Codex hands its environment to the commands it runs through `shell_environment_policy`:
+  its default inherits every variable but those whose names hold `KEY`, `SECRET`, or `TOKEN`, which none of these
+  does. A user policy of `inherit = "core"` or `"none"`, or an `include_only` that leaves them out, drops them, and an
+  install then fails to write its cache outside the writable roots; nothing reaches another folder.
   Its events go to `logs/<issue>.<attempt>.jsonl` in the run's folder.
 - Git cannot reach the main checkout from there: nothing under its `.git` is granted, the clone's origin is the
   pinned forge URL, and work moves only through the forge. The session pushes with a full refspec and names the branch
@@ -201,7 +209,12 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 - Codex must run every hook of this plugin unasked: each handler hooks.json lists, of every event, needs a trusted
   `[hooks.state]` entry for this plugin's id in `config.toml`, not turned off. Trust them in `/hooks` after each install
   and update. `[sandbox_workspace_write] network_access = true` must be set, or the session could neither push nor
-  reach the forge, and `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
+  reach the forge. That switch opens every host to a sandboxed command, so the registries the base branch's
+  [`projectRun.registries`](../config.md#project-run) lists, which hold a Claude Code session's network to them, narrow
+  nothing here: a Codex session reaches every registry, and every other host, whatever the list says. Install scripts
+  a package runs still run inside the sandbox, under its writable roots. Codex's experimental network proxy,
+  `features.network_proxy` with its `domains` rules, could hold a session to the forge's and the listed registries'
+  hosts; no live run has checked it, so the start does not turn it on. `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
   folders, nor the runs folder. Each failure halts the start, and records nothing.
 - A start holds the session only after three proofs, each in a bounded wait: its session id in the first JSON event
   within 30 seconds, its first tool call within 180 seconds, and the agent gate hook's beacon a few seconds after it.
@@ -233,6 +246,11 @@ Before `verified` changes, a live Codex must show every one of these:
 8. Whether `codex exec` loads a project's `.codex/config.toml` from a clone of a trusted repository.
 9. Which environment hook processes get.
 10. Which top-level `error` events are fatal, so a start may halt on them as it halts on `turn.failed`.
+11. With `projectRun.registries` listing `npm`, `npm ci` in the clone installs into the attempt's `cache` folder,
+    `echo $npm_config_cache` names it, nothing new appears in `~/.npm`, and the driver's `wait` removes the attempt's
+    folder once the session ended; the same for `pip`, `cargo`, `go`, and `bundler`.
+12. Whether `features.network_proxy` with `domains` allow rules holds `git push`, `gh`, and an install to the listed
+    hosts under `codex exec --sandbox workspace-write`, and refuses an unlisted one.
 
 ## Limits
 

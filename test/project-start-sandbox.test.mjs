@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { forgeDomains, forgeTokenVars } from '../plugins/aidrian/lib/forges/index.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { BEACON_WAIT, IDENTIFY_CAP, startBackground, startProject } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
@@ -21,6 +22,7 @@ import { accessProblem, cloneProblem, configFolder, CREDENTIAL_PATHS, mcpConfig,
 import { nestedProtected as anyHostNested, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { cacheVars, isRegistries, REGISTRIES, REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
 import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { PENDING_AGE } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, OWN_PLUGIN, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
@@ -287,6 +289,102 @@ test('a start on Claude Code works in a fresh clone with a drop and its placehol
   const tracked = runFixture(t, { files: { '.claude/settings.json': '{"permissions":{}}' } });
   assert.equal(tracked.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   assert.equal(readFileSync(path.join(work(tracked), '.claude/settings.json'), 'utf8'), '{"permissions":{}}');
+});
+
+test('projectRun.registries is a closed list of ecosystems, each to the fixed hosts its official clients install from', (t) => {
+  assert.deepEqual(REGISTRIES, {
+    npm: ['registry.npmjs.org', 'registry.yarnpkg.com'],
+    pypi: ['pypi.org', 'files.pythonhosted.org'],
+    crates: ['index.crates.io', 'static.crates.io'],
+    go: ['proxy.golang.org', 'sum.golang.org'],
+    rubygems: ['index.rubygems.org', 'rubygems.org'],
+  });
+  assert.deepEqual(REGISTRY_NAMES, ['npm', 'pypi', 'crates', 'go', 'rubygems']);
+  assert.deepEqual(registryHosts(['go', 'npm', 'registry.example.com']), ['registry.npmjs.org', 'registry.yarnpkg.com', 'proxy.golang.org', 'sum.golang.org'], 'in the map\'s order; a name it does not hold adds no host');
+  assert.deepEqual(registryHosts(undefined), []);
+  for (const each of [[], ['npm'], [...REGISTRY_NAMES]]) assert.equal(isRegistries(each), true, JSON.stringify(each));
+  for (const each of [['registry.example.com'], ['npm', 'npm'], 'npm', [null], ['NPM']]) assert.equal(isRegistries(each), false, JSON.stringify(each));
+  // A config names an ecosystem, never a host: anything else is an error, and the default, none, stands.
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, registries: ['npm', 'evil.example'] }, init: false });
+  const { config, errors } = loadConfig(fx.project);
+  assert.match(errors.join('\n'), /"projectRun\.registries" must be a list of registry names, each once, from "npm", "pypi", "crates", "go", or "rubygems"/u);
+  assert.deepEqual(config.projectRun.registries, []);
+  const good = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, registries: ['pypi', 'npm'] }, init: false });
+  assert.deepEqual(loadConfig(good.project).config.projectRun.registries, ['pypi', 'npm']);
+});
+
+test('the cache variables put every package manager\'s cache and global store in the attempt\'s cache folder, and leave go\'s module cache removable', () => {
+  const vars = cacheVars('/a/cache', { GOFLAGS: '-mod=mod  -modcacherw' });
+  assert.deepEqual(vars, {
+    npm_config_cache: '/a/cache/npm',
+    PNPM_HOME: '/a/cache/pnpm',
+    pnpm_config_store_dir: '/a/cache/pnpm/store',
+    pnpm_config_cache_dir: '/a/cache/pnpm-cache',
+    pnpm_config_state_dir: '/a/cache/pnpm-state',
+    YARN_CACHE_FOLDER: '/a/cache/yarn',
+    YARN_GLOBAL_FOLDER: '/a/cache/yarn-global',
+    PIP_CACHE_DIR: '/a/cache/pip',
+    UV_CACHE_DIR: '/a/cache/uv',
+    CARGO_HOME: '/a/cache/cargo',
+    GOPATH: '/a/cache/go',
+    GOMODCACHE: '/a/cache/go/pkg/mod',
+    GOCACHE: '/a/cache/go-build',
+    GOFLAGS: '-mod=mod -modcacherw',
+    GEM_HOME: '/a/cache/gem',
+    BUNDLE_USER_HOME: '/a/cache/bundle',
+  });
+  for (const [name, value] of Object.entries(vars)) if (name !== 'GOFLAGS') assert.ok(value.startsWith('/a/cache/'), name);
+  for (const kept of ['HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'COREPACK_HOME', 'BUNDLE_PATH', 'npm_config_store_dir']) assert.equal(vars[kept], undefined, `${kept} stays as it is`);
+  assert.equal(cacheVars('/a/cache').GOFLAGS, '-modcacherw');
+  // The settings set them through `env`, which reaches every command of the session; none given, no `env` key.
+  const base = { work: '/w', git: '/g', grants: ['/g'], domains: ['github.com'], temp: [], home: '/home/u', platform: 'linux' };
+  assert.deepEqual(sandboxSettings({ ...base, cacheVars: vars }).env, vars);
+  assert.equal(Object.hasOwn(sandboxSettings(base), 'env'), false);
+});
+
+test('a start on Claude Code reaches the registries both reads of the default branch list, and keeps every cache in the attempt\'s folder', (t) => {
+  const settingsOf = (fx) => {
+    const [{ args }] = fx.claude.starts();
+    return JSON.parse(args[args.indexOf('--settings') + 1]);
+  };
+  const forge = forgeDomains({ host: 'github.com' });
+  const listed = { allow: true, unverifiedHosts: true, registries: ['npm', 'pypi'] };
+  const fx = runFixture(t, { projectRun: listed });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const cache = path.join(path.dirname(work(fx)), 'cache');
+  const settings = settingsOf(fx);
+  assert.deepEqual(settings.sandbox.network.allowedDomains, [...forge, ...REGISTRIES.npm, ...REGISTRIES.pypi]);
+  assert.equal(settings.sandbox.network.strictAllowlist, true);
+  assert.deepEqual(settings.env, cacheVars(cache, fx.env));
+  assert.ok(settings.sandbox.filesystem.allowWrite.includes(realpathSync(cache)), 'the cache folder is writable');
+  assert.equal(lstatSync(cache).isDirectory(), true);
+  assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'empty and owner-only');
+  assert.deepEqual(readdirSync(cache), []);
+
+  // A registry only one read lists is not reached: a working copy or the forge alone widens nothing.
+  const half = runFixture(t, { projectRun: { ...listed, registries: ['npm', 'go'] }, forgeConfig: { version: 1, projectRun: { ...listed, registries: ['go', 'crates'] } } });
+  assert.equal(half.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.deepEqual(settingsOf(half).sandbox.network.allowedDomains, [...forge, ...REGISTRIES.go]);
+
+  // None listed, the default: the forge's hosts only, and the caches still in the attempt's folder.
+  const none = runFixture(t);
+  assert.equal(none.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.deepEqual(settingsOf(none).sandbox.network.allowedDomains, forge);
+  assert.deepEqual(settingsOf(none).env, cacheVars(path.join(path.dirname(work(none)), 'cache'), none.env));
+});
+
+test('the Claude Code adapter refuses cache variables that are not plain text, and runs no claude', (t) => {
+  const fx = runFixture(t, { init: false });
+  const { cwd, git } = folders(t);
+  for (const bad of [{ GOPATH: '/c\n' }, { 'a-b': '/c' }, ['/c'], null]) {
+    const claude = fakeClaude({ dir: fx.dir });
+    const result = startProject({
+      session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true,
+      sandbox: { git, grants: [git], domains: ['github.com'], cacheVars: bad }, home: fx.home, platform: 'linux', run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits',
+    });
+    assert.match(result.problem ?? '', /the cache environment the gate passes the session is not variable names to plain text/u, JSON.stringify(bad));
+    assert.deepEqual(claude.calls, []);
+  }
 });
 
 test('a start halts unless the default branch sets projectRun.unverifiedHosts', (t) => {

@@ -7,6 +7,7 @@ import { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, CONTINUE_ROUTES, HANDOFF_MODES, MAX_
 import { CLASS_MAX, DECISION_MODES, decisionClasses, isClassName, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isObject } from './fs.mjs';
+import { isRegistries, REGISTRY_NAMES } from './project-registries.mjs';
 import { pathsProblem } from './review/config.mjs';
 
 const SEMVER = /^\d+\.\d+\.\d+$/u;
@@ -75,6 +76,8 @@ export const TYPES = {
     (value) => isObject(value) && Object.entries(value).every(([name, server]) => /^[\w.-]{1,64}$/u.test(name) && isObject(server)),
     'an object of MCP server names, each letters, digits, ".", "_", or "-", to the server\'s definition as an object',
   ],
+  // The package registries a confined project session may reach, by ecosystem name (lib/project-registries.mjs), each once.
+  registries: [isRegistries, () => `a list of registry names, each once, from ${oneOf(REGISTRY_NAMES)}`],
   budgetEnforce: [(value) => ['warn', 'fail'].includes(value), '"warn" or "fail"'],
   docBytes: [
     (value) => isObject(value) && Object.entries(value).every(([doc, bytes]) => isText(doc) && Number.isInteger(bytes) && bytes > 0),

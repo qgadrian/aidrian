@@ -139,12 +139,14 @@ const credentialStores = (home, config) => [...new Set([
 ])];
 
 // The settings object of the session that works in the clone `work`, whose separate git folder is `git`, granted the
-// real folders `grants` (its git folder, drop folder, and the state work folders), the network hosts `domains`, and the
+// real folders `grants` (its git, drop, and cache folders, and the state work folders), the network hosts `domains`, and the
 // temporary folders `temp`, for the user whose home is `home` and host config folder `config`, on `platform`. `main` is
 // the main checkout, which no sandboxed command and no Read reaches but its git folder `mainGit`, whose objects the clone
-// borrows; `secrets` the environment variables the sandbox unsets (secretVars). Scalars passed with --settings win over
-// the user's settings; lists merge with them, which accessProblem checks.
-export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [] }) {
+// borrows; `secrets` the environment variables the sandbox unsets (secretVars); `cacheVars` the variables that move the
+// package managers' caches into the attempt's folder (lib/project-registries.mjs), set through the settings' `env`,
+// which reaches every command of the session. Scalars passed with --settings win over the user's settings; lists merge
+// with them, which accessProblem checks.
+export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], cacheVars = {} }) {
   const credentials = credentialStores(home, config);
   const unread = main ? [...credentials, main] : credentials;
   const reopen = main && mainGit && within(main, mainGit) ? { allowRead: [mainGit] } : {};
@@ -175,6 +177,7 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
     // The claude.ai connectors load whatever --strict-mcp-config says; only this turns them off, and a true wins from any source.
     disableClaudeAiConnectors: true,
     worktree: { bgIsolation: 'none' },
+    ...(Object.keys(cacheVars).length ? { env: { ...cacheVars } } : {}),
   };
 }
 

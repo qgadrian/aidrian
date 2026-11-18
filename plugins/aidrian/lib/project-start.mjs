@@ -11,7 +11,8 @@
 //     each to its own sandbox, and a host that is not halts the start (lib/project-run-gate.mjs). Its session works in a
 //     fresh clone made for each attempt, never in a linked worktree: `runs/<run>/attempts/<issue>.<attempt>/` holds
 //     `work/`, the clone, `git/`, its separate git folder, which borrows the main checkout's objects read-only through
-//     alternates, and `drop/`, where the session hands its result over (lib/project-result.mjs). The branch comes from
+//     alternates, `drop/`, where the session hands its result over (lib/project-result.mjs), and `cache/`, where its
+//     package managers keep their caches (lib/project-registries.mjs). The branch comes from
 //     the forge: the first attempt cuts it from the base tip, a later one fetches it. The main repository never fetches from the clone, the gate never runs git
 //     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
@@ -168,19 +169,21 @@ export function stateWorkFolders(state, { env, home }) {
   return { folders };
 }
 
-// The fresh clone of attempt `attempt` of issue `key` for a confined host: { work, git, drop } or { problem }, which
-// leaves no attempt folder. Any folder the attempt had is removed first. The clone borrows the main checkout's objects
+// The fresh clone of attempt `attempt` of issue `key` for a confined host: { work, git, drop, cache } or { problem },
+// which leaves no attempt folder. `cache` is the empty, owner-only folder its package managers' caches go to
+// (project-registries.mjs cacheVars). Any folder the attempt had is removed first. The clone borrows the main checkout's objects
 // read-only, takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the
 // base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. `env` is the environment
 // of its network calls.
 export function prepareAttempt({ project, state, run, key, attempt, branch, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
-  const [work, git, drop] = ['work', 'git', 'drop'].map((name) => path.join(folder, name));
+  const [work, git, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
   try {
     rmSync(folder, { recursive: true, force: true });
     mkdirSync(folder, { recursive: true, mode: 0o700 });
     mkdirSync(drop, { mode: 0o700 });
+    mkdirSync(cache, { mode: 0o700 });
   } catch (error) {
     return { problem: `the attempt's folder ${folder} cannot be made (${error.code ?? 'no code'})` };
   }
@@ -210,8 +213,8 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   }
   const checkout = gateGit(['checkout', '--quiet', '-b', branch, from], work);
   if (checkout.status !== 0) return failed('checkout', checkout);
-  const plain = plainFolderProblem(drop);
-  return plain ? gone(plain) : { work, git, drop };
+  const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
+  return plain ? gone(plain) : { work, git, drop, cache };
 }
 
 // Puts the host's placeholders in the fresh clone `work` whose git folder is `git`, before its session starts, where

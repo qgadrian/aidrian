@@ -104,7 +104,7 @@ test('a confined session writes its running attempt\'s folders in the runs folde
   const folders = stateFolders(fx.project, fx.config, { home: fx.home });
   const attempts = path.join(runsFolder(fx.state), 'launch', 'attempts');
   const attempt = path.join(attempts, 'ENG-1.1');
-  for (const part of ['work', 'git', 'drop']) mkdirSync(path.join(attempt, part), { recursive: true });
+  for (const part of ['work', 'git', 'drop', 'cache']) mkdirSync(path.join(attempt, part), { recursive: true });
   const at = new Date().toISOString();
   appendToRun(fx.state, 'launch', () => ({ rows: [
     { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name: 'launch ENG-1 1', cwd: path.join(attempt, 'work'), branch: 'feat/eng-1-export', drop: path.join(attempt, 'drop'), at, outcome: 'started', id: 'pid-1-0000000000000000', child: OTHER },
@@ -114,7 +114,7 @@ test('a confined session writes its running attempt\'s folders in the runs folde
   assert.equal(ownAttemptFolder(fx.project, fx.config, mark, { home: fx.home }), realpathSync(attempt));
   assert.equal(ownAttemptFolder(fx.project, fx.config, { project: 'launch', issue: 'ENG-4' }, { home: fx.home }), null, 'an issue with no running confined start');
   const ask = (file, own = () => ownAttemptFolder(fx.project, fx.config, mark, { home: fx.home })) => projectRunWriteDenial(write(file, { session_id: OTHER, cwd: path.join(attempt, 'work') }), fx.project, fx.config, () => folders, { unattended: () => true, home: fx.home, own });
-  for (const folder of ['work', 'git', 'drop']) assert.equal(ask(path.join(attempt, folder, 'file.txt')), null, folder);
+  for (const folder of ['work', 'git', 'drop', 'cache']) assert.equal(ask(path.join(attempt, folder, 'file.txt')), null, folder);
   assert.match(ask(path.join(attempt, 'work', 'x.txt'), null)?.reason ?? '', /the folder of the project runs/u, 'a session with no attempt');
   for (const file of [path.join(runsFolder(fx.state), 'launch', 'ledger.jsonl'), path.join(attempt, 'other.txt'), path.join(attempts, 'ENG-1.2', 'work', 'x.txt'), path.join(runsFolder(fx.state), 'launch', 'logs', 'ENG-1.1.jsonl')]) {
     assert.match(ask(file)?.reason ?? '', /the folder of the project runs/u, file);

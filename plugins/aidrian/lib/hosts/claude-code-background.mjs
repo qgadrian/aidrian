@@ -15,6 +15,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
+import { varsProblem } from '../project-registries.mjs';
 import { configFolder, mcpConfig, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
 import { programNames, programOnPath, runCommand } from './process.mjs';
 
@@ -221,9 +222,11 @@ function ownMode({ session, list, env, readMode }) {
 // Starts the session of one issue of a project run, in the background, in the attempt's clone `cwd`, under the name
 // `name`, whose first message is `prompt`, as startIn does, in the permission mode the driver session `session` runs in
 // (`readMode`, sessionMode by default; never bypassPermissions), under the host's sandbox: `--setting-sources user`,
-// the settings sandboxSettings gives for `sandbox`, { git, grants, domains, main, mainGit, tokens }, and
+// the settings sandboxSettings gives for `sandbox`, { git, grants, domains, cacheVars, main, mainGit, tokens }, and
 // `--strict-mcp-config` with only the servers `mcp` names. `sandbox.git` is the clone's git folder, which `sandbox.grants`
-// must hold, each an absolute path of plain text that resolves; `sandbox.domains` the forge's network hosts;
+// must hold, each an absolute path of plain text that resolves; `sandbox.domains` the forge's network hosts and the
+// registries the team lists; `sandbox.cacheVars` the variables that move the package managers' caches into the
+// attempt's folder, which the settings' `env` sets;
 // `sandbox.main` the main checkout, which the session may not read but its git folder `sandbox.mainGit`, and in which
 // neither the clone nor a granted folder may lie; `sandbox.tokens` the forge's token variables, the one credential kept
 // (secretVars). Any miss runs no `claude --bg`. No agent is
@@ -262,8 +265,10 @@ export function startProject({ session, cwd, prompt, name, effort, efforts = [],
 
 const within = (folder, file) => file === folder || file.startsWith(`${folder}${path.sep}`);
 
-// The checked folders and hosts of a project start's sandbox, { git, grants, domains, main, mainGit, tokens } with real
-// paths, or { problem }. `main` and `mainGit` are optional, and each, when given, an absolute path that resolves.
+// The checked folders and hosts of a project start's sandbox, { git, grants, domains, main, mainGit, tokens, cacheVars }
+// with real paths, or { problem }. `cacheVars`, none by default, is the environment that moves its package managers'
+// caches into the attempt's folder (lib/project-registries.mjs cacheVars). `main` and `mainGit` are optional, and each,
+// when given, an absolute path that resolves.
 function sandboxInputs(sandbox) {
   const plain = (each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each);
   if (sandbox === null || typeof sandbox !== 'object') return { problem: 'the gate named no sandbox for the session: its git folder, granted folders, and network hosts' };
@@ -292,7 +297,9 @@ function sandboxInputs(sandbox) {
     }
   }
   const tokens = Array.isArray(sandbox.tokens) ? sandbox.tokens.filter((each) => typeof each === 'string') : [];
-  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens };
+  const vars = varsProblem(sandbox.cacheVars);
+  if (vars) return { problem: vars };
+  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens, cacheVars: { ...sandbox.cacheVars } };
 }
 
 // The temporary folders a sandboxed command may write, by their real paths: /tmp and the host's own.

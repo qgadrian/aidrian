@@ -969,7 +969,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   Claude Code's `.claude/skills`, `agents`, `commands`, and `.claude/settings.local.json`, and while the project has a
   project run under way, an active run in any of its state folders, a folder of runs that cannot be listed, or a live
   unattended or pending mark naming it, no subagent may either, whichever session it belongs to. In a project with no
-  run, a subagent writes them as before. A confined session, as Codex's, writes the `work`, `git`, and `drop` folders of
+  run, a subagent writes them as before. A confined session, as Codex's, writes the `work`, `git`, `drop`, and `cache` folders of
   its issue's running attempt under `<state>/runs/<run>/attempts/`, as the run's ledger names it, and nothing else in
   the runs folder. A project run's attempt clone is no shared main checkout: the [main-checkout rule](#main-checkout)
   reads the run's main checkout as its own.
@@ -997,7 +997,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
     is outside. A mark filed before the start folder was recorded names no worktree;
-  - its issue's running attempt folders `work` and `drop`, under `<state>/runs/<run>/attempts/`;
+  - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`;
   - the state folders it writes by hand, each when it is no link, of every state folder of the project its mark names:
     `plans`, `tmp`, `handoffs` (the continuation store in it stays refused, as above), and `quorum`, where the product
     quorum runs under auto decisions; in `reviews`, only a review manifest, `pr-<n>.json` or a temporary copy of it,

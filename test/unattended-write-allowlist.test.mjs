@@ -54,7 +54,7 @@ function fixture(t) {
   git('commit', '-q', '-m', 'config');
   git('worktree', 'add', '-q', '-b', 'feat/x', worktree);
   const attempt = path.join(state, 'runs', 'launch', 'attempts', 'ENG-1.1');
-  for (const name of ['work', 'git', 'drop']) mkdirSync(path.join(attempt, name), { recursive: true });
+  for (const name of ['work', 'git', 'drop', 'cache']) mkdirSync(path.join(attempt, name), { recursive: true });
   const env = { ...process.env, XDG_STATE_HOME: path.join(root, 'marks'), XDG_CONFIG_HOME: xdg, GIT_CONFIG_SYSTEM: system, HOME: home, TMPDIR: temp };
   delete env.GIT_CONFIG_NOSYSTEM;
   delete env.ZDOTDIR;
@@ -132,7 +132,7 @@ test('a session no Human attends writes its own worktree, its attempt\'s work an
     path.join(fx.state, 'reviews', '.pr-7.json.tmp'),
     path.join(fx.state, 'reviews', 'pr-7', 'captures', 'abc', 'home.png'),
     path.join(fx.temp, 'scratch.txt'),
-    ...['work', 'drop'].map((name) => path.join(fx.attempt, name, 'x.json')),
+    ...['work', 'drop', 'cache'].map((name) => path.join(fx.attempt, name, 'x.json')),
   ];
   for (const file of allowed) {
     mkdirSync(path.dirname(file), { recursive: true });

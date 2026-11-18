@@ -583,6 +583,37 @@ test('a program on a checked entry whose real path lies inside the session`s fol
   assert.deepEqual(io.calls, []);
 });
 
+// The snapshot starts git and gh by name from the PATH it is given, so a folder whose git or gh resolves into the
+// session's folder or root gives no PATH entry, though its own real path lies outside both.
+test('a PATH folder whose git or gh links into the session`s folder or root, or to nothing, leaves no entry', async () => {
+  const env = layout();
+  const root = path.join(env.base, 'root');
+  const linkIn = (name, target) => {
+    const folder = path.join(env.base, `${name}-${path.basename(path.dirname(target))}`);
+    mkdirSync(folder, { recursive: true });
+    symlinkSync(write(target), path.join(folder, name));
+    return folder;
+  };
+  const planted = [
+    linkIn('git', path.join(env.project, 'tools/git')),
+    linkIn('gh', path.join(env.project, 'vendor/gh')),
+    linkIn('git', path.join(root, 'bin/git')),
+    linkIn('gh', path.join(root, 'cli/gh')),
+  ];
+  const dangling = path.join(env.base, 'dangling');
+  mkdirSync(dangling);
+  symlinkSync(path.join(env.project, 'later/git'), path.join(dangling, 'git'));
+  planted.push(dangling);
+  const kept = linkIn('gh', path.join(env.base, 'elsewhere/gh'));
+  write(path.join(env.bin, 'git'));
+  const io = env.io({ PATH: [...planted, kept, env.bin].join(':') });
+  const runner = await runnerFor(io, { cwd: env.project, root });
+  assert.deepEqual(runner.entries, [realpathSync(kept), realpathSync(env.bin)]);
+  assert.equal(await runner.which('git'), realpathSync(path.join(env.bin, 'git')));
+  assert.equal((await runSnapshot(io, { session: ID, cwd: env.project, root })).kind, 'ok');
+  assert.equal(io.calls[0].init.env.PATH, [realpathSync(kept), realpathSync(env.bin)].join(':'));
+});
+
 test('a non-zero exit is failed, whatever the output', async () => {
   const env = layout();
   for (const exitCode of [1, 2, -1, null]) {

@@ -1654,11 +1654,12 @@ const modText = (rel) => readFileSync(path.join(MOD, rel), 'utf8');
 // A source without its whole-line comments.
 const modCode = (rel) => modText(rel).split('\n').filter((line) => !/^\s*\/\//u.test(line)).join('\n');
 
-test('the Claude mod`s manifest is 0.1.0 with its settings, the aidrian manifest`s author and repository, and its marketplace entry', () => {
+// The release workflow raises the version before npm run check, so this holds its form; release fixtures hold exact values.
+test('the Claude mod`s manifest has a semver version, its settings, the aidrian manifest`s author and repository, and its marketplace entry', () => {
   const mod = json('plugins/aidrian-claude-mod/.claude-plugin/plugin.json');
   const aidrian = json('plugins/aidrian/.claude-plugin/plugin.json');
   assert.equal(mod.name, 'aidrian-mod');
-  assert.equal(mod.version, '0.1.0');
+  assert.match(mod.version, /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u);
   for (const key of ['author', 'repository']) assert.deepEqual(mod[key], aidrian[key], key);
   assert.deepEqual(Object.keys(mod.userConfig), ['mode', 'notifyMinTurnSeconds', 'focusCheck', 'focusApp', 'sounds', 'volume', 'ticketPrefixes', 'cacheTtlSeconds']);
   assert.equal(mod.userConfig.focusApp.default, 'kitty');
@@ -1698,8 +1699,16 @@ test('no Claude mod hook starts a process: $.process.run is named once, in the i
 
 test('the Claude mod holds no forge-specific call, and format.mjs`s forge table alone names a forge', () => {
   const files = [...MOD_HOOKS, ...MOD_LIBS];
+  // The one place gh is named: the programs the snapshot starts by name, which the resolver only stats on each PATH
+  // folder to keep a folder whose git or gh resolves into the session's folder off the snapshot's PATH; never run.
+  const STARTED = "const STARTED_BY_NAME = ['git', 'gh'];";
+  const client = modCode('lib/snapshot-client.mjs');
+  assert.equal(client.split(STARTED).length, 2, 'one STARTED_BY_NAME declaration');
+  assert.deepEqual([...client.matchAll(/STARTED_BY_NAME\b(?! =)[^\n]*/gu)].map((match) => match[0]), ['STARTED_BY_NAME) {']);
+  assert.match(client, /for \(const name of STARTED_BY_NAME\) \{\n {4}let found;\n {4}try \{\n {6}found = await io\.fs\.stat\(/u);
   for (const rel of files) {
-    assert.doesNotMatch(modCode(rel), /['"`](?:gh|glab)['"`]/u, `${rel} names the program gh or glab`);
+    const code = rel === 'lib/snapshot-client.mjs' ? client.replace(STARTED, '') : modCode(rel);
+    assert.doesNotMatch(code, /['"`](?:gh|glab)['"`]/u, `${rel} names the program gh or glab`);
     assert.doesNotMatch(modText(rel), /api\.github\.com|gitlab\.com\/api|\/api\/v[34]\b|graphql|\/repos\/|\/merge_requests/iu, `${rel} holds a forge API host or route`);
   }
   // The forge table: from its link pattern to the entry of a row with no forge.

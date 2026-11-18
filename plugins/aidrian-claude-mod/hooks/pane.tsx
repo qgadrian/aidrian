@@ -62,7 +62,7 @@ type Refresh = SnapshotResult & { repo?: Repo | null }
 // Kept in the module, not in `$.state`: a reload runs session.start again, which sets them anew. `alerts` says whether
 // the session is an interactive terminal one, the only kind the notifications reach; `transcript` is the session's
 // checked transcript, which the cache lifetime is read from: the one a snapshot run was given, or the one the lib finds
-// when no run has given one.
+// when no run has given one; `draws` counts the refreshes drawn, so a slow lookup of an older one stores nothing.
 const live: {
   client: { trigger: () => Promise<void> } | null
   alerts: boolean
@@ -70,7 +70,8 @@ const live: {
   cwd: string | null
   transcript: { session: string; file: string } | null
   issue: { key: string; value: Issue | null; fetchedAt: number } | null
-} = { client: null, alerts: false, ticks: 0, cwd: null, transcript: null, issue: null }
+  draws: number
+} = { client: null, alerts: false, ticks: 0, cwd: null, transcript: null, issue: null, draws: 0 }
 
 // Whether this session takes notifications: an interactive session drawn in a terminal, as session.start said. A `-p`
 // run, the SDK, and the desktop app take none.
@@ -798,14 +799,28 @@ async function readAll(io: Io, asked: Target, prefixes: string): Promise<Refresh
   return { ...snapshot, repo }
 }
 
+// The poller does not wait for a draw, so a newer draw can start while this one waits on Linear; `isLatest` says
+// whether this draw is still the newest, and only then are its transcript and its lookup stored.
 async function drawRefresh($: EngineInterface, drawn: Refresh, asked: Target, settings: Settings) {
+  const draw = ++live.draws
+  const isLatest = () => draw === live.draws
   const { repo = null, ...snapshot } = drawn
   const at = await $.clock.now()
   await update($, result, () => snapshot)
   await update($, repoAtom, () => repo)
   await update($, refreshedAt, () => at)
+
+  if (!isLatest()) {
+    return
+  }
+
   await keepTranscript($, snapshot.transcript ?? null, asked.session)
-  await loadIssue($, snapshot, settings.prefixes)
+
+  if (!isLatest()) {
+    return
+  }
+
+  await loadIssue($, snapshot, settings.prefixes, isLatest)
 }
 
 // The transcript a snapshot run was given becomes the session's; when it is the first the session has, the cache
@@ -855,7 +870,7 @@ async function loadRepo(io: Io, { cwd, root }: Target): Promise<Repo | null> {
 
 // The title and state of the snapshot's ticket: the one MCP call of the mod, `get_issue` with the `{ id }` issueLookup
 // gives for a key a valid prefix matched, to the first Linear server that answers. A GitHub `#N` key is not looked up.
-async function loadIssue($: EngineInterface, snapshot: SnapshotResult, prefixes: string) {
+async function loadIssue($: EngineInterface, snapshot: SnapshotResult, prefixes: string, isLatest: () => boolean) {
   const lookup = snapshot.kind === 'ok' ? issueLookup(snapshot.snapshot?.ticket ?? null, prefixes) : null
 
   if (lookup === null) {
@@ -867,6 +882,11 @@ async function loadIssue($: EngineInterface, snapshot: SnapshotResult, prefixes:
   const cached = live.issue
   const isFresh = cached !== null && cached.key === lookup.id && at - cached.fetchedAt < ISSUE_TTL_MS
   const issue = isFresh ? cached.value : await askLinear($, lookup)
+
+  if (!isLatest()) {
+    return
+  }
+
   live.issue = isFresh ? cached : { key: lookup.id, value: issue, fetchedAt: at }
   await update($, issueAtom, () => issue)
 }

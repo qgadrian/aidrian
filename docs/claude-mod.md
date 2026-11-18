@@ -72,7 +72,9 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
   file, not a link, below that plugin folder, and outside the session's folder.
 - **Processes.** Every process starts by an absolute path through one resolver, never through a shell: `node` and
   `git` from PATH folders outside the session's folder, and `/usr/bin/osascript` with one constant script for the
-  focus check. `focusApp` is only compared with what that script prints.
+  focus check. `focusApp` is only compared with what that script prints. Each process gets as its PATH only those
+  folders, and of them only the ones whose `git` and `gh`, when present, resolve outside the session's folder too:
+  the snapshot runs both by name.
 - **The git status read.** The branch read passes `--no-optional-locks` and `-c core.fsmonitor=false` to git, so it
   takes no lock and starts no fsmonitor program. A repository's own configured filter drivers can still run, as in
   Claude Code's own start-up status read.

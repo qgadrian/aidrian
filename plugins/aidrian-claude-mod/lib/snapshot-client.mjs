@@ -9,7 +9,7 @@
 //   enabledPlugins  () => $.settings.read({ key: 'enabledPlugins' })
 // Every process the mod starts, this snapshot, the focus check, and the band's git reads, goes through one resolver,
 // runnerFor: a program of its allowlist by an absolute argv[0], never a shell, env PATH set to the entries it checked,
-// and a time limit.
+// whose git and gh, which the snapshot starts by name, it checked too, and a time limit.
 
 // The aidrian plugin's SESSION_ID (its lib/handoff-markers.mjs), held equal by test/claude-mod-servers.test.mjs.
 export const SESSION_ID = /^[\w-]{1,128}$/u;
@@ -26,6 +26,9 @@ const FOCUS_TIMEOUT_MS = 2_000;
 // node, never by the command's own shell script.
 const RUNNABLE = new Set(['node', 'git']);
 const LOOKED_UP = new Set([...RUNNABLE, 'aidrian']);
+// The programs the snapshot itself starts by name from the PATH it is given (the aidrian plugin's lib/git.mjs and
+// lib/forges/github-cli.mjs), so each PATH entry is checked for them too.
+const STARTED_BY_NAME = ['git', 'gh'];
 const MARKETPLACE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -52,10 +55,26 @@ async function realStat(io, file, kind) {
   }
 }
 
+// Whether each program of STARTED_BY_NAME in the folder `real` is absent, or resolves to a real path `outside` keeps.
+// One that exists and cannot be resolved, as a link to nothing yet, fails the check.
+async function startsOutside(io, real, outside) {
+  for (const name of STARTED_BY_NAME) {
+    let found;
+    try {
+      found = await io.fs.stat(`${real}/${name}`, { resolve: true });
+    } catch {
+      continue;
+    }
+    if (!isAbsolute(found?.realPath) || !outside(found.realPath)) return false;
+  }
+  return true;
+}
+
 // The resolver every process of the mod runs through. Its PATH is the absolute entries of the mod's PATH whose real
-// path lies outside the real session folder `cwd` and session root `root`, compared folded; `which` finds a program of
-// LOOKED_UP on them, outside both too; `run` starts one of RUNNABLE; `frontmostApp` runs the focus check and gives the
-// frontmost application's name, or null. A check that cannot be made leaves no entry.
+// path lies outside the real session folder `cwd` and session root `root`, compared folded, and whose git and gh, where
+// present, lie outside both too; `which` finds a program of LOOKED_UP on them, outside both too; `run` starts one of
+// RUNNABLE; `frontmostApp` runs the focus check and gives the frontmost application's name, or null. A check that
+// cannot be made leaves no entry.
 export async function runnerFor(io, { cwd, root }) {
   const fences = await Promise.all([cwd, root].map(async (folder) => (await realStat(io, folder, 'dir'))?.realPath));
   const fenced = fences.every(Boolean);
@@ -63,7 +82,8 @@ export async function runnerFor(io, { cwd, root }) {
   const entries = [];
   for (const entry of String(io.env?.PATH ?? '').split(':')) {
     const real = (await realStat(io, entry, 'dir'))?.realPath;
-    if (real && outside(real) && !entries.includes(real)) entries.push(real);
+    const isNew = real && outside(real) && !entries.includes(real);
+    if (isNew && (await startsOutside(io, real, outside))) entries.push(real);
   }
   const which = async (name) => {
     if (!LOOKED_UP.has(name)) return null;

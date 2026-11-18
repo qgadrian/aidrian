@@ -53,6 +53,9 @@ type World = {
   gitDelayMs: number
   transcript: string[]
   linear: Record<string, unknown> | null
+  // The Linear answer for one key, and how long it takes on the mocked clock, where a test gives one.
+  issues: Record<string, Record<string, unknown>>
+  linearDelayMs: Record<string, number>
   runs: Run[]
   mcpCalls: { server: string; tool: string; args: Record<string, unknown> }[]
 }
@@ -73,6 +76,8 @@ const world = (fields: Partial<World>): World => ({
   gitDelayMs: 0,
   transcript: [],
   linear: null,
+  issues: {},
+  linearDelayMs: {},
   runs: [],
   mcpCalls: [],
   ...fields,
@@ -127,11 +132,14 @@ const fakeWorld = (on: On, clock: Clock, state: World) => {
 
     return { value: text.slice(offset, offset + (e.length ?? text.length)) } as never
   })
-  on('mcp.call', ($, e) => {
+  on('mcp.call', async ($, e) => {
     state.mcpCalls.push({ server: e.server, tool: e.tool, args: e.args })
-    if (e.server !== 'linear-server' || state.linear === null) return { deny: 'not connected' } as never
+    const id = String(e.args.id)
+    const answer = state.issues[id] ?? state.linear
+    if (e.server !== 'linear-server' || answer === null) return { deny: 'not connected' } as never
+    if (state.linearDelayMs[id] > 0) await clock.sleep(state.linearDelayMs[id])
 
-    return { value: { content: [{ type: 'text', text: JSON.stringify(state.linear) }], isError: false } } as never
+    return { value: { content: [{ type: 'text', text: JSON.stringify(answer) }], isError: false } } as never
   })
   on('process.run', async ($, e) => {
     const cwd = e.init?.cwd ?? state.cwd
@@ -557,6 +565,26 @@ describe('the ticket', () => {
     await startIn($, on, state)
 
     expect(await (await pane($)).findAll({ type: 'Link' })).toEqual([])
+  })
+
+  test('a slow lookup for a folder the session left never replaces the issue of the folder it is in', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const state = world({ issues: { 'ABC-1': { ...ISSUE, title: 'Left folder' }, 'ABC-2': { ...ISSUE, title: 'Current folder' } } })
+    const clock = await startIn($, on, state)
+
+    state.snapshot = { ticket: { key: 'ABC-1', source: 'branch' } }
+    state.linearDelayMs = { 'ABC-1': 4000 }
+    state.cwd = WORKTREE
+    await clock.advance(1000)
+    state.snapshot = { ticket: { key: 'ABC-2', source: 'branch' } }
+    state.cwd = MAIN
+    await clock.advance(1000)
+    // The worktree's lookup answers at 5s, after the main folder's drew.
+    await clock.advance(4000)
+    const drawing = await pane($)
+
+    expect(state.mcpCalls.filter(call => call.server === 'linear-server').map(call => call.args.id)).toEqual(['ABC-1', 'ABC-2'])
+    expect(await drawing.find({ type: 'Text', text: /Current folder/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /Left folder/ })).toBeUndefined()
   })
 
   test('a GitHub #N key shows as it is, with no lookup', async ($, on) => {

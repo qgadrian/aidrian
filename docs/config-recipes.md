@@ -91,10 +91,10 @@ What it turns on:
 - Persona-audit triage files issues without asking.
 - The screen check: while product feedback is on, as the recipe turns it on, a pull request whose changes match the
   feedback list in force owes product feedback before the ready mark, with a persona walk when the project has a persona.
-  That list is `review.productFeedback.files`, or the targets' files only while no `files` list is set, read from the
-  default branch and the base. A change to a screen a target names is captured at a phone, a tablet, and a desktop
-  width only when the review runs a visual reviewer and the capture can reach the app; the recipe adds no flow that
-  requires one, so add the review doc's flow to put one in the plan
+  That list is the union of the default branch's and the base's: each gives its `review.productFeedback.files`, or
+  its targets' files when it sets no `files` list. A change to a screen a target names is captured at a phone, a
+  tablet, and a desktop width only when the review runs a visual reviewer and the capture can reach the app; the
+  recipe adds no flow that requires one, so add the review doc's flow to put one in the plan
   ([Screens checked on every device](#screens-checked-on-every-device)).
 
 What it still keeps for a person: a security verdict and a critical-flow sign-off, which no setting hands to an agent;
@@ -201,10 +201,11 @@ Full autonomy and autopilot merge with no person looking, so they turn on two ch
   persona. The feedback is no approval and no merge block; only the ready mark waits for it.
 
 A change that matches only `review.productFeedback.files`, and no target, gets feedback but no capture.
-Product feedback reads its list from the default branch and the base, never from the pull request: `files` when set,
-and the targets' files only when no `files` list is set. So a pull request that adds a path to `files` does not owe
-feedback for that path itself. A later pull request owes it while feedback is on and its changes match the list then
-in force, as [`status`](config.md#the-commands) reads it.
+Product feedback reads its list from the default branch and the base, never from the pull request: each branch gives
+its `files`, or its targets' files when it sets no `files` list, and the list in force is the union of the two.
+So a path a pull request adds to `files` does not count for that pull request, though its changes to files the list
+in force already covers still owe feedback. A later pull request owes it while feedback is on and its changes match
+the list then in force, as [`status`](config.md#the-commands) reads it.
 
 The target, `{ "files": ["src/app/**"], "routes": ["/"] }`, is a placeholder, as `"test"` is: replace it with the
 project's screen files and the routes that show them, one target per group of screens. The `harness-setup` skill does

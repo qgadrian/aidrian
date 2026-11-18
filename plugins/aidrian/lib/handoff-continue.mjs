@@ -35,7 +35,7 @@ import { baseBranchTip, commandConfig, committedConfig, stateDirProblem } from '
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
 import { treeOf } from './git.mjs';
-import { arm, cancelArmed, CHAIN_CEILING, chainLimit, checkedSha, clearPending, floorFits, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
+import { arm, cancelArmed, CHAIN_CEILING, chainLimit, checkedSha, clearPending, floorFits, floorProgress, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
@@ -51,6 +51,8 @@ export const BACKGROUND_HOPS = 5;
 // How many background hops in a row may show no progress, no new commit and no new Done item, before the gate stops
 // the chain and the handoff goes on by the clear route, where a Human looks (progressOf).
 export const STALL_HOPS = 2;
+// Why a hop past what a chain floor records continues by no route.
+const CEILING_WHY = `a chain floor records at most ${CHAIN_CEILING} continuations and Done items, and this hop would pass that`;
 
 // Whether the background route may run for `project`: { ok: true, maxChain, mode } or { ok: false, why }. This machine turns it
 // on in the main checkout's local file (`handoff.background`, project.mjs localHandoffBackground), and the team in the config.json of
@@ -256,8 +258,9 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 }
 
 // The background route, once the brief passed every check: a chain that made no progress over STALL_HOPS hops in a row,
-// or whose next floor CHAIN_CEILING cannot record, goes on by the clear route instead (progressOf, floorFits), or, when
-// the working config's maxChain cannot arm a clear at this chain, by none: a person resumes the brief. Otherwise the store keeps the checked bytes, the host starts a new
+// goes on by the clear route instead (progressOf), or, when the working config's maxChain cannot arm a clear at this
+// chain, by none: a person resumes the brief. A hop whose next floor CHAIN_CEILING cannot record (floorFits) goes on by
+// none too, since a clear would deliver the same chain. Otherwise the store keeps the checked bytes, the host starts a new
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
 // records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
 // under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start
@@ -282,7 +285,7 @@ function startInBackground(ready) {
   };
   const progress = progressOf({ store, session, now, cwd, text: found.bytes.toString('utf8') });
   if (progress.stalls >= STALL_HOPS) return fallBack(`stuck: no new commits or finished steps over the last ${STALL_HOPS} handoffs`);
-  if (!floorFits({ chain: chain + 1, done: progress.done })) return fallBack(`a chain floor records at most ${CHAIN_CEILING} continuations and Done items, and this hop would pass that`);
+  if (!floorFits({ chain: chain + 1, done: progress.done })) return none(`${CEILING_WHY}; a person resumes the brief`);
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
@@ -328,8 +331,8 @@ function progressOf({ store, session, now, cwd, text }) {
   const branch = branchOf(text);
   const tree = (branch === null ? null : treeOf(cwd, branch)) ?? treeOf(cwd);
   const done = sectionItems(text, 'Done')?.length ?? 0;
-  const floor = readFrom(store, session, { now });
-  const stuck = floor?.stalls !== undefined && tree === floor.tree && done <= floor.done;
+  const floor = floorProgress(readFrom(store, session, { now }));
+  const stuck = floor !== null && tree === floor.tree && done <= floor.done;
   return { tree, done, stalls: stuck ? floor.stalls + 1 : 0 };
 }
 
@@ -497,7 +500,8 @@ export function deliverCleared(store, marker, session, { now = Date.now() } = {}
   const problem = (hasControl(store.handoffs) || hasControl(found.path ?? '') ? 'lies in a folder whose path holds a control character' : null)
     ?? found.problem
     ?? (sha256(found.bytes) !== marker.sha256 ? 'changed since it was armed' : null)
-    ?? (marker.chain + 1 > store.maxChain ? `has Chain ${marker.chain}, and session.handoff.maxChain allows ${store.maxChain} continuations in a row` : null);
+    ?? (marker.chain + 1 > store.maxChain ? `has Chain ${marker.chain}, and session.handoff.maxChain allows ${store.maxChain} continuations in a row` : null)
+    ?? (floorFits({ chain: marker.chain + 1 }) ? null : `has Chain ${marker.chain}, and ${CEILING_WHY}`);
   if (problem) {
     return { systemMessage: `The handoff brief ${marker.slug} ${problem}, so this session did not load it: resume with the session-continue skill and the slug ${marker.slug}.`, context: null };
   }

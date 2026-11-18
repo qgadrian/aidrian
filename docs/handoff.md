@@ -185,13 +185,14 @@ whatever the config says, and `background` only when the config says `"backgroun
    user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
    is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
    On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
-   hop past the 10,000 continuations a chain floor records, a working copy whose `state.dir` differs from the base
-   branch's, a session that did not start, and a started session the gate could not hold to a chain floor and stopped
-   fall back to the clear route instead where the host has it: `continue: clear`, the `fallback:` line, and the clear
-   route's `say:` line, with the clear continuation armed. When the working copy's own `maxChain` is below the brief's
-   `Chain`, as in a worktree older than a base branch that says `"unlimited"`, no clear can be armed, and it prints
-   `continue: none` and the reason, ending `a person resumes the brief`. A started session it could neither hold nor stop gives
-   `continue: none`, with a `fallback:` line that names it and the host's command to stop it, and arms nothing beside it.
+   working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
+   the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
+   `continue: clear`, the `fallback:` line, and the clear route's `say:` line, with the clear continuation armed.
+   When the working copy's own `maxChain` is below the brief's `Chain`, as in a worktree older than a base branch that
+   says `"unlimited"`, no clear can be armed, and it prints `continue: none` and the reason, ending
+   `a person resumes the brief`. So does a hop past the 10,000 continuations a chain floor records, since a clear
+   would deliver the same chain. A started session it could neither hold nor stop gives `continue: none`, with a
+   `fallback:` line that names it and the host's command to stop it, and arms nothing beside it.
 4. A refusal exits 1 with the reason and the remedy on stderr, since the session can fix it: no passing check of the
    brief's current bytes (run `aidrian handoff check` first), a brief last written more than 15 minutes ago or dated in
    the future (refresh it), or a `Chain` below the floor this session was given (set it, and check again).
@@ -237,19 +238,21 @@ start context names; a session a person started by typing the resume writes 0.
 Every background hop records, with the new session's chain floor, the progress it starts from: the tree of the branch
 the brief's Current state names (`Branch:`), read from the gate's folder, so work in a worktree counts from the main
 checkout too, or of HEAD there when that value is no branch name by git's own rules (`git check-ref-format --branch`)
-or names no branch; and the number of items under the brief's `## Done`. The next hop from that session compares its
-own brief with the record. A changed tree on the branch, or more Done items, is progress: an empty commit or a reworded
-one is not. Two hops in a row with neither, and the gate starts no session: the handoff goes on by the
-clear route, where a person looks, with the line
+or names no branch. A backticked value is taken whole, with any `|` or space in it; a bare one ends at a `|` and loses
+only the spaces and `*` at its end. The record also holds the number of items under the brief's `## Done`. The next
+hop from that session compares its own brief with the record. A changed tree on the branch, or more Done items, is progress: an empty commit or a reworded
+one is not. Two hops in a row with neither, and the gate starts no session: the handoff goes on by the clear route,
+where a person looks, with the line
 `fallback: stuck: no new commits or finished steps over the last 2 handoffs; this handoff goes on by the clear route`.
 
 It always runs, whatever `maxChain` says, and it is what bounds a chain under `"unlimited"`. The records sit in the
 continuation store, which a subagent and a session the background route started may not write, and the hop that a
-person started, or a clear delivered, records none, so the count starts from 0 there. The signal is cheap, not proof:
+person started, or a clear delivered, records none, so the count starts from 0 there; so does a floor whose progress
+has a shape this version does not read, which still holds its chain and route. The signal is cheap, not proof:
 a session that writes Done items it did not finish passes it, and so does one that changes a file and changes it back
 over two hops, which is why `maxChain` stays the default bound. Under `"unlimited"` one bound stays in code: a chain
-floor records at most 10,000 continuations and 10,000 Done items, and a hop past either starts no session and goes on
-by the clear route.
+floor records at most 10,000 continuations and 10,000 Done items, and a hop past either starts no session and arms no
+clear: a person resumes the brief. A clear's delivery past 10,000 loads nothing either, and says why.
 
 ### The clear route
 

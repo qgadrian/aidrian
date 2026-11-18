@@ -59,14 +59,20 @@ export function sectionProblems(text) {
 
 const CURRENT_STATE = REQUIRED.find((section) => section.name === 'Current state').heading;
 
-// The first `Branch:` value of the brief's Current state section, without backticks, or null when it has none.
+// `Branch:`, the spaces and `*` that close a bold label, then a backticked name, or the text up to a `|` or the line's end.
+const BRANCH_VALUE = /(?<![\p{L}\p{N}_-])Branch:[ \t*]*(?:`([^`\n]+)`|([^|\n]*))/iu;
+
+// The first `Branch:` value of the brief's Current state section, or null when it has none. A backticked name is taken
+// whole, `|` and every space in it; a bare one loses only the spaces, tabs, and `*` at its end. Git allows underscores,
+// `|`, and other spaces in a branch name, so nothing else is trimmed.
 export function branchOf(text) {
   let inState = false;
   for (const line of unfencedLines(String(text ?? ''))) {
     const title = headingOf(line);
     if (title !== null) inState = CURRENT_STATE.test(title);
-    const value = inState && title === null ? labelValues([line], 'Branch').find((each) => each !== '') : undefined;
-    if (value) return value.replace(/^`+|`+$/gu, '');
+    const match = inState && title === null ? BRANCH_VALUE.exec(line) : null;
+    const value = match ? (match[1] ?? match[2].replace(/[ \t*]+$/u, '')) : '';
+    if (value) return value;
   }
   return null;
 }

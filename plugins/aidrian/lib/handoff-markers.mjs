@@ -210,19 +210,25 @@ function isArmed(value, maxChain) {
 
 const isReady = (value, maxChain) => isArmed(value, maxChain) && Number.isFinite(value.ended_at) && isPid(value.host_pid);
 
-// A floor's progress, which only the background route records: none, or the tree of the brief's branch (null when git
-// could not say), the Done items the brief held, and how many hops in a row before it showed neither moving.
-const isProgress = (value) => (value.tree === undefined && value.done === undefined && value.stalls === undefined)
-  || ((value.tree === null || (typeof value.tree === 'string' && /^[0-9a-f]{40,64}$/u.test(value.tree)))
-    && whole(value.done, 0, CHAIN_CEILING) && whole(value.stalls, 0, CHAIN_CEILING));
+// A floor's progress, which only the background route records: the tree of the brief's branch (null when git could not
+// say), the Done items the brief held, and how many hops in a row before it showed neither moving.
+const isProgress = (value) => (value.tree === null || (typeof value.tree === 'string' && /^[0-9a-f]{40,64}$/u.test(value.tree)))
+  && whole(value.done, 0, CHAIN_CEILING) && whole(value.stalls, 0, CHAIN_CEILING);
+const noProgress = (value) => value.tree === undefined && value.done === undefined && value.stalls === undefined;
+
+// The progress a chain floor read from the store records, { tree, done, stalls }, or null when it records none, or a
+// shape this version does not read, such as an earlier one's: the floor's chain and route still hold, and the progress
+// check counts from 0 again.
+export const floorProgress = (floor) => (floor && !noProgress(floor) && isProgress(floor) ? { tree: floor.tree, done: floor.done, stalls: floor.stalls } : null);
 
 // Whether a chain floor can record a hop to `chain` with `done` Done items: both at most CHAIN_CEILING. The background
 // route asks it before it starts a session, since a floor it cannot record stops the session it started.
 export const floorFits = ({ chain, done = 0 }) => whole(chain, 0, CHAIN_CEILING) && whole(done, 0, CHAIN_CEILING);
 
+// A chain floor as the store reads it: its progress fields are not read here (floorProgress), so a floor whose progress
+// has another shape still holds its chain and route.
 const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
-  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at)
-  && isProgress(value);
+  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at);
 
 const isStarted = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
   && typeof value.slug === 'string' && SLUG.test(value.slug) && briefOf(value.brief, value.slug) && whole(value.chain, 0, CHAIN_CEILING)
@@ -371,11 +377,11 @@ export function clearPending(store, { now = Date.now() } = {}) {
 }
 
 // Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to, and
-// the background route's `progress`, { tree, done, stalls }, when it is given (isProgress).
+// the background route's `progress`, { tree, done, stalls }, when it is given; a progress of another shape writes nothing.
 // `session` may be the short id a host printed for a session it started, which readFrom matches by prefix.
 export function noteFrom(store, session, { slug, chain, brief, route, progress }, { now = Date.now() } = {}) {
   const value = { slug, chain, brief, route, ...progress, at: now };
-  return isFrom(value) ? writeMarker(store, sessionFile('from', session), value) : null;
+  return isFrom(value) && (noProgress(value) || isProgress(value)) ? writeMarker(store, sessionFile('from', session), value) : null;
 }
 
 // The chain floor `session` was given, or null: the highest of its own and every one filed under a short id it starts

@@ -4,7 +4,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findProcesses, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
+import { attachLine, findProcesses, logLimit, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
 import { responseObjects } from './response.mjs';
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -329,6 +329,9 @@ export default {
       stop: ({ id, started, run }) => stopProcess({ id, started, run }),
       ended: ({ id, run }) => processEnded({ id, run }),
       find: ({ cwd, run }) => findProcesses({ cwd, run }),
+      // Whether the session's turn failed on a usage or rate limit, from Codex's own `turn.failed` record in the run log
+      // (codex-exec.mjs logLimit); unverified, as no live `codex exec` has shown that record.
+      limitOf: ({ log, now }) => logLimit({ log, now }),
       attachLine,
       stopLine,
     },

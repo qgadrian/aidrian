@@ -26,8 +26,9 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { pauseSync } from '../fs.mjs';
+import { pauseSync, tailObjects } from '../fs.mjs';
 import { varsProblem } from '../project-registries.mjs';
+import { clockTime, durationTime } from './limit-time.mjs';
 import { programNames, programOnPath, runCommand } from './process.mjs';
 
 // How long a start waits for each proof, and the step between reads.
@@ -221,6 +222,38 @@ export function firstTool(log) {
     }
   }
   return undefined;
+}
+
+// How much of a run log's end is read for the turn's end, and the words of a usage limit and of a rate limit in Codex's
+// own error text: `You've hit your usage limit. ... try again in 2 hours 5 minutes.` or `... try again at 3:04 PM.`
+// (codex-rs core's usage limit error), and `exceeded retry limit, last status: 429 Too Many Requests` once its own
+// retries ran out. UNVERIFIED: taken from Codex's source, never seen in a live `codex exec` log.
+const LIMIT_TAIL = 1024 * 1024;
+const USAGE = /\busage limit\b|\bhit your (?:usage )?limit\b/iu;
+const RATE = /\brate[ _-]?limit|\b429\b|\btoo many requests\b/iu;
+
+// When the limit Codex's text `text` reports lifts, in milliseconds since the epoch, or null when it names no time:
+// `try again in` a span, or `try again at` a clock time on this machine's clock, as Codex prints it.
+export function codexReset(text, now) {
+  const inSpan = /\btry again in\s+([^|]{1,80})/iu.exec(text);
+  if (inSpan) return durationTime(inSpan[1], now);
+  const atTime = /\btry again at\s+([^|]{1,80})/iu.exec(text);
+  return atTime ? clockTime(atTime[1], now) : null;
+}
+
+// Whether the session whose events the run log `log` holds ended its turn on a usage or rate limit: { kind: 'usage' |
+// 'rate', until } when the last turn end there is a `turn.failed` whose message reports one, `until` null when it names
+// no time; else null. Only Codex's own `turn.failed` record is read: never an item's output or a message the model wrote,
+// and never a top-level `error` event, which Codex also prints for a retry it goes on from.
+export function logLimit({ log, now = Date.now() }) {
+  if (typeof log !== 'string' || !path.isAbsolute(log)) return null;
+  const last = (tailObjects(log, LIMIT_TAIL) ?? []).filter((event) => event.type === 'turn.failed' || event.type === 'turn.completed').at(-1);
+  if (last?.type !== 'turn.failed') return null;
+  const message = last.error?.message ?? last.message;
+  if (typeof message !== 'string') return null;
+  const usage = USAGE.test(message);
+  if (!usage && !RATE.test(message)) return null;
+  return { kind: usage ? 'usage' : 'rate', until: codexReset(message, now) };
 }
 
 // Reads `read()` every STEP until it gives anything but undefined, or `gone()` says the process ended, at most `ms`

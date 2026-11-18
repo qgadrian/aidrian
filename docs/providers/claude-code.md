@@ -328,6 +328,12 @@ ignored, so the live checks below must show each one holds.
   stopped, gives its attempt back, and halts the run until an attended `aidrian project resume`.
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
   `aidrian handoff route` `route: none`, before any store or mark write. It pushes its work and records its result.
+- A usage or rate limit is read from the session's transcript alone (`lib/hosts/claude-code-limit.mjs`): its last
+  `assistant` entry, only when the host marked it `isApiErrorMessage: true`, and only when its text, the host's own,
+  names a limit, as `Claude AI usage limit reached|<epoch seconds>`, `5-hour limit reached ∙ resets 5pm`, or
+  `API Error: 429 ...`, or its `error` is `rate_limit`. The reset time is read from the epoch, or from `resets <time>
+  (<zone>)`. These shapes come from the host's issue reports and changelog, not a live run: until one shows them, a
+  limit the reader misses ends the session with no result, or past `issueHours` ([Project run](../config.md#project-run)).
 
 The settings the session starts with (`sandboxSettings` in `lib/hosts/claude-code-sandbox.mjs`, which the tests pin
 whole). A scalar passed with `--settings` wins over the user's settings; a list merges with theirs, which the start checks.
@@ -485,6 +491,8 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     appears in `~/.npm`, and the driver's `wait` removes the attempt's folder once the session ended; with the list
     empty, `npm ci` fails on the network and writes nothing outside the attempt's folder. The same for `pip install`
     in a virtual environment, `cargo fetch`, `go mod download`, and `bundle install`, each with its registry listed.
+19. What a usage limit and a rate limit leave at the end of a background session's transcript, and which state
+    `claude agents --json --all` then lists the session in, so `lib/hosts/claude-code-limit.mjs` reads the real record.
 
 ### Dependency installs
 

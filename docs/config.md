@@ -1744,6 +1744,18 @@ clone under its host's sandbox, and a host that is not halts the start. The sess
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
+A session that meets a usage or rate limit pauses the run (`lib/project-limit.mjs`). `wait` asks the host adapter
+whether the session's last record is the host's own limit error, never a tool's output or the model's text; when it is,
+`wait` stops the session, ends the attempt `limit` (it counts as any attempt), opens the issue again, and writes a
+`limit` row whose `until` is the reset time the host named, held to between 1 minute and 6 hours from then, or, when it
+named none, 15, then 30, then 60 minutes for each limit in a row since the last result. It prints `limit <issue> <kind>
+until <time> -> <state>`. Until then `start` exits 1 with `paused until <time>`, `next` prints that line first and
+`--json` adds `pause`, and an idle `wait` waits with it, up to `--max-wait`. Once it is over, the same issue starts
+again as a new attempt: a fresh clone on the issue's branch as the forge holds it, whose prompt says the attempt before
+stopped on a limit. A run waits out 24 pauses at most: the next limit writes a `halt` row instead, which only
+`aidrian project resume` lifts. Neither host's limit record is verified live, and a host that reads none, or a record
+it does not recognise, leaves the backstop: the session ends with no result, or `issueHours` stops it. A limit the
+driver session meets itself is not handled: nothing restarts a driver.
 For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
 main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
 checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose

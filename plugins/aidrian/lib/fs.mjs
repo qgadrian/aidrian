@@ -2,7 +2,7 @@
 // commands. Paths are relative to `root` where a function takes one. No dependencies: this file runs from the installed
 // plugin, which has no node_modules.
 
-import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason.
@@ -121,6 +121,35 @@ export function isEntry(file) {
 export const pauseSync = (ms) => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
 };
+
+// The JSON objects of the last `bytes` of the regular file `file`, one a whole line, in order, read without following a
+// link: a line cut at the start of the read, or that is no JSON object, is left out. null when it cannot be read.
+export function tailObjects(file, bytes) {
+  let fd;
+  let text;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    const start = Math.max(0, stat.size - bytes);
+    const buffer = Buffer.alloc(stat.size - start);
+    const read = readSync(fd, buffer, 0, buffer.length, start);
+    text = buffer.subarray(0, read).toString('utf8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  return text.split('\n').flatMap((line) => {
+    try {
+      const value = JSON.parse(line);
+      return isObject(value) ? [value] : [];
+    } catch {
+      return [];
+    }
+  });
+}
 
 export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

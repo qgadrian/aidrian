@@ -229,6 +229,12 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   every call in the clone while its own git config sets a key that makes git run a program, such as `core.fsmonitor`,
   `gpg.program` with `log.showSignature`, or a credential helper, and every git call of the plugin runs with
   fsmonitor, hooks, and signature display off.
+- A usage or rate limit is read from the run log alone (`logLimit` in `lib/hosts/codex-exec.mjs`): its last turn end,
+  only when it is a `turn.failed` whose message names one, as `You've hit your usage limit. ... try again in 2 hours 5
+  minutes.` or `... try again at 3:04 PM.`, or `exceeded retry limit, last status: 429 Too Many Requests`; never a
+  top-level `error` event, an item's output, or a message. These come from Codex's source, not a live run: until one
+  shows them, a limit the reader misses ends the session with no result, or past `issueHours`
+  ([Project run](../config.md#project-run)).
 - A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
   time is the one recorded. The table is read whole, up to 64 MiB of command lines, so a busy machine's listing still
   finds a start by its folder.
@@ -251,6 +257,7 @@ Before `verified` changes, a live Codex must show every one of these:
     folder once the session ended; the same for `pip`, `cargo`, `go`, and `bundler`.
 12. Whether `features.network_proxy` with `domains` allow rules holds `git push`, `gh`, and an install to the listed
     hosts under `codex exec --sandbox workspace-write`, and refuses an unlisted one.
+13. What a usage limit and a rate limit leave in the `codex exec --json` log, so `logLimit` reads the real record.
 
 ## Limits
 

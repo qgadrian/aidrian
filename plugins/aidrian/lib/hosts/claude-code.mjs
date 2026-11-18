@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
+import { transcriptLimit } from './claude-code-limit.mjs';
 import { accessProblem, cloneProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote } from './claude-code-sandbox.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -237,6 +238,9 @@ export default {
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),
       find: ({ cwd, name, env, run }) => findSessions({ cwd, name, env, run }),
+      // Whether the session last met a usage or rate limit, from the host's own API error entry at the end of its
+      // transcript (hosts/claude-code-limit.mjs); unverified, as no live session has shown that entry.
+      limitOf: ({ session, cwd, env, home, now }) => transcriptLimit({ session, cwd, env, home, now }),
       attachLine,
       stopLine,
     },

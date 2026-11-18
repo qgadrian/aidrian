@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-11-18T07:23:20.275Z",
+  "recordedAt": "2026-11-18T09:06:02.841Z",
   "refs": [
     {
       "host": "github.com",
@@ -52,6 +52,8 @@
                 "reviewDecision": "REVIEW_REQUIRED",
                 "createdAt": "2026-11-12T03:17:32Z",
                 "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
                 "headRepository": {
                   "name": "cli",
                   "owner": {
@@ -180,6 +182,8 @@
                 "reviewDecision": "REVIEW_REQUIRED",
                 "createdAt": "2026-11-12T03:16:21Z",
                 "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
                 "headRepository": {
                   "name": "cli",
                   "owner": {
@@ -311,6 +315,8 @@
                 "reviewDecision": "REVIEW_REQUIRED",
                 "createdAt": "2026-11-12T03:15:27Z",
                 "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
                 "headRepository": {
                   "name": "cli",
                   "owner": {
@@ -439,6 +445,8 @@
                 "reviewDecision": "REVIEW_REQUIRED",
                 "createdAt": "2026-11-12T03:12:41Z",
                 "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
                 "headRepository": {
                   "name": "cli",
                   "owner": {
@@ -567,6 +575,8 @@
                 "reviewDecision": "REVIEW_REQUIRED",
                 "createdAt": "2026-11-12T02:20:00Z",
                 "headRefName": "fix/11247-pr-create-json",
+                "viewerDidAuthor": false,
+                "authorAssociation": "NONE",
                 "headRepository": {
                   "name": "cli",
                   "owner": {
@@ -702,6 +712,8 @@
               "reviewDecision": "REVIEW_REQUIRED",
               "createdAt": "2026-10-14T03:22:28Z",
               "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "NONE",
               "headRepository": {
                 "name": "node",
                 "owner": {
@@ -820,6 +832,8 @@
               "reviewDecision": "APPROVED",
               "createdAt": "2026-10-11T01:04:42Z",
               "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
               "headRepository": {
                 "name": "node",
                 "owner": {
@@ -938,6 +952,8 @@
               "reviewDecision": "APPROVED",
               "createdAt": "2026-02-22T00:49:17Z",
               "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
               "headRepository": {
                 "name": "node",
                 "owner": {
@@ -1056,6 +1072,8 @@
               "reviewDecision": "APPROVED",
               "createdAt": "2025-06-15T00:41:01Z",
               "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
               "headRepository": {
                 "name": "node",
                 "owner": {
@@ -1091,6 +1109,8 @@
               "reviewDecision": "APPROVED",
               "createdAt": "2025-03-09T00:29:08Z",
               "headRefName": "actions/tools-update-acorn",
+              "viewerDidAuthor": false,
+              "authorAssociation": "COLLABORATOR",
               "headRepository": {
                 "name": "node",
                 "owner": {
@@ -1137,6 +1157,8 @@
           "reviewDecision": "REVIEW_REQUIRED",
           "createdAt": "2026-11-12T03:17:32Z",
           "headRefName": "fix/11247-pr-create-json",
+          "viewerDidAuthor": false,
+          "authorAssociation": "NONE",
           "headRepository": {
             "name": "cli",
             "owner": {

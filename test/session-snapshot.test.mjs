@@ -810,9 +810,9 @@ test('prs: a cached row`s key the docs do not name, at the top or inside checks,
   const stored = JSON.parse(readFileSync(cache, 'utf8'));
   const hostile = 'x\u202e\u009b2J';
   const [row] = stored.value;
-  writeFileSync(cache, JSON.stringify({ ...stored, value: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile } }] }), { mode: 0o600 });
+  writeFileSync(cache, JSON.stringify({ ...stored, value: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile }, stale: hostile, unsupported: hostile }] }), { mode: 0o600 });
   const { json, stdout } = env.run(['--session', ID]);
-  assert.deepEqual(json.prs, [PR_ROW], 'the documented keys alone, checks its four counts');
+  assert.deepEqual(json.prs, [{ ...PR_ROW, stale: false, unsupported: false }], 'the documented keys alone, checks its four counts, and each flag a boolean');
   assert.equal(env.calls().length, 1, 'the cached row was read, with no new forge call');
   assert.ok(!stdout.includes('smuggled') && !/[\u202e\u009b]/u.test(stdout), 'neither key nor its text shows');
 });

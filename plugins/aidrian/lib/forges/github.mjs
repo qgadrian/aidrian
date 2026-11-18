@@ -65,18 +65,19 @@ const HEAD_CHANGES = 5;
 // however many, with no page of them read (GitHub's StatusCheckRollupContextConnection).
 // SHORTCUT: unresolvedThreads counts the unresolved threads among the first 100 alone. Enough for display data; paging
 // reviewThreads, as findingThreads does, would replace it.
-const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName author { login } '
+const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName viewerDidAuthor authorAssociation '
   + 'headRepository { name owner { login } } repository { name owner { login } } reviewThreads(first: 100) { nodes { isResolved } } '
   + 'commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } } }';
 const headChanges = (index) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change } }`;
 
 // The one query operation for `refs`, as changeRef gave them: its text is built from each ref's index and kind alone, a
-// number or a branch, and every value is a variable (changesVariables). It reads the viewer's login once, which ranks a
-// branch's pull requests (answeredChange). Never a mutation.
+// number or a branch, and every value is a variable (changesVariables). No root field: a non-null one a token cannot
+// resolve, such as an app installation token's viewer, nulls the whole `data`; each pull request says itself whether the
+// token's user wrote it (viewerDidAuthor), which ranks a branch's pull requests (answeredChange). Never a mutation.
 function changesQuery(refs) {
   const head = refs.map((ref, i) => `$o${i}: String!, $n${i}: String!, ${ref.number === null ? `$b${i}: String!` : `$p${i}: Int!`}`);
   const body = refs.map((ref, i) => `r${i}: repository(owner: $o${i}, name: $n${i}) { ${ref.number === null ? `${headChanges(i)} parent { ${headChanges(i)} }` : `pullRequest(number: $p${i}) { ...change }`} }`);
-  return `query changes(${head.join(', ')}) { viewer { login } ${body.join(' ')} }\n${CHANGE_FIELDS}`;
+  return `query changes(${head.join(', ')}) { ${body.join(' ')} }\n${CHANGE_FIELDS}`;
 }
 const changesVariables = (refs) => Object.assign({}, ...refs.map((ref, i) => ({ [`o${i}`]: ref.owner, [`n${i}`]: ref.name, ...(ref.number === null ? { [`b${i}`]: ref.branch } : { [`p${i}`]: ref.number }) })));
 
@@ -101,22 +102,24 @@ const createdAt = (node) => {
   return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
 };
 
-// How a branch's pull requests rank, best first: the viewer's own, then an open one, then the newest.
-const byRank = (viewer) => {
-  const own = (node) => Number(isLogin(viewer) && sameName(node?.author?.login, viewer));
-  const open = (node) => Number(node?.state === 'OPEN');
-  return (a, b) => own(b) - own(a) || open(b) - open(a) || createdAt(b) - createdAt(a);
-};
+// How a branch's pull requests rank, best first: the token's user's own (viewerDidAuthor), then one whose author belongs
+// to the repository (MEMBER_ASSOCIATIONS; any other association, or none, is an outsider's), then an open one, then the
+// newest. Anyone can open a pull request from a branch of any name, so an outsider's never outranks a member's.
+const own = (node) => Number(node?.viewerDidAuthor === true);
+const trusted = (node) => Number(MEMBER_ASSOCIATIONS.has(node?.authorAssociation));
+const open = (node) => Number(node?.state === 'OPEN');
+const byRank = (a, b) => own(b) - own(a) || trusted(b) - trusted(a) || open(b) - open(a) || createdAt(b) - createdAt(a);
 
 // The pull request one alias of the answer gives `ref`: a number's own; for a branch, the first by byRank of those whose
 // head is that branch of the ref's repository, in the repository or its parent, so a fork's pull request from a branch of
 // the same name never resolves it, a branch pushed to a fork resolves to its pull request on the parent, and another
-// author's newer pull request from the same branch never replaces the viewer's. Else null.
-function answeredChange(ref, alias, viewer) {
+// author's newer pull request from the same branch never replaces the token's user's, nor an outsider's a member's.
+// Else null.
+function answeredChange(ref, alias) {
   if (ref.number !== null) return alias?.pullRequest ?? null;
   const nodes = [alias?.pullRequests?.nodes, alias?.parent?.pullRequests?.nodes].flatMap((list) => (Array.isArray(list) ? list : []));
   const heads = nodes.filter((node) => sameName(node?.headRepository?.owner?.login, ref.owner) && sameName(node?.headRepository?.name, ref.name) && node?.headRefName === ref.branch);
-  return heads.sort(byRank(viewer))[0] ?? null;
+  return heads.sort(byRank)[0] ?? null;
 }
 
 const STATES = Object.freeze({ OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' });
@@ -374,11 +377,10 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       if (asked.length === 0) return checked;
       const input = JSON.stringify({ query: changesQuery(asked), variables: changesVariables(asked) });
       const data = changesData(() => gh(['api', 'graphql', '--hostname', CHANGES_HOST, '--input', '-'], { input }));
-      const viewer = data.viewer?.login;
       let alias = 0;
       return checked.map((ref) => {
         if (ref === null) return null;
-        const node = answeredChange(ref, data[`r${alias++}`], viewer);
+        const node = answeredChange(ref, data[`r${alias++}`]);
         return node ? changeRow(node) : null;
       });
     },

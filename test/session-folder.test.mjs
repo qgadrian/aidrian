@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { appendSessionFile, APPENDED_FILES, readSessionFile, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { appendSessionFile, APPENDED_FILES, readSessionTail, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
@@ -293,24 +293,27 @@ test('appendSessionFile writes nothing in a symlinked or group-readable folder',
   assert.equal(sessionFolder(state, 'fine', NONE) !== null, true);
 });
 
-test('readSessionFile reads the ledger no-follow: missing is empty, and a link, a shared file, or one past the cap is refused', { skip: !POSIX }, () => {
+test('readSessionTail reads the ledger no-follow: missing is empty, any size is its tail, and a link or a shared file is refused', { skip: !POSIX }, () => {
   const { state } = stateWithSessions();
   const folder = sessionFolder(state, 'reader', NONE);
   const file = path.join(folder, 'prs.jsonl');
-  assert.equal(readSessionFile(folder, 'prs.jsonl', { maxBytes: 100 }), '');
+  const tail = (maxBytes = 100) => readSessionTail(folder, 'prs.jsonl', { maxBytes });
+  assert.deepEqual(tail(), { text: '', cut: false });
   appendSessionFile(folder, 'prs.jsonl', 'row\n', { maxBytes: 100 });
-  assert.equal(readSessionFile(folder, 'prs.jsonl', { maxBytes: 100 }), 'row\n');
-  assert.equal(readSessionFile(folder, 'prs.jsonl', { maxBytes: 3 }), null, 'past the cap');
-  assert.equal(readSessionFile(folder, 'usage.json', { maxBytes: 100 }), null, 'only the ledger');
+  assert.deepEqual(tail(), { text: 'row\n', cut: false });
+  assert.deepEqual(tail(3), { text: 'ow\n', cut: true }, 'past the cap: the tail, never a refusal');
   chmodSync(file, 0o644);
-  assert.equal(readSessionFile(folder, 'prs.jsonl', { maxBytes: 100 }), null, 'readable by others');
+  assert.equal(tail(), null, 'readable by others');
   chmodSync(file, 0o600);
   const other = path.join(scratch(), 'other.txt');
   writeFileSync(other, 'x\n', { mode: 0o600 });
   rmSync(file);
   linkSync(other, file);
-  assert.equal(readSessionFile(folder, 'prs.jsonl', { maxBytes: 100 }), null, 'a hard link');
+  assert.equal(tail(), null, 'a hard link');
   rmSync(file);
   symlinkSync(other, file);
-  assert.equal(readSessionFile(folder, 'prs.jsonl', { maxBytes: 100 }), null, 'a symlink');
+  assert.equal(tail(), null, 'a symlink');
+  rmSync(file);
+  mkdirSync(file);
+  assert.equal(tail(), null, 'no regular file');
 });

@@ -175,8 +175,11 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   ledger holds them, newest first, it answers, for each of the first 25, the forge-neutral row of its change request, or
   null when the ref fails `changeRef`, resolves to none, or the forge gives no answer for it. A number is its own change
   request; a branch is, among those whose head is that branch of the ref's repository, in that repository or the one
-  it was forked from, the forge's signed-in user's own first, then an open one, then the newest, never one from a fork
-  with a branch of the same name. The row is
+  it was forked from, the one the forge's signed-in user wrote first, as the change request itself says (GitHub's
+  `viewerDidAuthor`), then one by a person who belongs to the repository (GitHub's `authorAssociation` of `OWNER`,
+  `MEMBER`, or `COLLABORATOR`; any other is an outsider's), then an open one, then the newest, never one from a fork
+  with a branch of the same name. The read names no field of the signed-in user at the query's root, which a token
+  that cannot resolve it, such as an app's installation token, would turn into no answer at all. The row is
   `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`:
   `forge` the adapter's `id`; `host` and `repo` the repository as `repoIdentity` reads it, `repo` its path; `state`
   `open`, `closed`, or `merged`; `isDraft` a boolean; `mergeable` true, false, or null while the forge has not worked it

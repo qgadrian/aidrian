@@ -20,7 +20,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdi
 import path from 'node:path';
 
 import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
-import { looseFolder, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
+import { looseFolder, SESSION_ID } from './handoff-markers.mjs';
 
 // A session folder whose newest file is older than this goes when another session's folder is created.
 export const SWEEP_DAYS = 30;
@@ -133,30 +133,15 @@ export function writeSessionFile(folder, name, text, { token = newToken(), uid =
   }
 }
 
-// The text of the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave: '' when it is missing, and
-// null when `folder` fails privateFolder, or the file is a symlink, no regular file, has more than one link, is another
-// user's or readable by one, or holds more than `maxBytes` (handoff-markers readOwnFile, no-follow and non-blocking).
-// Never throws.
-export function readSessionFile(folder, name, { maxBytes, uid = processUid() } = {}) {
-  if (!APPENDED_FILES.includes(name) || !Number.isSafeInteger(maxBytes) || !isPrivateFolder(folder, uid)) return null;
-  const file = path.join(folder, name);
-  try {
-    lstatSync(file);
-  } catch (error) {
-    return error.code === 'ENOENT' ? '' : null;
-  }
-  const read = readOwnFile(file, { cap: maxBytes, uid });
-  if (read === null || read.stat.nlink !== 1 || (Number.isInteger(uid) && (read.stat.mode & 0o077) !== 0)) return null;
-  return read.text;
-}
-
 // A tail read opens where no symlink is, and never waits on a named pipe.
 const READ_TAIL = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
-// The last `maxBytes` of the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave, under
-// readSessionFile's rules but for the size, which is never refused: { text, cut }, `cut` true when the text starts inside
-// a line; { text: '', cut: false } when the file is missing; and null when it is refused. Opened no-follow and
-// non-blocking, and read only when fstat shows a regular file with one link this user alone may read. Never throws.
+// The last `maxBytes` of the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave: { text, cut },
+// `cut` true when the text starts inside a line, and { text: '', cut: false } when the file is missing. A file of any
+// size is read, its tail alone. Null, the read refused, when `folder` fails privateFolder at the time of the read, or the
+// file is a symlink (lstat, then opened no-follow), no regular file, has more than one link, or is not owned by `uid`
+// with a mode no other user may read or write (fstat of the descriptor). Opened non-blocking, so a named pipe never
+// waits. Never throws.
 export function readSessionTail(folder, name, { maxBytes, uid = processUid() } = {}) {
   if (!APPENDED_FILES.includes(name) || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || !isPrivateFolder(folder, uid)) return null;
   const file = path.join(folder, name);

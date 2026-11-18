@@ -10,6 +10,7 @@ import { createGithubForge, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_CH
 import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
+import { isRefName } from '../plugins/aidrian/lib/git.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import * as reviewState from '../plugins/aidrian/lib/review/state.mjs';
 import { listForge, openPrBodies } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
@@ -873,7 +874,8 @@ test('runGh hands a request body to a real gh child on its stdin, and gives a ca
 });
 
 // changesState's batched read. test/fixtures/forges/github/changes-state.json records one answer GitHub gave to it,
-// read-only, against public repositories, on 2026-11-18: gh exited 1 on it, since one alias did not resolve.
+// read-only, against public repositories, on 2026-11-18, with the query that ranks by viewerDidAuthor and
+// authorAssociation and reads no root field: gh exited 1 on it, since one alias did not resolve.
 const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/forges/github/changes-state.json', import.meta.url), 'utf8'));
 const replay = (answer, status = 0) => recorded(() => {
   if (status === 0) return JSON.stringify(answer);
@@ -890,15 +892,24 @@ test('changesState sends one query operation, its aliases from indexes, every va
     assert.equal(calls.length, 1);
     return calls[0];
   };
-  const hostile = run([branchRef('acme/notes', '@/etc/hosts'), branchRef('acme/notes', '{owner}'), branchRef('acme/notes', 'x") { viewer { login } }'), numberRef('acme/notes', 7)]);
-  const plain = run([branchRef('acme/notes', 'feat/a'), branchRef('acme/notes', 'feat/b'), numberRef('acme/notes', 9)]);
+  // x"){viewer{login}} passes isRefName, so changeRef keeps it: GraphQL syntax and a root field's name, sent as a value.
+  assert.ok(isRefName('x"){viewer{login}}'), 'the hostile branch is a valid ref name');
+  const hostile = run([branchRef('acme/notes', '@/etc/hosts'), branchRef('acme/notes', '{owner}'), branchRef('acme/notes', 'x") { viewer { login } }'), branchRef('acme/notes', 'x"){viewer{login}}'), numberRef('acme/notes', 7)]);
+  const plain = run([branchRef('acme/notes', 'feat/a'), branchRef('acme/notes', 'feat/b'), branchRef('acme/notes', 'feat/c'), numberRef('acme/notes', 9)]);
   assert.deepEqual(hostile.args, ['api', 'graphql', '--hostname', 'github.com', '--input', '-'], 'no -F, no -f, and no value in argv');
   const { query, variables } = bodyOf(hostile);
   assert.equal(query, bodyOf(plain).query, 'the query text is the same whatever the values');
   assert.match(query, /^query changes\(/u);
   assert.doesNotMatch(query, /mutation|@\/etc|\{owner\}|x"\)/u);
-  assert.equal(query.match(/viewer/gu).length, 1, 'the one viewer read is the adapter`s own, never a value`s');
-  assert.deepEqual(variables, { o0: 'acme', n0: 'notes', b0: '@/etc/hosts', o1: 'acme', n1: 'notes', b1: '{owner}', o2: 'acme', n2: 'notes', p2: 7 }, 'the ref that fails the ref-name check is dropped');
+  // The ranking's fields, read on each pull request, and no root field: a non-null root one a token cannot resolve, such
+  // as an app installation token's viewer, would null the whole answer.
+  assert.match(query, /\bviewerDidAuthor\b/u);
+  assert.match(query, /\bauthorAssociation\b/u);
+  assert.doesNotMatch(query, /\bviewer\s*\{/u, 'no root viewer read');
+  assert.equal(query.match(/viewer/gu).length, 1, 'viewer appears once, as viewerDidAuthor, never from a value');
+  assert.deepEqual(variables, {
+    o0: 'acme', n0: 'notes', b0: '@/etc/hosts', o1: 'acme', n1: 'notes', b1: '{owner}', o2: 'acme', n2: 'notes', b2: 'x"){viewer{login}}', o3: 'acme', n3: 'notes', p3: 7,
+  }, 'the ref that fails the ref-name check is dropped; the one that passes it reaches the variables as its own b-index');
   assert.deepEqual(Object.keys(hostile.options).sort(), ['cwd', 'input'], 'no environment of its own');
   const many = run(Array.from({ length: 30 }, (_, i) => numberRef('acme/notes', i + 1)));
   assert.equal(Object.keys(bodyOf(many).variables).filter((name) => name.startsWith('p')).length, MAX_CHANGE_REFS, 'at most 25 refs, the first ones');
@@ -927,6 +938,8 @@ test('changesState on recorded answers: a newer pull request from a fork with a 
   const nodes = RECORDED.answer.data.r1.pullRequests.nodes;
   assert.notEqual(nodes[0].headRepository.owner.login, 'nodejs', 'the newest pull request on that branch name comes from a fork');
   assert.ok(Date.parse(nodes[0].createdAt) > Date.parse(nodes[1].createdAt));
+  assert.deepEqual(nodes.map((node) => [node.viewerDidAuthor, node.authorAssociation]), [[false, 'NONE'], ...Array(4).fill([false, 'COLLABORATOR'])],
+    'GitHub answers the ranking`s fields: the fork`s author an outsider, the repository`s own a collaborator');
   assert.deepEqual([rows[1].repo, rows[1].number], ['nodejs/node', nodes[1].number], 'the newest whose head is the row`s own repository');
 });
 
@@ -959,16 +972,27 @@ test('changesState: a branch with two pull requests resolves to the newer, by it
   assert.equal(row.number, 9);
 });
 
-test('changesState: a branch resolves to the viewer`s own pull request first, then an open one, then the newest', () => {
-  const node = (number, createdAt, { author = 'me', state = 'OPEN' } = {}) => ({ ...PR_NODE, number, createdAt, state, author: { login: author }, url: `https://github.com/acme/notes/pull/${number}` });
-  const resolve = (nodes, viewer = 'me') => replay({ data: { viewer: { login: viewer }, r0: { pullRequests: { nodes }, parent: null } } })
-    .forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number;
-  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z'), node(9, '2026-11-17T00:00:00Z', { author: 'someone' })]), 4,
-    'a newer pull request from another author, with the same head repository and branch, does not replace the viewer`s');
-  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { author: 'ME' }), node(9, '2026-11-17T00:00:00Z', { author: 'someone' })]), 4, 'logins compare without case');
+test('changesState: a branch resolves to the token user`s own pull request, then a member`s, then an open one, then the newest', () => {
+  const node = (number, createdAt, { mine = false, state = 'OPEN', ...given } = {}) => ({
+    ...PR_NODE, number, createdAt, state, viewerDidAuthor: mine, authorAssociation: Object.hasOwn(given, 'association') ? given.association : 'COLLABORATOR', url: `https://github.com/acme/notes/pull/${number}`,
+  });
+  const resolve = (nodes) => replay({ data: { r0: { pullRequests: { nodes }, parent: null } } }).forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number;
+  const outsider = node(9, '2026-11-17T00:00:00Z', { association: 'NONE' });
+  const collaborator = node(4, '2026-11-01T00:00:00Z', { state: 'MERGED' });
+  assert.equal(resolve([outsider, collaborator]), 4, 'an outside author`s newer open pull request loses to a collaborator`s merged one');
+  const mine = node(2, '2026-10-01T00:00:00Z', { mine: true, association: 'CONTRIBUTOR', state: 'CLOSED' });
+  assert.equal(resolve([outsider, collaborator, mine]), 2, 'the token user`s own beats both: closed, older, and an outsider by association');
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    assert.equal(resolve([outsider, node(4, '2026-11-01T00:00:00Z', { association, state: 'CLOSED' })]), 4, `${association} is trusted`);
+  }
+  for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE', 'owner', 'MAINTAINER', 'has', undefined, null]) {
+    assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { association, state: 'MERGED' }), outsider]), 9, `${association} is untrusted: the open one wins`);
+  }
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { mine: 'true' }), node(9, '2026-11-17T00:00:00Z')]), 9, 'only viewerDidAuthor true counts as the token user`s');
   assert.equal(resolve([node(4, '2026-11-01T00:00:00Z'), node(9, '2026-11-17T00:00:00Z', { state: 'MERGED' })]), 4, 'an open one beats a newer merged one');
   assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { state: 'CLOSED' }), node(9, '2026-11-17T00:00:00Z', { state: 'MERGED' })]), 9, 'then the newest');
-  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { author: 'a' }), node(9, '2026-11-17T00:00:00Z', { author: 'b' })], null), 9, 'no viewer: the newest');
+  const noViewer = replay({ data: { viewer: null, r0: { pullRequests: { nodes: [collaborator] }, parent: null } } });
+  assert.equal(noViewer.forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number, 4, 'no root viewer is read, so an answer without one still resolves');
 });
 
 test('changesState: every row carries the adapter`s id, from the one constant that names it', () => {

@@ -443,12 +443,14 @@ else by repository and branch, `touched` rows as well as `pushed`. It orders the
 first, and keeps 25 refs at most, each a number or a branch, counted before branches resolve: a branch with no pull
 request uses one, and so does a row of an unsupported host. The adapter reads them all in one call (`changesState`),
 started in the session's folder, never in one a row names: a number is its own pull request; a branch is, among the
-pull requests whose head is that branch of the row's repository, in that repository or its parent, the signed-in
-user's own first, then an open one, then the newest, so a fork's pull request from a branch of the same name never
-answers for it, another author's newer one from the same branch never replaces the user's, and a branch pushed to a fork
-finds its pull request on the parent. It reads the 5 newest pull requests of the branch's name in each of the two
-repositories, so a name that 5 or more newer pull requests from forks share can crowd out the row's own, which then
-shows nothing. A branch with none gives no entry and no error. Two rows that answer the same pull request give one entry.
+pull requests whose head is that branch of the row's repository, in that repository or its parent, the one the
+signed-in user wrote first (`viewerDidAuthor`), then one by an owner, member, or collaborator of the repository
+(`authorAssociation`), then an open one, then the newest, so a fork's pull request from a branch of the same name never
+answers for it, another author's newer one from the same branch never replaces the user's, an outsider's newer open one
+never replaces a collaborator's merged one, and a branch pushed to a fork finds its pull request on the parent.
+It reads the 5 newest pull requests of the branch's name in each of the two repositories,
+so a name that 5 or more newer pull requests from forks share can crowd out the row's own, which then shows nothing.
+A branch with none gives no entry and no error. Two rows that answer the same pull request give one entry.
 Each entry is the forge-neutral row the adapter fills ([Adding a forge](providers/adding-a-host.md#adding-a-forge)):
 `forge` the adapter's `id`, `host` and `repo` the repository, `state` `open`, `closed`, or `merged`, `isDraft` a
 boolean, `mergeable` true, false, or null while the forge has not worked it out, `reviewDecision` `approved`,

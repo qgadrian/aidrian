@@ -197,11 +197,12 @@ function prsSection(ctx, cwd, forge) {
   return [...cached.value.map((row) => (cached.stale ? { ...row, stale: true } : row)), ...unsupported].map(shownChange);
 }
 
-// A change request's row as shown: its documented keys alone, in order, its strings through displayText, `checks` rebuilt.
+// A change request's row as shown: its documented keys alone, in order, strings through displayText, flags as booleans.
 const same = (value) => value;
+const flag = (value) => value === true;
 const capped = (cap) => (value) => (typeof value === 'string' ? displayText(value, cap) : value);
 const SHOWN = Object.entries({ forge: capped(DISPLAY_CAPS.name), host: capped(DISPLAY_CAPS.name), repo: capped(DISPLAY_CAPS.path), number: same, title: capped(DISPLAY_CAPS.title), url: capped(DISPLAY_CAPS.path), isDraft: same, state: same,
-  mergeable: same, reviewDecision: same, unresolvedThreads: same, checks: (checks) => checks && { passed: checks.passed, failed: checks.failed, pending: checks.pending, skipped: checks.skipped }, stale: same, unsupported: same });
+  mergeable: same, reviewDecision: same, unresolvedThreads: same, checks: (checks) => checks && { passed: checks.passed, failed: checks.failed, pending: checks.pending, skipped: checks.skipped }, stale: flag, unsupported: flag });
 const shownChange = (row) => Object.fromEntries(SHOWN.filter(([key]) => Object.hasOwn(row, key)).map(([key, shape]) => [key, shape(row[key])]));
 
 // { owned, mergedNotCleaned }, and `stale: true` when the merged count is a cached value past its window. `owned` counts

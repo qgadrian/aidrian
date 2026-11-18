@@ -16,7 +16,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS, UNHOOKED } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { CHAIN_CEILING, noteFollow, noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
@@ -1037,7 +1037,6 @@ test('in auto mode, a session the shell function started asks to end once its tu
 test('a session ends itself only in auto mode, from the shell function\'s own claude process, attended, and never unattended', (t) => {
   const cases = [
     ['continue: background with mode ask', { handoff: { mode: 'ask', continue: 'background' } }, WRAPPED, undefined],
-    ['no shell function', {}, { CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' }, undefined],
     ['a Human does not attend it', {}, { ...WRAPPED, CLAUDE_CODE_SESSION_ATTENDED: '0' }, undefined],
     ['another shell started it', {}, WRAPPED, '4343 4100 claude'],
     ['a background session\'s process', {}, WRAPPED, '4343 4242 claude bg-spare'],
@@ -1049,7 +1048,7 @@ test('a session ends itself only in auto mode, from the shell function\'s own cl
     passCheck(setting);
     const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run, line), env: { ...setting.env, ...wrapped } });
     assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
-    assert.ok(result.out[1].endsWith(PLAIN), `${name}: ${result.out[1]}`);
+    assert.ok(result.out[1].includes(PLAIN), `${name}: ${result.out[1]}`);
     assert.equal(takeEnding(setting.store, SESSION), null, name);
   }
   const setting = setup(t, { handoff: { mode: 'auto' } });
@@ -1061,6 +1060,24 @@ test('a session ends itself only in auto mode, from the shell function\'s own cl
   const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env });
   assert.ok(result.out[1].endsWith(PLAIN), `a session no Human attends: ${result.out[1]}`);
   assert.equal(takeEnding(setting.store, SESSION), null, 'a session no Human attends never ends a process');
+});
+
+test('in auto mode, an attended session its shell function did not start says why the terminal stays, and only then', (t) => {
+  const bare = { CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' };
+  const cases = [
+    ['no shell function, auto mode', {}, bare, true],
+    ['no shell function, mode ask', { handoff: { mode: 'ask', continue: 'background' } }, bare, false],
+    ['no shell function, a Human does not attend it', {}, { CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '0' }, false],
+    ['the shell function, another shell started it', {}, WRAPPED, false],
+  ];
+  for (const [name, options, wrapped, hint] of cases) {
+    const setting = setup(t, { handoff: { mode: 'auto' }, ...options });
+    passCheck(setting);
+    const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run, '4343 4100 claude'), env: { ...setting.env, ...wrapped } });
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(hint ? `${PLAIN} ${UNHOOKED}` : PLAIN), `${name}: ${result.out[1]}`);
+    assert.equal(takeEnding(setting.store, SESSION), null, name);
+  }
 });
 
 test('a background session the terminal follows asks to end its own session once its turn ends, in auto mode only', (t) => {

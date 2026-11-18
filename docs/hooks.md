@@ -940,7 +940,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   checks, so a call they refuse by name, such as a write of `.aidrian.local.json`, is refused before any link walk.
   It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
   and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
-  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
+  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. A request to end a session
+  or a record that a terminal follows one ([Replacing the terminal](handoff.md#replacing-the-terminal)) is matched only
+  with the id shape the store writes, `ending-` or `follow-` and 8 hex digits or a whole UUID, so a common name such as
+  `follow-up.json` stays allowed. That is an accepted limit
   of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule

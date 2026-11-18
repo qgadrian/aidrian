@@ -182,6 +182,12 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
 const MARKER_NAME = new RegExp(ARMING_FILE.source, 'iu');
 // An unsure glob's part whose plain start names such a file, as `armed-*`.
 const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|continued)-/iu;
+// A request to end a session or a record that a terminal follows one (lib/terminal-replace.mjs), whose forgery would end
+// an attended session or move a terminal: named by the id shape a host gives a session, 8 hex digits or a whole UUID, as
+// the store writes them. `ending-` and `follow-` are common words, so a name such as `follow-up.json` stays out of it.
+const RECORD_NAME = /^(?:ending|follow)-[0-9a-f]{8}(?:-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\.json$/iu;
+// An unsure glob's part whose plain start may still grow into such a name, as `ending-*` or `follow-ab12*`.
+const RECORD_GLOB = /^(?:ending|follow)-[0-9a-f-]*$/iu;
 // A word of a command no lexer reads that names the store's folder by its own name.
 const STORE_FOLDER = /^\.continue$/iu;
 // A text that names the store's folder, or a marker in it.
@@ -213,9 +219,12 @@ const real = (file) => {
 };
 
 // Whether a text from a folder no path gives names the store or one of its files.
-const namesStore = (text) => STORE_NAME.test(text) || text.split('/').some((part) => MARKER_NAME.test(part));
+const namesStore = (text) => STORE_NAME.test(text) || text.split('/').some((part) => MARKER_NAME.test(part) || RECORD_NAME.test(part));
 // Whether a glob from a folder no path gives may name one of those files.
-const globNamesStore = (text) => namesStore(text) || text.split('/').some((part) => MARKER_GLOB.test(part.split(/[*?[]/u)[0]) && GLOB.test(part));
+const globNamesStore = (text) => namesStore(text) || text.split('/').some((part) => {
+  const start = part.split(/[*?[]/u)[0];
+  return (MARKER_GLOB.test(start) || RECORD_GLOB.test(start)) && GLOB.test(part);
+});
 
 const GLOB = /[*?[]/u;
 // The store's folder and the one that holds it, as a glob from any folder may name them.

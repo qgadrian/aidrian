@@ -425,12 +425,14 @@ export const startedInBackground = (store, session, { now = Date.now() } = {}) =
 const readFloor = (store, name, now) => readMarker(store, name, { now, field: 'at', shape: isFrom });
 
 // The names of the chain floors filed for `session`: its own, then those under a short id it starts with, from `names`
-// when given, else from a listing of the store.
+// when given, else from a listing of the store. Ids compare in the case the disk folds to: on such a disk, a floor under
+// a short id in other letters is still the session's, and one that spells its full id in other letters is its own file.
 function floorFiles(store, session, names) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return [];
+  const own = foldCase(session);
   const prefixOf = (name) => {
     const short = SHORT_FROM.exec(name)?.[1];
-    return short !== undefined && short !== session && session.startsWith(short);
+    return short !== undefined && foldCase(short) !== own && own.startsWith(foldCase(short));
   };
   return [sessionFile('from', session), ...(names ?? listStore(store)).filter(prefixOf)];
 }

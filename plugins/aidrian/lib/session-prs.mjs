@@ -338,6 +338,10 @@ export const isRepository = (host, repoPath) => typeof host === 'string' && HOST
 // path, cwd absolute, a number a positive integer or none, a branch the ref-name check or none, and one of the two.
 const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, cwd }) => typeof host === 'string' && HOST_NAME.test(host)
   && isRepoPath(repoPath) && validCwd(cwd) && isNumber(number) && isBranch(branch) && (number !== null || branch !== null);
+// Whether `row` has the shape of a ledger row, as lib/session-links.mjs checks each row of a ledger before the ticket or
+// any other reader takes it: a known kind, a time that parses, and the fields isUnsupportedRow checks.
+export const isLedgerRow = (row) => row !== null && typeof row === 'object' && KINDS.has(row.kind) && typeof row.at === 'string'
+  && Number.isFinite(Date.parse(row.at)) && isUnsupportedRow(row);
 
 // The refs the snapshot shows from the ledger's `rows`: each row of a known kind with a time, on a host the adapter
 // `forge` declares and whose fields pass its changeRef and the cwd check, or on another host and passing

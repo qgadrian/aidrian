@@ -127,6 +127,18 @@ test('lineage opens at most 16 floor files: a walk that would open more ends at 
   assert.deepEqual(lineage(store, first).map(({ id }) => id), [second], 'the second lookup would pass 16 files, so the walk ends before it');
 });
 
+test('short ids, floors and folder names alike, compare in the case the disk folds to', () => {
+  const { store, floor } = fixture();
+  const full = 'abcd1234-0000-4000-8000-000000000001';
+  floor('ABCD1234', 'parent-1');
+  // A floor under the short id in other letters: on a disk that folds case it is the session's.
+  assert.equal(readHop(store, full)?.parent ?? null, FOLDS ? 'parent-1' : null);
+  floor('abcd1234', 'parent-1');
+  const lineageOf = (names) => lineage(store, full, { sessionNames: () => names }).map(({ id }) => id);
+  assert.deepEqual(lineageOf([full, 'ABCD1234-other']), FOLDS ? [] : ['parent-1'], 'a folder whose name differs only in case is another session`s');
+  assert.deepEqual(lineageOf([full.toUpperCase()]), ['parent-1'], 'the session`s own folder in other letters is its own, or, on a disk that does not fold case, starts with no short id');
+});
+
 test('a floor under a short id gives a parent only when no other folder name starts with it, scanning to the second', () => {
   const { store, floor } = fixture();
   const full = 'abcd1234-0000-4000-8000-000000000001';

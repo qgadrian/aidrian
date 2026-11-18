@@ -104,7 +104,7 @@ under the session id of the hook's payload ([Session ledger](../hooks.md#session
 | --- | --- | --- | --- |
 | Claude Code | The PostToolUse Bash hook, under the payload's `session_id` | The clear route and the background route write `parent` on the chain floor | By `node --test` on fixtures (`test/session-snapshot-links.test.mjs`, `test/handoff-continue-hooks.test.mjs`, `test/handoff-continue-background.test.mjs`, and the hook on `test/fixtures/hosts/claude-code/bash-post.json` in `test/adapters.test.mjs`); not live |
 | Codex | The PostToolUse Bash hook, under the payload's `session_id` | None: Codex declares no continue route, so it has no floor and no parent | The hook on `test/fixtures/hosts/codex/bash-post.json`, built from Codex's source; fixture only, not live |
-| A host that names no session | None | None | `links` is null with `links` in `errors` |
+| A host that names no session | None | None | `links` is null |
 
 `test/adapters.test.mjs` feeds each host in `HOSTS` its `bash-post.json` with an `aidrian worktree new` command, and
 the command's `status: "created"` result where the host's response holds the call's output, and a row must land under

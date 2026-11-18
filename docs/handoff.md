@@ -527,11 +527,10 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 
 Each section fails open: one that fails is null with its name in `errors`, and the command exits 0 whenever its
 arguments parse, so a status line never breaks. In a folder with no project every section but `session` is null,
-`errors` is empty, and nothing is written. Without `--session`, `handoff`, `prs`, and `worktrees.mergedNotCleaned` are
-null and `errors` does not name them, since their caches are kept per session; without `--transcript`, `handoff` is
-null the same way. `links` is the exception: without `--session` it is null with `links` in `errors`. A session id that
-fails `SESSION_ID` writes nothing, and names `handoff`, `prs`, `worktrees`, and `links` in
-`errors`.
+`errors` is empty, and nothing is written. Without `--session`, `handoff`, `prs`, `links`, and
+`worktrees.mergedNotCleaned` are null and `errors` does not name them, since what they read is kept per session; without
+`--transcript`, `handoff` is null the same way. A session id that fails `SESSION_ID` writes nothing, and names
+`handoff`, `prs`, `worktrees`, and `links` in `errors`.
 More than 32 ticket prefixes, or one that is not a letter and up to 15 letters or digits, make `ticket` null.
 
 **The shared decision.** `handoffStatus` in `lib/session-length.mjs` decides the level, and the Stop hook's reminder
@@ -651,9 +650,11 @@ snapshot walks the [chain floors](#the-chain)' `parent` names back from the sess
 sessions, as far back as a floor and a session folder live, 30 days. The walk ends at an id it has seen, the session's
 own included, compared in the case the disk folds to, at a floor with no parent, and once it has read 16 floor files.
 A floor filed under the short id a host printed gives a parent only when no other session folder name starts with
-that short id. An earlier session hands down only its `created` and `pushed` rows, and only on a repository the
-project's remotes name (each remote's `url` and `pushurl`, read once a snapshot in the current folder, and only when
-there is an earlier session), and only the rows it wrote at or before the time of the hop that left it: what it did
+that short id; both compare in the case the disk folds to, so on such a disk a folder whose name differs only in
+letter case is another session's, and the session's own folder in other letters is its own.
+An earlier session hands down only its `created` and `pushed` rows, and only on a repository the project's remotes
+name (each remote's `url` and `pushurl`, read once a snapshot in the current folder, and only when there is an
+earlier session), and only the rows it wrote at or before the time of the hop that left it: what it did
 after it handed off is its own. A `touched` row, written when a session only viewed or commented on a pull request,
 stays with its own session, and so does a row on another repository. With remotes git cannot read, nothing is handed
 down, and no section fails. The session's own refs fill the 25 places first, newest first; then each earlier session
@@ -665,8 +666,10 @@ The forge still gets one call of at most 25 refs. An inherited entry shows only 
 closed is not shown, but its ref still used one of the 25 places, so fewer than 25 can show while an older open one is
 left out. An inherited row on a host no adapter declares shows, since nothing says it closed. The cache keeps its one
 key, its age: when a session cached its own rows before its floor was written, the earlier session's show up to 60
-seconds late. No row value reaches a process: the forge still runs in the session's folder, and the remotes read and
-the ticket's branch read run in the current folder with constant arguments.
+seconds late. No row value reaches a process's argv, environment, or working folder: the forge still runs in the
+session's folder, and the remotes read and the ticket's branch read run in the current folder with constant
+arguments. The forge's one call does carry the selected refs, each repository, branch, and number, as GraphQL
+variables on its stdin, which is how it asks for them.
 A session a person resumes by typing, the first after `maxChain`, and every Codex session, which has no continue route,
 have no parent, and show their own rows alone.
 
@@ -676,10 +679,13 @@ have no parent, and show their own rows alone.
    read never hides the branch's ticket.
 2. With `--session`, the newest row of the session's ledger or of its `links.jsonl` whose branch holds a key; with none
    there, the nearest earlier session's rows, as it hands them down, and so on: `source: "ledger"`. The newest is the
-   latest `at`, then on a tie a row of `links.jsonl` before one of the ledger, then the later line. The ledger keeps the
-   first time of a repeated row, so a branch pushed again does not move forward.
-   A ledger of the session's own that cannot be read makes `ticket` null with `ticket` in `errors`; without
-   `--session`, or with no session folder, this rule does not run.
+   latest `at`, then on a tie a row of `links.jsonl` before one of the ledger, then the later line. A row of either
+   file is read only when it has the shape its writer gives it, each field checked, so a malformed row, the session's
+   own or an earlier session's, gives no ticket. The ledger leaves out a repeat within a minute of the row it repeats,
+   keeping that row's time, so a branch pushed again at once does not move forward; one pushed again later is written
+   with its new time, and its ticket is the newest.
+   A ledger or `links.jsonl` of the session's own that cannot be read makes `ticket` null with `ticket` in `errors`;
+   without `--session`, or with no session folder, this rule does not run.
 
 **The worktree.** `links` reads the session's `links.jsonl`, the worktrees its `aidrian worktree new` calls created
 ([Session ledger](hooks.md#session-ledger)). It keeps the newest row of each key, `host/path:branch`, drops each whose
@@ -690,13 +696,12 @@ repository the project's remotes name, or with no repository when they name none
 lists it: once it is removed, pruned, or moved with `git worktree move`, it is gone, and a worktree switched to another
 branch still shows the branch it was made with. The list is the one the `worktrees` section reads, read once a
 snapshot and only when a row needs it, and no filesystem call is made on a row's value. `links` is null with `links`
-in `errors` whenever the snapshot cannot read the session's links: without `--session`, with an id that fails
-`SESSION_ID`, with no session folder, as for a state folder inside a checkout, with a file the session folder's rules
-refuse, such as a named pipe or a symlink, and when the worktree list cannot be read. It is null with `errors` not
-naming it when the session has no `links.jsonl`, or none of its rows names a worktree git still lists. This is unlike
-`prs`, which `errors` does not name without `--session`: a reader that treats any error name as a failure sees `links`
-on every call without a session. The snapshot reads no host variable, so a host that gives its shell calls no session
-id shows the same as a call without `--session`.
+in `errors` whenever the snapshot cannot read the session's links: with an id that fails `SESSION_ID`, with no session
+folder, as for a state folder inside a checkout, with a file the session folder's rules refuse, such as a named pipe
+or a symlink, and when the worktree list cannot be read. It is null with `errors` not naming it without `--session`,
+as `prs` is, when the session has no `links.jsonl`, and when none of its rows names a worktree git still lists. The
+snapshot reads no host variable, so a host that gives its shell calls no session id shows the same as a call without
+`--session`.
 
 **Run time.** Every git call the snapshot starts, those of finding the project and its state folder included, is
 killed outright at git's 2 s limit, even one that ignores SIGTERM, and once one is, the later ones of the

@@ -51,7 +51,7 @@ const OPTIONS = Object.fromEntries([...['session', 'transcript', 'ticket-prefixe
 export const commands = {
   session: {
     usage: 'snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A|B] [--deadline-ms N] [--json|--line]',
-    about: "print the session's status for a status line, as JSON or one plain line: handoff, pull requests, lessons, worktrees, decisions, audits, and ticket",
+    about: "print the session's status for a status line, as JSON or one plain line: handoff, pull requests, lessons, worktrees, decisions, audits, ticket, and links",
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
       const deadline = values['deadline-ms'] ?? String(FORGE_BUDGET_MS);
@@ -111,7 +111,8 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   section('decisions', () => ({ provisional: unconfirmed(scanDecisions(project, { unindexed: false, config: ctx.config })) }));
   section('audits', () => auditsSection(ctx));
   section('ticket', () => shownTicket(ticketOf(cwd, ticketPrefixes, { rows: links?.rows ?? null, git: KILL })));
-  section('links', () => shownLink(linksOf(links?.rows ?? null, worktrees)));
+  // Without --session there are no links to read, and so no error, as for prs.
+  if (session !== null) section('links', () => shownLink(linksOf(links?.rows ?? null, worktrees)));
   return { ...out, errors: SECTIONS.filter((name) => errors.has(name)) };
 }
 

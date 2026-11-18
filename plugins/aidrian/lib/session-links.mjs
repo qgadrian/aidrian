@@ -15,7 +15,7 @@ import { foldCase } from './fs.mjs';
 import { openStore, readHop, SESSION_ID, storeNames } from './handoff-markers.mjs';
 import { existingSessionFolder, sessionFolderNames } from './session-folder.mjs';
 import { isWorktreeRow, LINKS } from './session-links-writer.mjs';
-import { remoteRepos } from './session-prs.mjs';
+import { isLedgerRow, LEDGER, remoteRepos } from './session-prs.mjs';
 import { readRows } from './session-rows.mjs';
 
 export { LINKS, LINKS_MAX_BYTES } from './session-links-writer.mjs';
@@ -61,10 +61,13 @@ export function lineage(store, session, { now = Date.now(), names, sessionNames 
   }
 }
 
-// Whether no name of `names` starts with `short` but `own`: false with no listing.
+// Whether no name of `names` starts with `short` but `own`, each compared in the case the disk folds to, so a folder
+// whose name differs only in case is still another session's on a disk that folds case, and a second spelling of the
+// session's own folder is still its own: false with no listing.
 function onlyOwn(names, short, own) {
   if (names === null || typeof names[Symbol.iterator] !== 'function') return false;
-  for (const name of names) if (name.startsWith(short) && name !== own) return false;
+  const [prefix, self] = [foldCase(short), foldCase(own)];
+  for (const name of names) if (typeof name === 'string' && foldCase(name).startsWith(prefix) && foldCase(name) !== self) return false;
   return true;
 }
 
@@ -132,7 +135,7 @@ export function sessionLinks({ state, checkouts, maxChain, folder, session, cwd,
   const namesOf = () => (names ??= (io.storeNames ?? storeNames)(storeOf()));
   const sessionNames = () => (io.sessionNames ?? sessionFolderNames)(state, { checkouts });
   const rows = folder === null ? null : rowReader({
-    own: folder, files, now, state, checkouts, checks: { [LINKS]: isWorktreeRow }, read: io.readRows,
+    own: folder, files, now, state, checkouts, checks: { [LINKS]: isWorktreeRow, [LEDGER]: isLedgerRow }, read: io.readRows,
     chain: () => lineage(storeOf(), session, { now, names: namesOf(), sessionNames }),
     remotes: () => remoteRepos(cwd, (args, dir) => runGit(args, dir, git)),
   });

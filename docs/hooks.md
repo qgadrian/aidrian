@@ -1333,8 +1333,9 @@ the command is the writer). `links.jsonl` keeps to 64 KB under the ledger's rule
 (`appendRows` in `lib/session-rows.mjs`), but with no key: every row is appended, and the reader settles repeats. Its
 read-time key is `host/path:branch`, or the branch alone with no origin, and for each key the row with the newest `at`
 decides, the later line on a tie. That differs from the pull request ledger on purpose: the ledger leaves out a repeat
-within a minute when it writes, keeps a row's first `at`, and the snapshot orders its refs by each ref's latest row;
-`links.jsonl` keeps every row, so its newest `at` is the real latest, which a worktree that went needs.
+within a minute of the row it repeats, so that row keeps its `at`, while a repeat after the minute is written with its
+new `at`, and the snapshot orders its refs, and the ticket its rows, by the latest; `links.jsonl` keeps every row, so
+its newest `at` is the real latest, which a worktree that went needs.
 
 A `created` or `touched` row records what the command line names, not what each command did. Claude Code runs
 `PostToolUse` only for a Bash call that succeeded, but one command's status inside a line is not seen, so

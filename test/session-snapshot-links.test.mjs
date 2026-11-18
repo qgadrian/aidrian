@@ -11,6 +11,7 @@ import test from 'node:test';
 
 import { noteFrom, openStore, storeNames } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { originRepository } from '../plugins/aidrian/lib/session-links-writer.mjs';
 import { readRows } from '../plugins/aidrian/lib/session-rows.mjs';
 import { snapshot } from '../plugins/aidrian/lib/session-snapshot.mjs';
 
@@ -30,7 +31,8 @@ const git = (cwd, ...args) => {
 
 // A project on `branch` whose `upstream` remote names acme/notes on github.com (origin stays unset, so the merged-heads
 // read starts no forge call), with its own state root, a fake gh that logs each call and answers what `answer` last set,
-// and a fake git before the real one that logs each call's argv, folder, and environment.
+// and a fake git before the real one that logs each call's argv, folder, and environment, which is the minimal one
+// `env` gives the command.
 function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme/notes.git' }, failRemotes = false, failList = false } = {}) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-snapshot-links-')));
   const dir = path.join(base, 'project');
@@ -58,7 +60,9 @@ function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme
   chmodSync(path.join(bin, 'git'), 0o755);
   const answer = (value) => writeFileSync(answerFile, JSON.stringify({ text: JSON.stringify(value) }));
   answer({ data: {} });
-  const env = { ...process.env, ...GIT_CONFIG_NONE, XDG_STATE_HOME: state, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  // The command, and the doubles that log their environment, see only what the snapshot needs, never the runner's
+  // own variables, such as a forge token.
+  const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, HOME: base, ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}), ...GIT_CONFIG_NONE, XDG_STATE_HOME: state };
   const run = (args = []) => {
     const result = spawnSync(process.execPath, [CLI, 'session', 'snapshot', ...args], { cwd: dir, env, encoding: 'utf8', timeout: 30_000 });
     assert.equal(result.status, 0, result.stderr);
@@ -197,7 +201,7 @@ test('the ticket comes from the current branch, else the session`s pushed rows, 
   assert.deepEqual(keyed.run(['--session', ID]).ticket, { key: '#9', source: 'branch' });
 });
 
-test('no row value reaches a process: no argv, environment, or folder of git or gh holds one', { skip: !POSIX }, () => {
+test('no row value reaches a process`s argv, environment, or folder; the forge gets the selected refs on stdin, as GraphQL variables', { skip: !POSIX }, () => {
   const env = setup();
   const madeUp = path.join(env.base, 'made', 'up');
   const branch = 'fix/7--upload-pack=evil';
@@ -213,6 +217,8 @@ test('no row value reaches a process: no argv, environment, or folder of git or 
     assert.ok(!call.cwd.startsWith(madeUp));
   }
   assert.equal(existsSync(madeUp), false);
+  assert.ok(env.ghCalls().every(({ input }) => input === null || Object.keys(JSON.parse(input)).sort().join() === 'query,variables'), 'stdin holds the query and its variables alone');
+  assert.ok(env.variables().some((vars) => Object.values(vars).includes(branch)), 'the selected branch reaches the forge as a variable');
   const own = env.gitCalls().filter(({ args }) => ['--get-regexp', 'symbolic-ref'].some((word) => args.includes(word)));
   for (const { cwd } of own) assert.equal(cwd, env.dir, 'in the process`s own folder');
   assert.deepEqual(own.filter(({ args }) => args.includes('--get-regexp')).map(({ args }) => args), [['config', '--get-regexp', '^(remote\\..*\\.(url|pushurl)|branch\\..*\\.merge)$']], 'the remotes, once, with constant arguments');
@@ -287,12 +293,13 @@ test('links shows the session`s worktree as git lists it, own, then the parent`s
   const lists = (args) => {
     const from = env.gitCalls().length;
     const out = env.run(args);
-    return { out, count: env.gitCalls().slice(from).filter((call) => call.args.join(' ') === 'worktree list --porcelain').length };
+    // The sections' list, as listWorktrees runs it in the main checkout; project discovery's own runs without `-C`.
+    return { out, count: env.gitCalls().slice(from).filter(({ args }) => args[0] === '-C' && args.slice(2).join(' ') === 'worktree list --porcelain').length };
   };
-  const baseline = lists(['--session', 'fresh-0']).count;
+  assert.equal(lists(['--session', 'fresh-0']).count, 1, 'the worktrees section lists once');
   const { out: json, count } = lists(['--session', ID]);
   assert.deepEqual([json.links, json.errors], [{ branch: 'feat/own', worktree: listed, source: 'own' }, []]);
-  assert.equal(count, baseline, 'the links section reads no worktree list of its own: it shares the worktrees section`s');
+  assert.equal(count, 1, 'the links section reads no worktree list of its own: it shares the worktrees section`s');
   assert.deepEqual(json.worktrees.owned, 1);
   const child = 'kid-2';
   links(env, child, [linkRow({ branch: 'feat/gone', cwd: path.join(env.base, 'gone') }, 2)]);
@@ -315,7 +322,7 @@ test('links is null with links in errors when the session`s links cannot be read
   const linked = env.run(['--session', 'linked-1']);
   assert.deepEqual([linked.links, linked.errors.includes('links')], [null, true]);
   assert.ok(Date.now() - started < 20_000);
-  assert.deepEqual(env.run([]).errors, ['links'], 'no --session');
+  assert.deepEqual([env.run([]).links, env.run([]).errors], [null, []], 'no --session: no links to read, and no error');
   assert.ok(env.run(['--session', '../x']).errors.includes('links'), 'an id that fails SESSION_ID');
   const failing = setup({ failList: true });
   links(failing, ID, [linkRow({}, 1)]);
@@ -356,4 +363,52 @@ test('a links branch and path holding ESC, U+202E, and U+200B come out without t
   assert.equal([...json.links.branch].length, 100);
   assert.equal(json.links.worktree, listed);
   for (const hidden of ['\u001b', '‮', '​']) assert.ok(!JSON.stringify(json.links).includes(hidden));
+});
+
+test('the git and gh doubles never see the runner`s own variables, such as a forge token', { skip: !POSIX }, (t) => {
+  const sentinel = 'runner-secret-6f1d2c';
+  const saved = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = sentinel;
+  t.after(() => {
+    if (saved === undefined) delete process.env.GH_TOKEN;
+    else process.env.GH_TOKEN = saved;
+  });
+  const env = setup();
+  env.ledger(ID, [row({ number: 1 }, 1)]);
+  env.answer(answerFor([1]));
+  env.run(['--session', ID]);
+  const calls = [...env.gitCalls(), ...env.ghCalls()];
+  assert.ok(calls.length > 0 && env.ghCalls().length > 0);
+  assert.ok(calls.every((call) => !JSON.stringify(call).includes(sentinel)), 'no logged call holds the runner`s token');
+});
+
+test('a malformed ledger row gives no ticket, the session`s own or an earlier session`s', { skip: !POSIX }, () => {
+  const env = setup();
+  const bad = [
+    row({ kind: 'unknown', branch: 'fix/42-x' }, 5), row({ kind: 'pushed', branch: 'fix/43..bad' }, 6), row({ kind: 'pushed', branch: 'fix/44-x', cwd: 'relative' }, 7),
+    row({ kind: 'pushed', branch: 'fix/45-x', host: 'Not A Host' }, 8), row({ kind: 'pushed', branch: 'fix/46-x', number: -1 }, 9),
+  ];
+  env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/1-good' }, 1), ...bad]);
+  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#1', source: 'ledger' }, 'the newest well-formed row');
+  env.ledger(ID, bad);
+  env.ledger(PARENT, [row({ kind: 'pushed', branch: 'fix/2-parent' }, 1), ...bad]);
+  env.hop(ID, PARENT);
+  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#2', source: 'ledger' }, 'the parent`s newest well-formed row');
+});
+
+test('a branch pushed again more than a minute later is the newest for the ticket', { skip: !POSIX }, () => {
+  const env = setup();
+  env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/1-first' }, 1), row({ kind: 'pushed', branch: 'fix/2-second' }, 5), row({ kind: 'pushed', branch: 'fix/1-first' }, 10)]);
+  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#1', source: 'ledger' });
+});
+
+test('a worktree recorded under a rewritten origin is inherited across a handoff: writer and reader read the raw URL', { skip: !POSIX }, () => {
+  const env = setup({ remotes: { origin: 'gh:acme/notes' } });
+  git(env.dir, 'config', 'url.https://github.com/.insteadOf', 'gh:');
+  const listed = withWorktree(env, 'feat/rewritten');
+  const origin = originRepository(env.dir);
+  links(env, PARENT, [linkRow({ branch: 'feat/rewritten', cwd: listed, host: origin.host, path: origin.path }, 1)]);
+  env.ledger(ID, []);
+  env.hop(ID, PARENT);
+  assert.deepEqual(env.run(['--session', ID]).links, { branch: 'feat/rewritten', worktree: listed, source: 'inherited' });
 });

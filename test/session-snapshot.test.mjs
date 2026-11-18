@@ -225,7 +225,7 @@ test('the command reads no stdin and no host variable: the caller passes the ses
   assert.equal(code, 0, 'it ends with its stdin still open');
   const json = JSON.parse(stdout);
   assert.equal(json.session.id, null);
-  assert.deepEqual([json.handoff, json.prs, json.worktrees.mergedNotCleaned, json.errors], [null, null, null, ['links']], 'without --session nothing is cached and nothing is an error, but links, which has no session to read');
+  assert.deepEqual([json.handoff, json.prs, json.worktrees.mergedNotCleaned, json.errors], [null, null, null, []], 'without --session nothing is cached and nothing is an error');
   const transcript = path.join(env.base, 'session.jsonl');
   writeFileSync(transcript, turnsOf('handoff-cost')[4]);
   const noTranscript = env.run(['--session', ID]).json;
@@ -354,7 +354,7 @@ test('a state folder below a folder every user may write gives no lessons or aud
   t.after(() => chmodSync(env.state, 0o700));
   const { json } = env.run();
   assert.deepEqual([json.lessons, json.audits], [null, null]);
-  assert.deepEqual(json.errors, ['lessons', 'audits', 'links']);
+  assert.deepEqual(json.errors, ['lessons', 'audits']);
 });
 
 // A project with one linked worktree on `feat/x`, whose origin is `origin`, and a fake gh that answers with `heads`.
@@ -843,13 +843,13 @@ test('a state folder every user may write gives no lessons or audits section, as
   const state = env.projectState();
   mkdirSync(path.join(state, 'lessons'), { recursive: true });
   writeFileSync(path.join(state, 'lessons/inbox.jsonl'), '');
-  assert.deepEqual(env.run().json.errors, ['links'], 'the user`s own folder is read; links has no session');
+  assert.deepEqual(env.run().json.errors, [], 'the user`s own folder is read');
   chmodSync(state, 0o777);
   t.after(() => chmodSync(state, 0o700));
   const { json, status } = env.run();
   assert.equal(status, 0);
   assert.deepEqual([json.lessons, json.audits], [null, null]);
-  assert.deepEqual(json.errors, ['lessons', 'audits', 'links']);
+  assert.deepEqual(json.errors, ['lessons', 'audits']);
   const session = env.run(['--session', ID]).json;
   assert.equal(session.prs, null, 'nor a pull request ledger read');
   assert.deepEqual(session.errors, ['prs', 'lessons', 'worktrees', 'audits', 'links']);
@@ -866,7 +866,7 @@ test('a named pipe at the lesson inbox or the audits triage file fails that sect
     assert.equal(status, 0, name);
     assert.ok(ms < 10_000, `${name}: ${ms} ms`);
     assert.equal(json[name], null);
-    assert.deepEqual(json.errors, [name, 'links']);
+    assert.deepEqual(json.errors, [name]);
   }
 });
 
@@ -1125,7 +1125,7 @@ test('a state.dir of ".." in a repository folder named lessons reads no inbox at
   const { json, status } = env.run();
   assert.equal(status, 0);
   assert.equal(json.lessons, null);
-  assert.deepEqual(json.errors, ['lessons', 'links']);
+  assert.deepEqual(json.errors, ['lessons']);
 });
 
 test('a state.dir of ".." in a repository folder named audits reads no report in the work tree', { skip: !POSIX }, (t) => {
@@ -1134,7 +1134,7 @@ test('a state.dir of ".." in a repository folder named audits reads no report in
   const { json, status } = env.run();
   assert.equal(status, 0);
   assert.equal(json.audits, null);
-  assert.deepEqual(json.errors, ['audits', 'links']);
+  assert.deepEqual(json.errors, ['audits']);
 });
 
 test('a state.dir of ".." in a repository folder named sessions makes no session folder in the work tree', { skip: !POSIX }, (t) => {

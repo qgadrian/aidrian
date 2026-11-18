@@ -172,6 +172,17 @@ test('github.autoMerge: aidrian check warns, and still passes, when the machine 
   assert.doesNotMatch(check().stderr, /auto-merge/u, 'allowed by the team: nothing to say');
 });
 
+test('aidrian check fails a session.handoff.maxChain that is neither a whole number above 0 nor "unlimited"', (t) => {
+  const team = project(t, { version: 1, session: { handoff: { maxChain: 'forever' } } });
+  const check = () => spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['check'], { cwd: team.root, encoding: 'utf8' });
+  const failed = check();
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr + failed.stdout, /"session\.handoff\.maxChain" must be a whole number above 0, or "unlimited"/u);
+  writeFileSync(path.join(team.root, '.aidrian/config.json'), JSON.stringify({ version: 1, session: { handoff: { maxChain: 'unlimited' } } }));
+  const passed = check();
+  assert.doesNotMatch(passed.stderr + passed.stdout, /maxChain/u);
+});
+
 test('docs/config.md shows the github defaults as DEFAULTS holds them', () => {
   // A changed default raises no `aidrian check` line, so the doc is where a project reads it.
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
@@ -416,6 +427,8 @@ test('the handoff settings load as a group, and a project sets any of them', (t)
   assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'background', maxChain: 3 } }]);
   const chain = loadConfig(project(t, { version: 1, session: { handoff: { continue: 'clear', maxChain: 5 } } }));
   assert.deepEqual([chain.errors, chain.config.session.handoff], [[], { ...DEFAULTS.session.handoff, continue: 'clear', maxChain: 5 }]);
+  const unlimited = loadConfig(project(t, { version: 1, session: { handoff: { maxChain: 'unlimited' } } }));
+  assert.deepEqual([unlimited.errors, unlimited.config.session.handoff.maxChain], [[], 'unlimited']);
   const some = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'off' } } }));
   assert.deepEqual([some.errors, some.config.session.handoff], [[], { ...DEFAULTS.session.handoff, mode: 'off' }]);
 });
@@ -423,7 +436,7 @@ test('the handoff settings load as a group, and a project sets any of them', (t)
 test('the handoff continue route is none by default, a chain is 3 handoffs, and the schema takes every route', () => {
   assert.deepEqual(DEFAULTS.session.handoff, { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3 });
   assert.deepEqual(CONTINUE_ROUTES, ['none', 'clear', 'compact', 'background']);
-  assert.deepEqual(SCHEMA.session.handoff, { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positive' });
+  assert.deepEqual(SCHEMA.session.handoff, { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited' });
 });
 
 test('a string session.handoff, the old shape, loads with the new continue defaults', (t) => {
@@ -688,8 +701,10 @@ const errorCases = [
   ['a fractional token ceiling', { version: 1, session: { handoff: { maxTokens: 1.5 } } }, /"session\.handoff\.maxTokens" must be a whole number, 0 or more$/],
   ['a handoff continue route outside its list', { version: 1, session: { handoff: { continue: 'fork' } } }, /"session\.handoff\.continue" must be "none", "clear", "compact", or "background"$/],
   ['a handoff continue route that is no string', { version: 1, session: { handoff: { continue: true } } }, /"session\.handoff\.continue" must be "none", "clear", "compact", or "background"$/],
-  ['a handoff chain of 0', { version: 1, session: { handoff: { maxChain: 0 } } }, /"session\.handoff\.maxChain" must be a whole number above 0$/],
-  ['a fractional handoff chain', { version: 1, session: { handoff: { maxChain: 2.5 } } }, /"session\.handoff\.maxChain" must be a whole number above 0$/],
+  ['a handoff chain of 0', { version: 1, session: { handoff: { maxChain: 0 } } }, /"session\.handoff\.maxChain" must be a whole number above 0, or "unlimited"$/],
+  ['a fractional handoff chain', { version: 1, session: { handoff: { maxChain: 2.5 } } }, /"session\.handoff\.maxChain" must be a whole number above 0, or "unlimited"$/],
+  ['a handoff chain of another word', { version: 1, session: { handoff: { maxChain: 'forever' } } }, /"session\.handoff\.maxChain" must be a whole number above 0, or "unlimited"$/],
+  ['a handoff chain as a numeric string', { version: 1, session: { handoff: { maxChain: '5' } } }, /"session\.handoff\.maxChain" must be a whole number above 0, or "unlimited"$/],
   ['review record outside its list', { version: 1, review: { record: 'pr' } }, /"review\.record" must be "comment" or "local"$/],
   ['review engine that is not a name', { version: 1, review: { engine: 'two words' } }, /"review\.engine" must be "auto", "codex-local", "pr-bot", "self", or a reviewer of review\.reviewers$/],
   ['lesson signals switch that is not a boolean', { version: 1, lessons: { auto: 'off' } }, /"lessons\.auto" must be true or false$/],

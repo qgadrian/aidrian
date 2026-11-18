@@ -225,10 +225,12 @@ What each part needs, and what happens without it:
   one, only the `product-manager` read runs.
 
 A project with no screens yet leaves out `review.visual` and `review.productFeedback`: `review.visual.targets` may not
-be empty, and a target that matches no file checks nothing. While auto-merge is allowed, `aidrian check` warns once git
-tracks a web screen file and `review.visual` is still unset, so the check gets turned on when the first screen lands.
-[Auto-merge](config.md#auto-merge) says what counts as a screen file: web screen extensions only, so `.tsx` and `.jsx`
-files of an app that depends on `react-native` and not on `react-dom` do not count.
+be empty, and a target that matches no file checks nothing. With its first UI of any kind, native included, the team
+turns on `review.productFeedback.auto` with `files` for that UI, and adds `review.visual` only for web screens.
+Do not wait for a warning: while auto-merge is allowed, `aidrian check` warns once git tracks a web screen file and
+`review.visual` is still unset, but a native screen never triggers it, and the warning says nothing of product feedback.
+[Auto-merge](config.md#auto-merge) says what counts as a screen file: web screen extensions only, so a `.tsx` or `.jsx`
+file whose nearest `package.json` depends on `react-native` and not on `react-dom` does not count.
 
 A project whose screens are all native, such as an iOS, Android, or React Native app, leaves out `review.visual`, since
 no capture reaches its screens, and still sets `review.productFeedback` with `files` for its UI, so its changes still

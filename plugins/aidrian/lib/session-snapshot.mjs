@@ -16,13 +16,13 @@ import { listAudits } from './audits.mjs';
 import { loadConfig } from './config.mjs';
 import { scanDecisions } from './decisions-cli.mjs';
 import { remoteIdentity, servedRepository } from './forges/index.mjs';
-import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
+import { checkoutHolding, resolvedPath } from './fs.mjs';
 import { GIT_TIMEOUT_MS, killingGit, mainRoot, runGit } from './git.mjs';
-import { latestBrief, looseFolder, MARKER_CAP, openStore, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
+import { latestBrief, MARKER_CAP, openStore, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { lessons, lessonStats, stateInbox } from './lesson-inbox.mjs';
 import { findProject, projectCheckouts, stateDir } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
-import { sessionFolder } from './session-folder.mjs';
+import { sessionFolder, stateHeld } from './session-folder.mjs';
 import { handoffStatus, stopMarkerPath } from './session-length.mjs';
 import { cachedSessionUsage } from './session-usage-cache.mjs';
 import { usageLines } from './usage.mjs';
@@ -114,8 +114,8 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
 
 // What the sections share: { project, config, state, checkouts, inside, loose, folder }. `checkouts` are the project's and
 // every checkout of its repository (projectCheckouts), or null when git could not list them. `inside` says the state
-// folder resolves inside one of them, or that it or they cannot be resolved. `loose` says the real state folder is another
-// user's, or every user may write it (looseFolder). `folder` is the session's folder, or null; a session
+// folder resolves inside one of them, or that it or they cannot be resolved. `loose` says the real state folder, or a
+// folder above it, fails the session folder's rule (stateHeld). `folder` is the session's folder, or null; a session
 // that was given and has none, whether its id fails or its folder cannot be made, names the cached sections in `errors`:
 // `worktrees`, `handoff` when the id fails or a transcript was given, and `prs` when the id fails or the state folder is
 // inside a checkout.
@@ -130,7 +130,7 @@ function context(project, { session, transcript, validId }, errors) {
   const real = state === null ? null : resolvedPath(state);
   const checkouts = projectCheckouts(project);
   const inside = real === null || checkouts === null || checkoutHolding(real, checkouts) !== undefined;
-  const loose = real !== null && looseFolder(real, processUid()) !== null;
+  const loose = real !== null && !stateHeld(real);
   const folder = validId && !inside ? sessionFolder(state, session, { checkouts }) : null;
   if (session !== null && folder === null) {
     const named = [['prs', !validId || inside], ['worktrees', true], ['handoff', !validId || transcript !== null]];
@@ -139,8 +139,8 @@ function context(project, { session, transcript, validId }, errors) {
   return { project, config, state, checkouts, inside, loose, folder };
 }
 
-// The state folder of `ctx` when it is outside every checkout and the user's own, as sessionFolder and openStore hold it;
-// else it throws.
+// The state folder of `ctx` when it is outside every checkout, and it and every folder above it pass the rule
+// sessionFolder holds them to (stateHeld); else it throws.
 const ownState = (ctx) => {
   if (ctx.inside || ctx.loose) throw new Error('not the user`s own');
   return ctx.state;

@@ -337,6 +337,22 @@ test('lessons, decisions, and audits count what their readers give; a marker out
   }
 });
 
+test('a state folder below a folder every user may write gives no lessons or audits section', { skip: !POSIX }, (t) => {
+  const env = setup(t);
+  const add = spawnSync(process.execPath, [CLI, 'lesson', 'add', '--tier', 'P1'], { cwd: env.dir, env: env.env, input: 'title: first\nA note.\n', encoding: 'utf8' });
+  assert.equal(add.status, 0, add.stderr);
+  const audits = path.join(env.projectState(), 'audits');
+  mkdirSync(audits, { recursive: true });
+  writeFileSync(path.join(audits, 'front-desk-2026-06-01.md'), '## Findings\n\n### F1. polish: x\n');
+  assert.deepEqual([env.run().json.lessons?.open, env.run().json.audits], [1, { untriaged: 1 }]);
+  // The state root above the project's state folder, which stays the user's own and mode 0700.
+  chmodSync(env.state, 0o777);
+  t.after(() => chmodSync(env.state, 0o700));
+  const { json } = env.run();
+  assert.deepEqual([json.lessons, json.audits], [null, null]);
+  assert.deepEqual(json.errors, ['lessons', 'audits']);
+});
+
 // A project with one linked worktree on `feat/x`, whose origin is `origin`, and a fake gh that answers with `heads`.
 function withWorktree(t, { origin = 'https://github.com/acme/notes.git', gh = {}, merged = true } = {}) {
   const env = setup(t, { origin, gh });

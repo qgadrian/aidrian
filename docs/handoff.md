@@ -547,8 +547,9 @@ the repository, the main checkout or any linked worktree, as with `state.dir` se
 relative `state.dir` of a project below the repository root, which resolves against that root,
 or when git cannot list the checkouts in time, the snapshot gives no handoff, lessons, or audits section, and
 names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
-gives no handoff section either, and names `handoff` and `worktrees`. A state folder that is another user's, or that
-every user may write, gives no lessons or audits section, as it gives no session folder.
+gives no handoff section either, and names `handoff` and `worktrees`. A state folder that fails the session folder's
+rule for it and every folder above it ([Local state](project-folder.md#local-state)), such as one another user owns, or
+one below a folder every user may write, gives no lessons or audits section, as it gives no session folder.
 The hooks and the gate hold the continuation store to the same list of checkouts, and keep no marker there when git
 cannot give it.
 `chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session

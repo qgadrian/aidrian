@@ -955,7 +955,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   (`lib/session-origins.mjs`), whether or not the hooks have written there yet. It records a state folder only when the
   session folder writer would keep folders there by its own repository's checkouts, writes the record as the
   unattended marks are written (a folder the user's alone, 0700, and a random temporary file created only where nothing
-  is, then a rename), reads and writes it as one step under its reservations (`exclusive` in `lib/session-rows.mjs`),
+  is, then a rename), reads and writes it as one step under its reservations (`exclusive` in `lib/session-folder.mjs`),
   and writes it again on a resume, so a resumed session's record is never pruned as stale; the guard reads it once a
   call as the store reads its own files: no-follow, non-blocking, a regular file the user owns, mode 0600, within
   16 KB, so a link, a named pipe, or a record others may read gives none. Also those of every project's default state

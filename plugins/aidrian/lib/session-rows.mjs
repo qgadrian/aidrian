@@ -2,7 +2,9 @@
 // request ledger `prs.jsonl` (lib/session-prs.mjs) and the links `links.jsonl` (lib/session-links.mjs), and appended to. Display data only: no hook, gate, skill, or agent decides anything
 // from them. This file names no host, forge, or tracker.
 
-import { appendSessionFile, readSessionTail, reserveSessionFile, writeSessionFile } from './session-folder.mjs';
+import { appendSessionFile, exclusive, LOCK_WINDOW_MS, readSessionTail, reserveSessionFile, writeSessionFile } from './session-folder.mjs';
+
+export { LOCK_WAIT_MS, LOCK_WINDOW_MS } from './session-folder.mjs';
 
 // The row objects of the last `maxBytes` of the file `name` in `folder`, oldest first, read no-follow and non-blocking
 // through readSessionTail: a first line the cut fell inside and a last line still being written are dropped, and so is
@@ -81,38 +83,4 @@ function newestLines(lines, budget) {
     bytes += size;
   }
   return kept;
-}
-
-// The length of a reservation window, and how long a writer waits for another's step to end, in steps of RETRY_MS.
-export const LOCK_WINDOW_MS = 5_000;
-export const LOCK_WAIT_MS = 1_000;
-const RETRY_MS = 5;
-const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-// `step()`'s answer, run while this process holds the reservations `reserve(at)` takes, each a release function or
-// null, for the window that holds now and the next one (`at` a window later), taken in that order and released after;
-// `fallback` when it cannot take them within LOCK_WAIT_MS. Two writers whose steps overlap in time share a window, so
-// one waits for the other while the first's step takes less than a window: an append does not land on a file a
-// compaction is about to rename over, and two compactions do not drop each other's rows. The accepted limits, for
-// display data (docs/hooks.md#session-ledger): a writer that waits past LOCK_WAIT_MS, as while a killed writer's
-// reservations hold their two windows, writes nothing and its rows are lost; and a step paused past both windows is no
-// longer alone. lib/session-origins.mjs takes its records' updates the same way.
-export function exclusive(reserve, step, fallback = false) {
-  const until = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    const now = Date.now();
-    const first = reserve(now);
-    const second = first && reserve(now + LOCK_WINDOW_MS);
-    if (first && second) {
-      try {
-        return step();
-      } finally {
-        second();
-        first();
-      }
-    }
-    first?.();
-    if (Date.now() >= until) return fallback;
-    pause(RETRY_MS);
-  }
 }

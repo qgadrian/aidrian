@@ -5,7 +5,7 @@
 // of absolute state folders, each added once, MAX_STATES at most; no subagent or unattended session may write the folder
 // (handoff-guard.mjs stateFoldersWriteDenial). The folder is the user's alone, 0700, and each record 0600, written as
 // lib/unattended-mark.mjs writes a mark: a random temporary file created only where nothing is, then a rename. An update
-// reads and writes the record as one step under its reservations (session-rows.mjs exclusive), and every update, a
+// reads and writes the record as one step under its reservations (session-folder.mjs exclusive), and every update, a
 // resume's too, writes it again, so its time is fresh. A record untouched for STALE_DAYS goes when another is written.
 // It names no host, forge, or tracker.
 
@@ -17,8 +17,7 @@ import path from 'node:path';
 import { checkoutHolding, processUid, resolvedPath } from './fs.mjs';
 import { readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { stateRoot } from './project.mjs';
-import { reserveFile } from './session-folder.mjs';
-import { exclusive, LOCK_WINDOW_MS } from './session-rows.mjs';
+import { exclusive, LOCK_WINDOW_MS, reserveFile } from './session-folder.mjs';
 
 export const ORIGIN_FOLDER = 'session-origins';
 export const MAX_STATES = 8;

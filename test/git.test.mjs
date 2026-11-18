@@ -118,3 +118,23 @@ test('repositoryCheckouts lists every checkout but a gone one; [] only outside a
   t.after(() => rmSync(empty, { recursive: true, force: true }));
   assert.deepEqual(answer(dir, empty), []);
 });
+
+test('repositoryCheckouts is null when the environment points git at another repository, or keeps it from this one', (t) => {
+  const { dir } = repo(t);
+  const other = repo(t).dir;
+  const lib = JSON.stringify(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/git.mjs'));
+  // Each child gets the environment named, and nothing else that points git anywhere.
+  const answer = (cwd, extra) => {
+    const script = `import { repositoryCheckouts } from ${lib}; console.log(JSON.stringify(repositoryCheckouts(${JSON.stringify(cwd)})));`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, ...extra }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  assert.equal(answer(dir, { GIT_DIR: path.join(other, '.git') }), null, 'GIT_DIR');
+  assert.equal(answer(dir, { GIT_WORK_TREE: other }), null, 'GIT_WORK_TREE');
+  assert.equal(answer(dir, { GIT_COMMON_DIR: path.join(other, '.git') }), null, 'GIT_COMMON_DIR');
+  // The same through the options a caller passes for each git call.
+  assert.equal(repositoryCheckouts(dir, () => ({ env: { ...process.env, GIT_DIR: path.join(other, '.git') } })), null);
+  // A ceiling above the checkout keeps git from it, but the disk shows its `.git`: unknown, never empty.
+  assert.equal(answer(path.join(dir, 'src'), { GIT_CEILING_DIRECTORIES: dir }), null, 'GIT_CEILING_DIRECTORIES');
+});

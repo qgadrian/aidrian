@@ -84,8 +84,14 @@ export function checkoutRoots(cwd, options) {
 // folder is gone are dropped. Each listed path is exactly as git prints it. [] only when no git is installed, or `cwd`
 // is outside any repository: no folder at or above it holds a `.git`. Inside a repository every failure is null, a
 // stopped git and a non-zero exit included: the list always names the main checkout, so a failed one leaves the
-// checkouts unknown, and a caller that keeps files out of every checkout refuses. `read` gives each git call's options.
+// checkouts unknown, and a caller that keeps files out of every checkout refuses. So is a git kept from the repository by
+// GIT_CEILING_DIRECTORIES: the disk still shows a `.git` at or above `cwd`, so the list fails closed. An environment that
+// sets GIT_DIR, GIT_WORK_TREE, or GIT_COMMON_DIR points git at a repository other than the one at `cwd`, or at another
+// work tree of it, so its list would be wrong, not unknown: null too. `read` gives each git call's options, and its
+// `env`, when given, is the environment that counts.
 export function repositoryCheckouts(cwd, read = () => undefined) {
+  const env = read()?.env ?? process.env;
+  if (REDIRECTS.some((name) => env[name] !== undefined)) return null;
   const listed = runGit(['worktree', 'list', '--porcelain'], cwd, read());
   if (listed.error?.code === 'ENOENT') return [];
   if (listed.status !== 0) return underGit(cwd) ? null : [];
@@ -97,8 +103,11 @@ export function repositoryCheckouts(cwd, read = () => undefined) {
   return [...new Set([roots.current, ...paths.filter((dir) => dir && holdsCheckout(dir))])];
 }
 
+// The variables that point git away from the repository its folder holds.
+const REDIRECTS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'];
+
 // Whether git keeps a work tree at `dir`: a `.git` file or folder is there.
-export const holdsCheckout =(dir) => isFile(path.join(dir, '.git')) || isDirectory(path.join(dir, '.git'));
+export const holdsCheckout = (dir) => isFile(path.join(dir, '.git')) || isDirectory(path.join(dir, '.git'));
 
 // Whether `dir` or a folder above it holds a `.git` entry, where git looks for a repository. It reads the disk alone, so
 // it answers when git does not.

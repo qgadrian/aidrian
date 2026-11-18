@@ -6,7 +6,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -172,6 +172,14 @@ for (const host of HOSTS) {
     }
     if (routes.includes('background')) {
       assert.equal(typeof host.capabilities.handoffContinue.startBackground, 'function', 'background needs a way to start the new session');
+    }
+    const replace = host.capabilities.handoffContinue?.replaceTerminal;
+    if (replace) {
+      assert.ok(routes.includes('background'), 'a terminal is replaced only after a background start');
+      for (const word of [replace.program, replace.attach]) assert.match(word, /^[a-z][a-z0-9-]{0,31}$/u, 'the shell function names the program and its attach word as plain words');
+      for (const name of ['hostProcess', 'isHost']) assert.equal(typeof replace[name], 'function', `replaceTerminal.${name}`);
+      assert.ok(Object.hasOwn(os.constants.signals, replace.signal), 'replaceTerminal.signal is a signal name');
+      assert.equal(typeof host.capabilities.handoffContinue.attachCommand, 'function', 'the say line names the command that opens the new session');
     }
   });
 }

@@ -25,6 +25,7 @@ import * as reviewSignoff from '../lib/rules/review-signoff.mjs';
 import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
+import * as shellInitInstall from '../lib/rules/shell-init-install.mjs';
 
 // Which rules start a process. Every rule first reads the command alone, and most stop there. A rule that needs the
 // project finds it (findProject), which runs git once inside a project folder. Past that, only these start one, and only
@@ -45,6 +46,7 @@ const RULES = [
   ['git-hook-bypass', gitHookBypass],
   ['git-amend', gitAmend],
   ['process-kill', processKill],
+  ['shell-init-install', shellInitInstall],
   ['grep-exit-chain', grepExitChain],
   ['dependency-link', dependencyLink],
   ['attribution', attribution],

@@ -7,6 +7,11 @@
 //   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
+//   ending-<session>.json      { shell, id, next, host_pid | own, at }   a session that ends itself once its turn ends,
+//                              so the terminal of the shell `shell` opens the background session `id`, whose full id is
+//                              `next` or null; an attended one by its host process, a background one as the session `own`
+//   follow-<session>.json      { shell, at }   a background session the terminal of the shell `shell` follows, written
+//                              when the session before it ended itself (lib/terminal-replace.mjs)
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
 // takes it for every session id that starts with it, and the highest of those and the session's own wins. A floor of
 // route `background` marks a session no Human attends (startedInBackground).
@@ -42,14 +47,19 @@ export const hasControl = (text) => /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.
 export const MARKER_CAP = 64 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
+// How long a session's request to end itself holds: the turn that ran the gate ends well inside it.
+export const ENDING_WINDOW = 30 * 60 * 1000;
+// How long a record that a terminal follows a background session holds: a hop's session rarely runs longer.
+export const FOLLOW_AGE = 12 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY };
-const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued)-/u;
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE };
+const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued|ending|follow)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
 const CHAIN_CEILING = 10_000;
 // A short id a floor may be filed under: what a host prints before its listing names the session's full id.
 const SHORT_FROM = /^from-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
+const SHORT_FOLLOW = /^follow-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 // A session name the say line prints in single quotes, and a started marker keeps: no quote, `$`, `;`, or other
 // character a shell reads inside them.
 export const PLAIN_NAME = /^[\w .@:\u00b7-]{1,100}$/u;
@@ -58,7 +68,7 @@ const MODE = /^[A-Za-z]{1,32}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
-const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
 export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
@@ -178,7 +188,8 @@ function sameFolder(real, dir) {
 // Whether `t` is a time no later than `now` and at most `window` before it.
 export const fresh = (t, now, window) => Number.isFinite(t) && now - t >= 0 && now - t <= window;
 const whole = (value, min, max) => Number.isInteger(value) && value >= min && value <= max;
-const isPid = (value) => Number.isInteger(value) && value > 1;
+// A process id the plugin may name: never 0 or 1, and within the range a pid takes.
+export const isPid = (value) => Number.isInteger(value) && value > 1 && value < 2 ** 31;
 const sessionFile = (kind, session) => (typeof session === 'string' && SESSION_ID.test(session) ? `${kind}-${session}.json` : null);
 
 // Whether `brief` is an absolute path to a brief of `slug`.
@@ -383,6 +394,60 @@ export function noteStarted(store, session, started, { now = Date.now() } = {}) 
 // The background start `session` made in the last day, or null.
 export function readStarted(store, session, { now = Date.now() } = {}) {
   return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted });
+}
+
+const idOrNull = (value) => value === null || (typeof value === 'string' && SESSION_ID.test(value));
+// A request names exactly one way to end: the host process of an attended session, or the id of a background session.
+const isEnding = (value) => isObject(value) && isPid(value.shell) && typeof value.id === 'string' && SESSION_ID.test(value.id)
+  && idOrNull(value.next) && Number.isFinite(value.at)
+  && (isPid(value.host_pid) !== (typeof value.own === 'string' && SESSION_ID.test(value.own)));
+
+// Records that `session` ends itself once its turn ends, and that the shell `shell` then opens the background session
+// `id`, whose full id is `next` or null. An attended session names its host process `hostPid`, which the shell started;
+// a background session the shell's terminal follows names its own id `own`, as the host listed it. Returns the file, or
+// null when the store is refused or a value has a wrong shape.
+export function noteEnding(store, session, { hostPid, own, shell, id, next = null }, { now = Date.now() } = {}) {
+  const value = { shell, id, next, ...(hostPid === undefined ? {} : { host_pid: hostPid }), ...(own === undefined ? {} : { own }), at: now };
+  return isEnding(value) ? writeMarker(store, sessionFile('ending', session), value) : null;
+}
+
+// Takes the request of `session` to end itself, written in the last ENDING_WINDOW, and deletes it, so it acts once:
+// { shell, id, next } with `hostPid` or `own`, or null. Never throws on a missing or refused store.
+export function takeEnding(store, session, { now = Date.now() } = {}) {
+  const name = sessionFile('ending', session);
+  const value = readMarker(store, name, { now, field: 'at', shape: isEnding });
+  try {
+    remove(store, name);
+  } catch {
+    // Left for the sweep; a read past its window finds nothing.
+  }
+  if (!value) return null;
+  const way = value.host_pid === undefined ? { own: value.own } : { hostPid: value.host_pid };
+  return { shell: value.shell, id: value.id, next: value.next, ...way };
+}
+
+const isFollow = (value) => isObject(value) && isPid(value.shell) && Number.isFinite(value.at);
+
+// Records that the terminal of the shell `shell` follows the background session `session`, its full id or the short one
+// the host printed. Returns the file, or null.
+export function noteFollow(store, session, { shell }, { now = Date.now() } = {}) {
+  const value = { shell, at: now };
+  return isFollow(value) ? writeMarker(store, sessionFile('follow', session), value) : null;
+}
+
+// The shell whose terminal follows `session`, from the last FOLLOW_AGE, under its own id or a short one it starts with, the
+// latest if several: { shell, id }, where `id` is the id it was filed under; or null.
+export function readFollow(store, session, { now = Date.now() } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  const read = (id) => {
+    const value = readMarker(store, sessionFile('follow', id), { now, field: 'at', shape: isFollow });
+    return value && { shell: value.shell, id, at: value.at };
+  };
+  const shorts = listStore(store).map((name) => SHORT_FOLLOW.exec(name)?.[1]).filter((short) => short !== undefined && short !== session && session.startsWith(short));
+  const found = [read(session), ...shorts.map(read)].filter(Boolean);
+  if (found.length === 0) return null;
+  const latest = found.reduce((last, each) => (each.at > last.at ? each : last));
+  return { shell: latest.shell, id: latest.id };
 }
 
 // Keeps `bytes`, a brief that passed the check, as `continued-<sha256>.md` in the store, owner-only, so the session a

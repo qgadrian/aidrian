@@ -25,7 +25,7 @@ import { clockTime, durationTime, FAR } from '../plugins/aidrian/lib/hosts/limit
 import { BACKOFF, checkedLimit, LIMIT_WAITS, limitEndRows, PAUSE_CEILING, PAUSE_FLOOR, pauseEnd, pauseOf, pausedTime, pauseRow } from '../plugins/aidrian/lib/project-limit.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
-import { DRIVER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
 const MINUTE = 60_000;
@@ -62,6 +62,9 @@ test('Claude Code: only the host\'s own API error entry, as the last assistant e
   assert.deepEqual(read(apiError('Claude usage limit reached. Your limit will reset at 11:30am (Asia/Tokyo).')), { kind: 'usage', until: Date.UTC(2026, 10, 19, 2, 30, 0) }, 'a named zone');
   assert.deepEqual(read(apiError('Weekly limit reached ∙ resets Nov 21, 5pm')), { kind: 'usage', until: FAR }, 'another day is past any pause');
   assert.deepEqual(read(apiError('You\'ve hit your limit · resets in 2 hours')), { kind: 'usage', until: NOW + 2 * HOUR }, 'a span after resets');
+  for (const label of ['weekly', '5-hour', 'Opus']) {
+    assert.deepEqual(read(apiError(`You've hit your ${label} limit · resets 5pm (UTC)`)), { kind: 'usage', until: Date.UTC(2026, 10, 18, 17, 0, 0) }, label);
+  }
   assert.deepEqual(read(apiError('API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}')), { kind: 'rate', until: null });
   assert.deepEqual(read(apiError('Request rejected', { error: 'rate_limit' })), { kind: 'rate', until: null }, 'the structured class alone');
   assert.deepEqual(read(apiError('5-hour limit reached ∙ resets 5pm (UTC)', { error: 'rate_limit' })), { kind: 'usage', until: Date.UTC(2026, 10, 18, 17, 0, 0) });
@@ -306,12 +309,54 @@ test('two running issues limited in one wait make one pause', (t) => {
   appendToRun(fx.state, 'launch', () => ({ rows: [other, { event: 'issue', key: 'ENG-4', state: 'running', at: other.at }] }));
   const reset = Math.floor(Date.now() / 1000) + 2 * 3600;
   fx.limit([apiError(`Claude AI usage limit reached|${reset}`)], fx.start);
-  fx.limit([apiError('API Error: 429 rate limited')], other);
+  fx.limit([apiError('You\'ve hit your weekly limit')], other);
   const out = fx.cmd(['wait', 'launch', '--max-wait', '0']).out;
   assert.equal(out.filter((line) => line.startsWith('paused ENG-')).length, 2, out.join('\n'));
   const rows = fx.rows().filter((row) => row.event === 'limit');
   assert.deepEqual(rows.map((row) => [row.key, row.wait, row.joined ?? false]), [['ENG-1', 1, false], ['ENG-4', 1, true]]);
   assert.deepEqual(rows.map((row) => row.until), [iso(reset * 1000), iso(reset * 1000)], 'no backoff step for the one that joined');
+});
+
+test('a running session is held only for a usage limit whose pause runs: a rate limit, or a record unchanged after its pause, ends the attempt', (t) => {
+  const rate = started(t);
+  rate.limit([apiError('API Error: 429 rate limited')]);
+  assert.match(rate.cmd(['wait', 'launch', '--max-wait', '0']).out[0], /^limit ENG-1 rate until \S+ -> open$/u);
+  assert.deepEqual(rate.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [CHILD], 'a rate limit is no limit the host continues');
+
+  // The host lists each limited session working and never continues it: three such limits leave the issue open.
+  const fx = runFixture(t);
+  for (let n = 1; n <= 3; n += 1) {
+    const start = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(start.exitCode, 0, start.err.join('\n'));
+    const row = fx.rows().filter((each) => each.event === 'start' && each.outcome === 'started').at(-1);
+    const begun = Date.parse(row.at);
+    // Met twenty minutes before the start row's time, with no reset named: a 15-minute pause, over before now.
+    writeTranscript(fx.env.CLAUDE_CONFIG_DIR, row.cwd, [apiError('Claude AI usage limit reached', { timestamp: iso(begun - 20 * MINUTE) })], row.child);
+    assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: begun - 19 * MINUTE }).out[0], /^paused ENG-1 usage until /u);
+    assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: begun - 4 * MINUTE + 30_000 }).out, ['running ENG-1'], 'held through the grace after the pause');
+    const ended = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: begun + 30 * MINUTE }).out;
+    assert.match(ended[0], /^limit ENG-1 usage until \S+ -> open$/u, ended.join('\n'));
+    assert.equal(fx.claude.states[row.child], 'stopped');
+  }
+  assert.equal(fx.rows().filter((row) => row.event === 'limit').length, 3, 'one pause a record, none written again at its end');
+  assert.equal(fx.run().states.get('ENG-1').state, 'open');
+});
+
+test('a held session past 24 pauses writes one halt and ends its attempt; after an attended resume the next start runs', (t) => {
+  const fx = started(t);
+  const past = iso(Date.now() - HOUR);
+  appendToRun(fx.state, 'launch', () => ({ rows: Array.from({ length: LIMIT_WAITS }, (_, i) => ({ event: 'limit', key: 'ENG-4', attempt: 1, kind: 'usage', until: past, named: false, wait: i + 1, at: past })) }));
+  fx.limit([apiError(`Claude AI usage limit reached|${Math.floor(Date.now() / 1000) + 7200}`, { timestamp: iso(Date.now()) })]);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['limit ENG-1 usage halt -> open', 'idle']);
+  assert.equal(fx.claude.states[CHILD], 'stopped', 'a halted run holds no session');
+  for (let n = 0; n < 3; n += 1) assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['idle']);
+  assert.equal(fx.rows().filter((row) => row.event === 'halt').length, 1);
+  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).out[0], /^halt the run is halted/u);
+  const resumed = fx.cmd(['resume', 'launch'], { session: OTHER });
+  assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
+  const next = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(next.exitCode, 0, next.err.join('\n'));
+  assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
 });
 
 test('an idle wait waits out the pause with the driver and returns once it is over', (t) => {

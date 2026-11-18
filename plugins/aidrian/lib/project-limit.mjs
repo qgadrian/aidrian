@@ -9,9 +9,10 @@
 //   - with no reset time, BACKOFF: 15, then 30, then 60 minutes for each pause in a row since the last result;
 //   - a limit met while a pause lasts joins it: the same `wait` number, its `until` moved later only by a named reset;
 //   - past LIMIT_WAITS pauses a run, a `halt` row instead, which an attended `aidrian project resume` lifts.
-// A host that continues its own session once the limit resets (`capabilities.projectStart.continuesAtLimit`) keeps it:
-// `wait` records the pause and waits on that session. A session that ended on the limit, or one of a host that does not
-// continue, ends the attempt (`ended`, reason `limit`), which counts toward no cap of the issue
+// A host that continues its own session once a usage limit resets (`capabilities.projectStart.continuesAtLimit`) keeps
+// it: `wait` records the pause and waits on that session while the pause runs. A rate limit, a pause over with the same
+// record still the session's last, a limit past LIMIT_WAITS, a session that ended on the limit, and one of a host that
+// does not continue all end the attempt (`ended`, reason `limit`), which counts toward no cap of the issue
 // (project-run-guard.mjs spentAttempts), and opens the issue again; the next start of it, once the pause is over, is a
 // new attempt in a fresh clone on the issue's branch as the forge holds it. Time paused does not count toward
 // issueHours (pausedTime). The rows live in the run's ledger, so a continuation of the driver sees each pause. A limit
@@ -96,6 +97,13 @@ const recordOf = (limit) => (limit.at === null ? null : iso(limit.at));
 
 // Whether the run `found` holds a `limit` row for this very record of attempt `attempt` of issue `key`.
 export const limitRecorded = (found, key, attempt, limit) => limitRows(found).some((row) => row.key === key && row.attempt === attempt && (row.record ?? null) === recordOf(limit));
+
+// Whether the pause the run recorded for this very record of attempt `attempt` of issue `key` still runs at `now`, with
+// PAUSE_FLOOR of grace after its end for the host to continue the session.
+export function recordedPauseRuns(found, key, attempt, limit, now) {
+  const waits = new Set(limitRows(found).filter((row) => row.key === key && row.attempt === attempt && (row.record ?? null) === recordOf(limit)).map((row) => row.wait));
+  return pauses(found).some((each) => waits.has(each.wait) && each.end + PAUSE_FLOOR > now);
+}
 
 // The row that records the limit `limit` attempt `attempt` of issue `key` met, at `now`: { row, until } with `until` the
 // pause's end, a row of a new pause or one that joins the pause that lasts, or, past LIMIT_WAITS pauses, a `halt` row

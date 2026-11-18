@@ -50,7 +50,7 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
-import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow } from './project-limit.mjs';
+import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
@@ -615,10 +615,12 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
 // error record shows it (`capabilities.projectStart.limitOf`): null when it shows none or the host reads none, so the
 // other checks go on; else { line } with the line to print, if any, and the issue's other checks skipped.
 //   - A session the host does not list as ended, of a host that continues its own session once the limit resets
-//     (`continuesAtLimit`), keeps running: the record's pause is written once (pauseRow), and while it lasts the issue
-//     waits; once it is over and the same record is still the session's last, the other checks go on.
-//   - Otherwise the sessions are stopped, and the attempt ends on the limit (limitEndRows). A session that cannot be
-//     stopped writes nothing and is read again by the next wait.
+//     (`continuesAtLimit`), keeps running only for a `usage` limit, and only while its normal pause runs: the record's
+//     pause is written once (pauseRow), and the issue waits until that pause, and PAUSE_FLOOR after it, are over.
+//   - Every other case takes the stop path: a `rate` limit, a pause that is over while the same record is still the
+//     session's last, and a limit past LIMIT_WAITS, which halts the run. The sessions are stopped, and the attempt ends
+//     on the limit (limitEndRows), with no second pause for a record that has one. A session that cannot be stopped
+//     writes nothing and is read again by the next wait.
 // Each write happens only while the issue still runs that attempt.
 function limitLine({ state, run, store, cap, env, home, spawn, key, start, found, now }) {
   if (typeof cap.limitOf !== 'function') return null;
@@ -627,15 +629,19 @@ function limitLine({ state, run, store, cap, env, home, spawn, key, start, found
   const ended = chainEnded({ cap, store, id: start.id, session: start.child, env, spawn, now });
   const current = (fresh) => fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt;
   const when = (until) => (until === null ? 'halt' : `until ${iso(until)}`);
-  if (ended !== true && cap.continuesAtLimit === true) {
-    if (limitRecorded(found, key, start.attempt, limit)) return pauseOf(found, now) ? {} : null;
+  // Only a usage limit is one the host continues, and only while its normal pause runs.
+  const holdable = ended !== true && cap.continuesAtLimit === true && limit.kind === 'usage';
+  if (holdable && limitRecorded(found, key, start.attempt, limit) && recordedPauseRuns(found, key, start.attempt, limit, now)) return {};
+  if (holdable && !limitRecorded(found, key, start.attempt, limit)) {
     let paused = null;
     const written = safely(() => appendToRun(state, run, (fresh) => {
       if (!current(fresh) || limitRecorded(fresh, key, start.attempt, limit)) return { rows: [] };
       paused = pauseRow({ found: fresh, key, attempt: start.attempt, limit, now });
-      return { rows: [paused.row] };
+      // Past LIMIT_WAITS the run halts: a halted run holds no session, which the stop path below ends.
+      return paused.until === null ? { rows: [] } : { rows: [paused.row] };
     }));
-    return written?.rows?.length ? { line: `paused ${key} ${limit.kind} ${when(paused.until)}: its session goes on once the limit resets` } : {};
+    if (written?.rows?.length) return { line: `paused ${key} ${limit.kind} ${when(paused.until)}: its session goes on once the limit resets` };
+    if (paused?.until !== null) return {};
   }
   if (ended !== true && !stopChain({ cap, store, start, env, spawn, now })) return { line: `limited ${key} attempt ${start.attempt}: a session of it could not be stopped` };
   let closed = null;

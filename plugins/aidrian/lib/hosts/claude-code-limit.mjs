@@ -23,8 +23,8 @@ import { clockTime, durationTime, epochTime } from './limit-time.mjs';
 const TAIL = 1024 * 1024;
 const ID = /^[0-9A-Za-z][\w-]{3,127}$/u;
 // How the host's own error text starts when it reports a limit, and the words that make it a usage limit, not a rate limit.
-const LIMIT_TEXT = /^\s*(?:Claude AI usage limit reached|Claude usage limit reached|(?:5-hour|weekly|session|daily|opus|sonnet|usage)\s+limit reached|You've hit your (?:usage )?limit|API Error: 429\b)/iu;
-const USAGE = /\busage limit\b|\blimit reached\b|\bhit your (?:usage )?limit\b/iu;
+const LIMIT_TEXT = /^\s*(?:Claude AI usage limit reached|Claude usage limit reached|(?:5-hour|weekly|session|daily|opus|sonnet|usage)\s+limit reached|You've hit your (?:[\w-]+ )?limit|API Error: 429\b)/iu;
+const USAGE = /\busage limit\b|\blimit reached\b|\bhit your (?:[\w-]+ )?limit\b/iu;
 const EPOCH = /\|\s*(\d{9,11})\b/u;
 const RESET = /\breset(?:s)?(?:\s+at)?\s+([^|]{1,80})/iu;
 const AGAIN = /\btry again in\s+([^|]{1,80})/iu;

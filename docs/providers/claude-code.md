@@ -334,7 +334,10 @@ ignored, so the live checks below must show each one holds.
   `Claude AI usage limit reached|<epoch seconds>`, `5-hour limit reached ∙ resets 5pm`, or `API Error: 429`. The reset
   time is read against the entry's `timestamp`: from the epoch, from `resets <time> (<zone>)`, then from `resets in`
   a span. The session starts with `autoContinueAtUsageLimit`, so the host waits out a usage limit and continues it,
-  and the adapter declares `continuesAtLimit`: `wait` keeps a limited session the host still lists running. These
+  and the adapter declares `continuesAtLimit`: `wait` keeps a session the host still lists running only for a `usage`
+  limit, and only while its pause runs, with a minute's grace. The host continues only a claude.ai usage limit, on
+  billing that is not usage-based; anything else takes the stop path: a rate limit, a pause over with the same record
+  still the session's last, and a limit past the run's 24 pauses each stop the session and end its attempt. These
   shapes and the setting's effect come from the host's issue reports, changelog, and binary, not a live run (live check
   19): until one shows them, a limit the reader misses ends the session with no result, or past `issueHours`
   ([Project run](../config.md#project-run)).

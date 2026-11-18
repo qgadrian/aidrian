@@ -290,13 +290,12 @@ const isFolder = (folder) => {
 // and writes it: a row whose cwd is no folder on disk, or whose fields the newest row of its change request holds when
 // that row was written within REPEAT_WINDOW_MS of its `at`, is left out; any other repeat is written with its new time,
 // so its ref is shown first again, ranked by its newest kind, and stays shown while newer ones come. The rest are
-// appended; when the ledger is already past LEDGER_MAX_BYTES, as two appends racing can leave it, or the append would
+// appended; when the ledger is already past LEDGER_MAX_BYTES, as an older writer could leave it, or the append would
 // pass it, the ledger is rewritten through a temporary file and a rename with the newest rows of that tail that fit in
 // half of it, then these, so the newest always show. Nothing is written when the ledger cannot be read as the session
 // folder's rules allow. Returns whether it wrote. Never throws. The append and the compaction are lib/session-rows.mjs
-// appendRows'; this one decides the repeats from the lines it read.
-// SHORTCUT: two hooks of one session writing together can lose a row in a compaction or add a duplicate. Enough for
-// display data: the next touch records it again and the snapshot dedupes. Compacting under reserveSessionFile closes it.
+// appendRows', which runs each write as one step no other writer of the ledger runs beside, so two hooks of one session
+// writing together lose no row; this one decides the repeats from the lines it read.
 export function appendLedger(folder, rows, options = {}) {
   if (!Array.isArray(rows)) return false;
   const select = (lines, taken) => {

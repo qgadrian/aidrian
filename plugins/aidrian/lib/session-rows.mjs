@@ -2,7 +2,7 @@
 // request ledger `prs.jsonl` (lib/session-prs.mjs) and the links `links.jsonl` (lib/session-links.mjs), and appended to. Display data only: no hook, gate, skill, or agent decides anything
 // from them. This file names no host, forge, or tracker.
 
-import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
+import { appendSessionFile, readSessionTail, reserveSessionFile, writeSessionFile } from './session-folder.mjs';
 
 // The row objects of the last `maxBytes` of the file `name` in `folder`, oldest first, read no-follow and non-blocking
 // through readSessionTail: a first line the cut fell inside and a last line still being written are dropped, and so is
@@ -37,24 +37,36 @@ export function parsed(line) {
 }
 
 // Appends `rows` to the file `name`, one of APPENDED_FILES, in `folder`, which sessionFolder gave, under its cap
-// `maxBytes`: it reads the file's last `maxBytes` through readSessionTail and writes nothing when that read is refused;
-// a cut first line and a partial last line are no lines; `select(lines, rows)` gives the rows to write, all of them
-// when none is given, so a writer that leaves out a repeat decides it from the lines it reads. The rows are appended in
-// place while the tail was read whole and they keep the file within `maxBytes`; else the file is rewritten through a
-// temporary file and a rename with the newest lines that fit in half of `maxBytes`, then the rows, as two writes racing
-// past the cap can leave it, so the next write compacts what they left. Returns whether it wrote. Never throws.
+// `maxBytes`, as one step no other writer of the file runs beside (exclusive): it reads the file's last `maxBytes`
+// through readSessionTail and writes nothing when that read is refused; a cut first line and a partial last line are no
+// lines; `select(lines, rows)` gives the rows to write, all of them when none is given, so a writer that leaves out a
+// repeat decides it from the lines it reads. The rows are appended in place while the tail was read whole and they keep
+// the file within `maxBytes`, after a line end when the file ends inside a line, so a row cut short by a killed writer
+// takes no new row with it. Else the file is rewritten through a temporary file and a rename: the newest rows of the
+// batch that fit in `maxBytes`, after the newest lines read that fit in what is left, and in half of `maxBytes` at most,
+// so the file never passes its cap. A file left past it, as by an older writer, is compacted the same way. Returns
+// whether it wrote. Never throws.
 export function appendRows(folder, name, rows, { maxBytes, select = (lines, given) => given, ...options } = {}) {
   if (typeof folder !== 'string' || !Array.isArray(rows) || rows.length === 0) return false;
-  const read = readSessionTail(folder, name, { ...options, maxBytes });
-  if (read === null) return false;
-  const lines = tailLines(read);
-  const fresh = select(lines, rows);
-  if (fresh.length === 0) return false;
-  const text = fresh.map((row) => `${JSON.stringify(row)}\n`).join('');
-  if (!read.cut && Buffer.byteLength(read.text) + Buffer.byteLength(text) <= maxBytes) return appendSessionFile(folder, name, text, { ...options, maxBytes });
-  const compacted = newestLines(lines, maxBytes / 2).map((line) => `${line}\n`).join('') + text;
-  return writeSessionFile(folder, name, compacted, options) !== null;
+  // A file the session folder's rules refuse waits for no reservation: it would never be written.
+  if (readSessionTail(folder, name, { ...options, maxBytes: 0 }) === null) return false;
+  return exclusive(folder, name, options, () => {
+    const read = readSessionTail(folder, name, { ...options, maxBytes });
+    if (read === null) return false;
+    const lines = tailLines(read);
+    const fresh = select(lines, rows);
+    if (fresh.length === 0) return false;
+    const text = fresh.map((row) => `${JSON.stringify(row)}\n`).join('');
+    const lead = read.text !== '' && !read.text.endsWith('\n') ? '\n' : '';
+    if (!read.cut && Buffer.byteLength(read.text) + Buffer.byteLength(lead + text) <= maxBytes) return appendSessionFile(folder, name, lead + text, { ...options, maxBytes });
+    const added = newestLines(fresh.map((row) => JSON.stringify(row)), maxBytes);
+    const room = Math.min(maxBytes / 2, maxBytes - bytesOf(added));
+    const compacted = [...newestLines(lines, room), ...added].map((line) => `${line}\n`).join('');
+    return writeSessionFile(folder, name, compacted, options) !== null;
+  });
 }
+
+const bytesOf = (lines) => lines.reduce((sum, line) => sum + Buffer.byteLength(line) + 1, 0);
 
 // The newest of `lines` that are row objects and fit in `budget` bytes, oldest first.
 function newestLines(lines, budget) {
@@ -68,4 +80,36 @@ function newestLines(lines, budget) {
     bytes += size;
   }
   return kept;
+}
+
+// The length of a reservation window, and how long a writer waits for another's step to end, in steps of RETRY_MS.
+export const LOCK_WINDOW_MS = 5_000;
+export const LOCK_WAIT_MS = 1_000;
+const RETRY_MS = 5;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// `step()`'s answer, run while this process holds the file's reservations (reserveSessionFile) for the window that holds
+// now and the next one, taken in that order and released after; false when it cannot take them within LOCK_WAIT_MS.
+// Two writers whose steps overlap in time share a window, so one waits for the other: an append never lands on a file
+// that a compaction is about to rename over, and two compactions never drop each other's rows. A killed writer's
+// reservations hold only their two windows, after which writes go on. `options` gives reserveSessionFile its ids.
+function exclusive(folder, name, { uid, gid }, step) {
+  const ids = { ...(uid === undefined ? {} : { uid }), ...(gid === undefined ? {} : { gid }) };
+  const until = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    const now = Date.now();
+    const first = reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now, ...ids });
+    const second = first && reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now: now + LOCK_WINDOW_MS, ...ids });
+    if (first && second) {
+      try {
+        return step();
+      } finally {
+        second();
+        first();
+      }
+    }
+    first?.();
+    if (Date.now() >= until) return false;
+    pause(RETRY_MS);
+  }
 }

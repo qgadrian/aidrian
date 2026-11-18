@@ -1291,11 +1291,18 @@ is not a folder on disk, and a row whose fields, all but `at` and `agentId`, the
 branch holds, when that row was written within the last 60 s (`REPEAT_WINDOW_MS`), so a call made again at once adds
 nothing. Any other repeat is written with its new time, so a touch, a push, then a touch again of one branch writes all
 three and the branch resolves as its last call did, and a
-pull request acted on again shows first again and stays among the 25 the snapshot shows while newer ones come. The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
-last 256 KB, so it reads every row, and drops a first line the cut fell inside if two writes passed the cap together): a write that would pass it, or that finds the ledger past it, as two writes together can leave it, rewrites the
-ledger, through a temporary file and a rename under the same checks, with the newest rows of that tail that fit in half
-of it and then the new ones, so the newest pull requests always show. The `SessionEnd` hook and
-worktree cleanup leave it alone, so a resumed session keeps its pull requests.
+pull request acted on again shows first again and stays among the 25 the snapshot shows while newer ones come.
+The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
+last 256 KB, so it reads every row, and drops a first line the cut fell inside if an older writer left the ledger past
+the cap): a write that would pass it, or that finds the ledger past it, rewrites the ledger, through a temporary file
+and a rename under the same checks, with the newest of the new rows that fit in the cap, after the newest rows of that
+tail that fit in what is left and in half of it at most, so the file never passes its cap and the newest pull requests
+always show. Each write, append or rewrite, is one step no other writer of the file runs beside: it holds the file's
+reservations (`<file>.<window>.lock`, `reserveSessionFile`) for the 5-second window that holds its start and the next
+one, and a second writer waits up to a second for them, so two hooks of one session that write together lose no row;
+a killed writer's reservations hold only their two windows. A write after a line cut short, as a killed writer leaves
+it, starts on a new line, so the new row is read and only the cut one is dropped. The `SessionEnd` hook and worktree
+cleanup leave it alone, so a resumed session keeps its pull requests.
 
 The snapshot also reads the ledgers of the sessions a handoff came from, through the `parent` each chain floor names
 ([Across a handoff](handoff.md#across-a-handoff)): at most 5 of them, the last 64 KB of each, from a folder it finds by

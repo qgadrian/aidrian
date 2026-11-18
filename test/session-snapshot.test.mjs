@@ -761,7 +761,11 @@ test('prs on answers recorded from GitHub: one repository that does not resolve 
   const recorded = JSON.parse(readFileSync(path.join(ROOT, 'test/fixtures/forges/github/changes-state.json'), 'utf8'));
   const env = withLedger(t);
   env.ledger(recorded.refs.map(({ path: repo, number, branch }, index) => ledgerRow(env.dir, { kind: number === null ? 'pushed' : 'touched', path: repo, number, branch }, 50 - index)));
-  env.answer(recorded.answer, { status: recorded.status });
+  // The last node of each full page dropped, so the ranking alone decides: a full page fails closed (test/forge-github.test.mjs).
+  const answer = structuredClone(recorded.answer);
+  answer.data.r0.parent.pullRequests.nodes.pop();
+  answer.data.r1.pullRequests.nodes.pop();
+  env.answer(answer, { status: recorded.status });
   const { json } = env.run(['--session', ID]);
   assert.deepEqual(json.prs.map(({ repo, number }) => `${repo}#${number}`), ['cli/cli#15035', 'nodejs/node#66655'], 'the fork`s branch and the number give one entry');
   assert.deepEqual(json.errors, []);

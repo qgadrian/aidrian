@@ -408,13 +408,14 @@ test('a folder or a branch holding a hidden character writes nothing', () => {
   assert.deepEqual(rows(`git push origin 'feat\u001b[2J'`), [], 'an escape in a refspec');
 });
 
-// ledgerRows over a fake git: `remotes` by name and URL, and the branch every folder is on. `calls` holds the folder of
+// ledgerRows over a fake git: `remotes` by name and URL, the branch every folder is on, and more config lines as
+// `git config --get-regexp` prints them. `calls` holds the folder of
 // each git read.
-function fakeGit(remotes, branch = 'feat', pushUrls = []) {
+function fakeGit(remotes, branch = 'feat', pushUrls = [], config = []) {
   const calls = [];
   const read = (args, folder) => {
     calls.push(folder);
-    const lines = [...Object.entries(remotes).map(([name, url]) => `remote.${name}.url ${url}`), ...pushUrls.map(([name, url]) => `remote.${name}.pushurl ${url}`)];
+    const lines = [...Object.entries(remotes).map(([name, url]) => `remote.${name}.url ${url}`), ...pushUrls.map(([name, url]) => `remote.${name}.pushurl ${url}`), ...config];
     if (args[0] === 'config') return { status: 0, stdout: lines.join('\n') };
     return { status: 0, stdout: `${branch}\n` };
   };
@@ -461,6 +462,40 @@ test('a push URL, when set, is the push`s repository alone: one that names none 
   for (const url of ['/srv/git/widgets', 'file:///srv/git/widgets', 'DISABLED', `https://github.com/me/${'w'.repeat(1100)}`]) assert.deepEqual(push([['origin', url]]), [], url.slice(0, 40));
   assert.deepEqual(push([['origin', 'DISABLED'], ['origin', 'git@github.com:me/widgets.git']]), [], 'a later push URL never replaces an unreadable first one');
   assert.deepEqual(push([['origin', 'git@github.com:me/widgets.git'], ['origin', 'git@github.com:other/widgets.git']]), [pushed('me/widgets', 'feat', '/w')], 'the first push URL');
+});
+
+test('a push that names no remote goes where git sends it: the branch`s pushRemote, then remote.pushDefault, then its remote, then origin', () => {
+  const remotes = { ...ORIGIN, fork: 'https://github.com/me/widgets.git', up: 'https://github.com/acme/up.git', track: 'https://github.com/acme/track.git' };
+  const push = (config, command = 'git push') => unit(command, '/w', fakeGit(remotes, 'feat', [], config).read);
+  assert.deepEqual(push(['branch.feat.pushremote fork', 'remote.pushdefault up', 'branch.feat.remote track']), [pushed('me/widgets', 'feat', '/w')], 'pushRemote');
+  assert.deepEqual(push(['branch.other.pushremote fork', 'remote.pushdefault up', 'branch.feat.remote track']), [pushed('acme/up', 'feat', '/w')], 'pushDefault, past another branch`s pushRemote');
+  assert.deepEqual(push(['branch.feat.remote track']), [pushed('acme/track', 'feat', '/w')], 'the branch`s remote');
+  assert.deepEqual(push(['remote.pushdefault fork', 'remote.pushdefault up']), [pushed('acme/up', 'feat', '/w')], 'the last value, as git reads it');
+  assert.deepEqual(push([]), [pushed('acme/widgets', 'feat', '/w')], 'origin');
+  assert.deepEqual(push(['remote.pushdefault up'], 'git push origin'), [pushed('acme/widgets', 'feat', '/w')], 'a remote on the line wins');
+});
+
+test('a push with no refspec records the branch push.default sends, and none for matching, nothing, or a remote`s own push refspec', () => {
+  const push = (config, command = 'git push') => unit(command, '/w', fakeGit(ORIGIN, 'feat', [], config).read);
+  for (const mode of ['simple', 'current']) assert.deepEqual(push([`push.default ${mode}`]), [pushed('acme/widgets', 'feat', '/w')], mode);
+  const upstream = ['push.default upstream', 'branch.feat.remote origin', 'branch.feat.merge refs/heads/main-line'];
+  assert.deepEqual(push(upstream), [pushed('acme/widgets', 'main-line', '/w')], 'upstream: the branch merge names');
+  assert.deepEqual(push(upstream, 'git push origin'), [pushed('acme/widgets', 'main-line', '/w')]);
+  assert.deepEqual(push(['push.default upstream', 'branch.feat.remote up', 'branch.feat.merge refs/heads/x'], 'git push origin'), [], 'origin is not the upstream`s remote');
+  assert.deepEqual(push(['push.default upstream']), [], 'no upstream');
+  for (const mode of ['matching', 'nothing', 'Simple']) assert.deepEqual(push([`push.default ${mode}`]), [], mode);
+  assert.deepEqual(push(['remote.origin.push refs/heads/feat:refs/heads/elsewhere']), [], 'remote.origin.push');
+  assert.deepEqual(push(['remote.origin.push']), [], 'remote.origin.push with no value');
+  assert.deepEqual(push(['remote.origin.push refs/heads/x'], 'git push origin feat/a'), [pushed('acme/widgets', 'feat/a', '/w')], 'a refspec on the line wins');
+  assert.deepEqual(push(['push.default matching'], 'git push origin HEAD'), [pushed('acme/widgets', 'feat', '/w')], 'HEAD on the line');
+});
+
+test('a push reads pushRemote from the folder`s real git config', () => {
+  const dir = checkout('push-remote', { origin: 'https://github.com/acme/widgets.git', fork: 'https://github.com/me/widgets.git' }, 'feat/pr');
+  assert.equal(spawnSync('git', ['config', 'branch.feat/pr.pushRemote', 'fork'], { cwd: dir, env: ENV }).status, 0);
+  assert.deepEqual(rows('git push', { cwd: dir }), [pushed('me/widgets', 'feat/pr', dir)]);
+  assert.equal(spawnSync('git', ['config', 'push.default', 'matching'], { cwd: dir, env: ENV }).status, 0);
+  assert.deepEqual(rows('git push', { cwd: dir }), []);
 });
 
 test('a --repo value the shell fills in records nothing, even where a remote has that name', () => {

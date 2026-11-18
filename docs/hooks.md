@@ -1226,7 +1226,7 @@ snapshot's `displayText` removes). One call writes at most 32 rows and has git r
 | Kind | From | Its repository and pull request |
 | --- | --- | --- |
 | `created` | `gh pr create` | A line of the output, from its last 64 KB, that is exactly a pull request link. Its repository must be the one `-R` or `GH_REPO` names, else one of the repositories the remotes of the call's folder name, so a fork's pull request on its parent records the parent and an echoed link of another repository records nothing |
-| `pushed` | `git push` | The remote it names: a URL, a remote's name read through its first push URL alone when it has one (and nothing when that names no repository, such as a local path or `DISABLED`), else its first URL, or origin when it names none. Each refspec gives its row: a name, `HEAD` or `@` for the current branch, `src:dst` for `dst`, without a leading `+` and `refs/heads/`. With no refspec, the current branch. A delete, a dry run, a tag, as `refs/tags/<name>` or git's `tag <name>`, and `--all`, `--mirror`, `--branches`, or `--tags` record nothing |
+| `pushed` | `git push` | The remote it names: a URL, a remote's name read through its first push URL alone when it has one (and nothing when that names no repository, such as a local path or `DISABLED`), else its first URL. With no remote named, the one git pushes to: the current branch's `branch.<name>.pushRemote`, then `remote.pushDefault`, then the branch's `branch.<name>.remote`, then origin. Each refspec gives its row: a name, `HEAD` or `@` for the current branch, `src:dst` for `dst`, without a leading `+` and `refs/heads/`. With no refspec, the branch `push.default` sends: the current one when it is unset, `simple`, or `current`, the one `branch.<name>.merge` names when it is `upstream` and the remote is the branch's own, and none for `matching`, `nothing`, or a remote whose `remote.<name>.push` is set. A delete, a dry run, a tag, as `refs/tags/<name>` or git's `tag <name>`, and `--all`, `--mirror`, `--branches`, or `--tags` record nothing |
 | `touched` | `gh pr ready`, `edit`, `merge`, `checks`, `view`, `comment` | A link names its own repository. A number, a branch, or no target takes the repository `-R` or `GH_REPO` names, else the one repository on a declared host the folder's remotes name, and nothing when they name several, as in a fork checkout. No target is the folder's current branch |
 
 A bare `owner/name` in `-R` or `GH_REPO` names nothing while `GH_HOST` is set, since gh then reads it on that host.
@@ -1237,7 +1237,7 @@ a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` 
 line where no command, a nested one included, runs `cd`, `pushd`, or `popd`, plain or through `builtin`, and nothing
 else moves the call; and
 otherwise none, so the call records nothing. `cd sub && gh pr create` and `git push && cd /other` record nothing.
-The current branch and the remotes are read with `git symbolic-ref` and `git config`, in that folder.
+The current branch is read with `git symbolic-ref`, and the remotes and the push settings with one `git config --get-regexp`, in that folder: no word of the line or value of the ledger reaches git's arguments.
 
 What may point a call at another repository records nothing: a folder, remote, repository, target, or refspec the shell
 fills in, a word it fills in unquoted anywhere in a `gh` call, since it may split into a second `-R`, a line that sets,

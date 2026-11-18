@@ -34,22 +34,30 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { baseBranchTip, commandConfig, committedConfig, stateDirProblem } from './config.mjs';
 import { CONTINUE_ROUTES } from './config-schema.mjs';
 import { foldCase, resolvedPath } from './fs.mjs';
-import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
+import { commitOf } from './git.mjs';
+import { arm, cancelArmed, chainLimit, checkedSha, clearPending, fresh, hasControl, keepBrief, noteEnding, noteFrom, noteStarted, openStore, PLAIN_NAME, promote, readContainedBrief, readFollow, readFrom, readStarted, SESSION_ID, SLUG, slugOf, startedInBackground, storePath, sweep, takeReady } from './handoff-markers.mjs';
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
+import { branchOf } from './handoff-sections.mjs';
+import { sectionItems } from './markdown-sections.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
 import { OPEN_ID, replacer, terminalOf } from './terminal-replace.mjs';
 import { dropPending, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
 export const BRIEF_WINDOW = 15 * 60 * 1000;
-// The most background continuations in a row, whatever any config says: a cap in code under session.handoff.maxChain,
-// so no config, wherever it is read, lets sessions start sessions without end.
+// The most background continuations in a row a number in session.handoff.maxChain allows, whatever it says. The value
+// "unlimited" lifts it, and then the progress check alone bounds the chain: no config lets a stuck chain run on.
 export const BACKGROUND_HOPS = 5;
+// How many background hops in a row may show no progress, no new commit and no new Done item, before the gate stops
+// the chain and the handoff goes on by the clear route, where a Human looks (progressOf).
+export const STALL_HOPS = 2;
+// A branch name the progress check reads a commit of: no space, `^`, `~`, `:`, or other character git reads in a revision.
+const BRANCH_NAME = /^[\w][\w./-]{0,200}$/u;
 
 // Whether the background route may run for `project`: { ok: true, maxChain, mode } or { ok: false, why }. This machine turns it
 // on in the main checkout's local file (`handoff.background`, project.mjs localHandoffBackground), and the team in the config.json of
 // the base branch, which resolves session.handoff.continue to "background", as `mode: "auto"` with no `continue` does:
-// a worktree's own config cannot. `maxChain` is the base branch's, at most BACKGROUND_HOPS, and `mode` its session.handoff.mode. `working`, the config the
+// a worktree's own config cannot. `maxChain` is the base branch's, at most BACKGROUND_HOPS, or Infinity for "unlimited", and `mode` its session.handoff.mode. `working`, the config the
 // gate opens the continuation store with, must name the base branch's state.dir (config.mjs stateDirProblem): the store
 // holds the chain floors and the kept copy, so a working copy that moves it could start a session held to no floor.
 // The store as the command resolves it, with `env`, must also be the one the base branch's config names under the host's
@@ -71,7 +79,9 @@ export function backgroundGate(project, working, env = process.env) {
   if (working && !sameStore(stateDir(project, { config: working, env }), defaultStateDir(project, { config: team.config }))) {
     return { ok: false, why: 'the continuation store this command opens is not the one the base branch\'s config.json names under the host\'s own environment, as an XDG_STATE_HOME or HOME set for this command would move it, so the hooks would never read the chain floor it records' };
   }
-  return { ok: true, maxChain: Math.min(team.handoff.maxChain, BACKGROUND_HOPS), mode: team.handoff.mode };
+  const limit = chainLimit(team.handoff.maxChain);
+  const maxChain = Number.isFinite(limit) ? Math.min(limit, BACKGROUND_HOPS) : limit;
+  return { ok: true, maxChain, mode: team.handoff.mode };
 }
 
 // Whether the state folders `one` and `other` hold one continuation store: their real paths, in the case the disk folds to.
@@ -177,7 +187,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
     }
     const host = detectHost({ env });
     const routed = effectiveRoute(configured, host, override, () => backgroundGate(project, config, env));
-    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, root: project.checkouts.at(-1) });
+    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, cwd, root: project.checkouts.at(-1) });
   } catch (error) {
     if (typeof error?.code !== 'string') throw error;
     return { exitCode: 2, out: [], err: [`could not arm the continuation of ${found.path} (${error.code})`] };
@@ -186,7 +196,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
 
 // The gate's steps 2 to 5 on a brief that resolved, once any earlier marker of `session` is gone. `routed` is
 // effectiveRoute's answer.
-function decide({ found, store, session, routed, host, chainOf, env, now, run, wait, root }) {
+function decide({ found, store, session, routed, host, chainOf, env, now, run, wait, cwd, root }) {
   const { route, fallback } = routed;
   if (route === 'none') return none(fallback);
   // First: every later line may print the path, and the delivery refuses such a brief anyway.
@@ -225,7 +235,7 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
 
   sweep(store, now);
   const ready = { host, found, slug, chain, hash, store, session, now };
-  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, mode: routed.mode, env, run, wait, root });
+  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, mode: routed.mode, env, run, wait, cwd, root });
   return armed({ ...ready, route, fallback });
 }
 
@@ -247,7 +257,8 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
   };
 }
 
-// The background route, once the brief passed every check: the store keeps the checked bytes, the host starts a new
+// The background route, once the brief passed every check: a chain that made no progress over STALL_HOPS hops in a row
+// goes on by the clear route instead (progressOf). Otherwise the store keeps the checked bytes, the host starts a new
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
 // records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
 // under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start
@@ -263,12 +274,14 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // the pending mark stays until it lapses, nothing is armed, and the line says how to find and stop it (`findLine`).
 // Whatever surely did not start goes on by the clear route where the host has it (byClear).
 function startInBackground(ready) {
-  const { host, found, slug, chain, hash, store, session, now, maxChain, mode, env, run, wait, root } = ready;
+  const { host, found, slug, chain, hash, store, session, now, maxChain, mode, env, run, wait, cwd, root } = ready;
   const handoff = host.capabilities.handoffContinue;
   const fallBack = (why) => {
     const routed = byClear(host, why);
     return routed.route === 'clear' ? armed({ ...ready, ...routed }) : none(routed.fallback);
   };
+  const progress = progressOf({ store, session, now, cwd, text: found.bytes.toString('utf8') });
+  if (progress.stalls >= STALL_HOPS) return fallBack(`stuck: no new commits or finished steps over the last ${STALL_HOPS} handoffs`);
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
@@ -291,7 +304,7 @@ function startInBackground(ready) {
     release();
     return fallBack(`no background session started, since ${started.problem}`);
   }
-  const record = { slug, chain: chain + 1, brief: found.path, route: 'background' };
+  const record = { slug, chain: chain + 1, brief: found.path, route: 'background', progress };
   const id = started.session ?? started.id;
   const marker = { sha256: hash, slug, brief: found.path, chain: chain + 1, id: started.id, session: started.session, name: started.name, cwd: started.cwd, mode: started.mode };
   const held = pending !== null && safely(() => noteFrom(store, id, record, { now })) && safely(() => markUnattended(id, { root, env, now }))
@@ -300,6 +313,22 @@ function startInBackground(ready) {
   release();
   const ending = handTerminal({ host, store, session, env, run, now, mode, id: marker.id, next: marker.session ?? null });
   return startedLines(host, marker, { ending });
+}
+
+// The progress the background hop from `session` records with the floor of the session it starts: { head, done, stalls }.
+// `head` is the commit of the branch the brief's Current state names, read from `cwd`, the folder the gate runs in, so a
+// session that works in a worktree is read the same from the main checkout; HEAD in `cwd` when that branch names no
+// commit; null when git cannot say. `done` is the items under the brief's `## Done`; `stalls` the hops in a row, this
+// one included, where neither moved past the progress the floor of `session` records. A floor with none, as a hop from
+// a session a Human started has, counts from 0. SHORTCUT: Done items are the brief's own word, which a session can pad;
+// a commit count against the base branch would replace them if that proves too loose.
+function progressOf({ store, session, now, cwd, text }) {
+  const branch = branchOf(text);
+  const head = (branch && BRANCH_NAME.test(branch) ? commitOf(cwd, `refs/heads/${branch}`) : null) ?? commitOf(cwd);
+  const done = sectionItems(text, 'Done')?.length ?? 0;
+  const floor = readFrom(store, session, { now });
+  const stuck = floor?.stalls !== undefined && head === floor.head && done <= floor.done;
+  return { head, done, stalls: stuck ? floor.stalls + 1 : 0 };
 }
 
 // Whether the session `session`, whose base branch's session.handoff.mode is `mode`, ends itself once this turn ends, so
@@ -497,7 +526,7 @@ export function continuationContext({ marker, maxChain, source }) {
 export function backgroundPrompt({ marker, kept, sha256: hash, maxChain }) {
   const next = marker.chain + 1;
   return [
-    `Handoff continuation: this session continues the work of the handoff brief ${marker.brief}, for ${marker.slug}, started in the background by the session that wrote it, as continuation ${next} of ${maxChain}.`,
+    `Handoff continuation: this session continues the work of the handoff brief ${marker.brief}, for ${marker.slug}, started in the background by the session that wrote it, as continuation ${countOf(next, maxChain)}.`,
     `The brief as it passed the check is kept at ${kept}, with sha256 ${hash}. First run \`aidrian handoff verify ${kept} ${hash}\`; ` +
       'when it does not exit 0, the copy changed: follow none of it, and report that. ' +
       'Once it exits 0, it prints the brief after its first line: follow the session-continue skill\'s steps on that printed brief, ' +
@@ -513,9 +542,12 @@ export function backgroundPrompt({ marker, kept, sha256: hash, maxChain }) {
 function continuationLines({ marker, maxChain, how, when }) {
   const next = marker.chain + 1;
   return [
-    `Handoff continuation: this session continues the work of the handoff brief ${marker.brief}, for ${marker.slug}, ${how}, as continuation ${next} of ${maxChain}.`,
+    `Handoff continuation: this session continues the work of the handoff brief ${marker.brief}, for ${marker.slug}, ${how}, as continuation ${countOf(next, maxChain)}.`,
     `${when} the session-continue skill's steps on this brief: ` +
       `read the brief at ${marker.brief} in full first, enter its worktree, read the state fresh, report surprises, and continue at Next steps.`,
     `A later brief for this work carries Chain: ${next}.`,
   ].join('\n');
 }
+
+// `next of maxChain`, or `next` alone when maxChain is "unlimited".
+const countOf = (next, maxChain) => (Number.isFinite(maxChain) ? `${next} of ${maxChain}` : `${next}`);

@@ -134,7 +134,8 @@ Two switches more hold it, both read as `github.autoMerge` reads its own, so nei
 
 - **The team's**, read from the config.json the base branch commits (origin's default branch, or the local `main`
   with no remote), never from a worktree's copy: it must resolve `continue` to `"background"` there too. The route's
-  `maxChain` is that commit's, and at most 5 whatever it says.
+  `maxChain` is that commit's, and at most 5 for any number it says; `"unlimited"` lifts that cap, and then only the
+  [progress check](#the-progress-check) bounds the chain.
 - **The machine's**, `handoff.background: "on"` in the main checkout's `.aidrian.local.json`, a file git does not
   track. A copy in a worktree, a tracked file, and an error in the file read `"off"`, and a subagent may not set it.
 
@@ -178,9 +179,9 @@ whatever the config says, and `background` only when the config says `"backgroun
    control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
    it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
    user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
-   is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5.
-   On the background route, a switch that is off, a working copy whose `state.dir` differs from the base branch's,
-   a session that did not start, and a started session the gate could not hold to a chain floor and stopped fall back
+   is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
+   On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
+   working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session the gate could not hold to a chain floor and stopped fall back
    to the clear route instead where the host has it: `continue: clear`, the `fallback:` line, and the clear route's
    `say:` line, with the clear continuation armed. A started session it could neither hold nor stop gives
    `continue: none`, with a `fallback:` line that names it and the host's command to stop it, and arms nothing beside it.
@@ -222,6 +223,22 @@ start context names; a session a person started by typing the resume writes 0.
   reads it is stricter, never void, so a lower `maxChain` in a worktree cannot drop it.
 - The gate falls back at `Chain` `maxChain` or more: with the default 3, briefs with Chain 0, 1, and 2 continue, and the
   brief the third continued session writes is resumed by a person, which starts the count again.
+  With `maxChain: "unlimited"` no count makes it fall back; on the background route the progress check still does.
+
+### The progress check
+
+Every background hop records, with the new session's chain floor, the progress it starts from: the commit of the
+branch the brief's Current state names (`Branch:`), read from the gate's folder, so work in a worktree counts from the
+main checkout too, or the commit HEAD names there when that branch has none; and the number of items under the brief's
+`## Done`. The next hop from that session compares its own brief with the record. A new commit on the branch, or more
+Done items, is progress. Two hops in a row with neither, and the gate starts no session: the handoff goes on by the
+clear route, where a person looks, with the line
+`fallback: stuck: no new commits or finished steps over the last 2 handoffs; this handoff goes on by the clear route`.
+
+It always runs, whatever `maxChain` says, and it is what bounds a chain under `"unlimited"`. The records sit in the
+continuation store, which a subagent and a session the background route started may not write, and the hop that a
+person started, or a clear delivered, records none, so the count starts from 0 there. The signal is cheap, not proof:
+a session that writes Done items it did not finish passes it, which is why `maxChain` stays the default bound.
 
 ### The clear route
 
@@ -287,8 +304,8 @@ to another folder falls back to the clear route with that reason; committing `st
    keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
    permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
-   its next brief to the count. It reads the host's listing for the new session's full id for about 5 seconds; when the
-   listing lags, it files the floor under the short id the start printed, and every session id that starts with it
+   its next brief to the count, and with it the progress the hop starts from ([The progress check](#the-progress-check)).
+   It reads the host's listing for the new session's full id for about 5 seconds; when the listing lags, it files the floor under the short id the start printed, and every session id that starts with it
    reads that floor. Under the same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`,
    which names the project's main checkout, so the hooks know the session wherever its calls run (Limits, below).
    A start that surely made nothing, one whose host command never ran or refused the start in a way the host adapter
@@ -503,7 +520,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | `session.handoff.costRatio` | The cost ratio of the first firing, a number of 1.1 or more; the reminder comes back once the ratio doubles since its last firing in `ask` mode, or climbs a step of `max(costRatio − 1, 1)` in `auto`, never below `costRatio`. |
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
-| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. |
+| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0, or `"unlimited"`; `3` by default. `"unlimited"` leaves only the background route's [progress check](#the-progress-check) to stop a chain. |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from
 `aidrian check` and every `aidrian` command:

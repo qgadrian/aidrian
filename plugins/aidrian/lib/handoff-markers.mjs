@@ -85,13 +85,17 @@ export function slugOf(name) {
   return BRIEF_FILE.exec(base)?.[2] ?? base.replace(/\.md$/u, '');
 }
 
+// The number of continuations in a row session.handoff.maxChain allows: Infinity for "unlimited", where only the
+// background route's progress check (lib/handoff-continue.mjs) bounds a chain.
+export const chainLimit = (maxChain) => (maxChain === 'unlimited' ? Infinity : maxChain);
+
 // The store of the state folder `state`: { dir, handoffs, maxChain, uid, refused }. `dir` is the real path of the
 // store's folder. `refused` says why no marker may be written or read there, or is null: the store's folder is a
 // symlink; it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the
 // case it was spelled in; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
 // writable by every user, where the system has user ids. A folder its group may write passes: a umask of 002 is common. A folder not made yet passes,
-// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds every
-// chain a marker holds. `uid` is this process's user, null where the system has none, and every read refuses a marker
+// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, as chainLimit reads
+// it, which bounds every chain a marker holds. `uid` is this process's user, null where the system has none, and every read refuses a marker
 // or a brief another user owns.
 export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
@@ -108,7 +112,7 @@ export function openStore(state, { checkouts = [], maxChain, uid = processUid() 
     const loose = [state, handoffs, storePath(state)].map((dir) => [dir, looseFolder(dir, uid)]).find(([, why]) => why);
     if (loose) refused = `the folder ${loose[0]} of the continuation store ${loose[1]}, so no continuation marker is kept there; make it the user's own, writable by that user alone`;
   }
-  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain, uid, refused });
+  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain: chainLimit(maxChain), uid, refused });
 }
 
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
@@ -208,8 +212,15 @@ function isArmed(value, maxChain) {
 
 const isReady = (value, maxChain) => isArmed(value, maxChain) && Number.isFinite(value.ended_at) && isPid(value.host_pid);
 
+// A floor's progress, which only the background route records: none, or the commit HEAD named (null when git could not
+// say), the Done items the brief held, and how many hops in a row before it showed neither moving.
+const isProgress = (value) => (value.head === undefined && value.done === undefined && value.stalls === undefined)
+  || ((value.head === null || (typeof value.head === 'string' && /^[0-9a-f]{40,64}$/u.test(value.head)))
+    && whole(value.done, 0, CHAIN_CEILING) && whole(value.stalls, 0, CHAIN_CEILING));
+
 const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
-  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at);
+  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at)
+  && isProgress(value);
 
 const isStarted = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
   && typeof value.slug === 'string' && SLUG.test(value.slug) && briefOf(value.brief, value.slug) && whole(value.chain, 0, CHAIN_CEILING)
@@ -342,10 +353,11 @@ export function clearPending(store, { now = Date.now() } = {}) {
   return { listed, armed };
 }
 
-// Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to.
+// Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to, and
+// the background route's `progress`, { head, done, stalls }, when it is given (isProgress).
 // `session` may be the short id a host printed for a session it started, which readFrom matches by prefix.
-export function noteFrom(store, session, { slug, chain, brief, route }, { now = Date.now() } = {}) {
-  const value = { slug, chain, brief, route, at: now };
+export function noteFrom(store, session, { slug, chain, brief, route, progress }, { now = Date.now() } = {}) {
+  const value = { slug, chain, brief, route, ...progress, at: now };
   return isFrom(value) ? writeMarker(store, sessionFile('from', session), value) : null;
 }
 

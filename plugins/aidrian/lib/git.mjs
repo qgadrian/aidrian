@@ -35,6 +35,11 @@ export function currentRoot(cwd) {
   return firstLine(['rev-parse', '--show-toplevel'], cwd);
 }
 
+// The commit `ref` names in the repository that `cwd` is in, HEAD by default, or null when it names none.
+export function commitOf(cwd, ref = 'HEAD') {
+  return firstLine(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd);
+}
+
 // `cwd` from the top of its checkout, with a trailing slash: '' at the top, or when git cannot answer.
 export function showPrefix(cwd) {
   return firstLine(['rev-parse', '--show-prefix'], cwd) ?? '';

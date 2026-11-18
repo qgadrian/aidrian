@@ -65,6 +65,7 @@ export const TYPES = {
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   positiveOrNull: [(value) => value === null || (Number.isInteger(value) && value > 0), 'a whole number above 0, or null'],
+  positiveOrUnlimited: [(value) => value === 'unlimited' || (Number.isInteger(value) && value > 0), 'a whole number above 0, or "unlimited"'],
   budgetEnforce: [(value) => ['warn', 'fail'].includes(value), '"warn" or "fail"'],
   docBytes: [
     (value) => isObject(value) && Object.entries(value).every(([doc, bytes]) => isText(doc) && Number.isInteger(bytes) && bytes > 0),

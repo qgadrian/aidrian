@@ -343,6 +343,30 @@ test('the normal path: wait returns on the result while the issue\'s session is 
   assert.equal(later.out[1], `started ENG-4 attempt 1 session ${STARTED[1].id}`);
 });
 
+test('once the forge no longer allows project runs, wait still settles the run to idle, stopping a session past its hours, and start refuses', (t) => {
+  let allow = true;
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 1 } });
+  const contents = fx.forge.contents;
+  fx.forge.contents = (...args) => {
+    const read = contents(...args);
+    const config = JSON.parse(Buffer.from(read.content, 'base64').toString('utf8'));
+    return { ...read, content: Buffer.from(JSON.stringify({ ...config, projectRun: { ...config.projectRun, allow } })).toString('base64') };
+  };
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  allow = false;
+  const note = 'note policy: the default branch main on the forge does not set projectRun.allow to true; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, 1';
+  const within = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.equal(within.exitCode, 0, within.err.join('\n'));
+  assert.deepEqual(within.out, [note, 'running ENG-1']);
+  const later = Date.now() + 2 * 60 * 60 * 1000;
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, [note, 'ended ENG-1 timeout -> open', 'idle']);
+  assert.equal(fx.claude.states[STARTED[0].session], 'stopped');
+  const refused = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.err.join('\n'), /does not set projectRun\.allow to true/u);
+  assert.equal(fx.claude.starts().length, 1, 'wait and the refused start started nothing');
+});
+
 test('after wait stops an issue\'s session past its hours, the host lists it stopped, and the issue starts again', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 1 } });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);

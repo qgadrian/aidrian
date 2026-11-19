@@ -381,6 +381,9 @@ test('the shell function records the session it opens by a plain id, typed or fr
     assert.deepEqual(chained.follows, ['', 'first-id', 'second-id'], `${shell}: chained`);
     assert.equal(existsSync(path.join(chained.records, `follows-${chained.shell}`)), false, `${shell}: chained`);
 
+    const flagged = inShell(t, { shell, script: 'claude --skip-something attach abcd1234' });
+    assert.deepEqual(flagged.follows, ['abcd1234'], `${shell}: typed through an alias that adds an option`);
+
     const stale = inShell(t, { shell, script: 'd="$XDG_STATE_HOME/aidrian/handoff-terminals"; mkdir -p "$d"; echo "abcd1234 1" > "$d/follows-$$"; claude --resume x' });
     assert.deepEqual(stale.follows, [''], `${shell}: a record an earlier run left is gone before a plain run starts`);
 

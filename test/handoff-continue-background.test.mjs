@@ -1104,6 +1104,7 @@ test('a background session the gate started ends itself once its turn ends, in a
     ['followed in the store, auto mode', { mode: 'auto' }, 'store', 'switch'],
     ['the shell function opened it by its id', { mode: 'auto' }, 'shell', 'switch'],
     ['the shell function opened it by a short id it starts with', { mode: 'auto' }, 'short', 'switch'],
+    ['the shell function opened it in one terminal while the store names another', { mode: 'auto' }, 'both', 'switch', { rows: [...ATTACHED, '4343 900 -zsh', '5001 4343 claude'] }],
     ['followed, but the shell runs no client any more', { mode: 'auto' }, 'store', 'stop', { rows: ['1 0 launchd', '4242 900 -zsh'] }],
     ['the shell function\'s record names another session', { mode: 'auto' }, 'other', 'stop'],
     ['no terminal follows it', { mode: 'auto' }, null, 'stop'],
@@ -1116,15 +1117,16 @@ test('a background session the gate started ends itself once its turn ends, in a
     t.after(() => rmSync(xdg, { recursive: true, force: true }));
     const env = { ...setting.env, XDG_STATE_HOME: xdg, ...attended };
     assert.ok(markUnattended(SESSION, { root: setting.dir, env }), name);
-    if (follows === 'store') assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
+    if (follows === 'store' || follows === 'both') assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
     if (follows === 'shell') followsRecord(env, 4242, SESSION);
     if (follows === 'short') followsRecord(env, 4242, 'session-');
     if (follows === 'other') followsRecord(env, 4242, 'zzzz9999');
+    if (follows === 'both') followsRecord(env, 4343, SESSION);
     const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir }).run, rows), env });
     assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
     assert.ok(result.out[1].endsWith({ switch: SWITCHES, stop: STOPS }[ending] ?? PLAIN), `${name}: ${result.out[1]}`);
     const own = follows === 'short' ? 'session-' : SESSION;
-    const expected = { switch: { own, shell: 4242 }, stop: { own: SESSION, shell: null } }[ending];
+    const expected = { switch: { own, shell: follows === 'both' ? 4343 : 4242 }, stop: { own: SESSION, shell: null } }[ending];
     assert.deepEqual(takeEnding(setting.store, SESSION), expected ? { ...expected, id: 'abcd1234', next: NEW_SESSION } : null, name);
   }
 });
@@ -1164,7 +1166,7 @@ test('the terminal follows a chain of background hops the shell function attache
       follow: ({ session, shell }) => noteFollow(setting.store, session, { shell }), env, run, start: (each) => helpers.push(each),
     });
     assert.equal(ended, true, `hop ${at + 1}`);
-    assert.deepEqual(helpers, [{ host: 'claude-code', own: at === 0 ? hop.short : hop.full, session: hop.full, delay: END_DELAY }], `hop ${at + 1} stops itself`);
+    assert.deepEqual(helpers, [{ host: 'claude-code', own: hop.short, session: hop.full, delay: END_DELAY }], `hop ${at + 1} stops itself`);
     assert.match(readFileSync(shellRecord, 'utf8'), new RegExp(`^${next.short} \\d+\\n$`, 'u'), `hop ${at + 1}`);
     // The client exits, and the shell function reads the record and attaches the next hop, as it does in a shell.
     rmSync(shellRecord);

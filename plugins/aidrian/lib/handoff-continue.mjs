@@ -361,14 +361,15 @@ function unhooked({ host, store, session, env, now, mode }) {
 
 // For a background session, on a host that can end its own session, which no Human attends as the host tells it, so a
 // former background session a Human resumed never names itself: { own, shell }, else null. `shell` is the shell whose
-// terminal follows it, as the store records once the session before it ended itself, or as the shell function recorded
-// when it opened this session, the first of them that still runs the host's client (replaceTerminal.hasClient); else
-// null, and the session only stops. `own` is the id that record names it by, or its own.
+// terminal follows it, as the shell function recorded when it opened this session, which it deletes once that program
+// exits, or else as the store records once the session before it ended itself, which may be stale; the first of them
+// that still runs the host's client (replaceTerminal.hasClient); else null, and the session only stops. `own` is the id
+// that record names it by, or its own.
 function followed({ host, store, session, env, run, now }) {
   const replace = replacer(host);
   if (typeof replace.endOwn !== 'function' || replace.attended(env)) return null;
   const alive = (shell) => safely(() => replace.hasClient?.({ shell, run })) === true;
-  const follows = [safely(() => readFollow(store, session, { now, live: alive })), safely(() => readFollows(session, { env, now, live: alive }))];
+  const follows = [safely(() => readFollows(session, { env, now, live: alive })), safely(() => readFollow(store, session, { now, live: alive }))];
   const live = follows.find((follow) => follow !== null);
   return live ? { own: live.id, shell: live.shell } : { own: session, shell: null };
 }

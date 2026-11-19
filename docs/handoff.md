@@ -447,12 +447,13 @@ With no record, or one it refuses, it returns the exit code of the last program 
 but that id. Each exit is caught, and every variable is set before it is read, so a shell with `set -e` or `set -u`
 still reaches the record.
 
-Each time the function opens a session by a plain id, typed as `claude attach <id>` or from the record, it first
-writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, in a folder that is a real one the
-user owns, made 0700 first, and deletes it once that program exits. Each run first deletes a record an earlier run
-left, so a terminal killed mid-run never follows a session it no longer shows. The gate of that session reads it to know this terminal follows it,
-so a terminal the Human attached by hand switches on that session's handoff too. `claude attach '<name>'`, by a name,
-writes none, and that session's handoff only stops it.
+Each time the function opens a session by a plain id, typed as `claude attach <id>`, after any options an alias adds,
+or from the record, it first writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, in a
+folder that is a real one the user owns, made 0700 first, and deletes it once that program exits. Each run first
+deletes a record an earlier run left, so a terminal killed mid-run never follows a session it no longer shows. The gate
+of that session reads it, for 12 hours (`FOLLOW_AGE`), to know this terminal follows it, so a terminal the Human
+attached by hand switches on that session's handoff too. `claude attach '<name>'`, by a name, never matches, and that
+session's handoff only stops it.
 
 An alias for `claude` takes the place of the function when typed. One whose value starts with `claude`, such as
 `alias claude='claude --dangerously-skip-permissions'`, still reaches the function, flag and all. One that points
@@ -486,8 +487,9 @@ terminal opens is a background session: no Human attends it as far as the hooks 
 `AIDRIAN_SHELL_PID`. When it hands off in turn, with every switch above on and its launch confirmed, the gate notes a
 request that names the session's own id in place of a host process; a session the host says a Human attends, as a
 former background session a Human resumed, never gets one. The request names a shell when one follows the session: the
-store's `follow-` record for it, under its full id or the short one the host printed, or else the shell function's
-`follows-` record that opened it by the full id or a short one of at least 8 characters (`SHORT_ID_MIN`), the first whose shell is alive and the parent of a `claude` process, as
+shell function's `follows-` record that opened it by the full id or a short one of at least 8 characters
+(`SHORT_ID_MIN`), or else the store's `follow-` record for it, under its full id or the short one the host printed,
+which can be stale; of each, the latest whose shell is alive and the parent of a `claude` process, as
 a terminal attached to the session is. The host adapter tells that (`replaceTerminal.hasClient`), by pid, parent, and
 program name alone. The say line then says the terminal switches, with nothing to open by hand. With no such shell, the
 request names none, and the say line says the session stops once this turn ends, then how to open the new one.

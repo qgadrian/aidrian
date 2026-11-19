@@ -286,7 +286,7 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
 
   assert.deepEqual(log().map((row) => [row.agent_id, row.delivered, row.running, row.handoffs_written, row.sent_back]), [
     ['p1', 'chat', 0, 1, false], ['p2', 'file', 0, 1, false], ['p3', 'chat', 0, 1, false], ['p4', 'chat', 0, 0, false],
-    ['p5', 'chat', 1, 0, true], ['p5', 'chat', 0, 1, false],
+    ['p5', 'pending', 1, 0, true], ['p5', 'chat', 0, 1, false],
   ]);
 });
 

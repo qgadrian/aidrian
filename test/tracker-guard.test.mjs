@@ -1108,7 +1108,7 @@ const runTracker = {
   team: { createFields: ['board'], keyFields: ['ticket'] },
   unguardedRoutes: [],
   run: {
-    issue: { tool: 'put_ticket', key: 'ticket', status: 'phase', label: 'tags', started: 'active', done: 'closed', fields: ['points', 'edits'], text: ['edits'] },
+    issue: { tool: 'put_ticket', key: 'ticket', status: 'phase', label: 'tags', started: 'active', done: 'closed', fields: ['points', 'edits'], text: ['edits'], inserted: ['new', 'text'] },
     comment: { tool: 'note_ticket', key: 'ticket', body: 'text' },
   },
   mergeVerbs: ['land_*'],
@@ -1141,6 +1141,11 @@ test('an issue\'s session sets only the started status, and writes plain text', 
     assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'append', text }] }), /put_ticket sets edits with a mention/u, text);
   }
   assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Two\n\nparagraphs, plain; v1.2 shipped.' }), null, 'white space and plain text pass');
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: 'see [spec](https://x.example/a)', new: 'see the spec' }] }), null, 'an anchor is not inserted text');
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: 'x', new: 'see [spec](https://x.example/a)' }] }), /sets edits with a mention/u);
+  assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Updated `config.json` on `api.example.org`.' }), null, 'a file or host name in backticks');
+  assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Updated config.json.' }), /put a file or host name in backticks, such as `config\.json`/u);
+  assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'run `rm -rf x`' }), /sets text with a mention/u, 'a code span around anything but one file or host name');
 });
 
 test('for an issue\'s session, the driver, and a held session, every call on a tracker server is a write unless its name reads', () => {
@@ -1174,7 +1179,8 @@ test('a tracker\'s merge tool is refused to every session, pointing at gh pr mer
   for (const writer of [child, driver, { role: 'unattended' }, { role: 'held', why: 'x' }]) {
     assert.match(runJudge(writer, 'land_change', { change: '12' }), /merges code through the tracker.*only through the pr-auto-merge skill/u, writer.role);
     const elsewhere = runWriteRefusal({ writer, tool: 'mcp__renamed_box__land_change', input: {}, trackers: [runTracker] });
-    assert.match(elsewhere?.reason ?? '', /land_change merges code/u, `${writer.role}: a server no list names`);
+    assert.match(elsewhere?.reason ?? '', /land_change is named like a tool that merges, and a session no Human attends never calls one, on any server/u, `${writer.role}: a server no list names`);
+    assert.doesNotMatch(elsewhere?.reason ?? '', /through the tracker/u);
   }
   assert.equal(runWriteRefusal({ writer: null, tool: 'mcp__renamed_box__land_change', input: {}, trackers: [runTracker] }), null, 'attended, on a server no tracker is known on');
   assert.equal(runJudge({ role: 'unattended' }, 'put_ticket', { ticket: 'TB-9' }), null);
@@ -1237,4 +1243,10 @@ test('the shipped tracker declares the run tools, statuses, merge verbs, and rea
     assert.ok((each.mergeVerbs ?? []).every((verb) => each.writeVerbs.some((write) => nameMatches(write, verb.replace(/\*$/u, 'x')))), `${each.id}: a merge verb is a write too`);
     for (const call of each.readyCalls ?? []) assert.ok(each.writeVerbs.some((verb) => nameMatches(verb, call.tool)), call.tool);
   }
+});
+
+test('the shipped tracker\'s read-only tools a first word does not name pass for an issue\'s session', () => {
+  const child = { role: 'child', run: 'launch', issue: 'ENG-1' };
+  for (const tool of ['extract_images', 'get_attachment', 'list_comments']) assert.equal(runWriteRefusal({ writer: child, tool: `mcp__linear__${tool}`, input: {} }), null, tool);
+  assert.match(runWriteRefusal({ writer: child, tool: 'mcp__linear__delete_comment', input: { id: 'c1' } })?.reason ?? '', /is not a write the run's tools make/u);
 });

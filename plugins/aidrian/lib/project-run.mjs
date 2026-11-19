@@ -29,6 +29,7 @@ import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
+import { issueTextsOf, writeIssueTexts } from './project-issue-text.mjs';
 import { MARK_FOLDER, markDriver, readUnattendedMark } from './unattended-mark.mjs';
 
 // A run id: lower-case letters, digits, and dashes, starting with a letter or digit.
@@ -202,6 +203,17 @@ export function readCapped(file, cap) {
     return { problem: `${file} cannot be read (${error.code ?? error.message})`, code: error.code };
   } finally {
     if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The parsed snapshot input at `file`, read as readCapped reads, or null.
+function rawInput(file) {
+  const read = readCapped(file, INPUT_CAP);
+  if (read.problem) return null;
+  try {
+    return JSON.parse(read.bytes.toString('utf8'));
+  } catch {
+    return null;
   }
 }
 
@@ -382,6 +394,9 @@ export function initRun({ project, config, run, file, session, input = {}, env =
     mkdirSync(runFolder(state, run), { mode: 0o700 });
     const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...read.snapshot })}\n`;
     writeFileSync(snapshotFile(state, run), text, { mode: 0o600, flag: 'wx' });
+    // Each issue's text, kept apart from snapshot.json, for its session to read from a file (lib/project-issue-text.mjs).
+    const texts = issueTextsOf(rawInput(file), new Set(read.snapshot.issues.map((issue) => issue.key)));
+    const kept = writeIssueTexts(runFolder(state, run), texts);
     const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
     // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (recordIssue).
     appendRow(ledgerFile(state, run), row);
@@ -391,6 +406,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
         `run: ${run}`,
         `issues: ${read.snapshot.issues.length}`,
         `repository: ${repository.host}/${repository.owner}/${repository.name}`,
+        ...(kept ? [`issue text: ${kept} of ${read.snapshot.issues.length} kept for the issues' sessions to read`] : []),
         ...(read.dropped ? [`dropped: ${read.dropped} fields the snapshot never keeps, such as titles and bodies`] : []),
         `folder: ${runFolder(state, run)}`,
       ],

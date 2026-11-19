@@ -27,7 +27,7 @@
 // project run's `project`.
 
 import { claimStart, dropClaim, keepClaim, noteFrom, noteStarted, readStarted } from './handoff-markers.mjs';
-import { dropPending, markPending, markUnattended } from './unattended-mark.mjs';
+import { dropPending, markDriver, markPending, markUnattended } from './unattended-mark.mjs';
 
 // What `act` returns, or null when it throws: a store write the disk refuses.
 export function safely(act) {
@@ -59,14 +59,16 @@ export function safely(act) {
 // every read of the claim and the start record takes the time afresh, so a record written after `now` holds.
 // `intent()`, when given, is the caller's write-ahead record, which must return true for the start to go on; each
 // outcome then says, as `intended`, whether it ran, so the caller knows whether a record of the start is there to settle.
-// The background handoff route gives none, and its outcomes are as they were.
-export function startHeld({ session, launch, stop, ended, store, root, floor, record, tags = null, env, now, intent }) {
+// The background handoff route gives none, and its outcomes are as they were. `driver`, { run, root, state }, is the
+// driver mark of `session` when it drives a project run: the new session gets the same mark with its own, or it counts
+// as unheld and is stopped, so a driver's continuation is held as a driver from its first call.
+export function startHeld({ session, launch, stop, ended, store, root, floor, record, tags = null, driver = null, env, now, intent }) {
   const state = { pending: null, claimed: false, refusal: null, ended: false, intended: false, identified: null, cwd: null };
-  const answer = held({ session, launch, stop, ended, store, root, floor, record, tags, env, now, intent }, state);
+  const answer = held({ session, launch, stop, ended, store, root, floor, record, tags, driver, env, now, intent }, state);
   return typeof intent === 'function' ? { ...answer, intended: state.intended } : answer;
 }
 
-function held({ session, launch, stop, ended, store, root, floor, record, tags, env, now, intent }, state) {
+function held({ session, launch, stop, ended, store, root, floor, record, tags, driver, env, now, intent }, state) {
   const release = () => state.pending && safely(() => dropPending(state.pending));
   const settle = (result, keep = false) => {
     if (keep) safely(() => keepClaim(store, session, { now: Date.now() }));
@@ -75,7 +77,7 @@ function held({ session, launch, stop, ended, store, root, floor, record, tags, 
   };
   let started;
   try {
-    started = launch(holdFor({ session, ended, store, root, env, intent }, state), identifyFor({ store, root, floor, tags, env, now }, state));
+    started = launch(holdFor({ session, ended, store, root, env, intent }, state), identifyFor({ store, root, floor, tags, driver, env, now }, state));
   } catch (error) {
     // Thrown after the hold, the start may have run.
     started = { problem: `the host's start failed (${error?.code ?? error?.message ?? 'no message'})`, uncertain: true };
@@ -93,7 +95,7 @@ function held({ session, launch, stop, ended, store, root, floor, record, tags, 
   }
   const id = started.session ?? started.id;
   const marker = { ...record, id: started.id, session: started.session, name: started.name, cwd: started.cwd, mode: started.mode };
-  const kept = state.pending !== null && (state.identified === id || (safely(() => noteFrom(store, id, floor, { now })) && safely(() => markUnattended(id, { root, cwd: state.cwd, env, now, tags }))))
+  const kept = state.pending !== null && (state.identified === id || (safely(() => noteFrom(store, id, floor, { now })) && safely(() => markUnattended(id, { root, cwd: state.cwd, env, now, tags })) && markedDriver(id, driver, env, now)))
     && safely(() => noteStarted(store, session, marker, { now }));
   if (!kept) return unheld({ started, stop, release, settle });
   release();
@@ -102,15 +104,18 @@ function held({ session, launch, stop, ended, store, root, floor, record, tags, 
 
 // The identify startHeld gives the adapter: files the floor and the mark of the session `{ id, session }` names, under
 // its full id or the id the host printed, while the pending mark still holds it: whether both were filed.
-function identifyFor({ store, root, floor, tags, env, now }, state) {
+function identifyFor({ store, root, floor, tags, driver, env, now }, state) {
   return ({ id, session } = {}) => {
     const own = session ?? id;
     if (state.pending === null || typeof own !== 'string') return false;
-    const filed = Boolean(safely(() => noteFrom(store, own, floor, { now })) && safely(() => markUnattended(own, { root, cwd: state.cwd, env, now, tags })));
+    const filed = Boolean(safely(() => noteFrom(store, own, floor, { now })) && safely(() => markUnattended(own, { root, cwd: state.cwd, env, now, tags })) && markedDriver(own, driver, env, now));
     if (filed) state.identified = own;
     return filed;
   };
 }
+
+// Whether the new session `id` holds the driver mark `driver` names, when there is one: filed now, or none needed.
+const markedDriver = (id, driver, env, now) => !driver || Boolean(safely(() => markDriver(id, { run: driver.run, root: driver.root, state: driver.state, env, now })));
 
 // The hold startHeld gives the adapter: the claim, then one start per session, then the pending mark. It notes in
 // `state` the pending mark's file, whether it took the claim, why it refused, as startHeld's `refused` outcome, and

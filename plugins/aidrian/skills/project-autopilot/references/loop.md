@@ -14,6 +14,7 @@ named and go on from that output as step 2 says.
 
 1. `aidrian project next <run>`:
    - `halted <cause>`: § Halt.
+   - `paused until <time>`: § Pause.
    - one `next <key> <branch>` line or more: step 2 for each, in order.
    - `wait <n> running`: step 3.
    - `done`: § Finish.
@@ -32,10 +33,10 @@ named and go on from that output as step 2 says.
    - `paused <key> ...`: that issue's session waits out a limit and goes on by itself; step 3 again.
    - `paused until <time>` with no running issue: § Pause.
    - only `running <key>` lines: step 3 again.
-   - `overdue <key> ...`: a session the run could not stop. Note it, and go on; a second `overdue` for the same issue:
-     § Stop, with that line as the cause.
+   - `overdue <key> ...` or `limited <key> attempt <n>: ... could not be stopped`: a session the run could not stop.
+     Note it, and go on; a second such line for the same issue: § Stop, with that line as the cause.
    - `idle`: step 1.
-   - exit 75: § Retry. Exit 1: § Stop.
+   - exit 75, `retry: <why>`, as when the forge cannot answer now: § Retry. Exit 1: § Stop.
 4. `aidrian project report <run> --json`, and write each report it owes as [tracker-writes.md](tracker-writes.md) says.
    Exit 75: § Retry. Exit 1: § Stop. Then step 1.
 
@@ -89,10 +90,15 @@ At the session-length reminder, a usage-limit warning, or the plan offer, hand o
    the run to the new session. The ledger holds the rest: name no issue's detail.
 3. Run `aidrian project handoff <run> <brief>` before `aidrian handoff continue <brief>`: custody moves only to a session
    started from a brief the driver recorded this way. Then follow the `session-handoff` skill's continue step.
-4. When `aidrian handoff continue` answers `continue: none`, or refuses twice, keep driving in this session: the host
-   compacts it. Never end the turn with the run still going and no driver.
+4. When `aidrian handoff continue` answers `continue: none` or `continue: clear`, or refuses twice, keep driving in this
+   session: the host compacts it, and the clear route waits on a person. Never end the turn with the run still going and
+   no driver.
 
-A run left with no driver, as after a crash, is taken up by the Human: `aidrian project resume <run>`, in a session the
-Human attends, takes custody once the host lists the last driver's sessions as ended, and that session drives on.
+A run left with no driver is taken up by the Human:
+
+- The first driver, the session the Human launched: the Human resumes that same host session, which keeps its id and
+  so the run's custody, and it drives on from the loop.
+- A background continuation the host lists as ended: `aidrian project resume <run>`, in a session the Human attends,
+  takes custody, and that session drives on. For a driver it cannot read as such, it says to resume that session instead.
 A run's driver hands off on the normal route, and its hops count as any session's. Each issue's session starts with
 its own hops, apart from the driver's.

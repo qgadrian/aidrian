@@ -22,27 +22,31 @@ Each line is `ok <name>`, `blocker <name>: <why and fix>`, `note <name>: <what>`
 | `host` | a confined start; an unverified host needs `projectRun.unverifiedHosts`; hooks trusted | as its line says |
 | `access` | push rights; an HTTPS origin, since the sandbox refuses SSH; nothing that runs outside the sandbox: other enabled plugins, user hooks, a status line, a credential helper | turn each off in the host's user settings, or the team names it in `projectRun.outsideSandbox` |
 | `usage-limit` | the host carries on by itself after a usage limit, which stops this driver too | as its line says: in Claude Code, `"autoContinueAtUsageLimit": true` in the user's settings |
-| `tracker` | the base branch's tracker, with a server of it in `projectRun.mcpServers`, the only servers an issue's session loads; no server there named like a tracker that the run rule cannot map | add the tracker's server there, on the default branch |
+| `tracker` | the base branch's tracker, and no server in `projectRun.mcpServers` named like a tracker that the run rule cannot map; with no tracker server there, a `note`: issue sessions read their issue from a file and write no tracker, and the driver reports | point the server at the tracker's own endpoint, or remove it |
 | `auto-merge` | the default branch allows auto-merge and lists `github.requiredChecks`; this machine's switch is on | a CI workflow and its checks in `github.requiredChecks`, merged before the run |
-| `handoff` | the base branch's `session.handoff.continue` is `"background"`, so the driver can hand itself on | set it on the default branch |
+| `handoff` | the base branch's `session.handoff.continue` is `"background"`, so the driver can hand itself on; `"clear"` needs a person, so it blocks | set it on the default branch |
 | `reviewer`, `reviewer-seen` | `github.reviewer` is set, and the bot reviewed a recent pull request | install the bot and request one review; with no pull request yet, a `note`: the first one proves it, and the merge's trust check holds every merge until then |
 | `ci` | the repository has an active CI workflow | merge one before the run |
 
 Answer each `ask` line with the tool it names, or the forge's and tracker's own tools; a `no` is a blocker.
+A `note mcp-servers` line names servers the run rule maps to no tracker: each must be no tracker connection.
 `ask labels` names the tracker's label and status reads: the decision label, and `projectRun.blockedStatus` when set,
 must exist in the team.
 
 ## 3. The snapshot
 
-Hand the read to one subagent, so its hundreds of issues never enter this session. Give it the project, the run id
+Hand the read to one subagent, so its hundreds of issues never enter this session: one with Write and the tracker's
+tools, such as `general-purpose`. Give it the project, the run id
 (the project's name in lowercase words joined by `-`, then the date, such as `billing-v2-20261118`), the file
 `<state>/tmp/<run>.snapshot.json`, where `<state>` is the folder `aidrian state` prints, and these rules:
 
 - Read with the tracker's tools (`knowledge/references/tracker.md`): Linear's `list_issues` with the project and
   `fields` `id`, `gitBranchName`, `statusType`, `priority`, `parentId`, page by page; then each issue's blockers
   through `get_issue` with relations.
-- Keep for each issue only `key`, `branch`, `status` (its status type), `blockedBy` (keys), and `priority` (0 to 4).
-  A blocker outside the project goes in `outside` as `{ key, status }`. No title, body, or comment.
+- Keep for each issue `key`, `branch`, `status` (its status type), `blockedBy` (keys), and `priority` (0 to 4), and its
+  `text`: `{ title, description, criteria, labels }`, the acceptance criteria as written. The run keeps the text apart,
+  as data, and writes it to a file each issue's session reads instead of the tracker. A blocker outside the project goes
+  in `outside` as `{ key, status }`. No comment.
 - A parent whose children are in the project is not run: its children are. A parent with no children there runs.
 - Write `{ "issues": [...], "outside": [...] }` to the file, and return only the counts and each blocker it met.
 

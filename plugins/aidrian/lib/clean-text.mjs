@@ -7,14 +7,15 @@
 const INVISIBLE = /[\p{Cf}\p{Co}\p{Cn}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/gu;
 const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}]/gu;
 // A domain-shaped token, such as evil.example or evil.example/path: labels of letters, digits, and dashes joined by dots,
-// ending in a top-level label of 2 to 24 letters. A file name such as config.json reads as one too, and goes.
+// ending in a top-level label of 2 to 24 letters. A file name such as config.json reads as one too. It is kept, as an
+// inline code span, which a tracker renders as text and never as a link.
 const DOMAIN = /(?<![\w.@-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-])(?:[/:]\S*)?/giu;
 
-// Text a result keeps of a field: INVISIBLE characters, images, links (their text kept), HTML, bare and domain-shaped
-// addresses, and every `@` before a word, as a mention starts, removed until the text stops changing, so a removal cannot
-// join a new one (`@@name`, `@<b></b>name`); white space folded, cut at `cap`. null for a value that is no string.
-// `domains: false` keeps domain-shaped tokens, for the run's own reasons in its ledger, such as a forge's host, which the
-// report cleans again with them before anything is posted.
+// Text a result keeps of a field: INVISIBLE characters, images, links (their text kept), HTML, bare addresses, backticks,
+// and every `@` before a word, as a mention starts, removed until the text stops changing, so a removal cannot join a new
+// one (`@@name`, `@<b></b>name`); each domain-shaped token wrapped in an inline code span; white space folded, cut at
+// `cap`. null for a value that is no string. `domains: false` leaves domain-shaped tokens bare, for the run's own reasons
+// in its ledger, such as a forge's host, which the report cleans again before anything is posted.
 export function cleanText(value, cap, { domains = true } = {}) {
   if (typeof value !== 'string') return null;
   let text = value;
@@ -35,11 +36,16 @@ const cleanOnce = (value, domains) => value.replace(INVISIBLE, '').replace(BREAK
     .replace(/\b(?:[a-z][a-z0-9+.-]*):\/\/\S*/giu, '')
     .replace(/\b(?:mailto|javascript|data|file):\S*/giu, '')
     .replace(/\bwww\.\S+/giu, '')
-    .replace(domains ? DOMAIN : /(?!)/u, '')
+    .replace(/`+/gu, '')
+    .replace(domains ? DOMAIN : /(?!)/u, (token) => `\`${token}\``)
     .replace(/@+(?=[\w-])/gu, '')
     .replace(/\s+/gu, ' ')
     .trim();
 
-// Whether `value` holds anything cleanText removes but white space: a mention, a link or address, an image, HTML, a
-// character reference, or a hidden character. The tracker guard refuses an issue's session text that does.
+// Whether `value` holds anything cleanText changes but white space: a mention, a link or address, an image, HTML, a
+// character reference, a hidden character, a backtick that is not a code span around one domain-shaped token, or such a
+// token left bare. The tracker guard refuses an issue's session text that does; a file or host name goes in backticks.
 export const textProblem = (value) => typeof value === 'string' && cleanText(value, Infinity) !== value.replace(/\s+/gu, ' ').trim();
+
+// `value` with its hidden characters removed (INVISIBLE), and nothing else changed: for text kept as a fenced file.
+export const stripHidden = (value) => (typeof value === 'string' ? value.replace(INVISIBLE, '') : '');

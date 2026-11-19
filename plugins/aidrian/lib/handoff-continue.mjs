@@ -39,7 +39,7 @@ import { arm, cancelArmed, checkedSha, clearPending, fresh, hasControl, keepBrie
 import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, stateDir } from './project.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
-import { PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
+import { PENDING_AGE, readDriverMark, readUnattendedMark } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
 export const BRIEF_WINDOW = 15 * 60 * 1000;
@@ -310,8 +310,12 @@ function startInBackground(ready) {
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
+  // A project run's driver hands on a driver: its continuation is held as one from its first call, with the run's driver
+  // mark filed for it (run-driver.mjs), and drives only once custody moves to it on its first `aidrian project wait`.
+  const driver = safely(() => readDriverMark(session, { env }));
   const held = startHeld({
     session,
+    driver: driver?.run && driver.root ? driver : null,
     launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait }),
     stop: (id) => handoff.stopBackground?.({ id, env, run }),
     ended: (earlier) => handoff.sessionEnded?.({ id: earlier.id, session: earlier.session, env, run }),

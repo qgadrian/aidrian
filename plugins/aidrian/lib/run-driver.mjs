@@ -69,6 +69,11 @@ export function runDriver(session, { env = process.env, home } = {}) {
 // Whether `session` is held as a project run's driver (runDriver).
 export const drivesRun = (session, options = {}) => runDriver(session, options) !== null;
 
+// Whether `session` has driven a project run at any time: it holds a driver mark, whether or not the run has ended. The
+// sign-off hold stays on such a session for the rest of it: `aidrian project end` ends the run and custody, and the
+// run's sign-offs still come from a session the Human attends.
+export const droveRun = (session, options = {}) => readDriverMark(session, options) !== null;
+
 // The unattended mark a driver stands for, for a reader that takes one (the merge guard, `aidrian pr auto-merge`):
 // { root, cwd: null } with the run's main checkout, `root` null when it is unknown, which such a reader refuses on; or
 // null when `session` drives no run.

@@ -17,7 +17,7 @@ import path from 'node:path';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { knownPrefix, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
-import { drivesRun } from './run-driver.mjs';
+import { droveRun } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
@@ -390,8 +390,8 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('signoff needs a pull request number');
-  if (!ruledBy && !rest.includes('--check') && (readUnattendedMark(session) !== null || drivesRun(session))) {
-    throw new Error('a sign-off is the Human\'s, and this session has no Human at hand (an unattended mark) or drives a project run: the Human runs it in a session they attend, or in their own shell');
+  if (!ruledBy && !rest.includes('--check') && (readUnattendedMark(session) !== null || droveRun(session))) {
+    throw new Error('a sign-off is the Human\'s, and this session has no Human at hand (an unattended mark) or drives a project run, or did: the Human runs it in a session they attend, or in their own shell');
   }
   const flags = {};
   let dryRun = false;

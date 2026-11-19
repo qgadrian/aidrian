@@ -29,11 +29,12 @@ export default {
   // update of one issue, which `save_issue` makes only with `id` (without it, it creates), and a new comment on one.
   // `state` takes a status type as well as a name or id: an issue's session may set only `started`, and the driver's
   // report sets `done`, which the tracker maps to the team's first completed status. `fields` are what an issue's own
-  // session may also set; `text` the fields whose text the guard checks, with the comment's body. A `parentId` or `id`
+  // session may also set; `text` the fields whose text the guard checks, with the comment's body, and `inserted` the keys
+  // of a patch's operations that hold the text they add (the anchors they match are not checked). A `parentId` or `id`
   // on a comment, a reply or an edit, is none of these. `labelRead` and `statusRead` list a team's labels and statuses,
   // which the driver reads in its first turn.
   run: {
-    issue: { tool: 'save_issue', key: 'id', status: 'state', label: 'addLabels', started: 'started', done: 'completed', fields: ['estimate', 'patch'], text: ['patch'] },
+    issue: { tool: 'save_issue', key: 'id', status: 'state', label: 'addLabels', started: 'started', done: 'completed', fields: ['estimate', 'patch'], text: ['patch'], inserted: ['new_string', 'text'] },
     comment: { tool: 'save_comment', key: 'issueId', body: 'body' },
     labelRead: 'list_issue_labels',
     statusRead: 'list_issue_statuses',
@@ -45,4 +46,6 @@ export default {
   // Calls that mark a pull request ready for review, refused as a merge is: `gh pr ready` is the route the ready hold
   // judges.
   readyCalls: [{ tool: 'update_diff', field: 'statusAction', values: ['markReadyForReview'] }],
+  // Tools that only read, under a name the guard's first-word check does not know.
+  readVerbs: ['extract_images'],
 };

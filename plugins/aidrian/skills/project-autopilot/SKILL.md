@@ -37,7 +37,8 @@ which makes it the driver, then the loop.
 Read [references/loop.md](references/loop.md) once turn 1 ends, and follow it: next, start, wait, report, repeat.
 
 - Run every command in the foreground, with the tool timeouts the loop names, which keep each call under the host's
-  automatic move to the background. Once this turn ends, nothing wakes the driver.
+  automatic move to the background. Once this turn ends, only the notice of a command the host moved to the
+  background wakes the driver.
 - `paused until <time>`, from `start` or `wait`, is a usage limit, not a refusal: the loop's § Pause sits it out.
 - A `halt` line from `start`, or `halted` from `next`: start nothing more, wait until no issue runs, write the owed
   reports and the summary, tell the Human the cause and the fix, and end. A halt waits on a person: never run
@@ -57,9 +58,9 @@ before the first report.
 ## What stops an issue
 
 An issue's session decides what it can and parks the rest. The intended stops are a `security-engineer` verdict,
-a critical-flow `product-manager` sign-off, and a hard product call in a floor class. A pull request that
-`aidrian pr auto-merge` refuses for `trust: "signoff"` parks the same way; `trust: "bot"` is the bot's review, which the
-issue's session asks for once per head before it parks.
+a critical-flow `product-manager` sign-off, and a hard product call in a floor class. When an issue's merge stops,
+`aidrian project stop-action` says what its session does, the bot's review included; a sign-off it parks on is the
+Human's, like the stops above.
 Each parks its issue, and every issue that waits on it is skipped; the run goes on with the rest. The driver gathers
 each parked decision through the report's comment and label, and lists them all in the final report.
 It never decides or signs off one itself: the Human signs off in a separate session the Human attends.

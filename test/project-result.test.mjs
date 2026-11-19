@@ -217,7 +217,7 @@ test('result text loses format and tag characters by category, and every mention
   const tags = String.fromCodePoint(0xe0041, 0xe0042, 0xe007f);
   assert.equal(cleanText(`hide${tags}me`, 99), 'hideme');
   assert.equal(cleanText('a\u{fe0f}b\u{e0100}c\u{f0000}d\u{10ffff}e\u{2066}f\u{2029}g\th', 99), 'abcdef g h');
-  assert.equal(cleanText('ping @@admin and `@team and @@@ops and @<b></b>lead and @​owner', 99), 'ping admin and `team and ops and lead and owner');
+  assert.equal(cleanText('ping @@admin and `@team and @@@ops and @<b></b>lead and @​owner', 99), 'ping admin and team and ops and lead and owner', 'a backtick goes too: only a file or host name is kept in one');
   assert.doesNotMatch(cleanText('x@[a](https://e.x)y @-z', 99), /@/u);
 });
 

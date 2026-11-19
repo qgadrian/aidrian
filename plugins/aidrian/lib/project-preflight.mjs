@@ -84,8 +84,10 @@ export function preflightCommand({ project, config, run = null, env = process.en
   const tracker = trackerLines(base, policy, read.problem ? (fallback.mcpServers ?? {}) : policy.mcpServers);
   lines.push(...tracker.lines);
   check('auto-merge', autoMergeProblem({ project, repository, facade }));
-  check('handoff', base.why ? `the base branch's config.json cannot be read (${base.why})` : ['background', 'clear'].includes(base.config.session?.handoff?.continue) ? null
-    : 'the base branch\'s session.handoff.continue is not "background", so the driver cannot hand itself on when its session grows long; set it on the default branch');
+  const route = base.config?.session?.handoff?.continue;
+  check('handoff', base.why ? `the base branch's config.json cannot be read (${base.why})` : route === 'background' ? null
+    : route === 'clear' ? 'the base branch\'s session.handoff.continue is "clear", and the clear route needs a person to start the next session; set it to "background" on the default branch'
+      : 'the base branch\'s session.handoff.continue is not "background", so the driver cannot hand itself on when its session grows long; set it on the default branch');
   if (!continueRoutes(detectHost({ env })).some((route) => ['background', 'clear'].includes(route))) lines.push('note handoff: this host lists no route that continues a session, so the driver keeps driving in this one session, which the host compacts');
   const reviewer = base.config?.github?.reviewer;
   check('reviewer', base.why ? `the base branch's config.json cannot be read (${base.why})` : NO_REVIEWER.has(reviewer) ? 'the base branch sets no github.reviewer, so no bot reviews an issue\'s pull request before an unattended merge' : null);
@@ -113,9 +115,13 @@ function trackerLines(base, policy, mcpServers) {
   const unmapped = entries.filter(([name, definition]) => !mapped(name, definition) && TRACKERS.some((each) => name.toLowerCase().includes(each.id))).map(([name]) => name);
   let problem = null;
   if (!adapter) problem = 'the base branch\'s config.json names no tracker the plugin knows (tracker.provider), so the run cannot read or report its issues';
-  else if (!entries.some(([name, definition]) => mapped(name, definition) === adapter)) problem = `the default branch's projectRun.mcpServers holds no ${adapter.name} server, and an issue's session loads only those, so it could not reach the tracker; add one there`;
   else if (unmapped.length) problem = `projectRun.mcpServers holds ${unmapped.map((name) => JSON.stringify(name)).join(', ')}, named like a tracker with an endpoint no tracker adapter knows, so the run rule could not hold its writes; point it at the tracker's own endpoint, or remove it`;
   lines.push(problem ? `blocker tracker: ${problem}` : 'ok tracker');
+  // An issue's session reads its issue from a file the driver wrote, so a run needs no tracker server in it.
+  if (adapter && !entries.some(([name, definition]) => mapped(name, definition) === adapter)) lines.push(`note tracker: projectRun.mcpServers holds no ${adapter.name} server, so issue sessions will not write the tracker; the driver reports`);
+  // Every tracker connection there must reach an adapter's endpoint, or be named in tracker.servers: the rule screens no other.
+  const others = entries.filter(([name, definition]) => !mapped(name, definition) && !(tracker.servers ?? []).includes(name)).map(([name]) => name);
+  if (others.length) lines.push(`note mcp-servers: the run rule maps ${others.map((name) => JSON.stringify(name)).join(', ')} to no tracker, so it screens no tracker write there; a tracker connection must reach its adapter's endpoint or be named in tracker.servers`);
   return { lines, adapter };
 }
 
@@ -136,7 +142,7 @@ function autoMergeProblem({ project, repository, facade }) {
   if (local === 'unset' && github.autoMerge?.default === 'on' && !mayFollowTeamDefault(project)) local = 'off';
   const resolved = resolveAutoMerge(github, local);
   if (resolved.reason === 'team') return 'the default branch on the forge does not set github.autoMerge.allow, so no issue\'s pull request merges with no one there';
-  if (resolved.reason === 'local') return 'this machine has not turned auto-merge on: "github": { "autoMerge": "on" } in its git-ignored local file, or the team sets solo';
+  if (resolved.reason === 'local') return 'this machine has not turned auto-merge on: "github": { "autoMerge": "on" } in its git-ignored local file, or the team sets github.autoMerge.default to "on"';
   if (!Array.isArray(github.requiredChecks) || github.requiredChecks.length === 0) return 'the default branch lists no github.requiredChecks, so a pull request would merge with no CI run; merge a CI workflow and its checks in github.requiredChecks before the run';
   return null;
 }

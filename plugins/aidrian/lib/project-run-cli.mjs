@@ -31,7 +31,7 @@ import { LOCKED } from './jsonl.mjs';
 import { preflightCommand, snapshotCheck } from './project-preflight.mjs';
 import { recordedCommand, reportCommand } from './project-report.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
-import { endRun, recordHandoff, recordResult, resumeRun, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
+import { endRun, recordHandoff, recordResult, resumeRun, RETRY_EXIT, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
@@ -71,8 +71,8 @@ export function projectCommand(args, options = {}) {
   }
 }
 
-// The exit of a refusal that may pass when tried again.
-export const RETRY_EXIT = 75;
+// The exit of a refusal that may pass when tried again: project-run-gate.mjs's.
+export { RETRY_EXIT };
 
 function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform } = {}) {
   const [action, ...rest] = args;

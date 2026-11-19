@@ -243,7 +243,10 @@ export function runWriteRefusal({ writer, tool, rawTool, input, tracker = null, 
   const kind = runCallKind({ tool, rawTool, input, tracker, writeTools, trackers, mcpServers, strict });
   if (kind === null) return null;
   const { adapter, short } = kind;
-  if (kind.merge === 'tracker' || (kind.merge && writer)) {
+  if (kind.merge === 'anywhere' && writer) {
+    return refused(`${short} is named like a tool that merges, and a session no Human attends never calls one, on any server`, `Merge only through the pr-auto-merge skill, \`aidrian pr auto-merge <number>\`; or leave it to ${human}`);
+  }
+  if (kind.merge === 'tracker') {
     return refused(`${short} merges code through the tracker, past the merge guard`, writer
       ? `A session no Human attends merges only through the pr-auto-merge skill, \`aidrian pr auto-merge <number>\`; or leave the merge to ${human}`
       : 'Merge with `gh pr merge <number>`, which the merge guard judges');
@@ -278,8 +281,17 @@ function keyProblem(call, allowed) {
   return allowed(call.key) ? null : `${call.spec.key} is ${JSON.stringify(call.key)}`;
 }
 
-// Every string a value holds, at any depth, as a patch's operations hold theirs.
-const strings = (value) => (typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : []);
+// The text a value inserts: the value itself when it is a string; else, at any depth, the strings under the keys in
+// `inserted`, as a patch's operations hold the text they add, and never the anchors they match existing text by.
+const insertedText = (value, inserted) => {
+  if (typeof value === 'string') return [value];
+  const walk = (each) => {
+    if (Array.isArray(each)) return each.flatMap(walk);
+    if (!each || typeof each !== 'object') return [];
+    return Object.entries(each).flatMap(([key, held]) => (inserted.includes(key) && typeof held === 'string' ? [held] : walk(held)));
+  };
+  return walk(value);
+};
 
 function childRefusal(writer, call, adapter, short, human) {
   const own = `an issue's session of the run ${writer.run} writes only its own issue ${writer.issue}`;
@@ -293,8 +305,8 @@ function childRefusal(writer, call, adapter, short, human) {
     return refused(`${short} sets ${call.spec.status} to ${JSON.stringify(call.input[call.spec.status])?.slice(0, 40)}, and an issue's session sets only ${JSON.stringify(call.spec.started)}`, `Leave the rest to the run's report, which the driver writes`);
   }
   const texts = call.kind === 'issue' ? (call.spec.text ?? []) : [call.spec.body];
-  const field = texts.find((each) => strings(call.input[each]).some(textProblem));
-  if (field) return refused(`${short} sets ${field} with a mention, link, address, image, HTML, or hidden character`, 'Write plain text, with no link or mention: name a page or a person in words');
+  const field = texts.find((each) => insertedText(call.input[each], call.spec.inserted ?? []).some(textProblem));
+  if (field) return refused(`${short} sets ${field} with a mention, link, address, image, HTML, or hidden character`, 'Write plain text: name a page or a person in words, and put a file or host name in backticks, such as `config.json`');
   return null;
 }
 

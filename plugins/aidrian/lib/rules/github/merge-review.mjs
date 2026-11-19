@@ -577,7 +577,7 @@ function checkCommand(command, { cwd, env, input, viewPr, waiverForge, startedAt
     if (merge.graphql && !mark) continue;
     if (mark && (merge.graphql || merge.auto)) return unattendedProblem({ project, home: places.home, merge, mark, startedAt, now });
     // A session of a project run is held to the run's budget of waived merges (waiver.mjs budgetProblem).
-    if (mark) memo.run = runOf(mark);
+    if (mark) Object.assign(memo, { run: runOf(mark), home: places.home });
     // Before any record is parsed: a session no Human attends is refused on record files planted to stall or mislead.
     const planted = mark && merge.pr !== null ? recordProblem(project, merge.pr, { pastDeadline: () => now() >= startedAt + WAIVER_DEADLINE_MS }) : null;
     if (planted) return unattendedProblem({ project, home: places.home, merge, mark, startedAt, now, planted });
@@ -611,7 +611,7 @@ function checkTool(toolInput, { cwd, input, viewPr, waiverForge, startedAt, now,
   const pr = Number.isInteger(n) && n > 0 ? n : null;
   const how = 'Merge with `gh pr merge <PR> --match-head-commit <sha>` instead, which names the head.';
   if (pr === null) return unresolved(null, how);
-  const memo = mark ? { run: runOf(mark) } : {};
+  const memo = mark ? { run: runOf(mark), home: places.home } : {};
   const planted = mark ? recordProblem(project, pr, { pastDeadline: () => now() >= startedAt + WAIVER_DEADLINE_MS }) : null;
   if (planted) return unattendedProblem({ project, home: places.home, merge: { pr, head, repo }, mark, startedAt, now, planted });
   const reason = judgeMerge({ project, pr, head, repo, viewPr, answers: transcriptAnswers(readTranscript(input?.transcript_path)), how, waiverForge, startedAt, now, memo });

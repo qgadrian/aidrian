@@ -78,7 +78,8 @@ export function judgeProblem({ project, config, state, entry }) {
   return dispatched ? null : `the dispatch log holds no dispatch of the code-reviewer ${judge} by session ${session} between the cap and the verdict`;
 }
 
-// Whether a judge may be dispatched for `head`, or would see its verdict stand: { may: true } or { why }. `policies` are
+// Whether a judge may be dispatched for `head`, or would see its verdict stand: { may: true } or { why, kind? }, `kind`
+// "signoff" when a sign-off of the Human's is owed. `policies` are
 // branchPolicies' answer, read from the forge; `trail()` gives the forge's review trail of the pull request; `host`
 // the host this command runs under.
 export function waiverMayRun({ project, config, state, pr, head, policies, repo, host, base, prefix, trail, run, runHost = detectHost() }) {
@@ -92,7 +93,8 @@ export function waiverMayRun({ project, config, state, pr, head, policies, repo,
   const cap = capProblem(state, head);
   if (cap) return { why: cap };
   const owes = signoffOwed({ state, head, trail: trail(), policies, prefix, repo, pr });
-  if (owes) return { why: owes };
+  // A sign-off the Human owes is merge trust's `signoff` half, so a caller can report it as merge trust does.
+  if (owes) return { why: owes, kind: 'signoff' };
   const budget = budgetProblem({ project, config, run, pr });
   if (budget) return { why: budget };
   return { may: true };

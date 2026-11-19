@@ -36,6 +36,8 @@
 //      finding open at the cap a local reviewer's of medium severity or lower and no security finding; the judge in the
 //      recording session's dispatch log; under a project run, fewer than WAIVED_MERGES waived merges; and the review
 //      bot's pass of exactly the head, read in the review trail, attended or not. A verdict never stands in for the bot.
+//      A verdict that would stand but for a sign-off the Human owes on the head stops as merge trust does: reason
+//      `trust`, `trust: "signoff"`, naming the flow.
 //      A `none_needed` outcome on exactly that head counts only by pr-auto-merge-docs.mjs noneNeededProblem: its plan
 //      reasons are exactly "only files that cannot change behaviour", at depth `none`; `github.autoMerge.unreviewedPaths` is a non-empty
 //      list with no error on both the default branch and the base, and names every changed file on each, as the whole path
@@ -555,6 +557,8 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
       const state = scoped(recordFor(project, pr.number, pr.repo), project, pr.repo);
       const changes = changesRequested(pr);
       let problem = changes ?? reviewProblem(state, pr.head, unreviewed);
+      // A sign-off of the Human's that a judge's verdict would otherwise need: merge trust's `signoff` stop.
+      let owedSignoff = null;
       // The review trail, read at most once: for a verdict's bot check and for merge trust.
       let trail = null;
       const readTrail = () => (trail ??= forge.reviewTrail(pr.repo, pr.number, { host: pr.host, paths: trailPaths(prefix) }));
@@ -568,9 +572,13 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
           return fail(`could not read the review trail of #${pr.number} with gh (${ghError(error)})`);
         }
         if (stand.waived) [problem, waived] = [null, true];
+        // A verdict that would stand but for a sign-off the Human owes is merge trust's stop, reported as merge trust
+        // reports it, so a run parks it as a decision for the Human.
+        else if (stand.kind === 'signoff') [problem, owedSignoff] = [null, stand.why];
         else problem = `${problem}, and no judge's verdict lets it merge: ${stand.why}`;
       }
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
+      else if (owedSignoff) [effective, reason, why, trust] = [false, 'trust', owedSignoff, 'signoff'];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
       else if (unattended()) {
         // The record is this machine's word, which a confined session can write: a merge no Human attends rests on the

@@ -441,6 +441,7 @@ function withoutLocal(state) {
   // What stopped the review at the round cap, and the judge's agent id and recording session of each waiver, are this
   // machine's alone: auto-merge reads them here, never from a posted copy.
   if (isObject(view?.outcome)) delete view.outcome.cap;
+  for (const round of Array.isArray(view?.rounds) ? view.rounds : []) if (isObject(round)) delete round.cap;
   for (const entry of Array.isArray(view?.waivers) ? view.waivers : []) {
     if (!isObject(entry)) continue;
     delete entry.judge_id;

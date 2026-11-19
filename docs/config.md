@@ -443,14 +443,16 @@ review owed, and every one of these holds on that head:
   review step keeps the cause on the record's outcome, and a verdict stands only on it: never on a flow left with an
   invariant violated, unverified, or unsigned, a deleted flow test, a failing flow check, the review bot's own round
   limit, or a pass of this machine that never reviewed the head; and never on a record from an older plugin, which
-  keeps no cause. When a fix was pushed that no round reviewed, the last round's own open findings and flows decide.
+  keeps no cause. Every flow of the plan counts, whichever stage answers for it. When a fix was pushed that no round
+  reviewed, the last reviewed round's whole cause, which the record keeps on that round, decides.
 - Each of those findings is listed, of `medium` severity or lower, and no security finding: none `critical` or
   `high`, none marked as one, none from a security pass or the security reviewer. Findings only counted refuse, since
   each one's severity cannot be told. No accepted residual above `low` holds the record.
 - No sign-off of the Human's is owed on the head: every flow the record names for the Human on that head, which it
   must name, every flow the forge's file list and both branches' configs may select, as
   [merge trust](review.md#merge-trust) reads them, and every flow the cap's cause names has a sign-off on exactly that
-  head in the sign-off store. This holds attended or not.
+  head in the sign-off store. This holds attended or not. Auto-merge reports such a stop as merge trust does: reason
+  `trust`, `"trust": "signoff"`, naming the flow.
 - The review bot, the default branch's `github.reviewer`, passed exactly that head on GitHub, read from the review
   trail as [merge trust](review.md#merge-trust) reads it. With no bot set, nothing is waived.
 

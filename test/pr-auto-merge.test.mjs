@@ -1521,7 +1521,8 @@ test('a waived round cap never lets auto-merge skip the Human\'s sign-off of a f
   r.record((state) => (capped()(state), (state.signoffable.flows = ['payments'])));
   logJudge(r);
   const attended = waived(t, r);
-  assert.deepEqual([attended.code, attended.result.reason], [1, 'review']);
+  // Reported as merge trust reports an owed sign-off, so a run parks it as a decision for the Human.
+  assert.deepEqual([attended.code, attended.result.reason, attended.result.trust], [1, 'trust', 'signoff']);
   assert.match(attended.result.why, /flow payments needs the Human's sign-off on head abcdef1/u);
   // The Human signs it off on that head, in the store only a session they attend writes.
   recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: HEAD, by: 'Adrian' });

@@ -30,6 +30,7 @@
 // in lib/review/step.mjs and runs its stages in lib/review/stages.mjs, both on one step context `s`, which carries the
 // outcome writers below. The record commands live in lib/review/record.mjs; this file re-exports them.
 
+import { isObject } from '../fs.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { repoName } from '../remotes.mjs';
@@ -120,9 +121,6 @@ function noteFindings({ state, head }, extra) {
   const merged = dedupe(itemized.map((each) => [each.pass, each.findings.filter(blocks)]));
   const counted = passes.filter((each) => !Array.isArray(each.findings)).reduce((total, each) => total + (each.open ?? 0), 0);
   round.open = merged.length + counted + violated.length;
-  // The flows the round left unsigned, each with an invariant violated or unverified, which the count above leaves out
-  // when only unverified: the waiver at a later cap reads them (capCause).
-  round.unsigned = (extra.flows ?? []).map((flow) => flow.flow).filter((flow) => typeof flow === 'string');
   round.findings = itemized.length === passes.length
     ? [...merged.map((each) => ({
       ...(isFindingId(each.id) ? { id: each.id, mint: each.mint, ...(Array.isArray(each.aliases) && each.aliases.length ? { aliases: each.aliases } : {}) } : {}),
@@ -139,49 +137,52 @@ const CAUSE_ITEMS = 50;
 // (waiver.mjs capProblem), which takes it only when open findings of this machine's reviewers are the whole cause:
 // { head, reviewed, items, counted, itemized, unrun, unsigned, flows, tests_removed, checks_failing, bot, human }.
 // `reviewed` is the head the last round reviewed. When it is `head`, the items are the open findings of every pass with
-// a result for it, each with its pass's stage and reviewer, and `unrun` the passes of this machine with none. When it is
-// another head (a fix pushed that no round reviewed), they are that round's own open findings, each with the stage the
-// plan note gives its pass, and `unsigned` the flows that round left unsigned. `counted` is the open count, `itemized`
-// whether every one of them is listed. `flows`, `tests_removed`, and `checks_failing` are this step's stops; `bot` that
-// the review bot's own round limit stopped it; `human` the flows the Human signs off with no sign-off kept on `head`.
+// a result for it, each with its pass's stage and reviewer, `unrun` the passes of this machine with none, and `flows`
+// every flow of the plan whose invariants are not all held, whichever stage answers for it (evidence.mjs flowStatus).
+// That whole cause is kept on the round too (`round.cap`). When the last round reviewed another head (a fix pushed that
+// no round reviewed), the cause is that round's kept one, its flows as `unsigned`; a round with none kept gives
+// `unsigned: null`, which refuses. `counted` is the open count, `itemized` whether every one of them is listed;
+// `tests_removed` and `checks_failing` this step's evidence stops and flow tests deleted with no sign-off on `head`;
+// `bot` that the review bot's own round limit stopped it; `human` the flows the Human signs off with no sign-off kept
+// on `head`.
 function capCause(s, extra) {
-  const { state, head, plan, map, resultFor, keptSignoffs, removedTests = [] } = s;
+  const { state, head, plan, map, resultFor, keptSignoffs, removedTests = [], flowStatus } = s;
   const round = state.rounds.at(-1) ?? null;
+  const tests = [...new Set([...(extra.tests_removed ?? []), ...removedTests.filter((each) => state.signoffs?.[each.flow]?.head !== head)].map((each) => each.flow))];
+  const human = plan.flows.filter((flow) => flow.signoff === 'human' && state.signoffs?.[flow.id]?.head !== head && !keptSignoffs?.has(flow.id)).map((flow) => flow.id);
+  const bot = extra.bot !== undefined;
+  if (round?.head !== head) {
+    const kept = isObject(round?.cap) && round.cap.head === round.head ? round.cap : null;
+    if (!kept) return { head, reviewed: round?.head ?? null, items: [], counted: null, itemized: false, unrun: [], unsigned: null, flows: [], tests_removed: tests, checks_failing: 0, bot, human };
+    return {
+      ...kept, head, reviewed: kept.head, unsigned: [...(kept.flows ?? [])], flows: [],
+      tests_removed: [...new Set([...(kept.tests_removed ?? []), ...tests])], bot: kept.bot === true || bot, human: [...new Set([...(kept.human ?? []), ...human])],
+    };
+  }
   const passes = plan.stages.flatMap((stage) => stage.passes.map((pass) => ({ pass, stage: stage.name })));
   const securityPass = (id) => state.planNote?.passes?.[id]?.security === true || state.dispatched?.[id]?.security === true;
   const item = (finding, pass, stage, reviewer) => ({
     ...(isFindingId(finding?.id) ? { id: finding.id } : {}), severity: typeof finding?.severity === 'string' ? finding.severity : null,
     ...(finding?.security === true || securityPass(pass) ? { security: true } : {}), pass, stage, reviewer: reviewer ?? null,
   });
-  let items;
-  let counted;
-  let itemized;
-  let unrun = [];
-  let unsigned = [];
-  if (round?.head === head) {
-    const open = passes.map(({ pass, stage }) => ({ pass, stage, result: resultFor(pass) })).filter(({ result }) => result?.open > 0);
-    const listed = open.map(({ pass, stage, result }) => ({ open: result.open, list: Array.isArray(result.list) ? result.list.filter(blocks).map((finding) => item(finding, pass.id, stage, pass.reviewer)) : null }));
-    items = listed.flatMap((each) => each.list ?? []);
-    counted = listed.reduce((total, each) => total + each.open, 0);
-    itemized = listed.every((each) => each.list !== null && each.list.length >= each.open);
-    unrun = passes.filter(({ pass }) => map[pass.reviewer]?.kind !== 'remote' && !resultFor(pass)).map(({ pass }) => pass.id);
-  } else {
-    const stageOf = (id) => state.planNote?.passes?.[id]?.stage ?? state.dispatched?.[id]?.stage ?? null;
-    const reviewerOf = (id) => state.planNote?.passes?.[id]?.reviewer ?? null;
-    const found = Array.isArray(round?.findings) ? round.findings : null;
-    items = (found ?? []).map((finding) => item(finding, finding?.pass ?? null, stageOf(finding?.pass), reviewerOf(finding?.pass)));
-    counted = Number.isInteger(round?.open) ? round.open : null;
-    itemized = counted !== null && (counted === 0 || (found !== null && found.length >= counted));
-    unsigned = Array.isArray(round?.unsigned) ? round.unsigned : null;
-  }
-  return {
-    head, reviewed: round?.head ?? null, items: items.slice(0, CAUSE_ITEMS), counted, itemized: itemized && items.length <= CAUSE_ITEMS, unrun, unsigned,
-    flows: (extra.flows ?? []).map((flow) => flow.flow),
-    tests_removed: [...new Set([...(extra.tests_removed ?? []), ...removedTests.filter((each) => state.signoffs?.[each.flow]?.head !== head)].map((each) => each.flow))],
+  const open = passes.map(({ pass, stage }) => ({ pass, stage, result: resultFor(pass) })).filter(({ result }) => result?.open > 0);
+  const listed = open.map(({ pass, stage, result }) => ({ open: result.open, list: Array.isArray(result.list) ? result.list.filter(blocks).map((finding) => item(finding, pass.id, stage, pass.reviewer)) : null }));
+  const items = listed.flatMap((each) => each.list ?? []);
+  const cause = {
+    head, reviewed: head, items: items.slice(0, CAUSE_ITEMS), counted: listed.reduce((total, each) => total + each.open, 0),
+    itemized: listed.every((each) => each.list !== null && each.list.length >= each.open) && items.length <= CAUSE_ITEMS,
+    unrun: passes.filter(({ pass }) => map[pass.reviewer]?.kind !== 'remote' && !resultFor(pass)).map(({ pass }) => pass.id),
+    unsigned: [],
+    // Every flow whose invariants are not all held, not only the flows of the stage the cap was judged at.
+    flows: [...new Set([...(extra.flows ?? []).map((flow) => flow.flow), ...plan.flows.filter((flow) => typeof flowStatus !== 'function' || !flowStatus(flow).signed).map((flow) => flow.id)])],
+    tests_removed: tests,
     checks_failing: Array.isArray(extra.checks_failing) ? extra.checks_failing.length : 0,
-    bot: extra.bot !== undefined,
-    human: plan.flows.filter((flow) => flow.signoff === 'human' && state.signoffs?.[flow.id]?.head !== head && !keptSignoffs?.has(flow.id)).map((flow) => flow.id),
+    bot,
+    human,
   };
+  // A later cap on a head no round reviewed reads this round's whole cause.
+  round.cap = cause;
+  return cause;
 }
 
 // The round cap: round_limit, unless the base branch's github.extraRounds lets the check at the cap run

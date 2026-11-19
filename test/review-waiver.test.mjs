@@ -1023,3 +1023,43 @@ test('the posted copy keeps no judge id, session, or cap cause, on a private rep
   const why = judgeProblem({ project, config: loadConfig(project).config, state, entry: { ...state.waivers[0], judge_id: '<script>', session: 'x y' } });
   assert.match(why ?? '', /no dispatch of the code-reviewer \(an id of no known shape\) by session \(an id of no known shape\)/u);
 });
+
+test('the guard reads the sign-off store and the run`s budget only with time left: past the deadline it is the unread denial, and the hook ends inside 5 s', async (t) => {
+  const fx = runFixture(t);
+  const { owner, name } = fx.run().init.repository;
+  const r = repo(t, { local: ON });
+  // Five merged pull requests of the run, each on a verdict, kept in this checkout's records; the run's ledger lives only
+  // in the main checkout `fx`, whose config names its state folder.
+  for (const n of [1, 2, 3, 4, 6]) {
+    const state = emptyState(n, `${owner}/${name}`);
+    roundLimit(state);
+    waiver(state);
+    writeLocalState(r.project(), state);
+  }
+  appendToRun(fx.state, 'launch', () => ({ rows: [1, 2, 3, 4, 6].map((pr) => ({ event: 'result', key: 'WID-1', attempt: 1, session: 'child', via: 'drop', status: 'merged', pr, verified: true, at: new Date().toISOString() })) }));
+  r.record(5, (state) => (roundLimit(state), waiver(state)));
+  const project = r.project();
+  const state = readLocalState(project, 5);
+  const memo = () => ({ run: 'launch', home: fx.project });
+  // Read through the main checkout: the budget is spent, counted no further than its most.
+  const spent = guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: () => 0, memo: memo() });
+  assert.match(spent.route, /A judge's verdict cannot stand for this head: project run launch merged 3 pull requests on a judge's verdict already, its most \(3\)/u);
+  // The view and the trail end past the deadline: neither the store nor the ledger is read, and the denial is unread.
+  const clock = { now: 0 };
+  const late = guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(undefined, { clock, tick: 2100 }), startedAt: 0, now: () => clock.now, memo: memo() });
+  assert.deepEqual([late.allow, late.note, late.route], [false, ', and the team\'s github.unattendedWaiver could not be read in time', '']);
+  // A sign-off owed is not even read past it: the denial is still the unread one, not the store's.
+  const owing = { ...state, signoffable: { head: HEAD, flows: ['payments'] } };
+  const lateClock = { now: 0 };
+  const lateOwed = guardWaiver({ project, state: owing, pr: 5, head: HEAD, named: true, forge: teamForge(undefined, { clock: lateClock, tick: 2100 }), startedAt: 0, now: () => lateClock.now, memo: memo() });
+  assert.deepEqual([lateOwed.note, lateOwed.route], [', and the team\'s github.unattendedWaiver could not be read in time', '']);
+  // The deadline passes while the run's records are counted: the count stops, and the verdict cannot stand.
+  let calls = 0;
+  guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: () => ((calls += 1), 0), memo: { home: fx.project } });
+  const before = calls;
+  let seen = 0;
+  const started = Date.now();
+  const counted = guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: () => ((seen += 1) > before ? WAIVER_DEADLINE_MS + 1 : 0), memo: memo() });
+  assert.ok(Date.now() - started < 5000, 'the hook ends inside its 5 s');
+  assert.match(counted.route, /A judge's verdict cannot stand for this head: the hook ran out of time counting the project run's waived merges/u);
+});

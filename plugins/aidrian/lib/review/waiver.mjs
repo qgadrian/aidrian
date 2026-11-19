@@ -197,7 +197,8 @@ export function runOf(mark) {
   return typeof mark.project === 'string' ? mark.project : null;
 }
 
-// The ledger of the project run `run`, readRun's answer from the first state folder that holds it, or null.
+// The ledger of the project run `run`, readRun's answer from the first state folder of `project` (the main checkout,
+// whose config names its state folders, as the merge guard's pinnedFor reads it) that holds it, or null.
 export function runLedger({ project, config, run }) {
   for (const state of stateFolders(project, config, { lazy: true })) {
     const found = readRun(state, run);
@@ -206,28 +207,39 @@ export function runLedger({ project, config, run }) {
   return null;
 }
 
+// Thrown when a count runs out of the hook's time.
+class OutOfTime extends Error {}
+
 // How many pull requests the project run `run` merged, other than `pr`, on a judge's verdict: its ledger's merged
-// results whose review record holds a `waive` that stands for the head its outcome names, the head that merged
-// (waiverFor); or null when the run's ledger cannot be read.
-export function waivedMerges({ project, config, run, pr }) {
-  const found = runLedger({ project, config, run });
+// results whose review record, read in `project`, holds a `waive` that stands for the head its outcome names, the head
+// that merged (waiverFor); or null when the run's ledger cannot be read. The ledger is read through `home`, the main
+// checkout, and its config. It stops counting at WAIVED_MERGES, and `pastDeadline()` is asked before each record read:
+// past it, the count throws OutOfTime.
+export function waivedMerges({ project, home = project, config, run, pr, pastDeadline = () => false }) {
+  const found = runLedger({ project: home, config, run });
   if (!found) return null;
   const { owner, name } = found.init.repository;
   const merged = new Set(found.rows.filter((row) => row?.event === 'result' && row.status === 'merged' && Number.isInteger(row.pr) && row.pr !== pr).map((row) => row.pr));
-  return [...merged].filter((n) => {
+  let count = 0;
+  for (const n of merged) {
+    if (count >= WAIVED_MERGES) break;
+    if (pastDeadline()) throw new OutOfTime();
     const record = readLocalState(project, n, `${owner}/${name}`);
-    return typeof record?.outcome?.head === 'string' && waiverFor(record, record.outcome.head, 'round_cap') !== null;
-  }).length;
+    if (typeof record?.outcome?.head === 'string' && waiverFor(record, record.outcome.head, 'round_cap') !== null) count += 1;
+  }
+  return count;
 }
 
-// Why the run's budget keeps a verdict from standing for `pr`, or null. `run` is runOf's answer.
-export function budgetProblem({ project, config, run, pr }) {
+// Why the run's budget keeps a verdict from standing for `pr`, or null. `run` is runOf's answer; `home` and `config`
+// the main checkout and its config, which name the ledger's state folders; `pastDeadline` the hook's clock.
+export function budgetProblem({ project, home = project, config, run, pr, pastDeadline = () => false }) {
   if (run === undefined) return null;
   if (run === null) return 'this session\'s unattended mark names a project run that cannot be read, so the run\'s waived merges cannot be counted';
   let spent;
   try {
-    spent = waivedMerges({ project, config, run, pr });
-  } catch {
+    spent = waivedMerges({ project, home, config, run, pr, pastDeadline });
+  } catch (error) {
+    if (error instanceof OutOfTime) return 'the hook ran out of time counting the project run\'s waived merges';
     spent = null;
   }
   if (spent === null) return `the ledger of project run ${shown(run, PASS_NAME, 'named')} cannot be read, so its waived merges cannot be counted`;
@@ -386,16 +398,23 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   if (gate.reason === 'unread') return unread;
   if (!gate.on) return none;
   // A verdict never stands in for the review bot, and never lifts what else stopped the review or a sign-off the Human
-  // owes: each is read before the verdict, so the denial says why none can stand.
+  // owes: each is read before the verdict, so the denial says why none can stand. The sign-off store and the run's
+  // ledger and records are read only with time left in the hook.
   const cannot = (why) => ({ ...none, route: ` A judge's verdict cannot stand for this head: ${why}.` });
+  // Past the deadline only: a read that ends on it, as budgetedForge's last may, is in time.
+  const late = () => now() > deadline;
   const bot = botProblem(trail, head, policies.policy.github.reviewer);
   if (bot) return cannot(`it never stands in for the review bot, and ${bot}`);
   const cap = capProblem(state, head);
   if (cap) return cannot(cap);
+  if (late()) return unread;
   const owes = signoffOwed({ state, head, trail, policies, prefix, repo: home, pr });
   if (owes) return cannot(owes);
-  // A session of a project run is held to the run's budget of waived merges (`memo.run`, merge-review.mjs check).
-  const budget = memo && memo.run !== undefined ? budgetProblem({ project, config: loadConfig(project).config, run: memo.run, pr }) : null;
+  // A session of a project run is held to the run's budget of waived merges (`memo.run`), its ledger read through the
+  // main checkout and its config (`memo.home`, merge-review.mjs check), as the guard reads the run's pinned repository.
+  if (late()) return unread;
+  const main = memo?.home ?? project;
+  const budget = memo && memo.run !== undefined ? budgetProblem({ project, home: main, config: loadConfig(main).config, run: memo.run, pr, pastDeadline: late }) : null;
   if (budget) return cannot(budget);
   const verdict = waiverFor(state, head, kind);
   if (verdict && named) return { allow: true, note: '', route: '' };

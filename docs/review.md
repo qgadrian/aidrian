@@ -1235,8 +1235,10 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   judge's agent id and the recording session, which auto-merge finds in the dispatch log. A `round_limit` outcome also
   keeps `cap`, what stopped the review (`plugins/aidrian/lib/review/run.mjs` capCause): the open findings by pass and
   stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
-  reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. The posted
-  copy keeps neither `cap` nor a waiver's `judge_id` and `session`. Each binds to one head and
+  reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. Its flows are
+  every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
+  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads. The posted copy keeps no `cap`,
+  on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the
   posted copy keeps no `judge_id` or `session`.
   A record without the list has none. The [merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read them only

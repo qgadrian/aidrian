@@ -1417,14 +1417,21 @@ The counts come from one family of summary lines, summed over every line of it a
 since a script or a monorepo tool prints one summary a runner: the first of node's runner summary (`ℹ pass 12`,
 `# fail 0`); `Tests` lines, as vitest and jest print them, also behind a task prefix such as turbo's `web:test: `;
 cargo's `test result:` lines, one a test binary and the doc-tests; `go test -v`'s `--- PASS: TestX` and
-`--- FAIL: TestX` lines, one a top-level test, subtests left out; else, since go test prints no pass count, its package
-lines, `ok  <package>  0.01s` and `FAIL  <package>  0.01s`, one a package; any other line with "N passed" or
+`--- FAIL: TestX` lines, one a top-level test, subtests left out, with at least one failure a package that failed, so a
+package that did not build, a test binary that timed out, or a TestMain that exited 1 after its tests passed fails the
+run; else, since go test prints no pass count, its package lines, `ok  <package>  0.01s` and `FAIL  <package>  0.01s`,
+one a package, where a package whose tests were all filtered out (`[no tests to run]`) or that has none counts no
+pass, as a `-v` run whose tests were all skipped counts none; any other line with "N passed" or
 "N failed", as pytest's and Playwright's; rspec's and mix's "12 examples, 0 failures". A family that names passes and
 no failure counts 0 failures. Unless node's runner counted, whose fail count stands, a line that is only "N failed"
 above 0, colours stripped, as Playwright's own `1 failed` line, makes the run failed; a test named
 "lists 2 failed payments" never does. The counts read the last 64 KB of the output. When Claude Code keeps a stdout too
 long for the payload in a file (`persistedOutputPath`), and sends only its head, the counts read the last 64 KB of that
-file, opened without following a symlink, then the stderr; a file it cannot read leaves the head.
+file, then the stderr. The file is read only when it is a regular file by `lstat`, never a symlink or a FIFO, in a
+`tool-results` folder whose real path is under the real path of Claude Code's projects folder (`CLAUDE_CONFIG_DIR`, else
+`~/.claude`, then `projects`), so a symlinked config folder still counts and a folder linked from elsewhere does not.
+It is opened without following a symlink and without taking a terminal, and its descriptor must show a regular file.
+Any other path, or a file it cannot read, leaves the head.
 The record keeps its newest rows within 64 KB.
 
 Two checks read it:
@@ -1441,13 +1448,23 @@ Two checks read it:
   forge shows, such as `gh pr checks` on GitHub. A session whose record cannot be read is not judged. The record is this
   checkout's, so a body for another branch is not judged: a `--head` that names another branch, or an edit of a pull
   request whose head is another branch or that the open list cannot show. An edit names its pull request by number,
-  URL, branch name, or nothing for the checked-out branch's; a branch name is matched against each open pull request's
-  `headRefName`. An edit judges only the clauses its pull request's current body does not already hold.
+  URL, branch name (`feat/x`, or `owner:feat/x`), or nothing for the checked-out branch's; a URL counts only as gh
+  reads one, with a scheme and host, so `team/pull/3` is a branch name. A branch name is matched against each open pull
+  request's `headRefName`, and an `owner:` one against its `headRepositoryOwner` too; when several open pull requests
+  fit and nothing settles which, the edit is judged as if the body were new. An edit judges only the clauses its pull
+  request's current body does not already hold. The duplicate-body check reads the edit's target the same way.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
-  own rows since its run started: a run of the session or of another agent is that one's to report. What the report
-  quotes is not its claim: a block quote line, a span in double quotes, and a clause that gives the claim to another
-  source, such as "the pull request body says `npm test` passed" or "according to the reviewer". It sends the
-  subagent back once, on the first stop of its turn, to quote the output a finished run returned or to call the run "not finished".
+  own rows since its run started: a run of the session or of another agent is that one's to report. Like fenced code,
+  what the report quotes is not its claim: a block quote line, a span in double quotes outside a code span (the quotes
+  of `pytest -k "adds"` are the command's), a clause that opens with "according to" an outside source, and a part of a
+  clause, split at a coordinating "and", in which an outside source and a verb of saying come right before the command,
+  as "the pull request body says `npm test` passed". An outside source is another agent, a pull request, an issue, a
+  review, or a handoff; "this report", "my run", and "the test output" are the writer's own, so "according to the test
+  output, `npm test` passed" and "fixed the issue reported in the ticket and `npm test` passed" stay claims.
+  An accepted residual: a report that wraps its own claim in a quote or a block quote, as one in fenced code, is not
+  checked; the check stops the mistake seen live, a report written from runs that never ended, not one set on hiding.
+  It sends the subagent back once, on the first stop of its turn, to quote the output a finished run returned or to
+  call the run "not finished".
 
 `aidrian test changed` with nothing to run prints a summary of 0 tests, so its row shows no test passed and supports no claim.
 

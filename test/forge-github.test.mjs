@@ -483,8 +483,8 @@ test('the hooks` calls: the merge guard`s view and the pull request body rule`s 
     ['pr', 'view', 'feat/x', '--json', 'number,headRefOid,baseRefName,url'],
     ['pr', 'view', '', '--json', 'number,headRefOid,baseRefName,url', '--repo', 'acme/notes'],
     // Once a repository: the evidence check and the duplicate check of one hook share the list.
-    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body,headRefName'],
-    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body,headRefName', '--repo', 'acme/notes'],
+    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body,headRefName,headRepositoryOwner'],
+    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body,headRefName,headRepositoryOwner', '--repo', 'acme/notes'],
   ]);
   assert.deepEqual(calls.map((call) => call.options), calls.map(() => ({ cwd: '/repo', timeoutMs: 3000 })), 'every call carries the hook`s bound');
   // A hook lets the action run: a gh that fails or times out is no answer, never an error.

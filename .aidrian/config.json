@@ -14,5 +14,5 @@
   },
   "review": { "engine": "codex-local", "record": "local" },
   "session": { "handoff": { "mode": "auto" } },
-  "testing": { "fullSuite": ["npm run check"], "pushFirstMinutes": 5 }
+  "testing": { "fullSuite": ["npm run check", "npm test", "npm run test"], "pushFirstMinutes": 5 }
 }

@@ -30,7 +30,7 @@ export const CHECK_RUNS = 'checks.jsonl';
 export const CHECK_RUNS_MAX_BYTES = 64 * 1024;
 // How much of a call's output is read, from its end, for the counts: of its text, or of the file the host kept it in.
 const OUTPUT_TAIL = 64 * 1024;
-const READ_FILE = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+const READ_FILE = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0) | (constants.O_NOCTTY ?? 0);
 const COMMAND_MAX = 300;
 
 // Programs that run a command given after them: `npx vitest`, `pnpm exec jest`, `python -m pytest`, `bundle exec rspec`.
@@ -140,8 +140,8 @@ export function testRuns(command, cwd, testing = {}) {
 // 2. `Tests` lines, as vitest (`Tests  1 failed | 11 passed (12)`) and jest (`Tests:  1 failed, 11 passed, 12 total`)
 //    print them, also behind a task prefix such as turbo's `web:test: `;
 // 3. cargo's `test result: ok. 12 passed; 0 failed; ...`, one a test binary and the doc-tests;
-// 4. go test's: with `-v`, the `--- PASS: TestX` and `--- FAIL: TestX` lines at the start of a line, one a top-level
-//    test, subtests left out; else, since go test prints no pass count, the `ok  <package>  0.01s` and
+// 4. go test's (goCounts): with `-v`, the `--- PASS: TestX` and `--- FAIL: TestX` lines at the start of a line, one a
+//    top-level test, subtests left out; else, since go test prints no pass count, the `ok  <package>  0.01s` and
 //    `FAIL  <package>  0.01s` lines, one a package;
 // 5. any other line with "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===` and Playwright's own lines;
 // 6. rspec's and mix's `12 examples, 0 failures`.
@@ -154,8 +154,14 @@ const TESTS_LINE = new RegExp(String.raw`^\s*${TASK_PREFIX}Tests:?\s+\d`, 'u');
 const CARGO_LINE = /\btest result:\s+\w+\.\s+\d+\s+passed;/u;
 const WORDS_LINE = /\b\d+\s+(?:passed|failed)\b/u;
 const EXAMPLES_LINE = /\b(\d+)\s+(?:examples?|tests?),\s+(\d+)\s+failures?\b/u;
-const GO_TESTS = { pass: /^--- PASS: \S/u, fail: /^--- FAIL: \S/u };
-const GO_PACKAGES = { pass: /^ok\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\))/u, fail: /^FAIL\s+\S+\s+(?:\d+(?:\.\d+)?s|\[(?:build|setup) failed\])/u };
+// go test's lines (runCounts family 4): a `-v` run's, a top-level test's result, and a package's.
+const GO_VERBOSE = /^(?:=== RUN\s|--- (?:PASS|FAIL|SKIP): \S)/u;
+const GO_TEST = { pass: /^--- PASS: \S/u, fail: /^--- FAIL: \S/u };
+const GO_PACKAGE = {
+  any: /^(?:(?:ok|FAIL)\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\)|\[(?:build|setup) failed\])|\?\s+\S+\s+\[no test files\])/u,
+  pass: /^ok\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\))(?!.*\[no tests to run\])/u,
+  fail: /^FAIL\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\)|\[(?:build|setup) failed\])/u,
+};
 const BARE_FAILED = /^\s*([1-9]\d*)\s+failed\s*$/gmu;
 // An ANSI colour code, which a runner wraps its summary in.
 const ANSI = /\u001b\[[0-9;]*m/gu;
@@ -179,12 +185,10 @@ export function runCounts(output) {
 
 // The counts of the first family of summary lines in `lines` (runCounts, families 2 to 6).
 function familyCounts(lines) {
-  for (const family of [TESTS_LINE, CARGO_LINE, GO_TESTS, GO_PACKAGES, WORDS_LINE]) {
-    if (!(family instanceof RegExp)) {
-      // A go family counts its lines, one a test or a package.
-      const pass = lines.filter((line) => family.pass.test(line)).length;
-      const fail = lines.filter((line) => family.fail.test(line)).length;
-      if (pass + fail > 0) return { pass, fail };
+  for (const family of [TESTS_LINE, CARGO_LINE, 'go', WORDS_LINE]) {
+    if (family === 'go') {
+      const go = goCounts(lines);
+      if (go) return go;
       continue;
     }
     const held = lines.filter((line) => family.test(line));
@@ -198,6 +202,18 @@ function familyCounts(lines) {
   if (!examples.length) return { pass: null, fail: null };
   const fail = examples.reduce((total, found) => total + Number(found[2]), 0);
   return { pass: examples.reduce((total, found) => total + Number(found[1]), 0) - fail, fail };
+}
+
+// go test's counts, or null when `lines` hold none of its lines. A `-v` run counts its top-level tests, and fails at
+// least once a package of it failed, so a package that did not build, a test binary that timed out and panicked, or a
+// TestMain that exited 1 after its tests passed fails the run. Any other run counts its packages: a package whose tests
+// all were skipped or filtered out (`[no tests to run]`), or that has none, counts no pass.
+function goCounts(lines) {
+  const count = (pattern) => lines.filter((line) => pattern.test(line)).length;
+  const packagesFailed = count(GO_PACKAGE.fail);
+  if (lines.some((line) => GO_VERBOSE.test(line))) return { pass: count(GO_TEST.pass), fail: Math.max(count(GO_TEST.fail), packagesFailed) };
+  if (lines.some((line) => GO_PACKAGE.any.test(line))) return { pass: count(GO_PACKAGE.pass), fail: packagesFailed };
+  return null;
 }
 
 // A run's status from its counts and whether the host saw its exit status as 0 (`exitZero`, true only when the line's
@@ -341,13 +357,25 @@ const PASS_WORD = /\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|all\s+\d+\s+te
 const FAIL_WORD = /\bnot\s+finished\b|\b(?:failed|failing|red|timed\s+out|stopped|interrupted)\b|\b[1-9]\d*\s+(?:fail(?:s|ed|ures?)?)\b|\bfail(?:s|ures?)?\s*:?\s*[1-9]/iu;
 // A clause about CI, which the record cannot see: its results are quoted from the forge.
 const CI_WORD = /\bCI\b|\bpipeline\b|\bworkflow\b/u;
-// A clause that gives the claim to another source, as "the pull request body says `npm test` passed" or "according to
-// the reviewer": a source, at most two words, then a verb of saying. "The output says" is the writer's own run.
-const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|review|agent|subagent|dispatcher|issue|ticket|comment|thread|handoff|report|brief|author|commit\s+message|bot)`;
+// An outside source a report may quote: another agent, a pull request, an issue, a review. The writer's own words are
+// none: "this report", "my report", "the test report", and "the test output" or "my run", which name no source here.
+const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|review|agent|subagent|dispatcher|issue|ticket|comment|thread|handoff|(?<!\b(?:this|my|our|test)\s)report|brief|author|commit\s+message|bot)`;
 const SAYS = String.raw`(?:says?|said|claim(?:s|ed)?|states?|stated|reports?|reported|writes|wrote|lists?|listed|quotes?|quoted|asserts?|asserted)`;
-const ATTRIBUTED = new RegExp(String.raw`\b${SOURCE}(?:'s)?\s+(?:\S+\s+){0,2}?${SAYS}\b|\baccording\s+to\b`, 'iu');
-// A span in double quotes, straight or curly: words quoted from another.
+// A clause an outside source governs: one that opens with "according to" it, or a part of it, split at a coordinating
+// "and", in which a source and a verb of saying come right before the command (SAID_BEFORE, built with the suites).
+const ACCORDING = new RegExp(String.raw`^\W*according\s+to\s+(?:\S+\s+){0,2}?${SOURCE}\b`, 'iu');
+const saidBefore = (suites) => {
+  const command = ['`', ...suites.map((suite) => `${escape(suite)}\\b`)].join('|');
+  return new RegExp(String.raw`\b${SOURCE}(?:'s)?\s+(?:\S+\s+){0,2}?${SAYS}(?:\s+that)?\s*:?\s+["“]?(?=${command})`, 'iu');
+};
+// A span in double quotes, straight or curly: words quoted from another. A quote inside a code span, as in
+// `pytest -k "adds"`, is the command's own, so code spans are set aside while the quotes are read (unquoted).
 const QUOTED_SPAN = /"[^"\n]*"|“[^”\n]*”/gu;
+function unquoted(text) {
+  const code = [];
+  const masked = text.replace(/`[^`\n]*`/gu, (span) => `\u0000${code.push(span) - 1}\u0000`);
+  return masked.replace(QUOTED_SPAN, ' ').replace(/\u0000(\d+)\u0000/gu, (_, index) => code[Number(index)]);
+}
 // A Markdown block quote line.
 const BLOCK_QUOTE = /^\s{0,3}>/u;
 // A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one.
@@ -362,19 +390,19 @@ const PASS_COUNT = /(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s*\/\s*\d+\b|(?<!\
 // `testing.fullSuite` command, also as plain words.
 // Each is { clause, key, counts, commits }: `key` the command's (commandKey), `counts` the pass counts it states, and
 // `commits` the commit ids it names, such as "at 056c3c2", which the pull request body rule reads the tree of.
-// `ownOnly` leaves out what the text quotes: block quote lines, spans in double quotes, and a clause that gives its
-// claim to another source (ATTRIBUTED). A subagent's report quotes other agents and pull request bodies; a pull request
+// `ownOnly` leaves out what the text quotes: block quote lines, spans in double quotes outside code, and what an
+// outside source governs (ownClause). A subagent's report quotes other agents and pull request bodies; a pull request
 // body's `## Tests run` section is its author's own, so that rule reads every line of it.
 export function passClaims(body, { section = 'Tests run', testing = {}, ownOnly = false } = {}) {
   let lines = section === null ? [...unfencedLines(body)] : sectionLines(body, section);
   // A block quote line ends its paragraph, as a blank line does.
   if (ownOnly) lines = lines?.map((line) => (BLOCK_QUOTE.test(line) ? '' : line));
   const suites = (testing.fullSuite ?? []).map(keyOfText).filter(Boolean);
+  const said = saidBefore(suites);
   const claims = [];
   for (const unit of units(lines ?? [])) {
     for (const written of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
-      if (ownOnly && ATTRIBUTED.test(written)) continue;
-      const clause = ownOnly ? written.replace(QUOTED_SPAN, ' ') : written;
+      const clause = ownOnly ? ownClause(written, said) : written;
       if (!PASS_WORD.test(clause) || FAIL_WORD.test(clause) || CI_WORD.test(clause)) continue;
       const keys = [...clause.matchAll(/`([^`\n]+)`/gu)].flatMap(([, code]) => {
         const [segment] = lexPipeline(code).segments.filter((each) => !CHANGES_DIRECTORY.has(readInvocation(each).program));
@@ -389,6 +417,19 @@ export function passClaims(body, { section = 'Tests run', testing = {}, ownOnly 
     }
   }
   return claims;
+}
+
+// The part of `clause` that is the writer's own: '' when it opens with "according to" an outside source, else its parts,
+// split at a coordinating "and", but those in which an outside source says the command (`said`), with its quoted spans
+// dropped (unquoted). "Fixed the issue reported in the ticket and `npm test` passed" keeps its claim.
+function ownClause(clause, said) {
+  if (ACCORDING.test(clause)) return '';
+  const own = clause.split(/(,?\s+and\s+)/iu).filter((part, index, parts) => {
+    // A joining "and" stays when the part after it does.
+    const text = index % 2 ? parts[index + 1] : part;
+    return !said.test(text);
+  });
+  return unquoted(own.join(''));
 }
 
 // The list items and paragraphs of `lines`, each one string: a list marker starts one, a blank line or a heading ends it,

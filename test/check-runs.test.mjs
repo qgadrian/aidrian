@@ -150,11 +150,38 @@ test('go test counts its tests with -v, else its packages', () => {
   assert.deepEqual(runCounts(GO_VERBOSE), { pass: 3, fail: 0 }, 'top-level tests, not subtests or packages');
   assert.deepEqual(runCounts(GO_VERBOSE_FAIL), { pass: 1, fail: 1 });
   assert.deepEqual(runCounts(GO_PACKAGES), { pass: 2, fail: 0 }, 'a package with no test files is neither');
-  assert.deepEqual(runCounts(GO_PACKAGES_FAIL), { pass: 0, fail: 1 }, 'a failing test\'s line names the failure');
+  assert.deepEqual(runCounts(GO_PACKAGES_FAIL), { pass: 0, fail: 2 }, 'a failing test, and a package that did not build');
   assert.deepEqual(runCounts('ok  \texample.test/other\t0.004s\nFAIL\texample.test/broken [build failed]\n'), { pass: 1, fail: 1 }, 'a package that did not build');
   for (const output of [GO_VERBOSE, GO_PACKAGES]) assert.equal(runStatus(runCounts(output), false), 'passed', output);
   for (const output of [GO_VERBOSE_FAIL, GO_PACKAGES_FAIL]) assert.equal(runStatus(runCounts(output), false), 'failed', output);
   assert.deepEqual(runCounts('ok 1 - adds\nok 2 - subtracts\n'), { pass: null, fail: null }, 'a TAP line is no go package');
+});
+
+// A `-v` run whose package failed with no `--- FAIL:` line of its own.
+const GO_V_BUILD = '=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.test/pkg\t0.010s\n' +
+  '# example.test/broken\nbroken/x.go:3:1: syntax error: non-declaration statement outside function body\nFAIL\texample.test/broken [build failed]\nFAIL\n';
+const GO_V_TIMEOUT = '=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestSlow\npanic: test timed out after 1s\n\trunning tests:\n\t\tTestSlow (1s)\n\n' +
+  'goroutine 7 [running]:\ntesting.(*M).startAlarm.func1()\nFAIL\texample.test/pkg\t1.012s\nFAIL\n';
+const GO_V_MAIN_EXIT = '=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n--- PASS: TestB (0.00s)\nPASS\nFAIL\texample.test/pkg\t0.008s\nFAIL\n';
+
+test('a go -v run with a failed package fails, though no test of it printed FAIL', () => {
+  for (const [output, why] of [[GO_V_BUILD, 'a package that did not build'], [GO_V_TIMEOUT, 'a timeout panic'], [GO_V_MAIN_EXIT, 'a TestMain that exited 1 after its tests passed']]) {
+    assert.ok(runCounts(output).fail >= 1, why);
+    assert.equal(runStatus(runCounts(output), false), 'failed', why);
+    const [row] = checkRows({ command: 'go test -v ./... | tee go.log', cwd: '/w', output, exitZero: true, tree: () => ({ tree: 't', trackedTree: 't' }), at: 't' });
+    assert.equal(row.status, 'failed', `${why}, behind a pipe`);
+  }
+  assert.deepEqual(runCounts(GO_V_MAIN_EXIT), { pass: 2, fail: 1 });
+});
+
+test('a go package with no tests to run counts no pass', () => {
+  assert.deepEqual(runCounts('ok  \texample.test/pkg\t0.005s [no tests to run]\n'), { pass: 0, fail: 0 });
+  assert.deepEqual(runCounts('?   \texample.test/cmd\t[no test files]\n'), { pass: 0, fail: 0 });
+  const skipped = '=== RUN   TestA\n    a_test.go:5: needs a database\n--- SKIP: TestA (0.00s)\nPASS\nok  \texample.test/pkg\t0.004s\n';
+  assert.deepEqual(runCounts(skipped), { pass: 0, fail: 0 }, 'a -v run whose tests were all skipped');
+  const [row] = checkRows({ command: 'go test -run TestNone ./...', cwd: '/w', output: 'ok  \texample.test/pkg\t0.005s [no tests to run]\n', exitZero: true, tree: () => ({ tree: 't', trackedTree: 't' }), at: 't' });
+  assert.equal(row.pass, 0);
+  assert.equal(unsupportedClaims(passClaims('`go test -run TestNone ./...` passed', { section: null }), [row], { tree: 't' }).length, 1, 'supports no claim');
 });
 
 test('the working trees count uncommitted files, with and without the untracked ones, and match the commit that holds them', () => {
@@ -234,6 +261,28 @@ test('a report\'s own claims leave out what it quotes from another source', () =
   const all = passClaims(report, { section: null }).map(({ key }) => key);
   assert.deepEqual(all, ['npm test', 'npm test', 'node --test test/a.test.mjs', 'vitest run', 'npm test', 'pytest'], 'a pull request body reads every line');
   assert.equal(passClaims('> `npm test` passed\n`npm test` passed', { section: null, ownOnly: true }).length, 1, 'a line after a block quote is the writer\'s');
+  assert.deepEqual(passClaims('The reviewer says `npm test` passed, and `vitest run` passed 3/3.', { section: null, ownOnly: true }).map(({ key }) => key),
+    ['vitest run'], 'the part after a coordinating "and" is the writer\'s');
+});
+
+test('a report\'s own claim stays one when it names a source that does not say the command', () => {
+  const own = (text) => passClaims(text, { section: null, ownOnly: true, testing: TESTING }).map(({ key, counts }) => ({ key, counts }));
+  for (const [text, counts] of [
+    ['According to the test output, `npm test` passed, 120/120.', [120]],
+    ['`npm test` passed 120/120, according to my run.', [120]],
+    ['Fixed the issue reported in the ticket and `npm test` passed 40/40.', [40]],
+    ['Fixed the two findings the reviewer reported, and `npm test` now passes: 12 passed.', [12]],
+    ['Updated the fixture according to the spec and `npm test` passed.', []],
+    ['This report states `npm test` passed 40/40.', [40]],
+  ]) assert.deepEqual(own(text), [{ key: 'npm test', counts }], text);
+  assert.deepEqual(own('The PR body says npm run check passed.'), [], 'a full suite named as plain words, said by a source');
+});
+
+test('quotes inside a code span are the command\'s, and its claim is checked', () => {
+  const [claim] = passClaims('`pytest -k "adds"` passed, 12 passed.', { section: null, ownOnly: true });
+  assert.equal(claim?.key, 'pytest -k adds');
+  const rows = checkRows({ command: 'pytest -k "adds"', cwd: '/w', output: PYTEST_PASS, exitZero: true, tree: () => ({ tree: 't', trackedTree: 't' }), at: 't' });
+  assert.deepEqual(unsupportedClaims([claim], rows, { tree: 't' }), [], 'its own run supports it');
 });
 
 test('a claim needs a run of its command that passed, at the tree, with the count it states', () => {
@@ -311,12 +360,16 @@ test('a call whose output Claude Code kept in a file is counted from that file\'
   const lines = Array.from({ length: 2000 }, (_, index) => `✔ case ${index} (0.1ms)`).join('\n');
   const whole = `${lines}\nℹ tests 2000\nℹ pass 2000\nℹ fail 0\n`;
   assert.ok(Buffer.byteLength(whole) > 30_000);
-  const file = path.join(ROOT, `persisted-${made}.txt`);
+  // Where Claude Code keeps it: <config>/projects/<project>/<session>/tool-results/. The hooks run with HOME at ROOT.
+  const results = path.join(ROOT, '.claude/projects/-work-app', `s-${made}`, 'tool-results');
+  mkdirSync(results, { recursive: true });
+  const file = path.join(results, 'b1.txt');
   writeFileSync(file, whole);
   const response = { stdout: whole.slice(0, 30_000), stderr: '', interrupted: false, isImage: false, noOutputExpected: false, persistedOutputPath: file, persistedOutputSize: whole.length };
   const claude = detectHost({ env: { CLAUDECODE: '1' } });
-  assert.deepEqual(claude.shellRun(response).persisted, { file, after: '' });
-  assert.equal(claude.shellRun({ stdout: 'o', stderr: '' }).persisted, null);
+  const home = { HOME: ROOT };
+  assert.deepEqual(claude.shellRun(response, { CLAUDE_CONFIG_DIR: path.join(ROOT, '.claude') }).persisted, { file, after: '' });
+  assert.equal(claude.shellRun({ stdout: 'o', stderr: '' }, home).persisted, null);
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'persist-1', response }));
   assert.deepEqual(recorded('persist-1').map(({ status, pass, fail, tree: at }) => ({ status, pass, fail, at })), [{ status: 'passed', pass: 2000, fail: 0, at: tree }]);
 
@@ -331,6 +384,43 @@ test('a call whose output Claude Code kept in a file is counted from that file\'
   assert.equal(fileTail(link), null, 'a symlink is never read');
   assert.equal(fileTail('relative.txt'), null);
   assert.equal(outputText('out', { file, after: 'warning\nℹ fail 1' }).endsWith('ℹ fail 0\n\nwarning\nℹ fail 1'), true, 'the stderr after it');
+});
+
+test('a persisted output path is read only in a tool-results folder under Claude Code\'s projects folder', () => {
+  const claude = detectHost({ env: { CLAUDECODE: '1' } });
+  const config = path.join(ROOT, `config-${made}`);
+  const results = path.join(config, 'projects/-work-app/s1/tool-results');
+  mkdirSync(results, { recursive: true });
+  const inside = path.join(results, 'b1.txt');
+  writeFileSync(inside, 'ℹ pass 1\n');
+  const persisted = (file, env = { CLAUDE_CONFIG_DIR: config }) => claude.shellRun({ stdout: 'head', stderr: '', persistedOutputPath: file }, env).persisted;
+  assert.deepEqual(persisted(inside), { file: inside, after: '' });
+  // A tool-results folder anywhere else, as one a command made in the project, is no output of a call.
+  const elsewhere = path.join(ROOT, `elsewhere-${made}/tool-results`);
+  mkdirSync(elsewhere, { recursive: true });
+  writeFileSync(path.join(elsewhere, 'b1.txt'), 'ℹ pass 1\n');
+  assert.equal(persisted(path.join(elsewhere, 'b1.txt')), null, 'a path outside the projects folder');
+  assert.equal(persisted(path.join(config, 'projects/-work-app/s1/b1.txt')), null, 'outside a tool-results folder');
+  // A tool-results folder under projects that links to one elsewhere resolves outside it.
+  symlinkSync(elsewhere, path.join(config, 'projects/-work-app/s2'));
+  assert.equal(persisted(path.join(config, 'projects/-work-app/s2/b1.txt')), null, 'a symlinked parent that resolves outside');
+  mkdirSync(path.join(config, 'projects/-work-app/s3'));
+  symlinkSync(elsewhere, path.join(config, 'projects/-work-app/s3/tool-results'));
+  assert.equal(persisted(path.join(config, 'projects/-work-app/s3/tool-results/b1.txt')), null, 'a symlinked tool-results folder that resolves outside');
+  // A config folder reached through a symlink still holds the real projects folder.
+  const linked = path.join(ROOT, `config-link-${made}`);
+  symlinkSync(config, linked);
+  const through = path.join(linked, 'projects/-work-app/s1/tool-results/b1.txt');
+  assert.deepEqual(persisted(through, { CLAUDE_CONFIG_DIR: linked }), { file: inside, after: '' }, 'a symlinked config folder');
+  assert.deepEqual(persisted(inside, { CLAUDE_CONFIG_DIR: linked }), { file: inside, after: '' });
+  symlinkSync(path.join(elsewhere, 'b1.txt'), path.join(results, 'link.txt'));
+  assert.equal(persisted(path.join(results, 'link.txt')), null, 'a symlinked file');
+  if (process.platform !== 'win32') {
+    const fifo = path.join(results, 'fifo.txt');
+    assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+    assert.equal(persisted(fifo), null, 'a FIFO');
+    assert.equal(fileTail(fifo), null, 'and fileTail never blocks on one');
+  }
 });
 
 test('the shell adapters say whether a call finished and whether its exit status is known', () => {
@@ -391,7 +481,8 @@ test('the pull request body rule refuses a pass the session record does not supp
 
   // An edit judges only the lines its pull request's body lacks, and only for this branch's pull request.
   const edit = `gh pr edit 7 --body-file ${bodyFile}`;
-  const open = [{ number: 7, headRefName: 'feat/x', body: BODY([claim]) }, { number: 8, headRefName: 'other', body: '' }];
+  const acme = { headRepositoryOwner: { login: 'acme' } };
+  const open = [{ number: 7, headRefName: 'feat/x', body: BODY([claim]), ...acme }, { number: 8, headRefName: 'other', body: '', ...acme }];
   assert.equal(judge([claim, '- more text'], [], { command: edit, open }), null, 'a line the body already held');
   assert.match(judge([claim, '- `npm test`: 3 passed'], [], { command: edit, open }) ?? '', /says `npm test` passed/u, 'a new line');
   assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit 8 --body-file ${bodyFile}`, open }), null, 'another branch\'s pull request');
@@ -400,11 +491,18 @@ test('the pull request body rule refuses a pass the session record does not supp
   // An edit that names its pull request by branch name reads that pull request's body, matched by its head.
   const byBranch = `gh pr edit feat/x --body-file ${bodyFile}`;
   assert.equal(judge([claim, '- more text'], [], { command: byBranch, open }), null, 'a line the branch\'s body already held');
-  assert.equal(judge([claim], [], { command: `gh pr edit acme:feat/x --body-file ${bodyFile}`, open }), null, 'with its owner too');
   assert.match(judge([claim, '- `npm test`: 3 passed'], [], { command: byBranch, open }) ?? '', /says `npm test` passed/u, 'a new line');
+  const owned = judge([claim, '- `npm test`: 3 passed'], [], { command: `gh pr edit acme:feat/x --body-file ${bodyFile}`, open }) ?? '';
+  assert.match(owned, /says `npm test` passed/u, 'a new line under an owner:branch target');
+  assert.doesNotMatch(owned, /`npm run check`/u, 'and only the new line');
   assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit other --body-file ${bodyFile}`, open }), null, 'another branch\'s pull request');
   const slashed = [{ number: 3, headRefName: 'feat/x', body: BODY([claim]) }];
   assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit team/pull/3 --body-file ${bodyFile}`, open: slashed }), null, 'a branch named like a URL path is a branch');
+  // Two open pull requests share the head's name, one from a fork: the owner settles which, and nothing else does.
+  const twins = [open[0], { number: 9, headRefName: 'feat/x', body: '', headRepositoryOwner: { login: 'fork' } }];
+  assert.equal(judge([claim], [], { command: `gh pr edit acme:feat/x --body-file ${bodyFile}`, open: twins }), null, 'the owner\'s pull request, whose body held the line');
+  assert.match(judge([claim], [], { command: `gh pr edit fork:feat/x --body-file ${bodyFile}`, open: twins }) ?? '', /^Blocked/u, 'the fork\'s, whose body did not');
+  assert.match(judge([claim], [], { command: byBranch, open: twins }) ?? '', /^Blocked/u, 'unsettled: every line is judged');
 });
 
 test('the subagent stop hook sends back once a report that claims a pass its own finished run does not show', () => {

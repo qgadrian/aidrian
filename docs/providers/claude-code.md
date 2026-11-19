@@ -331,8 +331,11 @@ It never signals a process: the supervisor owns the background session's process
 
 A terminal the Human attached by a name, as `claude attach 'staff-perm · 6'`, follows the session too:
 `replaceTerminal.nameMatcher` (`nameMatcher` in `lib/hosts/claude-code-background.mjs`) reads `claude agents --json`
-once and says a typed target opens the session when it is that session's whole name and no other listed session has
-that name, or part of its name and of no other listed session's, case and all. `claude attach --help` on 2.1.328 gives
+once. It counts only the rows whose `startedAt`, in epoch milliseconds, is at or before the time the terminal attached,
+plus 5 seconds; a row with no `startedAt` never matches. Among those rows, a typed target resolves to every row whose
+`sessionId` or `id` it is, or starts, when it has at least 8 characters, then to the one row whose whole name it is,
+when only one has that name, or else to every row whose name holds it, case and all. It opens the session only when
+all of that resolves to this session alone. `claude attach --help` on 2.1.328 gives
 `claude attach <id|name>` and says part of the session name works in place of the id. Not verified live: how the
 command picks between a whole name and a part another name holds, or whether it ignores case; the test above follows
 nothing it is unsure of.

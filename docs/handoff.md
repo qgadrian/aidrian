@@ -458,10 +458,19 @@ A typed target that is no plain id, such as `claude attach 'staff-perm · 6'`, b
 `~<hex> <epoch seconds>`: the target's bytes in lowercase hexadecimal, through `od`, so no character of it reaches the
 record as typed, when it is 1 to 128 bytes (`NAME_BYTES`); a longer one writes no record. The gate of a session asks
 the host which session such a target opens (`replaceTerminal.nameMatcher`), once, and only for a fresh record no id
-matches. On Claude Code, `claude attach` takes a session's name, or part of it, in place of its id, so the target
-follows the session whose whole name it is, when no other listed session has that name, or whose name alone among the
-listed sessions holds it, case and all. A name that reads as a plain id, such as `staff-perm`, is recorded as one, and
-the gate asks the host about it too when no id matches. The request then names the session by its own full id.
+matches. Two rules bind the answer:
+
+- Only a session the host lists as started at or before the record's time, plus 5 seconds (`NEXT_MARGIN`), may be
+  the match, and uniqueness is judged among those sessions alone. A terminal that attached to `widget build` by the
+  part `widget` keeps following it when a session named `widget` starts later.
+- The target must resolve to exactly one of those sessions, across ids and names: a session's full id, its short id,
+  or a prefix of at least 8 characters (`SHORT_ID_MIN`) of either counts, as well as its name. A target that is another
+  session's id or id prefix never matches this session, even when this session's name holds it.
+
+On Claude Code, `claude attach` takes a session's name, or part of it, in place of its id, so among those sessions the
+target resolves to the one whose whole name it is, when only one has that name, or else to every one whose name holds
+it, case and all. A name that reads as a plain id, such as `staff-perm`, is recorded as one, and the gate asks the host
+about it too when no id matches. The request then names the session by its own full id.
 
 An alias for `claude` takes the place of the function when typed. One whose value starts with `claude`, such as
 `alias claude='claude --dangerously-skip-permissions'`, still reaches the function, flag and all. One that points

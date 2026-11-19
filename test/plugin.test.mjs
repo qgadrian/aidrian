@@ -802,8 +802,10 @@ test('a reused ledger reaches what a settled marker means, the handoff carries t
   assert.match(flat('docs/dispatch-log.md'), row);
   assert.match(readFileSync(path.join(PLUGIN, 'lib/decisions-cli.mjs'), 'utf8'), /`quorum route` and `quorum provisional` add `resolve`'s/);
   const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
-  assert.match(docs['config.md'].summary, /autoStart/);
-  for (const words of ['quorum route', 'quorum provisional']) assert.ok(docs['project-folder.md'].summary.includes(words), words);
+  // Each summary keeps the words a search for its surface uses, within the 160 characters an index summary holds.
+  for (const words of ['autoStart', 'projectRun', 'next']) assert.ok(docs['config.md'].summary.includes(words), `config.md summary: ${words}`);
+  for (const words of ['quorum route', 'quorum provisional', 'worktrees', 'decision markers', 'migrating']) assert.ok(docs['project-folder.md'].summary.includes(words), `project-folder.md summary: ${words}`);
+  for (const file of ['config.md', 'project-folder.md']) assert.ok(docs[file].summary.length <= 160, `${file} summary: ${docs[file].summary.length} characters`);
 });
 
 test('no eval prompt sets its own run count: the documented --runs flag covers it', () => {

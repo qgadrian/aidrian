@@ -439,8 +439,10 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
     }
     return trees.get(commit);
   };
+  // Digits alone git cannot read are a number, such as "at 1234567 ms", and leave the line to HEAD's tree.
   const missing = claims.filter((claim) => {
-    const tree = treeAt(claim.commits.at(-1) ?? 'HEAD');
+    const named = claim.commits.filter((id) => /[a-f]/u.test(id) || treeAt(id) !== null).at(-1);
+    const tree = treeAt(named ?? 'HEAD');
     return tree !== null && unsupportedClaims([claim], runs, { tree }).length > 0;
   });
   if (!missing.length) return null;

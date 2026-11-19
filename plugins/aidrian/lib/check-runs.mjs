@@ -496,8 +496,10 @@ function stringsOf(value) {
 
 // A Markdown block quote line.
 const BLOCK_QUOTE = /^\s{0,3}>/u;
-// A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one.
-const COMMIT_ID = /\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b/gu;
+// A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one, or digits alone
+// after "at" or "commit", in backticks or not, as about one abbreviated id in 27 is. Digits alone may still be a time
+// or a date, so the pull request body rule takes them only when git knows the commit.
+const COMMIT_ID = /\b(?:(?=[0-9]*[a-f])[0-9a-f]{7,40}|(?<=\b(?:[Aa]t|[Cc]ommit)\s+`?)[0-9]{7,40})\b/gu;
 // The pass counts a clause states: "4071/4071", "12 pass", "pass 12", "12 tests passed". A number after a word, as in
 // "Node 22 pass", is a name, not a count, but after "all" or "only".
 const PASS_COUNT = /(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s*\/\s*\d+\b|(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s+(?:tests?\s+)?pass(?:es|ed|ing)?\b|\bpass(?:es|ed)?\s*:?\s+(\d+)\b/giu;

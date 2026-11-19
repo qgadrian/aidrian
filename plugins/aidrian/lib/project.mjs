@@ -80,8 +80,8 @@ export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|
 // even inside a main checkout that has one. Outside git it goes on to the file-system root.
 // Every hook starts here, some on every tool call: with no project folder above `start` it runs no git, and with one it
 // runs git once, for the checkout's top folder and its main checkout together, and once more when the local auto-merge
-// switch is on, to ask whether git tracks that file. `read`, when given, gives the options of the first of those reads,
-// as stateDir's does, for a caller under a deadline.
+// switch is on, to ask whether git tracks that file. `read`, when given, gives the options of each of those reads, as
+// stateDir's does, for a caller under a deadline.
 export function findProject(start, read) {
   const from = path.resolve(start);
   const found = nearestFolder(from);
@@ -95,7 +95,7 @@ export function findProject(start, read) {
       if (dir === found) break;
     }
   }
-  return openProject(found, roots);
+  return openProject(found, roots, read);
 }
 
 // The nearest folder at or above `dir` that has `.aidrian.json` or `.aidrian/config.json`, or null.
@@ -162,13 +162,14 @@ export function projectAt(start) {
 // `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
 // because it could not be read or names no usable folder: from `root`, or absolute when it is in the main checkout.
 // `roots` is git's checkoutRoots for a folder in the same checkout, when the caller already asked; null outside git.
-export function openProject(root, roots) {
+// `read`, when given, gives the options of each git read the local file takes, as findProject's does.
+export function openProject(root, roots, read) {
   const errors = [];
   const unreadable = [];
   const dir = folderDir(root, errors, unreadable);
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
   const checkouts = checkoutsOf(root, roots);
-  const local = readLocal(checkouts, errors, unreadable);
+  const local = readLocal(checkouts, errors, unreadable, read);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
   return {
     root,
@@ -303,8 +304,9 @@ const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review
 // unattended waiver, and review approvals), and `review.productFeedback.auto` come only from the main checkout's file
 // (checkouts.at(-1)): a copy a session writes in its own worktree raises nothing, lowers nothing, and never turns merging on.
 // Behind such a copy, the main checkout's file gets every check it gets when it is the one loaded, and its errors are
-// reported, so a worktree's copy hides none of them.
-function readLocal(checkouts, errors, unreadable) {
+// reported, so a worktree's copy hides none of them. Whether git tracks the main checkout's file is asked once, and only
+// when a switch or `review.productFeedback.auto` needs it, with the options `read` gives, as findProject's reads take them.
+function readLocal(checkouts, errors, unreadable, read) {
   const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...UNSET_SWITCHES };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
@@ -314,8 +316,10 @@ function readLocal(checkouts, errors, unreadable) {
   if (own) errors.push(...own.problems);
   else unreadable.push(holder === checkouts[0] ? LOCAL : path.join(holder, LOCAL));
   const mainFile = holder === main ? own : mainLocal(main, errors);
-  const switches = machineSwitches(mainFile, main, errors);
-  const feedbackAuto = mainFeedbackAuto(mainFile?.raw, main, errors);
+  let asked = null;
+  const tracked = () => (asked ??= runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main, typeof read === 'function' ? read() : undefined)).status;
+  const switches = machineSwitches(mainFile, tracked, errors);
+  const feedbackAuto = mainFeedbackAuto(mainFile?.raw, tracked, errors);
   if (!own) return { ...none, ...switches, feedbackAuto };
   const { models, names, telemetry, agents, review } = raw;
   return { sources: own.sources, models, names, telemetry, agents, review, decisions: mainFile?.raw.decisions, ...switches, feedbackAuto };
@@ -354,17 +358,18 @@ const UNSET_SWITCHES = Object.freeze({ autoMerge: 'unset', unattendedWaiver: 'un
 // and "off" when it cannot be read. An error anywhere in the file, a tracked-file one too, reads an unset auto-merge
 // "off", so it never follows a team default of "on", and the waiver "off" though it says "on": a wrong local file never
 // turns merging on, nor lets a verdict stand in for the Human.
-function machineSwitches(file, main, errors) {
+// `tracked` gives git's status for the question whether it tracks the file (readLocal).
+function machineSwitches(file, tracked, errors) {
   if (file === undefined) return UNSET_SWITCHES;
   if (!file) return { autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off', handoffBackground: 'off' };
-  const tracked = [];
-  const autoMerge = untrackedSwitch(file.autoMerge, 'github.autoMerge', main, tracked);
-  const unattendedWaiver = untrackedSwitch(file.unattendedWaiver, 'github.unattendedWaiver', main, tracked);
-  const reviewApprovals = untrackedSwitch(file.reviewApprovals, 'reviewApprovals', main, tracked);
-  const unattendedSignoff = untrackedSwitch(file.unattendedSignoff, 'unattendedSignoff', main, tracked);
-  const handoffBackground = untrackedSwitch(file.handoffBackground, 'handoff.background', main, tracked);
-  errors.push(...tracked);
-  const broken = file.problems.length > 0 || tracked.length > 0;
+  const problems = [];
+  const autoMerge = untrackedSwitch(file.autoMerge, 'github.autoMerge', tracked, problems);
+  const unattendedWaiver = untrackedSwitch(file.unattendedWaiver, 'github.unattendedWaiver', tracked, problems);
+  const reviewApprovals = untrackedSwitch(file.reviewApprovals, 'reviewApprovals', tracked, problems);
+  const unattendedSignoff = untrackedSwitch(file.unattendedSignoff, 'unattendedSignoff', tracked, problems);
+  const handoffBackground = untrackedSwitch(file.handoffBackground, 'handoff.background', tracked, problems);
+  errors.push(...problems);
+  const broken = file.problems.length > 0 || problems.length > 0;
   return {
     autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge,
     unattendedWaiver: broken ? 'off' : unattendedWaiver,
@@ -374,13 +379,13 @@ function machineSwitches(file, main, errors) {
   };
 }
 
-// A switch `value` the local file in `main` sets, named `key` in its errors. A local file git tracks travels with a
-// branch, so it is no machine's own switch. Only git's answer "untracked" (exit 1) keeps it on: tracked under any case, a
+// A switch `value` the main checkout's local file sets, named `key` in its errors; `tracked` gives git's status (readLocal).
+// A local file git tracks travels with a branch, so it is no machine's own switch. Only git's answer "untracked" (exit 1) keeps it on: tracked under any case, a
 // git that fails or stalls, or no repository at all reads "off". Asked only when the switch is on, so a hook pays no git
 // call for a file that keeps it off.
-function untrackedSwitch(value, key, main, errors) {
+function untrackedSwitch(value, key, tracked, errors) {
   if (value !== 'on') return value;
-  const { status } = runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main);
+  const status = tracked();
   if (status === 0) errors.push(`${LOCAL}: git tracks it, so a branch could carry it; "${key}" reads "off" until it is untracked (git rm --cached ${LOCAL})`);
   else if (status !== 1) errors.push(`${LOCAL}: git could not say whether it tracks it, so "${key}" reads "off"`);
   return status === 1 ? 'on' : 'off';
@@ -390,10 +395,10 @@ function untrackedSwitch(value, key, main, errors) {
 // it could not be read. Unset, a value that is no boolean, a broken file, and no file all read as undefined, so the
 // team's value holds, never false. A file git tracks travels with a branch, so it is no machine's own: only git's answer
 // "untracked" (exit 1) keeps the value. Asked only when a value is set, so a hook pays no git call for a file with none.
-function mainFeedbackAuto(raw, main, errors) {
+function mainFeedbackAuto(raw, tracked, errors) {
   const auto = raw?.review?.productFeedback?.auto;
   if (typeof auto !== 'boolean') return undefined;
-  const { status } = runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main);
+  const status = tracked();
   if (status === 1) return auto;
   errors.push(status === 0
     ? `${LOCAL}: git tracks it, so a branch could carry it; "review.productFeedback.auto" is ignored until it is untracked (git rm --cached ${LOCAL})`

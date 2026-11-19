@@ -948,14 +948,17 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   waits on it ([Project start](providers/codex.md#project-start)). A beacon lapses with the pending mark.
 - A session whose start proves its sandbox from inside it, as every Claude Code issue session's does
   ([The sandbox proof](providers/claude-code.md#the-sandbox-proof)), runs only the exact
-  `aidrian project confine <run> <issue>` of its own issue, alone, in Bash, until the start files the passed proof in
-  its mark; a call it makes before then is refused, wherever it runs. Before the gate files its mark, the pending mark
-  holds a call in the clone it starts the same way, when the start wrote the proof's plan beside that clone. Once the
-  mark or the verdict in the drop folder says the proof failed, or the mark's proof state cannot be read, every call
-  is refused, the confine command too. The hook also refuses the confine command, and writes a failed verdict, when
+  `aidrian project confine <run> <issue>` of its own issue, alone, on one line, in Bash, and only while no verdict is in
+  the drop folder, until the start files the passed proof in its mark; a call it makes before then is refused,
+  wherever it runs. A session with no readable mark of its own, whichever pending mark it reads, is held the same way
+  whenever its call runs in an attempt's clone whose start wrote the proof's plan. Once the mark or the verdict in the
+  drop folder says the proof failed, or the mark's proof state cannot be read, every call is refused, the confine
+  command too. Before and after the proof, a file-tool read (Read, Grep, Glob, or LS, as the host's adapter names its
+  read tools) that reaches a store the plan lists as hidden, or a folder that holds one, is refused. The hook also refuses the confine command, and writes a failed verdict, when
   its own environment, the host process's, holds a variable whose value names the attempt's `cache` folder. Only that
   issue's session may run the confine command (`lib/project-run-guard.mjs`). A session with no proof in its mark
-  and no plan beside its clone, as Codex's, is not held so.
+  and no plan beside its clone, as Codex's, is not held so. And a session an unattended mark holds never runs a call
+  that asks the host to run it outside its sandbox (`sandbox_escape`, Claude Code's `dangerouslyDisableSandbox`).
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
@@ -1325,7 +1328,9 @@ and repeat the call until the task ends, or stop it with `TaskStop` when it shou
 One send-back did not hold. A foreground wait that outlives its timeout is moved to the background, so at the next stop it
 is one more running task, and some agents answered the send-back by arming a Monitor, another task, and ending the turn.
 Claude Code marks every stop after the first send-back of a turn with `stop_hook_active: true`, so that flag cannot count
-the rounds. The hook counts them instead, in a file per agent in the temporary folder (`lib/child-send-backs.mjs`):
+the rounds. The hook counts them instead, in a file per agent in the hooks' counts folder, `<state root>/hook-counts`,
+which no confined session's sandbox may write (`lib/child-send-backs.mjs`), opened without following a link or waiting
+on a FIFO, and only as a regular file of the user with one link:
 it sends the subagent back at each stop while its task runs, up to 5 times in a row, and says which round it is.
 A stop with none of its own tasks running clears the count, and a turn no stop hook started counts from zero.
 The stop the cap lets end with the task still running is an occurrence of an [automatic lesson](lessons.md#automatic-lessons)

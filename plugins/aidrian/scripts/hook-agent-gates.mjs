@@ -33,7 +33,9 @@
 // A session whose start proves its sandbox from inside it (capabilities.projectStart.confineProof) runs only the exact
 // `aidrian project confine <run> <issue>` until the start confirms the proof in its unattended mark, and nothing once the
 // proof failed; the hook also fails the proof when its own environment, the host process's, holds the session's cache
-// variables (lib/project-confine.mjs confineDenial).
+// variables, and its file tools never read a store the proof's plan lists as hidden (lib/confine-guard.mjs
+// confineDenial). A session an unattended mark holds never runs a call that asks the host for its sandbox escape
+// (`sandbox_escape`, which the host's adapter maps its own parameter to).
 // In a project run's attempt clone, a key of the clone's own git config that makes git run a program, a `.git` that does
 // not point at the attempt's own git folder, or a `commondir` or `config.worktree` there other than the start gate's
 // placeholder refuses every call, first, before any git call of this hook runs there (lib/attempt-clone.mjs
@@ -53,7 +55,7 @@ import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, signoffWriteDenial, startedUnattended, stateFolders, unattendedMarkWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
-import { confineDenial } from '../lib/project-confine.mjs';
+import { confineDenial, sandboxEscapeDenial } from '../lib/confine-guard.mjs';
 import { drivesRun, ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
 import { noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
@@ -90,8 +92,12 @@ async function gate(input) {
   // call: the proof a host's start adapter waits on that the host runs this plugin's hooks for it
   // (lib/unattended-mark.mjs noteBeacon). It never throws.
   if (mark?.pending || mark?.issue) noteBeacon(input.session_id);
+  // A session no Human attends never asks the host to run a command outside its sandbox.
+  const escape = sandboxEscapeDenial(input, { mark });
+  if (escape) await block(input, 'config-guard', escape.reason, { match: escape.match });
   // A confined session whose start proves its sandbox from inside it runs only `aidrian project confine` until the
-  // start confirmed that proof in its mark, and nothing once it failed (lib/project-confine.mjs), wherever its call runs.
+  // start confirmed that proof in its mark, and nothing once it failed, and its file tools never read a store its
+  // sandbox hides (lib/confine-guard.mjs), wherever its call runs.
   const unproven = confineDenial(input, { mark, env: process.env });
   if (unproven) await block(input, 'config-guard', unproven.reason, { match: unproven.match });
   const marked = mark?.root ? findProject(mark.root) : null;

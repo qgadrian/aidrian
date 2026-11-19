@@ -18,7 +18,7 @@ import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { recordSignoff } from '../plugins/aidrian/lib/review/run.mjs';
-import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { check as signoffCheck, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
@@ -682,6 +682,33 @@ test('a records folder a confined session filled with planted entries refuses an
   // Past the hook's deadline, the walk stops and refuses too.
   assert.match(recordProblem(r.project, 7, { pastDeadline: () => true }) ?? '', /could not be listed in time/u);
   assert.ok(RECORD_LIST_CAP >= 10_000, 'far above what a project`s records take');
+});
+
+test('a records folder that cannot be opened, or whose listing fails partway, refuses an unattended merge', (t) => {
+  const r = repo(t);
+  r.record(forged());
+  const folder = path.dirname(recordFile(r.project, 7, 'acme/notes'));
+  const failing = (code, after = 0) => () => {
+    if (after < 0) throw Object.assign(new Error(code), { code });
+    let read = 0;
+    return { readSync: () => {
+      if (read >= after) throw Object.assign(new Error(code), { code });
+      read += 1;
+      return { name: `pr-7-review-x${read}--y.json` };
+    }, closeSync() {} };
+  };
+  assert.match(recordNames(folder, 7, { opendir: failing('EACCES', -1) }).problem, /cannot be listed \(EACCES\)/u);
+  assert.deepEqual(recordNames(folder, 7, { opendir: failing('ENOENT', -1) }), { names: [] }, 'a folder that is not there holds none');
+  const partway = recordNames(folder, 7, { opendir: failing('EIO', 3) });
+  assert.match(partway.problem, /failed partway \(EIO\)/u);
+  assert.equal(partway.names.length, 3);
+  // Through the guard: a folder it cannot open refuses the merge.
+  chmodSync(folder, 0o000);
+  try {
+    assert.match(merge(r, MERGE) ?? '', /cannot be listed/u);
+  } finally {
+    chmodSync(folder, 0o700);
+  }
 });
 
 test('a merge mutation is read in every `gh api` call, whatever the endpoint`s spelling', (t) => {

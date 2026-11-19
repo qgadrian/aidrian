@@ -19,11 +19,11 @@
 //     user directly in the state folder that holds no guarded folder and lies in none.
 // Every git call goes through gateGit (lib/git.mjs).
 
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
-import { isWithin, resolvedPath } from './fs.mjs';
+import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
@@ -350,7 +350,7 @@ export function confinedShellVars({ session, cwd, env = process.env, home }) {
     };
     const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
     if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
-    const read = readSmallJson(path.join(attempt.folder, SHELL_VARS));
+    const read = readSmallJson(path.join(attempt.folder, SHELL_VARS), SHELL_VARS_CAP);
     if (!read || varsProblem(read)) return null;
     const vars = Object.fromEntries(Object.entries(read).filter(([name]) => CACHE_VAR_NAMES.includes(name)));
     return Object.keys(vars).length ? vars : null;
@@ -367,22 +367,4 @@ function recordedAttempt(mark, attempt, real, home) {
   if (!project) return false;
   const own = ownAttemptFolder(project, loadConfig(project).config, mark, home ? { home } : {});
   return own !== null && own === real(attempt.folder);
-}
-
-// The JSON of the regular file `file`, of one link and at most SHELL_VARS_CAP, read without following a link, or null.
-function readSmallJson(file) {
-  let fd;
-  try {
-    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > SHELL_VARS_CAP) return null;
-    const buffer = Buffer.alloc(stat.size);
-    const read = readSync(fd, buffer, 0, stat.size, 0);
-    const value = JSON.parse(buffer.subarray(0, read).toString('utf8'));
-    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
 }

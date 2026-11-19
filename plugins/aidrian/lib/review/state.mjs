@@ -376,15 +376,16 @@ export function recordFolders(project) {
 export const RECORD_LIST_CAP = 20_000;
 
 // The record files of number `pr` in `dir`, read one entry at a time: { names }, or { problem, names } past
-// RECORD_LIST_CAP entries or past `pastDeadline()`, with the names read until then. A folder that cannot be listed
-// holds none.
-function recordNames(dir, pr, { pastDeadline = () => false } = {}) {
+// RECORD_LIST_CAP entries, past `pastDeadline()`, when the folder is there and cannot be opened, or when its listing
+// fails partway, with the names read until then. A folder that is not there holds none. `opendir` is a test's.
+export function recordNames(dir, pr, { pastDeadline = () => false, opendir = opendirSync } = {}) {
   const names = [];
   let handle;
   try {
-    handle = opendirSync(dir);
-  } catch {
-    return { names };
+    handle = opendir(dir);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { names };
+    return { names, problem: `the review records folder ${dir} cannot be listed (${error.code ?? 'no code'})` };
   }
   try {
     for (let seen = 0; ; seen += 1) {
@@ -395,10 +396,14 @@ function recordNames(dir, pr, { pastDeadline = () => false } = {}) {
       const { name } = entry;
       if (name === `pr-${pr}-review.json` || (name.startsWith(`pr-${pr}-review-`) && name.endsWith('.json'))) names.push(name);
     }
-  } catch {
-    return { names };
+  } catch (error) {
+    return { names, problem: `the listing of the review records folder ${dir} failed partway (${error.code ?? 'no code'})` };
   } finally {
-    handle.closeSync();
+    try {
+      handle.closeSync();
+    } catch {
+      // Closed already.
+    }
   }
 }
 

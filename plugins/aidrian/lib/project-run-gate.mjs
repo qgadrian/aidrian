@@ -423,9 +423,11 @@ function launchStart(context, place) {
   const proving = cap.confineProof === true;
   let confine = null;
   if (proving) {
+    // The unlisted host must be outside the domains the user's and the organization's settings add too.
+    const added = safely(() => cap.confineDomains?.({ env, home, platform: context.platform }));
     confine = prepareConfine({
-      folder, run, key, attempt, work: cwd, git, drop, cache, domains, main, env, home, ...(context.listen ? { listen: context.listen } : {}),
-      reads: safely(() => cap.confineReads?.({ env, home })) ?? [],
+      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home,
+      ...(context.listen ? { listen: context.listen } : {}), reads: safely(() => cap.confineReads?.({ env, home })) ?? [],
     });
     if (confine.problem) {
       safely(() => rmSync(folder, { recursive: true, force: true }));
@@ -438,7 +440,7 @@ function launchStart(context, place) {
   const fileProof = (own, result) => safely(() => markUnattended(own, { root: context.main, cwd: resolvedPath(cwd) ?? cwd, env, tags: { ...tags, confine: result } }));
   const confined = proving ? (own) => {
     proved = own;
-    const answer = confineCheck({ folder, session: own });
+    const answer = confineCheck({ folder, session: own, prints: confine.prints });
     if (answer === null) return null;
     const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
     if (!answer.pass) return { problem: answer.problem };
@@ -460,7 +462,8 @@ function launchStart(context, place) {
           guarded: guardedStore({ env, home }),
           mcp: context.policy.mcpServers, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
-        if (started?.proof && started.uncertain === false) proof = started.problem;
+        // A failed proof halts the run whatever came of stopping its session (startLines).
+        if (started?.proof) proof = started.problem;
         return started;
       },
       stop: (id) => cap.stop({ id, env, run: spawn }),
@@ -537,11 +540,13 @@ export function forgeBase(project, repository, forge, env = process.env) {
 function startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans, now }) {
   const at = iso(now);
   let rows = [];
+  const halt = proof ? [{ event: 'halt', cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [];
+  // A session whose stop is unknown stays for settleOrphans, and a failed proof halts the run all the same.
   if (result.intended && result.outcome === 'started') rows = [{ ...base, at, outcome: 'started', id: result.marker.id, child: result.marker.session ?? null }];
   else if (result.intended && (result.outcome === 'uncertain' || (result.outcome === 'unheld' && !result.stopped))) {
-    rows = [{ ...base, at, outcome: result.outcome === 'uncertain' ? 'uncertain' : 'unheld', stopped: false }];
+    rows = [{ ...base, at, outcome: result.outcome === 'uncertain' ? 'uncertain' : 'unheld', stopped: false, ...(proof ? { proof: true } : {}) }, ...halt];
   } else if (result.intended) {
-    rows = [{ ...base, at, outcome: 'void', ...(proof ? { proof: true } : {}) }, { event: 'issue', key, state: 'open', at }, ...(proof ? [{ event: 'halt', cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [])];
+    rows = [{ ...base, at, outcome: 'void', ...(proof ? { proof: true } : {}) }, { event: 'issue', key, state: 'open', at }, ...halt];
   }
   const settle = (fresh) => (driverOf(fresh).session === session ? { rows } : { problem: 'custody of the run moved while the session started' });
   const written = rows.length ? safely(() => appendToRun(state, run, settle)) : null;
@@ -550,7 +555,7 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
     const look = cap.attachLine?.({ id: result.marker.id, name: result.marker.name }) ?? `its id is ${result.marker.id}`;
     return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `worktree: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
   }
-  if (proof && result.outcome === 'none') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
+  if (proof && result.outcome !== 'started') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
   const why = {
     refused: result.busy ? `the start claim of this session is busy (${result.busy}); a start from it may still run` : `this session's earlier start, ${result.earlier?.id}, has not ended as the host lists it`,
     none: `no session started: ${result.problem}`,

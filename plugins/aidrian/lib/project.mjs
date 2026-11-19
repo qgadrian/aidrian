@@ -60,7 +60,7 @@ const defaultRead = () => undefined;
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
-  'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
+  'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version', 'confine-guard',
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',

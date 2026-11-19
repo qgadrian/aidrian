@@ -465,6 +465,8 @@ Residual risks, each known and left for a later change:
   commands; merge trust that rests on the forge alone closes that for the merge.
 - A subagent's handoff file can be overwritten after that subagent stopped.
 - For a few seconds between the launch and the session's own mark, only the pending mark holds it.
+- On Linux the host masks a path it denies with an empty mount, so a read probe opens and sees nothing; the proof
+  judges a read by the target's fingerprint the start took outside the sandbox, never by whether it opened.
 - The sandbox proof runs once, at the start: a sandbox that weakens later in the session is not caught. Its network
   probes count a host that gives no answer within 3 seconds as refused, so on a machine with no network they prove
   nothing of the network; its write and read probes still do.
@@ -531,14 +533,22 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     call and every probe is refused; the Bash tool's environment names the session in `CLAUDE_CODE_SESSION_ID`, as
     the verdict's session; the sandbox's proxy variables, when set, name an HTTP proxy that refuses the unlisted host;
     the localhost listener sees no connection; the cache variables are in force in the shell and absent from the hook's
-    own environment; and the session's next call runs once the start confirmed the proof. With the sandbox turned off
-    by a user setting the start does not check, the proof fails and the run halts.
+    own environment; a line the SessionStart hook appends to `CLAUDE_ENV_FILE` runs inside the sandbox only, as a
+    probe line whose write outside the sandbox does not land; on Linux, the read probes of a masked folder and file see
+    nothing of the fingerprints; and the session's next call runs once the start confirmed the proof. With the
+    sandbox turned off by a user setting the start does not check, the proof fails and the run halts. Once the Bash
+    tool's environment is shown to name the session, the verdict's session becomes mandatory. A background Bash
+    command and Monitor run under the same sandbox (live check 8).
 21. A trace of the host's own git calls in a background session after its launch, on both platforms, as with a
     `git` wrapper first on PATH that logs each call. Should any run mid-session, they are hardened through the inline
     settings' `env` (`GIT_CONFIG_COUNT` with `core.fsmonitor=false`, `submodule.recurse=false`,
     `diff.ignoreSubmodules=dirty`, and `protocol.ext.allow=never`, never `core.hooksPath`), and `denyWrite` gains the
     config and hooks of every nested `.git` folder by pattern. Until the trace, neither is passed: the settings'
     `env` reaches the hooks and MCP servers too.
+22. Managed settings: a `managed-settings.json` and a `managed-settings.d/` file with `sandbox.allowUnsandboxedCommands:
+    true` halt the start on macOS and on Linux; a macOS configuration profile in the `com.anthropic.claudecode` domain
+    does too; and whether server-managed settings, which the start does not read, leave a local cache a later check
+    could read.
 
 ### The sandbox proof
 
@@ -549,28 +559,60 @@ its start stays as [its page](codex.md#project-start) says.
 
 1. Before the launch, the start writes `confine-plan.json` in the attempt's folder, which no confined session writes,
    and runs a localhost listener outside the sandbox, a `node` process that notes each connection in that folder.
-   The plan names every probe, the listener's port, a host outside every allowed domain and every registry's host,
-   and a nonce that names each probe path.
+   The plan names every probe, the listener's port and process, a host outside every allowed domain (the session's,
+   and those the user's and the organization's `sandbox.network.allowedDomains` add) and every registry's host, a
+   nonce that names each probe path, and the stores the sandbox hides. What each read target holds, its fingerprint,
+   stays in the start's memory: for a folder, one entry the sandbox does not open again (for the main checkout, any
+   but its git folder); for a file, its first bytes. An empty target is not probed.
 2. The session's prompt makes `aidrian project confine <run> <issue>` its first call. Until the start confirms the
-   proof, the agent gate hook refuses that session every call but that exact command, alone, in Bash, while its
-   mark says the proof is owed, and, before the gate files that mark, while the pending mark holds a call in the clone
-   it starts ([hooks](../hooks.md#agent-gates)). The hook also refuses the confine command, and fails the proof, when
-   its own environment, which is the host process's, holds a cache variable of the session: those reach the
-   session's sandboxed commands alone.
-3. `aidrian project confine` runs in the session's sandboxed shell and tries: to make a file in each unattended mark
-   folder, in the attempt's folder, and in the home folder; to open the clone's git `config` and
-   `.claude/settings.json` for writing; to remove the keep file of `cache` and of `drop`; to move each folder away,
-   or else to put a link beside it, and to write through the link; to read each credential store there is and the
-   main checkout; to connect to the unlisted host, directly and through each HTTP proxy the shell's environment names;
-   and to connect to the listener. It also checks that each cache variable is in force in the shell with the value
-   the start wrote. Any probe that succeeds is undone and fails the proof, and so does a write, removal, or move whose target is not there.
-   It writes the verdict, `confine.json`, in the drop folder.
+   proof, the agent gate hook refuses that session every call but that exact command, alone, on one line, in Bash,
+   and only while no verdict is there: while its mark says the proof is owed, and, with no readable mark of its own,
+   whenever its call runs in an attempt's clone with a plan, whichever pending mark it reads
+   ([hooks](../hooks.md#agent-gates)). The hook also refuses the confine command, and fails the proof, when its own
+   environment, which is the host process's, holds a cache variable of the session: those reach the session's
+   sandboxed commands alone. Before and after the proof, the hook refuses a Read, Grep, Glob, or LS that reaches a store
+   the plan lists as hidden, a folder that holds one included, since the file tools run outside the sandbox.
+3. `aidrian project confine` runs once a start, under a lock in the drop folder, in the session's sandboxed shell, and
+   tries: to make a file in each unattended mark folder, in the attempt's folder, and in the home folder, one there
+   already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the
+   keep file of `cache` and of `drop`; to move each folder away, or else to put a link beside it, and to write through
+   the link; to read each store in the plan; to connect to the unlisted host, directly and through each HTTP proxy the
+   shell's environment names; and to connect to the listener. It also checks that each cache variable is in force in
+   the shell with the value the start wrote. Any write, removal, move, link, or connection that succeeds is undone and
+   fails the proof, and so does one whose target is not there. A read that opens is not yet a landed read: on Linux
+   the host masks a denied folder with an empty one and a denied file with an empty one, so the proof hands what each
+   read saw, salted with the nonce, to the start. It writes the verdict, `confine.json`, in the drop folder.
 4. The start, outside the sandbox, reads the verdict once the beacon came, for at most 180 seconds: one of its own
-   plan that passed, names no other session, with no connection on the listener, no probe path left, and `cache` and
-   `drop` plain folders that keep their keep files, passes. It then files `confine: "passed"` in the session's mark,
-   and the hook lets the session's calls through to the other guards. Any other verdict, or none in time, stops the
-   session, files `confine: "failed"`, gives the attempt back, and halts the run until an attended
-   `aidrian project resume`; the hook refuses that session every later call. The listener stops when the start ends.
+   plan that passed, names no other session, holds no read that saw a target's fingerprint, with the listener the
+   start ran alive on its recorded port and pid (`ps` shows it, no zombie) and no connection on it, no probe path left,
+   and `cache` and `drop` plain folders that keep their keep files, passes. It then files `confine: "passed"` in the
+   session's mark, and the hook lets the session's calls through to the other guards. Any other verdict, or none in
+   time, stops the session, files `confine: "failed"`, gives the attempt back, and halts the run until an attended
+   `aidrian project resume`; when the stop itself fails, the start stays for `wait` to settle, and the run halts all the
+   same. The hook refuses that session every later call. The listener stops when the start ends.
+
+A start whose proof cannot be prepared refuses with `the sandbox proof cannot be prepared`, records nothing, and leaves
+no attempt folder; [Project run](../config.md#project-run) names each cause and its fix.
+
+The hook also refuses, to every session an unattended mark holds, a Bash call that sets `dangerouslyDisableSandbox`,
+the host's ask to run outside the sandbox, which the adapter reads as the standard `sandbox_escape`; with
+`allowUnsandboxedCommands: false` the host ignores it, so this is a second wall.
+
+### Managed settings
+
+The host ranks the organization's managed settings above `--settings`, so a managed value can undo the session's own
+sandbox. Before a start, the start reads each managed source the host documents on this machine
+(code.claude.com/docs/en/managed-settings, read on 2026-11-19), lowest rank first: `managed-settings.json` and each
+`*.json` in `managed-settings.d/` beside it, in `/Library/Application Support/ClaudeCode/` on macOS and
+`/etc/claude-code/` on Linux and WSL, then on macOS the managed preferences of the `com.anthropic.claudecode` domain,
+`/Library/Managed Preferences/com.anthropic.claudecode.plist` and the same under the user's own folder there, read
+through `plutil`. Each is judged by the user settings' rules for `sandbox` keys, granted folders, and commands, with
+one more: a scalar the session's own settings set, such as `allowUnsandboxedCommands`, passes only at the session's
+value. Its `enabledPlugins` switches count over the user's for the plugin checks. A source that is there and cannot
+be read halts the start; a platform with no documented sources halts it too.
+
+Server-managed settings, which the host fetches from the claude.ai console and caches where its docs do not say, are
+not read: a residual, which live check 22 covers.
 
 ### Dependency installs
 

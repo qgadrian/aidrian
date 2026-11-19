@@ -786,7 +786,7 @@ const NO_READ_LANDED = 'this session was refused for no read of the connected wo
 const denyRows = ({ log }) => log().filter((row) => row.event === 'hook_deny');
 
 test('a batch of first writes is refused with its reason, adds no row and no block count, and files no lesson', (t) => {
-  const { inbox, log, session, temp, write } = project(t, TELEMETRY);
+  const { inbox, log, session, state, write } = project(t, TELEMETRY);
   for (let call = 0; call < 5; call += 1) {
     const refused = write();
     assert.equal(refused.status, 2);
@@ -794,13 +794,13 @@ test('a batch of first writes is refused with its reason, adds no row and no blo
     assert.match(refused.stderr, /Call mcp__x__get_workspace, then write again/);
   }
   assert.deepEqual(log().filter((row) => row.event === 'hook_deny'), []);
-  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false);
+  assert.equal(existsSync(path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`)), false);
   assert.deepEqual(inbox(), []);
 });
 
 test('a session refused for no read whose read never lands writes one row at its end, and cleans up', (t) => {
   const refused = project(t, TELEMETRY);
-  const { end, inbox, session, temp, write } = refused;
+  const { end, inbox, session, state, temp, write } = refused;
   for (let call = 0; call < 3; call += 1) assert.equal(write({}, { agent_type: 'worker' }).status, 2);
   const marker = path.join(temp, `aidrian-tracker-refused-${session}`);
   assert.equal(existsSync(marker), true);
@@ -811,7 +811,7 @@ test('a session refused for no read whose read never lands writes one row at its
   assert.deepEqual(rows.map((row) => [row.rule, row.tool, row.agent_type, row.session_id, row.reason]), [['tracker-guard', WRITE, 'worker', session, NO_READ_LANDED]]);
   assert.ok(NO_READ_LANDED.length <= 120);
   assert.equal(existsSync(marker), false);
-  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
+  assert.equal(existsSync(path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
   assert.deepEqual(inbox(), [], 'one block is no lesson');
 
   assertRuns(end());
@@ -1038,9 +1038,9 @@ test('a note that cannot be saved lets the call run, and a later call in the ses
 });
 
 test('session end forgets which tools the session noted', (t) => {
-  const { end, run, session, temp } = project(t);
+  const { end, run, session, state } = project(t);
   assertRuns(run(POST, { tool_name: UNLISTED }));
-  const folder = path.join(temp, `aidrian-denials-${session}`);
+  const folder = path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`);
   assert.equal(existsSync(path.join(folder, `${UNLISTED}.noted`)), true);
   assertRuns(end());
   assert.equal(existsSync(folder), false);

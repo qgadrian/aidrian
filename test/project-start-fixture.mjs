@@ -128,7 +128,8 @@ export function fakeForge(config, head, views = {}, { push = () => true } = {}) 
 // session's first tool call; `beacon: false` files none, as a host that does not run the plugin's hooks. Where the
 // start wrote a sandbox proof plan beside the clone, each such session also hands over the verdict `confine` gives for
 // that plan (passVerdict by default, as a session whose sandbox refused every probe; null hands none over).
-export function fakeClaude({ dir, start = null, hidden = false, env = null, beacon = true, confine = passVerdict } = {}) {
+// `stoppable: false` makes every `claude stop` fail, as a supervisor that does not answer.
+export function fakeClaude({ dir, start = null, hidden = false, env = null, beacon = true, confine = passVerdict, stoppable = true } = {}) {
   const calls = [];
   const sessions = [];
   const states = {};
@@ -137,8 +138,8 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
     if (args[0] === 'stop') {
       const found = sessions.find((each) => each.id === args[1] || each.sessionId === args[1]);
       // As 2.1.326 lists a session `claude stop` stopped: `stopped`, not `done`.
-      if (found) states[found.sessionId] = 'stopped';
-      return { status: found ? 0 : 1, stdout: '', stderr: '' };
+      if (found && stoppable) states[found.sessionId] = 'stopped';
+      return { status: found && stoppable ? 0 : 1, stdout: '', stderr: '' };
     }
     if (args[0] === 'agents') {
       const listed = [{ sessionId: DRIVER, name: 'driver', kind: 'interactive', cwd: dir, state: 'working' }, ...sessions.map((each) => ({ ...each, state: states[each.sessionId] ?? 'working' }))];

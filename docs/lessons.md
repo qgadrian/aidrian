@@ -213,8 +213,11 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
   and a tool is one occurrence for good, so a lesson rejected because the tool only reads never reopens.
 
 A row holds names, counts, paths, and ids, never a prompt, a command, or tool output; the `session` id finds the rest.
-The block counts live in the system's temporary folder, in one folder per session with a small file per rule, which grows
-a byte per block, so subagents that block at the same time all count; the session-end hook deletes the session's folder.
+The block counts live in the hooks' counts folder, `<state root>/hook-counts`, never the temporary folder, which a
+confined session's sandbox may write: a FIFO planted at a count would hold the blocking hook past its time, and the host
+would then run the call it refused. One folder per session holds a small file per rule, which grows a byte per block,
+so subagents that block at the same time all count; each is opened without following a link or waiting, and counts
+only as a regular file of the user with one link. The session-end hook deletes the session's folder.
 That folder also holds a marker per tool noted, so a session notes each tool once.
 
 Not recorded: the session-length reminder fires in most long sessions by design, and its numbers are already in the dispatch log.

@@ -118,6 +118,14 @@ export function fileEditOf({ tool_name: tool, tool_input: given }) {
   return host ? host.fileEdit(tool, given ?? {}) : null;
 }
 
+// The paths a file-tool read in a tool call names, as the tool names them, a null one standing for the call's folder,
+// or null when the tool reads no file through the host's own file tools: a host lists its read tools in
+// `fileReadTools` and names their paths with `fileRead(tool, input)`. A host whose reads all run in its shell lists none.
+export function fileReadOf({ tool_name: tool, tool_input: given }) {
+  const host = HOSTS.find((each) => (each.fileReadTools ?? []).includes(tool));
+  return host ? host.fileRead(tool, given ?? {}) : null;
+}
+
 // The folders a project keeps `kind` (skills or agents) in, on every host that reads them.
 export const projectFolders = (kind) => HOSTS.flatMap((host) => host.projectFolders[kind] ?? []);
 

@@ -321,7 +321,7 @@ function tempFolders() {
 // `started` names is stopped when one fails, or the proof does not come within CONFINE_WAIT.
 function proveHooks({ started, identify, beacon, confined, env, run, wait, claude }) {
   const stopped = (why, proof = null) => {
-    if (!stopBackground({ id: started.id, env, run, resolve: () => claude })) return { problem: `${why}, and the session ${started.id} could not be stopped`, uncertain: true };
+    if (!stopBackground({ id: started.id, env, run, resolve: () => claude })) return { problem: `${why}, and the session ${started.id} could not be stopped`, uncertain: true, ...(proof ? { proof } : {}) };
     return { problem: `${why}; the session was stopped`, uncertain: false, ...(proof ? { proof } : {}) };
   };
   const own = started.session;

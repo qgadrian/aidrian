@@ -2,7 +2,7 @@
 // commands. Paths are relative to `root` where a function takes one. No dependencies: this file runs from the installed
 // plugin, which has no node_modules.
 
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason.
@@ -298,5 +298,57 @@ function classSource(body) {
     return source;
   } catch {
     return '.';
+  }
+}
+
+const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
+const OWN_FLAGS = (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+// Makes `dir` and every folder above it that is missing, owner-only, and returns whether `dir` is then a plain folder of
+// this process's user, not a link. Never throws.
+export function ownFolderSync(dir) {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(dir);
+    const uid = processUid();
+    return stat.isDirectory() && !stat.isSymbolicLink() && (!Number.isInteger(uid) || stat.uid === uid);
+  } catch {
+    return false;
+  }
+}
+
+// Opens `file` with `flags` (and O_CREAT's `mode`), never following a link and never waiting, as on a FIFO: the file
+// descriptor when it is then a regular file of this process's user with a single link, else null, with the file closed.
+// A hook's counter opens its file this way, so a planted FIFO, link, or hard link neither stalls the hook nor leads its
+// write elsewhere. Never throws.
+export function openOwnFile(file, flags, mode = 0o600) {
+  let fd;
+  try {
+    fd = openSync(file, flags | OWN_FLAGS, mode);
+    const stat = fstatSync(fd);
+    const uid = processUid();
+    if (stat.isFile() && stat.nlink === 1 && (!Number.isInteger(uid) || stat.uid === uid)) return fd;
+  } catch {
+    // Not there, not plain, or not ours.
+  }
+  if (fd !== undefined) closeSync(fd);
+  return null;
+}
+
+// The JSON object in the regular file `file`, of one link and at most `cap` bytes, read without following a link and
+// without waiting on a FIFO, or null.
+export function readSmallJson(file, cap = 64 * 1024) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | OWN_FLAGS);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > cap) return null;
+    const buffer = Buffer.alloc(stat.size);
+    const value = JSON.parse(buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8'));
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }

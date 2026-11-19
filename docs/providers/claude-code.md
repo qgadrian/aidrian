@@ -108,6 +108,25 @@ Checked on Claude Code 2.1.314, with a hook that logged each call:
 
 So Claude Code holds each agent to its gates, tool by tool and pattern by pattern.
 
+## Background agents
+
+Claude Code runs every agent dispatch in the background while its fork-subagent mode is on, and that mode is on by
+default in an interactive session. The launch is forced asynchronous for any caller but an in-process teammate, whatever
+the call's `run_in_background` says. So the Agent hook's rewrite to `run_in_background: false`, which the transcript
+records as applied, does not move a subagent's dispatch to the foreground there, and its dispatch row stays
+`async_launched`. Only `CLAUDE_CODE_FORK_SUBAGENT=0` in the session's environment turns the mode off, which also removes
+the `fork` agent type. A child's `.meta.json` `launchedWithDefaults` says the call named no model, not that it named no flag.
+
+What the [background check](../hooks.md#background-check) guarded against does not happen on this host. A background
+agent's report reaches the subagent that started it after that subagent ended its turn: Claude Code starts it again
+(`SubagentStart` fires), and the report arrives as a message. The subagent's own dispatcher is told it stopped only once
+it stops with no live background child. Each idle-with-children occurrence of 2026-11-14 to 17 whose transcript was kept
+shows the wake. The adapter declares it as `capabilities.wakesOnChildReport`, with the `background_tasks` types of an
+agent, and the stop hook leaves such a task out of the check. A background shell still counts.
+
+Checked by reading the transcripts of four such subagents and Claude Code 2.1.328's launch code. Not verified: a
+session with the fork-subagent mode turned off.
+
 ## Shell commands of the Monitor tool
 
 The Monitor tool runs its `command` in a shell, in the background, under Bash's permission rules, and a subagent may

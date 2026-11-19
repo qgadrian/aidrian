@@ -159,6 +159,13 @@ export default {
       path.join(root, '.claude/settings.json'),
       path.join(configDir(env), 'settings.json'),
     ],
+    // A background agent's report reaches the subagent that started it even after that subagent ended its turn: the host
+    // starts it again with the report (SubagentStart fires, and the report arrives as a message), and tells the subagent's
+    // own dispatcher it stopped only once it stops with no live background child. Seen on 2.1.3xx in each of the four
+    // idle-with-children occurrences of 2026-11-14 to 17 that kept a transcript. So the stop hook's background check
+    // leaves such a child out (lib/dispatch-rows.mjs blockingChildren). `taskTypes` are its `background_tasks` types of an
+    // agent; a shell task is none. docs/providers/claude-code.md#background-agents.
+    wakesOnChildReport: { taskTypes: ['subagent', 'local_agent', 'remote_agent'] },
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,

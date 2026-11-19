@@ -1048,7 +1048,7 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
 - `maxMb`: once the log reaches this size, the next row moves it to `dispatch-log.1.jsonl`, replacing the file there.
   The two files hold about twice `maxMb` at most, and `aidrian report` reads both.
 - `hookDenies: false`: the Bash rules, the main-checkout rule, the agent gates, and the config guard still block,
-  and write no `hook_deny` row ([hooks.md](hooks.md#recorded-blocks)). A rule that keeps blocking one session still becomes a lesson.
+  and write no `hook_deny` row ([hooks.md](hooks.md#recorded-blocks)). A rule that keeps blocking one agent run for the same cause still becomes a lesson.
   The exception is the tracker write guard's [no-read refusal](#how-a-write-is-judged): with this key or `enabled` off,
   a session stuck on it leaves no row and no lesson, though the agent still sees each refusal.
 

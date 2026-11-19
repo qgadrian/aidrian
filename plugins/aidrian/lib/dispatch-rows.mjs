@@ -10,7 +10,7 @@ import { CHILD_SEND_BACKS } from './child-send-backs.mjs';
 import { checkDelivery } from './delivery-check.mjs';
 import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
-import { sessionIdentity } from './hosts/index.mjs';
+import { detectHost, sessionIdentity, wakesOnReport } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import {
   aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
@@ -80,13 +80,23 @@ export function runningChildren(input) {
     .map((task) => ({ id: task.id, type: text(task.type) ?? 'task', description: text(task.description, DESCRIPTION_CHARS) }));
 }
 
+// The `children` (runningChildren) that keep the subagent in its turn: those whose report its host does not deliver once
+// it is idle. Claude Code starts an idle subagent again with a background agent's report, so on it such a child is left
+// out (capabilities.wakesOnChildReport): sending the agent back to wait for one only cost turns, and an agent with no
+// shell, which cannot wait in the foreground, answered it by handing back before the report arrived.
+export function blockingChildren(input, children, { env = process.env } = {}) {
+  const host = detectHost({ env, input });
+  return children.filter((child) => !wakesOnReport(host, child));
+}
+
 // Which subagent stopped, as its `stop` row names it: { session_id, agent_id, agent_type }.
 export function stopAgent(input) {
   return { session_id: text(input.session_id), agent_id: text(input.agent_id), agent_type: text(input.agent_type) ?? 'general-purpose' };
 }
 
 // A block by one of the plugin's own hooks (lib/hook-deny.mjs): which rule, on which tool, for which agent, and `match`,
-// the rule's own words for what it matched, cut to REASON_CHARS. The agent is named as on a `dispatch` row's dispatcher.
+// the rule's own words for what it matched, cut to REASON_CHARS. The agent is named as on a `dispatch` row's dispatcher,
+// and `agent_id` names a subagent's run, null for the main thread.
 export function denyRow(input, rule, match, { env = process.env, now = Date.now() } = {}) {
   return {
     event: 'hook_deny',
@@ -95,6 +105,7 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
     rule,
     tool: text(input.tool_name),
     agent_type: text(input.agent_type) ?? text(sessionIdentity(env).agent) ?? 'main',
+    agent_id: text(input.agent_id),
     reason: text(match, REASON_CHARS),
   };
 }

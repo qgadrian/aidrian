@@ -36,7 +36,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
-| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written ([delivery check](hooks.md#delivery-check)), `chat` for none. |
+| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written, past one not due while a background task of its own still runs ([delivery check](hooks.md#delivery-check)), `chat` for none. |
 | `paths` | Those paths, at most 20. |
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
 | `handoffs_written` | How many handoff files its brief asked for the hook wrote from its final report, as the [delivery check](hooks.md#delivery-check) does when the agent did not write one. A row written before the field has none. |
@@ -106,6 +106,7 @@ It writes one row at the end of a session with no read recorded, on a host with 
 | `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `attribution`, `pr-body`, `public-text`, `main-checkout`, `agent-gates`, `config-guard`, `tracker-guard`, or `ask-names`. |
 | `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
 | `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
+| `agent_id` | The subagent run that made the call, null for the main thread. A row written before the field has none. |
 | `reason` | What the rule matched, at most 120 characters, as the list below says. |
 
 The `reason` is:
@@ -189,7 +190,7 @@ Explore: 12 dispatches, 8% re-dispatched, median 88s and 85k tokens, $3.08, deli
   docs read: 1.5 docs and 13.0 KB a run; docs/knowledge/engineering/testing.md (11), docs/knowledge/engineering/code-style.md (5)
 Sessions: 2, $42.10 estimated, main conversation and subagents together
 Hook denies: 6 in 2 sessions
-  git-amend: 4, by main 3, Explore 1; 1 session blocked 3 times or more, an automatic lesson
+  git-amend: 4, by main 3, Explore 1; 1 agent run blocked 3 times or more for the same reason, an automatic lesson
     most often: `git commit --amend` rewrites the branch tip, and another agent working on this branch may already have built on it.
   agent-gates: 1, by aidrian:explorer 1
     most often: agents.explorer.deny has "WebFetch"
@@ -211,8 +212,8 @@ Hook denies: 6 in 2 sessions
 - **tool calls per request that made one**: as in [Sessions](#sessions), over the runs' own requests.
 - **docs read**: how many knowledge docs a run opened, and their bytes, on average, then the five that agent type opened most.
   The averages leave out runs logged with doc reads off, and the bytes, runs logged before sizes.
-- **Hook denies**: the `hook_deny` rows, per rule, most blocks first: the agents it blocked, the sessions it blocked
-  3 times or more, which is when a block becomes an [automatic lesson](lessons.md#automatic-lessons),
+- **Hook denies**: the `hook_deny` rows, per rule, most blocks first: the agents it blocked, the agent runs it blocked
+  3 times or more for the same `reason`, which is when a block becomes an [automatic lesson](lessons.md#automatic-lessons),
   and the `reason` it logged most often. A rule an agent keeps hitting needs clearer words in that agent's instructions or in the rule's message.
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.

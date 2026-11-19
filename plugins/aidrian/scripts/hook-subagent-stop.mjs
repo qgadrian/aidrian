@@ -3,12 +3,15 @@
 // back once, on the first stop of its turn, to write it or correct its report, and the send-back is recorded as a lesson
 // for that agent type (lib/lesson-signals.mjs). A handoff file its brief asked it to write and it did not (unwrittenHandoffs)
 // is the record its dispatcher reads, since a handback can reach another session or none: the hook writes the agent's
-// final report there (deliverHandoffs), and sends it back for the file only when it has no report to write, or while a
-// background task of its own still runs. It writes only on a stop it lets end: a stop sent back, as for another missing
-// file, has a report the agent will correct, and the corrected one is what the file must hold.
+// final report there (deliverHandoffs), and sends it back for the file only when it has no report to write. While a
+// background task of its own still runs, the file is not due: the background check sends the agent back, and the
+// delivery check neither sends it back for the file nor records a lesson. It writes only on a stop it lets end: a stop
+// sent back, as for another missing file, has a report the agent will correct, and the corrected one is what the file must hold.
 // The background check: no background shell or agent it started may still run (runningChildren). A subagent that ends its
-// turn goes idle: a shell task's end notice wakes it, but a subagent task's handback to an idle agent is refused, and the
-// work it waits on stalls until something else wakes it. So it is told to wait in the foreground, and sent back again at
+// turn goes idle: a shell task's end notice wakes it, but on a host that refuses a subagent task's handback to an idle
+// agent, the work it waits on stalls until something else wakes it. A host that delivers that report and wakes the agent
+// declares it (capabilities.wakesOnChildReport), and such a task is left out (blockingChildren); Claude Code does.
+// So it is told to wait in the foreground, and sent back again at
 // each stop while such a task runs, up to CHILD_SEND_BACKS in a row (lib/child-send-backs.mjs): one send-back did not hold,
 // since a foreground wait that outlives its timeout is moved to the background, and a watch armed instead is another task.
 // The stop the cap lets end with a task still running is recorded as a lesson for the plugin. The count is stored before
@@ -23,7 +26,7 @@
 import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendBacks } from '../lib/child-send-backs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
-import { checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered } from '../lib/dispatch-rows.mjs';
+import { blockingChildren, checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered } from '../lib/dispatch-rows.mjs';
 import { deliverHandoffs, finalReport } from '../lib/delivery-check.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../lib/check-runs.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
@@ -97,9 +100,11 @@ await runHook((input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
-  const children = runningChildren(input);
+  const tasks = runningChildren(input);
+  // The tasks the background check counts: a background agent whose report the host delivers to an idle subagent is none.
+  const children = blockingChildren(input, tasks);
   const checked = checkDelivery(input, project);
-  const running = children.length > 0;
+  const running = tasks.length > 0;
   // The send-back is decided on the delivery as it would be once the handoff files are written, and they are written
   // only when the stop ends.
   let delivery = deliverHandoffs(input, checked, { running, write: false });
@@ -119,7 +124,7 @@ await runHook((input) => {
     forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
   }
   if (config.telemetry.enabled) {
-    appendEvent(project, config, stopRow(input, project, { delivery, children, sentBack: forChildren || forDelivery || forEvidence, docReads: config.telemetry.docReads }));
+    appendEvent(project, config, stopRow(input, project, { delivery, children: tasks, sentBack: forChildren || forDelivery || forEvidence, docReads: config.telemetry.docReads }));
   }
   const agent = stopAgent(input);
   // The lesson's evidence names the agent's dispatch log row, which only telemetry writes.

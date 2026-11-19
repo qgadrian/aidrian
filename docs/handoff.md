@@ -344,8 +344,10 @@ to another folder falls back to the clear route with that reason; committing `st
 6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
    host's command to open it. The line ends on what becomes of this session: with the
-   [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends;
-   without it, `This session has ended its work; the new one is <name>, open it with <the host's command>.`
+   [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends, with
+   nothing to open by hand; without it, `This session has ended its work; the new one is <name>, open it with <the
+   host's command>.` A session the background route started, which no terminal follows, says it stops once this turn
+   ends, before the same words ([Replacing the terminal](#replacing-the-terminal)).
    In `auto` mode, a session a Human attends whose shell never loaded the function, such as one started in a terminal
    opened before `aidrian shell-init <shell> --install` wrote it, adds one line on why its terminal stays: start the
    next session in a new terminal, or after reloading the shell's startup file.
@@ -360,10 +362,12 @@ listing does not show ends as step 5 says, by the clear route only when nothing 
 
 Limits:
 
-- Without the [shell function](#replacing-the-terminal), the old session stays open and idle: it spends no tokens
-  while no turn starts, and the Human closes it at will. A turn that starts there after the gate, such as a background
-  agent's report, runs beside the new session in the same worktree, so the skill settles every agent first, as on the
-  clear route, and the prompt hook names the session that owns the work.
+- Without the [shell function](#replacing-the-terminal), an old session a Human attends stays open and idle: it spends
+  no tokens while no turn starts, and the Human closes it at will. An old session the background route started stops
+  itself in `auto` mode, so the host lists it as done rather than idle ([Replacing the terminal](#replacing-the-terminal)).
+  A turn that starts in an open one after the gate, such as a background agent's report, runs beside the new session
+  in the same worktree, so the skill settles every agent first, as on the clear route, and the prompt hook names the
+  session that owns the work.
 - The new session starts in the host's default model for that folder; a model the old session switched to in the
   session does not carry over. Its permission mode is the old session's, as step 3 says.
 - No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
@@ -443,6 +447,14 @@ With no record, or one it refuses, it returns the exit code of the last program 
 but that id. Each exit is caught, and every variable is set before it is read, so a shell with `set -e` or `set -u`
 still reaches the record.
 
+Each time the function opens a session by a plain id, typed as `claude attach <id>`, after any options an alias adds, each with at most one value,
+or from the record, it first writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, in a
+folder that is a real one the user owns, made 0700 first, and deletes it once that program exits. Each run first
+deletes a record an earlier run left, so a terminal killed mid-run never follows a session it no longer shows. The gate
+of that session reads it, for 12 hours (`FOLLOW_AGE`), to know this terminal follows it, so a terminal the Human
+attached by hand switches on that session's handoff too. `claude attach '<name>'`, by a name, never matches, and that
+session's handoff only stops it.
+
 An alias for `claude` takes the place of the function when typed. One whose value starts with `claude`, such as
 `alias claude='claude --dangerously-skip-permissions'`, still reaches the function, flag and all. One that points
 elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
@@ -470,31 +482,41 @@ It runs only where every switch of the background route is on, and `session.hand
    skips the session-length reminder.
 3. The host's program exits, and the shell function opens the new session in the same terminal.
 
-The next hops chain the same way, so the terminal follows each session of the chain. The session the terminal opens is a
-background session: no Human attends it as far as the hooks know, and it carries no `AIDRIAN_SHELL_PID`. When it hands
-off in turn, with every switch above on and its launch confirmed, the gate notes a request only when the store holds a
-`follow-` record for it, under its full id or the short one the host printed. That request names the session's own id
-in place of a host process; a session the host says a Human attends, as a former background session a Human resumed,
-never gets one. Its Stop hook takes it once, checks that the session's own id is that id or starts with it, that no
-Human attends it, and, through the host adapter (`replaceTerminal.hasClient`, pid, parent, and program name alone), that
-the shell is alive and the parent of a `claude` process, as a terminal attached to the session is. Then it writes the
-shell's record, passes the `follow-` record on to the next session, and starts the helper. The helper ends
-that session alone, through the host's own stop command, `replaceTerminal.endOwn`. It stops nothing unless the host's
-listing names exactly one background session that is this very session under that id. On Claude Code that is
-`claude stop <id>`, and `claude attach` in the shell then exits 0, so the shell function opens the next session. The
-chain floor and its cap of 5 continuations in a row bound the hops: at the cap the gate goes on by none, and the session
-stays open. This is a provisional decision of the harness, which lets a session no Human attends end its own session
-and nothing else. Dropping the request that names a session's own id puts the later hops back on the plain line.
+The next hops chain the same way, so the terminal follows each session of the chain, however long. The session the
+terminal opens is a background session: no Human attends it as far as the hooks know, and it carries no
+`AIDRIAN_SHELL_PID`. When it hands off in turn, with every switch above on and its launch confirmed, the gate notes a
+request that names the session's own id in place of a host process; a session the host says a Human attends, as a
+former background session a Human resumed, never gets one. The request names a shell when one follows the session: the
+shell function's `follows-` record that opened it by the full id or a short one of at least 8 characters
+(`SHORT_ID_MIN`), or else the store's `follow-` record for it, under its full id or the short one the host printed,
+which can be stale; of each, the latest whose shell is alive and the parent of a `claude` process, as
+a terminal attached to the session is. The host adapter tells that (`replaceTerminal.hasClient`), by pid, parent, and
+program name alone. The say line then says the terminal switches, with nothing to open by hand. With no such shell, the
+request names none, and the say line says the session stops once this turn ends, then how to open the new one.
+
+Its Stop hook takes the request once, and checks that the session's own id is that id or starts with it and that no
+Human attends it. When the request names a shell that still runs a `claude` client, it writes the shell's record and
+passes the `follow-` record on to the next session. Either way it starts the helper, which ends that session alone,
+through the host's own stop command, `replaceTerminal.endOwn`, so the host lists it as done rather than idle. It stops
+nothing unless the host's listing names exactly one background session that is this very session under that id. On
+Claude Code that is `claude stop <id>`, and `claude attach` in the shell then exits 0, so the shell function opens the
+next session. The chain floor and its cap of 5 continuations in a row bound the hops: at the cap the gate goes on by
+none, and the session stays open. This is a provisional decision of the harness, which lets a session no Human attends
+end its own session and nothing else. Dropping the request that names a session's own id leaves the later hops open
+and idle, and puts them back on the plain line.
 
 Limits:
 
 - A subagent cannot run the gate, and its stop is not the Stop hook's, so no subagent ends a process or a session. A
-  session no Human attends ends only itself, through the host, and only when a terminal follows it; it never names a
-  process. Every other refusal of such a session stays, such as starting a session from a shell. The store, where the
-  request and the `follow-` record live, is closed to both, as for a chain floor.
-- When the Human leaves an attached session, the `follow-` record still says the terminal follows it. At its handoff it
-  still ends itself, and the shell's record waits a minute for a program the shell function ran to exit.
-- The shell's record lies outside the continuation store, in a folder that is the user's alone (0700), each record 0600.
+  session no Human attends ends only itself, through the host, and only once the session that took its work started;
+  it never names a process. Every other refusal of such a session stays, such as starting a session from a shell. The
+  store, where the request and the `follow-` record live, is closed to both, as for a chain floor.
+- When the Human leaves an attached session, the `follow-` record still says the terminal follows it. When that shell
+  runs a `claude` again by the session's handoff, the shell's record waits a minute for it to exit.
+- A host's own attach client may move to the new session by itself, as Claude Code's sometimes does. The old session
+  still stops, which ends a client still attached to it, and the terminal follows the next hop all the same.
+- The shell's record and its `follows-` record lie outside the continuation store, in a folder that is the user's
+  alone (0700), each record 0600; the gate reads no `follows-` record in a folder another user may write.
   The [agent gates](hooks.md#agent-gates) hook refuses a write there to a subagent and to a session no Human attends, as
   it refuses the unattended marks. Another process of the same user can still write one: it can only make the terminal
   open a session by a plain id, within its minute, the next time a program the shell function ran exits.

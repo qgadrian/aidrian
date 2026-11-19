@@ -14,7 +14,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { HOSTS } from './hosts/index.mjs';
-import { NEXT_MARGIN, NEXT_WINDOW, OPEN_ID, replacer, shellPid, SHELL_VAR, TERMINAL_FOLDER } from './terminal-replace.mjs';
+import { FOLLOWS_PREFIX, NEXT_MARGIN, NEXT_WINDOW, OPEN_ID, replacer, shellPid, SHELL_VAR, TERMINAL_FOLDER } from './terminal-replace.mjs';
 
 export const SHELLS = ['zsh', 'bash'];
 export const BEGIN = '# >>> aidrian shell-init >>>';
@@ -55,14 +55,30 @@ export function shellInit(shell, hosts = HOSTS) {
 // but that id. Each exit is caught with `||`, and every variable is set before it is read, so a shell that runs with
 // `set -e` or `set -u` goes on to the record. zsh and bash read the same body; zsh first resets its options for the
 // function, so a setting such as RE_MATCH_PCRE cannot change the patterns.
+// Each time it opens a session by a plain id, typed as `program attach <id>`, after any options an alias adds, each with at most one value, or from
+// the record, it first writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, and deletes
+// it once that program exits: the gate of that session, run in the background, reads it to know this terminal follows
+// it (terminal-replace.mjs readFollows). A write it cannot make is skipped.
 function shellFunction(shell, program, attach) {
   return [
     `function ${program} {`,
     ...(shell === 'zsh' ? ['  emulate -L zsh'] : []),
     `  local rc=0 id='' expires='' now=0 base="\${HOME:-}/.local/state" pattern='${OPEN_ID.source}' digits='^[0-9]{1,12}$'`,
     '  [[ ${XDG_STATE_HOME:-} == /* ]] && base=$XDG_STATE_HOME',
-    `  local next="$base/aidrian/${TERMINAL_FOLDER}/$$"`,
+    `  local dir="$base/aidrian/${TERMINAL_FOLDER}"`,
+    `  local next="$dir/$$" follows="$dir/${FOLLOWS_PREFIX}$$"`,
+    '  command rm -f -- "$follows" 2>/dev/null || :',
+    "  local arg='' want=0 value=0",
+    '  for arg in "$@"; do',
+    '    if (( want )); then [[ $arg =~ $pattern ]] && id=$arg; break; fi',
+    `    [[ $arg == ${attach} ]] && { want=1; continue; }`,
+    '    if [[ $arg == -* ]]; then [[ $arg == *=* ]] && value=0 || value=1; continue; fi',
+    '    (( value )) || break',
+    '    value=0',
+    '  done',
+    ...followsWrite('  '),
     `  ${SHELL_VAR}=$$ command ${program} "$@" || rc=$?`,
+    '  command rm -f -- "$follows" 2>/dev/null || :',
     '  while [[ -f $next && ! -L $next && -O $next ]]; do',
     "    id='' expires=''",
     "    IFS=' ' read -r id expires < \"$next\" || :",
@@ -71,12 +87,22 @@ function shellFunction(shell, program, attach) {
     '    now=$(command date +%s)',
     `    (( expires >= now && expires <= now + ${LATEST} )) || break`,
     '    rc=0',
+    ...followsWrite('    '),
     `    ${SHELL_VAR}=$$ command ${program} ${attach} "$id" || rc=$?`,
+    '    command rm -f -- "$follows" 2>/dev/null || :',
     '  done',
     '  return $rc',
     '}',
   ];
 }
+
+// The lines that write this shell's `follows-` record for a plain `$id`, at `indent`: in a subshell, so its umask and
+// noclobber stay there, into a folder that is a real one this user owns, made owner-only first, never through a file
+// left in its place. The function deletes its record before it runs anything, so one an earlier run left never counts.
+const followsWrite = (indent) => [
+  `${indent}[[ -n $id ]] && { ( umask 077 && command mkdir -p -- "$dir" && [[ -d $dir && ! -L $dir && -O $dir ]] && command chmod 700 "$dir" && command rm -f -- "$follows" \\`,
+  `${indent}  && set -C && command printf '%s %s\\n' "$id" "$(command date +%s)" > "$follows" ) 2>/dev/null || :; }`,
+];
 
 // One line on stderr when an alias of `program` remains whose value does not start with `program`: typed, it runs past
 // the function, so a handoff would not replace the terminal. An alias that starts with it, such as one that adds a flag,

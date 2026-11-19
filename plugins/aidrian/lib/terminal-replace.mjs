@@ -12,24 +12,28 @@
 //   3. The shell function reads `<state root>/handoff-terminals/<shell pid>`, `<id> <expiry in epoch seconds>`, deletes
 //      it, and opens the session `id` when it is fresh and `id` is plain, again after that session's program exits.
 // The next hops chain the same way. When a session ends itself, the Stop hook also notes in the store that the shell's
-// terminal now follows the new session (handoff-markers.mjs noteFollow). That session runs in the background, so no
-// Human attends it as the hooks know it, and it carries no SHELL_VAR; when it hands off in turn, the gate notes a
-// request that names its own id instead of a host process, only when the store says a terminal follows it, and its Stop
-// hook ends that session alone, through the host's own stop command (replaceTerminal.endOwn), never another process.
-// Its `claude attach` in the shell then exits, and the shell function opens the next one. The chain floor and its cap
-// bound the hops. This is a provisional decision of the harness: dropping the second way of ending, `own`, puts the
-// later hops back on the plain line the Human acts on.
+// terminal now follows the new session (handoff-markers.mjs noteFollow). The shell function says so too, each time it
+// opens a session by a plain id, typed or from a record: `<state root>/handoff-terminals/follows-<shell pid>`, `<id>
+// <epoch seconds>`, deleted once that program exits (readFollows). A background session runs with no Human attending it
+// as the hooks know it, and it carries no SHELL_VAR; when it hands off in turn, the gate notes a request that names its
+// own id instead of a host process, with the shell whose terminal follows it, by the store or the shell's own record,
+// while that shell runs the host's client (replaceTerminal.hasClient), or with no shell. Its Stop hook ends that session
+// alone, through the host's own stop command (replaceTerminal.endOwn), never another process, so the host lists it as
+// done rather than idle; with a shell, it first writes the shell's record and passes the follow on. The client in the
+// shell then exits, and the shell function opens the next one. The chain floor and its cap bound the hops. This is a
+// provisional decision of the harness: dropping the second way of ending, `own`, leaves the later hops idle and puts
+// them back on the plain line the Human acts on.
 // Which host process, which signal, and which program and words open a session are the host adapter's
 // `capabilities.handoffContinue.replaceTerminal`; this file names no host.
 
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { isPid } from './handoff-markers.mjs';
+import { FOLLOW_AGE, isPid, readOwnFile } from './handoff-markers.mjs';
 import { HOSTS } from './hosts/index.mjs';
 import { stateRoot } from './project.mjs';
 
@@ -44,6 +48,13 @@ export const NEXT_MARGIN = 5 * 1000;
 export const END_DELAY = 2000;
 // An id the shell function opens; the shell function holds it to the same pattern.
 export const OPEN_ID = /^[0-9A-Za-z][-_0-9A-Za-z]{3,127}$/u;
+// The shell function's record of the session its terminal shows, `follows-<shell pid>`, and its one line.
+export const FOLLOWS_PREFIX = 'follows-';
+const FOLLOWS_FILE = new RegExp(`^${FOLLOWS_PREFIX}(\\d{1,10})$`, 'u');
+// The shortest id a follows record may name a session by when it is not the full id: the short id a host lists, such as
+// the first 8 characters of a Claude Code session id. A shorter typed name never matches another session by prefix.
+export const SHORT_ID_MIN = 8;
+const FOLLOWS_LINE = new RegExp(`^(${OPEN_ID.source.slice(1, -1)}) (\\d{1,12})\\n?$`, 'u');
 const HELPER = path.resolve(import.meta.dirname, '../scripts/end-host.mjs');
 
 export const replacer = (host) => host.capabilities.handoffContinue?.replaceTerminal ?? null;
@@ -109,20 +120,57 @@ export function writeNext({ shell, id, env = process.env, now = Date.now() }) {
   }
 }
 
+// The shell whose terminal shows the background session `session`, as the shell function recorded when it opened it by
+// its full id or a short one it starts with, in the last FOLLOW_AGE: { shell, id }, where `id` is the id it opened, the
+// latest if several; or null. Only a regular file this user owns, no symlink, in a folder no other user may write.
+// The shell may have moved on since; replaceTerminal.hasClient says whether it still runs the host's client, and
+// `live(shell)`, asked of a newer record only, skips one whose shell does not, so a dead one never hides a live one.
+export function readFollows(session, { env = process.env, now = Date.now(), live = () => true } = {}) {
+  if (typeof session !== 'string' || !OPEN_ID.test(session)) return null;
+  let folder;
+  let names;
+  try {
+    folder = terminalFolder(env);
+    const stat = lstatSync(folder);
+    if (!stat.isDirectory() || (stat.mode & 0o022) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) return null;
+    names = readdirSync(folder);
+  } catch {
+    return null;
+  }
+  let latest = null;
+  for (const name of names) {
+    const shell = Number(FOLLOWS_FILE.exec(name)?.[1]);
+    if (!isPid(shell)) continue;
+    const match = FOLLOWS_LINE.exec(readOwnFile(path.join(folder, name), { cap: 256 })?.text ?? '');
+    if (!match) continue;
+    const at = Number(match[2]) * 1000;
+    const id = match[1];
+    if (at > now + NEXT_MARGIN || now - at > FOLLOW_AGE || !(id === session || (id.length >= SHORT_ID_MIN && session.startsWith(id)))) continue;
+    if ((!latest || at > latest.at) && live(shell)) latest = { shell, id, at };
+  }
+  return latest && { shell: latest.shell, id: latest.id };
+}
+
 // The Stop hook's step, in the session `session`: takes the request `take()` returns, as handoff-markers.mjs takeEnding,
 // or null, and when this session's own facts confirm it, writes the shell's record, notes through `follow` that the
 // shell's terminal follows the next session, and starts the helper. `unattended()` says no Human attends this session.
-// An attended session's request names its host process, which its own environment must name as the shell's child; a
-// background session's names its own id, which `session` must start with, on a host that can end its own session.
-// Returns whether the session is ending.
+// An attended session's request names its host process, which its own environment must name as the shell's child, and
+// it ends nothing without the shell's record. A background session's names its own id, which `session` must start
+// with, on a host that can end its own session: it ends whether or not a terminal follows it, and writes the shell's
+// record only while the shell it names is alive and the parent of the host's client, as a terminal attached to the
+// session is (replaceTerminal.hasClient). Returns whether the session is ending.
 export function endAfterTurn({ host, session, take, unattended, follow = () => null, env = process.env, now = Date.now(), run, start = startHelper }) {
   const replace = replacer(host);
   if (!replace) return false;
   const request = take();
   if (!request) return false;
-  const ending = request.own === undefined ? ownProcess({ host, request, unattended, env, run }) : ownSession({ replace, request, session, unattended, env, run });
-  if (!ending || !writeNext({ shell: request.shell, id: request.id, env, now })) return false;
-  follow({ session: request.next ?? request.id, shell: request.shell });
+  const byProcess = request.own === undefined;
+  const ending = byProcess ? ownProcess({ host, request, unattended, env, run }) : ownSession({ replace, request, session, unattended, env });
+  if (!ending) return false;
+  const attached = byProcess || (request.shell !== null && replace.hasClient?.({ shell: request.shell, run }) === true);
+  const handed = attached && writeNext({ shell: request.shell, id: request.id, env, now }) !== null;
+  if (byProcess && !handed) return false;
+  if (handed) follow({ session: request.next ?? request.id, shell: request.shell });
   start({ host: host.id, ...ending, delay: END_DELAY });
   return true;
 }
@@ -135,12 +183,10 @@ function ownProcess({ host, request, unattended, env, run }) {
 }
 
 // The helper's arguments for a background session whose own id `session` is the request's, or starts with it, which no
-// Human attends, while the shell it names is alive and the parent of the host's client, as a terminal attached to the
-// session is (replaceTerminal.hasClient).
-function ownSession({ replace, request, session, unattended, env, run }) {
+// Human attends, as the host and the store tell it.
+function ownSession({ replace, request, session, unattended, env }) {
   if (typeof replace.endOwn !== 'function' || typeof session !== 'string' || replace.attended(env) || !unattended()) return null;
-  if (session !== request.own && !session.startsWith(request.own)) return null;
-  return replace.hasClient?.({ shell: request.shell, run }) === true ? { own: request.own, session } : null;
+  return session === request.own || session.startsWith(request.own) ? { own: request.own, session } : null;
 }
 
 // Starts scripts/end-host.mjs detached, so it outlives the hook and the session it ends: `pid <pid> <shell>` for a host

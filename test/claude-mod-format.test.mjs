@@ -125,26 +125,17 @@ test('the counts come before the numbers, so a narrow terminal cuts numbers and 
   assert.match(textsOf(changesParts(rows)).slice(0, 20), /✗1/u);
 });
 
-test('the same number in two repositories carries each repository name', () => {
-  const rows = [pull(42, { repo: 'acme/api' }), pull(42, { repo: 'acme/web', checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } })];
-  assert.equal(textsOf(changesParts(rows)), 'PRs ✓1 ✗1 ⏳0 · api#42, web#42');
-  assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
-  assert.equal(textsOf(changesParts([pull(1), pull(2)])), 'PRs ✓2 ✗0 ⏳0 · #1, #2', 'one repository: bare numbers');
-});
-
-test('a label names the owner, then the host, only when the repository name alone would collide', () => {
+test('changes from more than one repository list no number, since the same number could name either', () => {
   const failed = { checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } };
-  const owners = [pull(42, { repo: 'upstream/widget' }), pull(42, { repo: 'fork/widget', ...failed })];
-  assert.equal(textsOf(changesParts(owners)), 'PRs ✓1 ✗1 ⏳0 · upstream/widget#42, fork/widget#42');
-  const hosts = [pull(42, { repo: 'acme/widget' }), pull(42, { host: 'git.example.com', repo: 'acme/widget', ...failed })];
-  assert.equal(textsOf(changesParts(hosts)), 'PRs ✓1 ✗1 ⏳0 · github.com/acme/wid…#42, git.example.com/acm…#42');
-  for (const rows of [owners, hosts]) assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
-});
-
-test('a long repository name is cut so the number after it always shows', () => {
-  const rows = [pull(42, { repo: `acme/${'a'.repeat(60)}` }), pull(43, { repo: 'acme/web' })];
-  assert.equal(textsOf(changesParts(rows)), `PRs ✓2 ✗0 ⏳0 · ${'a'.repeat(19)}…#42, web#43`);
-  assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
+  for (const rows of [
+    [pull(42, { repo: 'acme/api' }), pull(42, { repo: 'acme/web', ...failed })],
+    [pull(42, { repo: 'upstream/widget' }), pull(42, { repo: 'fork/widget', ...failed })],
+    [pull(42, { repo: 'acme/widget' }), pull(42, { host: 'git.example.com', repo: 'acme/widget', ...failed })],
+  ]) {
+    assert.equal(textsOf(changesParts(rows)), '2 PRs · ✓1 ✗1 ⏳0', rows[1].repo);
+    assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
+  }
+  assert.equal(textsOf(changesParts([pull(1), pull(2, { repo: 'ACME/Notes' })])), 'PRs ✓2 ✗0 ⏳0 · #1, #2', 'one repository, in any case');
 });
 
 test('the words of a change come from the forge table', () => {
@@ -154,7 +145,7 @@ test('the words of a change come from the forge table', () => {
   const elsewhere = pull(7, { forge: 'gitlab' });
   assert.match(textsOf(changesParts([elsewhere])), /^change ✓1 ✗0 ⏳0 · #7$/u);
   assert.match(textsOf(changesParts([pull(1), elsewhere])), /^changes ✓2 ✗0 ⏳0 · #1, #7$/u, 'rows of two forges');
-  assert.match(textsOf(changesParts([pull(1), FIXTURE_ROWS[4]])), /^changes ✓1 ✗0 ⏳0 · github\.com\/acme\/not…#1, gitlab\.com\/acme\/not…#9$/u, 'a forge row and an unsupported one, on two hosts');
+  assert.match(textsOf(changesParts([pull(1), FIXTURE_ROWS[4]])), /^2 changes · ✓1 ✗0 ⏳0$/u, 'a forge row and an unsupported one, on two hosts');
   const [row] = changeRows([elsewhere]);
   assert.match(rowText(row), /^change #7/u);
   assert.equal(row.link, null, 'a forge with no entry gets no link, though its url is a github.com pull request');

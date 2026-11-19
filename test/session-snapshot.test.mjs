@@ -957,7 +957,7 @@ test('prs: rows on gitlab.com or a made-up host show as unsupported, with no gh 
   const unknown = { title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null, unsupported: true, inherited: false };
   assert.deepEqual(json.prs, [{ host: 'git.example.test', repo: 'team/sub/notes', number: null, ...unknown }, { host: 'gitlab.com', repo: 'acme/notes', number: 3, ...unknown }]);
   assert.deepEqual([json.errors, env.calls()], [[], []]);
-  assert.equal(env.run(['--session', ID, '--line']).stdout, 'PRs ✓0 ✗0 ⏳0 · #3, +1\n');
+  assert.equal(env.run(['--session', ID, '--line']).stdout, '2 PRs · ✓0 ✗0 ⏳0\n');
 });
 
 test('prs: a forge title and check state holding control, bidi, zero-width, and tag characters reach neither --json nor --line', { skip: !POSIX }, (t) => {

@@ -23,7 +23,8 @@ gives the snapshot's line without it.
   and the harness signals to act on, P1 lessons, provisional decisions, merged worktrees to clean, and untriaged
   persona findings; then, on a row of their own so a long list never cuts the signals off, the pull requests the
   session touched: the check counts first, so a narrow terminal cuts numbers and never a failure, then the first five
-  numbers, each in the color of its checks (`web#12` when they span repositories), and `+N` for the rest.
+  numbers, each in the color of its checks, and `+N` for the rest. Pull requests from more than one repository
+  show only their count, since the same number could name either; the pane names each one's repository.
   At 70% context or more, a context
   alert row follows it. Each part shows only when it holds something, in the words of the snapshot's `--line`, but
   for three: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws

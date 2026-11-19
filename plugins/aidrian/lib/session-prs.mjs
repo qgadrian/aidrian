@@ -473,38 +473,13 @@ export const isChangeCache = (value) => value !== null && typeof value === 'obje
 // How many pull request numbers the summary lists before it counts the rest as `+N`.
 export const LISTED_CHANGES = 5;
 
-// The longest repository prefix a summary label keeps, in code points, so the number after it always shows.
-export const LABEL_PREFIX_CAP = 20;
-
-// The repository prefix of each listed change's label: none when they share one repository; else the shortest of the
-// name, owner/name, and host/owner/name that tells every listed repository apart, cut at LABEL_PREFIX_CAP with `…`.
-export function labelPrefixes(rows) {
-  const identity = (row) => `${row.host}/${String(row.repo).toLowerCase()}`;
-  if (new Set(rows.map(identity)).size <= 1) return rows.map(() => '');
-  const levels = [
-    (row) => String(row.repo).split('/').pop(),
-    (row) => String(row.repo),
-    (row) => `${row.host}/${row.repo}`,
-  ];
-  const distinct = (level) => {
-    const seen = new Map();
-    return rows.every((row) => {
-      const text = level(row).toLowerCase();
-      const held = seen.get(text);
-      seen.set(text, identity(row));
-      return held === undefined || held === identity(row);
-    });
-  };
-  const level = levels.find(distinct) ?? levels[levels.length - 1];
-  return rows.map((row) => {
-    const chars = [...(level(row))];
-    return chars.length > LABEL_PREFIX_CAP ? `${chars.slice(0, LABEL_PREFIX_CAP - 1).join('')}…` : chars.join('');
-  });
-}
+// Whether `rows` come from more than one repository. Such a summary lists no number, since `#42` could then name a
+// change in either; the pane names each change with its repository.
+export const spansRepositories = (rows) => new Set(rows.map((row) => `${row.host}/${String(row.repo).toLowerCase()}`)).size > 1;
 
 // The pull request summary of a status line: `PRs ✓2 ✗0 ⏳1 · #12, #34, +1`, the counts first, then the first
-// LISTED_CHANGES numbers (`web#12` when they span repositories, as labelPrefixes names them) and `+N` for the rest and any with no number; with
-// no number to list, `3 PRs · ✓2 ✗0 ⏳1`. A count is of pull requests: one with a failed check, one with a pending
+// LISTED_CHANGES numbers and `+N` for the rest and any with no number; with no number to list, or pull requests from
+// more than one repository, `3 PRs · ✓2 ✗0 ⏳1`. A count is of pull requests: one with a failed check, one with a pending
 // check and none failed, or one with only passed or skipped checks. One with no check counts in none.
 export function changesSummary(prs) {
   const states = prs.map(({ checks }) => {
@@ -516,9 +491,9 @@ export function changesSummary(prs) {
   const count = (state) => states.filter((each) => each === state).length;
   const counts = `✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
   const noun = `PR${prs.length === 1 ? '' : 's'}`;
-  const listed = prs.filter(({ number }) => Number.isSafeInteger(number) && number > 0).slice(0, LISTED_CHANGES);
+  const numbered = spansRepositories(prs) ? [] : prs.filter(({ number }) => Number.isSafeInteger(number) && number > 0);
+  const listed = numbered.slice(0, LISTED_CHANGES);
   if (listed.length === 0) return `${prs.length} ${noun} · ${counts}`;
-  const prefixes = labelPrefixes(listed);
   const rest = prs.length - listed.length;
-  return `${noun} ${counts} · ${listed.map(({ number }, index) => `${prefixes[index]}#${number}`).join(', ')}${rest > 0 ? `, +${rest}` : ''}`;
+  return `${noun} ${counts} · ${listed.map(({ number }) => `#${number}`).join(', ')}${rest > 0 ? `, +${rest}` : ''}`;
 }

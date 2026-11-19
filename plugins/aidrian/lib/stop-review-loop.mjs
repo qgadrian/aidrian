@@ -14,13 +14,18 @@ export const REVIEW_LOOP_LEAD = 'This turn opened or updated a draft pull reques
 
 // Why the agent is sent back, or null. `actions` is turnActions' result, or null with no transcript to read; `reviewLoop`
 // is config.json `github.reviewLoop`; `human` the name config.json `names` gives (docs/config.md#names). Null unless the
-// loop is "auto", no background task still runs, and the turn's last draft action has no review action after it.
-// The loop's own update after its review, as when it copies residuals into the body through pr-write before it marks
-// the draft ready, is no draft action (transcript.mjs turnActions), so a draft after a review is a new pull request.
+// loop is "auto", no background task still runs, and a draft action of the turn has no review action of its pull request
+// after it. A draft and a review are of the same pull request when both name it, or either names none (`pr` null or
+// missing): a false send-back costs more than a missed one. The loop's own update after its review, as when it copies
+// residuals into the body through pr-write before it marks the draft ready, is no draft action (transcript.mjs
+// turnActions), so a draft after a review is a new pull request, or an update of another.
+const pullOf = (action) => (Number.isSafeInteger(action?.pr) ? action.pr : null);
+const samePull = (a, b) => a === null || b === null || a === b;
 export function reviewLoopOwed(input, actions, { reviewLoop, human = 'the Human' } = {}) {
   if (reviewLoop !== 'auto' || !Array.isArray(actions) || backgroundRunning(input)) return null;
-  const lastDraft = actions.findLastIndex((action) => action?.kind === 'draft');
-  if (lastDraft === -1 || actions.findLastIndex((action) => action?.kind === 'review') > lastDraft) return null;
+  const owed = actions.some((action, at) => action?.kind === 'draft'
+    && !actions.slice(at + 1).some((later) => later?.kind === 'review' && samePull(pullOf(later), pullOf(action))));
+  if (!owed) return null;
   return `${REVIEW_LOOP_LEAD} ` +
     'config.json `github.reviewLoop` is "auto", so run the `pr-review-loop` skill on it now, as the session\'s own step and not ' +
     'as a step of the skill that opened it: its last step marks the draft ready as `github.markReady` says and runs ' +

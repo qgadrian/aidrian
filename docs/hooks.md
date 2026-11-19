@@ -1228,12 +1228,18 @@ hand-back check on the report ([Send-backs per turn](#send-backs-per-turn)).
 - A draft is a `gh pr create` with `--draft` whose result is no error and names a pull request URL, or a `gh pr edit`
   that ran after a `pr-write` run, a Skill call whose result is no error or a typed slash command.
   A `pr-write` run that published nothing, such as one stopped on a failed check, is no draft.
-  A `pr-write` update after a review earlier in the turn is the loop's own, such as copying residuals into the body
-  before it marks the draft ready, and is no draft either, even when the turn started at the loop on a pull request
-  from an earlier turn. A draft create after a review is a new pull request and counts.
-- A review is what the health report counts as a review run: a `pr-review-loop` or `pr-review` Skill call that ran, or
-  such a typed slash command, or an `aidrian pr review` or `aidrian pr await-review` call whose result printed its JSON.
-  It counts only after the turn's last draft: a review before it leaves that draft unreviewed.
+  A `pr-write` update of a pull request reviewed earlier in the turn is the loop's own, such as copying residuals into
+  the body before it marks the draft ready, and is no draft either, even when the turn started at the loop on a pull
+  request from an earlier turn. A draft create after a review is a new pull request and counts, and so does an update
+  of another pull request.
+- A review is a `pr-review-loop` Skill call that ran, or such a typed slash command, or an `aidrian pr review` or
+  `aidrian pr await-review` call whose result printed its JSON. A `pr-review` run is none: it is the integration
+  review `issue-implement` runs after the draft, and the loop still follows it. The health report still counts it.
+- Each draft and review is of the pull request the transcript shows: a create's printed URL, an edit's target or its
+  printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given.
+  A draft is owed when no review of its pull request follows it in the turn: a review before it, or of another pull
+  request, leaves it unreviewed. A draft or a review whose pull request the transcript does not show matches any, since
+  a false send-back costs more than a missed one: a loop run with no argument counts for every draft before it.
 - `"ask"` turns it off, and the transcript is then not parsed for it. A background task still running holds it, as it
   holds the announce check: its end wakes the session.
 - A subagent's calls are not read, so a draft an `orchestrator` opens is its own loop's.

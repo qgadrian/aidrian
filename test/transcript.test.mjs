@@ -272,11 +272,41 @@ test('turnActions lists the draft and review actions since the Human`s last prom
   assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), write, edit('e1')), ['review'], 'a pr-write update after a review is the loop`s own');
   assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), write, draftOpened('d1', 41)), ['review', 'draft'], 'a draft create after a review still counts');
   assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.call('r1', 'Skill', { skill: 'pr-review' }), turn.result('r1', 'Launching skill: pr-review')),
-    ['draft', 'review'], 'a pr-review Skill run');
+    ['draft'], 'a pr-review Skill run, the integration review before the loop, is no review');
   const printed = JSON.stringify({ status: 'received', pr: 40 }, null, 2);
   assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.call('r1', 'Bash', { command: 'aidrian pr review 40' }), turn.result('r1', printed)),
     ['draft', 'review'], 'a review command that printed its JSON');
   assert.deepEqual(turnActions(''), []);
+});
+
+test('turnActions names the pull request of each draft and review where the transcript shows it', () => {
+  const actions = (...lines) => turnActions(lines.flat().join('\n')).map(({ kind, pr }) => ({ kind, pr }));
+  const loop = (id, args) => [turn.call(id, 'Skill', { skill: 'aidrian:pr-review-loop', args }), turn.result(id, 'Launching skill: aidrian:pr-review-loop')];
+  const bash = (id, command, output, isError = false) => [turn.call(id, 'Bash', { command }), turn.result(id, output, isError)];
+  const write = (id) => [turn.call(id, 'Skill', { skill: 'aidrian:pr-write' }), turn.result(id, 'Launching skill: aidrian:pr-write')];
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), loop('k1', '40 --await-codex'), loop('k2'), loop('k3', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'draft', pr: 40 }, { kind: 'review', pr: 40 }, { kind: 'review', pr: null }, { kind: 'review', pr: 41 }], 'a draft by its URL, a loop by its argument');
+  const typedLoop = turn.human('<command-message>aidrian:pr-review-loop</command-message>\n<command-name>/aidrian:pr-review-loop</command-name>\n<command-args>#42</command-args>');
+  assert.deepEqual(actions(typedLoop), [{ kind: 'review', pr: 42 }], 'a typed loop by its argument');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', '{\n  "status": "received",\n  "pr": 40\n}'),
+    bash('r2', 'aidrian pr await-review 43', '{"status":"no_reviewer","pr":null}'), bash('r3', 'aidrian pr await-review', '{"status":"no_reviewer","pr":null}')),
+  [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 43 }, { kind: 'review', pr: null }], 'a review command by what it printed, else its target');
+  const printed = '{\n  "status": "received",\n  "pr": 40\n}';
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', printed), write('p1'), bash('e1', 'gh pr edit 41 --body-file b.md', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'review', pr: 40 }, { kind: 'draft', pr: 41 }], 'an edit of another pull request after a review is a draft');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', printed), write('p1'), bash('e1', 'gh pr edit --body-file b.md', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'review', pr: 40 }, { kind: 'draft', pr: 41 }], 'an edit with no target, by the URL it printed');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', printed), write('p1'), bash('e1', 'gh pr edit 40 --body-file b.md', 'https://github.com/acme/notes/pull/40')),
+    [{ kind: 'review', pr: 40 }], 'an edit of the pull request the turn reviewed is the loop`s own');
+  assert.deepEqual(actions(turn.human('go'), loop('k1'), write('p1'), bash('e1', 'gh pr edit 41 --body-file b.md', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'review', pr: null }], 'a loop of no known pull request may be of any');
+});
+
+test('sessionActions still counts a pr-review run as a review run, as the health report reads it', () => {
+  const call = (id, name, input) => usageLine(`m-${id}`, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id, name, input }] });
+  const result = (id, content) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+  const typed = JSON.stringify({ type: 'user', uuid: 'u1', message: { role: 'user', content: '<command-name>/aidrian:pr-review</command-name>' } });
+  assert.equal(sessionActions([[call('k1', 'Skill', { skill: 'aidrian:pr-review' }), result('k1', 'Launching skill: aidrian:pr-review'), typed].join('\n')]).review_runs, 2);
 });
 
 test('turnActions: only the Human`s prompt starts the turn, and a typed slash command is an action', () => {
@@ -297,7 +327,7 @@ test('turnActions: only the Human`s prompt starts the turn, and a typed slash co
   assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued({ kind: 'task-notification' })), ['draft'], 'a queued task notification does not');
   assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued({ kind: 'peer' })), ['draft'], 'a queued peer message does not');
   assert.deepEqual(kinds(draftOpened('d1'), typed('aidrian:pr-review-loop')), ['review'], 'a typed review skill starts the turn and is its action');
-  assert.deepEqual(kinds(typed('aidrian:pr-review')), ['review']);
+  assert.deepEqual(kinds(typed('aidrian:pr-review')), [], 'a typed pr-review is no review of the loop');
   assert.deepEqual(kinds(typed('clear')), [], 'the host`s own command');
   const sideCall = JSON.stringify({ type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'tool_use', id: 's1', name: 'Bash', input: { command: 'gh pr create --draft --fill' } }] } });
   const sideResult = JSON.stringify({ type: 'user', isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: 'https://github.com/acme/notes/pull/41' }] } });

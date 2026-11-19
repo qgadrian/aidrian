@@ -113,13 +113,14 @@ test('the review-loop check passes under "ask", after a review run, and with no 
   const { stop: asking } = setup(t, { github: { reviewLoop: 'ask' } });
   assert.deepEqual(asking([human('go'), DRAFT, DONE]), QUIET, 'github.reviewLoop "ask"');
   assert.deepEqual(stop([human('go'), DRAFT, skillRun('k1', 'aidrian:pr-review-loop'), DONE]), QUIET, 'a pr-review-loop run after the draft');
-  assert.deepEqual(stop([human('go'), DRAFT, skillRun('k1', 'aidrian:pr-review'), DONE]), QUIET, 'a pr-review run after the draft');
   assert.deepEqual(stop([human('go'), DRAFT, REVIEW_COMMAND, DONE]), QUIET, 'an aidrian pr review call that printed its JSON');
   assert.deepEqual(stop([human('go'), call('b1', 'Bash', { command: 'npm test' }), result('b1', 'ok'), said('Done.')]), QUIET, 'no pull request opened');
 });
 
 test('a review before the draft, a pr-write run, and a task notification after the draft still send the turn back', (t) => {
   const { stop } = setup(t);
+  assert.equal(stop([human('implement #400'), DRAFT, skillRun('k1', 'aidrian:pr-review'), DONE]).status, 2,
+    'the integration review issue-implement runs after the draft is no review loop');
   assert.equal(stop([human('go'), skillRun('k1', 'aidrian:pr-review-loop'), DRAFT, DONE]).status, 2, 'the only review ran before the draft');
   const edit = [call('e1', 'Bash', { command: 'gh pr edit 40 --body-file b.md' }), result('e1', 'https://github.com/acme/notes/pull/40')];
   assert.equal(stop([human('go'), skillRun('p1', 'aidrian:pr-write'), edit, DONE]).status, 2, 'a pr-write run that updated a pull request, with no review after it');
@@ -154,6 +155,13 @@ test('a new draft opened after the loop ran on another pull request is sent back
   const received = [call('r', 'Bash', { command: 'aidrian pr review 40' }), result('r', '{\n  "status": "received",\n  "pr": 40\n}')];
   const second = [call('d2', 'Bash', { command: 'gh pr create --draft --title t2 --body-file c.md' }), result('d2', 'https://github.com/acme/notes/pull/41')];
   assert.equal(stop([human('go'), DRAFT, skillRun('k1', 'aidrian:pr-review-loop'), received, second, said('Opened #41.')]).status, 2);
+  const publish = [call('e2', 'Bash', { command: 'gh pr edit 41 --body-file c.md' }), result('e2', 'https://github.com/acme/notes/pull/41')];
+  assert.equal(stop([human('go'), DRAFT, received, skillRun('p2', 'aidrian:pr-write'), publish, said('Published #41.')]).status, 2,
+    'a pr-write update of another pull request after the loop on #40');
+  const loop41 = [call('k2', 'Skill', { skill: 'aidrian:pr-review-loop', args: '41' }), result('k2', 'Launching skill: aidrian:pr-review-loop')];
+  assert.deepEqual(stop([human('go'), DRAFT, received, skillRun('p2', 'aidrian:pr-write'), publish, loop41, said('Looped #41.')]), QUIET,
+    'each draft has its own loop');
+  assert.equal(stop([human('go'), DRAFT, second, loop41, said('Looped #41.')]).status, 2, 'two drafts, one loop: #40 is still owed');
 });
 
 test('the review-loop check holds while a background task runs, and is quiet on Codex, outside a project, and without a transcript', (t) => {
@@ -182,4 +190,10 @@ test('reviewLoopOwed: a reason only under "auto", with a transcript, and for a d
   assert.equal(owed([draft], { reviewLoop: undefined }), null);
   assert.equal(owed([draft], {}, { background_tasks: [{ id: 'b1', status: 'running' }] }), null);
   assert.match(reviewLoopOwed({}, [draft], { reviewLoop: 'auto' }), /when the Human asked the run to stop at the draft/u, 'the default name');
+  const of = (kind, pr) => ({ kind, pr });
+  assert.ok(owed([of('draft', 40), of('review', 41)]), 'a review of another pull request');
+  assert.ok(owed([of('draft', 40), of('draft', 41), of('review', 41)]), 'a second draft reviewed, the first not');
+  assert.equal(owed([of('draft', 40), of('review', null)]), null, 'a review of no known pull request may be of any');
+  assert.equal(owed([of('draft', null), of('review', 41)]), null, 'a draft of no known pull request, and a review');
+  assert.equal(owed([of('draft', 40), of('draft', 41), of('review', 41), of('review', 40)]), null);
 });

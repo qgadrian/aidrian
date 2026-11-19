@@ -100,6 +100,8 @@ export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
     rule,
     count: sum([...entry.agents.values()], (count) => count),
     agents: ranked(entry.agents),
+    // An accepted residual: `repeated_runs` counts run-and-cause pairs, so one run blocked repeatedly for two causes
+    // counts twice.
     repeated_runs: [...entry.runs.values()].filter((count) => count >= REPEATED_DENIALS).length,
     reasons: ranked(entry.reasons).slice(0, 3),
   }));

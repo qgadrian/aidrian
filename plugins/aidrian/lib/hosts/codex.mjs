@@ -209,6 +209,8 @@ export default {
       trustStep: 'open Codex and trust them in its hooks panel, /hooks, after each install and update',
       offStep: 'open Codex and turn them back on in its hooks panel, /hooks, or enable the plugin',
     },
+    // Nothing here says whether Codex would let a session push to the remote, so the answer is unknown and a run starts.
+    pushPermission: () => ({ answer: 'unknown' }),
     // No handoff continue route runs here: session.handoff.continue falls back to none on Codex.
     handoffContinue: { routes: [] },
   },

@@ -187,7 +187,8 @@ function backwardLine() {
 function lastMode(file, session) {
   let fd;
   try {
-    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    // Not blocking, so a named pipe in a transcript's place answers at once, as no file, and never holds the gate.
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const stat = fstatSync(fd);
     if (!stat.isFile()) return undefined;
     let end = stat.size;

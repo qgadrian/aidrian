@@ -346,6 +346,61 @@ about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
 function.
 
+## Push permission in auto mode
+
+The adapter's `capabilities.pushPermission` ([the adapter's fields](adding-a-host.md#the-adapters-fields)),
+in `lib/hosts/claude-code-push.mjs`, says whether auto mode would let a session push to the repository's remote.
+In the `auto` permission mode a classifier judges each action against `autoMode` in the settings, whose `environment`
+lists the trusted repositories as prose, such as `"Trusted repo: github.com/acme/widget and its remotes"`
+([auto mode configuration](https://code.claude.com/docs/en/auto-mode-config)). It reads one file,
+`<config folder>/settings.json`, the user settings, where the config folder is `CLAUDE_CONFIG_DIR`, else `.claude` in
+the home folder. It writes nothing. Each step answers `unknown` when it cannot go on:
+
+1. The session's permission mode, from its transcript, as the [background route](#the-background-route) reads it.
+   Anything but `auto`, a session with no id, and a transcript it cannot read, a named pipe in its place included,
+   answer `unknown`, and no settings file is read.
+2. The settings file, following a symlink, opened without blocking and read as a regular file of at most 1 MB, parsed
+   as JSON. Missing, not a regular file, such as a named pipe, too large, bad JSON, or not an object: `unknown`.
+3. `autoMode` absent or not an object: `unknown`.
+4. `autoMode.environment` absent, not a list, empty, or holding a non-string: `unknown`.
+   `autoMode.allow`, when present, not a list of strings: `unknown`.
+5. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
+   entry names the repository and holds the word `push`, in any case, as in `pushes` or `git push`.
+6. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
+   `"$defaults"` in its list, and names this remote in no entry. The fix it gives adds `"$defaults"` to that list, or an
+   entry such as `"Trusted repo: github.com/acme/widget"`.
+
+An entry names the repository `github.com/acme/widget`, compared in lower case, when it holds either of:
+
+- `acme/widget`, the path after the host, with no letter, digit, `_`, `.`, or `-` before it, and no letter, digit,
+  `_`, or `-` after it: `acme/widget.git` and `github.com/acme/widget)` name it, and `acme/widget-site` does not.
+- `github.com/acme`, the host and the owner, for the whole organisation, with no letter, digit, `_`, `.`, or `-`
+  before it, and after it no letter, digit, `_`, or `-`, no `.` followed by one of those, and no `/` followed by one of
+  those or a `.`: `github.com/acme and all repos under it`, `github.com/acme.` at the end of a sentence, and
+  `github.com/acme/*` name it, and `github.com/acme/other`, `github.com/acme/.github`, and `github.com/acme.io` do not.
+
+Read on 2026-11-19 from the [auto mode configuration](https://code.claude.com/docs/en/auto-mode-config) and
+[settings](https://code.claude.com/docs/en/settings) references, with Claude Code 2.1.328 installed, and held against
+one live user settings file. Three assumptions follow from them:
+
+- Only the user settings file is read. The classifier ignores `autoMode` in `.claude/settings.json` and
+  `.claude/settings.local.json`, so a checked-in file cannot add its own rules, and counting them would count entries
+  the host ignores.
+- `denied` is a prediction of what a prose classifier will do. A custom `environment` with no `"$defaults"` that names
+  this repository in no entry is the shape of a run whose push was refused, and the only shape that answers `denied`.
+- `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
+
+Limits: managed settings and a `--settings` value can add `autoMode` entries the user file does not show, and an entry
+that names the remote another way, such as an organisation by its name with no host, reads as naming nothing; either
+can answer `denied` where the classifier would allow the push, and the fix still works. The other way round, some
+entries that name another repository answer `allowed`: one on another host whose path is the same, such as
+`gitlab.example.com/acme/widget`, a name that goes on past a `.`, such as `acme/widget.site`, and an `allow` entry
+phrased as a refusal, such as `Never push to github.com/acme/widget`; the run then starts as it would without the
+check. A relative `CLAUDE_CONFIG_DIR` answers `unknown`. Every shape of `autoMode` the adapter does not know answers `unknown`.
+
+Verified by `node --test` on fixtures (`test/adapters.test.mjs`); not live: no denial of a real classifier has been held
+against the answer. `claude auto-mode config` shows the rules the host applies, as a check by hand.
+
 ## The Claude mod
 
 `aidrian-mod` is an optional mod for Claude Code alone: a band above the prompt, a pane, and notifications, drawn

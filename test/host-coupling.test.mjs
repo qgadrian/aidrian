@@ -99,3 +99,40 @@ const value = env['CODEX_' + 'X'];
   assert.ok(SHARED.includes('bin'), 'the commands are shared code too');
   assert.ok(walk(path.join(PLUGIN, 'bin')).length > 0, 'and the walk reaches them');
 });
+
+// A host's own setting stays in its adapter, as autoMode, the trusted repositories of Claude Code's auto mode, does in
+// lib/hosts/claude-code-push.mjs. The text is read whole, comments included: shared code does not even describe one.
+const HOST_SETTINGS = /autoMode/u;
+const HOSTS_FOLDER = `lib${path.sep}hosts${path.sep}`;
+
+function settingHits() {
+  return SHARED.flatMap((folder) => walk(path.join(PLUGIN, folder)))
+    .filter((file) => !path.relative(PLUGIN, file).startsWith(HOSTS_FOLDER))
+    .filter((file) => HOST_SETTINGS.test(readFileSync(file, 'utf8')))
+    .map((file) => path.relative(PLUGIN, file).split(path.sep).join('/'));
+}
+
+test('shared code names no host setting, in code or in a comment', () => {
+  assert.deepEqual(settingHits(), [], 'a host setting is read in its adapter under lib/hosts/, and shared code asks a capability');
+});
+
+test('the host setting check sees a comment and a string, and the adapter that holds the setting', () => {
+  for (const sample of ['// reads autoMode.environment', "const key = 'autoMode';", ' * the autoMode list']) assert.ok(HOST_SETTINGS.test(sample), sample);
+  assert.match(readFileSync(path.join(PLUGIN, 'lib/hosts/claude-code-push.mjs'), 'utf8'), HOST_SETTINGS, 'the adapter is where it lives, and the walk leaves it out');
+});
+
+// lib/hosts/ imports nothing outside itself but Node's built-ins, so an adapter never pulls shared code into every hook.
+const HOSTS_DIR = path.join(PLUGIN, 'lib/hosts');
+const IMPORTS = [/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]/gmu, /^\s*import\s*['"]([^'"]+)['"]/gmu, /\bimport\(\s*['"]([^'"]+)['"]\s*\)/gu];
+
+// The modules `text`, a file in lib/hosts/, imports from outside lib/hosts/, other than Node's built-ins.
+const outsideImports = (file, text) => IMPORTS.flatMap((pattern) => [...text.matchAll(pattern)].map((match) => match[1]))
+  .filter((specifier) => !specifier.startsWith('node:'))
+  .filter((specifier) => !specifier.startsWith('.') || !path.resolve(path.dirname(file), specifier).startsWith(`${HOSTS_DIR}${path.sep}`));
+
+test('lib/hosts/ imports nothing outside lib/hosts/ but Node built-ins', () => {
+  const outside = walk(HOSTS_DIR).flatMap((file) => outsideImports(file, readFileSync(file, 'utf8')).map((each) => `${path.relative(PLUGIN, file)}: ${each}`));
+  assert.deepEqual(outside, []);
+  const sample = "import { runGit } from '../git.mjs';\nimport {\n  a,\n} from './response.mjs';\nimport x from 'node:fs';\nconst m = await import('../project.mjs');\nimport 'lodash';\n";
+  assert.deepEqual(outsideImports(path.join(HOSTS_DIR, 'x.mjs'), sample).sort(), ['../git.mjs', '../project.mjs', 'lodash']);
+});

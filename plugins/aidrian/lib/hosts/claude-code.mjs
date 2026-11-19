@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { attachLine, findLine, nameMatcher, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { configDir } from './claude-code-config.mjs';
+import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
@@ -161,6 +162,8 @@ export default {
     ],
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
+    // Whether auto mode would let a session push to the remote, from the user settings (lib/hosts/claude-code-push.mjs).
+    pushPermission: (ask) => pushPermission(ask),
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
     // the claude process, names the session before and after it. The background route starts a new session with
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and

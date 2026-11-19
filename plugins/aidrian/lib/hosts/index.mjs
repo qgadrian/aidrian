@@ -2,6 +2,8 @@
 // variables or naming its tools. docs/providers/adding-a-host.md says what an adapter declares; test/adapters.test.mjs
 // checks each one. Hooks load this file on every call, so it and the adapters stay small and read no file when loaded.
 
+import path from 'node:path';
+
 import claudeCode from './claude-code.mjs';
 import codex from './codex.mjs';
 
@@ -34,7 +36,8 @@ export const UNKNOWN_HOST = Object.freeze({
     return read ? { ...read, exitZero: false } : { output: null, finished: false, exitZero: false };
   },
   hookInput: (input) => HOSTS.reduce((each, host) => host.hookInput(each), input),
-  capabilities: Object.freeze({}),
+  // Nothing says whether this host would let a session push, so a run starts.
+  capabilities: Object.freeze({ pushPermission: () => ({ answer: 'unknown' }) }),
 });
 
 // The host of this process, from its environment and, in a hook, its payload.
@@ -139,6 +142,35 @@ export const priceTables = (hosts = HOSTS) => hosts.map((host) => ({ host: host.
 
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];
+
+// What a host says of a push to the repository's remote, before a run no Human attends starts work
+// (docs/providers/adding-a-host.md, capabilities.pushPermission). `ask` is { repository, session, cwd, env }, with
+// `repository` as `host/owner/repo`.
+export const PUSH_ANSWERS = Object.freeze(['allowed', 'denied', 'unknown']);
+const DENIAL_FIELDS = ['setting', 'file', 'why', 'fix'];
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
+const UNKNOWN_PUSH = Object.freeze({ answer: 'unknown' });
+
+// The host's answer, never thrown: { answer: 'allowed' }, { answer: 'unknown' }, or { answer: 'denied', setting, file,
+// why, fix }. Unknown for a host without the capability, one that throws or answers outside PUSH_ANSWERS, and a denial
+// missing one of its four strings, with a control character in one, or with a `file` that is not absolute: a denial that
+// cannot name its setting and its file is not clear.
+export function pushPermission(host, ask) {
+  try {
+    const read = host?.capabilities?.pushPermission?.(ask);
+    if (typeof read?.then === 'function') {
+      Promise.resolve(read).catch(() => {});
+      return UNKNOWN_PUSH;
+    }
+    if (!PUSH_ANSWERS.includes(read?.answer)) return UNKNOWN_PUSH;
+    if (read.answer !== 'denied') return { answer: read.answer };
+    const denial = Object.fromEntries(DENIAL_FIELDS.map((field) => [field, read[field]]));
+    const clear = Object.values(denial).every((value) => typeof value === 'string' && value.trim() !== '' && !CONTROL.test(value));
+    return clear && path.isAbsolute(denial.file) ? { answer: 'denied', ...denial } : UNKNOWN_PUSH;
+  } catch {
+    return UNKNOWN_PUSH;
+  }
+}
 
 // What each host says about the tracker guard, as { host, ...capability }.
 export const trackerGuards = (hosts = HOSTS) => hosts.map((host) => ({ host, ...host.capabilities.trackerGuard }));

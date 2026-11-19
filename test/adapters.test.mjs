@@ -5,7 +5,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,7 +14,8 @@ import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
-import { agentAliases, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { pushPermission as claudePushPermission } from '../plugins/aidrian/lib/hosts/claude-code-push.mjs';
+import { agentAliases, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -362,7 +363,7 @@ test('the page on adding a host says what the adapter does not cover, and names 
   for (const delivery of DELIVERIES) assert.ok(text.includes(`\`${delivery}\``), delivery);
   for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove']) assert.ok(text.includes(name), name);
   assert.doesNotMatch(text, /hookEvents/u);
-  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes']) assert.ok(text.includes(`\`${field}`), field);
+  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission']) assert.ok(text.includes(`\`${field}`), field);
 });
 
 test('a value the file sets for what an adapter fills stays as written', () => {
@@ -512,4 +513,223 @@ test('each host`s PostToolUse Bash payload of aidrian worktree new files a links
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// The push permission capability (docs/providers/adding-a-host.md, capabilities.pushPermission): what a host says of a
+// push to the repository's remote before a run no Human attends starts work. Shared code reads it only through
+// pushPermission in lib/hosts/index.mjs, which answers unknown for whatever is not a clear answer.
+const REPOSITORY = 'github.com/acme/widget';
+const DENIAL = { answer: 'denied', setting: 'a.setting', file: '/x/settings.json', why: 'names no remote', fix: 'adds one' };
+
+test('every host answers the push permission with one of its answers, and unknown with no session', (t) => {
+  const config = mkdtempSync(path.join(tmpdir(), 'aidrian-push-'));
+  t.after(() => rmSync(config, { recursive: true, force: true }));
+  writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ autoMode: { environment: ['Trusted repo: github.com/acme/other'] } }));
+  assert.deepEqual(PUSH_ANSWERS, ['allowed', 'denied', 'unknown']);
+  for (const host of [...HOSTS, fakeHost, UNKNOWN_HOST]) {
+    const read = pushPermission(host, { repository: REPOSITORY, session: null, cwd: config, env: { CLAUDE_CONFIG_DIR: config } });
+    assert.ok(PUSH_ANSWERS.includes(read.answer), host.id);
+    assert.deepEqual(read, { answer: 'unknown' }, host.id);
+  }
+});
+
+test('a host without the push permission capability, Codex, and the unknown host answer unknown', () => {
+  const codex = HOSTS.find((host) => host.id === 'codex');
+  assert.equal(fakeHost.capabilities.pushPermission, undefined, 'the fixture host is the one without it');
+  for (const host of [codex, UNKNOWN_HOST]) {
+    assert.equal(typeof host.capabilities.pushPermission, 'function', host.id);
+    assert.deepEqual(host.capabilities.pushPermission({ repository: REPOSITORY, session: 's', cwd: '/x', env: {} }), { answer: 'unknown' }, host.id);
+  }
+  for (const host of [fakeHost, codex, UNKNOWN_HOST, null, undefined, {}, { capabilities: null }]) {
+    assert.deepEqual(pushPermission(host, { repository: REPOSITORY, session: 's', cwd: '/x', env: {} }), { answer: 'unknown' }, String(host?.id));
+  }
+});
+
+test('the push permission is unknown for a capability that throws, a junk answer, and a denial it cannot name', () => {
+  const answering = (read) => ({ ...fakeHost, capabilities: { ...fakeHost.capabilities, pushPermission: () => read } });
+  const throwing = { ...fakeHost, capabilities: { pushPermission: () => { throw new Error('boom'); } } };
+  assert.deepEqual(pushPermission(throwing, {}), { answer: 'unknown' });
+  const rejected = Promise.reject(new Error('later'));
+  for (const read of [undefined, null, 'allowed', 7, [], {}, { answer: 'yes' }, { answer: 'ALLOWED' }, { answer: null }, rejected, Promise.resolve({ answer: 'allowed' })]) {
+    assert.deepEqual(pushPermission(answering(read), {}), { answer: 'unknown' }, String(read?.answer ?? read));
+  }
+  const getter = { get answer() { throw new Error('boom'); } };
+  assert.deepEqual(pushPermission(answering(getter), {}), { answer: 'unknown' });
+  for (const field of ['setting', 'file', 'why', 'fix']) {
+    for (const value of [undefined, '', '  ', 7, null, 'two\nlines', 'a\u0007bell', 'a\u2028line']) {
+      assert.deepEqual(pushPermission(answering({ ...DENIAL, [field]: value }), {}), { answer: 'unknown' }, `${field}: ${JSON.stringify(value)}`);
+    }
+  }
+  for (const file of ['settings.json', './x/settings.json', '~/.claude/settings.json']) {
+    assert.deepEqual(pushPermission(answering({ ...DENIAL, file }), {}), { answer: 'unknown' }, `a file that is not absolute: ${file}`);
+  }
+  assert.deepEqual(pushPermission(answering({ ...DENIAL, extra: 'kept out' }), {}), DENIAL);
+  assert.deepEqual(pushPermission(answering({ answer: 'allowed', setting: 'x' }), {}), { answer: 'allowed' });
+  assert.deepEqual(pushPermission(answering({ answer: 'unknown' }), {}), { answer: 'unknown' });
+  let asked = null;
+  const recording = { ...fakeHost, capabilities: { pushPermission: (ask) => { asked = ask; return { answer: 'allowed' }; } } };
+  const ask = { repository: REPOSITORY, session: 's', cwd: '/x', env: {} };
+  pushPermission(recording, ask);
+  assert.equal(asked, ask, 'the capability gets the ask as given');
+});
+
+// A Claude Code config folder whose settings.json holds `settings`, written as JSON unless it is a string.
+function claudeSettings(t, settings) {
+  const config = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-push-')));
+  t.after(() => rmSync(config, { recursive: true, force: true }));
+  if (settings !== undefined) writeFileSync(path.join(config, 'settings.json'), typeof settings === 'string' ? settings : JSON.stringify(settings));
+  return config;
+}
+const inAuto = () => 'auto';
+const askClaude = (config, extra = {}) => claudePushPermission({ repository: REPOSITORY, session: 'session-1', cwd: config, env: { CLAUDE_CONFIG_DIR: config }, readMode: inAuto, ...extra });
+const trusting = (environment, allow) => ({ autoMode: { environment, ...(allow ? { allow } : {}) } });
+
+test('Claude Code in auto mode answers the push permission from auto mode\'s trusted repositories in its user settings', (t) => {
+  const cases = [
+    ['an environment entry names the remote', trusting(['Trusted repo: github.com/acme/widget and its remotes']), 'allowed'],
+    ['"$defaults" keeps the defaults, which trust the working repository', trusting(['$defaults', 'Source control: gitlab.example.com/other']), 'allowed'],
+    ['an entry for the whole organisation', trusting(['Source control: github.com/acme and all repos under it']), 'allowed'],
+    ['an organisation entry with a glob', trusting(['Source control: github.com/acme/*']), 'allowed'],
+    ['the path alone, with .git', trusting(['**Trusted repo**: ~/work/widget (acme/widget.git, private)']), 'allowed'],
+    ['in another case, closed by a bracket', trusting(['Trusted repo: (GitHub.com/Acme/Widget)']), 'allowed'],
+    ['a URL', trusting(['Remote: https://github.com/acme/widget']), 'allowed'],
+    ['an allow entry that names it and holds push', trusting(['Source control: gitlab.example.com/other'], ['Git Pushes to github.com/acme/widget are fine']), 'allowed'],
+    ['no entry names a repository', trusting(['Company: Acme builds widgets']), 'denied'],
+    ['only another remote is trusted', trusting(['Trusted repo: github.com/acme/other']), 'denied'],
+    ['a longer repository name', trusting(['Trusted repo: github.com/acme/widget-site']), 'denied'],
+    ['a longer organisation name', trusting(['Trusted repo: github.com/acme-corp/widget']), 'denied'],
+    ['another repository of the organisation', trusting(['Source control: github.com/acme/other and its remotes']), 'denied'],
+    ['an organisation with a longer name', trusting(['Source control: github.com/acme.io']), 'denied'],
+    ['an organisation at the end of a sentence', trusting(['Source control: github.com/acme.']), 'allowed'],
+    ['a repository of the organisation whose name starts with a dot', trusting(['Trusted repo: github.com/acme/.github']), 'denied'],
+    ['another host', trusting(['Source control: xgithub.com/acme']), 'denied'],
+    ['an allow entry that names it without push', trusting(['Trusted repo: github.com/acme/other'], ['Reading github.com/acme/widget is fine']), 'denied'],
+    ['an allow entry that holds push and names another', trusting(['Trusted repo: github.com/acme/other'], ['git push to github.com/acme/widget-site']), 'denied'],
+  ];
+  for (const [name, settings, answer] of cases) {
+    const config = claudeSettings(t, settings);
+    const read = askClaude(config);
+    assert.equal(read.answer, answer, name);
+    if (answer === 'denied') {
+      assert.equal(read.setting, 'autoMode.environment', name);
+      assert.equal(read.file, path.join(config, 'settings.json'), name);
+      assert.ok(path.isAbsolute(read.file), name);
+      assert.match(read.why, /"\$defaults"/u, name);
+      assert.ok(read.fix.includes('"$defaults"') && read.fix.includes(REPOSITORY), name);
+      assert.deepEqual(pushPermission({ capabilities: { pushPermission: () => read } }, {}), read, 'the registry passes the denial on');
+    } else {
+      assert.deepEqual(read, { answer }, name);
+    }
+  }
+});
+
+test('Claude Code answers unknown on settings it cannot read as a clear auto mode list', (t) => {
+  const cases = [
+    ['no autoMode', {}],
+    ['autoMode not an object', { autoMode: 'trust everything' }],
+    ['autoMode a list', { autoMode: ['x'] }],
+    ['no environment', { autoMode: { allow: ['git push anywhere'] } }],
+    ['an empty environment', trusting([])],
+    ['an environment that is no list', trusting('Trusted repo: github.com/acme/other')],
+    ['a non-string entry', trusting(['Trusted repo: github.com/acme/other', 7])],
+    ['an allow of another shape', trusting(['Trusted repo: github.com/acme/other'], 'git push')],
+    ['an allow with a non-string entry', trusting(['Trusted repo: github.com/acme/other'], [null])],
+    ['settings that are a list', '[]'],
+    ['settings that are null', 'null'],
+    ['bad JSON', '{"autoMode": {'],
+  ];
+  for (const [name, settings] of cases) assert.deepEqual(askClaude(claudeSettings(t, settings)), { answer: 'unknown' }, name);
+  assert.deepEqual(askClaude(claudeSettings(t, undefined)), { answer: 'unknown' }, 'settings missing');
+  const folder = claudeSettings(t, undefined);
+  mkdirSync(path.join(folder, 'settings.json'));
+  assert.deepEqual(askClaude(folder), { answer: 'unknown' }, 'a folder at that path');
+  const denying = JSON.stringify(trusting(['Trusted repo: github.com/acme/other']));
+  const large = claudeSettings(t, `${denying}${' '.repeat(1024 * 1024)}`);
+  assert.deepEqual(askClaude(large), { answer: 'unknown' }, 'over 1 MB');
+  assert.equal(askClaude(claudeSettings(t, `${denying}${' '.repeat(1024 * 1024 - denying.length)}`)).answer, 'denied', 'at 1 MB');
+  const relative = claudeSettings(t, JSON.parse(denying));
+  assert.equal(askClaude(relative).answer, 'denied', 'the same folder by its absolute path denies');
+  assert.deepEqual(askClaude(relative, { env: { CLAUDE_CONFIG_DIR: path.relative(process.cwd(), relative) } }), { answer: 'unknown' }, 'a relative config folder');
+  for (const repository of [undefined, '', 'github.com/acme', 'github.com//widget', 7]) {
+    assert.deepEqual(askClaude(claudeSettings(t, JSON.parse(denying)), { repository }), { answer: 'unknown' }, String(repository));
+  }
+});
+
+test('Claude Code reads auto mode from the user settings alone, never from the project\'s', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const cwd = path.join(config, 'work');
+  mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+  for (const name of ['settings.json', 'settings.local.json']) writeFileSync(path.join(cwd, '.claude', name), JSON.stringify(trusting(['$defaults'])));
+  const read = askClaude(config, { cwd });
+  assert.equal(read.answer, 'denied');
+  assert.equal(read.file, path.join(config, 'settings.json'));
+});
+
+test('Claude Code answers unknown at once for a named pipe at its user settings, alone or behind a symlink', { skip: process.platform === 'win32' }, (t) => {
+  for (const linked of [false, true]) {
+    const config = claudeSettings(t, undefined);
+    const pipe = path.join(config, linked ? 'pipe' : 'settings.json');
+    assert.equal(spawnSync('mkfifo', [pipe]).status, 0, 'mkfifo');
+    if (linked) symlinkSync(pipe, path.join(config, 'settings.json'));
+    const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+    const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: '/x', env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+    const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+    assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}'], linked ? 'behind a symlink' : 'alone');
+  }
+});
+
+test('Claude Code reads no mode, at once, from a named pipe in a transcript\'s place', { skip: process.platform === 'win32' }, (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const cwd = path.join(config, 'work');
+  const transcripts = path.join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/gu, '-'));
+  mkdirSync(transcripts, { recursive: true });
+  assert.equal(spawnSync('mkfifo', [path.join(transcripts, 'session-1.jsonl')]).status, 0, 'mkfifo');
+  const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/index.mjs');
+  const script = `import { HOSTS, pushPermission } from ${JSON.stringify(module)};
+const host = HOSTS.find((each) => each.id === 'claude-code');
+process.stdout.write(JSON.stringify(pushPermission(host, { repository: ${JSON.stringify(REPOSITORY)}, session: 'session-1', cwd: ${JSON.stringify(cwd)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} } })));`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+  assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}']);
+});
+
+test('Claude Code follows a symlink to its user settings', { skip: process.platform === 'win32' }, (t) => {
+  const config = claudeSettings(t, undefined);
+  const real = path.join(config, 'real.json');
+  writeFileSync(real, JSON.stringify(trusting(['Trusted repo: github.com/acme/other'])));
+  symlinkSync(real, path.join(config, 'settings.json'));
+  assert.equal(askClaude(config).answer, 'denied');
+});
+
+test('Claude Code answers unknown outside auto mode and then reads no settings file', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  for (const mode of ['acceptEdits', 'manual', 'plan', 'dontAsk', null, '(unreadable)', undefined]) {
+    const read = [];
+    const env = new Proxy({ CLAUDE_CONFIG_DIR: config }, { get: (target, name) => { read.push(name); return target[name]; } });
+    let asked = null;
+    const readMode = (ask) => { asked = ask; return mode; };
+    assert.deepEqual(claudePushPermission({ repository: REPOSITORY, session: 'session-1', cwd: '/work', env, readMode }), { answer: 'unknown' }, String(mode));
+    assert.deepEqual(read, [], `${mode}: no config folder looked up, so no settings file read`);
+    assert.equal(asked.env, env);
+    assert.deepEqual([asked.session, asked.cwd], ['session-1', '/work'], 'the mode is read for the session about to start work');
+  }
+});
+
+test('Claude Code\'s adapter answers denied from a transcript in auto mode and settings that trust only another remote', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const cwd = path.join(config, 'work');
+  const transcripts = path.join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/gu, '-'));
+  mkdirSync(transcripts, { recursive: true });
+  const lines = [{ type: 'permission-mode', permissionMode: 'manual', sessionId: 'session-1' }, { type: 'permission-mode', permissionMode: 'auto', sessionId: 'session-1' }];
+  writeFileSync(path.join(transcripts, 'session-1.jsonl'), `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+  const claudeCode = HOSTS.find((host) => host.id === 'claude-code');
+  const read = pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-1', cwd, env: { CLAUDE_CONFIG_DIR: config } });
+  assert.equal(read.answer, 'denied');
+  assert.deepEqual(Object.keys(read).sort(), ['answer', 'file', 'fix', 'setting', 'why']);
+  assert.equal(read.setting, 'autoMode.environment');
+  assert.equal(read.file, path.join(config, 'settings.json'));
+  assert.ok(read.fix.includes(REPOSITORY));
+  writeFileSync(path.join(config, 'settings.json'), JSON.stringify(trusting(['$defaults'])));
+  assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-1', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'allowed' });
+  assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-2', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'unknown' }, 'a session with no transcript');
 });

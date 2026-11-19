@@ -383,7 +383,7 @@ for (const maxParallel of [1, 2]) {
     writeFileSync(brief, DRIVER_BRIEF);
     assert.equal(checkBrief(brief, undefined, 0, { store: fx.store }).exitCode, 0);
     assert.equal(fx.cmd(['handoff', 'launch', brief]).exitCode, 0);
-    const answer = continueBrief(brief, { chainOf, cwd: fx.dir, env: fx.env, wait: () => {}, run: fx.claude.run });
+    const answer = continueBrief(brief, { chainOf, cwd: fx.dir, env: fx.env, home: fx.home, wait: () => {}, run: fx.claude.run });
     assert.equal(answer.out[0], 'continue: background', answer.out.join('\n'));
     assert.equal(fx.claude.starts().length, maxParallel + 1, 'the continuation started');
     // Any other start record of the driver's still waits for the host: its continuation's, which the ledger does not
@@ -418,7 +418,7 @@ function handOff(fx, session, name, extra = '') {
   writeFileSync(brief, DRIVER_BRIEF.replace('- Finish the run.', `- Finish the run.${extra}`));
   assert.equal(checkBrief(brief, undefined, 0, { store: fx.store }).exitCode, 0);
   assert.equal(fx.cmd(['handoff', 'launch', brief], { session }).exitCode, 0);
-  return continueBrief(brief, { chainOf, cwd: fx.dir, env: fx.as(session), wait: () => {}, run: fx.claude.run });
+  return continueBrief(brief, { chainOf, cwd: fx.dir, env: fx.as(session), home: fx.home, wait: () => {}, run: fx.claude.run });
 }
 
 test('only the current driver of a live run passes its issues\' starts: after its handoff, a second handoff and its own next start are held while the continuation runs', (t) => {

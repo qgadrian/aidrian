@@ -244,6 +244,12 @@ test('a pass claim names a test command and a pass, and never a failure, an unfi
   assert.deepEqual(passClaims('## Summary\n\n`npm test` passed\n'), [], 'only the Tests run section');
   assert.equal(passClaims('`npm test` passed', { section: null }).length, 1, 'a whole report with no section');
   assert.deepEqual(passClaims('`npm test` at 056c3c2 passed, 1234567 of them', { section: null })[0].commits, ['056c3c2'], 'a count is no commit id');
+  // About one abbreviated id in 27 is all digits: after "at" or "commit" it is still one.
+  assert.deepEqual(passClaims('`npm test` at 3854814: 4071/4071 pass', { section: null })[0].commits, ['3854814'], 'an id of only digits');
+  assert.deepEqual(passClaims('`npm test` passed at commit 3854814, 1234567 of them', { section: null })[0].commits, ['3854814']);
+  assert.deepEqual(passClaims('`npm test` at `3854814`: 12 pass', { section: null })[0].commits, ['3854814'], 'an id in backticks');
+  assert.deepEqual(passClaims('Commit 3854814: `npm test` 12 pass', { section: null })[0].commits, ['3854814'], 'a capital');
+  assert.deepEqual(passClaims('At 3854814, `npm test`: 12 pass', { section: null })[0].commits, ['3854814']);
   assert.equal(passClaims('`git status` is clean and `npm run lint` passed', { section: null }).length, 0, 'no test command');
   assert.deepEqual(passClaims('`npm test` on Node 22 pass', { section: null })[0].counts, [], 'a number after a word is a name');
 });
@@ -536,12 +542,22 @@ test('the pull request body rule refuses a pass the session record does not supp
   git('commit', '-q', '-m', 'fix again');
   assert.equal(judge([claim], [{ ...run, ...ran }]), null, 'the tracked files\' tree matches the commit');
 
+  // Reword the commit, keeping its tree, until its abbreviated id is all digits, as one in about 27 is.
+  for (let tries = 0; !/^[0-9]{7}/u.test(git('rev-parse', 'HEAD')); tries += 1) {
+    assert.ok(tries < 2000, 'no commit id of only digits');
+    git('commit', '-q', '--amend', '-m', `fix again ${tries}`);
+  }
   const first = git('rev-parse', 'HEAD');
   writeFileSync(path.join(dir, 'later.txt'), 'l\n');
   git('add', 'later.txt');
   git('commit', '-q', '-m', 'later');
   assert.match(judge([claim], [{ ...run, ...ran }]) ?? '', /^Blocked/u, 'a run of an earlier commit is not one of HEAD');
   assert.equal(judge([`- \`npm run check\` at ${first.slice(0, 7)}: 4071/4071 pass`], [{ ...run, ...ran }]), null, 'a line that names the commit its run was of');
+  // Digits alone that git cannot read are a number, never a commit that leaves the line unjudged.
+  assert.match(judge(['- `npm run check` passed at 1234567 ms: 4071/4071 pass'], [{ ...run, ...ran }]) ?? '', /^Blocked/u, 'a time is no commit');
+  const named = `- \`npm run check\` at ${first.slice(0, 7)} passed at 20261119: 4071/4071 pass`;
+  assert.equal(judge([named], [{ ...run, ...ran }]), null, 'the commit git reads, not the date after it');
+  assert.match(judge([named], [{ ...run, tree: 'f'.repeat(40), trackedTree: 'e'.repeat(40) }]) ?? '', /^Blocked/u, 'and a run of another tree');
 
   // An edit judges only the lines its pull request's body lacks, and only for this branch's pull request.
   const edit = `gh pr edit 7 --body-file ${bodyFile}`;

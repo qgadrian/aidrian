@@ -367,7 +367,7 @@ test('once the forge no longer allows project runs, wait still settles the run t
   assert.equal(fx.claude.starts().length, 1, 'wait and the refused start started nothing');
 });
 
-test('a policy the forge withdraws or cannot answer never loosens the hours wait stops a session at past the forge\'s or the default', (t) => {
+test('a policy the forge withdraws never loosens the hours wait stops a session at past the forge\'s or the default, and one it cannot answer holds each session to its start\'s', (t) => {
   // The base branch's local ref allows 24 hours, the forge 1: once the forge withdraws projectRun.allow, the 1 it held
   // still stops a session at 2 hours.
   let allow = true;
@@ -385,17 +385,31 @@ test('a policy the forge withdraws or cannot answer never loosens the hours wait
   assert.deepEqual(withdrawn.out, ['note policy: the default branch main on the forge does not set projectRun.allow to true; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, 1', 'ended ENG-1 timeout -> open', 'idle']);
   assert.equal(fx.claude.states[STARTED[0].session], 'stopped');
 
-  // A forge that cannot answer at all leaves the default, 6, not the local 24: a session at 7 hours is stopped.
+  // A forge that cannot answer now holds each session to the hours its start recorded as the team confirmed them, 24
+  // here: a session at 7 hours runs on, and one past its 24 is stopped.
   const down = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 24 } });
   assert.equal(down.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.equal(down.rows().filter((row) => row.event === 'start').at(-1).issueHours, 24, 'the start row records the confirmed hours');
   down.forge.contents = () => {
     throw new Error('gh: HTTP 429');
   };
-  const sevenHours = Date.now() + 7 * 60 * 60 * 1000;
-  const outage = down.cmd(['wait', 'launch', '--max-wait', '0'], { now: sevenHours });
+  const hours = (n) => Date.now() + n * 60 * 60 * 1000;
+  const outage = down.cmd(['wait', 'launch', '--max-wait', '0'], { now: hours(7) });
   assert.equal(outage.exitCode, 0, outage.err.join('\n'));
-  assert.match(outage.out[0], /^note policy: .*gh: HTTP 429.*stopping any past projectRun\.issueHours, 6$/u);
-  assert.deepEqual(outage.out.slice(1), ['ended ENG-1 timeout -> open', 'idle']);
+  assert.match(outage.out[0], /^note outage: .*gh: HTTP 429.*stopping any past the projectRun\.issueHours its start recorded, at most 24, or 6 for a start that recorded none$/u);
+  assert.deepEqual(outage.out.slice(1), ['running ENG-1']);
+  assert.notEqual(down.claude.states[STARTED[0].session], 'stopped');
+  assert.deepEqual(down.cmd(['wait', 'launch', '--max-wait', '0'], { now: hours(25) }).out.slice(1), ['ended ENG-1 timeout -> open', 'idle']);
+
+  // A start row an earlier version wrote, with no hours, is held to the default, 6: a session at 7 hours is stopped.
+  const older = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 24 } });
+  assert.equal(older.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const ledger = path.join(runsFolder(older.state), 'launch', 'ledger.jsonl');
+  writeFileSync(ledger, readFileSync(ledger, 'utf8').split('\n').map((line) => (line.includes('"event":"start"') ? JSON.stringify((({ issueHours, ...rest }) => rest)(JSON.parse(line))) : line)).join('\n'));
+  older.forge.contents = () => {
+    throw new Error('gh: HTTP 429');
+  };
+  assert.deepEqual(older.cmd(['wait', 'launch', '--max-wait', '0'], { now: hours(7) }).out.slice(1), ['ended ENG-1 timeout -> open', 'idle']);
 });
 
 test('after wait stops an issue\'s session past its hours, the host lists it stopped, and the issue starts again', (t) => {

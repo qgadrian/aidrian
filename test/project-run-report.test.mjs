@@ -766,7 +766,7 @@ test('a forge that cannot answer the team\'s policy now makes start exit 75 with
   // wait starts nothing, so a sustained outage never dead-ends the driver's halt wait: it settles the run with a note.
   const wait = fx.cmd(['wait', 'launch', '--max-wait', '0']);
   assert.equal(wait.exitCode, 0, wait.err.join('\n'));
-  assert.match(wait.out[0], /^note policy: the forge's copy of the default branch's config\.json cannot be read \(.*gh: HTTP 502.*; wait starts nothing and settles the issues that run, stopping any past projectRun\.issueHours, 6$/u);
+  assert.match(wait.out[0], /^note outage: the forge's copy of the default branch's config\.json cannot be read \(.*gh: HTTP 502.*; wait starts nothing and settles the issues that run, stopping any past the projectRun\.issueHours its start recorded, at most 6$/u);
   assert.equal(wait.out.at(-1), 'idle');
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'once the forge answers');
   const refusing = runFixture(t, { forgeConfig: { version: 1, projectRun: { allow: false } } });

@@ -25,7 +25,7 @@ const FACADE = [
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
   'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'workflowRun',
-  'reviewerSeen', 'ciWorkflows', 'refProtection',
+  'reviewerSeen', 'ciWorkflows', 'refProtection', 'workflowSecrets',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -192,21 +192,77 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
   assert.equal(facade.MAX_BODY, 65_536, 'the adapter names GitHub\'s longest body, and the facade gives it to shared code');
 });
 
-test('refProtection reads the default branch\'s protection and each active tag ruleset, with whether the signed-in user may bypass it', () => {
-  const answers = {
-    'repos/acme/notes': { default_branch: 'main' },
-    'repos/acme/notes/branches/main': { protected: false },
-    'repos/acme/notes/rules/branches/main': [[{ type: 'pull_request', ruleset_id: 1 }]],
-    'repos/acme/notes/rulesets?targets=tag&includes_parents=true': [[{ id: 7, target: 'tag', enforcement: 'active' }, { id: 8, target: 'tag', enforcement: 'evaluate' }, { id: 9, target: 'branch', enforcement: 'active' }]],
-    'repos/acme/notes/rulesets/7': { name: 'releases', conditions: { ref_name: { include: ['refs/tags/v*'] } }, rules: [{ type: 'creation' }, { type: 'deletion' }], current_user_can_bypass: 'never' },
-  };
-  const { forge, args } = recorded((call) => JSON.stringify(answers[call.find((each) => each.startsWith('repos/'))] ?? null));
-  assert.deepEqual(forge.refProtection('acme/notes', { host: 'github.com' }), { branch: 'main', protected: true, tags: [{ name: 'releases', refs: ['refs/tags/v*'], creation: true, bypass: 'never' }] });
-  assert.deepEqual(args().map((each) => each.filter((word) => word.startsWith('repos/'))[0]), Object.keys(answers), 'only the active tag ruleset is read whole');
+// A recording gh that answers each REST route from `answers`, by the route's word, an Error thrown as gh would.
+function routed(answers) {
+  return recorded((call) => {
+    const route = call.find((each) => each.startsWith('repos/') || each === 'user');
+    const answer = answers[route];
+    if (answer instanceof Error) throw answer;
+    return typeof answer === 'string' ? answer : JSON.stringify(answer ?? null);
+  });
+}
+
+// What GitHub answers for a repository whose default branch a ruleset with no bypass holds to a pull request, and whose
+// tags a ruleset over all of them, with no bypass, holds against creation and update.
+const HELD = {
+  'repos/acme/notes': { default_branch: 'main', permissions: { admin: true } },
+  'repos/acme/notes/rules/branches/main': [[{ type: 'pull_request', ruleset_id: 1 }, { type: 'deletion', ruleset_id: 1 }]],
+  'repos/acme/notes/rulesets/1': { id: 1, name: 'main', enforcement: 'active', current_user_can_bypass: 'never' },
+  'repos/acme/notes/rulesets?targets=tag&includes_parents=true': [[{ id: 7, target: 'tag', enforcement: 'active' }, { id: 8, target: 'tag', enforcement: 'evaluate' }, { id: 9, target: 'branch', enforcement: 'active' }]],
+  'repos/acme/notes/rulesets/7': { name: 'tags', enforcement: 'active', conditions: { ref_name: { include: ['~ALL'], exclude: [] } }, rules: [{ type: 'creation' }, { type: 'update' }, { type: 'deletion' }], current_user_can_bypass: 'never' },
+};
+const ALL_HELD = { name: 'tags', all: true, creation: true, update: true, bypass: 'never' };
+
+test('refProtection holds the default branch protected only by a rule the signed-in user cannot bypass, and reads each active tag ruleset', () => {
+  const { forge, args } = routed(HELD);
+  assert.deepEqual(forge.refProtection('acme/notes', { host: 'github.com' }), { branch: 'main', protected: true, why: null, tags: [ALL_HELD] });
   assert.ok(args().every((each) => each.includes('--hostname')), 'the pinned host');
-  const bare = recorded((call) => JSON.stringify(call.some((each) => each === 'repos/acme/notes') ? { default_branch: 'main' } : call.some((each) => each.includes('branches/main') && !each.includes('rules')) ? { protected: true } : []));
-  assert.deepEqual(bare.forge.refProtection('acme/notes'), { branch: 'main', protected: true, tags: [] }, 'classic protection, and no tag rule');
+  assert.ok(!args().some((each) => each.some((word) => word.includes('/protection'))), 'a ruleset that holds needs no read of branch protection');
+  // A ruleset whose pull request the signed-in user may bypass holds nothing, and branch protection is read instead.
+  for (const bypass of ['always', 'pull_requests_only', 'exempt', undefined]) {
+    const read = routed({ ...HELD, 'repos/acme/notes/rulesets/1': { ...HELD['repos/acme/notes/rulesets/1'], current_user_can_bypass: bypass }, 'repos/acme/notes/branches/main': { protected: false } }).forge.refProtection('acme/notes');
+    assert.equal(read.protected, false, String(bypass));
+    assert.match(read.why, /the ruleset "main" asks for a pull request, and lets the signed-in user bypass it.*it has no branch protection/u, String(bypass));
+  }
+  // Branch protection alone: it holds an administrator only when it includes administrators.
+  const classic = (protection, about = HELD['repos/acme/notes'], more = {}) => routed({
+    ...HELD, 'repos/acme/notes': about, 'repos/acme/notes/rules/branches/main': [[]], 'repos/acme/notes/branches/main': { protected: true },
+    'repos/acme/notes/branches/main/protection': protection, user: { login: 'octo' }, ...more,
+  }).forge.refProtection('acme/notes');
+  const reviews = { required_approving_review_count: 1 };
+  assert.deepEqual([classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }).protected, classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }).why],
+    [false, 'its branch protection does not include administrators, and the signed-in user is one'], 'an admin past a protection that does not include administrators');
+  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: true } }).protected, true, 'administrators included');
+  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }, { default_branch: 'main', permissions: { admin: false, push: true } }).protected, true, 'a user with no admin rights');
+  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }, { default_branch: 'main' }).protected, false, 'no permissions said: counted an admin');
+  assert.equal(classic({ enforce_admins: { enabled: true } }).protected, false, 'no pull request asked');
+  assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { users: [{ login: 'Octo' }] } }, enforce_admins: { enabled: true } }).protected, false, 'the user may skip it');
+  assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { users: [{ login: 'other' }], teams: [] } }, enforce_admins: { enabled: true } }).protected, true, 'another user may skip it');
+  assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { teams: [{ slug: 'ops' }] } }, enforce_admins: { enabled: true } }).protected, false, 'a team may hold the user');
+  const hidden = classic(new Error('gh: Not Found (HTTP 404)'), { default_branch: 'main', permissions: { admin: false } });
+  assert.deepEqual([hidden.protected, hidden.why], [null, 'GitHub shows the settings of its branch protection only to an administrator']);
+  assert.throws(() => classic(new Error('gh: connection reset')), /connection reset/u, 'any other failure throws');
+  // A tag rule names every tag, excluding none, and says what it restricts and who may bypass it.
+  const tag = (ruleset) => routed({ ...HELD, 'repos/acme/notes/rulesets/7': { ...HELD['repos/acme/notes/rulesets/7'], ...ruleset } }).forge.refProtection('acme/notes').tags[0];
+  assert.equal(tag({ conditions: { ref_name: { include: ['refs/tags/*'] } } }).all, true);
+  assert.equal(tag({ conditions: { ref_name: { include: ['refs/tags/foo-*'] } } }).all, false, 'a narrow pattern');
+  assert.equal(tag({ conditions: { ref_name: { include: ['~ALL'], exclude: ['refs/tags/v*'] } } }).all, false, 'an exclusion');
+  assert.deepEqual(tag({ rules: [{ type: 'creation' }], current_user_can_bypass: 'always' }), { ...ALL_HELD, update: false, bypass: 'always' });
+  assert.equal(tag({ enforcement: 'evaluate' }), undefined, 'a ruleset the detail names inactive');
   assert.throws(() => recorded(() => '{}').forge.refProtection('acme/notes'), /named no default branch/u);
+});
+
+test('workflowSecrets counts the repository\'s and its organization\'s Actions secrets, and reads the token\'s workflow scope', () => {
+  const headers = (scopes) => `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n${scopes === null ? '' : `X-Oauth-Scopes: ${scopes}\r\n`}\r\n{"login":"octo"}`;
+  const secrets = (more) => routed({ 'repos/acme/notes/actions/secrets': { total_count: 2 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 1 }, user: headers('gist, read:org, repo, workflow'), ...more });
+  const { forge, args } = secrets();
+  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 3, workflowPush: true });
+  assert.ok(args().some((each) => each.includes('--include') && each.includes('user')), 'the scopes come from the user read\'s headers');
+  assert.deepEqual(secrets({ user: headers('repo, read:org') }).forge.workflowSecrets('acme/notes'), { secrets: 3, workflowPush: false });
+  assert.deepEqual(secrets({ user: headers(null) }).forge.workflowSecrets('acme/notes'), { secrets: 3, workflowPush: null }, 'a token that names no scopes');
+  assert.deepEqual(secrets({ 'repos/acme/notes/actions/organization-secrets': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 2, 'no organization');
+  assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
+  assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': {} }).forge.workflowSecrets('acme/notes'), /no count of secrets/u);
 });
 
 test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {

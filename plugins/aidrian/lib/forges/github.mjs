@@ -353,6 +353,17 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
     // The repository itself, such as its `default_branch`.
     repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
+    // Whether the reviewer `login` reviewed any of the repository's last `limit` pull requests, for a project run's
+    // preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix.
+    reviewerSeen: (repo, login, { host, limit = 20 } = {}) => {
+      const list = json(['pr', 'list', '--repo', host ? `${host}/${repo}` : repo, '--state', 'all', '--limit', String(limit), '--json', 'number,reviews']);
+      const bare = (name) => String(name ?? '').replace(/\[bot\]$/u, '').toLowerCase();
+      const seen = Array.isArray(list) && list.some((change) => (change.reviews ?? []).some((review) => bare(review.author?.login) === bare(login)));
+      return { changes: Array.isArray(list) ? list.length : 0, seen };
+    },
+    // The names of the repository's active CI workflows, for a project run's preflight.
+    ciWorkflows: (repo, { host } = {}) => (rest(`repos/${repo}/actions/workflows`, { host })?.workflows ?? [])
+      .filter((workflow) => workflow?.state === 'active').map((workflow) => String(workflow.name)),
     // The commit the branch `branch` of `repo` points to now, as a full SHA, or null when the answer names none.
     branchHead: (repo, branch, { host } = {}) => {
       const sha = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.commit?.sha;

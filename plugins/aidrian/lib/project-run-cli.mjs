@@ -1,6 +1,7 @@
 // `aidrian project`: the record of a project run and the order of its issues (lib/project-run.mjs).
 //
 //   aidrian project init RUN --file PATH   # validate the driver's snapshot input and start run RUN; the attended main session only
+//                    [--check]             # only check the input and print its order and blockers, writing no run
 //   aidrian project next RUN [--json]      # the next issue or issues to start, `wait N running`, or `done`
 //   aidrian project summary RUN            # write and print summary.md from the ledger
 //   aidrian project end RUN                # the driver records the run's end, which releases its driver mark
@@ -11,11 +12,12 @@
 //   aidrian project resume RUN             # an attended session lifts the halt a failed start proof put on the run
 //   aidrian project report RUN [--json]    # the driver: the status, label, and comment the run owes each settled issue
 //   aidrian project recorded RUN ISSUE     # the driver: closes the report on ISSUE once it wrote it (lib/project-report.mjs)
-//   aidrian project preflight              # every check a start would refuse or halt on, before init (lib/project-preflight.mjs)
+//   aidrian project preflight [RUN]        # every check a start would refuse or halt on, before init (lib/project-preflight.mjs)
 //
 // The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder as lib/project-run.mjs
 // runPlace resolves and checks it. `--project` on init must name the project of the current folder's main checkout.
-// Exits: 0 on an answer; 1 on a refusal, a run that cannot be read, or bad arguments, after printing why.
+// Exits: 0 on an answer; 1 on a refusal, a run that cannot be read, or bad arguments, after printing why; 75 with a
+// `retry:` line when another process holds the run's ledger locked.
 
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -25,15 +27,16 @@ import { resolvedPath } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { projectAt } from './project.mjs';
 import { pauseOf } from './project-limit.mjs';
-import { preflightCommand } from './project-preflight.mjs';
+import { LOCKED } from './jsonl.mjs';
+import { preflightCommand, snapshotCheck } from './project-preflight.mjs';
 import { recordedCommand, reportCommand } from './project-report.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
 import { endRun, recordHandoff, recordResult, resumeRun, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
-const USAGE = 'init RUN --file PATH [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
+const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
   'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR] | ' +
-  'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [--project DIR]';
+  'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
 export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end', 'report', 'recorded', 'preflight'];
 // The positionals each action takes after its name.
@@ -57,7 +60,21 @@ export const commands = {
 // through, `spawn` and `wait`, the host adapter's stand-ins for its command and its pause, `pause`, wait's pause between
 // reads, `now`, and `platform`, the operating system a start's host sandbox runs on. Throws what parseArgs and
 // commandConfig throw, which lib/cli.mjs reports.
-export function projectCommand(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform } = {}) {
+// A ledger another process holds locked is a refusal that may pass: exit 75, EX_TEMPFAIL, with a `retry:` line, which
+// the driver's loop tries again after one wait.
+export function projectCommand(args, options = {}) {
+  try {
+    return projectAction(args, options);
+  } catch (error) {
+    if (error?.code !== LOCKED) throw error;
+    return { exitCode: RETRY_EXIT, out: [`retry: ${String(error.message).split('\n')[0]}`], err: [`aidrian project ${args[0]}: ${String(error.message).split('\n')[0]}`] };
+  }
+}
+
+// The exit of a refusal that may pass when tried again.
+export const RETRY_EXIT = 75;
+
+function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform } = {}) {
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
   const word = { type: 'string' };
@@ -67,23 +84,26 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
     options: {
       project: word,
       ...(['init', 'result'].includes(action) ? { file: word } : {}),
+      ...(action === 'init' ? { check: { type: 'boolean' } } : {}),
       ...(['next', 'report'].includes(action) ? { json: { type: 'boolean' } } : {}),
       ...(action === 'wait' ? { 'max-wait': word } : {}),
     },
   });
-  const wanted = POSITIONALS[action];
-  if (positionals.length !== wanted.length) return fail(`project ${action} takes ${wanted.length ? wanted.join(' and ') : 'no positional argument'}`);
+  // preflight takes the run it checks for, once init has made it, or none before.
+  const wanted = action === 'preflight' && positionals.length === 1 ? ['one run id'] : POSITIONALS[action];
+  if (positionals.length !== wanted.length) return fail(`project ${action} takes ${action === 'preflight' ? 'at most one run id' : wanted.join(' and ')}`);
   const [run, second] = positionals;
   const project = projectAt(path.resolve(cwd, values.project ?? '.'));
   const config = commandConfig(project);
   if (action === 'init') {
     if (!values.file) return fail('project init needs --file');
+    if (values.check) return snapshotCheck({ project, config, file: path.resolve(cwd, values.file) });
     if (values.project !== undefined && !sameMainCheckout(project, projectAt(cwd))) {
       return refused('init', '--project names a project outside the main checkout of the current folder; run init from that project');
     }
     return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home });
   }
-  if (action === 'preflight') return preflightCommand({ project, config, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}) });
+  if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });
   if (action === 'recorded') return recordedCommand({ project, config, run, key: second, env, home, ...(now === undefined ? {} : { now }) });
   const gate = { project, config, run, env, home, ...(now === undefined ? {} : { now }), ...(forge ? { forge } : {}) };
@@ -93,7 +113,7 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
     return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });
   }
   if (action === 'handoff') return recordHandoff({ ...gate, brief: path.resolve(cwd, second) });
-  if (action === 'resume') return resumeRun(gate);
+  if (action === 'resume') return resumeRun({ ...gate, spawn });
   if (action === 'end') return endRun(gate);
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);

@@ -6,23 +6,32 @@
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
 // sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach), and whether the host
 // carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
-// so one pass names every blocker. Two checks need the tracker's and the forge's own reads, which the driver makes:
-// `ask` lines name them.
+// so one pass names every blocker. Then what the run needs to finish with no one: the tracker's server among the
+// team's projectRun.mcpServers, each tracker server there mapped so the run rule can hold it, auto-merge on with
+// required checks, a handoff route for the driver, and, through the forge, the reviewer bot seen and CI workflows.
+// A read the forge or the tracker lacks becomes an `ask` line, which the driver answers with its own tools.
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
+import { resolveAutoMerge } from './config-local.mjs';
 import { forgeFor } from './forges/index.mjs';
+import { knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
-import { detectHost } from './hosts/index.mjs';
-import { activeRuns, pinnedRepository, runPlace } from './project-run.mjs';
+import { continueRoutes, detectHost } from './hosts/index.mjs';
+import { branchPolicies } from './pr-auto-merge.mjs';
+import { mayFollowTeamDefault } from './project.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace } from './project-run.mjs';
 import { teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
+import { trackerOfEndpoint } from './tracker-guard.mjs';
+import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
 
 // The reviewer values that mean no bot reviews, as config-defaults.mjs reads `github.reviewer`.
 const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 
-// Runs every check for `project`, whose loaded config is `config`, and returns { exitCode, out, err }: a line `ok NAME`,
+// Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
+// active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
 // `blocker NAME: WHY`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, and `platform` are a test's.
-export function preflightCommand({ project, config, env = process.env, home, forge, platform = process.platform }) {
+export function preflightCommand({ project, config, run = null, env = process.env, home, forge, platform = process.platform }) {
   const lines = [];
   const check = (name, problem) => lines.push(problem ? `blocker ${name}: ${problem}` : `ok ${name}`);
   const main = project.checkouts.at(-1);
@@ -31,7 +40,7 @@ export function preflightCommand({ project, config, env = process.env, home, for
   const place = runPlace(project, config, { env, ...(home ? { home } : {}) });
   check('state', place.problem ?? null);
   if (!place.problem) {
-    const active = activeRuns(place.state);
+    const active = activeRuns(place.state, run ? { except: run } : {});
     check('run', active.length ? `the run ${active[0].run ?? 'in a folder that cannot be listed'} is still active, and a project has one active run at a time` : null);
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };
@@ -71,11 +80,100 @@ export function preflightCommand({ project, config, env = process.env, home, for
     }
     check('usage-limit', limit);
   }
+  const asks = [];
+  const tracker = trackerLines(base, policy, read.problem ? (fallback.mcpServers ?? {}) : policy.mcpServers);
+  lines.push(...tracker.lines);
+  check('auto-merge', autoMergeProblem({ project, repository, facade }));
+  check('handoff', base.why ? `the base branch's config.json cannot be read (${base.why})` : ['background', 'clear'].includes(base.config.session?.handoff?.continue) ? null
+    : 'the base branch\'s session.handoff.continue is not "background", so the driver cannot hand itself on when its session grows long; set it on the default branch');
+  if (!continueRoutes(detectHost({ env })).some((route) => ['background', 'clear'].includes(route))) lines.push('note handoff: this host lists no route that continues a session, so the driver keeps driving in this one session, which the host compacts');
   const reviewer = base.config?.github?.reviewer;
   check('reviewer', base.why ? `the base branch's config.json cannot be read (${base.why})` : NO_REVIEWER.has(reviewer) ? 'the base branch sets no github.reviewer, so no bot reviews an issue\'s pull request before an unattended merge' : null);
-  lines.push(`ask reviewer-seen: confirm on the forge that ${NO_REVIEWER.has(reviewer) ? 'the reviewer bot' : reviewer} has reviewed a recent pull request of this repository`);
-  lines.push('ask ci: confirm the default branch runs CI on pull requests, or that the run\'s first issue creates it');
+  forgeLines({ facade, repository, reviewer, lines, check, asks });
+  if (tracker.adapter?.run?.labelRead) {
+    const status = base.config?.projectRun?.blockedStatus;
+    asks.push(`ask labels: confirm with ${tracker.adapter.run.labelRead} that the team has the label ${JSON.stringify(base.config?.projectRun?.decisionLabel)}${typeof status === 'string' ? `, and with ${tracker.adapter.run.statusRead} the status ${JSON.stringify(status)}` : ''}; a missing one is a blocker`);
+  }
+  lines.push(...asks);
   if (typeof cap?.limitContinue !== 'function') lines.push('ask usage-limit: confirm this host carries on by itself after a usage limit, since a limit stops the driver too');
   const blocked = lines.some((line) => line.startsWith('blocker '));
   return { exitCode: blocked ? 1 : 0, out: lines, err: blocked ? ['aidrian project preflight: fix each blocker line, then run it again'] : [] };
+}
+
+// The tracker check: the base branch's tracker adapter, and a server of it among the team's projectRun.mcpServers, which
+// are the only servers an issue's session loads; and every server there that a tracker's name or endpoint marks as one
+// the run rule can map. A server named like a tracker whose endpoint maps to none is a blocker: the rule could not hold
+// its writes. Returns { lines, adapter }.
+function trackerLines(base, policy, mcpServers) {
+  const lines = [];
+  const tracker = base.config?.tracker ?? {};
+  const adapter = (typeof tracker.provider === 'string' ? trackerById(tracker.provider) : null) ?? trackerOfTools([...(tracker.writeTools ?? []), ...(tracker.readTools ?? [])]);
+  const entries = Object.entries(mcpServers ?? {});
+  const mapped = (name, definition) => trackerOfEndpoint(definition) ?? TRACKERS.find((each) => knownServers(each).includes(name)) ?? null;
+  const unmapped = entries.filter(([name, definition]) => !mapped(name, definition) && TRACKERS.some((each) => name.toLowerCase().includes(each.id))).map(([name]) => name);
+  let problem = null;
+  if (!adapter) problem = 'the base branch\'s config.json names no tracker the plugin knows (tracker.provider), so the run cannot read or report its issues';
+  else if (!entries.some(([name, definition]) => mapped(name, definition) === adapter)) problem = `the default branch's projectRun.mcpServers holds no ${adapter.name} server, and an issue's session loads only those, so it could not reach the tracker; add one there`;
+  else if (unmapped.length) problem = `projectRun.mcpServers holds ${unmapped.map((name) => JSON.stringify(name)).join(', ')}, named like a tracker with an endpoint no tracker adapter knows, so the run rule could not hold its writes; point it at the tracker's own endpoint, or remove it`;
+  lines.push(problem ? `blocker tracker: ${problem}` : 'ok tracker');
+  return { lines, adapter };
+}
+
+// Why an issue's pull request could not merge with no one there, or null: the default branch on the forge allows
+// auto-merge, this machine's switch lets it, and it lists required checks, since a merge with none waits on no CI.
+function autoMergeProblem({ project, repository, facade }) {
+  if (!repository) return 'the repository is unknown, so the forge\'s config cannot be read';
+  const prefix = knownPrefix(project.root);
+  let policies;
+  try {
+    policies = branchPolicies(facade, { repo: `${repository.owner}/${repository.name}`, host: repository.host, base: null }, prefix ?? '');
+  } catch (error) {
+    return `the forge's copy of the default branch's config.json cannot be read (${String(error.message).split('\n')[0]})`;
+  }
+  const github = policies.policy.github ?? {};
+  // As `aidrian pr auto-merge` reads it: the machine's own word, or the team's default where a tracked file cannot say.
+  let local = project.localAutoMerge;
+  if (local === 'unset' && github.autoMerge?.default === 'on' && !mayFollowTeamDefault(project)) local = 'off';
+  const resolved = resolveAutoMerge(github, local);
+  if (resolved.reason === 'team') return 'the default branch on the forge does not set github.autoMerge.allow, so no issue\'s pull request merges with no one there';
+  if (resolved.reason === 'local') return 'this machine has not turned auto-merge on: "github": { "autoMerge": "on" } in its git-ignored local file, or the team sets solo';
+  if (!Array.isArray(github.requiredChecks) || github.requiredChecks.length === 0) return 'the default branch lists no github.requiredChecks, so a pull request would merge with no CI run; merge a CI workflow and its checks in github.requiredChecks before the run';
+  return null;
+}
+
+// The reviewer bot seen on a recent pull request, and CI workflows, through the forge's own reads, or `ask` lines for a
+// forge with none. With no pull request yet, the first one proves the bot, and the merge's trust check holds it until then.
+function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
+  const bot = NO_REVIEWER.has(reviewer) ? null : reviewer;
+  const named = repository ? `${repository.owner}/${repository.name}` : null;
+  if (typeof facade.reviewerSeen === 'function' && named && bot) {
+    try {
+      const { changes, seen } = facade.reviewerSeen(named, bot, { host: repository.host });
+      if (changes === 0) lines.push(`note reviewer-seen: no pull request yet, so the first one shows whether ${bot} reviews; the merge's trust check holds every merge until it has`);
+      else check('reviewer-seen', seen ? null : `${bot} reviewed none of the last ${changes} pull requests; install it on the repository and request one review`);
+    } catch (error) {
+      check('reviewer-seen', `the forge cannot list recent pull requests (${String(error.message).split('\n')[0]})`);
+    }
+  } else if (bot) asks.push(`ask reviewer-seen: confirm on the forge that ${bot} has reviewed a recent pull request of this repository`);
+  if (typeof facade.ciWorkflows === 'function' && named) {
+    try {
+      const workflows = facade.ciWorkflows(named, { host: repository.host });
+      check('ci', workflows.length ? null : 'the repository has no active CI workflow; merge one that runs on pull requests before the run');
+    } catch (error) {
+      check('ci', `the forge cannot list CI workflows (${String(error.message).split('\n')[0]})`);
+    }
+  } else asks.push('ask ci: confirm the default branch runs CI on pull requests');
+}
+
+// `aidrian project init RUN --file PATH --check`: the snapshot input's checks, as init makes them, and its order, with
+// no run written: a `blocker snapshot` line for each problem, and for each issue blocked by a cycle or by a status the
+// run does not start from; then `next` lines as `aidrian project next` would print them. Exit 1 on any blocker.
+export function snapshotCheck({ project, config, file }) {
+  const read = readSnapshotInput(file, refNames(project, config));
+  if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
+  const plan = planRun(read.snapshot, new Map());
+  const blockers = plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
+    .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`);
+  const out = [`ok snapshot ${read.snapshot.issues.length} issues`, ...blockers, ...nextLines(plan)];
+  return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
 }

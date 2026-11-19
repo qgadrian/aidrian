@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { nameMatches } from './agent-gates.mjs';
+import { textProblem } from './clean-text.mjs';
 import { UNKNOWN_HOST } from './hosts/index.mjs';
 import { knownServers, TRACKERS, trackerById, writeToolsOf } from './trackers/index.mjs';
 
@@ -158,60 +159,102 @@ const refused = (why, next) => ({ match: why, reason: `aidrian: this tracker wri
 // The sha256 of a comment body, as `aidrian project report` prints it and the driver's write must match.
 export const bodyHash = (body) => createHash('sha256').update(body, 'utf8').digest('hex');
 
+// The hosts an MCP server's definition, as projectRun.mcpServers holds it, reaches: its `url`, and each URL among its
+// `args`, as a server started through a remote proxy names one.
+function endpointHosts(definition) {
+  const values = [definition?.url, ...(Array.isArray(definition?.args) ? definition.args : [])].filter((each) => typeof each === 'string');
+  const hosts = [];
+  for (const value of values) {
+    try {
+      hosts.push(new URL(value).hostname.toLowerCase());
+    } catch {
+      // Not a URL.
+    }
+  }
+  return hosts;
+}
+
+// The adapter whose endpoints the MCP server `definition` reaches, or null.
+export const trackerOfEndpoint = (definition, trackers = TRACKERS) => {
+  const hosts = endpointHosts(definition);
+  return trackers.find((each) => (each.endpoints ?? []).some((host) => hosts.includes(host.toLowerCase()))) ?? null;
+};
+
 // The adapter whose connection serves the tool `tool`, or null: one whose known servers, with the servers `tracker`
-// (the base branch's key) adds for its own provider, hold its server; else the provider of `tracker`, when its
-// `writeTools` name that server.
-export function trackerOfTool(tool, tracker, trackers = TRACKERS) {
+// (the base branch's key) adds for its own provider, hold its server; one whose endpoints the server of that name in
+// `mcpServers` (the base branch's projectRun.mcpServers) reaches; else the provider of `tracker`, when its `writeTools`
+// name that server.
+export function trackerOfTool(tool, tracker, trackers = TRACKERS, mcpServers = {}) {
   const server = serverPrefix(tool);
   if (server === null) return null;
   const named = typeof tracker?.provider === 'string' ? trackerById(tracker.provider, trackers) : null;
   const extra = Array.isArray(tracker?.servers) ? tracker.servers : [];
   const found = trackers.find((each) => knownServers(each, each === named ? extra : []).some((name) => `mcp__${name}__` === server));
   if (found) return found;
+  for (const [name, definition] of Object.entries(mcpServers ?? {})) {
+    const adapter = trackerOfEndpoint(definition, trackers);
+    if (adapter && knownServers({ servers: {} }, [name]).some((spelled) => `mcp__${spelled}__` === server)) return adapter;
+  }
   const listed = Array.isArray(tracker?.writeTools) && tracker.writeTools.some((pattern) => keyServer(pattern.replace(/\*$/u, 'x')) === server);
   return listed ? named : null;
 }
 
-// Why a session of a project run, or one no Human attends, may not call `tool` with `input`, as { match, reason }, or
-// null. It never reads `tracker.enabled`: a working copy that turns the guard off turns none of this off. `writer` says
-// who calls, as lib/project-report.mjs runWriter reads it from the session's unattended mark and the run's ledger:
-//   { role: 'child', run, issue }   an issue's session: it writes only its own issue, by its key, through the
-//                                   adapter's `run` tools and fields; a create, a UUID, or a tool with no issue field is refused;
-//   { role: 'driver', run, owed }   the run's driver: it writes only what `aidrian project report` owes, each
+// Whether `short`, a tool's name after its server, is a read by its name: a read verb (READ_NAME), the adapter's own
+// read tool, or one of its `readVerbs`.
+const readByName = (adapter, short) => READ_NAME.test(short) || short === adapter?.readTool || (adapter?.readVerbs ?? []).some((pattern) => nameMatches(pattern, short));
+
+// What the run rule judges of the call of `tool` with `input`: { adapter, short, merge, ready, write }, or null for a
+// call it lets run whoever calls. `merge` is a tool whose name an adapter's `mergeVerbs` match, on its tracker's server
+// (`tracker`), or on any server (`anywhere`); `ready` a call the adapter's `readyCalls` name; `write` a call `writeTools`
+// or the adapter's own verbs match, or, with `strict`, any call on a tracker's server that is not a read by its name.
+export function runCallKind({ tool, rawTool, input, tracker = null, writeTools = [], trackers = TRACKERS, mcpServers = {}, strict = false }) {
+  if (typeof tool !== 'string') return null;
+  const called = rawTool ? [tool, rawTool] : [tool];
+  const adapter = trackerOfTool(tool, tracker, trackers, mcpServers);
+  const server = serverPrefix(tool);
+  const short = server === null ? tool : tool.slice(server.length);
+  const mergeNamed = trackers.some((each) => (each.mergeVerbs ?? []).some((verb) => nameMatches(verb, short)));
+  const merge = mergeNamed ? (adapter ? 'tracker' : 'anywhere') : null;
+  const given = input && typeof input === 'object' ? input : {};
+  const ready = Boolean(adapter && (adapter.readyCalls ?? []).some((each) => each.tool === short && each.values.includes(given[each.field])));
+  const patterns = [...writeTools, ...(adapter ? writeToolsOf(adapter, [server.slice('mcp__'.length, -2)]) : [])];
+  const write = patterns.some((pattern) => called.some((name) => nameMatches(pattern, name))) || (strict && adapter !== null && !readByName(adapter, short));
+  return merge || ready || write ? { adapter, short, merge, ready, write } : null;
+}
+
+// Why a session may not call `tool` with `input` under the project run rule, as { match, reason }, or null. It never
+// reads `tracker.enabled`: a working copy that turns the guard off turns none of this off. `writer` says who calls, as
+// lib/project-report.mjs runWriter reads it from the session's unattended mark and its driver mark:
+//   null                            an attended session: only a tracker's merge and ready calls are refused, since
+//                                   `gh pr merge` and `gh pr ready` are the routes their guards judge;
+//   { role: 'child', run, issue }   an issue's session: it writes only its own issue, by its key, through the adapter's
+//                                   `run` tools and fields, status `started` only, with text no mention, link, address,
+//                                   image, HTML, or hidden character; a create, a UUID, or another tool is refused;
+//   { role: 'driver', run, owed }   the run's current driver: it writes only what `aidrian project report` owes, each
 //                                   [{ key, status, label, sha256 }]: the status and label as printed, and a comment
 //                                   whose body has that sha256;
-//   { role: 'unattended' }          a session no Human attends outside a run: only the merge rule below;
+//   { role: 'unattended' }          a session no Human attends outside a run: the merge and ready rules alone;
 //   { role: 'held', why }           a session that cannot be told apart from one of these: every write refused.
-// Every role is refused an adapter's `mergeVerbs` tool, since a merge goes only through pr-auto-merge. A write is a call
-// that `writeTools`, the base branch's and the working copy's lists, or the adapter's own verbs on its server, match.
-// `tracker` is the base branch's `tracker` key, or null; `rawTool` what the host sent, when it differs.
-export function runWriteRefusal({ writer, tool, rawTool, input, tracker = null, writeTools = [], human = 'the Human', trackers = TRACKERS }) {
-  if (!writer) return null;
-  const kind = runCallKind({ tool, rawTool, tracker, writeTools, trackers });
+// Any role but null is refused a tool a merge verb names on any server. For the child, driver, and held roles, every call
+// on a tracker's server is a write unless its name says it reads. `tracker` and `mcpServers` are the base branch's
+// `tracker` and projectRun.mcpServers, read through the main checkout the session's mark names, or null and {}.
+export function runWriteRefusal({ writer, tool, rawTool, input, tracker = null, writeTools = [], human = 'the Human', trackers = TRACKERS, mcpServers = {} }) {
+  const strict = ['child', 'driver', 'held'].includes(writer?.role);
+  const kind = runCallKind({ tool, rawTool, input, tracker, writeTools, trackers, mcpServers, strict });
   if (kind === null) return null;
   const { adapter, short } = kind;
-  if (kind.merge) {
-    return refused(`${short} merges code, and a session no Human attends merges only through the pr-auto-merge skill`, `Run \`aidrian pr auto-merge <number>\` through that skill, or leave the merge to ${human}`);
+  if (kind.merge === 'tracker' || (kind.merge && writer)) {
+    return refused(`${short} merges code through the tracker, past the merge guard`, writer
+      ? `A session no Human attends merges only through the pr-auto-merge skill, \`aidrian pr auto-merge <number>\`; or leave the merge to ${human}`
+      : 'Merge with `gh pr merge <number>`, which the merge guard judges');
   }
-  if (writer.role === 'unattended') return null;
-  if (writer.role === 'held') return refused(writer.why, `Try again once the start that holds this session has settled, or tell ${human}`);
+  if (kind.ready) return refused(`${short} marks a pull request ready through the tracker, past the ready hold`, 'Mark it ready with `gh pr ready <number>`, which the ready hold judges');
+  if (!writer || !kind.write || writer.role === 'unattended') return null;
+  if (writer.role === 'held') return refused(writer.why, `Try again once that has settled, or tell ${human}`);
   const call = runCall(adapter, short, input);
   if (writer.role === 'child') return childRefusal(writer, call, adapter, short, human);
   if (writer.role === 'driver') return driverRefusal(writer, call, adapter, short, human);
-  return null;
-}
-
-// What the run rule judges of the call of `tool`: { adapter, short, merge } for a tool that merges code or writes, or
-// null for any other, which the rule lets run whoever calls. The hook asks it first, so a read reads no mark or ledger.
-export function runCallKind({ tool, rawTool, tracker = null, writeTools = [], trackers = TRACKERS }) {
-  if (typeof tool !== 'string') return null;
-  const called = rawTool ? [tool, rawTool] : [tool];
-  const adapter = trackerOfTool(tool, tracker, trackers);
-  const server = serverPrefix(tool);
-  const short = server === null ? tool : tool.slice(server.length);
-  if (adapter && (adapter.mergeVerbs ?? []).some((verb) => nameMatches(verb, short))) return { adapter, short, merge: true };
-  const patterns = [...writeTools, ...(adapter ? writeToolsOf(adapter, [server.slice('mcp__'.length, -2)]) : [])];
-  return patterns.some((pattern) => called.some((name) => nameMatches(pattern, name))) ? { adapter, short, merge: false } : null;
+  return refused(`the run cannot tell what this session may write (${String(writer.role).slice(0, 20)})`, `Tell ${human}`);
 }
 
 // The call of `short` with `input` as the adapter's `run` names it: { kind, spec, key, fields }, or null for any other
@@ -235,6 +278,9 @@ function keyProblem(call, allowed) {
   return allowed(call.key) ? null : `${call.spec.key} is ${JSON.stringify(call.key)}`;
 }
 
+// Every string a value holds, at any depth, as a patch's operations hold theirs.
+const strings = (value) => (typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : []);
+
 function childRefusal(writer, call, adapter, short, human) {
   const own = `an issue's session of the run ${writer.run} writes only its own issue ${writer.issue}`;
   if (!call) return refused(`${short} is not a write the run's tools make, and ${own}`, `Write only through ${runTools(adapter)} ${writer.issue}, or put it in the result for ${human}`);
@@ -243,6 +289,12 @@ function childRefusal(writer, call, adapter, short, human) {
   const allowed = call.kind === 'issue' ? [call.spec.key, call.spec.status, ...(call.spec.fields ?? [])] : [call.spec.key, call.spec.body];
   const extra = call.fields.find((field) => !allowed.includes(field));
   if (extra) return refused(`${short} sets ${extra}, which ${own} does not set`, `Set only ${allowed.join(', ')}, or put the rest in the result for ${human}`);
+  if (call.kind === 'issue' && call.fields.includes(call.spec.status) && call.input[call.spec.status] !== call.spec.started) {
+    return refused(`${short} sets ${call.spec.status} to ${JSON.stringify(call.input[call.spec.status])?.slice(0, 40)}, and an issue's session sets only ${JSON.stringify(call.spec.started)}`, `Leave the rest to the run's report, which the driver writes`);
+  }
+  const texts = call.kind === 'issue' ? (call.spec.text ?? []) : [call.spec.body];
+  const field = texts.find((each) => strings(call.input[each]).some(textProblem));
+  if (field) return refused(`${short} sets ${field} with a mention, link, address, image, HTML, or hidden character`, 'Write plain text, with no link or mention: name a page or a person in words');
   return null;
 }
 

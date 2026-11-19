@@ -10,20 +10,19 @@
 // wrote as data. A file that fails gives a report from the ledger's own fields and says the file failed.
 //
 // The status and label come from the base branch's projectRun (decisionLabel, blockedStatus), as this checkout's git
-// holds it: a working copy cannot rename the label the guard holds the driver to. `completed` is a status type, which
-// the tracker maps to the team's first completed status.
+// holds it: a working copy cannot rename the label the guard holds the driver to. The done status is the adapter's
+// `run.issue.done`, a status type the tracker maps to the team's first completed status.
 
-import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
-import { loadConfig } from './config.mjs';
-import { baseReader, stateFolders } from './handoff-guard.mjs';
+import { baseReader } from './handoff-guard.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { CAPS, cleanText, RESULT_CAP, RESULT_STATUSES, validateResult } from './project-result.mjs';
 import { findProject } from './project.mjs';
-import { appendToRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID } from './project-run.mjs';
-import { custody, driverOf, runStore } from './project-run-guard.mjs';
+import { appendToRun, readCapped, readRun, runFolder, runPlace } from './project-run.mjs';
+import { currentDriver, custody, runStore } from './project-run-guard.mjs';
+import { runDriver } from './run-driver.mjs';
 import { bodyHash } from './tracker-guard.mjs';
 import { trackerById, trackerOfTools } from './trackers/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
@@ -52,7 +51,8 @@ export function reportPolicy(base) {
   if (!label) return { problem: 'the base branch\'s projectRun.decisionLabel is no text' };
   const blocked = blockedStatus === null || blockedStatus === undefined ? null : cleanText(blockedStatus, STATUS_CAP);
   if (blockedStatus !== null && blockedStatus !== undefined && !blocked) return { problem: 'the base branch\'s projectRun.blockedStatus is neither text nor null' };
-  return { label, blockedStatus: blocked };
+  const adapter = adapterOf(base.config.tracker);
+  return { label, blockedStatus: blocked, done: adapter?.run?.issue?.done ?? null, adapter };
 }
 
 // The result file of `key` in run `run`, read again as untrusted and checked against the `result` row `row`:
@@ -66,7 +66,7 @@ export function rereadResult(state, run, key, row) {
   } catch {
     return { problem: 'the session\'s result file is not JSON' };
   }
-  if (value?.run !== run || value?.key !== key || value?.attempt !== row.attempt || value?.status !== row.status) return { problem: 'the session\'s result file names another run, issue, attempt, or status than the ledger' };
+  if (value?.run !== run || value?.key !== key || value?.attempt !== row.attempt || value?.status !== row.status || (value?.pr ?? null) !== (row.pr ?? null)) return { problem: 'the session\'s result file names another run, issue, attempt, status, or pull request than the ledger' };
   const checked = validateResult(value);
   return checked.result ? { result: checked.result } : { problem: 'the session\'s result file fails its checks' };
 }
@@ -106,7 +106,7 @@ function buildReport({ state, run, key, cause, after, policy }) {
     facts.outcome = cause.event === 'orphan' ? 'orphan' : 'unknown';
   }
   if (after.state === 'done' && facts.outcome !== 'merged') facts.outcome = 'unknown';
-  const status = facts.outcome === 'merged' ? 'completed' : facts.outcome === 'blocked' ? policy.blockedStatus : null;
+  const status = facts.outcome === 'merged' ? policy.done : facts.outcome === 'blocked' ? policy.blockedStatus : null;
   const label = facts.outcome === 'merged' ? null : policy.label;
   const body = reportBody(run, facts, after.decision === 'attempts');
   return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, body, sha256: bodyHash(body) };
@@ -182,7 +182,7 @@ function openForDriver({ project, config, run, env, home, base }) {
 export function reportCommand({ project, config, run, json = false, env = process.env, home, base }) {
   const opened = openForDriver({ project, config, run, env, home, base });
   if (opened.problem) return { exitCode: 1, out: [], err: [`aidrian project report: ${opened.problem}`] };
-  const adapter = adapterOf(opened.base.config.tracker);
+  const { adapter } = opened.policy;
   const owed = owedReports({ state: opened.state, run, found: opened.found, policy: opened.policy })
     .map((report) => ({ ...report, calls: reportCalls(report, adapter) }));
   if (json) return { exitCode: 0, out: [JSON.stringify({ run, owed }, null, 2)], err: [] };
@@ -213,12 +213,14 @@ export function recordedCommand({ project, config, run, key, env = process.env, 
   return { exitCode: 0, out: [`recorded ${key}`], err: [] };
 }
 
-// Who the session `session` writes the tracker as, for runWriteRefusal: its unattended mark first, then the ledgers of
-// the project at `cwd`, or null for a session the run rules leave alone. A pending mark, or one that cannot be read,
-// holds it (`held`); a mark that names a run and an issue is that issue's session (`child`); the driver of any run of
-// the project, active or done, owes what owedReports says, with none when the base branch cannot be read (`driver`);
-// any other marked session is `unattended`. `home` is a test's; `base` a baseReader to share.
-export function runWriter({ session, cwd, env = process.env, home, base }) {
+// Who the session `session` writes the tracker as, for runWriteRefusal, from its unattended mark and its driver mark
+// alone, never the folder a call runs in: null for a session no mark names. A pending mark, or one that cannot be read,
+// holds it (`held`); a mark that names a run and an issue is that issue's session (`child`); a driver mark
+// (run-driver.mjs runDriver) is the run's driver when the ledger it names says it is the current one (currentDriver),
+// and owes what owedReports says, none when the base branch cannot be read; any other driver mark is `held`, as a
+// continuation before its first `wait` is; any other marked session is `unattended`. `project` is the project of the
+// main checkout the mark names, whose base branch the hook reads. `home` is a test's; `base` a baseReader to share.
+export function runWriter({ session, env = process.env, home, base }) {
   if (!isSession(session)) return null;
   let mark;
   try {
@@ -226,38 +228,21 @@ export function runWriter({ session, cwd, env = process.env, home, base }) {
   } catch {
     mark = { root: null };
   }
-  if (mark?.pending) return { role: 'held', why: 'another session\'s gate is starting a session, and until the host lists its id this session cannot be told apart from it' };
+  const projectOf = (root) => (typeof root === 'string' ? findProject(root) : null);
+  if (mark?.pending) return { role: 'held', why: 'another session\'s start of a project run\'s session holds this one until the host lists the new session, which lapses within 5 minutes' };
   if (mark && mark.root === null) return { role: 'held', why: 'this session\'s unattended mark cannot be read, so whether it works an issue of a project run cannot be told' };
   if (mark && mark.issue !== undefined) {
     if (typeof mark.issue !== 'string' || typeof mark.project !== 'string') return { role: 'held', why: 'this session\'s unattended mark names a project run\'s issue in a shape no run reads' };
-    return { role: 'child', run: mark.project, issue: mark.issue };
+    return { role: 'child', run: mark.project, issue: mark.issue, project: projectOf(mark.root) };
   }
-  const driver = driverWriter({ session, cwd, home, base });
-  return driver ?? (mark ? { role: 'unattended' } : null);
+  const driving = runDriver(session, { env, ...(home ? { home } : {}) });
+  if (driving) {
+    const current = currentDriver(session, { env, ...(home ? { home } : {}) });
+    if (!current) return { role: 'held', why: 'this session holds a project run\'s driver mark, and the run\'s ledger does not name it the current driver, or cannot be read; a continuation becomes the driver on its first `aidrian project wait`' };
+    const policy = reportPolicy((base ?? baseReader(current.project))());
+    const owed = policy.problem ? [] : owedReports({ state: current.state, run: current.run, found: current.found, policy });
+    return { role: 'driver', run: current.run, owed: owed.map(({ key, status, label, sha256 }) => ({ key, status, label, sha256 })), project: current.project };
+  }
+  return mark ? { role: 'unattended', project: projectOf(mark.root) } : null;
 }
 
-function driverWriter({ session, cwd, home, base }) {
-  const project = typeof cwd === 'string' ? findProject(cwd) : null;
-  if (!project) return null;
-  const { config } = loadConfig(project);
-  const read = base ?? baseReader(project);
-  for (const state of stateFolders(project, config, { lazy: true, base: read, ...(home ? { home } : {}) })) {
-    let names;
-    try {
-      names = readdirSync(runsFolder(state));
-    } catch {
-      continue;
-    }
-    for (const run of names.filter((name) => RUN_ID.test(name))) {
-      const found = readRun(state, run);
-      if (found.problem || driverOf(found).session !== session) continue;
-      const policy = reportPolicy(read());
-      const owed = policy.problem ? [] : owedReports({ state, run, found, policy });
-      return { role: 'driver', run, owed: owed.map(({ key, status, label, sha256 }) => ({ key, status, label, sha256 })) };
-    }
-  }
-  return null;
-}
-
-// The base branch's `tracker` key for the hook, or null when it cannot be read.
-export const baseTracker = (base) => base()?.config?.tracker ?? null;

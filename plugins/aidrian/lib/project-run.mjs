@@ -336,7 +336,7 @@ export function pinnedRepository(project) {
 
 // The names branchProblem holds a branch apart from for `project`: its default branch, as the working copy's and the
 // base branch's config name it and as origin's HEAD points to it, and its remotes.
-function refNames(project, config) {
+export function refNames(project, config) {
   const base = baseBranchConfig(project, 'git.defaultBranch');
   const head = runGit(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], project.root);
   const originHead = head.status === 0 ? head.stdout.trim().replace(/^refs\/remotes\/origin\//u, '') : null;

@@ -9,6 +9,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
+import { cleanText } from './clean-text.mjs';
 import { changeNotFound } from './forges/index.mjs';
 import { appendToRun, runFolder } from './project-run.mjs';
 import { ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
@@ -40,38 +41,8 @@ const processUid = () => (typeof process.getuid === 'function' ? process.getuid(
 // the decision `attempts`.
 export const afterFailure = (key, spent) => (spent < ISSUE_ATTEMPTS ? { event: 'issue', key, state: 'open' } : { event: 'issue', key, state: 'parked', decision: 'attempts' });
 
-// The characters a result's text never keeps: format characters (bidirectional marks, zero-width joiners, tag
-// characters), private-use and unassigned code points, and variation selectors, which are deleted, so none can hide
-// between a mark and a word; and controls and line and paragraph separators, which become spaces.
-const INVISIBLE = /[\p{Cf}\p{Co}\p{Cn}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/gu;
-const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}]/gu;
-
-// Text a result keeps of a field: INVISIBLE characters, images, links (their text kept), HTML, bare addresses, and every
-// `@` before a word, as a mention starts, removed until the text stops changing, so a removal cannot join a new one
-// (`@@name`, `@<b></b>name`); white space folded, cut at `cap`. null for a value that is no string.
-export function cleanText(value, cap) {
-  if (typeof value !== 'string') return null;
-  let text = value;
-  for (let pass = 0; pass < 10; pass += 1) {
-    const next = cleanOnce(text);
-    if (next === text) break;
-    text = next;
-  }
-  return text.slice(0, cap);
-}
-
-const cleanOnce = (value) => value.replace(INVISIBLE, '').replace(BREAKS, ' ')
-    // Character references a renderer would decode, such as &#64;, &#x40;, or &commat;, which spell a mention marker.
-    .replace(/&(?:#[0-9]{1,8};?|#[xX][0-9a-fA-F]{1,8};?|[A-Za-z][A-Za-z0-9]{1,31};)/gu, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/gu, '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/gu, '$1')
-    .replace(/<[^>]*>/gu, '')
-    .replace(/\b(?:[a-z][a-z0-9+.-]*):\/\/\S*/giu, '')
-    .replace(/\b(?:mailto|javascript|data|file):\S*/giu, '')
-    .replace(/\bwww\.\S+/giu, '')
-    .replace(/@+(?=[\w-])/gu, '')
-    .replace(/\s+/gu, ' ')
-    .trim();
+// cleanText lives in lib/clean-text.mjs, which the tracker hook loads with no forge import; it is re-exported here.
+export { cleanText };
 
 // The result a session wrote, `value`: { result, problems }, where `result` is { status, pr, decisions, stop } with only
 // those fields, each checked and its text cleaned (cleanText), or null when `problems` lists any.
@@ -239,7 +210,7 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const read = readDrop(start.drop);
   if (read.missing) return null;
   const at = iso(now);
-  const bad = (why) => ({ rows: [{ event: 'ended', key, attempt: start.attempt, reason: 'bad_result', why: cleanText(why, CAPS.stop), at }, { ...afterFailure(key, spent), at }], line: 'bad_result' });
+  const bad = (why) => ({ rows: [{ event: 'ended', key, attempt: start.attempt, reason: 'bad_result', why: cleanText(why, CAPS.stop, { domains: false }), at }, { ...afterFailure(key, spent), at }], line: 'bad_result' });
   if (read.problem) return bad(read.problem);
   const { value } = read;
   if (value?.run !== run || value?.key !== key || value?.attempt !== start.attempt) return bad('the drop\'s result names another run, issue, or attempt');

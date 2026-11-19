@@ -751,7 +751,12 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
   if (endedIn(found.rows)) return refuse(`the run ${run} ended already`);
   const held = custody({ found, store, session, now });
   if (held.problem) return refuse(held.problem);
-  const written = appendToRun(state, run, () => ({ rows: [...custodyRows(held, session, now), { event: 'end', session, at: iso(now) }] }));
+  // An issue that still runs has a session the run still answers for: end only once none does.
+  const written = appendToRun(state, run, (fresh) => {
+    const { running } = planRun(fresh.snapshot, fresh.states, { maxParallel: SERIAL });
+    if (running.length) return { problem: `the issues ${running.join(', ')} still run; run \`aidrian project wait ${run}\` until it prints idle, then end the run` };
+    return { rows: [...custodyRows(held, session, now), { event: 'end', session, at: iso(now) }] };
+  });
   if (written.problem) return refuse(written.problem);
   return { exitCode: 0, out: [`end: run ${run} ended, and its driver's hold is released`], err: [] };
 }
@@ -760,20 +765,41 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
 // main session, as attendedProblem reads the session the host names in `env`, that neither drives the run nor did, nor
 // is the continuation custody would move to (project-run-guard.mjs resumerProblem): a `resume` row, and `resumed RUN`.
 // A run that is not halted answers `not halted`. The driver never runs it: a halt waits on a person.
-export function resumeRun({ project, config, run, env = process.env, home, now = Date.now() }) {
+export function resumeRun({ project, config, run, env = process.env, home, now = Date.now(), spawn }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project resume: ${why}`] });
   const { session } = sessionIdentity(env);
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return refuse(opened.problem);
   // The Human's own shell names no session; a session must be an attended one that never drove the run.
-  if (session !== null && session !== undefined) {
+  const named = session !== null && session !== undefined;
+  if (named) {
     const attended = attendedProblem({ session, project, config, state: opened.state, env, ...(home ? { home } : {}), now });
     if (attended) return refuse(`a halt is lifted by a person, and ${attended}`);
     const member = resumerProblem({ found: opened.found, store: opened.store, session, now });
     if (member) return refuse(member);
   }
-  if (!haltOf(opened.found)) return { exitCode: 0, out: [`not halted ${run}`], err: [] };
-  const written = appendToRun(opened.state, run, (fresh) => (haltOf(fresh) ? { rows: [{ event: 'resume', session, at: iso(now) }] } : { rows: [] }));
+  if (endedIn(opened.found.rows)) return refuse(`the run ${run} ended`);
+  // A run whose driver chain the host lists as ended is stranded: the attended session that resumes it takes custody.
+  const stranded = named && strandedDriver({ found: opened.found, env, spawn });
+  if (!haltOf(opened.found) && !stranded) return { exitCode: 0, out: [`not halted ${run}`], err: [] };
+  const written = appendToRun(opened.state, run, (fresh) => {
+    const driver = driverOf(fresh);
+    const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
+    return { rows: [...(haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
+  });
   if (written.problem) return refuse(written.problem);
-  return { exitCode: 0, out: [`resumed ${run}`], err: [] };
+  const took = written.rows.some((row) => row.event === 'driver');
+  if (took && !markCustodian(session, readRun(opened.state, run), run, opened.state, env)) return refuse('custody moved, but this session\'s driver mark could not be filed; run resume again');
+  return { exitCode: 0, out: [...(written.rows.some((row) => row.event === 'resume') ? [`resumed ${run}`] : []), ...(took ? [`custody: this session now drives the run ${run}; its last driver ended`] : [])], err: [] };
+}
+
+// The session of the run `found`'s driver when the host lists it as ended, so no one drives the run, or null: a host
+// with no listing, or one that gives no answer, never strands it. Only the driver's own session is read: its start
+// records name the issues' sessions it started, which are not drivers. A continuation it started and that never took
+// custody loses it: its next command meets a ledger whose driver is another session.
+function strandedDriver({ found, env, spawn }) {
+  const cap = detectHost({ env }).capabilities.projectStart;
+  if (!cap || typeof cap.ended !== 'function') return null;
+  const driver = driverOf(found);
+  return safely(() => cap.ended({ id: driver.session, session: driver.session, env, run: spawn })) === true ? driver.session : null;
 }

@@ -25,22 +25,26 @@ Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`,
 
 ## Turn 1, with the Human here
 
-Read [references/preflight.md](references/preflight.md) and follow it: the preflight checks, the snapshot,
-and `aidrian project init`. Name every blocker it finds in one message, each with its fix, before the Human walks away.
-Start the loop only once nothing blocks; until then, start nothing.
+Read [references/preflight.md](references/preflight.md) and follow it, in its order: `aidrian project preflight`,
+the snapshot and its check, and `aidrian project init` last, only once nothing blocks.
+Name every blocker in one message, each with its fix, before the Human walks away; until then, start nothing.
+
+A session that continues from a `project-<run>` brief skips Turn 1: it runs `aidrian project wait <run> --max-wait 0`,
+which makes it the driver, then the loop.
 
 ## The loop
 
 Read [references/loop.md](references/loop.md) once turn 1 ends, and follow it: next, start, wait, report, repeat.
 
-- Call `aidrian project start` with a tool timeout of at least 300 s, and `aidrian project wait` with one above its
-  `--max-wait`. Wait in the foreground: once this turn ends, nothing wakes the driver.
-- `paused until <time>` from `start`, exit 1, is a usage limit, not a refusal: keep calling `wait` until that time,
-  as the loop's § Pause says, then go on.
-- A `halt` line from `start` or `next`: start nothing more, wait until no issue runs, write the owed reports and the
-  summary, tell the Human the cause and the fix the line names, and end. A halt waits on a person: never run
+- Run every command in the foreground, with the tool timeouts the loop names, which keep each call under the host's
+  automatic move to the background. Once this turn ends, nothing wakes the driver.
+- `paused until <time>`, from `start` or `wait`, is a usage limit, not a refusal: the loop's § Pause sits it out.
+- A `halt` line from `start`, or `halted` from `next`: start nothing more, wait until no issue runs, write the owed
+  reports and the summary, tell the Human the cause and the fix, and end. A halt waits on a person: never run
   `aidrian project resume`, which only an attended session runs.
-- Any other refusal of `start`: stop the loop the same way, with the refusal as the cause. Never work around one.
+- Exit 75 with a `retry:` line may pass: the loop tries again. Any other refusal stops the loop the same way, with the
+  refusal as the cause. Never work around one.
+- When nothing runs and `next` says `done`, `aidrian project end <run>` records the run's end.
 - Never run an issue's work in this session or a subagent: an issue's session does it, in its own clone.
 
 ## Tracker writes
@@ -54,7 +58,8 @@ before the first report.
 
 An issue's session decides what it can and parks the rest. The intended stops are a `security-engineer` verdict,
 a critical-flow `product-manager` sign-off, and a hard product call in a floor class. A pull request that
-`aidrian pr auto-merge` refuses for `trust`, which needs the Human's sign-off, parks the same way.
+`aidrian pr auto-merge` refuses for `trust: "signoff"` parks the same way; `trust: "bot"` is the bot's review, which the
+issue's session asks for once per head before it parks.
 Each parks its issue, and every issue that waits on it is skipped; the run goes on with the rest. The driver gathers
 each parked decision through the report's comment and label, and lists them all in the final report.
 It never decides or signs off one itself: the Human signs off in a separate session the Human attends.
@@ -63,7 +68,8 @@ It never decides or signs off one itself: the Human signs off in a separate sess
 
 The driver hands itself off on the normal route, as the `session-handoff` skill says, under the slug `project-<run>`.
 The run's ledger is its state: the brief names the run and this skill's `SKILL.md` path, and no issue's detail.
-[references/loop.md](references/loop.md) § Hand off says when, and the one command that must come first.
+[references/loop.md](references/loop.md) § Hand off says when, the one command that must come first, and what to do
+when the host continues nothing.
 
 ## Hard rules
 

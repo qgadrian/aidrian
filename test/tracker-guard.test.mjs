@@ -9,7 +9,7 @@ import test from 'node:test';
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { TRACKERS } from '../plugins/aidrian/lib/trackers/index.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
-import { bodyHash, judgeTrackerWrite, readTrackerValue, runCallKind, runWriteRefusal, trackerOfTool, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
+import { bodyHash, judgeTrackerWrite, readTrackerValue, runCallKind, runWriteRefusal, trackerOfEndpoint, trackerOfTool, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 
 const PLUGIN = path.resolve(import.meta.dirname, '../plugins/aidrian');
 const MODULE = path.join(PLUGIN, 'lib/tracker-guard.mjs');
@@ -1096,44 +1096,71 @@ test('a record session end cannot delete skips nothing: the session-length marke
 });
 
 // A project run's sessions (runWriteRefusal), against a tracker that does not exist, so the rule names none: its adapter
-// says which tools and fields a run writes, and which tool merges code.
+// says which tools and fields a run writes, which tool merges code, and which call marks a change ready.
 const runTracker = {
   id: 'ticketbox',
   name: 'Ticketbox',
   servers: { any: ['ticketbox'], 'claude-code': [], codex: [] },
+  endpoints: ['mcp.ticketbox.example'],
   readTool: 'site_info',
   workspaceField: 'url',
-  writeVerbs: ['put_*', 'note_*', 'land_*'],
+  writeVerbs: ['put_*', 'note_*', 'land_*', 'edit_change'],
   team: { createFields: ['board'], keyFields: ['ticket'] },
   unguardedRoutes: [],
-  run: { issue: { tool: 'put_ticket', key: 'ticket', status: 'phase', label: 'tags', fields: ['points'] }, comment: { tool: 'note_ticket', key: 'ticket', body: 'text' } },
+  run: {
+    issue: { tool: 'put_ticket', key: 'ticket', status: 'phase', label: 'tags', started: 'active', done: 'closed', fields: ['points', 'edits'], text: ['edits'] },
+    comment: { tool: 'note_ticket', key: 'ticket', body: 'text' },
+  },
   mergeVerbs: ['land_*'],
+  readyCalls: [{ tool: 'edit_change', field: 'state', values: ['ready'] }],
 };
 const child = { role: 'child', run: 'launch', issue: 'TB-1' };
 const owedBody = 'Project run launch: TB-1, attempt 1, merged.';
-const driver = { role: 'driver', run: 'launch', owed: [{ key: 'TB-1', status: 'completed', label: null, sha256: bodyHash(owedBody) }, { key: 'TB-2', status: null, label: 'needs-decision', sha256: bodyHash('b') }] };
+const driver = { role: 'driver', run: 'launch', owed: [{ key: 'TB-1', status: 'closed', label: null, sha256: bodyHash(owedBody) }, { key: 'TB-2', status: null, label: 'needs-decision', sha256: bodyHash('b') }] };
 const runJudge = (writer, short, input, more = {}) => runWriteRefusal({ writer, tool: `mcp__ticketbox__${short}`, input, trackers: [runTracker], ...more })?.reason ?? null;
 
 test('an issue\'s session writes only its own issue, by its key, through the adapter\'s run tools and fields', () => {
-  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', phase: 'started', points: 3 }), null);
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', phase: 'active', points: 3 }), null);
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: '- [ ] export', new: '- [x] export' }] }), null);
   assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'progress' }), null);
-  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-2', phase: 'started' }), /ticket is "TB-2", and an issue's session of the run launch writes only its own issue TB-1/u);
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-2', phase: 'active' }), /ticket is "TB-2", and an issue's session of the run launch writes only its own issue TB-1/u);
   assert.match(runJudge(child, 'put_ticket', { board: 'TB', title: 'new' }), /it names no issue in ticket, which makes a new item/u);
   assert.match(runJudge(child, 'put_ticket', { ticket: UUID, phase: 'x' }), /names the item by a UUID in ticket/u);
   assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', tags: ['x'] }), /put_ticket sets tags, which an issue's session/u);
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', description: 'all new' }), /put_ticket sets description/u, 'the whole body: only a patch');
   assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'x', parent: 'c-1' }), /note_ticket sets parent/u);
   assert.match(runJudge(child, 'put_board', { board: 'TB' }), /put_board is not a write the run's tools make, and an issue's session of the run launch writes only its own issue TB-1/u);
   assert.equal(runJudge(child, 'get_ticket', { ticket: 'TB-2' }), null, 'a read');
   assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__elsewhere__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker] }), null, 'a server no tracker serves');
 });
 
+test('an issue\'s session sets only the started status, and writes plain text', () => {
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', phase: 'closed' }), /sets phase to "closed", and an issue's session sets only "active"/u);
+  for (const text of ['ping @lead', 'see [spec](https://x.example/a)', 'at evil.example/x', '![x](y.png)', '<b>bold</b>', 'hidden​mark', 'ref &#64;lead', 'www.example.org']) {
+    assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text }), /note_ticket sets text with a mention, link, address, image, HTML, or hidden character/u, text);
+    assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'append', text }] }), /put_ticket sets edits with a mention/u, text);
+  }
+  assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Two\n\nparagraphs, plain; v1.2 shipped.' }), null, 'white space and plain text pass');
+});
+
+test('for an issue\'s session, the driver, and a held session, every call on a tracker server is a write unless its name reads', () => {
+  for (const short of ['mark_notification', 'frob_ticket', 'archive_all']) {
+    assert.match(runJudge(child, short, {}), /is not a write the run's tools make/u, short);
+    assert.match(runJudge(driver, short, {}), /is not a write the run's tools make/u, short);
+    assert.match(runJudge({ role: 'held', why: 'x' }, short, {}), /because x/u, short);
+    assert.equal(runJudge({ role: 'unattended' }, short, {}), null, `${short}: unattended outside a run`);
+    assert.equal(runJudge(null, short, {}), null, `${short}: attended`);
+  }
+  for (const short of ['get_ticket', 'list_tickets', 'site_info', 'search_tickets']) assert.equal(runJudge(child, short, {}), null, short);
+});
+
 test('the driver writes only the status, label, and comment body a report owes, and only on an issue that owes one', () => {
-  assert.equal(runJudge(driver, 'put_ticket', { ticket: 'TB-1', phase: 'completed' }), null);
+  assert.equal(runJudge(driver, 'put_ticket', { ticket: 'TB-1', phase: 'closed' }), null);
   assert.equal(runJudge(driver, 'note_ticket', { ticket: 'TB-1', text: owedBody }), null);
   assert.equal(runJudge(driver, 'put_ticket', { ticket: 'TB-2', tags: ['needs-decision'] }), null);
   assert.match(runJudge(driver, 'note_ticket', { ticket: 'TB-1', text: `${owedBody} ` }), /the comment on TB-1 is not the body `aidrian project report launch` printed/u);
-  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-1', phase: 'canceled' }), /sets phase to "canceled" on TB-1, and `aidrian project report launch` owes "completed"/u);
-  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-2', phase: 'completed' }), /put_ticket sets phase on TB-2/u, 'a status the report does not owe');
+  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-1', phase: 'canceled' }), /sets phase to "canceled" on TB-1, and `aidrian project report launch` owes "closed"/u);
+  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-2', phase: 'closed' }), /put_ticket sets phase on TB-2/u, 'a status the report does not owe');
   assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-1', points: 1 }), /sets points on TB-1/u);
   assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-1' }), /put_ticket sets nothing on TB-1/u);
   assert.match(runJudge(driver, 'note_ticket', { ticket: 'TB-3', text: owedBody }), /ticket is "TB-3", and the run launch's driver writes only what/u);
@@ -1142,13 +1169,35 @@ test('the driver writes only the status, label, and comment body a report owes, 
   assert.match(runJudge({ ...driver, owed: [] }, 'note_ticket', { ticket: 'TB-1', text: owedBody }), /driver writes only what/u, 'recorded: nothing owed');
 });
 
-test('every role is refused a tool that merges code; a held session every write; an unattended one only the merge', () => {
+test('a tracker\'s merge tool is refused to every session, pointing at gh pr merge; a merge-named tool anywhere to every marked one', () => {
+  assert.match(runJudge(null, 'land_change', { change: '12' }), /land_change merges code through the tracker, past the merge guard\. Merge with `gh pr merge <number>`, which the merge guard judges/u, 'attended');
   for (const writer of [child, driver, { role: 'unattended' }, { role: 'held', why: 'x' }]) {
-    assert.match(runJudge(writer, 'land_change', { change: '12' }), /land_change merges code, and a session no Human attends merges only through the pr-auto-merge skill/u, writer.role);
+    assert.match(runJudge(writer, 'land_change', { change: '12' }), /merges code through the tracker.*only through the pr-auto-merge skill/u, writer.role);
+    const elsewhere = runWriteRefusal({ writer, tool: 'mcp__renamed_box__land_change', input: {}, trackers: [runTracker] });
+    assert.match(elsewhere?.reason ?? '', /land_change merges code/u, `${writer.role}: a server no list names`);
   }
+  assert.equal(runWriteRefusal({ writer: null, tool: 'mcp__renamed_box__land_change', input: {}, trackers: [runTracker] }), null, 'attended, on a server no tracker is known on');
   assert.equal(runJudge({ role: 'unattended' }, 'put_ticket', { ticket: 'TB-9' }), null);
-  assert.match(runJudge({ role: 'held', why: 'another session\'s gate is starting a session' }, 'note_ticket', { ticket: 'TB-1', text: 'x' }), /because another session's gate is starting a session/u);
-  assert.equal(runJudge(null, 'land_change', {}), null, 'a session no run or mark names');
+  assert.match(runJudge({ role: 'held', why: 'another session\'s start holds this one, which lapses within 5 minutes' }, 'note_ticket', { ticket: 'TB-1', text: 'x' }), /lapses within 5 minutes/u);
+});
+
+test('a tracker call that marks a change ready is refused to every session, pointing at gh pr ready', () => {
+  for (const writer of [null, child, driver, { role: 'unattended' }]) {
+    assert.match(runJudge(writer, 'edit_change', { change: '12', state: 'ready' }) ?? '', /edit_change marks a pull request ready through the tracker, past the ready hold\. Mark it ready with `gh pr ready <number>`/u, writer?.role ?? 'attended');
+  }
+  assert.equal(runJudge(null, 'edit_change', { change: '12', state: 'draft' }), null);
+});
+
+test('a server named otherwise in projectRun.mcpServers maps to its tracker by endpoint, and holds the child to its issue', () => {
+  const mcpServers = { tickets: { type: 'http', url: 'https://mcp.ticketbox.example/mcp' }, proxied: { command: 'npx', args: ['mcp-remote', 'https://mcp.ticketbox.example/sse'] }, other: { url: 'https://db.example/mcp' } };
+  assert.equal(trackerOfEndpoint(mcpServers.tickets, [runTracker]), runTracker);
+  assert.equal(trackerOfEndpoint(mcpServers.proxied, [runTracker]), runTracker);
+  assert.equal(trackerOfEndpoint(mcpServers.other, [runTracker]), null);
+  for (const server of ['tickets', 'proxied']) {
+    const reason = runWriteRefusal({ writer: child, tool: `mcp__${server}__put_ticket`, input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers })?.reason ?? '';
+    assert.match(reason, /ticket is "TB-2"/u, server);
+  }
+  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__other__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers }), null);
 });
 
 test('the run rule reads the host\'s raw name, the base branch\'s servers and lists, and the working copy\'s lists', () => {
@@ -1163,22 +1212,29 @@ test('the run rule reads the host\'s raw name, the base branch\'s servers and li
   assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__custom__edit', input: {}, trackers: [runTracker] }), null, 'unlisted and unknown: no write to judge');
 });
 
-test('the shipped tracker declares the run tools and merge verbs the run rule reads', () => {
-  for (const each of TRACKERS) {
-    if (each.run === undefined) continue;
-    for (const kind of ['issue', 'comment']) assert.ok(each.writeVerbs.some((verb) => nameMatches(verb, each.run[kind].tool)), `${each.id} ${kind}: its run tool is a write`);
-    for (const field of ['key', 'status', 'label']) assert.equal(typeof each.run.issue[field], 'string', field);
-    for (const field of ['key', 'body']) assert.equal(typeof each.run.comment[field], 'string', field);
-    assert.ok((each.mergeVerbs ?? []).every((verb) => each.writeVerbs.some((write) => nameMatches(write, verb.replace(/\*$/u, 'x')))), `${each.id}: a merge verb is a write too`);
-  }
-});
-
-test('the run rule judges only a write or a merge, so the hook reads no mark or ledger for a read', () => {
+test('the run rule judges a merge, a ready call, or a write, so the hook judges no read', () => {
   const kind = (short, more = {}) => runCallKind({ tool: `mcp__ticketbox__${short}`, trackers: [runTracker], ...more });
   assert.equal(kind('site_info'), null);
   assert.equal(kind('get_ticket'), null);
-  assert.deepEqual(kind('put_ticket'), { adapter: runTracker, short: 'put_ticket', merge: false });
-  assert.deepEqual(kind('land_change'), { adapter: runTracker, short: 'land_change', merge: true });
+  assert.equal(kind('get_ticket', { strict: true }), null);
+  assert.equal(kind('frob_ticket'), null, 'not strict: only the lists');
+  assert.equal(kind('frob_ticket', { strict: true }).write, true);
+  assert.deepEqual(kind('put_ticket'), { adapter: runTracker, short: 'put_ticket', merge: null, ready: false, write: true });
+  assert.equal(kind('land_change').merge, 'tracker');
+  assert.equal(runCallKind({ tool: 'mcp__other__land_change', trackers: [runTracker] }).merge, 'anywhere');
+  assert.equal(kind('edit_change', { input: { state: 'ready' } }).ready, true);
   assert.equal(runCallKind({ tool: 'mcp__other__put_ticket', trackers: [runTracker] }), null);
   assert.equal(runCallKind({ tool: 42, trackers: [runTracker] }), null);
+});
+
+test('the shipped tracker declares the run tools, statuses, merge verbs, and ready calls the run rule reads', () => {
+  for (const each of TRACKERS) {
+    if (each.run === undefined) continue;
+    for (const kind of ['issue', 'comment']) assert.ok(each.writeVerbs.some((verb) => nameMatches(verb, each.run[kind].tool)), `${each.id} ${kind}: its run tool is a write`);
+    for (const field of ['key', 'status', 'label', 'started', 'done']) assert.equal(typeof each.run.issue[field], 'string', field);
+    for (const field of ['key', 'body']) assert.equal(typeof each.run.comment[field], 'string', field);
+    assert.ok(!(each.run.issue.fields ?? []).includes('description'), 'an issue\'s session patches its body, never replaces it');
+    assert.ok((each.mergeVerbs ?? []).every((verb) => each.writeVerbs.some((write) => nameMatches(write, verb.replace(/\*$/u, 'x')))), `${each.id}: a merge verb is a write too`);
+    for (const call of each.readyCalls ?? []) assert.ok(each.writeVerbs.some((verb) => nameMatches(verb, call.tool)), call.tool);
+  }
 });

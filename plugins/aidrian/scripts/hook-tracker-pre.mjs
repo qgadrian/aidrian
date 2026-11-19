@@ -1,8 +1,8 @@
 // PreToolUse hook for every MCP tool: the refusal half of the tracker write guard (docs/config.md#tracker).
 // First, whatever the working copy's `tracker.enabled` says, the project run rule (lib/tracker-guard.mjs runWriteRefusal):
-// on a tool a known tracker's connection serves, or one the working copy's writeTools name, a session of a project run
-// writes only what its role allows (lib/project-report.mjs runWriter reads the role from the session's unattended mark
-// and the run's ledger), and no session no Human attends calls a tool that merges code.
+// a session of a project run writes only what its role allows (lib/project-report.mjs runWriter reads the role from the
+// session's marks), a session no Human attends calls no tool a merge verb names on any server, and no session merges or
+// marks a pull request ready through a tracker's tool.
 // Then lib/tracker-guard.mjs judges a call of a tool in `tracker.writeTools` against the session's record of the connected
 // workspace, which hook-tracker-post.mjs writes, and a refused call exits 2 with the reason on stderr, recorded as the
 // other hooks record their blocks (lib/hook-deny.mjs), except the routine refusal of a session's first write, which every
@@ -24,14 +24,16 @@ import { baseReader } from '../lib/handoff-guard.mjs';
 import { block, deny, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
-import { baseTracker, runWriter } from '../lib/project-report.mjs';
-import { judgeTrackerWrite, refusalMarker, runCallKind, runWriteRefusal } from '../lib/tracker-guard.mjs';
+import { runWriter } from '../lib/project-report.mjs';
+import { runDriver } from '../lib/run-driver.mjs';
+import { judgeTrackerWrite, refusalMarker, runWriteRefusal } from '../lib/tracker-guard.mjs';
+import { readUnattendedMark } from '../lib/unattended-mark.mjs';
 
 await runHook(async (input) => {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const project = findProject(cwd);
   const config = project ? loadConfig(project).config : null;
-  const run = runDenial(input, cwd, project, config);
+  const run = runDenial(input, project, config);
   if (run) {
     if (!project) deny(run.reason);
     await block(input, 'tracker-guard', run.reason, { match: run.match, project, config });
@@ -47,22 +49,39 @@ await runHook(async (input) => {
   await block(input, 'tracker-guard', denial.reason, { match: denial.match, project, config });
 });
 
-// The project run rule's refusal of the call in `input`, or null. Only a write or a merge on a tool a known tracker serves,
-// or one the working copy's writeTools name, is read further, so a read, or any other MCP tool, reads no mark or ledger.
-function runDenial(input, cwd, project, config) {
+// The project run rule's refusal of the call in `input`, or null. Who calls comes from the session's marks alone
+// (lib/project-report.mjs runWriter). A session no mark names is judged on the working copy's tracker key, for a
+// tracker's merge and ready calls only. A marked session is judged on the base branch's `tracker` and
+// projectRun.mcpServers, read through the main checkout its mark names, never this call's folder. A read or a judgment
+// that throws refuses a session with a mark, a pending hold, or a driver mark, and lets an attended one run.
+function runDenial(input, project, config) {
   const tool = input.tool_name;
   if (typeof tool !== 'string' || !tool.startsWith('mcp__')) return null;
-  const working = config?.tracker ?? null;
-  const listed = [...(working?.writeTools ?? [])];
-  if (!runCallKind({ tool, rawTool: input.raw_tool_name, tracker: working, writeTools: listed })) return null;
-  const base = project ? baseReader(project) : () => ({});
-  const writer = runWriter({ session: input.session_id, cwd, base });
-  if (!writer) return null;
-  const tracker = baseTracker(base);
-  return runWriteRefusal({
-    writer, tool, rawTool: input.raw_tool_name, input: input.tool_input, tracker,
-    writeTools: [...(tracker?.writeTools ?? []), ...listed], human: config?.names?.human ?? 'the Human',
-  });
+  const listed = [...(config?.tracker?.writeTools ?? [])];
+  const human = config?.names?.human ?? 'the Human';
+  let writer = null;
+  try {
+    writer = runWriter({ session: input.session_id, env: process.env });
+    if (!writer) return runWriteRefusal({ writer, tool, rawTool: input.raw_tool_name, input: input.tool_input, tracker: config?.tracker ?? null, writeTools: listed, human });
+    const read = writer.project ? baseReader(writer.project)() : {};
+    const tracker = read.config?.tracker ?? null;
+    return runWriteRefusal({
+      writer, tool, rawTool: input.raw_tool_name, input: input.tool_input, tracker, mcpServers: read.config?.projectRun?.mcpServers ?? {},
+      writeTools: [...(tracker?.writeTools ?? []), ...listed], human,
+    });
+  } catch {
+    if (writer === null && !heldSession(input.session_id)) return null;
+    return { match: 'the project run rule could not be read', reason: 'aidrian: this tracker call is refused because the project run rule could not read who this session is or what it may write, and a session no Human attends is never let through on a guess. Try again, or tell the Human.' };
+  }
+}
+
+// Whether `session` has an unattended mark, a pending hold, or a driver mark, or one that cannot be read.
+function heldSession(session) {
+  try {
+    return readUnattendedMark(session) !== null || runDriver(session) !== null;
+  } catch {
+    return true;
+  }
 }
 
 // Leaves what the row at the session's end needs, which the SessionEnd payload lacks. The first refusal of a session keeps

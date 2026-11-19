@@ -1828,29 +1828,45 @@ Lines for the issues that run, are blocked, or are skipped follow. An issue in a
 An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
 is skipped and names it. `--json` prints the whole plan.
 
-`preflight` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the state folder
-and any other active run, `projectRun.allow` through the forge, the machine's switch, the host's start and its
-`projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the sandbox that
-`projectRun.outsideSandbox` does not name), whether the host carries on by itself after a usage limit (in Claude Code,
-`"autoContinueAtUsageLimit": true` in the user's settings), since a limit is the account's and stops the driver with
-the issues' sessions, and the base branch's `github.reviewer`. It prints `ok NAME` or
-`blocker NAME: WHY` for each, exits 1 on any blocker, and ends with two `ask` lines the driver answers with the forge's
-own tools: the reviewer bot seen on a recent pull request, and CI on pull requests. The `project-autopilot` skill runs it
-in its attended first turn, before `init`.
+`preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
+state folder and any other active run but `RUN`, `projectRun.allow` through the forge, the machine's switch, the host's
+start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
+sandbox that `projectRun.outsideSandbox` does not name), and whether the host carries on by itself after a usage limit
+(in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the only place the host reads it), since
+a limit is the account's and stops the driver with the issues' sessions. Then what the run needs to finish with no one:
+the base branch's tracker, with a server of it in `projectRun.mcpServers` and none there named like a tracker whose
+endpoint no adapter maps; auto-merge allowed on the forge's default branch with `github.requiredChecks` listed and this
+machine's switch on; `session.handoff.continue` set to `"background"`; and `github.reviewer`, with the bot seen on a recent
+pull request and an active CI workflow, read through the forge. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
+or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
+blocker. `init RUN --file PATH --check` checks a snapshot input as `init` would, prints its blockers (problems, cycles,
+issues started outside the run) and its `next` lines, and writes no run. The `project-autopilot` skill runs both in its
+attended first turn, and `init` last, once nothing blocks.
 
 `report RUN [--json]` prints, for the driver only, the report the run owes each issue that settled for good, done after
-a forge-confirmed merge or parked: a status (`completed` for a merge, `projectRun.blockedStatus` for a blocked issue),
-`projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the exact tool
-`calls` for the base branch's tracker. Both values come from the base branch's config. The body is built from the
-ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the ledger's
-run, issue, attempt, and status, and checked again; a file that fails gives a body from the ledger alone that says so.
-`recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
+a forge-confirmed merge or parked: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
+blocked issue), `projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the
+exact tool `calls` for the base branch's tracker. Both values come from the base branch's config. The body is built
+from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
+ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
+ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
+`end RUN` refuses while any issue still runs, naming them.
+`resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
+ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
+A command whose ledger another process holds locked exits 75 with a `retry:` line, a refusal that may pass.
 
-While a run is under way, the [tracker write guard](#tracker) holds its sessions whatever the working copy's
-`tracker.enabled` says: an issue's session writes only its own issue, by its key, through its tracker's issue and
-comment tools and the fields its adapter lists; the driver writes only the calls `report` owes, each matching the
-status, label, and body hash it printed, until `recorded`; and no session no Human attends calls a tracker tool that
-merges code.
+The [tracker write guard](#tracker) holds a project run's sessions whatever the working copy's `tracker.enabled` says,
+knowing each by its marks alone, never the folder a call runs in. An issue's session writes only its own issue, by its
+key, through its tracker's issue and comment tools and the fields its adapter lists: status `started`, an estimate,
+a patch of its body, and a comment, each with no mention, link, address, image, HTML, or hidden character. The current
+driver (a driver mark the ledger's custody confirms) writes only the calls `report` owes, each matching the status,
+label, and body hash it printed, until `recorded`; a driver mark the ledger does not confirm, as a continuation's
+before its first `wait`, is held, and writes nothing. For both, every call on the tracker's server is a write unless
+its name says it reads, and the tracker's servers include those of `projectRun.mcpServers` whose endpoint an adapter
+names. A session no Human attends calls no tool a tracker's merge verb names, on any server, and no session merges or
+marks a pull request ready through a tracker's own tool: `gh pr merge` and `gh pr ready` are the routes the merge guard
+and the ready hold judge. A marked session's base branch config is read through the main checkout its mark names, and
+a read that fails refuses it.
 
 ## Checking
 

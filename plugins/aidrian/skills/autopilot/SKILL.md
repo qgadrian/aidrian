@@ -9,6 +9,7 @@ disable-model-invocation: true
 Take one task from implementation to a reviewed pull request while the Human is away, then report. It merges only when auto-merge is on.
 Launched with `--continue`, it takes over a session already under way instead of starting a task.
 It runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
+It never redoes what the skills it runs already do.
 
 Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical.
 Load the `orchestration` skill too: it owns the worktree, the pull request, and review findings.
@@ -77,7 +78,6 @@ or before phase 2 on an adopted pull request, and follow it.
 
 The engine ends at its draft, and these phases own what follows: the review loop runs once.
 The `orchestration` skill's § 3 rules apply inside phases 3 and 4, never as a second loop after them.
-The bounds of the review rounds, the bot, and the fix passes: `references/phases.md` § Bounds.
 
 ## Stop
 
@@ -97,7 +97,8 @@ Write the brief first when checkpoints are allowed.
 
 ## Report
 
-Write for a reader who saw nothing of the run, in plain words, naming the Human and the AI as the start hook does. In this order:
+Write for a reader who saw nothing of the run: plain words, no internal labels, and the Human and the AI named
+by the names the start hook gives, never "you" or "I". In this order:
 
 1. **What shipped**: one or two lines, the pull request link, and the merge: merged, or why not, as the line
    `aidrian pr auto-merge` printed or the stop line of the `pr-merge-when-green` skill.

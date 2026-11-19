@@ -1992,8 +1992,12 @@ the base branch's tracker, with no server in `projectRun.mcpServers` named like 
 (no tracker server there is a `note`: issue sessions then write no tracker, and the driver reports; a `note mcp-servers`
 lists the servers the run rule maps to no tracker, each of which must be no tracker connection); auto-merge allowed on
 the forge's default branch with `github.requiredChecks` listed and this machine's switch on; `session.handoff.continue`
-set to `"background"`, since `"clear"` waits on a person; and `github.reviewer`, with the bot seen on a recent
-pull request and an active CI workflow, read through the forge. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
+set to `"background"`, since `"clear"` waits on a person; `github.reviewer`, with the bot seen on a recent
+pull request and an active CI workflow, read through the forge; and, through the forge too, a protected default branch
+and an active tag rule that restricts creating a tag and that the signed-in user, whose token an issue's session keeps,
+can never bypass (`branch-protection`, `release-tags`), with a `note workflows` line: the forge runs a pushed branch's
+workflow files with the repository's secrets, so release and deploy secrets belong in environments limited to protected
+branches and tags. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
 (problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue

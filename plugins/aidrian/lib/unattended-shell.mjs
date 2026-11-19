@@ -186,7 +186,7 @@ function unwrapped(program, words) {
 // Whether the words of a call to `program` run one of the declared subcommands of `each`, { programs, subcommands,
 // valueOptions, reads, toolchain, workspace }: its words, past the global options that take a value, start with one, or
 // hold one of more than one word in a row, and start with none of its reads.
-function runsDeclared(each, program, words) {
+export function runsDeclared(each, program, words) {
   if (!each.programs.includes(program)) return false;
   let named = namedWords(words, each.valueOptions ?? []);
   if (each.toolchain && named[0]?.startsWith('+')) named = named.slice(1);

@@ -113,7 +113,7 @@ export const commands = {
         (deps.print ?? console.log)(JSON.stringify(quorumRoles(rest[0], quorum())));
         return 0;
       }
-      if (action === 'route') return routeCommand(rest, { cwd, print: deps.print ?? console.log });
+      if (action === 'route') return routeCommand(rest, { cwd, print: deps.print ?? console.log, ...(deps.env ? { env: deps.env } : {}), ...(deps.home ? { home: deps.home } : {}) });
       if (action === 'provisional') return provisionalCommand(rest, { cwd, root, env, print: deps.print ?? console.log });
       if (action === 'codex') {
         const { values } = parseArgs({ args: rest, options: { plan: { type: 'string' }, brief: { type: 'string' }, out: { type: 'string' }, mode: { type: 'string', default: 'object' }, ledger: { type: 'string' } } });

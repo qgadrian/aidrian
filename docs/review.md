@@ -1396,6 +1396,16 @@ user's gh token stays readable to a confined session, so it can merge through th
 own account a session can steer is no second reviewer; and only branch protection with a required review from a second
 account is proof.
 
+The agent gate hook holds what an issue session runs with that token by name: it pushes only
+`git push origin HEAD:refs/heads/<its branch>`, and runs no tag push, release, workflow dispatch, or raw API write
+outside its own pull request and issues ([hooks.md](hooks.md#agent-gates)). A script or program the session runs, or
+`curl` with the token, is outside every hook and can still push a tag, cut a release, start a workflow, or push another
+branch: that is an accepted residual, which only the forge closes. So `aidrian project preflight` blocks a run whose
+default branch has no protection, or whose release tags no tag rule holds that restricts creating a tag and that the
+signed-in user can never bypass. The forge also runs a branch's own workflow files, with the repository's secrets, on
+every push: release and deploy secrets belong in environments limited to protected branches and tags, never in
+repository secrets a pushed branch's workflow can read, and the preflight notes it.
+
 ### Finding ids
 
 Every finding a pass records, a repeat a reviewer returned as already ruled included, gets an id, `R<round>-<n>`: the

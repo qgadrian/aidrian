@@ -25,7 +25,7 @@ const FACADE = [
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
   'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'workflowRun',
-  'reviewerSeen', 'ciWorkflows',
+  'reviewerSeen', 'ciWorkflows', 'refProtection',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -170,12 +170,12 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeTokenVars', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeRefCommands', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
   assert.equal(facade.servedRepository, servedRepository);
   // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
   const commands = facade.forgeConfigCommands();
   assert.ok(commands.every((each) => each.programs.includes('gh') && typeof each.what === 'string'));
-  assert.deepEqual(commands.flatMap((each) => each.subcommands.map((sub) => sub.join(' '))).sort(), ['auth login', 'auth logout', 'auth refresh', 'auth setup-git', 'auth switch', 'config set', 'extension install']);
+  assert.deepEqual(commands.flatMap((each) => each.subcommands.map((sub) => sub.join(' '))).sort(), ['alias delete', 'alias import', 'alias set', 'auth login', 'auth logout', 'auth refresh', 'auth setup-git', 'auth switch', 'config set', 'extension install']);
   assert.ok(commands.every((each) => each.valueOptions.includes('-R')), 'gh\'s repository option is skipped before the subcommand');
   // A pull request the forge has not: final. A forge that could not answer: not.
   const failed = (text) => Object.assign(new Error(text), { stderr: text });
@@ -190,6 +190,23 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
   assert.equal(facade.remoteIdentity, remoteIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
   assert.equal(facade.MAX_BODY, 65_536, 'the adapter names GitHub\'s longest body, and the facade gives it to shared code');
+});
+
+test('refProtection reads the default branch\'s protection and each active tag ruleset, with whether the signed-in user may bypass it', () => {
+  const answers = {
+    'repos/acme/notes': { default_branch: 'main' },
+    'repos/acme/notes/branches/main': { protected: false },
+    'repos/acme/notes/rules/branches/main': [[{ type: 'pull_request', ruleset_id: 1 }]],
+    'repos/acme/notes/rulesets?targets=tag&includes_parents=true': [[{ id: 7, target: 'tag', enforcement: 'active' }, { id: 8, target: 'tag', enforcement: 'evaluate' }, { id: 9, target: 'branch', enforcement: 'active' }]],
+    'repos/acme/notes/rulesets/7': { name: 'releases', conditions: { ref_name: { include: ['refs/tags/v*'] } }, rules: [{ type: 'creation' }, { type: 'deletion' }], current_user_can_bypass: 'never' },
+  };
+  const { forge, args } = recorded((call) => JSON.stringify(answers[call.find((each) => each.startsWith('repos/'))] ?? null));
+  assert.deepEqual(forge.refProtection('acme/notes', { host: 'github.com' }), { branch: 'main', protected: true, tags: [{ name: 'releases', refs: ['refs/tags/v*'], creation: true, bypass: 'never' }] });
+  assert.deepEqual(args().map((each) => each.filter((word) => word.startsWith('repos/'))[0]), Object.keys(answers), 'only the active tag ruleset is read whole');
+  assert.ok(args().every((each) => each.includes('--hostname')), 'the pinned host');
+  const bare = recorded((call) => JSON.stringify(call.some((each) => each === 'repos/acme/notes') ? { default_branch: 'main' } : call.some((each) => each.includes('branches/main') && !each.includes('rules')) ? { protected: true } : []));
+  assert.deepEqual(bare.forge.refProtection('acme/notes'), { branch: 'main', protected: true, tags: [] }, 'classic protection, and no tag rule');
+  assert.throws(() => recorded(() => '{}').forge.refProtection('acme/notes'), /named no default branch/u);
 });
 
 test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {

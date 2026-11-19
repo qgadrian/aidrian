@@ -195,7 +195,142 @@ export const CONFIG_COMMANDS = Object.freeze([
   { programs: ['gh'], subcommands: [['config', 'set'], ['extension', 'install']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own config' },
   { programs: ['gh'], subcommands: [['auth', 'login'], ['auth', 'logout'], ['auth', 'switch'], ['auth', 'refresh']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own login' },
   { programs: ['gh'], subcommands: [['auth', 'setup-git']], valueOptions: GH_VALUES, what: 'the user\'s git config' },
+  { programs: ['gh'], subcommands: [['alias', 'set'], ['alias', 'import'], ['alias', 'delete']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own config' },
 ]);
+
+// The forge CLI's subcommands that change what the forge releases or runs, or the repository's own settings, which the
+// agent gate hook refuses to a project run's issue session (lib/issue-forge-guard.mjs): with the token its sandbox
+// keeps, one would publish a release, start a workflow with the repository's secrets, or rerun a deploy. Each is
+// { programs, subcommands, valueOptions, what }, as CONFIG_COMMANDS; the forms that only read, such as `gh release
+// list`, pass.
+export const REF_COMMANDS = Object.freeze([
+  { programs: ['gh'], subcommands: [['release', 'create'], ['release', 'delete'], ['release', 'edit'], ['release', 'upload'], ['release', 'delete-asset']], valueOptions: GH_VALUES, what: 'a release on the forge' },
+  { programs: ['gh'], subcommands: [['workflow', 'run'], ['workflow', 'enable'], ['workflow', 'disable']], valueOptions: GH_VALUES, what: 'a workflow on the forge, which runs with the repository\'s secrets' },
+  { programs: ['gh'], subcommands: [['run', 'rerun'], ['run', 'cancel'], ['run', 'delete']], valueOptions: GH_VALUES, what: 'a workflow run on the forge, which may run with the repository\'s secrets' },
+  { programs: ['gh'], subcommands: [['secret', 'set'], ['secret', 'delete'], ['secret', 'remove'], ['variable', 'set'], ['variable', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s secrets or variables' },
+  { programs: ['gh'], subcommands: [['repo', 'edit'], ['repo', 'delete'], ['repo', 'rename'], ['repo', 'archive'], ['repo', 'unarchive'], ['repo', 'sync'], ['repo', 'deploy-key', 'add'], ['repo', 'deploy-key', 'delete'], ['cache', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s settings, keys, or caches' },
+  { programs: ['gh'], subcommands: [['ssh-key', 'add'], ['ssh-key', 'delete'], ['gpg-key', 'add'], ['gpg-key', 'delete']], valueOptions: GH_VALUES, what: 'the keys of the forge account' },
+]);
+
+// The folders of a repository whose files the forge runs, with the repository's secrets, on a push to any branch:
+// GitHub's workflows, and the actions a workflow calls from the repository. A project run's issue session never writes
+// them (lib/unattended-write.mjs).
+export const WORKFLOW_FOLDERS = Object.freeze(['.github/workflows', '.github/actions']);
+
+// gh api's options that take the next word, and those of them that send a field, which makes gh's default method POST.
+const API_VALUES = new Set(['-X', '--method', '-f', '--raw-field', '-F', '--field', '--input', '-H', '--header', '-q', '--jq', '-t', '--template', '-p', '--preview', '--hostname', '--cache']);
+const API_FIELDS = new Set(['-f', '--raw-field', '-F', '--field', '--input']);
+// The REST routes of a repository an issue session writes: its pull request's and issues' comments, reviews, labels, and
+// reviewers, and a pull request itself, but never a merge. Any other writing route, such as git refs, tags, releases,
+// dispatches, contents, statuses, Actions' secrets and variables, rulesets, or the repository's settings, is refused.
+const ISSUE_ROUTES = /^repos\/[^/]+\/[^/]+\/(?:pulls(?:\/\d+(?:\/(?:comments|reviews|requested_reviewers|update-branch)(?:\/[^/]+)*)?)?|pulls\/comments\/\d+(?:\/[^/]+)*|pulls\/\d+\/comments\/\d+\/replies|issues\/\d+(?:\/(?:comments|labels|reactions|assignees)(?:\/[^/]+)*)?|issues\/comments\/\d+(?:\/[^/]+)*)$/u;
+// The GraphQL mutations an issue session runs: on review threads, comments, reviews, reactions, labels, and its pull
+// request's draft state or reviewers. Any other, such as createRef, updateRefs, createCommitOnBranch,
+// mergePullRequest, or a ruleset's, is refused.
+const ISSUE_MUTATIONS = new Set([
+  'addComment', 'updateIssueComment', 'deleteIssueComment', 'minimizeComment', 'unminimizeComment', 'addReaction', 'removeReaction',
+  'addPullRequestReview', 'submitPullRequestReview', 'deletePullRequestReview', 'addPullRequestReviewComment', 'addPullRequestReviewThread',
+  'addPullRequestReviewThreadReply', 'updatePullRequestReviewComment', 'deletePullRequestReviewComment', 'resolveReviewThread', 'unresolveReviewThread',
+  'requestReviews', 'markPullRequestReadyForReview', 'convertPullRequestToDraft', 'addLabelsToLabelable', 'removeLabelsFromLabelable',
+]);
+
+// What a `gh api` call writes that a project run's issue session never writes, or null: a REST route outside
+// ISSUE_ROUTES with a writing method, which a field sent with no -X makes POST, or a GraphQL mutation outside
+// ISSUE_MUTATIONS, or one whose document cannot be read, as one read from a file or built at run time. `tokens` are
+// the call's words past `gh`, each { text, dynamic } as the shell lexer gives them: a word built at run time may name
+// any route or method, so a route or a method so built that may write is refused. Null for any other `program`.
+export function apiWrite(program, tokens) {
+  if (program !== 'gh') return null;
+  let at = 0;
+  while (at < tokens.length && tokens[at].text.startsWith('-') && !tokens[at].dynamic) at += GH_VALUES.includes(tokens[at].text) ? 2 : 1;
+  if (tokens[at]?.text !== 'api' || tokens[at].dynamic) return null;
+  let method = null;
+  let fields = false;
+  let route = null;
+  let named = false;
+  const sent = [];
+  const rest = tokens.slice(at + 1);
+  for (let i = 0; i < rest.length; i += 1) {
+    const { text: word, dynamic } = rest[i];
+    const [name, attached] = optionValue(word);
+    if (API_VALUES.has(name) && !dynamic) {
+      const given = attached === null ? rest[(i += 1)] : { text: attached, dynamic: false };
+      const value = { text: String(given?.text ?? ''), dynamic: given?.dynamic === true };
+      if (name === '-X' || name === '--method') method = value.dynamic ? '?' : value.text.toUpperCase();
+      if (API_FIELDS.has(name)) {
+        fields = true;
+        sent.push({ name, ...value });
+      }
+    } else if (word.startsWith('-') || (dynamic && named)) {
+      // An option built at run time may be a method or a field, and one that takes no value is a switch.
+      if (dynamic) method = '?';
+    } else if (!named) {
+      named = true;
+      route = dynamic ? null : word.replace(/^\/+/u, '').split('?')[0];
+    }
+  }
+  if (route === 'graphql') return graphqlWrite(sent);
+  const writes = method === null ? fields : method !== 'GET' && method !== 'HEAD';
+  if (!writes) return null;
+  if (route === null) return 'a forge API route built at run time, with a method that writes';
+  return ISSUE_ROUTES.test(route.replace(/^repos\/\{owner\}\/\{repo\}\//u, 'repos/o/r/')) ? null : `the forge API route ${route.slice(0, 120)}, which only the Human writes`;
+}
+
+// An option word of gh api as [name, attached value]: `--name=value`, a short option glued to its value, as `-XPOST`,
+// or the word alone with null.
+function optionValue(word) {
+  if (word.startsWith('--') && word.includes('=')) return [word.slice(0, word.indexOf('=')), word.slice(word.indexOf('=') + 1)];
+  if (/^-[XfFHqtp]./u.test(word)) return [word.slice(0, 2), word.slice(2)];
+  return [word, null];
+}
+
+// What the GraphQL call whose fields are `sent` writes that an issue session never writes, or null (apiWrite).
+function graphqlWrite(sent) {
+  if (sent.some(({ name }) => name === '--input')) return 'a GraphQL document read from a file or the input, which may hold any mutation';
+  const query = sent.find(({ text }) => /^query=/u.test(text));
+  if (!query) return sent.some(({ dynamic, text }) => dynamic && !/^\w+=/u.test(text)) ? 'a GraphQL field built at run time, which may be its document' : null;
+  const text = query.text.slice('query='.length);
+  if (query.dynamic) return 'a GraphQL document built at run time, which may hold any mutation';
+  if (query.name !== '-f' && query.name !== '--raw-field' && text.startsWith('@')) return 'a GraphQL document read from a file, which may hold any mutation';
+  const fields = mutationFields(text);
+  if (fields === null) return 'a GraphQL mutation whose fields cannot be read';
+  const other = fields.find((field) => !ISSUE_MUTATIONS.has(field));
+  return other ? `the forge's GraphQL mutation ${other.slice(0, 80)}, which only the Human runs` : null;
+}
+
+// The top-level fields of every mutation in the GraphQL document `text`, with strings and comments skipped and an
+// alias's own name read: [] for a document with no mutation, null for one this cannot read.
+function mutationFields(text) {
+  const tokens = text.replace(/"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\n]*/gu, ' " ').match(/[A-Za-z_][A-Za-z0-9_]*|\.\.\.|[{}():]|\S/gu) ?? [];
+  const fields = [];
+  let depth = 0;
+  let parens = 0;
+  let mutation = false;
+  let inside = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === '(') parens += 1;
+    else if (token === ')') parens -= 1;
+    else if (token === '{') {
+      depth += 1;
+      if (depth === 1) inside = mutation;
+    } else if (token === '}') {
+      depth -= 1;
+      if (depth === 0) [mutation, inside] = [false, false];
+    } else if (depth === 0 && parens === 0 && token === 'mutation') mutation = true;
+    else if (depth === 0 && parens === 0 && /^(?:query|subscription|fragment)$/u.test(token)) mutation = false;
+    else if (inside && depth === 1 && parens === 0) {
+      if (token === '...') return null;
+      if (!/^[A-Za-z_]/u.test(token)) continue;
+      if (tokens[i + 1] === ':') {
+        i += 1;
+        continue;
+      }
+      fields.push(token);
+    }
+  }
+  return depth === 0 && parens === 0 ? fields : null;
+}
 const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -570,6 +705,27 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The names of the repository's active CI workflows, for a project run's preflight.
     ciWorkflows: (repo, { host } = {}) => (rest(`repos/${repo}/actions/workflows`, { host })?.workflows ?? [])
       .filter((workflow) => workflow?.state === 'active').map((workflow) => String(workflow.name)),
+    // What guards the default branch and the tags of `repo`, for a project run's preflight: { branch, protected, tags },
+    // `branch` the default branch's name, `protected` whether branch protection or an active ruleset that asks for a pull
+    // request holds it, and `tags` each active tag ruleset, { name, refs, creation, bypass }: the ref patterns it
+    // includes, whether it restricts creating a matching tag, and whether the signed-in user may bypass it ('never',
+    // 'pull_requests_only', 'always', or 'exempt', as GitHub answers; null when it says nothing).
+    refProtection: (repo, { host } = {}) => {
+      const branch = rest(`repos/${repo}`, { host })?.default_branch;
+      if (typeof branch !== 'string' || branch === '') throw new Error('GitHub named no default branch');
+      const classic = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.protected === true;
+      const rules = list(`repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, { host });
+      const tags = list(`repos/${repo}/rulesets?targets=tag&includes_parents=true`, { host })
+        .filter((each) => each?.enforcement === 'active' && each?.target === 'tag' && Number.isSafeInteger(each?.id))
+        .map((each) => rest(`repos/${repo}/rulesets/${each.id}`, { host }))
+        .map((each) => ({
+          name: String(each?.name ?? ''),
+          refs: (Array.isArray(each?.conditions?.ref_name?.include) ? each.conditions.ref_name.include : []).map(String),
+          creation: (each?.rules ?? []).some((rule) => rule?.type === 'creation'),
+          bypass: typeof each?.current_user_can_bypass === 'string' ? each.current_user_can_bypass : null,
+        }));
+      return { branch, protected: classic || rules.some((rule) => rule?.type === 'pull_request'), tags };
+    },
     // The commit the branch `branch` of `repo` points to now, as a full SHA, or null when the answer names none.
     branchHead: (repo, branch, { host } = {}) => {
       const sha = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.commit?.sha;

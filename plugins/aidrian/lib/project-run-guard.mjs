@@ -140,6 +140,24 @@ export function ownAttemptFolder(project, config, mark, { base, home } = {}) {
   return null;
 }
 
+// The issue a session works, for the session whose unattended mark `mark` names the run and issue: { key, branch }, the
+// branch the run's snapshot names for that issue, while the issue runs and its latest start row was written ahead or
+// started, in a state folder of `project` (as ownAttemptFolder reads it), or null. The agent gate hook lets that session
+// push only that branch (lib/issue-forge-guard.mjs), and write by hand only the files named for its issue or branch in
+// the plans, tmp, and dispatch folders (lib/unattended-write.mjs).
+export function ownIssue(project, config, mark, { base, home } = {}) {
+  if (!mark?.project || !mark?.issue || !RUN_ID.test(mark.project)) return null;
+  for (const state of stateFolders(project, config, { lazy: true, ...(base ? { base } : {}), ...(home ? { home } : {}) })) {
+    const found = readRun(state, mark.project);
+    if (found.problem || found.states.get(mark.issue)?.state !== 'running') continue;
+    const start = startsOf(found, mark.issue).at(-1);
+    if (!start || !['started', 'uncertain'].includes(start.outcome)) continue;
+    const issue = found.snapshot.issues.find((each) => each.key === mark.issue);
+    if (typeof issue?.branch === 'string' && issue.branch !== '') return { key: issue.key, branch: issue.branch };
+  }
+  return null;
+}
+
 // Whether `row` is a start row as the gate writes it.
 export const isStartRow = (row) => row?.event === 'start' && typeof row.key === 'string' && ISSUE_KEY.test(row.key)
   && Number.isInteger(row.attempt) && row.attempt >= 1 && row.attempt <= ATTEMPT_CEILING && START_OUTCOMES.includes(row.outcome)

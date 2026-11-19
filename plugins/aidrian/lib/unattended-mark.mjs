@@ -235,6 +235,11 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   return pendingHold(pending, session, uid, now);
 }
 
+// Whether the mark `mark` (readUnattendedMark) holds a project run's issue session: it names an issue, as a tag of a
+// wrong shape does with `issue: null`, or it cannot be read, which may be one. A pending mark holds every session the
+// host did not list before a start, and is no issue's.
+export const issueHeld = (mark) => mark !== null && typeof mark === 'object' && mark.pending !== true && (mark.issue !== undefined || mark.root === null);
+
 // Whether an unattended mark, or a pending one, that holds names one of `roots`, the checkouts of a project, as its main
 // checkout: a session no Human attends, or one a gate is starting, belongs to that project. A mark or a folder that
 // cannot be read counts. lib/handoff-guard.mjs asks it only while the base branch's config cannot be read.

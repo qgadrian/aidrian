@@ -151,8 +151,9 @@ itself, `function claude`, which runs `claude` as before; when a handoff ends th
 with the current one; a session says when the block is older than the plugin, and when its terminal will stay
 behind at a handoff, as when a launcher or an editor command started it. An alias for `claude` that points
 elsewhere, such as `alias claude=~/.claude/local/claude`, runs past the function, and the block says so on stderr.
-A launcher on PATH that ends in `exec claude "$@"` follows too once named with `--wrap`, such as
-`aidrian shell-init zsh --install --wrap claude-work` ([Replacing the terminal](docs/handoff.md#replacing-the-terminal)).
+Most people type `claude` and need nothing more. `--wrap` is an advanced option, only for a launcher script on PATH
+that ends in `exec claude "$@"`, such as `claude-work`: `aidrian shell-init zsh --install --wrap claude-work` lets
+that script's terminal follow too ([Replacing the terminal](docs/handoff.md#replacing-the-terminal)).
 Sessions never run it for the Human: the agent gate refuses it, and a session hands over the command with `!` instead.
 Open a new terminal for it to take effect. To undo it:
 
@@ -187,7 +188,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pre-commit` | Refuses a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief, and arms the continuation that resumes from it. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
-| `aidrian shell-init` | Prints the shell function that opens the new session in the same terminal after a background handoff; `--install` adds it to the shell's startup file once, `--wrap` also under a launcher's name, `--uninstall` removes it. | [Let the terminal follow a handoff](#let-the-terminal-follow-a-handoff) |
+| `aidrian shell-init` | Prints the shell function that opens the new session in the same terminal after a background handoff; `--install` adds it to the shell's startup file once, `--wrap` (advanced) also under a launcher script's name, `--uninstall` removes it. | [Let the terminal follow a handoff](#let-the-terminal-follow-a-handoff) |
 | `aidrian quorum` | Runs Codex as a quorum adversary or advocate, checks a quorum ledger's citations, prints a mode's roles and caps from config.json, says what happens to one product decision, and records work continuing on a product ruling. | [Local state](docs/project-folder.md#local-state) |
 | `aidrian decisions resolve` | Says whether an agent may settle one decision or must ask the Human. | [Decisions](docs/config.md#decisions) |
 | `aidrian decisions list` | Lists the decisions agents made alone, from the markers in the indexed docs. | [Decision markers](docs/project-folder.md#decision-markers) |

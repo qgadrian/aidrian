@@ -487,7 +487,9 @@ An alias for `claude` takes the place of the function when typed. One whose valu
 elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
 the block prints one line on stderr that says so when the shell reads it.
 
-A launcher, a program on PATH that sets something up and ends in `exec claude "$@"`, opts in with `--wrap`:
+The plain `--install` covers a session started by typing `claude`, which is all most people need.
+`--wrap` is an advanced option for a launcher script: a program on PATH that sets something up and ends in
+`exec claude "$@"`, such as `claude-work`, opts in with
 `aidrian shell-init zsh --install --wrap claude-work`, repeatable. The block then also holds the same function under
 each name, `function claude-work`, whose first run is `command claude-work "$@"` with `AIDRIAN_SHELL_PID` set, and an
 alias check that accepts an alias whose value starts with `claude-work` or `claude`. Every later hop opens with

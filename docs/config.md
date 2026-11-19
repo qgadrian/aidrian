@@ -1735,11 +1735,13 @@ The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's sta
 A start that cannot go on safely halts: `aidrian project start` exits 1, its first line is `halt <cause>`, and no issue
 is parked. Most halts record nothing, such as a user the forge does not let push, a sandbox with no network, or a
 repository whose git config could run a program; fix the cause and start again. A start whose proof failed, as a
-session that never named itself or whose hooks never ran, gives its attempt back (a `void` start row, the issue open
+session that never named itself, whose hooks never ran, or whose sandbox proof failed
+([Claude Code](providers/claude-code.md#the-sandbox-proof)), gives its attempt back (a `void` start row, the issue open
 again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
 or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
 row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
-At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: the run is over, starts no
+At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: an end row counts only when
+the session that wrote it was the run's driver, by custody, at that row, and then the run is over, starts no
 issue, and no longer counts as active, and its driver mark stops holding the driver session
 ([hooks.md](hooks.md#agent-gates)). A run whose issues are all done or parked holds its driver until that row: its
 parked issues may still owe the Human's sign-offs, which come from a separate session the Human attends.

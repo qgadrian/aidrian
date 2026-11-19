@@ -45,8 +45,38 @@ function ledgerRows(file) {
   }
 }
 
-// Whether the ledger `rows` record the run's end: an `end` row `aidrian project end` wrote.
-export const endedIn = (rows) => rows.some((row) => row?.event === 'end' && typeof row.session === 'string');
+const SESSION = /^[\w-]{1,128}$/u;
+const SHA256 = /^[0-9a-f]{64}$/u;
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+const isSession = (value) => typeof value === 'string' && SESSION.test(value);
+// The time of a row's `at`, or NaN when it is not a timestamp as toISOString writes it.
+const timeOf = (row) => (typeof row?.at === 'string' && ISO.test(row.at) ? Date.parse(row.at) : Number.NaN);
+
+// Whether `row` moves custody from `driver`, { session, since }: a `driver` row that names a session, moves it from
+// the driver, carries the sha256 of the handed-over brief, and is dated no earlier than the row that made the driver.
+const movesCustody = (row, driver) => row?.event === 'driver' && isSession(row.session) && row.from === driver.session && SHA256.test(row.sha256 ?? '')
+  && Number.isFinite(timeOf(row)) && timeOf(row) >= driver.since;
+
+// The driver of a run, read through its ledger: { session, since }, the session the init row `init` names, then each
+// one a `driver` row of `rows`, the ledger's rows after init, moved custody to, with when the row that made it driver
+// was written. project-run-guard.mjs driverOf reads custody through it.
+export function driverAfter(init, rows) {
+  let driver = { session: init?.session, since: Date.parse(init?.at) };
+  for (const row of rows) if (movesCustody(row, driver)) driver = { session: row.session, since: timeOf(row) };
+  return driver;
+}
+
+// Whether the run `found`, { init, rows } with `rows` the ledger's rows after its init row, has ended: an `end` row
+// `aidrian project end` wrote, naming the session that was the run's driver, by custody, when the row was written. An
+// end row any other session wrote, as one a confined session planted, ends nothing.
+export function endedIn({ init, rows }) {
+  let driver = { session: init?.session, since: Date.parse(init?.at) };
+  for (const row of rows) {
+    if (movesCustody(row, driver)) driver = { session: row.session, since: timeOf(row) };
+    else if (row?.event === 'end' && isSession(row.session) && row.session === driver.session) return true;
+  }
+  return false;
+}
 
 // The project run `session` drives, as { run, project, root, state }, or null: from its driver mark alone, never from
 // the folder a call runs in, so a nested git folder or a folder outside the project changes nothing. `root` is the run's
@@ -62,7 +92,7 @@ export function runDriver(session, { env = process.env, home } = {}) {
   const held = { run: mark.run, project, root: mark.root, state: mark.state };
   if (!mark.run || !mark.state) return held;
   const rows = ledgerRows(path.join(mark.state, RUNS, mark.run, 'ledger.jsonl'));
-  if (rows !== null && endedIn(rows)) return null;
+  if (rows !== null && rows[0]?.event === 'init' && endedIn({ init: rows[0], rows: rows.slice(1) })) return null;
   return held;
 }
 

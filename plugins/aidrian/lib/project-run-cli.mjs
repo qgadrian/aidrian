@@ -9,10 +9,12 @@
 //   aidrian project result RUN ISSUE --file PATH   # the issue's own session records how it ended
 //   aidrian project handoff RUN BRIEF      # the driver records the brief its background continuation starts from
 //   aidrian project resume RUN             # an attended session lifts the halt a failed start proof put on the run
+//   aidrian project confine RUN ISSUE      # the issue's own session, as its first call, proves its sandbox holds
 //
 // The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder as lib/project-run.mjs
 // runPlace resolves and checks it. `--project` on init must name the project of the current folder's main checkout.
-// Exits: 0 on an answer; 1 on a refusal, a run that cannot be read, or bad arguments, after printing why.
+// Exits: 0 on an answer; 1 on a refusal, a run that cannot be read, a failed sandbox proof, or bad arguments, after
+// printing why.
 
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -22,24 +24,26 @@ import { resolvedPath } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { projectAt } from './project.mjs';
 import { pauseOf } from './project-limit.mjs';
+import { runConfine } from './project-confine.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
 import { endRun, recordHandoff, recordResult, resumeRun, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
-  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR]';
+  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR] | confine RUN ISSUE';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
-export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end'];
+export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end', 'confine'];
 // The positionals each action takes after its name.
-const POSITIONALS = { init: ['one run id'], next: ['one run id'], summary: ['one run id'], start: ['a run id', 'an issue key'], wait: ['one run id'], result: ['a run id', 'an issue key'], handoff: ['a run id', 'a brief'], resume: ['one run id'], end: ['one run id'] };
+const POSITIONALS = { init: ['one run id'], next: ['one run id'], summary: ['one run id'], start: ['a run id', 'an issue key'], wait: ['one run id'], result: ['a run id', 'an issue key'], handoff: ['a run id', 'a brief'], resume: ['one run id'], end: ['one run id'], confine: ['a run id', 'an issue key'] };
 
 export const commands = {
   project: {
     usage: USAGE,
     about: 'keep the record of a project run that works through a tracker project: init validates the snapshot input the driver session wrote from the tracker and starts run RUN, from the attended main session only; next prints the issue or issues to start, by blockers, then priority, then key, or done; summary writes the run\'s summary.md from its ledger; ' +
       'start, for the run\'s driver, starts the issue\'s own session in the background in its worktree, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
-      'resume, from an attended session only, lifts the halt a failed start proof put on the run; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold',
-    run: (args) => print(projectCommand(args)),
+      'resume, from an attended session only, lifts the halt a failed start proof put on the run; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
+      'confine, the first call of an issue\'s session on a host that proves its sandbox per start, tries from inside the sandbox what it must refuse, and hands the verdict to the start',
+    run: async (args) => print(await projectCommand(args)),
   },
 };
 
@@ -49,7 +53,8 @@ export const commands = {
 // an in-process caller can point it elsewhere. So are `forge`, the forge facade the team's policy and a merge are read
 // through, `spawn` and `wait`, the host adapter's stand-ins for its command and its pause, `pause`, wait's pause between
 // reads, `now`, and `platform`, the operating system a start's host sandbox runs on. Throws what parseArgs and
-// commandConfig throw, which lib/cli.mjs reports.
+// commandConfig throw, which lib/cli.mjs reports. `confine` returns a promise of the answer (lib/project-confine.mjs
+// runConfine), the others the answer itself.
 export function projectCommand(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform } = {}) {
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
@@ -67,6 +72,8 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
   const wanted = POSITIONALS[action];
   if (positionals.length !== wanted.length) return fail(`project ${action} takes ${wanted.join(' and ')}`);
   const [run, second] = positionals;
+  // Inside the session's sandbox, before anything of the project is read: the plan beside its clone names every probe.
+  if (action === 'confine') return values.project === undefined ? runConfine({ run, key: second, cwd, env }) : fail('project confine takes no --project: it runs in the clone its session started in');
   const project = projectAt(path.resolve(cwd, values.project ?? '.'));
   const config = commandConfig(project);
   if (action === 'init') {

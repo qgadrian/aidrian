@@ -19,6 +19,7 @@ import path from 'node:path';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { noteBeacon } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-confine.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { initRun, readRun } from '../plugins/aidrian/lib/project-run.mjs';
@@ -124,8 +125,10 @@ export function fakeForge(config, head, views = {}, { push = () => true } = {}) 
 // starts, in the folder it started in, under its name, with the ids of STARTED in order. `states` sets a listed
 // session's state by its full id ('working' by default); `stop` marks it stopped. `start` replaces the answer of `--bg`.
 // With `env`, each session `--bg` lists files its beacon under that environment, as the agent gate hook does on the
-// session's first tool call; `beacon: false` files none, as a host that does not run the plugin's hooks.
-export function fakeClaude({ dir, start = null, hidden = false, env = null, beacon = true } = {}) {
+// session's first tool call; `beacon: false` files none, as a host that does not run the plugin's hooks. Where the
+// start wrote a sandbox proof plan beside the clone, each such session also hands over the verdict `confine` gives for
+// that plan (passVerdict by default, as a session whose sandbox refused every probe; null hands none over).
+export function fakeClaude({ dir, start = null, hidden = false, env = null, beacon = true, confine = passVerdict } = {}) {
   const calls = [];
   const sessions = [];
   const states = {};
@@ -150,9 +153,27 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
     }
     if (!hidden) sessions.push({ id: ids.id, sessionId: ids.session, name, kind: 'background', cwd: options.cwd });
     if (!hidden && env && beacon) noteBeacon(ids.session, { env });
+    if (!hidden && confine) handVerdict(options.cwd, ids.session, confine);
     return { status: 0, stdout: `backgrounded · ${ids.id} · ${name}\n`, stderr: '' };
   };
   return { run, calls, sessions, states, starts: () => calls.filter((call) => call.args[0] === '--bg') };
+}
+
+// The verdict of a session whose sandbox refused every probe of `plan`, as `aidrian project confine` writes it.
+export const passVerdict = (plan, session) => ({ version: 1, run: plan.run, key: plan.key, attempt: plan.attempt, nonce: plan.nonce, session, pass: true, failed: [], probes: 12, at: new Date().toISOString() });
+
+// Writes in the drop folder beside the clone `work` the verdict `confine(plan, session)` gives, when the start wrote a
+// plan there.
+export function handVerdict(work, session, confine = passVerdict) {
+  const folder = path.dirname(work);
+  let plan;
+  try {
+    plan = JSON.parse(readFileSync(path.join(folder, CONFINE_PLAN), 'utf8'));
+  } catch {
+    return;
+  }
+  const verdict = confine(plan, session);
+  if (verdict) writeFileSync(path.join(folder, 'drop', CONFINE_VERDICT), JSON.stringify(verdict));
 }
 
 // The project, run, and helpers. `projectRun` is the committed projectRun, which allows runs and unverified hosts by

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
-import { accessProblem, cloneProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, confineReads, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -214,7 +214,8 @@ export default {
     // host's sandbox would let it write, and starts with `claude --bg --setting-sources user --settings <sandbox>
     // --strict-mcp-config --mcp-config <servers>` (hosts/claude-code-sandbox.mjs, claude-code-background.mjs), under the
     // name `<run> · <issue> · <attempt>`, with no agent and the driver session's permission mode and effort. A start holds
-    // the session only once the agent gate hook's beacon shows the plugin's hooks run for it. `access` halts on user
+    // the session only once the agent gate hook's beacon shows the plugin's hooks run for it, and the session's own
+    // `aidrian project confine` showed, from inside it, that the sandbox refuses what it must (confineProof). `access` halts on user
     // settings that would weaken the sandbox or run a command outside it, this plugin not enabled for the user, any other
     // plugin, a user skill, agent, or command with frontmatter hooks or MCP servers, an SSH origin, git's `store` helper,
     // and a Linux without bubblewrap or socat; `cloneProblem` on such a skill, agent, or command of the clone at any
@@ -235,8 +236,13 @@ export default {
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
       // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
       shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
-        session, cwd, name, prompt, env, hold, identify, beacon, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      // Each start proves, from inside the session, that the sandbox holds (lib/project-confine.mjs): its first call runs
+      // `aidrian project confine`, which tries what the sandbox must refuse, and the start holds the session only once the
+      // gate confirmed the verdict (`confined`). `confineReads` are the credential stores the proof tries to read.
+      confineProof: true,
+      confineReads: ({ env, home }) => confineReads({ env, home }),
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
+        session, cwd, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

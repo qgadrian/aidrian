@@ -60,6 +60,8 @@ const MARK_CAP = 64 * 1024;
 // file through others; test/project-start-guard.test.mjs holds the copies equal.
 export const RUN_TAG = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 export const ISSUE_TAG = /^(?:[A-Z][A-Z0-9]{0,15}-)?[1-9][0-9]{0,8}$/u;
+// The states a mark's `confine` tag takes (lib/project-confine.mjs): owed, passed, or failed.
+export const CONFINE_STATES = Object.freeze([true, 'passed', 'failed']);
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
@@ -109,7 +111,8 @@ function writeMark(folder, name, value) {
 
 // Files the mark of `session`, { root, cwd, at }, in markFolder(env), where `root` is the main checkout of the project the
 // gate ran in and `cwd`, when absolute, the folder it started the session in, after sweeping marks past MARK_AGE. `tags`,
-// { project, issue }, adds a project run's id and an issue key; a tag of a wrong shape writes nothing. Returns the file, or null when the session id cannot name a file, or the folder is a
+// { project, issue, confine? }, adds a project run's id, an issue key, and the state of the session's sandbox proof;
+// a tag of a wrong shape writes nothing. Returns the file, or null when the session id cannot name a file, or the folder is a
 // symlink, not a folder, or another user's, or the write fails. Never throws.
 export function markUnattended(session, { root, cwd = null, env = process.env, now = Date.now(), tags = null } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof root !== 'string' || !path.isAbsolute(root)) return null;
@@ -189,11 +192,14 @@ export function dropPending(file) {
   }
 }
 
-// The tags of a mark, { project, issue } with both or neither, or null when they have a wrong shape.
+// The tags of a mark, { project, issue } with both or neither, and, with both, `confine` when the session's start
+// proves its sandbox from inside it (lib/project-confine.mjs): true while that proof is owed, 'passed' once the start
+// confirmed it, or 'failed'; or null when they have a wrong shape.
 function tagsOf(value) {
-  if (value?.project === undefined && value?.issue === undefined) return {};
+  if (value?.project === undefined && value?.issue === undefined && value?.confine === undefined) return {};
   const ok = typeof value.project === 'string' && RUN_TAG.test(value.project) && typeof value.issue === 'string' && ISSUE_TAG.test(value.issue);
-  return ok ? { project: value.project, issue: value.issue } : null;
+  if (!ok || (value.confine !== undefined && !CONFINE_STATES.includes(value.confine))) return null;
+  return { project: value.project, issue: value.issue, ...(value.confine === undefined ? {} : { confine: value.confine }) };
 }
 
 // The mark of `session`, { root, cwd }, where `root` is the main checkout the gate named, or null when it named none
@@ -347,13 +353,14 @@ function readMark(file, uid, now) {
 
 // What a mark's value names: { root } with the main checkout or null, `cwd` when it names the folder the gate started the
 // session in, plus its tags when it carries any. A reader that must know whether the session works an issue counts
-// `root: null` as one it cannot tell.
+// `root: null` as one it cannot tell. Tags of a wrong shape read `confine: 'failed'` too, so a session whose proof
+// cannot be read runs nothing.
 function markOf(value) {
   if (!isObject(value)) return { root: null };
   const root = typeof value.root === 'string' && path.isAbsolute(value.root) ? value.root : null;
   const start = root !== null && typeof value.cwd === 'string' && path.isAbsolute(value.cwd) ? { cwd: value.cwd } : {};
   const tags = tagsOf(value);
-  return { root, ...start, ...(tags ?? { project: null, issue: null }) };
+  return { root, ...start, ...(tags ?? { project: null, issue: null, ...(value.confine === undefined ? {} : { confine: 'failed' }) }) };
 }
 
 // The JSON value of the regular file `file`, read without following a link, or null.

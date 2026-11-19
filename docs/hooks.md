@@ -591,7 +591,8 @@ run's driver is held the same way, from its driver mark. Its `gh pr merge --auto
 (`graphql`, `/graphql`, `graphql/`, `graphql?x=1`, or an absolute URL whose path is GraphQL's, or an endpoint the
 shell builds) whose query is in a file it names or the shell builds, and fed text naming one, are refused: each leaves
 the merge to GitHub. Before any record is parsed, its pull request's record files are checked: more than 8, more than
-8 MiB in all, or one that is a link, a FIFO, a hard link, or over 2 MiB refuses. Every other merge such a
+8 MiB in all, or one that is a link, a FIFO, a hard link, or over 2 MiB refuses, and so does a records folder past
+20,000 entries, or one the guard cannot list within its time, each folder read one entry at a time. Every other merge such a
 session makes that the checks above let through, with a record or none, the Human's answer, or a waiver, must also:
 name its number and its full 40-character head (`--match-head-commit`, `sha=`, the merge tool's `sha`, or the GitHub MCP
 server's `expectedHeadSha`, which its merge passes to GitHub), in the repository the session is pinned to, its project
@@ -945,6 +946,16 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   first call, `beacon.<session id>.json` in the folder the gate files marks in, once: a host adapter that cannot
   otherwise tell whether its host runs this plugin's hooks for the session it started, as Codex's under `codex exec`,
   waits on it ([Project start](providers/codex.md#project-start)). A beacon lapses with the pending mark.
+- A session whose start proves its sandbox from inside it, as every Claude Code issue session's does
+  ([The sandbox proof](providers/claude-code.md#the-sandbox-proof)), runs only the exact
+  `aidrian project confine <run> <issue>` of its own issue, alone, in Bash, until the start files the passed proof in
+  its mark; a call it makes before then is refused, wherever it runs. Before the gate files its mark, the pending mark
+  holds a call in the clone it starts the same way, when the start wrote the proof's plan beside that clone. Once the
+  mark or the verdict in the drop folder says the proof failed, or the mark's proof state cannot be read, every call
+  is refused, the confine command too. The hook also refuses the confine command, and writes a failed verdict, when
+  its own environment, the host process's, holds a variable whose value names the attempt's `cache` folder. Only that
+  issue's session may run the confine command (`lib/project-run-guard.mjs`). A session with no proof in its mark
+  and no plan beside its clone, as Codex's, is not held so.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.

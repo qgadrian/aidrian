@@ -196,6 +196,13 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
   };
 }
 
+// The credential stores the sandbox denies reading for the user whose home is `home`, under `env`, which the per-start
+// sandbox proof tries to read from inside the session (lib/project-confine.mjs): the proof reads the ones there.
+export const confineReads = ({ env, home }) => {
+  const user = home ?? homedir();
+  return [...new Set([...credentialStores(user, configFolder(env, user)), ...npmGlobalConfigs(env)])];
+};
+
 // The npm config files a sandboxed command could read a registry token from beside ~/.npmrc: the user and global config
 // files the driver's environment names (npm_config_userconfig and npm_config_globalconfig, in either case), and
 // `<prefix>/etc/npmrc`, for the prefix it names and the one the npm first on PATH, in an absolute folder, lies under

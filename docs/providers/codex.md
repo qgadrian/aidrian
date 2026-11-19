@@ -273,6 +273,10 @@ Before `verified` changes, a live Codex must show every one of these:
     `[features.network_proxy.domains]`, whether the start's `-c` table replaces it, so that host is refused. Until it
     does, a Codex session's network is held by an unverified proxy alone, and a user proxy setting halts the start.
 13. What a usage limit and a rate limit leave in the `codex exec --json` log, so `logLimit` reads the real record.
+14. After the session replaces its attempt's `cache` folder with a link, an `apply_patch` through the link is refused.
+    Claude Code's per-start sandbox proof checks the same from inside the session, and that a `CLAUDE_ENV_FILE` line
+    reaches the sandboxed shell alone ([The sandbox proof](claude-code.md#the-sandbox-proof)); a Codex start runs no
+    such proof, so this check stands in for it.
 
 Codex residuals, each open until the live checks hold:
 

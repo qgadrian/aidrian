@@ -45,7 +45,7 @@ test('the driver starts the issue next lists in a fresh clone cut from the base 
   const [started] = fx.claude.starts();
   assert.equal(started.cwd, clone, 'the session starts in the attempt\'s clone');
   const name = 'launch · ENG-1 · 1';
-  const prompt = projectPrompt({ run: 'launch', key: 'ENG-1', attempt: 1, branch: 'feat/eng-1-export', clone, note: started.args.at(-1).split('\n').at(-1) });
+  const prompt = projectPrompt({ run: 'launch', key: 'ENG-1', attempt: 1, branch: 'feat/eng-1-export', clone, confine: true, note: started.args.at(-1).split('\n').at(-1) });
   assert.deepEqual(started.args.slice(0, 7), ['--bg', '--name', name, '--permission-mode', 'acceptEdits', '--setting-sources', 'user'], 'no agent: the driver\'s permission mode, and only the user\'s settings');
   assert.deepEqual([started.args[7], started.args[9], started.args[10], started.args[11]], ['--settings', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']);
   assert.equal(JSON.parse(started.args[8]).sandbox.enabled, true);
@@ -64,7 +64,7 @@ test('the driver starts the issue next lists in a fresh clone cut from the base 
 
   const { session } = STARTED[0];
   assert.deepEqual({ ...readFrom(fx.store, session), at: 0 }, { slug: 'project-launch', chain: 0, brief: null, route: 'background', at: 0 }, 'chain floor 0, no brief');
-  assert.deepEqual(readUnattendedMark(session, { env: fx.env, home: fx.home }), { root: fx.dir, cwd: clone, project: 'launch', issue: 'ENG-1' }, 'the mark names the folder the session starts in, its own clone');
+  assert.deepEqual(readUnattendedMark(session, { env: fx.env, home: fx.home }), { root: fx.dir, cwd: clone, project: 'launch', issue: 'ENG-1', confine: 'passed' }, 'the mark names the folder the session starts in, its own clone, and the proof the start confirmed');
   const record = readStarted(fx.store, DRIVER);
   assert.deepEqual([record.project, record.sha256, record.brief, record.session], [{ run: 'launch', issue: 'ENG-1', attempt: 1 }, null, null, session]);
 

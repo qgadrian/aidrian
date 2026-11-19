@@ -264,6 +264,19 @@ test('a connection the listener notes only after the verdict is read still fails
   // A listener that never notes the sentinel leaves the proof unverified, and so failed.
   const deaf = sentinelHits({ folder: at.folder, host: '127.0.0.1', port: listener.port, wait: 200, run: () => ({ stdout: '40000' }), pause: () => {} });
   assert.match(deaf.problem, /was not noted within 0\.2 seconds, so whether a connection reached it cannot be told/u);
+  // One deadline holds the connection and the reads together: a connection that took the whole wait leaves no read time.
+  let now = 0;
+  const pauses = [];
+  const late = sentinelHits({ folder: at.folder, host: '127.0.0.1', port: listener.port, wait: 5000, clock: () => now, run: (_command, _args, options) => {
+    assert.equal(options.timeout, 5000, 'the connection is held to the same wait');
+    now += 4900;
+    return { stdout: '40000' };
+  }, pause: (ms) => {
+    pauses.push(ms);
+    now += ms;
+  } });
+  assert.match(late.problem, /was not noted within 5 seconds/u);
+  assert.deepEqual(pauses, [50, 50], 'the 100 ms left, no more');
   assert.match(sentinelHits({ folder: at.folder, host: '127.0.0.1', port: 9 }).problem, /the start's own connection .* failed/u, 'a closed port');
 });
 

@@ -506,23 +506,25 @@ export function confineCheck({ folder, session, prints = {}, isAlive = alive, se
 
 // The connections the listener at `host`:`port`, whose hits file is in the attempt's folder `folder`, noted besides the
 // start's own: { others } or { problem }. A session's connection completes at the handshake, before the listener's
-// process notes it, so the file read alone may miss one. The start first connects itself, the sentinel, and waits up to
-// `wait` for the listener to note it: the listener accepts and notes connections in order, so every one made before
-// the sentinel is noted by then. Every line but the sentinel's counts, one noted after it too. A sentinel that cannot
-// connect, or that the listener never notes in time, leaves the proof unverified: a problem, which fails it.
-// `pause` and `run` (spawnSync's shape) are a test's.
-export function sentinelHits({ folder, host, port, wait = SENTINEL_WAIT, pause = pauseSync, run = spawnSync }) {
+// process notes it, so the file read alone may miss one. The start first connects itself, the sentinel, and waits for
+// the listener to note it, `wait` in all for the connection and the reads together: the listener accepts and notes
+// connections in order, so every one made before the sentinel is noted by then. Every line but the sentinel's counts,
+// one noted after it too. A sentinel that cannot connect, or that the listener never notes in time, leaves the proof
+// unverified: a problem, which fails it. `pause`, `run` (spawnSync's shape), and `clock` are a test's.
+export function sentinelHits({ folder, host, port, wait = SENTINEL_WAIT, pause = pauseSync, run = spawnSync, clock = Date.now }) {
   const unverified = (why) => ({ problem: `the start's own connection to the localhost listener outside the sandbox ${why}, so whether a connection reached it cannot be told` });
-  const connected = run(process.execPath, ['-e', SENTINEL, String(host), String(port), String(wait)], { encoding: 'utf8', timeout: wait + 2000 });
+  const deadline = clock() + wait;
+  const connected = run(process.execPath, ['-e', SENTINEL, String(host), String(port), String(wait)], { encoding: 'utf8', timeout: wait });
   const own = String(connected.stdout ?? '').trim();
   if (!/^[1-9][0-9]{0,4}$/u.test(own)) return unverified('failed');
   const line = `hit ${own}`;
-  for (let waited = 0; ; waited += 50) {
+  for (;;) {
     const read = readOnce(path.join(folder, HITS_FILE), 1024 * 1024);
     if (read.problem) return unverified(`was not noted: its hits file ${read.problem}`);
     const lines = (read.text ?? '').split('\n').filter(Boolean);
     if (lines.includes(line)) return { others: lines.length - 1 };
-    if (waited >= wait) return unverified(`was not noted within ${wait / 1000} seconds`);
-    pause(50);
+    const left = deadline - clock();
+    if (left <= 0) return unverified(`was not noted within ${wait / 1000} seconds`);
+    pause(Math.min(50, left));
   }
 }

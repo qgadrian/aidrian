@@ -8,8 +8,8 @@ import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { committedConfig, firstTip, loadConfig, originDefaultTip, stateDirProblem } from '../config.mjs';
-import { isDirectory, isFile, isWithin, resolvedPath } from '../fs.mjs';
-import { checkoutRoots, runGit } from '../git.mjs';
+import { isWithin, resolvedPath } from '../fs.mjs';
+import { holdsCheckout, repositoryCheckouts } from '../git.mjs';
 import { remotesNaming } from '../remotes.mjs';
 import { committedConfigFile, DEFAULT_CONFIG, recordsFolder, stateDir } from '../project.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
@@ -82,22 +82,6 @@ function onDiskPath(file) {
 // A path as named and on disk, each in the spelling the comparison reads.
 const spellings = (file) => [file, onDiskPath(file)].filter(Boolean).map(spelled);
 
-// Whether git keeps a work tree at `dir`. A repository whose git folder lies apart has that folder listed as its main
-// entry, and a worktree whose folder is gone stays listed: neither is a checkout.
-const holdsCheckout = (dir) => isFile(path.join(dir, '.git')) || isDirectory(path.join(dir, '.git'));
-
-// Every checkout of this repository: the listed ones, and the one the project is in. Null when git cannot answer. git runs
-// only at the project root, where it meets the checkout's own `.git` first, so no answer depends on the state folder.
-function repositoryCheckouts(project, git) {
-  const listed = runGit(['worktree', 'list', '--porcelain'], project.root, git());
-  const roots = listed.status === 0 ? checkoutRoots(project.root, git()) : null;
-  if (!roots) return null;
-  const entries = listed.stdout.split('\n\n').filter((entry) => !entry.split('\n').includes('bare'));
-  // Each path exactly as git prints it, which is raw: the rest of its line, whatever that line holds.
-  const paths = entries.map((entry) => entry.split('\n').find((line) => line.startsWith('worktree '))?.slice('worktree '.length)).filter((dir) => dir && holdsCheckout(dir));
-  return [...new Set([roots.current, ...paths])];
-}
-
 // The refusal for a state folder inside the checkout `top`. A folder the config names moves by the config. The default
 // folder has nothing in the config to clear, so it moves by the config or by this machine's state root.
 function insideProblem(project, working, top) {
@@ -134,7 +118,9 @@ export function insideCheckout(project, working, git) {
   let tops;
   try {
     folder = [...spellings(state), ...spellings(records)];
-    tops = repositoryCheckouts(project, git);
+    // git runs only at the project root, where it meets the checkout's own `.git` first, so no answer depends on the
+    // state folder.
+    tops = repositoryCheckouts(project.root, git);
   } catch {
     tops = null;
   }

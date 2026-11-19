@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
+import { remoteIdentity, repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 
 // repoIdentity is the facade's own helper: it reads a remote or a `-R` value before any forge is chosen.
 test('repoIdentity reads every form of a repository to its host and full path', () => {
@@ -29,9 +29,34 @@ test('repoIdentity reads every form of a repository to its host and full path', 
 });
 
 test('repoIdentity is null for what names no repository, a local remote included', () => {
-  const local = ['/srv/git/acme/notes.git', './acme/notes', '../notes', '~/repos/acme/notes', 'C:/repos/acme/notes', 'c:\\repos\\acme\\notes', 'file:///srv/git/acme/notes.git'];
+  const local = ['/srv/git/acme/notes.git', './acme/notes', '../notes', '~/repos/acme/notes', 'C:/repos/acme/notes', 'c:\\repos\\acme\\notes', 'file:///srv/git/acme/notes.git', 'file://github.com/acme/notes', 'FILE://github.com/acme/notes.git'];
   for (const value of [...local, '', 'notes', '/', 'acme//notes', 'https://github.com/', 'https://github.com/notes', 'git@github.com:notes.git', 'ssh://[bad', null, undefined, 42, {}]) {
     assert.equal(repoIdentity(value), null, String(value));
+  }
+});
+
+test('remoteIdentity reads a network remote alone: a path git reads as a folder names no repository', () => {
+  for (const url of ['https://github.com/acme/notes.git', 'ssh://git@github.com/acme/notes', 'git@github.com:acme/notes.git', 'github.com:acme/notes']) {
+    assert.deepEqual(remoteIdentity(url), { host: 'github.com', path: 'acme/notes' }, url);
+  }
+  // git reads each of these as a folder relative to the repository, and repoIdentity as `[host/]owner/repo`.
+  for (const url of ['vendor/mirror.git', 'vendor/mirror', 'github.com/acme/notes', 'srv/git/acme/notes.git', '/srv/git/acme/notes.git', './acme/notes', 'C:/acme/notes', 'file:///srv/acme/notes.git', 'file://github.com/acme/notes', '', null]) {
+    assert.equal(remoteIdentity(url), null, String(url));
+  }
+  assert.deepEqual(repoIdentity('vendor/mirror.git'), { host: 'github.com', path: 'vendor/mirror' }, 'a -R value keeps its bare form');
+});
+
+test('an scp-style remote takes its host from before the first colon, whatever `@` its path holds', () => {
+  // git reads `host:path` up to its first colon: a user name holds no colon, so the path never supplies the host.
+  const cases = [
+    ['evil.com:foo@github.com:acme/notes', 'evil.com', 'foo@github.com:acme/notes'],
+    ['git@evil.com:foo@github.com:acme/notes', 'evil.com', 'foo@github.com:acme/notes'],
+    ['host:owner@x:y/repo', 'host', 'owner@x:y/repo'],
+    ['host:owner@x/repo', 'host', 'owner@x/repo'],
+  ];
+  for (const [url, host, repoPath] of cases) {
+    assert.deepEqual(remoteIdentity(url), { host, path: repoPath }, url);
+    assert.deepEqual(repoIdentity(url), { host, path: repoPath }, url);
   }
 });
 
@@ -51,4 +76,15 @@ test('repoIdentity reads ssh.github.com, GitHub\'s SSH endpoint on port 443, as 
     assert.deepEqual(repoIdentity(value), { host: 'github.com', path: 'acme/notes' }, value);
   }
   assert.deepEqual(repoIdentity('ssh://git@ssh.ghe.acme.io:443/acme/notes'), { host: 'ssh.ghe.acme.io', path: 'acme/notes' }, 'only the alias it knows');
+});
+
+test('repoIdentity refuses a value past REPO_IDENTITY_MAX at once, and trims the slashes of a value within it', () => {
+  const started = Date.now();
+  for (const value of [`https://github.com/a/${'/'.repeat(60_000)}x`, `a${'/'.repeat(60_000)}x`, `git@github.com:a/b${'/'.repeat(60_000)}`]) assert.equal(repoIdentity(value), null);
+  assert.ok(Date.now() - started < 100, `${Date.now() - started} ms`);
+  const within = Date.now();
+  assert.deepEqual(repoIdentity(`https://github.com/acme/notes${'/'.repeat(900)}`), { host: 'github.com', path: 'acme/notes' });
+  assert.equal(repoIdentity(`acme/${'/'.repeat(900)}x`), null);
+  assert.ok(Date.now() - within < 100, `${Date.now() - within} ms`);
+  assert.equal(repoIdentity(`https://github.com/acme/${'n'.repeat(1100)}`), null, 'past the cap');
 });

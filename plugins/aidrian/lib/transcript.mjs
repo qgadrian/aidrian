@@ -12,10 +12,17 @@ import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'];
 const emptyUsage = () => ({ calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
 
+// The entry of `key` in the plain object `record`, made by `make` when missing, as an own data property: a key from a
+// transcript, such as a model named __proto__, then names its own entry and never reaches Object.prototype.
+function ownEntry(record, key, make) {
+  if (!Object.hasOwn(record, key)) Object.defineProperty(record, key, { value: make(), enumerable: true, writable: true, configurable: true });
+  return record[key];
+}
+
 // Adds one request's tokens to its model's usage. A request whose prompt is over its price row's `over.prompt` is also
 // added to the usage's `over`, the part billed at the higher price (lib/model-prices.mjs costUsd); sumTokens reads the whole.
 function addTokens(perModel, model, tokens) {
-  const m = (perModel[model] ??= emptyUsage());
+  const m = ownEntry(perModel, model, emptyUsage);
   const tier = priceFor(model)?.over;
   const parts = tier && promptTokens(tokens) > tier.prompt ? [m, (m.over ??= emptyUsage())] : [m];
   for (const part of parts) {
@@ -108,7 +115,7 @@ export function estimateCostUsd(perModel) {
       continue;
     }
     const cost = costUsd(usage, price);
-    byModel[model] = Math.round(cost * 10000) / 10000;
+    ownEntry(byModel, model, () => Math.round(cost * 10000) / 10000);
     total += cost;
   }
   return { total: Math.round(total * 10000) / 10000, unknownModels, byModel };

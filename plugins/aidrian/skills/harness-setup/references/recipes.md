@@ -34,6 +34,16 @@ also run whole tracker projects with no one watching? Two choices, in this order
   and the proposal names each kept key. Leave out `git.mainCheckout`: Q5 writes the guard, last.
 - `github.requiredChecks`: put the names of the CI checks the project's workflows run on a pull request in place of `"test"`.
   With none found, leave the key out, and the report says auto-merge stays off until it names one.
+- `full-autonomy`, `full-autonomy-solo`, and `autopilot`: put the project's web screens in place of the placeholder target in `review.visual.targets`,
+  one target per group of screens, each with its files' globs and the routes that show them. `review.visual.platform`
+  takes only `"web"`: with no web screen, such as a native-only app, leave out `review.visual` and still set
+  `review.productFeedback` with `files`, and the report says no capture covers its screens. Set
+  `review.productFeedback.files` to the project's UI file patterns: every screen component, the hooks and helpers beside
+  them, the locales, and the styles. Unset, it falls back to the targets' files, and a pull request whose every changed file is outside them, on the
+  default branch and the base alike, can pass with no feedback. With no screen yet, leave out
+  `review.visual` and `review.productFeedback`. The report says the screen check is off, and that with the first UI of
+  any kind, native included, the team turns on `review.productFeedback.auto` with `files`, and adds `review.visual`
+  only for web screens. `aidrian check` warns only about a tracked web screen, so a native screen gets no reminder.
 - Set `requires.aidrian` to the running plugin's version when the recipe sets any `github.autoMerge`,
   `unattendedWaiver`, `review.unattendedSignoff`, `session.handoff.continue`, `solo`, or `projectRun` key.
 - `full-autonomy-solo`: the report says the Human merges the change that adds `solo`, since auto-merge never merges a

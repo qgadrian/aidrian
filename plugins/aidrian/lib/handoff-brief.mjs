@@ -26,12 +26,13 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
-import { openStore, readFrom, stampChecked, verifyKept } from './handoff-markers.mjs';
+import { projectStore } from './handoff-continue.mjs';
+import { readFrom, stampChecked, verifyKept } from './handoff-markers.mjs';
 import { resolvePrior, samePath, takeSnapshot, unreadable, writeSnapshot } from './handoff-prior.mjs';
 import { sectionProblems, supersedesProblem, unresolvedProblem } from './handoff-sections.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { findWrapViolations } from './markdown-wrap.mjs';
-import { projectAt, stateDir } from './project.mjs';
+import { projectAt } from './project.mjs';
 import { usageLines } from './usage.mjs';
 
 const CARRIED_SECTION = /^(decisions|gotchas|next steps|key paths|open risks)\b/i;
@@ -110,7 +111,7 @@ export const commands = {
 function continueSetting(project, config, env = process.env) {
   let store;
   try {
-    store = openStore(stateDir(project, { config, env }), { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
+    store = projectStore(project, config, env);
   } catch {
     return { store: null, floor: 0 };
   }

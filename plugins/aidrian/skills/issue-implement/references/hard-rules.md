@@ -53,6 +53,8 @@ Note each in the report under decided alone.
   A shell that drifted back to the main checkout gives a clean, meaningless result: a subagent's Bash folder resets between calls,
   so every command names its worktree in the same call (`git -C <worktree>`, `cd <worktree> && …`, or the runner's root flag).
 - **Check each claim.** After a dispatch, confirm with git that the claimed files changed. Never report a result no handoff or command shows.
+  A test, check, or CI result quotes output a tool returned in this run; a run stopped or still running is "not finished",
+  never a result. The pull request body rule and the subagent stop hook refuse a pass no finished run shows.
 - **Keep internal data out of web searches**: no issue text, code, or tool output.
 
 ## Tracker writes

@@ -7,6 +7,7 @@ costs more, and lets it hand off, ask, or carry on. This page is the feature in 
 - The [session-length reminder](#the-reminder): the Stop hook, at the end of a main-session turn.
 - The [plan handoff offer](#the-plan-offer): when the Human approves a plan.
 - The [continuation](#continue): how the session goes on once the brief is written.
+- The [snapshot](#the-snapshot): `aidrian session snapshot`, the same numbers for a status line.
 - The [cost model](#the-cost-model) both use, with its measured constants.
 - The [config](#config): `session.handoff` in config.json.
 - The [skills](#the-skills) that write and read the brief: `session-handoff` and `session-continue`.
@@ -72,11 +73,15 @@ their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at eac
 `maxTokens × 2^n` after `n` firings. Its message names the context only, with no `r` or `N`.
 
 **Re-arming.** A marker in the hooks' counts folder, `<state root>/hook-counts/aidrian-session-length-<session id>`,
-read and written only as the user's own regular file, never through a link or a FIFO, holds
+read only as the user's own regular file, never through a link or a FIFO, and written, in a folder the user alone
+owns, as a new temporary file, mode 0600, renamed over it, which `aidrian session snapshot` reads at the same path, holds
 `{"lastRatio": r, "tokens": n, "compactions": n}`: the cost ratio at the last cost firing (0 for none), how often the
 ceiling fired, and the compactions seen. A firing changes only what its own trigger holds: a cost firing records its
 ratio, and a ceiling firing raises its count past every doubling the context already reached, so a jump of two
 doublings in one turn is not reminded again at the next.
+`stopMarkerPath` in `lib/session-length.mjs` builds the path, for the hook and the [snapshot](#the-snapshot) alike, and
+gives none for a session id that fails `SESSION_ID`. The hook reads the marker only when it is a regular file this user
+owns, under 64 KiB, opened without following a symlink, and writes it as a new temporary file, mode 0600, renamed over it.
 A marker older versions wrote reads as follows. A mode word or one count is one firing of each trigger, the cost one
 at `costRatio`, at the session's current compactions. A marker from v0.28.0 to v0.47.0,
 `{"ratio": n, "tokens": n, "compactions": n}`, keeps its own `tokens` and `compactions`; a `ratio` above 0 is a cost
@@ -110,7 +115,7 @@ and the two give a ladder:
 | Warn only | `mode: "ask"`, `continue: "none"` | The agent asks; on a yes it writes the brief and prints the resume line. |
 | Brief, no new session | `mode: "auto"`, `continue: "none"` | The agent writes the brief unasked and prints the resume line. |
 | Brief, then a clear | `mode: "auto"` or `"ask"`, `continue: "clear"` | The brief, then the Human types the clear command and one message, and the new session resumes from the brief with nothing else typed. |
-| Fully automatic | `mode: "auto"` on the base branch, and `"handoff": { "background": "on" }` in this machine's `.aidrian.local.json` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on. |
+| Fully automatic | `mode: "auto"` on the base branch, and `"handoff": { "background": "on" }` in this machine's `.aidrian.local.json` | The brief is written, a new session is started in the background that resumes from it, and nothing is typed. The old session ends its turn with one line on where the work goes on; with the [shell function](#replacing-the-terminal), it also ends itself, and its terminal opens the new session. |
 
 The `continue` default follows `mode`: with `mode: "auto"` and no `continue`, the route is `"background"`; with any
 other mode it is `"none"`. A `continue` that config.json sets always wins, so `mode: "auto"` with `continue: "none"`
@@ -135,7 +140,8 @@ Two switches more hold it, both read as `github.autoMerge` reads its own, so nei
 
 - **The team's**, read from the config.json the base branch commits (origin's default branch, or the local `main`
   with no remote), never from a worktree's copy: it must resolve `continue` to `"background"` there too. The route's
-  `maxChain` is that commit's, and at most 5 whatever it says.
+  `maxChain` is that commit's, and at most 5 for any number it says; `"unlimited"` lifts that cap, and then only the
+  [progress check](#the-progress-check) bounds the chain.
 - **The machine's**, `handoff.background: "on"` in the main checkout's `.aidrian.local.json`, a file git does not
   track. A copy in a worktree, a tracked file, and an error in the file read `"off"`, and a subagent may not set it.
 
@@ -180,18 +186,24 @@ whatever the config says, and `background` only when the config says `"backgroun
 2. `none` prints `continue: none` and exits 0.
 3. A fallback prints `continue: none` and one `fallback:` line, exit 0: the host does not list the route, or tells the
    command no session id; the slug is not letters, digits, dots, dashes, and underscores, up to 100; the path holds a
-   control character; the store resolves inside a checkout of the repository, as with `state.dir` set to a folder in
-   it; the state, handoffs, or store folder is owned by another user or writable by every user, where the system has
-   user ids (not on Windows, where Node reports every writable folder as writable by others); or the brief's chain
-   is `maxChain` or more, on the background route the base branch's `maxChain`, at most 5.
+   control character; the store resolves inside a checkout of the repository, the main checkout or any linked
+   worktree, as with `state.dir` set to a folder in it, or a relative `state.dir` of a project below the repository
+   root, which resolves against that root, or git cannot list those checkouts; the state, handoffs, or store folder
+   is owned by another user or writable by every user, where the system has user ids (not on Windows, where Node
+   reports every writable folder as writable by others); or the brief's chain is `maxChain` or more, on the
+   background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
    On the background route, a confined issue session, one whose unattended mark names an issue of a project run, starts
    no continuation, before any store or mark write: `continue: none` and the `fallback:` line `a confined issue session
    starts no continuation; push the work and hand the result over`. It pushes its work and records its result instead.
-   On the background route, a switch that is off, a working copy whose `state.dir` differs from the base branch's,
-   a session that did not start, and a started session the gate could not hold to a chain floor and stopped fall back
-   to the clear route instead where the host has it: `continue: clear`, the `fallback:` line, and the clear route's
-   `say:` line, with the clear continuation armed. A started session it could neither hold nor stop gives
-   `continue: none`, with a `fallback:` line that names it and the host's command to stop it, and arms nothing beside it.
+   On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
+   working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
+   the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
+   `continue: clear`, the `fallback:` line, and the clear route's `say:` line, with the clear continuation armed.
+   When the working copy's own `maxChain` is below the brief's `Chain`, as in a worktree older than a base branch that
+   says `"unlimited"`, no clear can be armed, and it prints `continue: none` and the reason, ending
+   `a person resumes the brief`. So does a hop past the 10,000 continuations a chain floor records, since a clear
+   would deliver the same chain. A started session it could neither hold nor stop gives `continue: none`, with a
+   `fallback:` line that names it and the host's command to stop it, and arms nothing beside it.
 4. A refusal exits 1 with the reason and the remedy on stderr, since the session can fix it: no passing check of the
    brief's current bytes (run `aidrian handoff check` first), a brief last written more than 15 minutes ago or dated in
    the future (refresh it), or a `Chain` below the floor this session was given (set it, and check again).
@@ -250,6 +262,33 @@ start context names; a session a person started by typing the resume writes 0.
   reads it is stricter, never void, so a lower `maxChain` in a worktree cannot drop it.
 - The gate falls back at `Chain` `maxChain` or more: with the default 3, briefs with Chain 0, 1, and 2 continue, and the
   brief the third continued session writes is resumed by a person, which starts the count again.
+  With `maxChain: "unlimited"` no count makes it fall back; on the background route the progress check still does.
+- A floor may name its `parent`, the session that handed off: the clear route writes the session that armed the clear,
+  and the background route the session that ran the gate. A parent is written only when it is a session id and not the
+  id the floor is filed under. Only [the snapshot](#the-snapshot) reads it, to show the pull requests and the ticket of
+  the sessions a handoff came from; no check, gate, or guard does, so a floor with no parent, or a malformed one, holds
+  the same chain.
+
+### The progress check
+
+Every background hop records, with the new session's chain floor, the progress it starts from: the tree of the branch
+the brief's Current state names (`Branch:`), read from the gate's folder, so work in a worktree counts from the main
+checkout too, or of HEAD there when that value is no branch name by git's own rules (`git check-ref-format --branch`)
+or names no branch. A backticked value is taken whole, with any `|` or space in it; a bare one ends at a `|` and loses
+only the spaces and `*` at its end. The record also holds the number of items under the brief's `## Done`. The next
+hop from that session compares its own brief with the record. A changed tree on the branch, or more Done items, is progress: an empty commit or a reworded
+one is not. Two hops in a row with neither, and the gate starts no session: the handoff goes on by the clear route,
+where a person looks, with the line
+`fallback: stuck: no new commits or finished steps over the last 2 handoffs; this handoff goes on by the clear route`.
+
+It always runs, whatever `maxChain` says, and it is what bounds a chain under `"unlimited"`. The records sit in the
+continuation store, which a subagent and a session the background route started may not write, and the hop that a
+person started, or a clear delivered, records none, so the count starts from 0 there; so does a floor whose progress
+has a shape this version does not read, which still holds its chain and route. The signal is cheap, not proof:
+a session that writes Done items it did not finish passes it, and so does one that changes a file and changes it back
+over two hops, which is why `maxChain` stays the default bound. Under `"unlimited"` one bound stays in code: a chain
+floor records at most 10,000 continuations and 10,000 Done items, and a hop past either starts no session and arms no
+clear: a person resumes the brief. A clear's delivery past 10,000 loads nothing either, and says why.
 
 ### The clear route
 
@@ -315,10 +354,11 @@ to another folder falls back to the clear route with that reason; committing `st
    keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
    permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
-   its next brief to the count. It reads the host's listing for the new session's full id for about 5 seconds; when the
-   listing lags, it files the floor under the short id the start printed, and every session id that starts with it
-   reads that floor. Under the same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`,
-   which names the project's main checkout, so the hooks know the session wherever its calls run (Limits, below).
+   its next brief to the count, and with it the progress the hop starts from ([The progress check](#the-progress-check)).
+   It reads the host's listing for the new session's full id for about 5 seconds; when the listing lags, it files the
+   floor under the short id the start printed, and every session id that starts with it reads that floor. Under the
+   same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`, which names the
+   project's main checkout, so the hooks know the session wherever its calls run (Limits, below).
    A start that surely made nothing, one whose host command never ran or refused the start in a way the host adapter
    knows, such as an untrusted folder, while the listing shows no new session, falls back to the clear route. A start
    whose outcome is unknown, such as one that exited non-zero for any other reason, timed out, was stopped by a signal,
@@ -333,7 +373,15 @@ to another folder falls back to the clear route with that reason; committing `st
 6. It records the start for this session, which stops the session from starting another until the host lists the
    started one as ended, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
-   host's command to open it. The skill tells the Human that line and ends the turn; the old session does nothing more.
+   host's command to open it. The line ends on what becomes of this session: with the
+   [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends, with
+   nothing to open by hand; without it, `This session has ended its work; the new one is <name>, open it with <the
+   host's command>.` A session the background route started, which no terminal follows, says it stops once this turn
+   ends, before the same words ([Replacing the terminal](#replacing-the-terminal)).
+   In `auto` mode, a session a Human attends whose shell never loaded the function, such as one started in a terminal
+   opened before `aidrian shell-init <shell> --install` wrote it, adds one line on why its terminal stays: start the
+   next session in a new terminal, or after reloading the shell's startup file.
+   The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
 
@@ -344,10 +392,12 @@ listing does not show ends as step 5 says, by the clear route only when nothing 
 
 Limits:
 
-- The old session stays open and idle: it spends no tokens while no turn starts, and the Human closes it at will.
-  Nothing closes it by itself. A turn that starts there after the gate, such as a background agent's report, runs
-  beside the new session in the same worktree, so the skill settles every agent first, as on the clear route, and
-  the prompt hook names the session that owns the work.
+- Without the [shell function](#replacing-the-terminal), an old session a Human attends stays open and idle: it spends
+  no tokens while no turn starts, and the Human closes it at will. An old session the background route started stops
+  itself in `auto` mode, so the host lists it as done rather than idle ([Replacing the terminal](#replacing-the-terminal)).
+  A turn that starts in an open one after the gate, such as a background agent's report, runs beside the new session
+  in the same worktree, so the skill settles every agent first, as on the clear route, and the prompt hook names the
+  session that owns the work.
 - The new session starts in the host's default model for that folder; a model the old session switched to in the
   session does not carry over. Its permission mode is the old session's, as step 3 says.
 - No Human attends the new session, so the [agent gates](hooks.md#agent-gates) hook refuses it the machine's switches
@@ -448,6 +498,344 @@ typed. None of them lifts the cap of 5 background continuations in a row (`BACKG
   there; move it away. What a session no Human attends may never do is write those files in the main checkout
   ([agent gates](hooks.md#agent-gates)).
 
+### Replacing the terminal
+
+With a block in the shell's startup file, a background handoff also replaces the old session in its terminal: the
+old session ends itself once its turn ends, and the same terminal opens the new one, with nothing typed. A host's
+plugins have no install step, and the startup file is the Human's, so the Human writes the block once, in a terminal,
+or in a session with the `!` prefix:
+
+```sh
+aidrian shell-init zsh --install    # or bash, into ~/.bashrc
+aidrian shell-init zsh --uninstall  # removes it
+```
+
+No agent runs either: the [Bash rule](hooks.md#bash-rules) `shell-init-install` refuses both to every agent call, the
+main session's too, and says to hand the Human the command with `!`. The session start's lines word it the same way.
+
+`--install` writes the block to `~/.zshrc`, `$ZDOTDIR/.zshrc` when `ZDOTDIR` is set, or `~/.bashrc`, creating the file
+when it is missing, between the lines `# >>> aidrian shell-init >>>` and `# <<< aidrian shell-init <<<`, and changes no
+other line. The block holds the shell function itself, so no plugin code runs when a terminal starts and nothing is
+looked up on PATH. A file that already holds a block gets the current text in its place, or is left as it is when the
+block is current; a file with a line of its own outside a block that runs `aidrian shell-init` is left as it is. The
+command says which. On macOS, `--install` for bash also warns when `~/.bash_profile`, which a new terminal reads, does
+not source `~/.bashrc`. `--uninstall` removes every block, from its start marker to its end marker, and nothing else;
+a start marker with no end after it changes nothing and exits 1. A startup file that is a link stays one, and keeps its
+mode. Each prints what it did. When a block differs from the current text, as after a plugin update that changed it,
+the session start adds a `Handoff terminal:` line that names the file and the command to hand the Human; it never
+rewrites the block itself.
+
+`aidrian shell-init zsh` (or `bash`) prints the same function, for a startup file that evals it, and exits 2 for any
+other shell. The function is named for each host program that can do it, today `claude`, and is declared as
+`function claude`, so neither shell expands an alias of that name in its definition. It runs the program as
+`command claude "$@"`, with `AIDRIAN_SHELL_PID` set to the shell's own pid. Once the program exits, it reads and deletes
+this shell's record, `$XDG_STATE_HOME/aidrian/handoff-terminals/<shell pid>`, a line `<id> <expiry in epoch seconds>`.
+When the record is a regular file this user owns, not a symlink, its expiry is neither past nor more than 65 seconds
+away, and the id is letters, digits, dashes, and underscores, 4 to 128 of them, starting with a letter or digit, it runs
+the host's command that opens that session, `command claude attach <id>`, and reads the record again once that exits.
+With no record, or one it refuses, it returns the exit code of the last program it ran. It runs nothing from the record
+but that id. Each exit is caught, and every variable is set before it is read, so a shell with `set -e` or `set -u`
+still reaches the record.
+
+Each time the function opens a session by a plain id, typed as `claude attach <id>`, after any options an alias adds, each with at most one value,
+or from the record, it first writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, in a
+folder that is a real one the user owns, made 0700 first, and deletes it once that program exits. Each run first
+deletes a record an earlier run left, so a terminal killed mid-run never follows a session it no longer shows. The gate
+of that session reads it, for 12 hours (`FOLLOW_AGE`), to know this terminal follows it, so a terminal the Human
+attached by hand switches on that session's handoff too. `claude attach '<name>'`, by a name, never matches, and that
+session's handoff only stops it.
+
+An alias for `claude` takes the place of the function when typed. One whose value starts with `claude`, such as
+`alias claude='claude --dangerously-skip-permissions'`, still reaches the function, flag and all. One that points
+elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
+the block prints one line on stderr that says so when the shell reads it.
+
+It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
+`"auto"`, on a host whose adapter declares `replaceTerminal` ([Adding a host](providers/adding-a-host.md)):
+
+1. Once the background session started and the gate recorded it, the gate asks the host adapter for this session's host
+   process. It must be a child of the shell `AIDRIAN_SHELL_PID` names, of the host's program, and attended by a Human,
+   as the host tells it. The gate then notes in the continuation store, `ending-<session>.json`, the host process, the
+   shell, and the new session's id and full id. When anything above is missing, it notes nothing, and the say line ends
+   with the plain line on how to open the new session instead. A session a Human attends that the shell function did
+   not start, while this machine's switch and the working config turn the route on in `auto` mode, gets a
+   `Handoff terminal:` line at its start that says its terminal will not follow, and names the install command
+   ([Start lines](hooks.md#start-lines)). When a startup file already holds the current block, it gets none: such a
+   session runs where that file did not start it, such as an editor's terminal, and an install would change nothing.
+2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
+   its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
+   shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
+   follows the new session, for 12 hours, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
+   hooks and shows the last message. It checks the process is still the host's program that shell started, and sends
+   the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
+   A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
+   skips the session-length reminder.
+3. The host's program exits, and the shell function opens the new session in the same terminal.
+
+The next hops chain the same way, so the terminal follows each session of the chain, however long. The session the
+terminal opens is a background session: no Human attends it as far as the hooks know, and it carries no
+`AIDRIAN_SHELL_PID`. When it hands off in turn, with every switch above on and its launch confirmed, the gate notes a
+request that names the session's own id in place of a host process; a session the host says a Human attends, as a
+former background session a Human resumed, never gets one. The request names a shell when one follows the session: the
+shell function's `follows-` record that opened it by the full id or a short one of at least 8 characters
+(`SHORT_ID_MIN`), or else the store's `follow-` record for it, under its full id or the short one the host printed,
+which can be stale; of each, the latest whose shell is alive and the parent of a `claude` process, as
+a terminal attached to the session is. The host adapter tells that (`replaceTerminal.hasClient`), by pid, parent, and
+program name alone. The say line then says the terminal switches, with nothing to open by hand. With no such shell, the
+request names none, and the say line says the session stops once this turn ends, then how to open the new one.
+
+Its Stop hook takes the request once, and checks that the session's own id is that id or starts with it and that no
+Human attends it. When the request names a shell that still runs a `claude` client, it writes the shell's record and
+passes the `follow-` record on to the next session. Either way it starts the helper, which ends that session alone,
+through the host's own stop command, `replaceTerminal.endOwn`, so the host lists it as done rather than idle. It stops
+nothing unless the host's listing names exactly one background session that is this very session under that id. On
+Claude Code that is `claude stop <id>`, and `claude attach` in the shell then exits 0, so the shell function opens the
+next session. The chain floor and its cap of 5 continuations in a row bound the hops: at the cap the gate goes on by
+none, and the session stays open. This is a provisional decision of the harness, which lets a session no Human attends
+end its own session and nothing else. Dropping the request that names a session's own id leaves the later hops open
+and idle, and puts them back on the plain line.
+
+Limits:
+
+- A subagent cannot run the gate, and its stop is not the Stop hook's, so no subagent ends a process or a session. A
+  session no Human attends ends only itself, through the host, and only once the session that took its work started;
+  it never names a process. Every other refusal of such a session stays, such as starting a session from a shell. The
+  store, where the request and the `follow-` record live, is closed to both, as for a chain floor.
+- When the Human leaves an attached session, the `follow-` record still says the terminal follows it. When that shell
+  runs a `claude` again by the session's handoff, the shell's record waits a minute for it to exit.
+- A host's own attach client may move to the new session by itself, as Claude Code's sometimes does. The old session
+  still stops, which ends a client still attached to it, and the terminal follows the next hop all the same.
+- The shell's record and its `follows-` record lie outside the continuation store, in a folder that is the user's
+  alone (0700), each record 0600; the gate reads no `follows-` record in a folder another user may write.
+  The [agent gates](hooks.md#agent-gates) hook refuses a write there to a subagent and to a session no Human attends, as
+  it refuses the unattended marks. Another process of the same user can still write one: it can only make the terminal
+  open a session by a plain id, within its minute, the next time a program the shell function ran exits.
+- A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
+  mid-turn. Its transcript is kept, and the work goes on in the new session.
+
+## The snapshot
+
+`aidrian session snapshot` prints what a status line shows about the session and the project at the current folder.
+The caller passes the session: it reads no host variable and no stdin.
+
+```text
+aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A|B] [--deadline-ms N] [--json|--line]
+```
+
+`--json`, the default, prints one object:
+
+| Key | What it holds |
+| --- | --- |
+| `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
+| `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
+| `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names, then those of the sessions a handoff came from ([Across a handoff](#across-a-handoff)): the forge's entries, then the unsupported ones, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks, inherited }`, below. `inherited` is a boolean: true for an entry of an earlier session. Null, and in `errors`, when the session has no folder, as for a state folder inside a checkout, or not the user's own. |
+| `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
+| `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
+| `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
+| `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
+| `ticket` | `{ key, source }` or null: a key of `--ticket-prefixes` in a branch name, such as `ABC-123`, else `#42` from a branch named `fix/42-slug`; `source` is `branch` for the current branch, `ledger` for a branch the session's ledger, or an earlier session's, recorded ([The ticket](#the-ticket)). |
+| `links` | `{ branch, worktree, source }` or null: the worktree the session created with `aidrian worktree new`, while git still lists it, `source` `own`, else the one an earlier session created, `inherited` ([The worktree](#the-worktree)). |
+| `errors` | The names of the sections that failed, never their error text. |
+
+Each section fails open: one that fails is null with its name in `errors`, and the command exits 0 whenever its
+arguments parse, so a status line never breaks. In a folder with no project every section but `session` is null,
+`errors` is empty, and nothing is written. Without `--session`, `handoff`, `prs`, `links`, and
+`worktrees.mergedNotCleaned` are null and `errors` does not name them, since what they read is kept per session; without
+`--transcript`, `handoff` is null the same way. A session id that fails `SESSION_ID` writes nothing, and names
+`handoff`, `prs`, `worktrees`, and `links` in `errors`.
+More than 32 ticket prefixes, or one that is not a letter and up to 15 letters or digits, make `ticket` null.
+
+**The shared decision.** `handoffStatus` in `lib/session-length.mjs` decides the level, and the Stop hook's reminder
+calls it for its own trigger, so the two never disagree. The first that holds wins:
+
+| `level` | When |
+| --- | --- |
+| `ceiling` | The token ceiling fires now. |
+| `due` | The cost trigger fires now. |
+| `reminded` | The reminder fired and still stands: the marker records a firing since the last compaction, no trigger fires now, and the trigger that fired still holds at its first threshold. The hook writes the marker on the turn it reminds, so this is what a snapshot reads during that turn. |
+| `offer` | The [plan offer](#the-plan-offer)'s threshold holds. |
+| `quiet` | None does. Under `mode: "off"` the hook never reminds, so the level is always `quiet`, and the numbers stay. |
+
+The snapshot is `due` or `ceiling` on exactly the turns the Stop hook reminds. It reads the hook's marker at the hook's
+own path, and the transcript through the usage cache, so each call folds only the lines written since the last one,
+after a hash of the first and the last 64 KiB it folded before shows they are unchanged: a transcript rewritten in
+place there, at the same length included, is folded again from the start ([Local state](project-folder.md#local-state)).
+A warm call reads those two windows, not every byte folded before, so it costs the same at any transcript size;
+a rewrite confined to the middle goes unseen, which display data allows, since a transcript is only appended to.
+Like the reminder, the handoff section is verified on Claude Code transcripts only.
+It needs the session's folder in the state folder, so when the state folder is inside a checkout of
+the repository, the main checkout or any linked worktree, as with `state.dir` set to a folder in the repository, or a
+relative `state.dir` of a project below the repository root, which resolves against that root,
+or when git cannot list the checkouts in time, the snapshot gives no handoff, lessons, or audits section, and
+names those with `prs` and `worktrees` in `errors`. A disk whose modes cannot keep the session folder to its user alone
+gives no handoff section either, and names `handoff`, `prs`, and `worktrees`. A state folder that fails the session folder's
+rule for it and every folder above it ([Local state](project-folder.md#local-state)), such as one another user owns, or
+one below a folder every user may write, gives no lessons, audits, or pull requests section, as it gives no session folder.
+A state folder outside every checkout can still hold one: with `state.dir` set to `..` in a repository whose folder is
+named `lessons`, `audits`, or `sessions`, that folder below the state folder is the checkout itself. So each folder the
+snapshot reads or makes below the state folder, the lesson inbox, the audits folder, the sessions folder, and the
+session's own folder, is resolved again, and one inside a checkout gives no section that needs it, with its name in
+`errors`. The snapshot resolves the state folder's real path once and reads every section through that path, so a
+symlink at `state.dir` repointed after the check moves no read.
+The hooks that write or deliver a continuation marker, and the gate, hold the continuation store to every checkout of
+the repository, and keep no marker there when git cannot list them. The agent gates' unattended check is the exception:
+it looks for a background chain floor in any store outside the project's own checkouts, even when git cannot list the
+rest, since a floor it finds only adds refusals.
+`chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
+armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
+from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's
+`maxChain`, at most 5, so the `chain` of a session the [background route](#the-background-route) started may be above
+`maxChain`: a floor is read whatever the limit. A background start arms nothing, so in the session that handed off
+`continueArmed` stays false and its level stands; the prompt hook names the session that owns the work now.
+`lastBrief` is the slug of the newest brief in the handoffs folder, whichever session wrote it: a regular file this
+user owns, never a symlink or a folder. A store the gate refuses leaves `chain`, `continueArmed`, and `lastBrief` null; `maxChain` still shows.
+
+**Worktrees.** `owned` counts the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is
+the head commit of a merged pull request of their branch, before [worktree cleanup](project-folder.md#task-worktrees)'s own tree and age
+checks: a worktree it counts may still hold work that cleanup asks about. The merged heads come from the forge for
+origin's repository alone, read as git fetches from it in the checkout the snapshot runs in (its first URL, after any
+`url.<base>.insteadOf` rewrite, with that checkout's own config, such as a worktree's), when origin is a network remote
+and the forge adapter serves it (github.com today), and are
+cached for a minute in the session's folder, with the repository they were read for. With no origin, one git reads as a
+folder on disk, such as `vendor/mirror.git`, or one on a host the adapter does not serve, `mergedNotCleaned` is null and
+`errors` does not name `worktrees`: that repository is unsupported, not failed. An origin git cannot read, as when it
+times out or fails for another reason than no such remote, leaves `mergedNotCleaned` null with `worktrees` in `errors`,
+and `owned` still shows. A cache of another repository, as after
+origin moved under a fixed `state.dir`, counts as none, so its heads are never shown for the new one. One session starts at most one forge call a
+minute, whatever became of the last and however many snapshots start at once: a snapshot records its attempt under the
+cache's reservation for the current fixed minute, a lock file only one process can create, and one that finds the
+reservation held, or an attempt another snapshot recorded first, starts no call and shows the cached count as stale.
+The minutes are fixed, so two snapshots that start together either side of a minute's boundary can each start a call;
+a reservation a killed snapshot left blocks only its own minute. The call has 4 s, or `--deadline-ms`, and is killed
+past it, and the cached count then shows with `stale: true`, or as null with `worktrees` in `errors` when there is none.
+A value too large for the cache's 1 MiB read is not stored, but the attempt is, so the minute still holds.
+
+**Pull requests.** `prs` reads the session's [ledger](hooks.md#session-ledger), its last 256 KB, no-follow and
+non-blocking, only while its session folder still passes that folder's rule ([Local state](project-folder.md#local-state))
+and it is a regular file this user alone owns and reads, dropping a first line the cut fell
+inside and a last line still being written. It keeps the rows on a host the forge adapter declares (github.com today)
+whose fields pass the adapter's `changeRef` and whose folder is absolute, and dedupes them by repository and number,
+else by repository and branch, `touched` rows as well as `pushed`. It orders them by each one's latest row, newest
+first, and keeps 25 refs at most, each a number or a branch, counted before branches resolve: a branch with no pull
+request uses one, and so does a row of an unsupported host. The adapter reads them all in one call (`changesState`),
+started in the session's folder, never in one a row names: a number is its own pull request; a branch whose newest row
+is `touched` is, as the `gh pr` call it records looked it up, an open pull request first, then the newest; any other
+branch is, among the pull requests whose head is that branch of the row's repository, in that repository or its parent, the one the
+signed-in user wrote first (`viewerDidAuthor`), then one by an owner, member, or collaborator of the repository
+(`authorAssociation`), then an open one, then the newest, so a fork's pull request from a branch of the same name never
+answers for it, another author's newer one from the same branch never replaces the user's, an outsider's newer open one
+never replaces a collaborator's merged one, and a branch pushed to a fork finds its pull request on the parent.
+It reads the 5 newest pull requests of the branch's name in each of the two repositories,
+so a name that 5 or more newer pull requests from forks share can crowd out the row's own, which then shows nothing.
+On a page GitHub says has more (`pageInfo.hasNextPage`) an older, better one may lie past it, so there the branch shows
+only a pick of the top class its row asks for, an open one for a `touched` row and the signed-in user's own open one for
+any other, and otherwise nothing. A page of exactly 5 with no more, or with no `pageInfo`, is read as whole.
+A branch with none gives no entry and no error. Two rows that answer the same pull request give one entry.
+Each entry is the forge-neutral row the adapter fills ([Adding a forge](providers/adding-a-host.md#adding-a-forge)):
+`forge` the adapter's `id`, `host` and `repo` the repository, `state` `open`, `closed`, or `merged`, `isDraft` a
+boolean, `mergeable` true, false, or null while the forge has not worked it out, `reviewDecision` `approved`,
+`changes_requested`, `review_required`, or null, `unresolvedThreads` the unresolved among the first 100 review threads,
+`checks` `{ passed, failed, pending, skipped }` counted over every check of the head commit with no check-name rule, and `url` the pull request's link on
+github.com, or null when the forge answered any other; a cached `url` shows only when it is the link the adapter's
+`changeUrl` builds for the entry's forge, repository, and number, else null. A row on a host no adapter declares, such as gitlab.com, passes
+the snapshot's own checks (a host name, an absolute folder, a positive number, a branch git takes) and shows with
+`unsupported: true`, no `forge`, and null for what the forge would answer; it starts no forge call. The ledger hook
+records rows only on a declared host, so such a row appears only from a ledger written another way, such as by a later
+adapter.
+The answer is cached for a minute in `prs-cache.json`, with the refs it answered, under the merged heads' rules: one
+forge call a minute at most, a 1 MiB read, and the 4 s budget, which the two reads share, this one first. A cached
+answer shows only for the refs the ledger still selects, so a pull request pushed out of the newest 25 leaves, and the
+section never holds more than 25 entries, unsupported ones counted. When a selected ref has no cached answer, as when
+the session touched a new pull request inside the minute, the entries show with `stale: true` until the next refresh.
+When none of them has one, inside the minute or past the deadline, `prs` is null with `prs` in `errors`, never an empty
+list that reads as no pull requests.
+Past the deadline the cached entries show with `stale: true`, or `prs` is null with `prs` in `errors` when there is none. An answer that holds errors still gives the
+pull requests that resolved; only one that does not parse, or the deadline, fails the read, and its text never shows.
+A ledger with no row, or whose rows resolve to none, gives `[]`. A ledger that cannot be read, such as a named pipe or
+a symlink there, makes `prs` null with `prs` in `errors`.
+A row whose time does not parse, or is more than 60 seconds after the snapshot's clock, is dropped where the rows are
+read, so a row dated next year cannot hold the first of the 25 places, or the ticket. After the clock is set back, the
+rows written before it stay hidden until the clock passes them.
+
+**Across a handoff.** A session a handoff started shows the pull requests of the sessions it came from too. The
+snapshot walks the [chain floors](#the-chain)' `parent` names back from the session, nearest first: at most 5 earlier
+sessions, as far back as a floor and a session folder live, 30 days. The walk ends at an id it has seen, the session's
+own included, compared in the case the disk folds to, at a floor with no parent, and once it has read 16 floor files.
+A floor filed under the short id a host printed gives a parent only when no other session folder name starts with
+that short id; both compare in the case the disk folds to, so on such a disk a folder whose name differs only in
+letter case is another session's, and the session's own folder in other letters is its own. Whether ids fold is
+the system's (`foldCase`: macOS and Windows fold), not the volume's, an accepted limit for display data: on a
+case-sensitive volume of those systems, two sessions whose ids differ only in letter case read as one.
+An earlier session hands down only its `created` and `pushed` rows, and only on a repository the project's remotes
+name (each remote's `url` and `pushurl`, read once a snapshot in the current folder, and only when there is an
+earlier session), and only the rows it wrote at or before the time of the hop that left it: what it did
+after it handed off is its own. A `touched` row, written when a session only viewed or commented on a pull request,
+stays with its own session, and so does a row on another repository. With remotes git cannot read, nothing is handed
+down, and no section fails. The session's own refs fill the 25 places first, newest first; then each earlier session
+adds, newest first, the refs no nearer session holds, until there are 25, and no further session's ledger is read once
+there are. Of an earlier session's ledger the snapshot reads the last 64 KB, from a folder it finds by the full id
+alone and never creates: a missing one gives no rows, and one, or a ledger, the session folder's rules refuse ends the
+walk there. A ref two sessions hold is the nearer one's, so a pull request of the session's own always shows as its own.
+The forge still gets one call of at most 25 refs. An inherited entry shows only while it is `open`; one that merged or
+closed is not shown, but its ref still used one of the 25 places, so fewer than 25 can show while an older open one is
+left out. An inherited row on a host no adapter declares shows, since nothing says it closed. The cache keeps its one
+key, its age: when a session cached its own rows before its floor was written, the earlier session's show up to 60
+seconds late. No row value reaches a process's argv, environment, or working folder: the forge still runs in the
+session's folder, and the remotes read and the ticket's branch read run in the current folder with constant
+arguments. The forge's one call does carry the selected refs, each repository, branch, and number, as GraphQL
+variables on its stdin, which is how it asks for them.
+A session a person resumes by typing, the first after `maxChain`, and every Codex session, which has no continue route,
+have no parent, and show their own rows alone.
+
+**The ticket.** One function, `ticketOf` in `lib/session-links.mjs`, holds every rule; the first that gives a key wins:
+
+1. The branch of the current folder: `source: "branch"`. This rule never reads a ledger, so a ledger that cannot be
+   read never hides the branch's ticket.
+2. With `--session`, the newest row of the session's ledger or of its `links.jsonl` whose branch holds a key; with none
+   there, the nearest earlier session's rows, as it hands them down, and so on: `source: "ledger"`. The newest is the
+   latest `at`, then on a tie a row of `links.jsonl` before one of the ledger, then the later line. A row of either
+   file is read only when it has the shape its writer gives it, each field checked, a ledger row on a host the forge
+   adapter serves by that adapter's own ref check (`ledgerRowCheck` in `lib/session-prs.mjs`), so a malformed row, the
+   session's own or an earlier session's, gives no ticket. The ledger leaves out a repeat within a minute of the row it repeats,
+   keeping that row's time, so a branch pushed again at once does not move forward; one pushed again later is written
+   with its new time, and its ticket is the newest.
+   A ledger or `links.jsonl` of the session's own that cannot be read makes `ticket` null with `ticket` in `errors`;
+   without `--session`, or with no session folder, this rule does not run.
+
+**The worktree.** `links` reads the session's `links.jsonl`, the worktrees its `aidrian worktree new` calls created
+([Session ledger](hooks.md#session-ledger)). It keeps the newest row of each key, `host/path:branch`, drops each whose
+`cwd` is not, string for string, the path of a worktree `git worktree list` names and does not mark prunable, and
+shows the newest left with `source: "own"`; with none left, it does the same for the nearest earlier session's rows,
+as that session hands them down, with `source: "inherited"`. An earlier session hands down a worktree row only on a
+repository the project's remotes name, or with no repository when they name none. So a worktree shows only while git
+lists it: once it is removed, pruned, or moved with `git worktree move`, it is gone, and a worktree switched to another
+branch still shows the branch it was made with. The list is the one the `worktrees` section reads, read once a
+snapshot and only when a row needs it, and no filesystem call is made on a row's value. `links` is null with `links`
+in `errors` whenever the snapshot cannot read the session's links: with an id that fails `SESSION_ID`, with no session
+folder, as for a state folder inside a checkout, with a file the session folder's rules refuse, such as a named pipe
+or a symlink, and when the worktree list cannot be read. It is null with `errors` not naming it without `--session`,
+as `prs` is, when the session has no `links.jsonl`, and when none of its rows names a worktree git still lists. The
+snapshot reads no host variable, so a host that gives its shell calls no session id shows the same as a call without
+`--session`.
+
+**Run time.** Every git call the snapshot starts, those of finding the project and its state folder included, is
+killed outright at git's 2 s limit, even one that ignores SIGTERM, and once one is, the later ones of the
+same run give up at once, but for the worktree list, which has its own 2 s. With the 4 s forge budget, a run takes at
+most about 8 s past its own reading. A caller, such as a status line command, sets its timeout above that, or kills
+the snapshot's whole process group, since a forge command it started may outlive it. No read of the state folder
+waits: a named pipe, or any other entry that is no regular file, at the lesson inbox or the audits triage file fails
+that section at once, as at a cache file or the ledger of the session's folder.
+
+**The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
+line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,
+`2.3x · handoff due, pays back in ~24 calls` at `due` and `reminded`, `handoff now` at `ceiling`, and ` · armed 1/3`
+while a continuation is armed), then the pull requests, `3 PRs · ✓2 ✗0 ⏳1`, when `prs` holds an entry, then
+`📥 1 P1 · ⚖️ 2 decisions · 🧹 1 worktree · 🔎 3 findings`, each part only above 0. The pull request summary counts pull
+requests, not checks: `✗` one with a failed check, `⏳` one with a pending check and none failed, `✓` one whose checks
+all passed or were skipped; one with no check counts in none.
+Every string from a file name, a cache, the ledger, or a forge loses its control, format, separator, and surrogate characters and is
+cut by code point, and neither output writes an escape sequence or any C0, C1, or DEL character but the final line feed.
+
 ## The cost model
 
 All costs are in input tokens of the model of the session's last main-session call.
@@ -492,7 +880,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | `session.handoff.costRatio` | The cost ratio of the first firing, a number of 1.1 or more; the reminder comes back once the ratio doubles since its last firing in `ask` mode, or climbs a step of `max(costRatio − 1, 1)` in `auto`, never below `costRatio`. |
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
-| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0; `3` by default. |
+| `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0, or `"unlimited"`; `3` by default. `"unlimited"` leaves the background route's [progress check](#the-progress-check), and the 10,000 continuations a chain floor records, to stop a chain. |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from
 `aidrian check` and every `aidrian` command:

@@ -33,12 +33,11 @@ import { userInfo } from 'node:os';
 import path from 'node:path';
 
 import { isObject } from './fs.mjs';
+import { SESSION_ID } from './handoff-markers.mjs';
 import { stateRoot } from './project.mjs';
 
 // The folder's name under the state root; lib/handoff-guard.mjs guards it by this name too.
 export const MARK_FOLDER = 'unattended';
-// A session id that may name a file.
-const SESSION_ID = /^[\w-]{1,128}$/u;
 // A short id a mark may be filed under, as a chain floor may (lib/handoff-markers.mjs).
 const SHORT = /^([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 const MARK = /^[\w-]{1,128}\.json$/u;

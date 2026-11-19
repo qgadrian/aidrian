@@ -27,6 +27,8 @@ import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
 import * as projectInit from '../lib/rules/project-init.mjs';
+import * as pushFirst from '../lib/rules/push-first.mjs';
+import * as shellInitInstall from '../lib/rules/shell-init-install.mjs';
 
 // Which rules start a process. Every rule first reads the command alone, and most stop there. A rule that needs the
 // project finds it (findProject), which runs git once inside a project folder. Past that, only these start one, and only
@@ -36,7 +38,9 @@ import * as projectInit from '../lib/rules/project-init.mjs';
 // (each search in a node:vm context, which starts no process); merge-review, git for the hold against the base branch, each read bounded at
 // 1 s (lib/review/in-force.mjs baseProblem), one gh pr view, bounded at 3 s, and, only under the unattended waiver's local switch for a merge
 // it could waive, one git call and up to six gh calls, none begun 4 s after this process started (each stopped
-// at that deadline at the latest; lib/review/waiver.mjs); ready-hold, git for the committed config and then, when the
+// at that deadline at the latest; lib/review/waiver.mjs); push-first, findProject for a command that runs any program
+// but readers such as git and grep, and for a full test suite command, git for the branch, its remote copy, and the
+// commits that copy lacks; ready-hold, git for the committed config and then, when the
 // project may run product feedback, gh under one deadline for all its calls, which ends 4 s after this process started
 // at the latest; ready-checks, for a ready it can read, gh under the same kind of deadline, a view and at most one GraphQL
 // read; and main-checkout, git, which runs last. ready-hold runs after merge-review, so a command that marks a
@@ -47,6 +51,7 @@ const RULES = [
   ['git-hook-bypass', gitHookBypass],
   ['git-amend', gitAmend],
   ['process-kill', processKill],
+  ['shell-init-install', shellInitInstall],
   ['grep-exit-chain', grepExitChain],
   ['dependency-link', dependencyLink],
   ['attribution', attribution],
@@ -69,6 +74,7 @@ const RULES = [
   // After the ready hold, which pays nothing in a project without product feedback: one pr view, and one GraphQL read
   // when no check is pending, under its own deadline that also ends 4 s after this process started.
   ['ready-checks', readyChecks],
+  ['push-first', pushFirst],
   ['main-checkout', mainCheckout],
 ];
 

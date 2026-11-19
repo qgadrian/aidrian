@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "requires": { "aidrian": "0.37.0" },
+  "requires": { "aidrian": "0.73.1" },
   "names": { "human": "the Human", "ai": "Aidrian" },
   "git": {
     "defaultBranch": "main",
@@ -12,5 +12,7 @@
     "requiredChecks": ["Check (Node 22)", "Check (Node 24)", "Check (Node 26)", "Conventional Commit title"],
     "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true }
   },
-  "review": { "engine": "codex-local", "record": "local" }
+  "review": { "engine": "codex-local", "record": "local" },
+  "session": { "handoff": { "mode": "auto" } },
+  "testing": { "fullSuite": ["npm run check", "npm test", "npm run test"], "pushFirstMinutes": 5 }
 }

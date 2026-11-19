@@ -5,12 +5,12 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { changeNotFound, CONFIG_COMMANDS, createGithubForge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE, TOKEN_VARS } from './github.mjs';
-import { repoIdentity } from './identity.mjs';
+import { changeNotFound, CONFIG_COMMANDS, createGithubForge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE, servedRepository, TOKEN_VARS } from './github.mjs';
+import { remoteIdentity, repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
-// text before any forge is chosen.
-export { repoIdentity };
+// text before any forge is chosen. remoteIdentity reads a remote URL alone, and is null for one git reads as a folder.
+export { remoteIdentity, repoIdentity };
 
 // Whether a forge call that reads one pull request (`change`) failed because the forge has no such pull request, which
 // is final, rather than because it could not answer now.
@@ -31,6 +31,11 @@ export const forgeTokenVars = () => [...TOKEN_VARS];
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };
+
+// The repository check: given origin's identity, as repoIdentity reads it, the repository as the active adapter names it
+// to its forge, or null when that adapter does not serve it. Pass the answer as a method's `repo` option; on null, call
+// no forge.
+export { servedRepository };
 
 // Whether a name is shaped like a login of the forge, as an invariant's `approvers` must be.
 export { isLogin };

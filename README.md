@@ -58,6 +58,13 @@ claude plugin marketplace add qgadrian/aidrian
 claude plugin install aidrian@aidrian-harness
 ```
 
+Optional: the [Claude mod](docs/claude-mod.md), a band above the prompt with the handoff verdict and the session's
+pull requests, a pane, and notifications. It needs the `aidrian` plugin:
+
+```sh
+claude plugin install aidrian-mod@aidrian-harness
+```
+
 ### Codex
 
 Run these in a terminal:
@@ -125,6 +132,34 @@ it does step 1 and that page in one session. It asks its questions before writin
 and prints the commit for step 2.
 On a set-up project, it says what to fix.
 
+## Let the terminal follow a handoff
+
+With the [fully automatic handoff](docs/handoff.md#continue), a session that runs long hands its work to a new
+background session. Run this once, in a terminal, so the terminal that ran the old session switches to the new one,
+and to each session after it:
+
+```sh
+aidrian shell-init zsh --install    # for bash: aidrian shell-init bash --install
+```
+
+Update the plugin first, `claude plugin update aidrian@aidrian-harness` for Claude Code
+([Update](docs/providers/claude-code.md#update)): an older copy answers `unknown command: shell-init`. Check that the
+`aidrian` the terminal runs is the new one.
+It writes a marked block to `~/.zshrc` (or `~/.bashrc`), and changes no other line. The block is the shell function
+itself, `function claude`, which runs `claude` as before; when a handoff ends the session, it opens the new one with
+`claude attach`. No plugin code runs when a terminal starts. Run again after a plugin update, it replaces the block
+with the current one; a session says when the block is older than the plugin. An alias for `claude` that points
+elsewhere, such as `alias claude=~/.claude/local/claude`, runs past the function, and the block says so on stderr.
+Sessions never run it for the Human: the agent gate refuses it, and a session hands over the command with `!` instead.
+Open a new terminal for it to take effect. To undo it:
+
+```sh
+aidrian shell-init zsh --uninstall  # removes the block and nothing else
+```
+
+Without it, nothing changes: the old session stays open beside the new one, and its last line names the command that
+opens the new one. [Replacing the terminal](docs/handoff.md#replacing-the-terminal) has the details.
+
 ## What is in the plugin
 
 ### Commands
@@ -144,10 +179,12 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pr checks` | Gives a one-line verdict on the checks. | [`pr-merge-when-green`](plugins/aidrian/skills/pr-merge-when-green/SKILL.md) |
 | `aidrian pr auto-merge` | Says whether a session may merge a pull request unasked. | [Auto-merge](docs/config.md#auto-merge) |
 | `aidrian pr disposition` | Decides what to do with one review finding. | [`pr-review`](plugins/aidrian/skills/pr-review/SKILL.md) |
+| `aidrian test changed` | Runs only the test files a change touches, the local check before a push; CI runs the full suite. | [Push first](docs/hooks.md#push-first) |
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |
 | `aidrian pre-commit` | Refuses a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief, and arms the continuation that resumes from it. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
+| `aidrian shell-init` | Prints the shell function that opens the new session in the same terminal after a background handoff; `--install` adds it to the shell's startup file once, `--uninstall` removes it. | [Let the terminal follow a handoff](#let-the-terminal-follow-a-handoff) |
 | `aidrian quorum` | Runs Codex as a quorum adversary or advocate, checks a quorum ledger's citations, prints a mode's roles and caps from config.json, says what happens to one product decision, and records work continuing on a product ruling. | [Local state](docs/project-folder.md#local-state) |
 | `aidrian decisions resolve` | Says whether an agent may settle one decision or must ask the Human. | [Decisions](docs/config.md#decisions) |
 | `aidrian decisions list` | Lists the decisions agents made alone, from the markers in the indexed docs. | [Decision markers](docs/project-folder.md#decision-markers) |
@@ -184,6 +221,7 @@ Codex names an agent `aidrian-<agent>`; ask for a skill by name.
 | [Adopting in a project](docs/adopting.md) | Finish setting up a project. |
 | [Claude Code](docs/providers/claude-code.md) | Update the plugin and see how Claude Code runs it. |
 | [Codex](docs/providers/codex.md) | Update the plugin and see how Codex runs it. |
+| [Claude mod](docs/claude-mod.md) | Install the band, pane, and notifications, or the status line fallback. |
 | [Agents and skills](docs/agents-and-skills.md) | Find the agent or skill for a job. |
 | [Agents](docs/agent-sources.md) | See how the agent sources are written and built. |
 | [Architecture](docs/architecture.md) | See how the plugin's parts fit together. |

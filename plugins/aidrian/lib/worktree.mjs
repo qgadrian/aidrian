@@ -87,7 +87,7 @@ function run(command, args, options = {}) {
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? result.error?.message ?? '' };
 }
 
-const gitIn = (root, args) => run('git', ['-C', root, ...args]);
+const gitIn = (root, args, options) => run('git', ['-C', root, ...args], options);
 const git = gitIn;
 const failure = (result) => result.stderr.trim() || result.stdout.trim() || `exited ${result.status}`;
 
@@ -182,8 +182,11 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
 
 // `git worktree list --porcelain` as [{ path, main, head, branch, locked, prunable }]. The first entry is the main
 // checkout, which `main` marks: its path is not always the folder (a separate git folder is listed in its place).
-export function listWorktrees(main) {
-  const listed = git(main, ['worktree', 'list', '--porcelain']);
+// `timeoutMs` stops a git that does not answer in time, by `killSignal` when given, which then throws as a failed list:
+// `aidrian session snapshot` passes git's own limit and SIGKILL, and cleanup waits as long as git takes.
+export function listWorktrees(main, { timeoutMs, killSignal } = {}) {
+  const limit = { ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }), ...(killSignal === undefined ? {} : { killSignal }) };
+  const listed = git(main, ['worktree', 'list', '--porcelain'], limit);
   if (listed.status !== 0) throw blocked('inspect-worktrees', failure(listed));
   return listed.stdout.split('\n\n').filter((block) => block.startsWith('worktree ')).map((block, index) => {
     const lines = block.split('\n');
@@ -207,10 +210,13 @@ export function parseDuration(text) {
 }
 
 // Head commits of merged pull requests, by branch name, or null when gh cannot answer (absent, offline, no GitHub).
-export function mergedHeads(main) {
+// `repo` names the repository to the forge, as its repository check gives it, `timeoutMs` bounds the forge's call, and
+// `killSignal` stops it there: `aidrian session snapshot` passes all three, with SIGKILL, and cleanup none.
+export function mergedHeads(main, { repo = null, timeoutMs = null, killSignal = null } = {}) {
   try {
     const heads = new Map();
-    for (const { headRefName, headRefOid } of forgeFor(main).mergedChanges(GH_PR_LIMIT, { fields: 'headRefName,headRefOid' })) {
+    const fields = 'headRefName,headRefOid';
+    for (const { headRefName, headRefOid } of forgeFor(main, { timeoutMs, killSignal }).mergedChanges(GH_PR_LIMIT, { fields, ...(repo ? { repo } : {}) })) {
       if (headRefName && headRefOid) heads.set(headRefName, [...(heads.get(headRefName) ?? []), headRefOid]);
     }
     return heads;

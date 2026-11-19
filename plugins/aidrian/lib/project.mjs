@@ -12,7 +12,7 @@ import path from 'node:path';
 import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
 import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
-import { checkoutRoots, mainRoot, runGit } from './git.mjs';
+import { checkoutRoots, mainRoot, repositoryCheckouts, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 
@@ -57,16 +57,22 @@ const defaultRead = () => undefined;
 // project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, and project-stops.mjs: they decide which session may
 // start a project run, which issue it starts, which session records its result, and what an issue whose merge stopped
 // does, so a pull request that auto-merged itself cannot change them.
-// At the repository root: the marketplace manifests that install the plugin.
+// At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-claude-mod`
+// plugin's folder, whole, since it picks and runs the aidrian binary.
 const GUARDED_LIB = [
-  'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'clean-text', 'cli', 'closing-words', 'code-words', 'config', 'config-committed', 'config-defaults',
-  'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version', 'confine-guard',
-  'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
-  'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
-  'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-registries', 'project-report', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-trust', 'remotes', 'review-gate', 'run-driver', 'session-length',
-  'session-start-gate', 'shell-lex', 'solo',
-  'stop-announce', 'stop-history', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell', 'unattended-write', 'usage',
+  'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'check-runs',
+  'child-send-backs', 'clean-text', 'cli', 'closing-words', 'code-words', 'config', 'config-committed', 'config-defaults', 'config-guard',
+  'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version', 'confine-guard', 'deadline', 'decisions',
+  'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
+  'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io',
+  'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
+  'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-product-feedback',
+  'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-registries', 'project-report', 'project-result',
+  'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-trust', 'remotes',
+  'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins', 'session-prs',
+  'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'terminal-replace',
+  'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell', 'unattended-write', 'usage',
+  'worktree',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
@@ -82,13 +88,17 @@ export const GUARDED_PATHS = new RegExp(
     `|${HOST_PATHS}` +
     String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
     String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +
-    `|^plugins/aidrian/(?:${GUARDED_PLUGIN})`,
+    `|^plugins/aidrian/(?:${GUARDED_PLUGIN})` +
+    String.raw`|^plugins/aidrian-claude-mod/`,
   'iu',
 );
 
 // The paths, from the top of the repository, a review trail reads each branch's policy files at for the project folder
 // `prefix` (the forge's reviewTrail `paths`): the pointer file, the default folder's config.json, and its knowledge folder.
 export const trailPaths = (prefix = '') => ({ pointer: `${prefix}${OVERRIDE}`, config: `${prefix}${DEFAULT_DIR}/config.json`, knowledge: `${prefix}${DEFAULT_DIR}/knowledge` });
+// Guarded only in the plugin's own repository (isPluginRepository), from its root: the release script, which runs in the
+// release job that holds the write token. Another project's file at that path is its own, and stays unguarded.
+export const PLUGIN_REPOSITORY_PATHS = /^scripts\/version\.mjs$/iu;
 
 // The knowledge index folder beside a config.json path, such as one configPathIn located: `<folder>/knowledge`, with the
 // same prefix, as openProject's `paths.knowledge` is.
@@ -106,14 +116,15 @@ export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|
 // even inside a main checkout that has one. Outside git it goes on to the file-system root.
 // Every hook starts here, some on every tool call: with no project folder above `start` it runs no git, and with one it
 // runs git once, for the checkout's top folder and its main checkout together, and once more when the local auto-merge
-// switch is on, to ask whether git tracks that file.
-export function findProject(start) {
+// switch is on, to ask whether git tracks that file. `read`, when given, gives the options of the first of those reads,
+// as stateDir's does, for a caller under a deadline.
+export function findProject(start, read) {
   const from = path.resolve(start);
   const found = nearestFolder(from);
   if (found === null) return null;
   let probe = from;
   while (!isDirectory(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
-  const roots = checkoutRoots(probe);
+  const roots = checkoutRoots(probe, typeof read === 'function' ? read() : undefined);
   if (roots !== null) {
     for (let dir = from; ; dir = path.dirname(dir)) {
       if (outside(dir, roots.current)) return null;
@@ -330,6 +341,15 @@ function cloneLocal(roots, checkouts, errors, unreadable) {
 function checkoutsOf(root, roots) {
   const main = inMainCheckout(root, roots);
   return main && main !== realpathSync(root) ? [root, main] : [root];
+}
+
+// The project's checkouts and every checkout of its repository (lib/git.mjs repositoryCheckouts): what a state folder
+// must lie outside of before a session folder or a continuation marker is kept there. A relative `state.dir` of a project
+// below the repository root resolves against that root, so the project's own checkouts are not enough. Null when git
+// could not list them, so the caller refuses. `read` gives each git call's options.
+export function projectCheckouts(project, read) {
+  const repository = repositoryCheckouts(project.root, read);
+  return repository && [...new Set([...project.checkouts, ...repository])];
 }
 
 const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff', 'handoff'];

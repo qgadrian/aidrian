@@ -28,7 +28,8 @@ test('both marketplaces publish the same plugin, and both plugin manifests agree
   const claudeMarket = json('.claude-plugin/marketplace.json');
   const codexMarket = json('.agents/plugins/marketplace.json');
   assert.equal(claudeMarket.name, codexMarket.name);
-  assert.deepEqual(claudeMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', './plugins/aidrian']]);
+  // The Claude mod is a Claude Code mod: only the Claude Code marketplace lists it.
+  assert.deepEqual(claudeMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', './plugins/aidrian'], ['aidrian-mod', './plugins/aidrian-claude-mod']]);
   assert.deepEqual(codexMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', { source: 'local', path: './plugins/aidrian' }]]);
 
   const claude = json('plugins/aidrian/.claude-plugin/plugin.json');
@@ -269,7 +270,10 @@ test('no tracked file names a source project, its tracker keys, a person, or a t
   const { repository } = json('plugins/aidrian/plugin.json');
   const slug = new URL(repository).pathname.replace(/^\/|\.git$/g, '');
   const owner = slug.split('/')[0];
-  const installFiles = ['README.md', 'NOTICE', 'docs/adopting.md', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'];
+  const installFiles = [
+    'README.md', 'NOTICE', 'docs/adopting.md', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json',
+    'plugins/aidrian/plugin.json', 'plugins/aidrian-claude-mod/.claude-plugin/plugin.json',
+  ];
   const banned = bannedPatterns(ROOT);
   const hits = [];
   for (const file of execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean)) {
@@ -1321,6 +1325,108 @@ test('persona-audit states the limits of a pull request run, and passes the reso
   assert.match(report, /The walk stays within the tasks in scope/u);
 });
 
+test('persona-audit walks each browser task at every width walk_widths lists, and the report, comment, and re-check name the widths', () => {
+  const skill = flat('plugins/aidrian/skills/persona-audit/SKILL.md');
+  const reaching = flat('plugins/aidrian/skills/persona-audit/references/reaching-the-product.md');
+  const report = flat('plugins/aidrian/skills/persona-audit/references/report-format.md');
+  const format = flat('plugins/aidrian/skills/pr-product-feedback/references/comment-format.md');
+  const recheck = flat('plugins/aidrian/skills/pr-product-feedback/references/recheck-run.md');
+  const personas = flat('docs/personas.md');
+
+  // The walk: from the same resolve answer, in place of the persona's width, browser tasks only, and no question.
+  assert.match(skill, /their device \(the nearest width `product-access` lists; a non-empty `walk_widths`: reaching-the-product\.md § Every width\)/u);
+  assert.match(reaching, /## Every width A pull request run takes `walk_widths` from the same `aidrian pr resolve` answer as `head`\./u);
+  assert.match(reaching, /Empty, each task is walked at the persona's width, as § Environment check says\./u);
+  assert.match(reaching, /each in-scope task walked in a browser is walked once per width of `walk_widths`, in list order, in place of the persona's width, never in addition to it/u);
+  assert.match(reaching, /A task walked another way, such as an API with `curl`, a CLI, an SDK, or a simulator, has no viewport, so it is walked once\./u);
+  assert.match(reaching, /When `limited` is true there is still no walk\./u);
+  assert.match(reaching, /Ask the Human nothing before the walk: the committed `review\.productFeedback\.allWidths` is the consent\./u);
+  assert.match(reaching, /Naming personas skips the pick and the cap, never the widths\./u);
+  // Each width is held to the resize and its fallbacks; one out of reach is its own Not reached line, and the rest are walked.
+  assert.match(reaching, /With a non-empty `walk_widths`, hold each of its widths to this resize, read-back, and fallbacks\./u);
+  assert.match(reaching, /A width none reaches is a `## Not reached` line naming the task and the width, and the task's other widths are still walked\./u);
+  assert.match(reaching, /When none of a task's widths is reached, walk it once at the width the session has, as above, and name that width in the `Reached:` line\./u);
+  assert.match(reaching, /With a non-empty `walk_widths`, run it before each width's walk of such a task\./u);
+
+  // The report: a Width bullet, one finding for several widths, a Width column with a row per task and width.
+  assert.match(report, /Sections: A finding; An untraced cause; A task the product cannot do; The report; Every width; A run that replaces a report; The sidecar\./u);
+  assert.match(report, /A run that walks, with a non-empty `walk_widths` \(reaching-the-product\.md § Every width\), names the width of what it walked\. Any other run keeps the shape above, with no width in it\./u);
+  assert.match(report, /A finding of a task walked in a browser gets a `- Width:` bullet after its first line, naming the widths it was seen at and the widths walked without it, such as `- Width: 390 px\. Not at 1024 or 1440 px\.`/u);
+  assert.match(report, /Any other finding, walked another way or not walked, has none\./u);
+  assert.match(report, /Seen at several widths, it is one finding naming each, as one finding two personas share is written once and names both\./u);
+  // A shared finding keeps which persona, and which task, saw which width, so the re-check never walks one at another's width.
+  assert.match(report, /When the personas or tasks of a shared finding were seen at different widths, its `Width:` bullet names each persona with its own widths, such as `- Width: floor-manager at 390 px; host at 1440 px\. Not at 1024 px\.`, and each task in brackets after its persona when the tasks differ\./u);
+  assert.match(report, /`Not at` then names the widths none of them saw it at\./u);
+  assert.match(report, /The re-check walks each persona at its own widths alone, so a merge never drops which persona saw which width\./u);
+  assert.match(report, /The task table gets a `Width` column after `Task`, and one row per task and width, so each width has its own outcome\./u);
+  assert.match(report, /A task not walked in a browser keeps one row, with `-` in the Width column\./u);
+  assert.match(report, /\| Persona \| Task \| Width \| Evidence \| Outcome \|/u);
+  assert.match(report, /the browser would not go below 1024 px\.`; its row is `not walked`\./u);
+  assert.match(report, /- Persona: floor-manager\. Task: Move a booking to another table\. Evidence: walked\. Label: observed\. - Width: 390 px\. Not at 1024 px\. ```/u);
+  assert.match(report, /The `Reached:` line names the widths walked/u);
+  assert.match(report, /A width the browser could not reach is a `## Not reached` line naming the task and the width/u);
+  assert.match(report, /The sidecar holds no width: the `Width:` bullet is the one record\./u);
+  // The bullet lists each width in px, since the re-check walks only the widths it names: no word stands for them all.
+  assert.match(report, /or `- Width: 390, 1024, and 1440 px\.` It always lists each width in px, never a word for all of them: the re-check walks only the widths it names\./u);
+  assert.doesNotMatch(report, /Width: every width/u);
+  // A task none of whose widths was reached: its one walk at the session's width has its own row, and its findings name that width.
+  assert.match(report, /A task none of whose widths was reached is walked once at the session's width \(reaching-the-product\.md § Environment check\)\. That walk gets its own row, with the session's width in the Width column, and its findings' `Width:` bullet names that width, such as `- Width: 1280 px\.`/u);
+  // The example report of a run with no walk_widths keeps today's shape.
+  const example = /## The report[\s\S]*?```markdown\n([\s\S]*?)```/u.exec(readFileSync(path.join(PLUGIN, 'skills/persona-audit/references/report-format.md'), 'utf8'))[1];
+  assert.match(example, /\| Persona \| Task \| Evidence \| Outcome \|/u);
+  assert.doesNotMatch(example, /Width/u);
+
+  // The comment names the widths each item was seen at, and those walked or not reached.
+  assert.match(format, /When the report's findings carry a `Width:` bullet, the "seen" label names its widths: "\(seen at 390 px\)", "\(seen at 390 and 1024 px\)", or "\(seen at 390, 1024, and 1440 px\)", each in px as the bullet lists them, never a word for all of them\./u);
+  assert.doesNotMatch(format, /seen at every width/u);
+  assert.match(format, /"How it was checked" then names the widths walked, and "Not checked" names each width not reached/u);
+  // The re-check walks at the finding's widths, and confirms only when it shows at none.
+  // The re-check finds the entry by the item's audit key, never its title or the record's moving report pointer, and
+  // leaves the item unrecorded when that entry is gone, so a fix is never confirmed at a width it was not seen at.
+  assert.match(recheck, /Find its finding by the item's `audit_key` in `items --json`, `<report file>#<finding id>`, never by its title nor the record's `report`: in `<state>\/audits\/`, that report's sidecar `<name>\.json` holds the finding with that `id`, and its entry in the report is the `### ` finding heading at that finding's place in the sidecar's `findings`, with the same title\./u);
+  assert.match(recheck, /When that report, its sidecar, that `id`, or that heading is missing, leave the item unrecorded: say so in the reply, naming the `audit_key`\./u);
+  assert.doesNotMatch(recheck, /found by its title/u);
+  assert.match(recheck, /A persona finding whose entry has a `Width:` bullet \(the sidecar holds no width\) is walked at each width that bullet says it was seen at, and only at those, whatever `walk_widths` says now\./u);
+  assert.match(recheck, /A bullet that names personas walks each persona at its own widths alone, and each task at its own when it names tasks\./u);
+  // Judged by observation, each persona, task, and width the bullet names: reopened when it shows in any observation
+  // reached; confirmed only when every observation was re-walked and it shows in none; else left unrecorded.
+  assert.match(recheck, /A finding with a `Width:` bullet is judged by observation: each persona, task, and width the bullet says it was seen at\./u);
+  assert.match(recheck, /A plain bullet, such as `- Width: 390 px\.`, means the finding's own persona and task at those widths\./u);
+  assert.match(recheck, /The finding is reopened as soon as it shows in any observation the re-check reached\./u);
+  assert.match(recheck, /It is confirmed only when every observation was re-walked and it shows in none of them\./u);
+  assert.match(recheck, /When it shows in none of those reached and an observation could not be walked, such as a persona's task now unavailable or a width out of reach, leave the item unrecorded: say so in the reply, naming that observation\./u);
+  // The two edge cases: one persona's observation of a shared finding not walked, and the finding showing in one alone.
+  assert.match(recheck, /So a finding two personas share stays unrecorded when one persona's observation could not be walked, however clean the other's were,/u);
+  assert.match(recheck, /and showing in one observation reopens it, however clean the rest are\./u);
+  assert.doesNotMatch(recheck, /every seen-at width was reached/u);
+
+  // The docs: off by default, what it changes, its cost, and the link to the key.
+  const key = /\[`review\.productFeedback\.allWidths`\]\(config\.md#walking-every-width\)/u;
+  const pullRequestAlone = personas.slice(personas.indexOf('### A pull request link alone'), personas.indexOf('### What a run does'));
+  const whatARunDoes = personas.slice(personas.indexOf('### What a run does'), personas.indexOf('## Product feedback on a pull request'));
+  const feedback = personas.slice(personas.indexOf('## Product feedback on a pull request'), personas.indexOf('## Triage'));
+  for (const [name, part] of [['A pull request link alone', pullRequestAlone], ['What a run does', whatARunDoes], ['Product feedback on a pull request', feedback]]) {
+    assert.match(part, key, name);
+    assert.match(part, /off,? by default/u, name);
+    assert.match(part, /personas x tasks x widths/u, name);
+  }
+  assert.match(whatARunDoes, /each in-scope browser task once per width of `walk_widths`, in place of the persona's width, and checks each of those widths before the first walk\./u);
+  assert.match(whatARunDoes, /Each finding walked in a browser names the widths it was seen at in a `Width:` line/u);
+  assert.match(feedback, /covers every width of `walk_widths` for each browser task/u);
+  assert.match(feedback, /the "seen" label names the widths each item was seen at/u);
+  assert.match(whatARunDoes, /and one that several personas saw at different widths names each persona with its own\./u);
+  assert.match(feedback, /A re-check finds a persona item's finding by its audit key, never its title, and leaves the item unrecorded when that entry is gone; it walks the item at the widths it was seen at, each persona at its own\./u);
+  assert.match(feedback, /a label and a `Width:` line always list each width in px\./u);
+  assert.match(feedback, /It reopens the item when the finding shows in any observation reached, each persona, task, and width it was seen at; confirms it only when every observation was re-walked and it shows in none; and else leaves it unrecorded, naming the observation not walked, such as one persona's walk of a shared finding\./u);
+  assert.match(whatARunDoes, /A task none of whose widths is reached is walked once at the session's width, which gets its own row and is the width its findings name\./u);
+  const config = flat('docs/config.md');
+  assert.match(config, /`review\.productFeedback\.allWidths` \| `null`, the default, or `\{ "files": \[\.\.\.\] \}`/u);
+  assert.match(config, /the walk count is personas x tasks x widths/u);
+  assert.match(flat('docs/config-recipes.md'), /The persona walk runs at the persona's own device width, unless \[`review\.productFeedback\.allWidths`\]\(config\.md#walking-every-width\) lists a changed file; the captures cover the other widths\./u);
+  assert.doesNotMatch(flat('docs/config-recipes.md'), /own device width only/u);
+  assert.match(flat('docs/review.md'), /A persona walks the tasks the diff touches in the running app, at that persona's own device width unless \[`review\.productFeedback\.allWidths`\]\(config\.md#walking-every-width\) lists a changed file, and then at each width of `viewports`/u);
+});
+
 test('plugin text names no bare slash command', () => {
   // Claude Code runs this plugin's skills as /aidrian:<skill>, so a bare /<name> is not a command this plugin provides.
   // Name the skill instead (it works on every host), or write /aidrian:<skill>.
@@ -1639,4 +1745,128 @@ test('the pr-review skill posts no comment of its own, and names the engine`s su
   assert.match(step, /This skill posts nothing on the pull request\. The comment a reader looks at there is the summary comment that `aidrian pr review` writes/);
   assert.match(step, /When the manifest holds a `comment_id`, an earlier release of this skill posted that comment\. Delete it once/);
   assert.match(readFileSync(path.resolve(PLUGIN, '../../docs/agents-and-skills.md'), 'utf8'), /\| `pr-review` \| [^\n]*Posts no comment/);
+});
+
+// The Claude mod, plugins/aidrian-claude-mod: a Claude Code mod whose hooks (hooks/*.ts, hooks/*.tsx) run inside Claude
+// Code and are tested there by `claude plugin test`; these tests hold what its sources may and may not do.
+const MOD = path.join(ROOT, 'plugins/aidrian-claude-mod');
+const MOD_HOOKS = ['hooks/register.ts', 'hooks/pane.tsx'];
+const MOD_LIBS = ['lib/format.mjs', 'lib/pane-data.mjs', 'lib/servers.mjs', 'lib/snapshot-client.mjs'];
+const modText = (rel) => readFileSync(path.join(MOD, rel), 'utf8');
+// A source without its whole-line comments.
+const modCode = (rel) => modText(rel).split('\n').filter((line) => !/^\s*\/\//u.test(line)).join('\n');
+
+// The release workflow raises the version before npm run check, so this holds its form; release fixtures hold exact values.
+test('the Claude mod`s manifest has a semver version, its settings, the aidrian manifest`s author and repository, and its marketplace entry', () => {
+  const mod = json('plugins/aidrian-claude-mod/.claude-plugin/plugin.json');
+  const aidrian = json('plugins/aidrian/.claude-plugin/plugin.json');
+  assert.equal(mod.name, 'aidrian-mod');
+  assert.match(mod.version, /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u);
+  for (const key of ['author', 'repository']) assert.deepEqual(mod[key], aidrian[key], key);
+  assert.deepEqual(Object.keys(mod.userConfig), ['mode', 'notifyMinTurnSeconds', 'focusCheck', 'focusApp', 'sounds', 'volume', 'ticketPrefixes', 'cacheTtlSeconds']);
+  assert.equal(mod.userConfig.focusApp.default, 'kitty');
+  assert.equal(mod.userConfig.ticketPrefixes.default, '', 'no team key is written into plugin text');
+  const entry = json('.claude-plugin/marketplace.json').plugins.find((plugin) => plugin.name === 'aidrian-mod');
+  assert.equal(entry.category, 'development');
+  assert.match(entry.description, /^Optional\b[^.]*requires the aidrian plugin/u);
+});
+
+test('the Claude mod`s only MCP call is get_issue with the { id } issueLookup gives', () => {
+  const code = MOD_HOOKS.map(modCode).join('\n');
+  const calls = [...code.matchAll(/\$\.mcp\.(\w+)\(([^)]*)\)/gu)].map((match) => `${match[1]}(${match[2].trim()})`);
+  assert.deepEqual(calls, ['call(server, ISSUE_TOOL, lookup)']);
+  assert.match(code, /const lookup = snapshot\.kind === 'ok' \? issueLookup\(/u);
+  assert.deepEqual([...code.matchAll(/\baskLinear\(([^)]*)\)/gu)].map((match) => match[1]), ['$, lookup', '$: EngineInterface, lookup: { id: string }']);
+  for (const rel of MOD_LIBS) assert.doesNotMatch(modCode(rel), /\bmcp\b/u, rel);
+});
+
+test('no Claude mod hook starts a process: $.process.run is named once, in the io the lib`s resolver runs it through', () => {
+  const code = MOD_HOOKS.map(modCode).join('\n');
+  // The engine takes a noun of $ only as a call, so the io hands run over as a function that passes its arguments through.
+  assert.deepEqual([...code.matchAll(/\$\.process\.\w+[^\n]*/gu)].map((match) => match[0]), ['$.process.run(argv, init),']);
+  assert.match(modCode('hooks/pane.tsx'), /export async function engineIo\(\$: EngineInterface\) \{[\s\S]*?\n {4}run: \(argv: readonly string\[\], init: [^\n]*\) => \$\.process\.run\(argv, init\),\n[\s\S]*?\n\}/u);
+  // Every git read is runner.run of a fixed argv the file names as a constant; no shell, and osascript only through the lib.
+  const runs = [...code.matchAll(/\brunner\.run\(([^,]+), ([^,)]+)/gu)].map((match) => [match[1], match[2]]);
+  assert.ok(runs.length > 0);
+  for (const [program, args] of runs) {
+    assert.equal(program, "'git'");
+    assert.match(args, /^GIT_[A-Z]+$/u);
+  }
+  // Those are the hooks' only .run( call sites: runner.run of git, and the io's pass-through to $.process.run.
+  const sites = [...code.matchAll(/[\w$.]*\.run\(/gu)].map((match) => match[0]);
+  assert.deepEqual([...new Set(sites)].sort(), ['$.process.run(', 'runner.run(']);
+  assert.equal(sites.filter((site) => site === '$.process.run(').length, 1);
+  assert.doesNotMatch(code, /['"`](?:sh|bash|zsh|tail)['"`]|osascript|\.spawn\(/u);
+});
+
+test('the Claude mod holds no forge-specific call, and format.mjs`s forge table alone names a forge', () => {
+  const files = [...MOD_HOOKS, ...MOD_LIBS];
+  // The one place gh is named: the programs the snapshot starts by name, which the resolver only stats on each PATH
+  // folder to keep a folder whose git or gh resolves into the session's folder off the snapshot's PATH; never run.
+  const STARTED = "const STARTED_BY_NAME = ['git', 'gh'];";
+  const client = modCode('lib/snapshot-client.mjs');
+  assert.equal(client.split(STARTED).length, 2, 'one STARTED_BY_NAME declaration');
+  assert.deepEqual([...client.matchAll(/STARTED_BY_NAME\b(?! =)[^\n]*/gu)].map((match) => match[0]), ['STARTED_BY_NAME) {']);
+  assert.match(client, /for \(const name of STARTED_BY_NAME\) \{\n {4}let found;\n {4}try \{\n {6}found = await io\.fs\.stat\(/u);
+  for (const rel of files) {
+    const code = rel === 'lib/snapshot-client.mjs' ? client.replace(STARTED, '') : modCode(rel);
+    assert.doesNotMatch(code, /['"`](?:gh|glab)['"`]/u, `${rel} names the program gh or glab`);
+    assert.doesNotMatch(modText(rel), /api\.github\.com|gitlab\.com\/api|\/api\/v[34]\b|graphql|\/repos\/|\/merge_requests/iu, `${rel} holds a forge API host or route`);
+  }
+  // The forge table: from its link pattern to the entry of a row with no forge.
+  const format = modCode('lib/format.mjs');
+  const start = format.indexOf('const GITHUB_PULL');
+  const end = format.indexOf('const NO_FORGE');
+  assert.ok(start > 0 && end > start);
+  assert.match(format.slice(start, end), /github: Object\.freeze\(\{\n {4}change: 'pull request', one: 'PR', many: 'PRs',/u);
+  const outside = { 'lib/format.mjs': format.slice(0, start) + format.slice(end) };
+  for (const rel of files.filter((file) => file !== 'lib/format.mjs')) outside[rel] = modCode(rel);
+  for (const [rel, code] of Object.entries(outside)) {
+    assert.doesNotMatch(code, /github|gitlab|pull request|merge request/iu, `${rel} names a forge outside the forge table`);
+    assert.doesNotMatch(code, /\b(?:PRs?|MRs?)\b/u, `${rel} names a forge's word for a change outside the forge table`);
+  }
+});
+
+test('every alert of the Claude mod passes alertText, title included', () => {
+  const register = modCode('hooks/register.ts');
+  const shows = [...register.matchAll(/\$\.ui\.(toast|notify|log)\(([^\n]*)/gu)].map((match) => [match[1], match[2]]);
+  assert.ok(shows.length >= 3);
+  for (const [kind, args] of shows) assert.match(args, /^(?:alertText\(|shown\.text\b)/u, `$.ui.${kind}(${args}`);
+  assert.deepEqual([...register.matchAll(/\bshown = ([^\n]*)/gu)].map((match) => match[1]), ['alertText({ text: alert.text, title: folder })']);
+  assert.match(register, /\$\.ui\.notify\(shown\.text, \{ title: shown\.title \}\)/u);
+  // The focus check compares the setting with what the lib's constant script prints; the setting reaches no process.
+  assert.match(register, /return front !== null && front === focusApp/u);
+  assert.doesNotMatch(modCode('hooks/pane.tsx'), /\$\.ui\.(toast|notify|log)\(/u);
+});
+
+test('nothing the Claude mod reads reaches the model, and its pane command answers with constant text', () => {
+  const code = MOD_HOOKS.map(modCode).join('\n');
+  assert.doesNotMatch(code, /prompt\.compose|prompt\.submit|session\.append|\$\.session\.send|\$\.model\b|\$\.tool\.register|\bcontext:|attachments|additionalContext|systemMessage/u);
+  // The one call on subagents reads their states for the pane: none sends a subagent a word.
+  assert.deepEqual([...new Set([...code.matchAll(/\$\.agent\.(\w+)/gu)].map((match) => match[1]))], ['list']);
+  const texts = [...code.matchAll(/return \{ text: ([^}]*) \}/gu)].map((match) => match[1].trim());
+  assert.equal(texts.length, 2);
+  for (const text of texts) assert.match(text, /^'[^'$`]*'$/u);
+});
+
+test('the Claude mod`s sounds are named CC0 1.0 samples of one Freesound pack, in CREDITS.md, NOTICE, and the README, naming no person', () => {
+  const source = /CC0 1\.0[^.]*Freesound pack 44741/u;
+  const texts = {
+    'sounds/CREDITS.md': modText('sounds/CREDITS.md'),
+    NOTICE: readFileSync(path.join(ROOT, 'NOTICE'), 'utf8'),
+    'README.md': modText('README.md'),
+  };
+  for (const [name, text] of Object.entries(texts)) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.match(flat, source, name);
+    assert.doesNotMatch(flat, /\bMIT\b|Permission is hereby granted|peon-ping|\bby [A-Z]/u, name);
+  }
+  assert.match(texts['sounds/CREDITS.md'], /https:\/\/freesound\.org\b/u);
+  for (const sound of ['attention', 'done', 'error', 'limit']) assert.match(texts['sounds/CREDITS.md'], new RegExp(`\`${sound}\\.wav\``, 'u'));
+});
+
+test('the Claude mod ignores the types Claude Code writes when it loads it', () => {
+  assert.match(modText('.gitignore'), /^\.claude-plugin\/types\/$/mu);
+  const ignored = spawnSync('git', ['check-ignore', '-q', 'plugins/aidrian-claude-mod/.claude-plugin/types/claude-code/index.d.ts'], { cwd: ROOT });
+  assert.equal(ignored.status, 0);
 });

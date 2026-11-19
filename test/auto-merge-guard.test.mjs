@@ -62,6 +62,7 @@ const EXCEPTIONS = [
   { file: 'lib/transcript.mjs', loader: 'import.meta.dirname', line: /^pluginSkills \?\?= new Set\(readdirSync\(path\.join\(import\.meta\.dirname, '\.\.', 'skills'\)\)\);$/u, reason: 'lists the skill folder names; skills/ is guarded whole' },
   { file: 'scripts/hook-session-start.mjs', loader: 'import.meta.dirname', line: /^const BIN = path\.resolve\(import\.meta\.dirname, '\.\.\/bin'\);$/u, reason: 'the bin folder it puts on PATH, which GUARDED_PATHS covers whole' },
   { file: 'scripts/hook-session-end.mjs', loader: 'spawn(process.execPath', line: /^const worker = spawn\(process\.execPath, \[WORKER\], /u, reason: 'spawns WORKER, which the walk follows from its path.join(import.meta.dirname, ...)' },
+  { file: 'lib/terminal-replace.mjs', loader: 'spawn(process.execPath', line: /^const child = spawn\(process\.execPath, \[HELPER, /u, reason: 'spawns HELPER, scripts/end-host.mjs, which the walk follows from its path.resolve(import.meta.dirname, ...)' },
   { file: 'lib/review/visual.mjs', loader: 'spawn(process.execPath', line: /^const run = spawn\(process\.execPath, \[ADAPTERS\[visual\.platform\]\], \{$/u, reason: 'spawns an ADAPTERS script, which the walk follows from its new URL(..., import.meta.url)' },
   { file: 'lib/review/visual-web.mjs', loader: 'createRequire', line: /^import \{ createRequire \} from 'node:module';$/u, reason: 'imports createRequire, used on the next exception' },
   { file: 'lib/review/visual-web.mjs', loader: 'createRequire', line: /^const require = createRequire\(path\.join\(cwd, 'package\.json'\)\);$/u, reason: "loads the browser driver from the reviewed project's own node_modules, not from the plugin" },
@@ -160,6 +161,16 @@ test('the reviewers, the hooks, and the manifests are guarded', () => {
   for (const file of [`${PLUGIN}/agents/security-engineer.md`, `${PLUGIN}/codex/agents/aidrian-security-engineer.toml`, `${PLUGIN}/agents-src/review/security-engineer.md`, `${PLUGIN}/providers/claude.json`, `${PLUGIN}/agent-addons/explorer.codex.md`, `${PLUGIN}/scripts/session-row.mjs`, '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json', `${PLUGIN}/plugin.json`, `${PLUGIN}/.claude-plugin/plugin.json`, `${PLUGIN}/codex/install-agents.mjs`, `${PLUGIN}/skills/pr-merge-when-green/references/project-setup.md`, `${PLUGIN}/skills/pr-merge-when-green/references/after-merge.md`, `${PLUGIN}/skills/knowledge/references/handoff.md`]) {
     assert.ok(guarded(file), file);
   }
+});
+
+test("the Claude mod's folder is guarded everywhere, and the release script only in the plugin's own repository", () => {
+  for (const file of ['plugins/aidrian-claude-mod/lib/snapshot-client.mjs', 'plugins/aidrian-claude-mod/.claude-plugin/plugin.json']) assert.ok(guarded(file), file);
+  for (const file of ['plugins/aidrian-claude-mod-extra/x.mjs', 'scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(guarded(file), false, file);
+  const release = (file, pluginRepository) => pathsProblem({ files: [{ path: file, changeType: 'MODIFIED' }], changedFiles: 1 }, '', { pluginRepository });
+  assert.equal(guarded('scripts/version.mjs'), false, 'another project may have a scripts/version.mjs of its own');
+  assert.equal(release('scripts/version.mjs', false), null);
+  assert.match(release('scripts/version.mjs', true) ?? '', /^it changes "scripts\/version\.mjs", the plugin repository's release script, which runs in the release job that holds the write token$/u);
+  for (const file of ['scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(release(file, true), null, file);
 });
 
 test('no module can add a trusted author association', () => {

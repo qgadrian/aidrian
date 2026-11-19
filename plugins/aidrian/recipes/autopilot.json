@@ -7,6 +7,10 @@
     "extraRounds": "ask",
     "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
   },
+  "review": {
+    "visual": { "platform": "web", "targets": [{ "files": ["src/app/**"], "routes": ["/"] }], "viewports": [390, 1024, 1440] },
+    "productFeedback": { "auto": true }
+  },
   "decisions": {
     "mode": "decide-reversible",
     "maxMode": "decide-reversible",

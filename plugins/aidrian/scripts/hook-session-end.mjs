@@ -17,8 +17,8 @@ import { runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { readOwnText } from '../lib/fs.mjs';
 import { forgetDenials, sweepHookCounts } from '../lib/lesson-signals.mjs';
-import { sessionLengthMarker } from '../lib/session-length.mjs';
 import { findProject } from '../lib/project.mjs';
+import { stopMarkerPath } from '../lib/session-length.mjs';
 import { NO_READ_LANDED, refusalMarker } from '../lib/tracker-guard.mjs';
 
 const WORKER = path.join(import.meta.dirname, 'session-row.mjs');
@@ -31,10 +31,7 @@ await runHook(async (input) => {
   sweepHookCounts();
   forgetGateSnapshot(input.session_id);
   forgetTrackerRecord(input.session_id);
-  if (typeof input.session_id === 'string' && /^[\w-]+$/u.test(input.session_id)) {
-    const marker = sessionLengthMarker(input.session_id);
-    if (marker) rmSync(marker, { force: true });
-  }
+  removeStopMarker(input.session_id);
   // A subagent's payload promotes nothing: the continuation is the main session's.
   const cleared = input.reason === 'clear' && !input.agent_id;
   if (!cleared && typeof input.transcript_path !== 'string') return;
@@ -96,5 +93,17 @@ function forgetTrackerRecord(sessionId) {
     rmSync(file, { force: true });
   } catch {
     // Left behind. Only the stale-file sweep of gate-snapshot.mjs removes it, and that runs only when a gated session starts.
+  }
+}
+
+// Deletes the session-length reminder's marker, at stopMarkerPath's path. A removal that fails, such as of a folder in
+// its place, is ignored, so the hook goes on to the continuation and the session row.
+function removeStopMarker(sessionId) {
+  const marker = stopMarkerPath(sessionId);
+  if (marker === null) return;
+  try {
+    rmSync(marker, { force: true });
+  } catch {
+    // Left for the system to clear: the marker holds display counts only.
   }
 }

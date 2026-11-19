@@ -20,7 +20,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writ
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { checkoutRoots, worktreePaths } from './git.mjs';
+import { checkoutRoots, repositoryCheckouts } from './git.mjs';
 import { stateDir } from './project.mjs';
 import { firstPrompt, readText, filesTouched, lastHandback } from './transcript.mjs';
 
@@ -211,7 +211,7 @@ export function deliveryRoots(project, cwd) {
   } catch {
     // No state folder to read: the other roots still count.
   }
-  roots.push(...worktreePaths(cwd), PLUGIN_FOLDER, ...skillFolders());
+  roots.push(...(repositoryCheckouts(cwd) ?? []), PLUGIN_FOLDER, ...skillFolders());
   return [...new Set(roots)];
 }
 

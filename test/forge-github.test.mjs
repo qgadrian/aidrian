@@ -6,10 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, domains, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
-import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
+import { createGithubForge, domains, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_CHANGE_REFS, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { remoteIdentity, repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
+import { isRefName } from '../plugins/aidrian/lib/git.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import * as reviewState from '../plugins/aidrian/lib/review/state.mjs';
 import { listForge, openPrBodies } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
@@ -17,7 +18,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 
 // Every name the facade gives its callers.
 const FACADE = [
-  'id', 'cwd', 'isTrustedCommenter',
+  'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
@@ -169,7 +170,8 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeTokenVars', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeTokenVars', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
+  assert.equal(facade.servedRepository, servedRepository);
   // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
   const commands = facade.forgeConfigCommands();
   assert.ok(commands.every((each) => each.programs.includes('gh') && typeof each.what === 'string'));
@@ -185,8 +187,70 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
   assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
   assert.equal(facade.repoIdentity, repoIdentity);
+  assert.equal(facade.remoteIdentity, remoteIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
   assert.equal(facade.MAX_BODY, 65_536, 'the adapter names GitHub\'s longest body, and the facade gives it to shared code');
+});
+
+test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {
+  const { forge, args } = recorded(() => '[]');
+  forge.mergedChanges(400, { fields: 'headRefName,headRefOid', repo: 'github.com/acme/notes' });
+  forge.mergedChanges(400, { fields: 'headRefName,headRefOid' });
+  assert.deepEqual(args(), [
+    ['pr', 'list', '--state', 'merged', '--limit', '400', '--json', 'headRefName,headRefOid', '--repo', 'github.com/acme/notes'],
+    ['pr', 'list', '--state', 'merged', '--limit', '400', '--json', 'headRefName,headRefOid'],
+  ]);
+  assert.deepEqual(FORGE_HOSTS, ['github.com']);
+  assert.ok(Object.isFrozen(FORGE_HOSTS));
+  const served = (remote) => servedRepository(repoIdentity(remote));
+  assert.equal(served('https://github.com/Acme/Notes.git'), 'github.com/acme/notes');
+  assert.equal(served('git@github.com:acme/my.repo_name-2.git'), 'github.com/acme/my.repo_name-2');
+  assert.equal(served('ssh://git@ssh.github.com:443/acme/notes.git'), 'github.com/acme/notes', 'an alias reads as its canonical host');
+  assert.equal(served('acme/notes'), 'github.com/acme/notes');
+  for (const remote of [
+    'https://gitlab.com/acme/notes.git', 'https://github.example.com/acme/notes.git', 'https://github.com/acme%2Fsub/notes.git',
+    'https://github.com/acme/sub/notes.git', 'git@github.com:acme/..', 'git@github.com:acme/.', 'git@github.com:../notes',
+    'https://github.com/-acme/notes', `https://github.com/acme/${'n'.repeat(101)}`, '/srv/git/notes',
+  ]) assert.equal(served(remote), null, remote);
+  for (const identity of [null, undefined, {}, { host: 'github.com' }, { host: 'github.com', path: 7 }, { host: 'GITHUB.COM', path: 'a/b' }]) {
+    assert.equal(servedRepository(identity), null, JSON.stringify(identity));
+  }
+});
+
+test('hosts is the constant host list, and changeRef answers a ref only when every field has GitHub`s shape, with no gh call', () => {
+  const { forge, calls } = recorded();
+  assert.deepEqual(forge.hosts, ['github.com']);
+  assert.equal(forge.hosts, FORGE_HOSTS, 'the adapter`s own constant: no config, remote, ledger row, or cache adds a host');
+  const ref = (fields) => forge.changeRef(fields);
+  assert.deepEqual(ref({ host: 'github.com', path: 'acme/notes', number: 12 }), { host: 'github.com', owner: 'acme', name: 'notes', number: 12, branch: null });
+  assert.deepEqual(ref({ host: 'github.com', path: 'acme/my.repo_name-2', branch: 'feat/x' }), { host: 'github.com', owner: 'acme', name: 'my.repo_name-2', number: null, branch: 'feat/x' });
+  assert.deepEqual(ref({ host: 'github.com', path: 'acme/notes', number: 3, branch: 'feat' }), { host: 'github.com', owner: 'acme', name: 'notes', number: 3, branch: 'feat' });
+  assert.ok(Object.isFrozen(ref({ host: 'github.com', path: 'acme/notes', number: 1 })));
+  const refused = [
+    { host: 'gitlab.com', path: 'acme/notes', number: 1 },
+    { host: 'git.example.test', path: 'acme/notes', number: 1 },
+    { host: 'GITHUB.COM', path: 'acme/notes', number: 1 },
+    { host: 'github.com', path: 'acme/sub/notes', number: 1 },
+    { host: 'github.com', path: '-acme/notes', number: 1 },
+    { host: 'github.com', path: 'acme/..', number: 1 },
+    { host: 'github.com', path: `acme/${'n'.repeat(101)}`, number: 1 },
+    { host: 'github.com', path: 'acme/notes' },
+    { host: 'github.com', path: 'acme/notes', number: 0 },
+    { host: 'github.com', path: 'acme/notes', number: -2 },
+    { host: 'github.com', path: 'acme/notes', number: 1.5 },
+    { host: 'github.com', path: 'acme/notes', number: '12' },
+    { host: 'github.com', path: 'acme/notes', number: 2 ** 60 },
+    { host: 'github.com', path: 'acme/notes', branch: 'a..b' },
+    { host: 'github.com', path: 'acme/notes', branch: 'x'.repeat(256) },
+    { host: 'github.com', path: 'acme/notes', branch: '' },
+    { host: 'github.com', path: 'acme/notes', number: 1, branch: '-x' },
+    { host: 'github.com', path: 'acme/notes', branch: 'feat\u202ex' },
+    { host: 'github.com', path: 'acme/notes', branch: 'feat\u200bx' },
+    { host: 'github.com', path: 'acme/notes', branch: 'feat\u2028x' },
+  ];
+  for (const fields of refused) assert.equal(ref(fields), null, JSON.stringify(fields).slice(0, 120));
+  for (const fields of [null, undefined, 'github.com/acme/notes']) assert.equal(forge.changeRef(fields), null, String(fields));
+  assert.deepEqual(calls, [], 'changeRef starts no process');
 });
 
 test('changeEvidence: a comment, review, or review comment of the pull request, each read by its id', () => {
@@ -433,14 +497,16 @@ test('the hooks` calls: the merge guard`s view and the pull request body rule`s 
   view('', 'acme/notes');
   const bodies = openPrBodies('/repo', listForge('/repo', { run: run('[{"number":1,"body":"b"}]') }));
   assert.deepEqual(bodies(null), [{ number: 1, body: 'b' }]);
+  bodies(null);
   bodies('acme/notes');
   assert.deepEqual(calls.map((call) => call.args), [
     ['pr', 'view', '--json', 'number,headRefOid,baseRefName,url'],
     ['pr', 'view', '5', '--json', 'number,headRefOid,baseRefName,url', '--repo', 'acme/notes'],
     ['pr', 'view', 'feat/x', '--json', 'number,headRefOid,baseRefName,url'],
     ['pr', 'view', '', '--json', 'number,headRefOid,baseRefName,url', '--repo', 'acme/notes'],
-    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body'],
-    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body', '--repo', 'acme/notes'],
+    // Once a repository: the evidence check and the duplicate check of one hook share the list.
+    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body,headRefName,headRepositoryOwner'],
+    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body,headRefName,headRepositoryOwner', '--repo', 'acme/notes'],
   ]);
   assert.deepEqual(calls.map((call) => call.options), calls.map(() => ({ cwd: '/repo', timeoutMs: 3000 })), 'every call carries the hook`s bound');
   // A hook lets the action run: a gh that fails or times out is no answer, never an error.
@@ -459,7 +525,7 @@ test('the worktree cleanup`s merged heads, the decisions record`s pull request, 
   forge.reviewThreads('acme/notes', 12);
   forge.reviewThreads('acme/notes', 12, 'Y3Vyc29y');
   const query = 'query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}';
-  const graphql = ['api', 'graphql', '-f', `query=${query}`, '-F', 'o=acme', '-F', 'r=notes', '-F', 'n=12'];
+  const graphql = ['api', 'graphql', '-f', `query=${query}`, '-f', 'o=acme', '-f', 'r=notes', '-F', 'n=12'];
   assert.deepEqual(args(), [
     ['pr', 'list', '--state', 'merged', '--limit', '100', '--json', 'headRefName,headRefOid'],
     ['pr', 'view', '--json', 'number'],
@@ -545,7 +611,7 @@ test('the ready checks hold`s edit times: one GraphQL call, naming a host only w
   assert.equal(forge.changeEdits('acme/notes', 12).data.repository.pullRequest.lastEditedAt, '2026-11-10T23:45:16Z');
   forge.changeEdits('acme/notes', 12, { host: 'ghe.example.com' });
   const query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
-  const tail = ['-f', `query=${query}`, '-F', 'o=acme', '-F', 'r=notes', '-F', 'n=12'];
+  const tail = ['-f', `query=${query}`, '-f', 'o=acme', '-f', 'r=notes', '-F', 'n=12'];
   assert.deepEqual(args(), [['api', 'graphql', ...tail], ['api', 'graphql', '--hostname', 'ghe.example.com', ...tail]]);
 });
 
@@ -910,4 +976,238 @@ test('the forge\'s network hosts are the host and, for github.com, its API host'
   assert.deepEqual(domains('GitHub.com'), ['github.com', 'api.github.com']);
   assert.deepEqual(domains('ghe.example.com'), ['ghe.example.com']);
   assert.deepEqual(facade.forgeDomains({ host: 'github.com', owner: 'o', name: 'r' }), ['github.com', 'api.github.com']);
+});
+
+// changesState's batched read. test/fixtures/forges/github/changes-state.json records one answer GitHub gave to it,
+// read-only, against public repositories, on 2026-11-18, with the query that ranks by viewerDidAuthor and
+// authorAssociation and reads no root field: gh exited 1 on it, since one alias did not resolve. It was recorded before
+// the query asked for pageInfo, so its pages hold none and read as whole.
+const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/forges/github/changes-state.json', import.meta.url), 'utf8'));
+const replay = (answer, status = 0) => recorded(() => {
+  if (status === 0) return JSON.stringify(answer);
+  throw Object.assign(new Error(`gh exited ${status}`), { status, stdout: JSON.stringify(answer) });
+});
+const bodyOf = (call) => JSON.parse(call.options.input);
+const branchRef = (repoPath, branch) => ({ host: 'github.com', path: repoPath, number: null, branch });
+const numberRef = (repoPath, number) => ({ host: 'github.com', path: repoPath, number, branch: null });
+
+test('changesState sends one query operation, its aliases from indexes, every value a variable in the body on stdin', () => {
+  const run = (refs) => {
+    const { forge, calls } = recorded(() => '{"data":{}}');
+    forge.changesState(refs);
+    assert.equal(calls.length, 1);
+    return calls[0];
+  };
+  // x"){viewer{login}} passes isRefName, so changeRef keeps it: GraphQL syntax and a root field's name, sent as a value.
+  assert.ok(isRefName('x"){viewer{login}}'), 'the hostile branch is a valid ref name');
+  const hostile = run([branchRef('acme/notes', '@/etc/hosts'), branchRef('acme/notes', '{owner}'), branchRef('acme/notes', 'x") { viewer { login } }'), branchRef('acme/notes', 'x"){viewer{login}}'), numberRef('acme/notes', 7)]);
+  const plain = run([branchRef('acme/notes', 'feat/a'), branchRef('acme/notes', 'feat/b'), branchRef('acme/notes', 'feat/c'), numberRef('acme/notes', 9)]);
+  assert.deepEqual(hostile.args, ['api', 'graphql', '--hostname', 'github.com', '--input', '-'], 'no -F, no -f, and no value in argv');
+  const { query, variables } = bodyOf(hostile);
+  assert.equal(query, bodyOf(plain).query, 'the query text is the same whatever the values');
+  assert.match(query, /^query changes\(/u);
+  assert.doesNotMatch(query, /mutation|@\/etc|\{owner\}|x"\)/u);
+  // The ranking's fields, read on each pull request, and no root field: a non-null root one a token cannot resolve, such
+  // as an app installation token's viewer, would null the whole answer.
+  assert.match(query, /\bviewerDidAuthor\b/u);
+  assert.match(query, /\bauthorAssociation\b/u);
+  assert.doesNotMatch(query, /\bviewer\s*\{/u, 'no root viewer read');
+  assert.equal(query.match(/viewer/gu).length, 1, 'viewer appears once, as viewerDidAuthor, never from a value');
+  assert.deepEqual(variables, {
+    o0: 'acme', n0: 'notes', b0: '@/etc/hosts', o1: 'acme', n1: 'notes', b1: '{owner}', o2: 'acme', n2: 'notes', b2: 'x"){viewer{login}}', o3: 'acme', n3: 'notes', p3: 7,
+  }, 'the ref that fails the ref-name check is dropped; the one that passes it reaches the variables as its own b-index');
+  assert.deepEqual(Object.keys(hostile.options).sort(), ['cwd', 'input'], 'no environment of its own');
+  const many = run(Array.from({ length: 30 }, (_, i) => numberRef('acme/notes', i + 1)));
+  assert.equal(Object.keys(bodyOf(many).variables).filter((name) => name.startsWith('p')).length, MAX_CHANGE_REFS, 'at most 25 refs, the first ones');
+  assert.equal(bodyOf(many).variables.p24, 25);
+});
+
+test('changesState asks nothing for refs that fail changeRef, and answers null for each', () => {
+  const { forge, calls } = recorded();
+  const bad = [branchRef('-acme/notes', 'x'), numberRef('acme/notes', 0), { host: 'gitlab.com', path: 'acme/notes', number: 1, branch: null }, { host: 'ghe.example.test', path: 'a/b', number: 1, branch: null }, null];
+  assert.deepEqual(forge.changesState(bad), [null, null, null, null, null]);
+  assert.deepEqual(forge.changesState([]), []);
+  assert.deepEqual(calls, []);
+});
+
+test('changesState on recorded answers: a branch pushed to a fork resolves to its pull request on the parent, the newest of them', () => {
+  const [fork] = replay(RECORDED.answer, RECORDED.status).forge.changesState(RECORDED.refs);
+  assert.deepEqual(RECORDED.refs[0], branchRef('leonxljx/cli', 'fix/11247-pr-create-json'));
+  assert.equal(RECORDED.answer.data.r0.parent.pullRequests.nodes.length, 5, 'the branch has five pull requests on the parent');
+  assert.equal(RECORDED.answer.data.r0.parent.pullRequests.pageInfo, undefined, 'recorded before the query asked for pageInfo: a page with none is whole');
+  assert.deepEqual([fork.repo, fork.number, fork.url], ['cli/cli', 15035, 'https://github.com/cli/cli/pull/15035']);
+});
+
+test('changesState on recorded answers: a newer pull request from a fork with a branch of the same name does not resolve the row', () => {
+  const rows = replay(RECORDED.answer, RECORDED.status).forge.changesState(RECORDED.refs);
+  const nodes = RECORDED.answer.data.r1.pullRequests.nodes;
+  assert.notEqual(nodes[0].headRepository.owner.login, 'nodejs', 'the newest pull request on that branch name comes from a fork');
+  assert.ok(Date.parse(nodes[0].createdAt) > Date.parse(nodes[1].createdAt));
+  assert.deepEqual(nodes.map((node) => [node.viewerDidAuthor, node.authorAssociation]), [[false, 'NONE'], ...Array(4).fill([false, 'COLLABORATOR'])],
+    'GitHub answers the ranking`s fields: the fork`s author an outsider, the repository`s own a collaborator');
+  assert.deepEqual([rows[1].repo, rows[1].number], ['nodejs/node', nodes[1].number], 'the newest whose head is the row`s own repository');
+});
+
+test('changesState on recorded answers: a branch with none gives no row, a number its own, and a repository that does not resolve none', () => {
+  const { forge, calls } = replay(RECORDED.answer, RECORDED.status);
+  const rows = forge.changesState(RECORDED.refs);
+  assert.equal(calls.length, 1);
+  assert.equal(rows[2], null, 'a branch with no pull request');
+  assert.deepEqual([rows[3].repo, rows[3].number], ['cli/cli', 15035]);
+  assert.equal(rows[4], null, 'a null alias gives no row; the others still come');
+  assert.ok(RECORDED.answer.errors.length > 0 && RECORDED.status !== 0, 'gh exited non-zero on an answer that holds errors');
+  for (const each of rows.filter(Boolean)) {
+    assert.deepEqual(Object.keys(each), ['forge', 'host', 'repo', 'number', 'title', 'url', 'isDraft', 'state', 'mergeable', 'reviewDecision', 'unresolvedThreads', 'checks']);
+    assert.ok(!JSON.stringify(each).includes('Could not resolve'), 'no error text');
+  }
+});
+
+const PR_NODE = {
+  number: 7, title: 'Add notes', url: 'https://github.com/acme/notes/pull/7', isDraft: true, state: 'OPEN', mergeable: 'CONFLICTING', reviewDecision: 'CHANGES_REQUESTED',
+  createdAt: '2026-11-18T00:00:00Z', headRefName: 'feat/x', headRepository: { name: 'notes', owner: { login: 'acme' } }, repository: { name: 'notes', owner: { login: 'acme' } },
+  reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }, { isResolved: false }] },
+  commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { checkRunCountsByState: [], statusContextCountsByState: [] } } } }] },
+};
+const one = (node) => replay({ data: { r0: { pullRequest: node } } }).forge.changesState([numberRef('acme/notes', 7)])[0];
+
+test('changesState: a branch with two pull requests resolves to the newer, by its time and not its place in the answer', () => {
+  const node = (number, createdAt, owner = 'acme') => ({ ...PR_NODE, number, createdAt, url: `https://github.com/acme/notes/pull/${number}`, headRepository: { name: 'notes', owner: { login: owner } } });
+  const answer = { data: { r0: { pullRequests: { nodes: [node(4, '2026-11-01T00:00:00Z'), node(9, '2026-11-17T00:00:00Z'), node(12, '2026-11-18T00:00:00Z', 'someone')] }, parent: null } } };
+  const [row] = replay(answer).forge.changesState([branchRef('acme/notes', 'feat/x')]);
+  assert.equal(row.number, 9);
+});
+
+test('changesState: a branch resolves to the token user`s own pull request, then a member`s, then an open one, then the newest', () => {
+  const node = (number, createdAt, { mine = false, state = 'OPEN', ...given } = {}) => ({
+    ...PR_NODE, number, createdAt, state, viewerDidAuthor: mine, authorAssociation: Object.hasOwn(given, 'association') ? given.association : 'COLLABORATOR', url: `https://github.com/acme/notes/pull/${number}`,
+  });
+  const resolve = (nodes) => replay({ data: { r0: { pullRequests: { nodes }, parent: null } } }).forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number;
+  const outsider = node(9, '2026-11-17T00:00:00Z', { association: 'NONE' });
+  const collaborator = node(4, '2026-11-01T00:00:00Z', { state: 'MERGED' });
+  assert.equal(resolve([outsider, collaborator]), 4, 'an outside author`s newer open pull request loses to a collaborator`s merged one');
+  const mine = node(2, '2026-10-01T00:00:00Z', { mine: true, association: 'CONTRIBUTOR', state: 'CLOSED' });
+  assert.equal(resolve([outsider, collaborator, mine]), 2, 'the token user`s own beats both: closed, older, and an outsider by association');
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    assert.equal(resolve([outsider, node(4, '2026-11-01T00:00:00Z', { association, state: 'CLOSED' })]), 4, `${association} is trusted`);
+  }
+  for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE', 'owner', 'MAINTAINER', 'has', undefined, null]) {
+    assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { association, state: 'MERGED' }), outsider]), 9, `${association} is untrusted: the open one wins`);
+  }
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { mine: 'true' }), node(9, '2026-11-17T00:00:00Z')]), 9, 'only viewerDidAuthor true counts as the token user`s');
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z'), node(9, '2026-11-17T00:00:00Z', { state: 'MERGED' })]), 4, 'an open one beats a newer merged one');
+  assert.equal(resolve([node(4, '2026-11-01T00:00:00Z', { state: 'CLOSED' }), node(9, '2026-11-17T00:00:00Z', { state: 'MERGED' })]), 9, 'then the newest');
+  const noViewer = replay({ data: { viewer: null, r0: { pullRequests: { nodes: [collaborator] }, parent: null } } });
+  assert.equal(noViewer.forge.changesState([branchRef('acme/notes', 'feat/x')])[0].number, 4, 'no root viewer is read, so an answer without one still resolves');
+});
+
+test('changesState: on a page with more a branch resolves only to the top class its rank asks for, since a better one may lie past it', () => {
+  const node = (number, { mine = false, state = 'CLOSED', owner = 'acme' } = {}) => ({
+    ...PR_NODE, number, createdAt: `2026-11-${10 + number}T00:00:00Z`, state, viewerDidAuthor: mine, authorAssociation: 'COLLABORATOR',
+    url: `https://github.com/acme/notes/pull/${number}`, headRepository: { name: 'notes', owner: { login: owner } },
+  });
+  const forks = [1, 2, 3, 4].map((number) => node(number, { state: 'OPEN', owner: `fork${number}` }));
+  const resolve = (nodes, rank, more = true) => replay({ data: { r0: { pullRequests: { nodes, pageInfo: { hasNextPage: more } }, parent: null } } })
+    .forge.changesState([{ ...branchRef('acme/notes', 'feat/x'), rank }])[0]?.number ?? null;
+  assert.equal(resolve([node(9), ...forks], 'open'), null, 'a touched branch: its only closed one on a page with more');
+  assert.equal(resolve([node(9), ...forks], 'open', false), 9, 'exactly five, and GitHub says no more: the page is whole');
+  assert.equal(resolve([node(9), ...forks.slice(1)], 'open', false), 9, 'the same with room left on the page');
+  assert.equal(resolve([node(9, { state: 'OPEN' }), ...forks], 'open'), 9, 'an open one is the top class');
+  assert.equal(resolve([node(9, { mine: true, state: 'MERGED' }), ...forks], 'own'), null, 'a pushed branch: the user`s merged one on a page with more');
+  assert.equal(resolve([node(9, { mine: true, state: 'MERGED' }), ...forks], 'own', false), 9, 'the same on a whole page of exactly five');
+  assert.equal(resolve([node(9, { mine: true, state: 'OPEN' }), ...forks], 'own'), 9, 'the user`s own open one is the top class');
+  const parentMore = replay({ data: { r0: { pullRequests: { nodes: [node(9)], pageInfo: { hasNextPage: false } }, parent: { pullRequests: { nodes: forks, pageInfo: { hasNextPage: true } } } } } });
+  assert.equal(parentMore.forge.changesState([{ ...branchRef('acme/notes', 'feat/x'), rank: 'open' }])[0], null, 'either page with more fails closed');
+});
+
+test('changesState asks GitHub whether each branch page has more', () => {
+  const { forge, calls } = recorded(() => '{"data":{}}');
+  forge.changesState([branchRef('acme/notes', 'feat/x')]);
+  const { query } = bodyOf(calls[0]);
+  assert.equal(query.match(/pullRequests\(headRefName: \$b0, first: 5, [^)]*\) \{ nodes \{ \.\.\.change \} pageInfo \{ hasNextPage \} \}/gu)?.length, 2, 'the repository`s page and its parent`s');
+});
+
+test('a pull request number past GraphQL`s Int is refused before any call: the batch still resolves the others, and no read sends it', () => {
+  const past = 2 ** 31;
+  const { forge, calls } = replay({ data: { r0: { pullRequest: PR_NODE } } });
+  assert.equal(forge.changeRef(numberRef('acme/notes', past)), null);
+  assert.equal(forge.changeRef(numberRef('acme/notes', past - 1)).number, past - 1, 'the largest Int is a ref');
+  const rows = forge.changesState([numberRef('acme/notes', past), numberRef('acme/notes', 7)]);
+  assert.deepEqual(rows.map((row) => row?.number ?? null), [null, 7], 'the bad number answers null and the other still resolves');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(bodyOf(calls[0]).variables, { o0: 'acme', n0: 'notes', p0: 7 }, 'no variable holds the bad number');
+  assert.ok(!calls[0].options.input.includes(String(past)));
+  const reads = [() => forge.reviewsWithComments('acme/notes', past), () => forge.reviewThreads('acme/notes', past), () => forge.changeEdits('acme/notes', past), () => forge.findingThreads('acme/notes', past)];
+  for (const read of reads) assert.throws(read, /GraphQL/u);
+  assert.equal(calls.length, 1, 'no GraphQL read starts with it');
+  forge.comment('acme/notes', 2 ** 40);
+  assert.ok(calls.at(-1).args.includes('repos/acme/notes/issues/comments/1099511627776'), 'a REST id stays unbounded');
+});
+
+test('changesState: every row carries the adapter`s id, from the one constant that names it', () => {
+  const { forge } = replay({ data: { r0: { pullRequest: PR_NODE } } });
+  assert.equal(forge.changesState([numberRef('acme/notes', 7)])[0].forge, forge.id);
+  const source = readFileSync(new URL('../plugins/aidrian/lib/forges/github.mjs', import.meta.url), 'utf8');
+  assert.equal(source.match(/'github'/gu).length, 1, 'the id is written once');
+});
+
+test('changesState fills the forge-neutral row: its values, and every check counted from the rollup`s counts by state', () => {
+  const rollup = {
+    checkRunCountsByState: [{ state: 'SUCCESS', count: 120 }, { state: 'FAILURE', count: 3 }, { state: 'TIMED_OUT', count: 1 }, { state: 'IN_PROGRESS', count: 10 },
+      { state: 'QUEUED', count: 4 }, { state: 'SKIPPED', count: 5 }, { state: 'NEUTRAL', count: 2 }, { state: 'STALE', count: 1 }, { state: '\u001b]52;c;x\u0007', count: 1 }, { state: 'SUCCESS', count: -3 }],
+    statusContextCountsByState: [{ state: 'SUCCESS', count: 1 }, { state: 'ERROR', count: 1 }, { state: 'PENDING', count: 1 }, { state: 'EXPECTED', count: 1 }],
+  };
+  const row = one({ ...PR_NODE, repository: { name: 'notes', owner: { login: 'Acme' } }, url: 'https://github.com/Acme/notes/pull/7', commits: { nodes: [{ commit: { statusCheckRollup: { contexts: rollup } } }] } });
+  assert.deepEqual(row, {
+    forge: 'github', host: 'github.com', repo: 'acme/notes', number: 7, title: 'Add notes', url: 'https://github.com/Acme/notes/pull/7', isDraft: true,
+    state: 'open', mergeable: false, reviewDecision: 'changes_requested', unresolvedThreads: 2, checks: { passed: 121, failed: 5, pending: 18, skipped: 7 },
+  });
+  assert.equal(Object.values(row.checks).reduce((sum, n) => sum + n, 0), 151, 'a pull request with more than 100 checks is counted whole');
+  const states = [['MERGED', 'MERGEABLE', 'APPROVED'], ['CLOSED', 'UNKNOWN', 'REVIEW_REQUIRED'], ['OPEN', null, null]];
+  const none = { passed: 0, failed: 0, pending: 0, skipped: 0 };
+  assert.deepEqual(states.map(([state, mergeable, reviewDecision]) => {
+    const each = one({ ...PR_NODE, state, mergeable, reviewDecision, commits: { nodes: [] } });
+    return [each.state, each.mergeable, each.reviewDecision, each.checks];
+  }), [['merged', true, 'approved', none], ['closed', null, 'review_required', none], ['open', null, null, none]]);
+});
+
+test('changesState: url is built from what GitHub answered, and GitHub`s own kept only when it equals that', () => {
+  assert.equal(one(PR_NODE).url, 'https://github.com/acme/notes/pull/7');
+  for (const url of ['https://evil.example/acme/notes/pull/7', 'https://github.com/acme/notes/pull/7?x=1', 'javascript:alert(1)', 'https://github.com/other/notes/pull/7', null]) {
+    assert.equal(one({ ...PR_NODE, url }).url, null, String(url));
+  }
+  for (const repository of [{ name: 'notes', owner: { login: '-acme' } }, { name: '..', owner: { login: 'acme' } }, { name: 'notes', owner: null }, null]) {
+    assert.equal(one({ ...PR_NODE, repository }), null, JSON.stringify(repository));
+  }
+  assert.equal(one({ ...PR_NODE, state: 'DRAFT' }), null, 'a state outside open, closed, and merged');
+});
+
+test('changesState: an answer that does not parse, or holds no data, throws; so does a gh that stopped with no answer', () => {
+  for (const text of ['', 'not json', '{"errors":[{"message":"x"}]}', '{"data":null}', '{"data":[]}']) {
+    const { forge } = recorded(() => text);
+    assert.throws(() => forge.changesState([numberRef('acme/notes', 7)]), Error, text);
+  }
+  const { forge } = recorded(() => {
+    throw new Error('gh api graphql did not finish in 4 s and was stopped.');
+  });
+  assert.throws(() => forge.changesState([numberRef('acme/notes', 7)]), /did not finish/u);
+});
+
+test('reviewThreads, changeEdits, and reviewsWithComments send the owner and name with -f, and a number only through idOf', () => {
+  const { forge, args } = recorded(() => '{"data":{}}');
+  forge.reviewThreads('@/etc/hosts', 12);
+  forge.changeEdits('@/etc/hosts', 12);
+  forge.reviewsWithComments('@/etc/hosts', 12);
+  for (const call of args()) {
+    const owner = call.findIndex((arg) => /^(?:o|owner)=@$/u.test(arg));
+    const name = call.findIndex((arg) => /^(?:r|name)=etc$/u.test(arg));
+    assert.deepEqual([call[owner - 1], call[name - 1]], ['-f', '-f'], call.join(' '));
+    assert.deepEqual(call.slice(-2), ['-F', call.at(-1)]);
+    assert.match(call.at(-1), /^(?:n|number)=12$/u);
+  }
+  for (const bad of ['@/etc/hosts', '12abc', 0, -1, null]) {
+    assert.throws(() => forge.reviewThreads('acme/notes', bad), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.changeEdits('acme/notes', bad), /must be a positive whole number/u, String(bad));
+    assert.throws(() => forge.reviewsWithComments('acme/notes', bad), /must be a positive whole number/u, String(bad));
+  }
+  assert.equal(args().length, 3, 'no gh call for a number that fails');
 });

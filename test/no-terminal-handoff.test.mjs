@@ -22,6 +22,7 @@ const BREAK_GLASS = new Set([
   'lib/rules/github/public-text.mjs',
   'lib/rules/main-checkout/checkout.mjs',
   'lib/rules/process-kill.mjs',
+  'lib/rules/push-first.mjs',
 ]);
 
 test('no plugin text sends the Human to a terminal without an in-session route', () => {

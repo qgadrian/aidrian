@@ -158,6 +158,15 @@ This rests on the [tools reference](https://code.claude.com/docs/en/tools-refere
 [hooks reference](https://code.claude.com/docs/en/hooks#powershell), which give its command as `tool_input.command`, the
 Bash tool's field, and on test fixtures of that shape. It has not run live: no session here had the PowerShell tool on.
 
+## Session ids
+
+`CLAUDE_CODE_SESSION_ID` in the Bash tool is the session the host gives its hooks. Seen live on 2026-11-18, in a
+subagent of a main session: its Bash tool's `CLAUDE_CODE_SESSION_ID` and the `session_id` its hooks recorded in the
+dispatch log were both the main session's id, never another one; the live runs under
+[Handoff continuation](#handoff-continuation) show it follows a clear and is a background session's own. The
+snapshot's [worktree links](adding-a-host.md#session-links) are still written by the PostToolUse Bash hook, under the
+payload's `session_id`, since Codex's shell variable is not its hooks' id in a subagent, and one writer serves both hosts.
+
 ## Handoff continuation
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
@@ -199,7 +208,7 @@ Not verified, each with its answer in the design:
 | --- | --- |
 | Whether UserPromptSubmit fires for the clear or compact command | The adapter's `keepsArmed(prompt)` leaves the continuation for `/clear`, `/reset`, `/new`, and `/compact`. |
 | Whether other built-in commands fire UserPromptSubmit | Each one that does cancels the continuation, as any prompt does: only those four are spared. |
-| Whether a hook payload's `cwd` follows a `cd` in the Bash tool, as the Bash tool's own folder does | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. |
+| Whether a hook payload's `cwd` follows a `cd` in the Bash tool, as the Bash tool's own folder does | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. The [session ledger](../hooks.md#session-ledger) does not depend on the answer either: it takes a call's folder from an absolute leading `cd`, `git -C`, or `env -C`, and the payload's `cwd` only on a line that changes no directory. |
 
 UserPromptSubmit also fires when a background subagent reports back, on a scheduled-task or loop iteration, on a
 message from another session, and on the output of Claude's code in a Code Mode session when that code runs in the
@@ -219,9 +228,11 @@ the absolute folders of PATH alone, so an empty or relative entry never runs a `
    listed session, which files the pending mark that holds every other session until the new one's id is listed;
    when that fails, nothing starts.
 2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] <prompt>` there,
-   where the name is that session's, else the brief's slug, `<n>` the continuation's number, the agent
-   `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter accepts, the mode the
-   handing-off session's (below), and the prompt the continuation. It reads the short id from its
+   where the name is that session's, else the brief's slug. A name that ends in ` · <n - 1>` loses that count and
+   any before it that count down by one, so a second hop names `widget-work · 2`, not `widget-work · 1 · 2`;
+   any other name stays whole, such as `release · 2026`. `<n>` is the continuation's number; the agent is
+   `CLAUDE_CODE_AGENT` and the effort `CLAUDE_EFFORT` when each holds a value the adapter accepts, the mode is the
+   handing-off session's (below), and the prompt is the continuation. It reads the short id from its
    `backgrounded · <id> · <name>` line.
 3. `claude agents --json` again, every half second for about 5 seconds, for the one background session in that folder
    whose `sessionId` the first listing did not hold, by that short id, or by the name when the output printed none.
@@ -263,17 +274,26 @@ Checked by hand on Claude Code 2.1.326 on 2026-11-17, with a trivial prompt rath
 - Neither the shell of the session's Bash tool nor `claude agents --json` gives the session's permission mode: the
   listing's rows hold `pid`, `cwd`, `kind`, `startedAt`, `sessionId`, `name`, `status`, `id`, and `state`. The
   transcript does, `~/.claude/projects/<start folder, each character but a letter or digit as ->/<session id>.jsonl`
-  (under `CLAUDE_CONFIG_DIR` when set), with a `{"type":"permission-mode","permissionMode":"<mode>","sessionId":"<id>"}`
-  entry; `claude --help` lists `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, and `plan` for
-  `--permission-mode`.
+  (under `CLAUDE_CONFIG_DIR` when set). It may hold `{"type":"permission-mode","permissionMode":"<mode>","sessionId":"<id>"}`
+  entries, and the `user` entry of each prompt carries the mode as a top-level `"permissionMode":"<mode>"` field
+  beside `sessionId`; the `user` entries that hold tool results do not. Some transcripts, checked on 2026-11-17, hold
+  only the prompt entries' field. `claude --help` lists `acceptEdits`, `auto`,
+  `bypassPermissions`, `manual`, `dontAsk`, and `plan` for `--permission-mode`.
 
 So the adapter passes the handing-off session's permission mode with `--permission-mode`, so an unattended chain does
-not stop at a prompt the old session would not have shown. It reads the last `permission-mode` entry of that session's
-transcript, in the start folder's project folder, else in any project folder, from its last 16 MB, and passes it only
+not stop at a prompt the old session would not have shown. It reads the last entry of that session's transcript with
+a top-level `permissionMode`, of either shape, in the start folder's project folder, else in any project folder.
+It reads backwards from the end in 1 MB chunks until one names the mode, so it finds one however far back it is.
+It skips a subagent's sidechain entry and any entry whose `sessionId` is not the session's. A line over 32 MB is not
+parsed: one that holds the `"permissionMode"` key reads as no mode, and one without it is skipped. A
+`permissionMode` that is not a string reads as no mode either. It passes the mode only
 when it is `acceptEdits`, `auto`, `dontAsk`, `manual`, or `plan`; a transcript's `default` is passed as `manual`.
 A session that runs in `bypassPermissions` starts nothing, and the handoff goes on by the clear route: a session no
 Human attends never runs without permission checks. With no mode it can read, none starts either, since the host's
 default may be `bypassPermissions`, and the fallback line says the mode could not be read.
+Accepted residual: in a transcript that carries the mode only on prompt entries, a mode changed in the middle of a
+turn shows only at the next prompt, so a handoff in that turn passes the mode the turn started in. A background
+session of the chain seldom has a Human attached to change its mode, and `bypassPermissions` is never passed.
 Not verified live: a background start with `--permission-mode`.
 - `claude agents --json` also lists interactive sessions, with `sessionId`, `name`, `kind: "interactive"`, and `cwd`,
   the folder the session was started in; `claude --help` lists `stop|kill <id>` and `attach <id|name>`.
@@ -684,6 +704,48 @@ Narrowing the forge token to the repository reopens this ruling. Each one:
   It stays listable, as an opt-in.
 - `rubygems` (`index.rubygems.org`, `rubygems.org`): `gem push` to `rubygems.org`, with a key the session is given;
   `~/.gem/credentials` and `~/.local/share/gem/credentials` are hidden.
+
+### Replacing the terminal
+
+The adapter's `replaceTerminal` (`lib/hosts/claude-code-terminal.mjs`) lets a session that handed off end itself, so
+the terminal that ran it opens the new session ([handoff.md](../handoff.md#replacing-the-terminal)). The shell function
+`aidrian shell-init zsh` prints wraps `claude`, opens the next session with `command claude attach <id>`, and gives
+`claude` the shell's pid as `AIDRIAN_SHELL_PID`. A session is attended when `CLAUDE_CODE_SESSION_ATTENDED` is `1`.
+Its host process is `CLAUDE_PID`, when it is attended and `ps -o pid=,ppid=,comm= -p <pid>` shows a process named
+`claude` whose parent is that shell; it reads no process's arguments. It ends that process with SIGTERM.
+
+Checked by hand on Claude Code 2.1.326 on 2026-11-17, in a pseudo-terminal, with throwaway sessions in a trusted
+folder and a trivial prompt:
+
+- SIGTERM, SIGHUP, and SIGINT each end an interactive session within about 2 seconds, idle and in the middle of a turn.
+  Each time the transcript holds the last answer, the terminal is restored, and the session prints
+  `Resume this session with: claude --resume <id>`. The session exits 143 on SIGTERM, 129 on SIGHUP, and 0 on SIGINT.
+  The adapter sends SIGTERM, the signal whose meaning is to end.
+- Each runs the SessionEnd hooks, reason `other`, within the same short time a normal exit gives them: a hook that
+  takes 3 seconds is cancelled, with `failed: Hook cancelled`, under all three signals.
+- The Bash tool's shell and every hook carry `CLAUDE_PID`, the session's `claude` process, the parent of the Bash tool's
+  shell and of a hook's shell. They carry `CLAUDE_CODE_SESSION_ATTENDED=1` in an interactive session and `0` in a
+  background one, and a variable the starting shell exported, such as `AIDRIAN_SHELL_PID`.
+- The interactive `claude` shows as `claude` in `ps -o comm=`, a child of the program that started it. A background
+  session's process shows as `claude bg-spare` under `claude bg-pty-host`, so it never passes the check.
+
+A background session the gate started ends itself with `replaceTerminal.endOwn` (`stopOwnBackground` in
+`lib/hosts/claude-code-background.mjs`) once its own handoff started the next one, whether or not a terminal follows it.
+It reads `claude agents --json` and runs `claude stop <id>` only when exactly
+one background row has that `id`, or a `sessionId` that starts with it, and its `sessionId` is the session's own.
+It never signals a process: the supervisor owns the background session's process.
+
+Checked by hand on Claude Code 2.1.326, in a pseudo-terminal: `claude attach <id>` on a live background session exits 0
+about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the next session.
+
+Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
+function.
+
+## The Claude mod
+
+`aidrian-mod` is an optional mod for Claude Code alone: a band above the prompt, a pane, and notifications, drawn
+from `aidrian session snapshot`. It installs beside the plugin, `claude plugin install aidrian-mod@aidrian-harness`.
+[Claude mod](../claude-mod.md) has what it shows, its settings, the status line fallback, and its limits.
 
 ## Limits
 

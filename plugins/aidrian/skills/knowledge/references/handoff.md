@@ -19,7 +19,8 @@ Add a field only when your role emits it or the dispatch asks for it. Use these 
 - `pending_commit` (any agent dispatched not to commit): each changed file; the dispatcher compares it to `git status --porcelain`.
 - `residual_rows` (`product-manager`, from the `pr-write` residuals check): one `{ residual, contradicts, evidence }` per accepted residual.
 - `dirty_handoff` (developers): uncommitted changes with no reason when the dispatch asked for a commit.
-- `commands_run` (developers, `integrator`, `e2e-runner`, `helper-scout`, `github-archaeologist`): the exact commands run.
+- `commands_run` (developers, `integrator`, `e2e-runner`, `helper-scout`, `github-archaeologist`): the exact commands run,
+  each with its result as the tool returned it, or `not finished` for one stopped or still running.
 - `compliance` (developers: `not_bypassed` or `hook_failed`; `product-manager`, `architect`: each rule and whether it holds).
 - `defer_reason`: `non_goals_collision`, `confirmed_missing_authority`, `human_only`, or `user_chose`, on a finding deferred to a new issue.
 - `decision_options` (when the Human must choose): `id`, `summary`, `tradeoffs`, `recommended` (advisory), with the decision's `class`, `reversible`, and `docs`.

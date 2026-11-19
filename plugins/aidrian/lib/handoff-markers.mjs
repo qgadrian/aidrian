@@ -4,12 +4,20 @@
 //   checked-<brief name>.json  { sha256, at }                                       the brief that passed the check
 //   armed-<session>.json       { route, session, brief, slug, chain, sha256, armed_at }
 //   ready-<session>.json       the armed marker, plus ended_at and host_pid          after the session ended by a clear
-//   from-<session>.json        { slug, chain, brief, route, at }                      the chain floor of a session
+//   from-<session>.json        { slug, chain, brief, route, parent, at }              the chain floor of a session;
+//                              a background hop's adds { tree, done, stalls }, the progress it starts from;
+//                              `parent`, the session that handed off, is optional, and only the snapshot reads it
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
 // A project run's start (lib/project-run-gate.mjs) starts a session from no brief: its floor's `brief` is null, and its
 // start record has `sha256` and `brief` null and `project`, { run, issue, attempt }, in their place.
 //   claim-<session>.json       { at, kept }       a gate run's claim on starting a session for it (claimStart)
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
+//   ending-<session>.json      { shell, id, next, host_pid | own, at }   a session that ends itself once its turn ends,
+//                              so the terminal of the shell `shell` opens the background session `id`, whose full id is
+//                              `next` or null; an attended one by its host process, a background one as the session `own`,
+//                              whose `shell` is null when no terminal follows it: it then only stops, once `id` started
+//   follow-<session>.json      { shell, at }   a background session the terminal of the shell `shell` follows, written
+//                              when the session before it ended itself (lib/terminal-replace.mjs)
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
 // takes it for every session id that starts with it, and the highest of those and the session's own wins. A floor of
 // route `background` marks a session no Human attends (startedInBackground).
@@ -21,11 +29,11 @@
 // No function throws on a missing folder; a read returns null for anything it cannot use.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { CONTINUE_ROUTES } from './config-schema.mjs';
-import { foldCase, isObject, isWithin, resolvedPath } from './fs.mjs';
+import { checkoutHolding, foldCase, isObject, processUid, resolvedPath } from './fs.mjs';
 
 // A session id that may name a file.
 export const SESSION_ID = /^[\w-]{1,128}$/u;
@@ -45,14 +53,19 @@ export const hasControl = (text) => /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.
 export const MARKER_CAP = 64 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const DAY = 24 * 60 * 60 * 1000;
+// How long a session's request to end itself holds: the turn that ran the gate ends well inside it.
+export const ENDING_WINDOW = 30 * 60 * 1000;
+// How long a record that a terminal follows a background session holds: a hop's session rarely runs longer.
+export const FOLLOW_AGE = 12 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY };
-const KIND = /^(armed|ready|checked|tasks|taken|started|claim|from|gone|continued)-/u;
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE };
+const KIND = /^(armed|ready|checked|tasks|taken|started|claim|from|gone|continued|ending|follow)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
-const CHAIN_CEILING = 10_000;
+export const CHAIN_CEILING = 10_000;
 // A short id a floor may be filed under: what a host prints before its listing names the session's full id.
 const SHORT_FROM = /^from-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
+const SHORT_FOLLOW = /^follow-([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 // A session name the say line prints in single quotes, and a started marker keeps: no quote, `$`, `;`, or other
 // character a shell reads inside them.
 export const PLAIN_NAME = /^[\w .@:\u00b7-]{1,100}$/u;
@@ -61,7 +74,7 @@ const MODE = /^[A-Za-z]{1,32}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
-const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|claim|from|gone)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|claim|from|gone|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
 export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started|claim)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
@@ -78,33 +91,34 @@ export function slugOf(name) {
   return BRIEF_FILE.exec(base)?.[2] ?? base.replace(/\.md$/u, '');
 }
 
+// The number of continuations in a row session.handoff.maxChain allows: Infinity for "unlimited", where only the
+// background route's progress check (lib/handoff-continue.mjs) bounds a chain.
+export const chainLimit = (maxChain) => (maxChain === 'unlimited' ? Infinity : maxChain);
+
 // The store of the state folder `state`: { dir, handoffs, maxChain, uid, refused }. `dir` is the real path of the
 // store's folder. `refused` says why no marker may be written or read there, or is null: the store's folder is a
 // symlink; it resolves inside one of `checkouts`, compared in the case the disk folds to, since a real path keeps the
-// case it was spelled in; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
+// case it was spelled in, or `checkouts` is null, as when git could not list them; or `state`, its handoffs folder, or the store's folder is owned by another user than `uid` or
 // writable by every user, where the system has user ids. A folder its group may write passes: a umask of 002 is common. A folder not made yet passes,
-// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, which bounds every
-// chain a marker holds. `uid` is this process's user, null where the system has none, and every read refuses a marker
-// or a brief another user owns.
+// and the store makes its own folder for its owner alone. `maxChain` is session.handoff.maxChain, as chainLimit reads
+// it, which bounds the chain of an armed or ready marker; a chain floor or a start record is bounded by CHAIN_CEILING
+// alone. `uid` is this process's user, null where the system has none, and every read refuses a marker or a brief
+// another user owns.
 export function openStore(state, { checkouts = [], maxChain, uid = processUid() }) {
   const handoffs = path.join(state, 'handoffs');
   const real = resolvedPath(storePath(state));
-  const checkout = real && checkouts.find((each) => {
-    const root = resolvedPath(each);
-    return root !== null && isWithin(foldCase(root), foldCase(real));
-  });
+  const checkout = real && Array.isArray(checkouts) && checkoutHolding(real, checkouts);
   let refused = null;
   if (real === null) refused = `the continuation store ${storePath(state)} is behind a broken symlink`;
+  else if (!Array.isArray(checkouts)) refused = `git could not list the checkouts of the repository, so no continuation marker is kept in ${real}, which may be inside one`;
   else if (isLink(storePath(state))) refused = `the continuation store ${storePath(state)} is a symlink, and no continuation marker is kept behind one`;
   else if (checkout) refused = `the continuation store ${real} is inside the checkout ${checkout}, where no continuation marker is kept; move state.dir out of the repository`;
   else {
     const loose = [state, handoffs, storePath(state)].map((dir) => [dir, looseFolder(dir, uid)]).find(([, why]) => why);
     if (loose) refused = `the folder ${loose[0]} of the continuation store ${loose[1]}, so no continuation marker is kept there; make it the user's own, writable by that user alone`;
   }
-  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain, uid, refused });
+  return Object.freeze({ dir: real ?? storePath(state), handoffs, maxChain: chainLimit(maxChain), uid, refused });
 }
-
-const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
 
 // Whether a stat names a file of another user than `uid`; never where the system has no user ids.
 const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
@@ -113,7 +127,8 @@ const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 // Both checks hold only where the system has user ids: Windows has none, and Node reports its writable folders with the
 // other-write bit set, so there the mode tells nothing.
 // A folder that is not there, or cannot be read, gives null: the store's own checks then refuse what they cannot read.
-// lib/project-run.mjs runPlace holds a project run's folders to it too.
+// lib/project-run.mjs runPlace holds a project run's folders to it too, and lib/session-folder.mjs holds its state folder,
+// and every folder above it, to a stricter rule (heldFolder).
 export function looseFolder(dir, uid) {
   if (!Number.isInteger(uid)) return null;
   let stat;
@@ -186,7 +201,8 @@ function sameFolder(real, dir) {
 // Whether `t` is a time no later than `now` and at most `window` before it.
 export const fresh = (t, now, window) => Number.isFinite(t) && now - t >= 0 && now - t <= window;
 const whole = (value, min, max) => Number.isInteger(value) && value >= min && value <= max;
-const isPid = (value) => Number.isInteger(value) && value > 1;
+// A process id the plugin may name: never 0 or 1, and within the range a pid takes.
+export const isPid = (value) => Number.isInteger(value) && value > 1 && value < 2 ** 31;
 const sessionFile = (kind, session) => (typeof session === 'string' && SESSION_ID.test(session) ? `${kind}-${session}.json` : null);
 
 // Whether `brief` is an absolute path to a brief of `slug`.
@@ -201,7 +217,24 @@ function isArmed(value, maxChain) {
 
 const isReady = (value, maxChain) => isArmed(value, maxChain) && Number.isFinite(value.ended_at) && isPid(value.host_pid);
 
-// A floor's brief: the absolute path of a brief of its slug, or null for a session a project run started from no brief.
+// A floor's progress, which only the background route records: the tree of the brief's branch (null when git could not
+// say), the Done items the brief held, and how many hops in a row before it showed neither moving.
+const isProgress = (value) => (value.tree === null || (typeof value.tree === 'string' && /^[0-9a-f]{40,64}$/u.test(value.tree)))
+  && whole(value.done, 0, CHAIN_CEILING) && whole(value.stalls, 0, CHAIN_CEILING);
+const noProgress = (value) => value.tree === undefined && value.done === undefined && value.stalls === undefined;
+
+// The progress a chain floor read from the store records, { tree, done, stalls }, or null when it records none, or a
+// shape this version does not read, such as an earlier one's: the floor's chain and route still hold, and the progress
+// check counts from 0 again.
+export const floorProgress = (floor) => (floor && !noProgress(floor) && isProgress(floor) ? { tree: floor.tree, done: floor.done, stalls: floor.stalls } : null);
+
+// Whether a chain floor can record a hop to `chain` with `done` Done items: both at most CHAIN_CEILING. The background
+// route asks it before it starts a session, since a floor it cannot record stops the session it started.
+export const floorFits = ({ chain, done = 0 }) => whole(chain, 0, CHAIN_CEILING) && whole(done, 0, CHAIN_CEILING);
+
+// A chain floor as the store reads it: its progress fields are not read here (floorProgress), so a floor whose progress
+// has another shape still holds its chain and route. Its brief is the absolute path of a brief of its slug, or null for
+// a session a project run started from no brief.
 const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
   && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && (value.brief === null || briefOf(value.brief, value.slug)) && Number.isFinite(value.at);
 
@@ -232,15 +265,30 @@ const isChecked = (value) => isObject(value) && typeof value.sha256 === 'string'
 // `window`, or `shape` refuses it.
 function readMarker(store, name, { now, field, window = AGES[KIND.exec(name)?.[1]] ?? DAY, shape }) {
   if (store.refused || !name) return null;
+  const read = readOwnFile(path.join(store.dir, name), { cap: MARKER_CAP, uid: store.uid });
+  if (!read || !fresh(Math.floor(read.stat.mtimeMs), now, window)) return null;
+  try {
+    const value = JSON.parse(read.text);
+    return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// The text of `file` and its stat, { text, stat }, or null when it is missing, a symlink, no regular file, owned by
+// another user than `uid`, or larger than `cap` bytes. It is opened no-follow and non-blocking, so no read follows a
+// symlink or waits on a FIFO, and at most the size fstat gave is read, so a file that grows meanwhile stays under the cap.
+export function readOwnFile(file, { cap, uid = processUid() }) {
   let fd;
   try {
-    const file = path.join(store.dir, name);
     if (!lstatSync(file).isFile()) return null;
     fd = openSync(file, NO_FOLLOW);
     const stat = fstatSync(fd);
-    if (!stat.isFile() || foreign(stat, store.uid) || stat.size > MARKER_CAP || !fresh(Math.floor(stat.mtimeMs), now, window)) return null;
-    const value = JSON.parse(readFileSync(fd, 'utf8'));
-    return shape(value, store.maxChain) && fresh(value[field], now, window) ? value : null;
+    if (!stat.isFile() || foreign(stat, uid) || stat.size > cap) return null;
+    const bytes = Buffer.alloc(stat.size);
+    let read = 0;
+    for (let n = 1; n > 0 && read < bytes.length; read += n) n = readSync(fd, bytes, read, bytes.length - read, read);
+    return { text: bytes.subarray(0, read).toString('utf8'), stat };
   } catch {
     return null;
   } finally {
@@ -349,34 +397,67 @@ export function clearPending(store, { now = Date.now() } = {}) {
   return { listed, armed };
 }
 
-// Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to.
-// `session` may be the short id a host printed for a session it started, which readFrom matches by prefix.
-export function noteFrom(store, session, { slug, chain, brief, route }, { now = Date.now() } = {}) {
-  const value = { slug, chain, brief, route, at: now };
-  return isFrom(value) ? writeMarker(store, sessionFile('from', session), value) : null;
+// Records the chain floor of `session`, { slug, chain, brief, route }, which `aidrian handoff check` holds it to, and
+// the background route's `progress`, { tree, done, stalls }, when it is given; a progress of another shape writes nothing.
+// `session` may be the short id a host printed for a session it started, which readFrom matches by prefix. `parent`, the
+// session that handed off, is written only when it passes SESSION_ID and is not `session` in the case the disk folds to;
+// isFrom does not read it, so a floor without one, or with a bad one, is the same floor (readHop).
+export function noteFrom(store, session, { slug, chain, brief, route, progress, parent }, { now = Date.now() } = {}) {
+  const named = typeof parent === 'string' && SESSION_ID.test(parent) && typeof session === 'string' && foldCase(parent) !== foldCase(session);
+  const value = { slug, chain, brief, route, ...progress, ...(named ? { parent } : {}), at: now };
+  return isFrom(value) && (noProgress(value) || isProgress(value)) ? writeMarker(store, sessionFile('from', session), value) : null;
 }
 
 // The chain floor `session` was given, or null: the highest of its own and every one filed under a short id it starts
 // with, as a background start files one when the host had not listed the new session's full id yet. A lower floor under
 // its own id never hides a higher one under a short id.
-export function readFrom(store, session, { now = Date.now() } = {}) {
-  return floorsOf(store, session, now).reduce((high, each) => (high && high.chain >= each.chain ? high : each), null);
+// `names` is a listing of the store storeNames gave, which the snapshot reads once for all its readers; a gate or a
+// guard passes none, so it never counts a floor from an old listing.
+export function readFrom(store, session, { now = Date.now(), names } = {}) {
+  return highest(floorsOf(store, session, now, names))?.value ?? null;
+}
+
+const highest = (floors) => floors.reduce((high, each) => (high && high.value.chain >= each.value.chain ? high : each), null);
+
+// The names in the store's folder, [] for a refused store or one that cannot be listed: what readFrom and readHop take
+// as `names`.
+export const storeNames = (store) => (store.refused ? [] : listStore(store));
+
+// Of the floor readFrom picks for `session`: { parent, at, short, read }, where `parent` is the id it names when that
+// passes SESSION_ID, else null; `at` its time; `short` the short id it is filed under, or null under the session's own
+// id; and `read` the floor files it opened. Null with no floor, a refused store, or more than `limit` files to open.
+export function readHop(store, session, { now = Date.now(), names, limit = Infinity } = {}) {
+  if (store.refused) return null;
+  const files = floorFiles(store, session, names);
+  if (files.length > limit) return null;
+  const pick = highest(files.map((name) => ({ name, value: readFloor(store, name, now) })).filter(({ value }) => value));
+  if (!pick) return null;
+  const { parent, at } = pick.value;
+  const short = pick.name === sessionFile('from', session) ? null : SHORT_FROM.exec(pick.name)[1];
+  return { parent: typeof parent === 'string' && SESSION_ID.test(parent) ? parent : null, at, short, read: files.length };
 }
 
 // Whether the background route started `session`, so no Human attends it: a chain floor of route `background` is filed
 // for it, under its own id or a short one it starts with. lib/handoff-guard.mjs startedUnattended asks it.
-export const startedInBackground = (store, session, { now = Date.now() } = {}) => floorsOf(store, session, now).some((floor) => floor.route === 'background');
+export const startedInBackground = (store, session, { now = Date.now() } = {}) => floorsOf(store, session, now).some(({ value }) => value.route === 'background');
 
-// Every chain floor filed for `session`: its own, then those under a short id it starts with.
-function floorsOf(store, session, now) {
+const readFloor = (store, name, now) => readMarker(store, name, { now, field: 'at', shape: isFrom });
+
+// The names of the chain floors filed for `session`: its own, then those under a short id it starts with, from `names`
+// when given, else from a listing of the store. Ids compare in the case the disk folds to: on such a disk, a floor under
+// a short id in other letters is still the session's, and one that spells its full id in other letters is its own file.
+function floorFiles(store, session, names) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return [];
-  const read = (name) => readMarker(store, name, { now, field: 'at', shape: isFrom });
+  const own = foldCase(session);
   const prefixOf = (name) => {
     const short = SHORT_FROM.exec(name)?.[1];
-    return short !== undefined && short !== session && session.startsWith(short);
+    return short !== undefined && foldCase(short) !== own && own.startsWith(foldCase(short));
   };
-  return [read(sessionFile('from', session)), ...listStore(store).filter(prefixOf).map(read)].filter(Boolean);
+  return [sessionFile('from', session), ...(names ?? listStore(store)).filter(prefixOf)];
 }
+
+// Every chain floor filed for `session`, as { name, value }.
+const floorsOf = (store, session, now, names) => floorFiles(store, session, names).map((name) => ({ name, value: readFloor(store, name, now) })).filter(({ value }) => value);
 
 // Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
 // brief, chain, id, session, name, cwd, mode }, where `id` is the id the gate names it by, `session` its full id or null,
@@ -495,6 +576,63 @@ export function dropClaim(store, session) {
   }
 }
 
+const idOrNull = (value) => value === null || (typeof value === 'string' && SESSION_ID.test(value));
+// A request names exactly one way to end: the host process of an attended session, with the shell that started it, or
+// the id of a background session, with the shell whose terminal follows it or null.
+const isEnding = (value) => isObject(value) && typeof value.id === 'string' && SESSION_ID.test(value.id)
+  && idOrNull(value.next) && Number.isFinite(value.at)
+  && (isPid(value.host_pid)
+    ? value.own === undefined && isPid(value.shell)
+    : value.host_pid === undefined && typeof value.own === 'string' && SESSION_ID.test(value.own) && (value.shell === null || isPid(value.shell)));
+
+// Records that `session` ends itself once its turn ends, and that the shell `shell` then opens the background session
+// `id`, whose full id is `next` or null. An attended session names its host process `hostPid`, which the shell started;
+// a background session names its own id `own`, as the host listed it, and `shell` null when no terminal follows it, so
+// it only stops once `id` started. Returns the file, or null when the store is refused or a value has a wrong shape.
+export function noteEnding(store, session, { hostPid, own, shell, id, next = null }, { now = Date.now() } = {}) {
+  const value = { shell, id, next, ...(hostPid === undefined ? {} : { host_pid: hostPid }), ...(own === undefined ? {} : { own }), at: now };
+  return isEnding(value) ? writeMarker(store, sessionFile('ending', session), value) : null;
+}
+
+// Takes the request of `session` to end itself, written in the last ENDING_WINDOW, and deletes it, so it acts once:
+// { shell, id, next } with `hostPid` or `own`, or null. Never throws on a missing or refused store.
+export function takeEnding(store, session, { now = Date.now() } = {}) {
+  const name = sessionFile('ending', session);
+  const value = readMarker(store, name, { now, field: 'at', shape: isEnding });
+  try {
+    remove(store, name);
+  } catch {
+    // Left for the sweep; a read past its window finds nothing.
+  }
+  if (!value) return null;
+  const way = value.host_pid === undefined ? { own: value.own } : { hostPid: value.host_pid };
+  return { shell: value.shell, id: value.id, next: value.next, ...way };
+}
+
+const isFollow = (value) => isObject(value) && isPid(value.shell) && Number.isFinite(value.at);
+
+// Records that the terminal of the shell `shell` follows the background session `session`, its full id or the short one
+// the host printed. Returns the file, or null.
+export function noteFollow(store, session, { shell }, { now = Date.now() } = {}) {
+  const value = { shell, at: now };
+  return isFollow(value) ? writeMarker(store, sessionFile('follow', session), value) : null;
+}
+
+// The shell whose terminal follows `session`, from the last FOLLOW_AGE, under its own id or a short one it starts with, the
+// latest if several whose shell `live(shell)` accepts: { shell, id }, where `id` is the id it was filed under; or null.
+export function readFollow(store, session, { now = Date.now(), live = () => true } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  const read = (id) => {
+    const value = readMarker(store, sessionFile('follow', id), { now, field: 'at', shape: isFollow });
+    return value && { shell: value.shell, id, at: value.at };
+  };
+  const shorts = listStore(store).map((name) => SHORT_FOLLOW.exec(name)?.[1]).filter((short) => short !== undefined && short !== session && session.startsWith(short));
+  const found = [read(session), ...shorts.map(read)].filter((each) => each && live(each.shell));
+  if (found.length === 0) return null;
+  const latest = found.reduce((last, each) => (each.at > last.at ? each : last));
+  return { shell: latest.shell, id: latest.id };
+}
+
 // Keeps `bytes`, a brief that passed the check, as `continued-<sha256>.md` in the store, owner-only, so the session a
 // background start begins reads the very bytes the gate checked. Returns its path, or null when the store is refused.
 export function keepBrief(store, bytes, sha256) {
@@ -525,6 +663,24 @@ export function verifyKept(file, sha256, { uid = processUid() } = {}) {
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+// The newest brief in the store's handoffs folder, by modification time, whichever session wrote it: { name, slug }, or
+// null, and null when the store is refused. A brief counts when its name matches BRIEF_FILE with a slug SLUG matches and
+// no control character, and lstat reports a regular file this user owns. It reads only the listing: no brief's text.
+export function latestBrief(store) {
+  if (store.refused) return null;
+  let newest = null;
+  for (const name of listFolder(store.handoffs)) {
+    if (!BRIEF_FILE.test(name) || !SLUG.test(slugOf(name)) || hasControl(name)) continue;
+    try {
+      const stat = lstatSync(path.join(store.handoffs, name));
+      if (stat.isFile() && !foreign(stat, store.uid) && !(newest?.mtimeMs >= stat.mtimeMs)) newest = { name, slug: slugOf(name), mtimeMs: stat.mtimeMs };
+    } catch {
+      // Gone meanwhile.
+    }
+  }
+  return newest && { name: newest.name, slug: newest.slug };
 }
 
 const checkedFile = (name) => (BRIEF_FILE.test(name) && SLUG.test(slugOf(name)) ? `checked-${name}.json` : null);
@@ -559,10 +715,12 @@ export function sweep(store, now = Date.now()) {
   }
 }
 
-function listStore(store) {
+function listFolder(dir) {
   try {
-    return readdirSync(store.dir);
+    return readdirSync(dir);
   } catch {
     return [];
   }
 }
+
+const listStore = (store) => listFolder(store.dir);

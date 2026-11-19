@@ -2,10 +2,13 @@
 // for the GitHub MCP server a plugin installs.
 // docs/providers/adding-a-host.md lists the fields; docs/providers/claude-code.md says what was checked on this host.
 
+import { lstatSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
+import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { configDir } from './claude-code-config.mjs';
+import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
 import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
@@ -14,6 +17,22 @@ import { responseObjects } from './response.mjs';
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
 const agentName = (env) => env.CLAUDE_CODE_AGENT || null;
 const effort = (env) => env.CLAUDE_EFFORT || null;
+
+// The file a Bash payload's `persistedOutputPath` names, or null unless it is a regular file, by lstat, so no symlink, in a
+// `tool-results` folder whose real path is under Claude Code's real projects folder (configDir, then `projects`), where
+// Claude Code keeps a long output. Any other path is no output of a call, and is never read.
+function persistedFile(file, env) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  try {
+    const projects = realpathSync(path.join(configDir(env), 'projects'));
+    const folder = realpathSync(path.dirname(file));
+    if (path.basename(folder) !== 'tool-results' || !folder.startsWith(`${projects}${path.sep}`)) return null;
+    const real = path.join(folder, path.basename(file));
+    return lstatSync(real).isFile() ? real : null;
+  } catch {
+    return null;
+  }
+}
 
 // CLAUDECODE=1 marks its hooks and its Bash tool; the others say the same for a process that lost that one.
 const MARKERS = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_AGENT', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_EFFORT'];
@@ -160,6 +179,22 @@ export default {
   // Its names are the standard, which is what hooks.json matches; a plugin's GitHub server has its own matcher there.
   rawToolName: (standard) => standard,
   toolResponse: responseObjects,
+  // A Bash call's response, `{ stdout, stderr, interrupted, … }`, as `{ output, interrupted }`: its stdout, or null when the
+  // response holds none (test/fixtures/hosts/claude-code/bash-post.json).
+  shellOutput: (response) => ({ output: typeof response?.stdout === 'string' ? response.stdout : null, interrupted: response?.interrupted === true }),
+  // A finished Bash call, as the check-run record reads it (lib/check-runs.mjs): `{ output, persisted, finished, exitZero }`,
+  // `output` its stdout then stderr; `persisted`, for a stdout too long for the payload, `{ file, after }`: the file
+  // Claude Code kept the whole stdout in (`persistedOutputPath`), whose head alone `stdout` holds, and the stderr after
+  // it, else null (persistedFile); `finished` false for a call stopped, or one started in or moved to the background,
+  // whose end no hook sees (`backgroundTaskId`); `exitZero` true, since Claude Code runs PostToolUse only for a call that
+  // exited 0.
+  shellRun: (response, env = process.env) => {
+    const parts = [response?.stdout, response?.stderr].filter((part) => typeof part === 'string');
+    const finished = parts.length > 0 && response?.interrupted !== true && !response?.backgroundTaskId;
+    const file = persistedFile(response?.persistedOutputPath, env);
+    const after = typeof response?.stderr === 'string' ? response.stderr : '';
+    return { output: parts.length ? parts.join('\n') : null, persisted: file ? { file, after } : null, finished, exitZero: true };
+  },
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
   // as `Monitor` in an agent gate does for a Monitor call read as Bash. A shell call's `dangerouslyDisableSandbox`, its ask
   // to run outside the sandbox (code.claude.com/docs/en/sandboxing), with any value but false or null, reads as the
@@ -221,7 +256,7 @@ export default {
     prFooterSettings: (root, env) => [
       path.join(root, '.claude/settings.local.json'),
       path.join(root, '.claude/settings.json'),
-      path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'settings.json'),
+      path.join(configDir(env), 'settings.json'),
     ],
     // Its PostToolUse hook on the Agent tool writes a `dispatch` row with the agent id the tool returned for each subagent
     // (lib/dispatch-rows.mjs dispatchRow), so a waiver's judge can be confirmed in the dispatch log
@@ -234,7 +269,9 @@ export default {
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
     // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
     // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, `attachLine`
-    // says how to open one, and `sessionEnded` whether `claude agents --json --all` lists a started one as done.
+    // and `attachCommand` say how to open one, and `sessionEnded` whether `claude agents --json --all` lists a started one
+    // as done. `replaceTerminal` ends a session that handed off once its turn ends, so the shell function
+    // `aidrian shell-init` prints opens the new one in the same terminal (lib/hosts/claude-code-terminal.mjs).
     handoffContinue: {
       routes: ['clear', 'background'],
       steps: {
@@ -249,6 +286,21 @@ export default {
       stopLine,
       findLine,
       attachLine,
+      attachCommand: ({ id }) => `claude attach ${id}`,
+      replaceTerminal: {
+        program: PROGRAM,
+        attach: 'attach',
+        attended,
+        // The command that updates the plugin, for a terminal whose copy is older than `shell-init`.
+        updateCommand: 'claude plugin update aidrian@aidrian-harness',
+        hostProcess: ({ env, shell, run }) => hostProcess({ env, shell, run }),
+        isHost: ({ pid, shell, run }) => isWrappedHost({ pid, shell, run }),
+        // A background session the terminal follows ends itself with `claude stop`, which the supervisor owns, and
+        // `claude attach` then exits 0 about a second later (probed on 2.1.326), so the shell function goes on.
+        endOwn: ({ id, session, env, run }) => stopOwnBackground({ id, session, env, run }),
+        hasClient: ({ shell, run }) => hasClient({ shell, run }),
+        signal: END_SIGNAL,
+      },
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),

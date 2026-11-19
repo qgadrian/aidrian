@@ -9,7 +9,7 @@ import test from 'node:test';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import {
-  BRIEF_CALLS, handoffCost, handoffReason, nextRatio, planApprovedContext, readMarker, RESUME_TOKENS, sessionUsage, stopReminder, tokenCeiling,
+  BRIEF_CALLS, handoffCost, handoffReason, handoffStatus, nextRatio, planApprovedContext, readMarker, RESUME_TOKENS, sessionUsage, stopReminder, tokenCeiling,
 } from '../plugins/aidrian/lib/session-length.mjs';
 import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 
@@ -505,4 +505,98 @@ test('the Stop hook and the plan hook word the route of the session host, and a 
   const automatic = background.stop({}, CLAUDE).stderr;
   assert.match(automatic, /then end this turn: a new session goes on with the work in the background, and this one does nothing more\.\n$/u);
   assert.doesNotMatch(automatic, /not watching/u);
+});
+
+// The synthetic transcripts in test/fixtures/transcripts/handoff-*.jsonl, each with the config it is walked at and the
+// level each turn ends at in ask mode. Every one starts from a 30k baseline, a 74k fresh session, on claude-opus-5-5.
+const FIXTURES = path.resolve(import.meta.dirname, 'fixtures/transcripts');
+const HANDOFF_FIXTURES = {
+  'handoff-cost': { handoff: { costRatio: 2 }, levels: ['quiet', 'quiet', 'quiet', 'offer', 'due', 'reminded', 'reminded'] },
+  'handoff-doubling': { handoff: { costRatio: 2 }, levels: ['quiet', 'offer', 'due', 'reminded', 'due', 'reminded', 'due'] },
+  'handoff-compaction': { handoff: { costRatio: 2 }, levels: ['quiet', 'due', 'reminded', 'quiet', 'offer', 'due'] },
+  'handoff-ceiling': { handoff: { costRatio: 2, maxTokens: 120_000 }, levels: ['quiet', 'quiet', 'offer', 'ceiling', 'reminded', 'ceiling', 'due'] },
+  // The same transcript at a costRatio of 3: the ceiling fires alone at 150k, so the 160k turn is reminded by the token
+  // trigger only, while its ratio of 2.16 is still under costRatio.
+  'handoff-ceiling at costRatio 3': {
+    file: 'handoff-ceiling', handoff: { costRatio: 3, maxTokens: 120_000 }, levels: ['quiet', 'quiet', 'offer', 'ceiling', 'reminded', 'ceiling', 'reminded'],
+  },
+};
+const fileOf = (name) => HANDOFF_FIXTURES[name].file ?? name;
+
+// Each turn of a fixture: the transcript up to its assistant call, a turn's end.
+function turnsOf(name) {
+  const lines = readFileSync(path.join(FIXTURES, `${name}.jsonl`), 'utf8').trimEnd().split('\n');
+  return lines.flatMap((line, index) => (JSON.parse(line).type === 'assistant' ? [lines.slice(0, index + 1).join('\n')] : []));
+}
+
+// Walks a fixture as the Stop hook would, feeding the marker each firing returns forward: the status and the reminder of
+// each turn.
+function walk(name, mode) {
+  const handoff = { ...DEFAULTS.session.handoff, ...HANDOFF_FIXTURES[name].handoff, mode };
+  let markerText = null;
+  return turnsOf(fileOf(name)).map((text) => {
+    const status = handoffStatus(sessionUsage(text), handoff, markerText);
+    const reminder = stopReminder(text, handoff, markerText);
+    if (reminder) markerText = JSON.stringify(reminder.marker);
+    return { text, status, reminder, handoff };
+  });
+}
+
+test('the handoff fixtures cover a cost firing, a doubling, a compaction reset, and a token ceiling', () => {
+  assert.deepEqual(readdirSync(FIXTURES).filter((name) => name.startsWith('handoff-')).sort(),
+    [...new Set(Object.keys(HANDOFF_FIXTURES).map((name) => `${fileOf(name)}.jsonl`))].sort());
+  for (const [name, { levels }] of Object.entries(HANDOFF_FIXTURES)) {
+    assert.deepEqual(walk(name, 'ask').map(({ status }) => status.level), levels, name);
+  }
+});
+
+test('handoffStatus is due or ceiling on exactly the turns the Stop hook reminds, in ask and auto mode', () => {
+  for (const name of Object.keys(HANDOFF_FIXTURES)) {
+    for (const mode of ['ask', 'auto']) {
+      walk(name, mode).forEach(({ status, reminder }, turn) => {
+        assert.equal(['due', 'ceiling'].includes(status.level), reminder !== null, `${name} ${mode} turn ${turn + 1}: ${status.level}`);
+      });
+    }
+  }
+});
+
+test('handoffStatus is quiet on exactly the turns an approved plan in ask mode offers nothing', () => {
+  for (const name of Object.keys(HANDOFF_FIXTURES)) {
+    for (const mode of ['ask', 'auto']) {
+      walk(name, mode).forEach(({ text, status, handoff }, turn) => {
+        const offer = planApprovedContext({ ...handoff, mode: 'ask' }, sessionUsage(text));
+        assert.equal(status.level === 'quiet', offer === null, `${name} ${mode} turn ${turn + 1}: ${status.level}`);
+      });
+    }
+  }
+});
+
+test('when both triggers fire, handoffStatus is ceiling, and says each fires, with the counts after the compaction reset', () => {
+  const both = walk('handoff-ceiling', 'ask')[3];
+  assert.equal(both.status.level, 'ceiling');
+  assert.deepEqual([both.status.byCost, both.status.byTokens], [true, true]);
+  assert.deepEqual(both.reminder.marker, { lastRatio: 150_000 / 74_000, tokens: 1, compactions: 0 });
+  const { ratio, breakEven, level, nextRatio: next, context, ceiling, counts } = both.status;
+  assert.deepEqual({ ratio, level, next, context, ceiling, counts },
+    { ratio: 150_000 / 74_000, level: 'ceiling', next: 2, context: 150_000, ceiling: 120_000, counts: { lastRatio: 0, tokens: 0, compactions: 0 } });
+  assert.ok(Math.abs(breakEven - handoffCost(sessionUsage(both.text)).breakEven) < 1e-9);
+  assert.equal(handoffStatus(sessionUsage(both.text), { ...both.handoff, maxTokens: 0 }, null).ceiling, null, 'no ceiling when off');
+  const reset = walk('handoff-compaction', 'ask')[3];
+  const fired = JSON.stringify({ lastRatio: 155_000 / 74_000, tokens: 0, compactions: 0 });
+  assert.deepEqual(handoffStatus(sessionUsage(reset.text), reset.handoff, fired).counts, { lastRatio: 0, tokens: 0, compactions: 1 });
+  assert.equal(handoffStatus(sessionUsage(reset.text), reset.handoff, fired).level, 'quiet', 'a compaction resets the firing');
+});
+
+test('right after a firing, the status read with the marker it returned is reminded, not due', () => {
+  for (const [name, turn] of [['handoff-cost', 4], ['handoff-ceiling', 3], ['handoff-ceiling', 5], ['handoff-ceiling at costRatio 3', 3]]) {
+    const { text, handoff, reminder } = walk(name, 'ask')[turn];
+    assert.ok(reminder, `${name} turn ${turn + 1} fires`);
+    const status = handoffStatus(sessionUsage(text), handoff, JSON.stringify(reminder.marker));
+    assert.equal(status.level, 'reminded', `${name} turn ${turn + 1}`);
+    assert.deepEqual([status.byCost, status.byTokens], [false, false]);
+  }
+  const usage = sessionUsage(turnsOf('handoff-cost')[4]);
+  const legacy = handoffStatus(usage, { ...DEFAULTS.session.handoff, maxTokens: 0 }, 'ask\n');
+  assert.equal(legacy.level, 'reminded', 'a legacy marker counts as a cost firing at costRatio');
+  assert.equal(handoffStatus({ ...usage, last: 120_000 }, { ...DEFAULTS.session.handoff }, 'ask\n').level, 'offer', 'under costRatio again');
 });

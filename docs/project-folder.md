@@ -76,7 +76,8 @@ It writes nothing at all when a symlink would take a write outside the project, 
 `aidrian check` validates the whole folder. Run it locally and in CI. It prints `ok`, or one line per problem and exits 1:
 
 - `.aidrian.json`, when present: valid JSON, no key but `dir`, and `dir` inside the project.
-- `config.json`: the version first, then every key and value.
+- `config.json`: the version first, then every key and value. With `github.autoMerge.allow` true and `review.visual`
+  unset, a screen file git tracks is a warning, not a failure: [Auto-merge](config.md#auto-merge).
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes,
   `models`, as [config.md](config.md#models) describes, `names`, as [config.md](config.md#names) describes,
@@ -143,7 +144,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
 │   ├── .prior/           the brief a refresh supersedes, and the last brief that passed aidrian handoff check
-│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors
+│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors, requests to end, follow records
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
@@ -154,6 +155,14 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
 ├── runs/                 project runs, one folder per run: snapshot.json, ledger.jsonl, summary.md (config.md#project-run)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
+├── sessions/<session id>/  what aidrian session snapshot caches for one session, and its pull request ledger, for its user alone:
+│   ├── usage.json            the transcript read so far, as the handoff numbers fold it, and a hash of its first and last 64 KiB, saved step by step
+│   ├── prs.jsonl             the session's pull request ledger, one row per pull request a Bash call touched (hooks.md#session-ledger)
+│   ├── links.jsonl           the worktrees the session's aidrian worktree new calls created, one row each (hooks.md#session-ledger)
+│   ├── checks.jsonl          the session's check-run record, one row per test run a Bash call finished (hooks.md#check-runs)
+│   ├── prs-cache.json        the ledger's pull requests as the forge last answered, and when it was last asked
+│   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
+│   └── <cache>.<window>.lock  held for a moment while a snapshot records its forge attempt
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
@@ -165,7 +174,47 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, with each project run
   driver's `driver.<session id>.json` ([hooks.md](hooks.md#agent-gates)), and `signoffs/`, the
   [sign-off store](review.md#merge-trust), `<owner>/<name>/<PR>.json`, owner-only, which only `aidrian pr signoff` in a
-  session the Human attends writes.
+  session the Human attends writes,
+  and `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
+  60 seconds, deleted when the shell reads it, and `follows-<shell pid>`, the session the shell's terminal shows, deleted
+  when that program exits ([Replacing the terminal](handoff.md#replacing-the-terminal)), and
+  `session-origins/`, the state folders each session started with, which the session-folder guard holds for its
+  subagents wherever they work ([hooks.md](hooks.md#agent-gates)), owner-only, kept 30 days.
+- The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of
+  [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from, and the
+  [check-run record](hooks.md#check-runs) `checks.jsonl`, which the pull request body rule and the subagent stop hook read. Every write goes through `lib/session-folder.mjs`: the session id passes
+  `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with
+  mode 0700, no bit for the group or others, checked before every write, read, and sweep, which also checks that the
+  session folder's real path is still the one it was made at, so a folder above it swapped for a symlink gets none, and
+  that the state folder and every folder above it pass one rule (`heldFolder`), as OpenSSH's StrictModes holds the
+  folders above a key, so no other user can swap a folder between a check and the write that follows: read with
+  `lstat`, it is no symlink; the user owns it, or root does above the state folder; others may write it only with the
+  sticky bit; and its group only with the sticky bit, or when it is the user's own folder in a user private group, its
+  group the user's primary group whose id is the user's id, as Debian, Ubuntu, and Fedora give each user, whose umask
+  002 makes folders 0775. `/tmp`, root's and sticky, passes. A state folder not there yet is checked by the nearest
+  folder above it before anything is made. Each file is written as a
+  temporary file, mode 0600, renamed over it, under the cache names alone, with three exceptions: the check-run record
+  `checks.jsonl`, appended and read the same way within 64 KB (`lib/check-runs.mjs`), and the ledger
+  `prs.jsonl` and the session's links `links.jsonl`, which `lib/session-rows.mjs` appends to in place through the helper's `appendSessionFile` for the
+  [session ledger hook](hooks.md#session-ledger), no-follow, mode 0600, only while it is a regular file with one link
+  this user alone may read, and the snapshot reads the ledger's last 256 KB, and the last 64 KB of the links, through `readSessionTail` under the same checks,
+  no-follow and non-blocking, and each within its cap, 256 KB and 64 KB, rewritten by a temporary file and a rename with its newest rows when a
+  write would pass that or finds it past that, the writer reading the same tail; a cache's reservation for one fixed window,
+  `<name>.<window>.lock`, which makes reading and recording its last attempt one exclusive step in that window, is
+  created only where nothing is, never through a symlink, mode 0600, and removed only by the process that made it, so
+  one a killed process left blocks its own window alone. A state folder inside a checkout of the repository, the
+  main checkout or any linked worktree, or one git could not list the checkouts for, gets no session folder,
+  and neither does one whose `sessions` folder or session folder resolves inside a checkout, as with `state.dir` set to
+  `..` in a repository whose folder is named `sessions`; the snapshot reads the lesson inbox and the audits folder under
+  the same rule. Nor does a disk whose modes cannot keep it to its user, such as one mounted with fixed modes:
+  the snapshot's cached sections are then null, with their names in its `errors`. Creating a session folder removes the
+  others untouched for 30 days, deleting only the cache files, the ledger, and the links, their temporary files, and their
+  reservations that are regular files, then the folder once empty.
+- A chain floor in `handoffs/.continue/` may name its `parent`, the session that handed off
+  ([The chain](handoff.md#the-chain)). The snapshot follows those names to the folders of the earlier sessions and reads
+  their ledgers ([Across a handoff](handoff.md#across-a-handoff)): it finds each by its full id, under the same rules
+  as the session's own, and creates or sweeps none. A subagent, and a session the background route started, may not
+  write in `sessions/` ([Agent gates](hooks.md#agent-gates)).
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

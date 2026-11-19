@@ -20,6 +20,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
 | A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command, and one line naming the [background session](handoff.md#the-background-route) that owns the work when the session handed it off in the last 24 hours; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
+| After a Bash command | The [session ledger](#session-ledger): a row for each pull request the command created, pushed a branch of, or acted on; and the [check-run record](#check-runs): a row for each test run the command finished | Claude Code (verified by the hook test on a recorded result); Codex by payload fixture only ([not live](#session-ledger)) | no |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
@@ -33,8 +34,8 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
-| A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
+| The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)); the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
+| A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
 | A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
 The Bash rules run in the order of their table, in one process.
@@ -68,6 +69,13 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
   the session never asks the Human whether to hand off or keep going; it judges by itself and runs the
   `session-handoff` skill when a handoff is worth it. `"ask"` and `"off"` print nothing;
+- in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), one
+  `Handoff terminal:` line while this machine's `handoff.background` is `"on"` and config.json resolves
+  `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
+  not start, unless a startup file already holds the current block: after a background handoff its terminal stays on
+  the old session, and the line names
+  `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older copy of the plugin,
+  which answers `unknown command: shell-init`, with the host's update command (`claude plugin update aidrian@aidrian-harness`);
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
@@ -157,9 +165,10 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Git amend | `git commit --amend`; the deny names a follow-up commit, which a squash merge folds in, and `aidrian lint` fails a skill or agent that asks for an amend | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
+| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny names a copy with its own offline install from the lockfile | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
-| Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
+| Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract); a `## Tests run` line that says a test command passed with no [finished run](#check-runs) to show it | `AIDRIAN_ALLOW_PR_BODY=1` |
 | Public text, when turned on | An issue, pull request, or comment whose text matches [`github.publicText.patterns` or `.banned-terms.local`](config.md#public-text), or that the rule cannot read | `AIDRIAN_ALLOW_PUBLIC_TEXT=1` |
 | Attribution, when turned on | An agent's commit or new pull request without the [attribution](config.md#attribution) lines | `AIDRIAN_ALLOW_UNATTRIBUTED=1` |
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
@@ -174,6 +183,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Ready hold, in a project that runs product feedback | Marking a draft ready while its [product feedback](config.md#product-feedback) is owed ([Ready hold](#ready-hold)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in their own shell before the session |
 | Ready checks | Marking a draft ready while a check on its head has not finished, or before a check its last edit re-queues has shown, and editing a title or body in the same call as a ready ([Ready checks](#ready-checks)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, the ready hold's, set the same way |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers the guard's question, "Merge anyway" or, at the round cap, "Merge with the findings filed", or merges in their own shell; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
+| Push first, when turned on | A full test suite while the branch holds a commit older than `testing.pushFirstMinutes` that its remote copy lacks ([Push first](#push-first)) | `AIDRIAN_ALLOW_FULL_SUITE=1` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
@@ -378,6 +388,8 @@ What each rule matches:
   `--body-file` (`-t`, `-b`, `-F`), or any `gh pr create`, in the same command as one ([Ready checks](#ready-checks)).
 - Merge guard: `gh pr merge` but `--disable-auto` and a read of its `--help` or `-h`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
   sent as a PUT or a POST ([Merge guard](#merge-guard)).
+- Push first: a command of `testing.fullSuite` as written, through wrappers such as `rtk` and redirects, in the folder a leading
+  `cd` names; `npm test -- <file>` runs no full suite. [Push first](#push-first) says when it refuses.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;
   and there `git commit`, `commit-tree`, `cherry-pick`, `revert`, `rebase`, `am` (all but `--abort` and `--quit`),
@@ -467,7 +479,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
+`shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `project-init`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
@@ -980,7 +992,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   that asks the host to run it outside its sandbox (`sandbox_escape`, Claude Code's `dangerouslyDisableSandbox`).
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
-  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
+  that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds
+  for the shell records' folder, `handoff-terminals/` beside it, which names the session a shell opens in its terminal
+  next ([Replacing the terminal](handoff.md#replacing-the-terminal)).
 - A project run's driver counts as a session no Human attends for writes to the runs folder (its ledger and snapshot),
   the unattended marks, and the sign-off store, from `aidrian project init` on, wherever its call runs, and for the
   [merge guard](#merge-guard), `aidrian pr auto-merge`, and the review-signoff rule. `aidrian project init` files its
@@ -1039,7 +1053,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   checks, so a call they refuse by name, such as a write of `.aidrian.local.json`, is refused before any link walk.
   It reads literal paths only: a path built from a variable or a substitution, such as `"$STATE/handoffs/.continue/armed-s1.json"`,
   and a write after a `cd ~/…`, pass even when they name a marker. Only a relative target after a `cd` the guard
-  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. That is an accepted limit
+  cannot follow, such as `cd "$X" && echo {} > armed-s1.json`, is matched by its file name. A request to end a session
+  or a record that a terminal follows one ([Replacing the terminal](handoff.md#replacing-the-terminal)) is matched only
+  with the id shape the store writes, `ending-` or `follow-` and 8 hex digits or a whole UUID, so a common name such as
+  `follow-up.json` stays allowed. That is an accepted limit
   of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
 - When the base branch's config.json cannot be read in a repository with a remote, as when origin was added and never
@@ -1177,6 +1194,40 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   program or script the session wrote, or one of the project's own scripts; or by an MCP tool that writes files. An
   unsandboxed Claude Code issue session can still write anywhere through a program it runs. A ledger a session forges in
   the `quorum` folder, which it may write, could shape a later quorum run on the same plan.
+
+- A subagent, and a main session the background route started, may not write in the session folders,
+  `<state>/sessions/`, read as the continuation store is: a target in them, a folder that holds them and no checkout,
+  a glob that may reach them by its path or through a link on disk, and a change of mode or owner of them or of a
+  folder that holds them. The folders are those of the call's project; those of the state folders the session started
+  with, which the main session's `SessionStart` hook records in `<state root>/session-origins/<session id>.json`
+  (`lib/session-origins.mjs`), whether or not the hooks have written there yet. It records a state folder only when the
+  session folder writer would keep folders there by its own repository's checkouts, writes the record as the
+  unattended marks are written (a folder the user's alone, 0700, and a random temporary file created only where nothing
+  is, then a rename), reads and writes it as one step under its reservations (`exclusive` in `lib/session-folder.mjs`),
+  and writes it again on a resume, so a resumed session's record is never pruned as stale; the guard reads it once a
+  call as the store reads its own files: no-follow, non-blocking, a regular file the user owns, mode 0600, within
+  16 KB, so a link, a named pipe, or a record others may read gives none. Also those of every project's default state
+  folder under the state root (`<root>/projects/<id>/sessions`) that are there, listed one entry at a time with the
+  guards' deadline checked at each, their real paths kept for both passes of the call; the writer's checkout list it
+  reads stops its git at what is left of the deadline. And those of the project the session's gate snapshot or unattended mark names, each
+  project folder by itself, so a linked checkout whose config moves `state.dir` is its own. The snapshot's project is
+  opened, which runs git, only for a call that may write, a shell call or one with a write target, and never when it
+  is the call's own project, so a subagent's Read runs one git, to find its project. So a subagent that works in
+  another project, another checkout, or a folder with no project still meets the session folders of the project its
+  session started in, gated or not. No subagent or unattended session may write the origins folder, as for the marks.
+  A sessions folder that a checkout holds is no session folder, by the checkouts the session folder's writer keeps it
+  out of (`projectCheckouts`: the project's, the repository root, and every worktree), so a `state.dir` of `..` in a
+  checkout named `sessions`, of `.` in a project below the repository root, or in a sibling worktree leaves those
+  checkouts writable. A target in a folder no path gives, interpreter code such as
+  `python3 -c "open('…/prs.jsonl', 'a')"`, and a word of a command in a shell the lexer cannot read count when they
+  name `sessions/<a part>/<a session file>`, with `/` or `\` between the parts, one or more, as a native Windows path in
+  a string spells it, or a session file but `usage.json` by its name alone, read as a path part, whatever quote stands
+  around it, so `cd "$X" && echo {} >> prs.jsonl` is refused; the word `sessions` alone never counts, so a project's
+  own folder of that name stays writable, and nor does `usage.json` alone, a name other tools use.
+  The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the
+  [ledger](#session-ledger) still records a subagent's push. An attended main session is not held. The guard shares
+  the store guard's reach check (`reachesStateFolder` in `lib/handoff-guard.mjs`) and its limits, and runs where it
+  runs, first without its link walk and again with it.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule
   above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
 - A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:
@@ -1444,6 +1495,278 @@ Two hooks weigh what continuing the main session costs against a fresh session s
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.
+
+## Session ledger
+
+After a Bash command, `scripts/hook-bash-post.mjs` appends a row to the session's pull request ledger,
+`<state>/sessions/<session id>/prs.jsonl`, for each pull request the command created, pushed a branch of, or acted on.
+`aidrian session snapshot` reads it, as display data only: no hook, gate, skill, or agent decides anything from it.
+A subagent's call carries its parent's session id, so a dispatched slice lands in the same ledger, with its `agentId`.
+
+A row is `{ at, agentId, kind, forge, host, path, number, branch, cwd }`, and never a link, command text, or output.
+`forge` is the forge adapter's `id`, `host` and `path` the repository as `repoIdentity` reads it, or `remoteIdentity` for a remote's URL, and `cwd` the folder
+the call ran in. A row is written only for a host the adapter declares (`hosts`, github.com today), and only when the
+adapter's `changeRef` takes its fields: a path of exactly `owner/name`, a positive number, and a branch that passes
+git's ref-name rules within 255 bytes and holds no hidden character. `cwd` is absolute, within 1,024 bytes, with no
+hidden character: none of the Unicode categories Cc, Cf, Zl, Zp, and Cs (`lib/hidden-text.mjs`, the pattern the
+snapshot's `displayText` removes). One call writes at most 32 rows and has git read at most 8 folders.
+
+| Kind | From | Its repository and pull request |
+| --- | --- | --- |
+| `created` | `gh pr create`, never with `--dry-run`, which creates nothing | A line of the output, from its last 64 KB, that is exactly a pull request link. Its repository must be the one `-R` or `GH_REPO` names, else one of the repositories the remotes of the call's folder name, so a fork's pull request on its parent records the parent and an echoed link of another repository records nothing. The output is read only when `gh pr create` is the line's one command, after a leading `cd` or bare variable assignments, with no other command that could print: a `cat` with no redirection inside a substitution, such as a heredoc body, is the one other command allowed, so `gh pr create && echo <link>` records nothing |
+| `pushed` | `git push` | What git itself recorded, not the command's words: each remote-tracking ref whose reflog, `<git common dir>/logs/refs/remotes/<remote>/<branch>`, ends in an `update by push` entry written within the last 60 s (`PUSH_WINDOW_MS` in `lib/git-push.mjs`) whose new commit is the HEAD commit of the call's folder, so git's own remote selection, `push.default`, `remote.<name>.push`, and refspec mapping decide the branch, and `git push origin HEAD && git switch main` records the branch pushed. The branch is the ref's path after `<remote>/`, the remote the configured one whose name, the longest, starts that path, and the repository that remote's first `remote.<name>.pushurl` when one is set, so a push to a fork records the fork and a push URL that names no repository records nothing, else its first `remote.<name>.url`. Logs older than the window by their mtime are skipped, a symlink is never followed, and only each log's last line is read, from its last 4 KB, 4,096 entries at most. A push to a URL that no remote names, a tag, a delete, and a dry run update no remote-tracking ref, and a reftable repository keeps no such log, so they record nothing, an accepted limit. Every worktree of a repository shares those logs, so the HEAD commit keeps another worktree's push out; a push of a branch other than the one checked out, such as `git push origin other`, records nothing for the same reason, also accepted, and so is a sibling worktree's push of that same commit within the window. A push an earlier call made within the window is read again, also accepted, and its repeat is left out as below |
+| `touched` | `gh pr ready`, `edit`, `merge`, `checks`, `view`, `comment` | A link names its own repository. A number, a branch, or no target takes the repository `-R` or `GH_REPO` names, else the one repository on a declared host the folder's remotes name, and nothing when they name several, as in a fork checkout. No target is the folder's current branch, or the pull request gh checked out on it, as its `branch.<name>.merge` of `refs/pull/<n>/head` names, and nothing when a later command on the line runs `git checkout`, `git switch`, or `git worktree add`, since the branch is read after the line. An `owner:branch` target is that branch of the owner's repository of the same name, gh's fork |
+
+A bare `owner/name` in `-R` or `GH_REPO` names nothing while `GH_HOST` is set, since gh then reads it on that host.
+A remote whose URL git reads as a path on this machine, a `file:` URL or one with neither a scheme nor git's `host:path`
+form, such as `archive/widgets`, names no repository (`remoteIdentity`, as the snapshot reads origin), so no call or
+push records it.
+
+The call's folder holds under either reading of the payload's `cwd`, the folder the line started in or the one it
+ended in, which no host documents for a Bash call ([Claude Code](providers/claude-code.md)): it is the absolute folder
+a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` reads it; the payload's `cwd` only on a
+line where no command, a nested one included, runs `cd`, `pushd`, or `popd`, plain or through `builtin`, and nothing
+else moves the call; and
+otherwise none, so the call records nothing. `cd sub && gh pr create` and `git push && cd /other` record nothing.
+The current branch is read with `git symbolic-ref`, the remotes' `url` and `pushurl` and branches' `merge` with one `git config --get-regexp`, and, on a line that runs `git push`, the git common dir with one `git rev-parse --git-common-dir` and the HEAD commit with one `git rev-parse HEAD`, in that folder: no word of the line or value of the ledger reaches git's arguments.
+
+What may point a call at another repository records nothing: a folder, repository, or target the shell
+fills in, a word it fills in unquoted anywhere in a `gh` call, since it may split into a second `-R`, a line that sets,
+unsets, or empties `GH_REPO` or `GH_HOST` outside the call's own prefix, a git global option other than `-C` and plain
+switches such as `--no-pager` (so `-c`, `--config-env`, `--git-dir`, and `--work-tree`), and a line that changes
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, or a `GIT_CONFIG` variable, or reads a shell file into the
+shell with `source` or `.`, which may set any of them.
+A `url.<base>.insteadOf` rewrite in the folder's config is not applied, an accepted limit: such a remote records its
+URL as written.
+
+The forge seam: `scripts/hook-bash-post.mjs` and `lib/session-prs.mjs` name no forge. The reading of `gh pr` calls,
+`GH_REPO`, and the pull request link is GitHub's, in `lib/rules/github/session-calls.mjs`, which runs nothing; the hook
+hands it to `session-prs.mjs` in a table keyed by the adapter's `id`. A later forge adds its reader under
+`lib/rules/<forge id>/` ([Adding a forge](providers/adding-a-host.md#adding-a-forge)).
+
+The output comes from the host's adapter, its `shellOutput`, never from a payload field read in shared code: Claude
+Code's `stdout`, and Codex's one string of output. A response the adapter cannot read gives no `created` row, while
+`pushed` and `touched` rows still record. A call the host reports as interrupted, a session id that fails `SESSION_ID`,
+a payload folder with no project, and input the hook cannot read write nothing. The hook never refuses, always exits 0,
+and prints nothing on stdout or stderr.
+
+The folder and its file follow [the session folder's rules](project-folder.md#local-state): `lib/session-folder.mjs` makes the
+folder 0700, refuses a symlink, and, when it makes one, sweeps the session folders untouched for 30 days. As for the
+snapshot, a state folder inside any checkout of the repository, or one git could not list the checkouts for, or one
+that, with a folder above it, fails the rule `heldFolder` sets, gets no folder, so the call records nothing. Its
+`appendSessionFile` checks the folder again, as every write does (`boundFolder`), so a folder above it swapped for a
+symlink since gets nothing, then opens the ledger write-only, append, create, no-follow, and
+non-blocking, mode 0600, and writes only when the open file is a regular file with one link that this user owns and no
+other user may read or write. Before a write it reads the ledger's last 256 KB, no-follow, as the snapshot does, and leaves out a row whose folder
+is not a folder on disk, and a row whose fields, all but `at` and `agentId`, the newest row of its pull request or
+branch holds, when that row was written within the last 60 s (`REPEAT_WINDOW_MS`), so a call made again at once adds
+nothing. Any other repeat is written with its new time, so a touch, a push, then a touch again of one branch writes all
+three and the branch resolves as its last call did, and a
+pull request acted on again shows first again and stays among the 25 the snapshot shows while newer ones come.
+The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
+last 256 KB, so it reads every row, and drops a first line the cut fell inside if an older writer left the ledger past
+the cap): a write that would pass it, or that finds the ledger past it, rewrites the ledger, through a temporary file
+and a rename under the same checks, with the newest of the new rows that fit in the cap, after the newest rows of that
+tail that fit in what is left and in half of it at most, so the file never passes its cap and the newest pull requests
+always show. Each write, append or rewrite, is one step no other writer of the file runs beside: it holds the file's
+reservations (`<file>.<window>.lock`, `reserveSessionFile`) for the 5-second window that holds its start and the next
+one, and a second writer waits up to a second for them, so two hooks of one session that write together within that
+second lose no row. These are the accepted limits, for display data: a writer that waits past its second, as while a
+killed writer's reservations hold their two windows, writes nothing and its row is lost, and the hook does not try
+again; and a writer paused for more than both windows, past the hook's own timeout, may rename a compaction over a
+later append. A write after a line cut short, as a killed writer leaves it, starts on a new line, so the new row is
+read and only the cut one is dropped. The `SessionEnd` hook and worktree
+cleanup leave it alone, so a resumed session keeps its pull requests.
+
+The snapshot also reads the ledgers of the sessions a handoff came from, through the `parent` each chain floor names
+([Across a handoff](handoff.md#across-a-handoff)): at most 5 of them, the last 64 KB of each, from a folder it finds by
+the full id and never creates. Of those it keeps only `created` and `pushed` rows on a repository the project's remotes
+name, written at or before the hop, and it reads no further ledger once it holds 25 refs. A row more than 60 seconds
+ahead of the snapshot's clock, of any ledger, is dropped when read.
+
+The same hook records the worktree a session creates, in a second file, `<state>/sessions/<session id>/links.jsonl`:
+one row `{ at, kind: "worktree", host, path, branch, cwd }` for each worktree an `aidrian worktree new <branch>` of a
+shell call created. It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the
+shell fills in, a branch or an option it does not know that starts with `-`, or `--plan`, records nothing. A row also
+needs the command's own result in the call's output: the JSON line `aidrian worktree new` prints with
+`status: "created"`, that branch, and an absolute `worktree_path`, read from the output's last 64 KB. The command must
+be the line's one printing command, read as the ledger reads a `gh pr create` (`printsAlone` in
+`lib/session-prs.mjs`): only bare assignments and a `cd` the walk leaves out may come before it, and nothing after it,
+so the output is its result alone. So a call that was skipped, as after `false &&`, refused, as for a branch already
+checked out, or printed nothing records nothing, and neither does one beside another command, such as
+`echo '<saved result>'; aidrian worktree new <branch>` or `aidrian worktree new <branch> && npm test`, or a line with
+two of them. Within that rule an existing worktree is not recorded as one the session made, but the output is what the
+host hands the hook, which the model's own shell call shapes: a call made to print a forged result, such as a wrapper
+named `aidrian`, can still claim one. That is accepted for display data. Each command is looked up in the folder it ran
+in by the ledger's rule (`knownFolders`), which holds whether a host's payload names the folder the line started in or
+the one it ended in: the folder an absolute leading `cd` names, else the payload's folder only when nothing on the line
+changes directory; after a relative `cd`, a `cd` the walk cannot follow, or in a folder with no project, it records
+nothing. It is filed in that folder's project's session folder. `cwd` is the worktree's path as `git worktree list`
+prints it in that project's main checkout, read after the call, so the snapshot compares two spellings by git; it must
+be the folder the result names, through any symlink, and a branch git lists no worktree for, lists as prunable, or
+holds in the main checkout records nothing. `host` and `path` are origin's repository read from the raw
+`remote.origin.url` in the folder the command ran in, so an origin only that checkout's own config sets
+(`config.worktree`, `includeIf.onbranch`) is the one recorded, as the snapshot there reads its remotes; a
+`url.<base>.insteadOf` rewrite applies on neither side; both null with no origin. Every step of the links, finding the
+project, its main checkout, origin, the list, and the session folder, shares a 1-second budget, each git read stopped
+by SIGKILL at what is left, and runs after the ledger's row is written and apart from it, so a git that stalls neither
+passes the host's 5-second hook timeout nor loses the call's ledger row. Every field is checked as the reader checks it, and the row is filed under
+the payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
+output and exit code are its own ([Session links](providers/adding-a-host.md#session-links) says why the hook and not
+the command is the writer). `links.jsonl` keeps to 64 KB under the ledger's rules, through the same append
+(`appendRows` in `lib/session-rows.mjs`), but with no key: every row is appended, and the reader settles repeats. Its
+read-time key is `host/path:branch`, or the branch alone with no origin, and for each key the row with the newest `at`
+decides, the later line on a tie. That differs from the pull request ledger on purpose: the ledger leaves out a repeat
+within a minute of the row it repeats, so that row keeps its `at`, while a repeat after the minute is written with its
+new `at`, and the snapshot orders its refs, and the ticket its rows, by the latest; `links.jsonl` keeps every row, so
+its newest `at` is the real latest, which a worktree that went needs.
+
+A `created` or `touched` row records what the command line names, not what each command did. Claude Code runs
+`PostToolUse` only for a Bash call that succeeded, but one command's status inside a line is not seen, so
+`gh pr view 12 || true` records its row, and on Codex a shell call that exits non-zero still runs `PostToolUse`. A failed
+push leaves no record of its own, so it records nothing. A row whose branch has no
+pull request shows nothing.
+
+Where it is verified:
+
+| On | Verified | Not live |
+| --- | --- | --- |
+| Claude Code | `test/hook-bash-post.test.mjs` runs the hook on `test/fixtures/hosts/claude-code/bash-post.json`, whose `tool_response` is the result Claude Code 2.1.326 recorded for a real `gh pr create` Bash call | No hook has received that payload, an accepted limit: a session may not start another to record one, and the fixture says `live: false` |
+| Codex | The same test runs `test/fixtures/hosts/codex/bash-post.json`, built from the source at `rust-v0.169.0` | Any hook on Codex, which runs only after a person trusts it |
+
+What the Codex source says, at `rust-v0.169.0`: a shell call reaches the hook as `Bash`, with `tool_input` `{ command }`
+(`codex-rs/core/src/tools/handlers/unified_exec.rs`, `post_unified_exec_tool_use_payload`); its `tool_response` is the
+command's output as one string, stdout and stderr together; and a call still running or stopped sends no `PostToolUse`
+(`codex-rs/core/src/tools/context.rs`, `ExecCommandToolOutput`). The payload's fields are `PostToolUseCommandInput` in
+`codex-rs/hooks/src/schema.rs`. The group comes last in `PostToolUse`, so the trust keys of the tracker hooks,
+`pre_tool_use:5:0` and `post_tool_use:3:0`, do not move.
+
+## Check runs
+
+A report once said a full suite passed, 4071 of 4071, after the runs behind it were stopped before they ended; the real
+result was 40 failures. So a result a report states must be one a tool returned, and the plugin keeps the record that shows it.
+
+After each Bash call, the PostToolUse hook appends a row to the session folder's `checks.jsonl` for each test run on the
+command line's top level that the call finished (`lib/check-runs.mjs`): its command, the agent whose call ran it
+(`agentId`), two git trees of the checkout's files as they are when the run ends, one with the untracked files git does
+not ignore and one with the tracked files alone, each null when git cannot read it, the untracked code and test files
+beside the run (20 at most), its pass and fail counts, and `passed`, `failed`, or `unjudged`.
+A test run is a command of config.json [`testing.fullSuite`](config.md#testing) or `testing.changedCommand`, `npm test`
+and its pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `mix test`, rspec,
+`make test`, `make check`, or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with
+redirects dropped. A project's own script, such as `npm run check`, counts once `testing.fullSuite` names it.
+A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
+A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
+
+Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when
+the line's status is the run's: no separator but `&&` before or after it. After `;` or `||` the run may not have run,
+or another command's status is the line's. Such a run, a run behind a pipe, and every run on Codex, which runs the hook
+for a failed call too and sends no exit status, is judged by its counts alone: passed with a pass count above 0 and a
+fail count of 0, failed with a fail count above 0, and `unjudged` when it printed no count. A counts-only verdict reads
+the runner's summary, not the command's exit, so a script that runs the tests and then fails a later step reads as
+passed there: an accepted limit until a host sends an exit status.
+The counts come from one family of summary lines, summed over every line of it and never added to another family's,
+since a script or a monorepo tool prints one summary a runner: the first of node's runner summary (`ℹ pass 12`,
+`# fail 0`); `Tests` lines, as vitest and jest print them, also behind a task prefix such as turbo's `web:test: `;
+cargo's `test result:` lines, one a test binary and the doc-tests; `go test -v`'s `--- PASS: TestX` and
+`--- FAIL: TestX` lines, one a top-level test, subtests left out, with at least one failure a package that failed, so a
+package that did not build, a test binary that timed out, or a TestMain that exited 1 after its tests passed fails the
+run; else, since go test prints no pass count, its package lines, `ok  <package>  0.01s` and `FAIL  <package>  0.01s`,
+one a package, where a package whose tests were all filtered out (`[no tests to run]`) or that has none counts no
+pass, as a `-v` run whose tests were all skipped counts none; go lines that count nothing, `-v` or not, leave the
+counts to a later family, and with none, the run counts 0 passes; any other line with "N passed" or
+"N failed", as pytest's and Playwright's; rspec's and mix's "12 examples, 0 failures". A family that names passes and
+no failure counts 0 failures. Unless node's runner counted, whose fail count stands, a line that is only "N failed"
+above 0, colours stripped, as Playwright's own `1 failed` line, makes the run failed; a test named
+"lists 2 failed payments" never does. The counts read the last 64 KB of the output. When Claude Code keeps a stdout too
+long for the payload in a file (`persistedOutputPath`), and sends only its head, the counts read the last 64 KB of that
+file, then the stderr. The file is read only when it is a regular file by `lstat`, never a symlink or a FIFO, in a
+`tool-results` folder whose real path is under the real path of Claude Code's projects folder (`CLAUDE_CONFIG_DIR`, else
+`.claude` under `HOME`, then `projects`), so a symlinked config folder still counts and a folder linked from elsewhere does not.
+It is opened without following a symlink and without taking a terminal, and its descriptor must show a regular file.
+Any other path, or a file it cannot read, leaves the head.
+The record keeps its newest rows within 64 KB.
+
+Two checks read it:
+
+- The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item or
+  paragraph at a time with its wrapped lines joined, split at `;` and sentence ends. A clause that names a test command,
+  in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
+  "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
+  or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. A number after a
+  word, as in "Node 22", is no count. Either of the row's trees may match, so a run made beside an untracked scratch file
+  still proves the commit that leaves it out; the tracked files' tree alone does not count while an untracked code or
+  test file sat beside the run, which it may have loaded and the commit lacks, and the deny names that file.
+  A clause that names a failure, "not finished", or CI is not a pass claim: a CI result is quoted from the checks the
+  forge shows, such as `gh pr checks` on GitHub. A session whose record cannot be read is not judged. The record is this
+  checkout's, so a body for another branch is not judged: a `--head` that names another branch, or an edit of a pull
+  request whose head is another branch or that the open list cannot show. An edit names its pull request by number,
+  URL, branch name (`feat/x`, or `owner:feat/x`), or nothing for the checked-out branch's; a URL counts only as gh
+  reads one, with a scheme and host, so `team/pull/3` is a branch name. A branch name is matched against each open pull
+  request's `headRefName`, and an `owner:` one against its `headRepositoryOwner` too; when several open pull requests
+  fit and nothing settles which, the edit is judged as if the body were new. An edit judges only the clauses its pull
+  request's current body does not already hold. The duplicate-body check reads the edit's target the same way.
+- The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
+  own rows since its run started: a run of the session or of another agent is that one's to report. The report is
+  read in one pass over its lines, with fences found as the body rule finds them. A machine handoff's JSON, a
+  ```` ```json ```` fence whose content parses or an object that opens on a line starting with `{` outside fenced code,
+  is read one string value at a time, and the prose around it as text of its own. Any other fence, such as a
+  ```` ```jsonc ```` one or a ```` ```json ```` one that does not parse, stays fenced code, so a `{` line inside it
+  is no handoff and a claim after it still counts. At most 100 JSON values are parsed a report, and none is read by
+  recursion, so no report makes the check throw.
+  It skips only fenced code, block quote lines, and what an outside source governs: a clause that opens with
+  "according to" an outside source, and a part of a clause, split at a coordinating "and", in which an outside source
+  and a verb of saying come right before the command, as "the pull request body says
+  `npm test` passed" or "the reviewer wrote \"`npm test` passed\"". Such a part that ends at its list of commands
+  carries into the next part, whose predicate is the source's, so "the pull request body says `npm test` and
+  `vitest run` passed" is all the body's, while "the issue says `npm test` hangs, and `vitest run` passed 3/3" keeps
+  the second claim. Words in double quotes are the writer's own, so "`npm run check` reported \"4071/4071 pass\"" is a
+  claim. An outside source is another agent, a subagent, a pull request, an issue, a review, or a handoff; a report,
+  handoff, or review after "this", "my", or "our", with at most one word between, "this agent", "this subagent",
+  "my run", and "the test output" are the writer's own, so "according to the test output, `npm test` passed",
+  "my final report lists ...", and "fixed the issue reported in the ticket and `npm test` passed" stay claims.
+  An accepted residual: a report that puts its own claim in fenced code other than a JSON handoff, or in a block
+  quote, is not checked; the check stops the mistake seen live, a report written from runs that never ended, not one
+  set on hiding.
+  It sends the subagent back once, on the first stop of its turn, to quote the output a finished run returned or to
+  call the run "not finished".
+
+`aidrian test changed` with nothing to run prints a summary of 0 tests, so its row shows no test passed and supports no claim.
+
+An accepted residual: the record is a file the session's own user may write, so an agent that appends a row by hand
+forges evidence the checks accept. The checks stop the mistake seen live, a report written from runs that never ended,
+not a session set on lying; a forged row is itself a fabrication, and the rows name the agent and time of each run.
+
+Where it is verified: on Claude Code, `test/check-runs.test.mjs` runs the hooks on the Bash payload shape of the
+[session ledger](#session-ledger)'s recorded fixture, and the persisted output on the `persistedOutputPath` and
+`persistedOutputSize` fields Claude Code 2.1.317 to 2.1.327 recorded in transcripts for long Bash results; no live hook
+has run it. On Codex, the record reads the shell output the source sends, as the session ledger does, and no hook has run there.
+
+## Push first
+
+A subagent fixing review findings once held two small fixes for two hours: it ran the whole suite after each change on
+a machine three other suites loaded, and timing tests failed under that load, while CI was green on the previous head
+the whole time. So a project can make a full suite wait for the push. With config.json `testing.pushFirstMinutes` above
+0 (0, the default, turns the rule off), a command of [`testing.fullSuite`](config.md#testing), as written with no more
+arguments, is refused while the branch it runs on has a remote copy that lacks a commit older than that many minutes.
+The remote is the branch's push remote, else `remote.pushDefault`, else its upstream's remote, else `origin`; a branch
+with no remote copy is not judged.
+The deny says to push, let CI run the suite, run a reviewer's re-check on the pushed head beside CI, and run locally
+only the test files the change touches:
+
+```bash
+aidrian test changed            # the touched test files, through testing.changedCommand
+aidrian test changed --list     # only print them
+aidrian test changed --base origin/main
+```
+
+`aidrian test changed` reads the change against `--base`, else the branch's remote copy, else its merge base with the
+default branch on `origin`, uncommitted and untracked files included. A test file is a changed one, a Go `_test.go`
+beside a changed `.go` file, or one that names a changed file: a code file by its name and by its name without the
+extension, `index.*` by its folder and name, any other file by its path. A test file in a nested package, a folder with
+its own package.json, is left out for that package's runner. It runs `testing.changedCommand` with the files after it,
+else `npm test --` when package.json has a test script, and exits with that command's status. A project whose CI cannot
+run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides
 

@@ -85,8 +85,8 @@ import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from '.
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
-import { noneNeededProblem, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
-import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_PATHS, trailPaths } from './project.mjs';
+import { noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
+import { configPathIn, GUARDED_PATHS, isPluginRepository, knowledgeIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
@@ -377,9 +377,10 @@ export function wholeFiles(forge, pr) {
 // reads its policy from, including a folder the pointer file names: a change to one, in any case, is off with the key on
 // or off, after the guarded-path refusal so that refusal keeps its message. `startDocs` is what the start hook loads, as
 // startDocs read it: a doc or index file of it is guarded too, and an unreadable answer is off, as no list would be
-// whole. `includeGuardedPaths` lifts only the guarded-path refusals, these included, the team having accepted that risk
-// on both branches, and never for a policy file (POLICY_PATHS).
-export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, policyFiles = [], startDocs = { docs: [], folder: null } } = {}) {
+// whole. `pluginRepository` is whether the project is the plugin's own repository, whose release script is guarded too
+// (PLUGIN_REPOSITORY_PATHS). `includeGuardedPaths` lifts only the guarded-path refusals, these included, the team having
+// accepted that risk on both branches, and never for a policy file (POLICY_PATHS).
+export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, policyFiles = [], startDocs = { docs: [], folder: null }, pluginRepository = false } = {}) {
   if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
@@ -396,6 +397,8 @@ export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuar
   }
   const guarded = files.find(({ path }) => GUARDED_PATHS.test(path) || GUARDED_PATHS.test(path.slice(prefix.length)));
   if (guarded) return `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge`;
+  const release = pluginRepository && files.find(({ path }) => PLUGIN_REPOSITORY_PATHS.test(path));
+  if (release) return `it changes ${JSON.stringify(release.path)}, ${RELEASE_SCRIPT}`;
   const unreadable = startUnreadable(startDocs);
   if (unreadable) return unreadable;
   for (const { path } of files) {
@@ -517,6 +520,8 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
   const followsDefault = project.localAutoMerge === 'unset' && team.allow && team.default === 'on';
   const local = followsDefault && !mayFollowTeamDefault(project) ? 'off' : project.localAutoMerge;
   let { effective, reason } = resolveAutoMerge({ autoMerge: team }, local);
+  // The plugin's own repository guards its release script too (PLUGIN_REPOSITORY_PATHS); no other project does.
+  const pluginRepository = isPluginRepository(project);
   // Which half of merge trust is missing, `bot` or `signoff`, when the reason is `trust`; else null.
   let trust = null;
   // With `trust` "signoff": the flow whose sign-off is missing, and the class of the decision it is for the Human.
@@ -536,7 +541,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
     else {
       listed = prefix === null ? pr : wholeFiles(forge, pr);
       if (prefix !== null && typeof listed !== 'string') loaded = startDocs(forge, pr, main, policies.configFile, prefix);
-      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles, startDocs: loaded ?? undefined });
+      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles, startDocs: loaded ?? undefined, pluginRepository });
       if (paths) [effective, reason, why] = [false, 'paths', paths];
     }
   }
@@ -565,7 +570,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
           throw new Error(ghError(error));
         }
       };
-      const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree };
+      const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree, pluginRepository };
       const state = scoped(recordFor(project, pr.number, pr.repo), project, pr.repo);
       const changes = changesRequested(pr);
       let problem = changes ?? reviewProblem(state, pr.head, unreviewed);

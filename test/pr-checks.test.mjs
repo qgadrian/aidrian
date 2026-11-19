@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { checkoutRepos, computeVerdict, currentRows, namesRemote, parseCliArgs, runChecks } from '../plugins/aidrian/lib/pr-checks.mjs';
+import { checkoutRepos, computeVerdict, currentRows, namesRemote, parseCliArgs, remoteRepo, runChecks } from '../plugins/aidrian/lib/pr-checks.mjs';
 
 const row = (name, state) => ({ name, state });
 const verdict = (rows, policy, options) => computeVerdict(rows, policy, options).verdict;
@@ -243,9 +243,12 @@ test('-R still names a GitHub remote reached through an SSH alias, ssh.github.co
   const port443 = checksAt('ssh://git@ssh.github.com:443/acme/notes.git');
   assert.equal(port443('github.com/acme/notes'), 0, 'ssh.github.com is github.com');
   assert.equal(port443('ghe.acme.io/acme/notes'), 3, 'a dotted host that differs is still another repository');
-  for (const local of ['/srv/git/acme/notes.git', 'file:///srv/git/acme/notes.git']) {
+  // A bare `acme/notes.git` is a folder git reads relative to the checkout, and a file: URL's host is no network host.
+  for (const local of ['/srv/git/acme/notes.git', 'file:///srv/git/acme/notes.git', 'acme/notes.git', 'file://github.com/acme/notes']) {
+    assert.deepEqual(remoteRepo(local), { host: null, path: 'acme/notes' }, local);
     assert.equal(checksAt(local)('acme/notes'), 0, `${local}: its last two parts`);
     assert.equal(checksAt(local)('github.com/acme/notes'), 0, `${local}: no host to compare`);
+    assert.equal(checksAt(local)('ghe.acme.io/acme/notes'), 0, `${local}: no host to compare, so no host refuses it`);
   }
   const plain = checksAt('git@github.com:acme/notes.git');
   for (const spaced of [' acme/notes', 'acme/notes ']) assert.equal(plain(spaced), 3, JSON.stringify(spaced));

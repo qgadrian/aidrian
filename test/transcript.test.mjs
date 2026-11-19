@@ -53,6 +53,21 @@ test('effort is the last request`s stamped level; tool calls count once per tool
   assert.doesNotMatch(JSON.stringify(partOf(acc)), /SECRET/);
 });
 
+test('a model named __proto__ is counted as its own model and leaves Object.prototype alone', () => {
+  const text = [
+    usageLine('m1', '__proto__', { input_tokens: 10, output_tokens: 1 }),
+    usageLine('m2', 'claude-opus-5-5', { input_tokens: 5, output_tokens: 2 }),
+  ].join('\n');
+  const { perModel } = aggregateUsage(text);
+  assert.equal(Object.hasOwn(Object.prototype, 'calls'), false);
+  assert.equal({}.calls, undefined);
+  assert.deepEqual(Object.keys(perModel), ['__proto__', 'claude-opus-5-5']);
+  assert.deepEqual(perModel.__proto__, { calls: 1, input: 10, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
+  assert.equal(Object.getPrototypeOf(perModel), Object.prototype);
+  assert.equal(sumTokens(perModel).input, 15);
+  assert.deepEqual(estimateCostUsd(perModel).unknownModels, ['__proto__']);
+});
+
 test('a request found in two transcripts folded into one result counts once', () => {
   const line = usageLine('shared', 'claude-opus-5-5', { input_tokens: 1, output_tokens: 1 });
   const once = aggregateUsage(line);

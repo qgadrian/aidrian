@@ -3,7 +3,9 @@
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
 // ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
 // the main session only, a format line for chat replies, a handoff line while config.json `session.handoff.mode` is
-// "auto" (handoffLine), a line when the lesson inbox holds open lessons, which escalates when the inbox needs triage,
+// "auto" (handoffLine), a line when this machine runs the background handoff route but the shell function that lets the
+// terminal follow a handoff did not start the session (lib/shell-init.mjs unwrappedLine), a line for each block of that
+// function in a shell startup file that differs from the current one (staleBlockLines), a line when the lesson inbox holds open lessons, which escalates when the inbox needs triage,
 // a line while persona audits in the state folder hold untriaged findings (lib/audits.mjs auditNudge), a line when the
 // plugin copy running is older than the version the project requires (`requires` in config.json), and a line when the indexed docs hold
 // unconfirmed decisions and config.json `decisions.unreviewed.remind` says so. Last, in the main session while
@@ -32,8 +34,10 @@ import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
-import { findProject, stateDir } from '../lib/project.mjs';
+import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
 import { confinedShellVars } from '../lib/project-start.mjs';
+import { noteOrigin } from '../lib/session-origins.mjs';
+import { staleBlockLines, unwrappedLine } from '../lib/shell-init.mjs';
 
 const BIN = path.resolve(import.meta.dirname, '../bin');
 // The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
@@ -48,7 +52,16 @@ await runHook(async (input) => {
   if (!project) return;
   const subagent = process.argv.includes('--subagent');
   // The gates first: an error loading the knowledge below must not leave the session without its snapshot.
-  if (!subagent) saveGateSnapshot(input.session_id, project.root, loadConfig(project).config.agents);
+  if (!subagent) {
+    const started = loadConfig(project).config;
+    saveGateSnapshot(input.session_id, project.root, started.agents);
+    // Where this session's folders lie, so the session-folder guard holds them wherever a subagent works later.
+    try {
+      noteOrigin(input.session_id, path.resolve(stateDir(project, { config: started })), { checkouts: projectCheckouts(project) });
+    } catch {
+      // No state folder to name: the guard still holds the call's own project.
+    }
+  }
   const { config, buckets, errors } = loadKnowledge(project);
   const always = buckets.flatMap((bucket) => bucket.always);
   const command = binCommand('aidrian-knowledge');
@@ -81,6 +94,10 @@ async function mainSessionOutput(input, project, { lines, config, buckets }) {
   try {
     const handoff = handoffLine(config);
     if (handoff) out.push(handoff);
+    const host = detectHost({ input });
+    const unwrapped = unwrappedLine({ host, background: project.localHandoffBackground, handoff: config.session.handoff, env: process.env, human: JSON.stringify(config.names.human) });
+    if (unwrapped) out.push(unwrapped);
+    out.push(...staleBlockLines({ host, background: project.localHandoffBackground, env: process.env, human: JSON.stringify(config.names.human) }));
     const floor = versionFloorProblem(config);
     if (floor) out.push(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });

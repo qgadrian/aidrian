@@ -294,6 +294,21 @@ Codex residuals, each open until the live checks hold:
 - The keep files of `drop` and `cache` are not denied here: a session may remove either folder and put a link in its
   place, which the agent gate hook then refuses to write through.
 
+## Session ids
+
+Read in Codex's source at `rust-v0.166.0` on 2026-11-18, not live:
+
+- A shell call gets `CODEX_THREAD_ID`, the id of the thread that runs it (`codex-rs/core/src/exec_env.rs`, `create_env`),
+  and `CODEX_SESSION_ID`, "the shared root-session identity" (`inject_session_env` there).
+- A hook's payload carries `session_id: sess.session_id()` (`codex-rs/core/src/hook_runtime.rs`, the PreToolUse and
+  PostToolUse requests), and `session_id()` is "the identity shared by the root thread and all descendant threads",
+  equal to the root thread's id (`codex-rs/core/src/session/session.rs`).
+- So in the root thread `CODEX_THREAD_ID` equals the hooks' `session_id`, and in a subagent's thread it does not: it is
+  the subagent's own thread id. The adapter reads `CODEX_THREAD_ID` as a command's session (`sessionId`), so a command
+  that would file a row for a session reads the wrong one in a subagent. That is why the snapshot's
+  [worktree links](adding-a-host.md#session-links) are written by the PostToolUse Bash hook, under the payload's
+  `session_id`, and not by `aidrian worktree new`.
+
 ## Limits
 
 - Codex cannot make one agent read-only.

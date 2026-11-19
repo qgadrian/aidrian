@@ -16,12 +16,13 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, routeOf } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, routeOf, STALL_HOPS, UNHOOKED, unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
-import { CLAIM_AGE, claimStart, keepClaim, noteFrom, noteStarted, openStore, readArmed, readFrom, readStarted, startedInBackground } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { claudeOnPath, sessionEnded, startBackground, startIn } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { CHAIN_CEILING, CLAIM_AGE, claimStart, keepClaim, noteFollow, noteFrom, noteStarted, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { claudeOnPath, sessionEnded, sessionMode, startBackground, startIn } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
+import { END_DELAY, endAfterTurn, terminalFolder } from '../plugins/aidrian/lib/terminal-replace.mjs';
 import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -47,7 +48,11 @@ function setup(t, { handoff = { continue: 'background' }, committed = handoff, l
   mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
   const config = (session) => JSON.stringify({ version: 1, ...(set ? { state: { dir: set } } : {}), session: { handoff: session } });
   writeFileSync(path.join(dir, '.aidrian/config.json'), config(committed));
-  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8' });
+  // A last argument that is an object holds spawn options, such as `input`.
+  const git = (...args) => {
+    const options = typeof args.at(-1) === 'object' ? args.pop() : {};
+    return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8', ...options });
+  };
   git('init', '-q', '-b', 'main');
   git('add', '.aidrian/config.json');
   git('commit', '-q', '-m', 'config');
@@ -113,7 +118,7 @@ test('the background route starts the new session in this session\'s folder, rec
   const result = gate(setting, { run, env });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.equal(result.out[0], 'continue: background');
-  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. It resumes from ${setting.file}; this session stops here.`);
+  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. It resumes from ${setting.file}. This session has ended its work; the new one is \`harness-handoff · 1\`, open it with \`claude attach abcd1234\`.`);
 
   const [started] = bgCalls(calls);
   assert.equal(started.command, path.join(setting.bin, 'claude'), 'claude by its absolute path');
@@ -126,9 +131,11 @@ test('the background route starts the new session in this session\'s folder, rec
   assert.equal(readFileSync(kept, 'utf8'), brief(), 'an edit after the gate never reaches the copy the new session reads');
 
   const floor = readFrom(setting.store, NEW_SESSION);
-  assert.deepEqual({ ...floor, at: 0 }, { slug: 'widget', chain: 1, brief: setting.file, route: 'background', at: 0 }, 'the floor of the new session, as a clear delivery writes it');
+  const tree = setting.git('rev-parse', 'HEAD^{tree}').trim();
+  assert.deepEqual({ ...floor, at: 0 }, { slug: 'widget', chain: 1, brief: setting.file, route: 'background', tree, done: 0, stalls: 0, parent: SESSION, at: 0 }, 'the floor of the new session, as a clear delivery writes it, with the progress it starts from');
   assert.equal(readStarted(setting.store, SESSION).session, NEW_SESSION);
   assert.equal(readArmed(setting.store, SESSION), null, 'nothing is armed: nothing waits for a clear');
+  assert.deepEqual({ ...readHop(setting.store, NEW_SESSION), at: 0 }, { parent: SESSION, at: 0, short: null, read: 1 }, 'filed under the full id, naming the session that handed off');
 });
 
 test('the background route marks the new session unattended under the state root, owner-only, with the project it ran in', (t) => {
@@ -517,6 +524,7 @@ test('a listing that lags still holds the new session to its floor, by the short
   assert.ok(waits.reduce((sum, ms) => sum + ms, 0) <= 10_000);
   assert.ok(existsSync(path.join(setting.store.dir, 'from-abcd1234.json')), 'the floor under the short id');
   assert.equal(readFrom(setting.store, NEW_SESSION).chain, 1, 'the new session\'s full id starts with it');
+  assert.deepEqual({ ...readHop(setting.store, NEW_SESSION), at: 0 }, { parent: SESSION, at: 0, short: 'abcd1234', read: 2 }, 'the floor under the short id names the session that handed off');
 
   // In the new session, a brief that restarts the count at Chain 0 is refused by the check and the gate.
   const inNew = { ...setting.env, CLAUDE_CODE_SESSION_ID: NEW_SESSION };
@@ -1153,4 +1161,431 @@ test('a start the host made nothing of, after the host listed the earlier sessio
   assert.ok(calls.some((args) => args[0] === '--bg'), 'the hold passed and the start ran');
   assert.equal(readArmed(setting.store, SESSION)?.route, 'clear');
   assert.equal(existsSync(claimFile(setting)), false, 'nothing runs, so no claim is kept');
+});
+
+// Entries shaped like a Claude Code 2.1.326 transcript that holds no `permission-mode` entry: each `user` entry carries
+// the session's mode as a top-level `permissionMode` field, between its `message` and its `sessionId`, and long
+// `assistant` entries carry none.
+const userEntry = (mode, extra = {}) => ({ parentUuid: null, isSidechain: false, promptId: 'p', type: 'user', message: { role: 'user', content: 'go on' }, uuid: 'u', timestamp: '2026-11-17T20:00:00.000Z', permissionMode: mode, origin: 'cli', userType: 'external', entrypoint: 'cli', cwd: '/w', sessionId: SESSION, version: '2.1.326', gitBranch: 'main', ...extra });
+const assistantEntry = (size) => ({ parentUuid: 'u', isSidechain: false, type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(size) }] }, uuid: 'a', sessionId: SESSION });
+const transcript = (setting, entries) => writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${entries.map((each) => (typeof each === 'string' ? each : JSON.stringify(each))).join('\n')}\n`);
+
+test('a transcript with no permission-mode entry gives the mode of its last user entry, however far back it is', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The last entry that names the mode wins, more than 3 MB before the end, behind a line longer than a read chunk.
+  transcript(setting, [userEntry('manual'), userEntry('auto'), assistantEntry(1_500_000), ...Array.from({ length: 40 }, () => assistantEntry(50_000))]);
+  assert.equal(read(), 'auto');
+  // Only a top-level field counts: one nested in a message, quoted in its text, or on a subagent's entry, another
+  // session's, or one with no session id does not.
+  transcript(setting, [
+    userEntry('plan'),
+    { type: 'user', message: { content: [{ type: 'tool_result', content: { permissionMode: 'bypassPermissions' } }] }, sessionId: SESSION },
+    { ...assistantEntry(0), message: { content: '{"permissionMode":"bypassPermissions"}' } },
+    userEntry('bypassPermissions', { isSidechain: true }),
+    userEntry('bypassPermissions', { sessionId: 'someone-else' }),
+    userEntry('bypassPermissions', { sessionId: undefined }),
+    '{"permissionMode":"bypassPermissions", not json',
+  ]);
+  assert.equal(read(), 'plan');
+  // The last entry wins over an earlier one of either shape, and a bypassed mode is read as it is.
+  transcript(setting, [{ type: 'permission-mode', permissionMode: 'auto', sessionId: SESSION }, userEntry('bypassPermissions')]);
+  assert.equal(read(), 'bypassPermissions');
+  transcript(setting, [userEntry('bypassPermissions'), { type: 'permission-mode', permissionMode: 'dontAsk', sessionId: SESSION }]);
+  assert.equal(read(), 'dontAsk');
+  // No entry names a mode: none is read. A last line with no newline is read too.
+  transcript(setting, [assistantEntry(10), assistantEntry(2_100_000)]);
+  assert.equal(read(), null);
+  writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(assistantEntry(10))}\n${JSON.stringify(userEntry('acceptEdits'))}`);
+  assert.equal(read(), 'acceptEdits');
+});
+
+const MB = 1024 * 1024;
+
+test('a line too long to parse that holds the mode key fails closed; one without it is skipped', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The key near the line's end, read before the line is known to be too long.
+  transcript(setting, [userEntry('auto'), { ...assistantEntry(33 * MB), permissionMode: 'bypassPermissions' }, assistantEntry(10)]);
+  assert.equal(read(), null);
+  // The key more than 32 MB from the line's end, split across two read chunks: 8 of its bytes before a chunk edge.
+  const before = '{"type":"assistant","a":"x","permissionMode":"manual","b":"';
+  const after = `","sessionId":"${SESSION}"}`;
+  const key = '"permissionMode":"manual","b":"';
+  const fill = 34 * MB + 8 - key.length - after.length - 1;
+  writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(userEntry('auto'))}\n${before}${'x'.repeat(fill)}${after}\n`);
+  const text = readFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`));
+  const at = text.lastIndexOf('"permissionMode"');
+  assert.ok(text.length - at === 34 * MB + 8, 'the key straddles a chunk edge');
+  assert.equal(read(), null);
+  // A line too long to parse with no key in it is skipped, and the entry before it still gives the mode.
+  transcript(setting, [userEntry('auto'), assistantEntry(33 * MB), assistantEntry(10)]);
+  assert.equal(read(), 'auto');
+});
+
+test('a newline on a read chunk edge splits the lines there', (t) => {
+  const setting = setup(t, { mode: null });
+  const read = () => sessionMode({ session: SESSION, cwd: setting.dir, env: setting.env });
+  // The bytes after the mode line's newline are exactly 1 MB, so that newline is the last byte of the second chunk
+  // read; then 1 MB minus one, so it is the first byte of the first chunk read.
+  for (const tail of [MB, MB - 1]) {
+    const pad = JSON.stringify(assistantEntry(0)).length;
+    const filler = JSON.stringify(assistantEntry(tail - 1 - pad));
+    assert.equal(filler.length + 1, tail);
+    writeFileSync(path.join(setting.transcripts, `${SESSION}.jsonl`), `${JSON.stringify(userEntry('manual'))}\n${JSON.stringify(userEntry('plan'))}\n${filler}\n`);
+    assert.equal(read(), 'plan', `${tail} bytes after the newline`);
+  }
+});
+
+test('the gate passes on the mode a transcript gives only on its user entries, and refuses when that mode is bypassed or not a string', (t) => {
+  const start = (mode, earlier = []) => {
+    const setting = setup(t, { mode: null });
+    transcript(setting, [...earlier, userEntry(mode), ...Array.from({ length: 30 }, () => assistantEntry(100_000))]);
+    passCheck(setting);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    return { result: gate(setting, { run }), args: bgCalls(calls)[0]?.args ?? null };
+  };
+  const auto = start('auto');
+  assert.equal(auto.result.out[0], 'continue: background');
+  assert.equal(auto.args[auto.args.indexOf('--permission-mode') + 1], 'auto');
+  const bypass = start('bypassPermissions');
+  assert.equal(bypass.args, null, 'no session started');
+  assert.match(bypass.result.out[1], /this session runs with permission checks bypassed/u);
+  // The session's own entry whose mode is not a string refuses, whatever an earlier entry says.
+  for (const odd of [42, null, ['auto'], { mode: 'auto' }]) {
+    const unread = start(odd, [userEntry('auto')]);
+    assert.equal(unread.args, null, `${JSON.stringify(odd)}: no session started`);
+    assert.match(unread.result.out[1], /the permission mode of this session could not be read/u);
+  }
+});
+
+// A brief at `chain` whose Done section holds `done` items, on the branch `branch`.
+const doneBrief = (chain, done, branch = 'feat/widget') => brief(chain).replace('Branch: feat/widget', `Branch: ${branch}`)
+  .replace('## Next steps', `## Done\n${Array.from({ length: done }, (_, i) => `- step ${i + 1}, in commit abc\n`).join('')}\n## Next steps`);
+
+// The session SESSION as a background hop started it: a floor of route background at `chain`, with the progress
+// `progress` the hop before it recorded.
+const hopFloor = (setting, chain, progress) => noteFrom(setting.store, SESSION, { slug: 'widget', chain, brief: setting.file, route: 'background', progress }, { now: Date.now() });
+const STUCK = 'stuck: no new commits or finished steps over the last 2 handoffs';
+const treeAt = (setting, ref = 'HEAD') => setting.git('rev-parse', `${ref}^{tree}`).trim();
+// A commit on `branch` with `tree`, made without checking it out, as a session in another worktree makes one.
+const commitOn = (setting, branch, tree = 'HEAD^{tree}') => {
+  const made = setting.git('commit-tree', tree, '-p', `refs/heads/${branch}`, '-m', 'work').trim();
+  setting.git('update-ref', `refs/heads/${branch}`, made);
+};
+// A tree that is HEAD's with one file more.
+const otherTree = (setting) => {
+  const blob = setting.git('hash-object', '-w', '--stdin', { input: 'more\n' }).trim();
+  return setting.git('mktree', { input: `${setting.git('ls-tree', 'HEAD')}100644 blob ${blob}\tnotes.txt\n` }).trim();
+};
+
+test('a chain whose last two hops made no new commit and no new Done item goes on by the clear route and names why', (t) => {
+  const setting = setup(t, { text: brief(2) });
+  assert.ok(hopFloor(setting, 2, { tree: treeAt(setting), done: 0, stalls: STALL_HOPS - 1 }));
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run });
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', `fallback: ${STUCK}; this handoff goes on by the clear route`]);
+  assert.deepEqual(bgCalls(calls), [], 'no session starts');
+  assert.equal(readArmed(setting.store, SESSION).route, 'clear', 'a Human continues it');
+});
+
+// Each branch as git names it, and as the brief writes it: a backticked name is taken whole, `|` and no-break space too.
+const BRANCHES = [['feat/widget'], ['feat/c++'], ['feat/mañana'], ['@work'], ['feat/a|b', '`feat/a|b`'], ['feat/x\u00a0', '**`feat/x\u00a0`**']];
+for (const [branch, written = branch] of BRANCHES) {
+  test(`the progress check reads the tree of the brief's branch ${JSON.stringify(branch)}, so a commit in another worktree counts and an empty one does not`, (t) => {
+    const setting = setup(t, { text: doneBrief(2, 0, written) });
+    setting.git('branch', branch);
+    assert.ok(hopFloor(setting, 2, { tree: treeAt(setting, `refs/heads/${branch}`), done: 0, stalls: STALL_HOPS - 1 }));
+    const { run } = fakeRun({ own: setting.dir });
+    passCheck(setting);
+    assert.equal(gate(setting, { run }).out[0], 'continue: clear', 'the branch has not moved');
+    commitOn(setting, branch);
+    passCheck(setting);
+    assert.equal(gate(setting, { run }).out[0], 'continue: clear', 'an empty commit changes no file');
+    commitOn(setting, branch, otherTree(setting));
+    passCheck(setting);
+    assert.equal(gate(setting, { run }).out[0], 'continue: background', `${branch} moved while HEAD here stayed`);
+    assert.equal(readFrom(setting.store, NEW_SESSION).tree, treeAt(setting, `refs/heads/${branch}`));
+  });
+}
+
+test('a Branch: value git reads as a revision is never resolved: the progress check reads HEAD here instead', (t) => {
+  const setting = setup(t, { text: doneBrief(2, 0, 'main~1') });
+  commitOn(setting, 'main', otherTree(setting));
+  setting.git('reset', '-q', '--hard', 'HEAD');
+  assert.ok(hopFloor(setting, 2, { tree: treeAt(setting), done: 0, stalls: STALL_HOPS - 1 }));
+  passCheck(setting);
+  assert.equal(gate(setting, { run: fakeRun({ own: setting.dir }).run }).out[0], 'continue: clear', 'main~1 names the older tree, which would read as progress');
+});
+
+test('one hop with no progress still starts and counts it; a new tree or a new Done item starts the count again', (t) => {
+  const setting = setup(t, { text: doneBrief(2, 1) });
+  const tree = treeAt(setting);
+  const hop = (progress) => {
+    assert.ok(hopFloor(setting, 2, progress));
+    rmSync(path.join(setting.store.dir, 'started-session-1.json'), { force: true });
+    passCheck(setting);
+    const result = gate(setting, { run: fakeRun({ own: setting.dir }).run });
+    assert.equal(result.out[0], 'continue: background', result.out.join('\n'));
+    return readFrom(setting.store, NEW_SESSION);
+  };
+  assert.deepEqual(pick(hop({ tree, done: 1, stalls: 0 })), { tree, done: 1, stalls: 1 }, 'the same tree and Done count: one stalled hop');
+  assert.equal(hop({ tree: 'f'.repeat(40), done: 1, stalls: 1 }).stalls, 0, 'a new tree since the floor');
+  assert.equal(hop({ tree, done: 0, stalls: 1 }).stalls, 0, 'a new Done item since the floor');
+  assert.equal(hop({ tree: undefined, done: undefined, stalls: undefined }).stalls, 0, 'a floor with no progress, as a clear delivery writes it');
+});
+
+const pick = ({ tree, done, stalls }) => ({ tree, done, stalls });
+
+test('maxChain "unlimited" on the base branch lifts the hop cap; the worktree cannot set it', (t) => {
+  const deep = BACKGROUND_HOPS + 3;
+  const unlimited = setup(t, { handoff: { mode: 'auto', maxChain: 'unlimited' }, text: brief(deep) });
+  assert.ok(noteFrom(unlimited.store, SESSION, { slug: 'widget', chain: deep, brief: unlimited.file, route: 'clear' }));
+  passCheck(unlimited);
+  const { run, calls } = fakeRun({ own: unlimited.dir });
+  assert.equal(gate(unlimited, { run }).out[0], 'continue: background');
+  const [started] = bgCalls(calls);
+  assert.match(started.args.at(-1), new RegExp(`as continuation ${deep + 1}\\.\n`, 'u'), 'the first message names no cap');
+
+  const worktree = setup(t, { handoff: { mode: 'auto', maxChain: 'unlimited' }, committed: { mode: 'auto' }, text: brief(3) });
+  passCheck(worktree);
+  assert.match(gate(worktree, { run }).out[1], /^fallback: this brief has Chain 3, and the base branch's session\.handoff\.maxChain, at most 5 on the background route, allows 3/u);
+});
+
+test('under "unlimited", a stuck chain past 5 goes on by the clear route; past the working config\'s maxChain a person resumes it', (t) => {
+  const deep = BACKGROUND_HOPS + 3;
+  const both = setup(t, { handoff: { mode: 'auto', maxChain: 'unlimited' }, text: brief(deep) });
+  assert.ok(hopFloor(both, deep, { tree: treeAt(both), done: 0, stalls: STALL_HOPS - 1 }));
+  passCheck(both);
+  const { run, calls } = fakeRun({ own: both.dir });
+  const cleared = gate(both, { run });
+  assert.equal(cleared.exitCode, 0, cleared.err.join('\n'));
+  assert.deepEqual(cleared.out.slice(0, 2), ['continue: clear', `fallback: ${STUCK}; this handoff goes on by the clear route`]);
+
+  // An older worktree with the default maxChain 3 cannot arm a clear at Chain 8: the reason stays, and a person resumes.
+  const older = setup(t, { handoff: { mode: 'auto' }, committed: { mode: 'auto', maxChain: 'unlimited' }, text: brief(deep) });
+  assert.ok(hopFloor(older, deep, { tree: treeAt(older), done: 0, stalls: STALL_HOPS - 1 }));
+  passCheck(older);
+  const resumed = gate(older, { run });
+  assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
+  assert.deepEqual(resumed.out, ['continue: none', `fallback: ${STUCK}; a person resumes the brief`]);
+  assert.equal(readArmed(older.store, SESSION), null, 'nothing is armed');
+  assert.deepEqual(bgCalls(calls), []);
+});
+
+const CEILING = `a chain floor records at most ${CHAIN_CEILING} continuations and Done items, and this hop would pass that`;
+const armedFiles = (setting) => (existsSync(setting.store.dir) ? readdirSync(setting.store.dir).filter((name) => name.startsWith('armed-')) : []);
+
+test('under "unlimited", a hop whose floor the store cannot record starts no session and arms no clear: a person resumes it', (t) => {
+  const setting = setup(t, { handoff: { mode: 'auto', maxChain: 'unlimited' }, text: brief(CHAIN_CEILING) });
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run });
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  assert.deepEqual(result.out, ['continue: none', `fallback: ${CEILING}; a person resumes the brief`]);
+  assert.deepEqual(bgCalls(calls), [], 'no --bg call');
+  assert.deepEqual(armedFiles(setting), [], 'nothing is armed');
+});
+
+test('a clear delivery past what a chain floor records loads nothing and says why', (t) => {
+  const setting = setup(t, { text: brief(CHAIN_CEILING) });
+  const store = openStore(setting.state, { checkouts: [setting.dir], maxChain: 'unlimited' });
+  const marker = { route: 'clear', slug: 'widget', brief: setting.file, sha256: sha(brief(CHAIN_CEILING)), chain: CHAIN_CEILING };
+  const delivered = deliverCleared(store, marker, NEW_SESSION);
+  assert.equal(delivered.context, null);
+  assert.match(delivered.systemMessage, new RegExp(`has Chain ${CHAIN_CEILING}, and a chain floor records at most ${CHAIN_CEILING}`, 'u'));
+  assert.equal(readFrom(store, NEW_SESSION), null, 'no floor');
+  const below = deliverCleared(store, { ...marker, chain: CHAIN_CEILING - 1 }, NEW_SESSION);
+  assert.notEqual(below.context, null, 'one below still delivers');
+});
+
+// A floor in the shape this branch first wrote, { head, done, stalls }, written straight to the store as `file`.
+const oldFloor = (setting, file, chain) => {
+  mkdirSync(setting.store.dir, { recursive: true, mode: 0o700 });
+  const head = setting.git('rev-parse', 'HEAD').trim();
+  writeFileSync(path.join(setting.store.dir, file), JSON.stringify({ slug: 'widget', chain, brief: setting.file, route: 'background', head, done: 0, stalls: STALL_HOPS - 1, at: Date.now() }), { mode: 0o600 });
+};
+
+for (const [file, what] of [['from-session-1.json', 'its own id'], ['from-sess.json', 'a short id']]) {
+  test(`a floor of an earlier progress shape under ${what} keeps its chain and route, and counts progress from 0 again`, (t) => {
+    const setting = setup(t, { text: brief(2) });
+    oldFloor(setting, file, 2);
+    assert.deepEqual([readFrom(setting.store, SESSION)?.chain, readFrom(setting.store, SESSION)?.route], [2, 'background'], 'the floor is read');
+    assert.equal(startedInBackground(setting.store, SESSION), true, 'its route still marks the session unattended');
+    passCheck(setting);
+    const result = gate(setting, { run: fakeRun({ own: setting.dir }).run });
+    assert.equal(result.out[0], 'continue: background', 'the same HEAD in the old shape is no stall: the baseline starts again');
+    assert.equal(readFrom(setting.store, NEW_SESSION).stalls, 0);
+  });
+}
+
+test('a session a hop started and named is named again by its base name and the new count, never a second count', (t) => {
+  const setting = setup(t);
+  const named = (own, chain) => startBackground({ session: SESSION, slug: 'widget', chain, efforts: [], prompt: 'p', env: setting.env, hold: () => true, wait: noWait, run: fakeRun({ name: own, own: setting.dir }).run }).name;
+  assert.equal(named('widget-work · 1', 2), 'widget-work · 2');
+  assert.equal(named('widget-work · 1 · 2', 3), 'widget-work · 3');
+  assert.equal(named('widget-work ·  4', 5), 'widget-work · 5');
+  assert.equal(named('7 · 1', 2), '7 · 2');
+  // A count that is not the last hop's is part of the name the Human gave, and stays.
+  assert.equal(named('release · 2026', 1), 'release · 2026 · 1');
+  assert.equal(named('release · 2026', 3), 'release · 2026 · 3');
+  assert.equal(named('release · 2026 · 1', 2), 'release · 2026 · 2');
+  assert.equal(named('widget-work · 3', 2), 'widget-work · 3 · 2');
+  assert.equal(named('v · 2 docs', 3), 'v · 2 docs · 3');
+});
+
+// The environment of a session the shell function started, in shell 4242, as `claude` process 4343, attended, and a
+// stand-in for `run` that answers `ps` with `line` for that process.
+const WRAPPED = { AIDRIAN_SHELL_PID: '4242', CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' };
+const withPs = (run, line = '4343 4242 claude') => (command, args, options) => (command === '/bin/ps'
+  ? { status: 0, stdout: args.at(-1) === '4343' ? `${line}\n` : '', stderr: '' }
+  : run(command, args, options));
+const SWITCHES = 'This session has ended its work; this terminal switches to the new one, `harness-handoff · 1`, once this turn ends.';
+const PLAIN = 'This session has ended its work; the new one is `harness-handoff · 1`, open it with `claude attach abcd1234`.';
+
+test('in auto mode, a session the shell function started asks to end once its turn ends, and the say line says the terminal switches', (t) => {
+  const setting = setup(t, { handoff: { mode: 'auto' } });
+  passCheck(setting);
+  const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env: { ...setting.env, ...WRAPPED } });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.ok(result.out[1].endsWith(SWITCHES), result.out[1]);
+  assert.deepEqual(takeEnding(setting.store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: NEW_SESSION });
+  assert.equal(takeEnding(setting.store, SESSION), null, 'the request acts once');
+});
+
+test('a session ends itself only in auto mode, from the shell function\'s own claude process, attended, and never unattended', (t) => {
+  const cases = [
+    ['continue: background with mode ask', { handoff: { mode: 'ask', continue: 'background' } }, WRAPPED, undefined],
+    ['a Human does not attend it', {}, { ...WRAPPED, CLAUDE_CODE_SESSION_ATTENDED: '0' }, undefined],
+    ['another shell started it', {}, WRAPPED, '4343 4100 claude'],
+    ['a background session\'s process', {}, WRAPPED, '4343 4242 claude bg-spare'],
+    ['ps cannot read it', {}, WRAPPED, ''],
+    ['the shell pid is not a pid', {}, { ...WRAPPED, AIDRIAN_SHELL_PID: '42x' }, undefined],
+  ];
+  for (const [name, options, wrapped, line] of cases) {
+    const setting = setup(t, { handoff: { mode: 'auto' }, ...options });
+    passCheck(setting);
+    const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run, line), env: { ...setting.env, ...wrapped } });
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].includes(PLAIN), `${name}: ${result.out[1]}`);
+    assert.equal(takeEnding(setting.store, SESSION), null, name);
+  }
+  const setting = setup(t, { handoff: { mode: 'auto' } });
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, ...WRAPPED, XDG_STATE_HOME: xdg };
+  assert.ok(markUnattended(SESSION, { root: setting.dir, env }));
+  const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run), env });
+  assert.ok(result.out[1].endsWith(PLAIN), `a session no Human attends: ${result.out[1]}`);
+  assert.equal(takeEnding(setting.store, SESSION), null, 'a session no Human attends never ends a process');
+});
+
+test('in auto mode, an attended session its shell function did not start says why the terminal stays, and only then', (t) => {
+  const bare = { CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' };
+  const cases = [
+    ['no shell function, auto mode', {}, bare, true],
+    ['no shell function, mode ask', { handoff: { mode: 'ask', continue: 'background' } }, bare, false],
+    ['no shell function, a Human does not attend it', {}, { CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '0' }, false],
+    ['the shell function, another shell started it', {}, WRAPPED, false],
+  ];
+  for (const [name, options, wrapped, hint] of cases) {
+    const setting = setup(t, { handoff: { mode: 'auto' }, ...options });
+    passCheck(setting);
+    const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run, '4343 4100 claude'), env: { ...setting.env, ...wrapped } });
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(hint ? `${PLAIN} ${UNHOOKED}` : PLAIN), `${name}: ${result.out[1]}`);
+    assert.equal(takeEnding(setting.store, SESSION), null, name);
+  }
+});
+
+// A stand-in for `run` that answers `ps -A` with `rows`, each `pid ppid comm`, and passes every other call to `run`.
+const withClients = (run, rows) => (command, args, options) => (command === '/bin/ps' && args[0] === '-A'
+  ? { status: 0, stdout: `${rows.join('\n')}\n`, stderr: '' }
+  : run(command, args, options));
+const ATTACHED = ['1 0 launchd', '4242 900 -zsh', '5000 4242 claude'];
+const STOPS = 'This session has ended its work and stops once this turn ends; the new one is `harness-handoff · 1`, open it with `claude attach abcd1234`.';
+
+// Writes the shell function's record that the terminal of `shell` opened the session `id`, at `seconds`, under `env`.
+function followsRecord(env, shell, id, seconds = Math.floor(Date.now() / 1000)) {
+  const folder = terminalFolder(env);
+  mkdirSync(folder, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(folder, `follows-${shell}`), `${id} ${seconds}\n`, { mode: 0o600 });
+}
+
+test('a background session the gate started ends itself once its turn ends, in auto mode: its terminal switches when one follows, else it stops', (t) => {
+  for (const [name, handoff, follows, ending, { attended = {}, rows = ATTACHED } = {}] of [
+    ['followed in the store, auto mode', { mode: 'auto' }, 'store', 'switch'],
+    ['the shell function opened it by its id', { mode: 'auto' }, 'shell', 'switch'],
+    ['the shell function opened it by a short id it starts with', { mode: 'auto' }, 'short', 'switch'],
+    ['the shell function opened it in one terminal while the store names another', { mode: 'auto' }, 'both', 'switch', { rows: [...ATTACHED, '4343 900 -zsh', '5001 4343 claude'] }],
+    ['followed, but the shell runs no client any more', { mode: 'auto' }, 'store', 'stop', { rows: ['1 0 launchd', '4242 900 -zsh'] }],
+    ['the shell function\'s record names another session', { mode: 'auto' }, 'other', 'stop'],
+    ['no terminal follows it', { mode: 'auto' }, null, 'stop'],
+    ['ask mode', { mode: 'ask', continue: 'background' }, 'store', null],
+    ['a Human attends it, as a former background session resumed', { mode: 'auto' }, 'store', null, { attended: { CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
+  ]) {
+    const setting = setup(t, { handoff });
+    passCheck(setting);
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    t.after(() => rmSync(xdg, { recursive: true, force: true }));
+    const env = { ...setting.env, XDG_STATE_HOME: xdg, ...attended };
+    assert.ok(markUnattended(SESSION, { root: setting.dir, env }), name);
+    if (follows === 'store' || follows === 'both') assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
+    if (follows === 'shell') followsRecord(env, 4242, SESSION);
+    if (follows === 'short') followsRecord(env, 4242, 'session-');
+    if (follows === 'other') followsRecord(env, 4242, 'zzzz9999');
+    if (follows === 'both') followsRecord(env, 4343, SESSION);
+    const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir }).run, rows), env });
+    assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith({ switch: SWITCHES, stop: STOPS }[ending] ?? PLAIN), `${name}: ${result.out[1]}`);
+    const own = follows === 'short' ? 'session-' : SESSION;
+    const expected = { switch: { own, shell: follows === 'both' ? 4343 : 4242 }, stop: { own: SESSION, shell: null } }[ending];
+    assert.deepEqual(takeEnding(setting.store, SESSION), expected ? { ...expected, id: 'abcd1234', next: NEW_SESSION } : null, name);
+  }
+});
+
+test('the terminal follows a chain of background hops the shell function attached: each hop switches it, and stops itself', (t) => {
+  const hops = ['1111aaaa', '2222bbbb', '3333cccc', '4444dddd', '5555eeee'].map((short, index) => ({ short, full: `${short}-0000-4000-8000-00000000000${index + 1}` }));
+  const setting = setup(t, { handoff: { mode: 'auto', maxChain: 5 } });
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const base = { ...setting.env, XDG_STATE_HOME: xdg, CLAUDE_CODE_SESSION_ATTENDED: '0' };
+  // The first hop runs in the background, and the Human typed `claude attach 1111aaaa` in the shell 4242.
+  assert.ok(markUnattended(hops[0].full, { root: setting.dir, env: base }));
+  followsRecord(base, 4242, hops[0].short);
+  const shellRecord = path.join(terminalFolder(base), '4242');
+  for (let at = 0; at < hops.length - 1; at += 1) {
+    const [hop, next] = [hops[at], hops[at + 1]];
+    writeFileSync(path.join(setting.transcripts, `${hop.full}.jsonl`), `${JSON.stringify({ type: 'permission-mode', permissionMode: 'acceptEdits', sessionId: hop.full })}\n`);
+    writeFileSync(setting.file, brief(at).replace('## Next steps', `## Done\n${Array.from({ length: at + 1 }, (_, item) => `- step ${item}`).join('\n')}\n\n## Next steps`));
+    passCheck(setting);
+    const env = { ...base, CLAUDE_CODE_SESSION_ID: hop.full };
+    const listing = (started) => [{ id: hop.short, sessionId: hop.full, name: `widget · ${at}`, kind: 'background', cwd: setting.dir }, ...(started ? [{ id: next.short, sessionId: next.full, name: `widget · ${at + 1}`, kind: 'background', cwd: setting.dir }] : [])];
+    let started = false;
+    const run = withClients((command, args) => {
+      if (args[0] === 'agents') return { status: 0, stdout: JSON.stringify(listing(started)), stderr: '' };
+      started = true;
+      return { status: 0, stdout: `backgrounded · ${next.short} · widget · ${at + 1}\n`, stderr: '' };
+    }, ATTACHED);
+    const result = gate(setting, { run, env });
+    assert.equal(result.out[0], 'continue: background', `hop ${at + 1}: ${result.err.join('\n')}`);
+    assert.ok(result.out[1].endsWith(`this terminal switches to the new one, \`widget · ${at + 1}\`, once this turn ends.`), `hop ${at + 1}: ${result.out[1]}`);
+    assert.doesNotMatch(result.out[1], /open it with/u, `hop ${at + 1}: no attach by hand`);
+
+    // Its Stop hook: the shell's record names the next hop, the terminal follows it, and this hop stops itself.
+    const helpers = [];
+    const ended = endAfterTurn({
+      host: claudeCode, session: hop.full, take: () => takeEnding(setting.store, hop.full), unattended: () => unattendedHere(hop.full, { store: setting.store, env, now: Date.now() }),
+      follow: ({ session, shell }) => noteFollow(setting.store, session, { shell }), env, run, start: (each) => helpers.push(each),
+    });
+    assert.equal(ended, true, `hop ${at + 1}`);
+    assert.deepEqual(helpers, [{ host: 'claude-code', own: hop.short, session: hop.full, delay: END_DELAY }], `hop ${at + 1} stops itself`);
+    assert.match(readFileSync(shellRecord, 'utf8'), new RegExp(`^${next.short} \\d+\\n$`, 'u'), `hop ${at + 1}`);
+    // The client exits, and the shell function reads the record and attaches the next hop, as it does in a shell.
+    rmSync(shellRecord);
+    followsRecord(base, 4242, next.short);
+  }
 });

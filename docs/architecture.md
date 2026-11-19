@@ -31,10 +31,15 @@ plugins/aidrian/
 └── codex/
     ├── agents/aidrian-*.toml       generated Codex roles; never edit
     └── install-agents.mjs          copies those roles into $CODEX_HOME/agents (~/.codex/agents by default)
+plugins/aidrian-claude-mod/         the optional Claude mod, aidrian-mod, for Claude Code alone (docs/claude-mod.md)
+├── .claude-plugin/plugin.json      its manifest, settings, and version
+├── hooks/                          register.ts, the alerts, and pane.tsx, the band and the /aidrian-mod pane
+├── lib/                            what they draw from the snapshot, and the one resolver that starts its processes
+└── sounds/, tests/                 the alert sounds, and the tests claude plugin test runs
 scripts/build.mjs                   generates the flat agents/ and codex/agents from agents-src/ and providers/
-scripts/version.mjs                 checks a branch keeps the version, and raises it on release
+scripts/version.mjs                 checks a branch keeps each plugin's version, and raises and tags each on release
 scripts/code-shape.mjs              warns about long files, long functions, and nested ternaries in lib/
-.github/workflows/release.yml       releases the plugin after each merge to main
+.github/workflows/release.yml       releases each plugin after each merge to main
 examples/consumer/                  a small project that uses the plugin
 docs/                               one page per surface; docs/providers/ has one page per host
 test/                               node --test suites
@@ -57,8 +62,8 @@ test/                               node --test suites
 - **Forges**: every command, hook, and step that reads or writes a pull request, its checks, or its repository on the
   forge does it through `forgeFor(cwd)` in `lib/forges/`, whose named methods hold gh's commands and routes; no other
   file runs gh. Shared code imports `lib/forges/index.mjs` alone, never an adapter: it gives `forgeFor` and the
-  helpers `repoIdentity` (`identity.mjs`), the facade's own, which reads a repository to its canonical host and full
-  path before any forge is chosen, `isTrustedCommenter`, which says who belongs to it, and `REVIEWS_PAGE`. The last two
+  helpers `repoIdentity` and `remoteIdentity` (`identity.mjs`), the facade's own, which read a repository to its
+  canonical host and full path before any forge is chosen, the second from a network remote URL alone, `isTrustedCommenter`, which says who belongs to it, and `REVIEWS_PAGE`. The last two
   are GitHub's today, as the payloads are, until a second forge reshapes them. An option bounds a hook's calls (`timeoutMs`, and `killSignal`, which stops one at that bound), `strictJson` reads an empty answer as null, as
   `aidrian pr await-review` always has, and `{ host }` names the host of a pull request's URL.
   Callers' tests stub those methods; `test/forge-github.test.mjs` holds the gh command behind each one, and

@@ -302,6 +302,13 @@ export default {
     const structured = direct?.structuredContent ?? direct?.structured_content;
     return [direct, ...(isObject(structured) ? [structured] : []), ...rest].filter(Boolean);
   },
+  // A shell call's response, as `{ output, interrupted }`: Codex sends the command's output as one string, stdout and stderr
+  // together, and a call it stopped fires no PostToolUse (codex-rs/core/src/tools/context.rs, ExecCommandToolOutput
+  // post_tool_use_response, at rust-v0.169.0; test/fixtures/hosts/codex/bash-post.json).
+  shellOutput: (response) => ({ output: typeof response === 'string' ? response : null, interrupted: false }),
+  // A finished shell call, as the check-run record reads it (lib/check-runs.mjs): Codex runs PostToolUse for a call that
+  // exited non-zero too, and sends no exit status, so `exitZero` is false and a run is judged by its counts alone.
+  shellRun: (response) => ({ output: typeof response === 'string' ? response : null, finished: typeof response === 'string', exitZero: false }),
   // `raw_tool_name` keeps what Codex sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames).
   hookInput(input) {
     const name = toolName(input.tool_name);

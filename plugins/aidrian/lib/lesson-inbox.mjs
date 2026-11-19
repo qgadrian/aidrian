@@ -44,8 +44,11 @@ export const TRIAGE_FRESH_DAYS = 14;
 
 // The project's own inbox. `config` is the project's config when the caller has it; stateDir reads it otherwise.
 export function inboxPath(project, config) {
-  return path.join(stateDir(project, { config }), 'lessons', 'inbox.jsonl');
+  return stateInbox(stateDir(project, { config }));
 }
+
+// The inbox in the state folder `state`, for a caller that resolved that folder already.
+export const stateInbox = (state) => path.join(state, 'lessons', 'inbox.jsonl');
 
 // The inbox of the project `id` in the default state root, or null without an id.
 export const projectInboxPath = (id, env = process.env) => (id ? path.join(stateRoot(env), 'projects', id, 'lessons', 'inbox.jsonl') : null);

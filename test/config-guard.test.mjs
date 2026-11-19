@@ -1,16 +1,21 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
+import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { globParts } from '../plugins/aidrian/lib/fs.mjs';
+import { defaultSessionsFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { configFiles, findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { forgetGateSnapshot, saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
+import { configFiles, findProject, stateDir, stateRoot } from '../plugins/aidrian/lib/project.mjs';
+import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
+import { originFolder, readOrigins } from '../plugins/aidrian/lib/session-origins.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -100,6 +105,8 @@ test('a subagent may still read those files and write anything else, and the mai
       `cp notes.md ${dir}`,
       'cd src && echo x > notes.md',
       'cd "$TMPDIR" && echo x > notes.md',
+      // A file named like a handoff store record outside the store: `follow-` and `ending-` are common words.
+      'cd "$OUT" && echo {} > follow-up.json',
       "bash -c 'echo x > notes.md'",
       'python3 -c "print(1)"',
       "node -e \"require('fs').writeFileSync('tsconfig.json', '{}')\"",
@@ -828,6 +835,13 @@ test('a subagent may not write in the handoff continuation store, with or withou
         // The claim of a session on a start, which a removal would lift.
         'cd "$X" && rm claim-*',
         'cd "$X" && rm .continue/claim-*',
+        // A request to end a session, or a record that a terminal follows one, by the id shape the store writes, in a
+        // folder no path gives, and by a glob that may grow into one.
+        'cd "$STORE" && printf xxx > ending-0c5bd1a2-7f3e-4b8a-9d10-2e4f6a8b0c1d.json',
+        'cd "$STORE" && printf xxx > follow-ed95a7db.json',
+        'cd "$X" && cp /tmp/x.json FOLLOW-ED95A7DB.json',
+        'cd "$STORE" && tee ending-*',
+        'cd "$STORE" && cp /tmp/x.json follow-ed9*.json',
         // A glob in the first path part, right below the root.
         'rm -rf /*',
         `rm -rf /${state.split('/')[1].slice(0, 2)}*/${state.split('/').slice(2).join('/')}/handoffs/.continue`,
@@ -864,6 +878,11 @@ test('a subagent may not write in the handoff continuation store, with or withou
       // A chain floor's or task record's name is a common word: only the path rules cover them.
       ['Bash', { command: 'cd "$OUT" && echo {} > from-api.json' }],
       ['Bash', { command: 'cd "$OUT" && echo [] > tasks-list.json' }],
+      // So are names that only start like a request to end or a follow record: their id is no session's shape.
+      ['Bash', { command: 'cd "$OUT" && echo {} > follow-up.json' }],
+      ['Bash', { command: 'cd "$OUT" && echo {} > follow-ups.json' }],
+      ['Bash', { command: 'cd "$OUT" && echo {} > ending-notes.json' }],
+      ['Bash', { command: 'cd "$OUT" && rm -f follow-up*' }],
       ['Bash', { command: 'rm build/[a-z]*.o' }],
       ['Bash', { command: 'touch src/[z-a].js' }],
       ['Bash', { command: `rm -rf ${handoffs}/[0-9]*.md` }],
@@ -1314,4 +1333,261 @@ test('a gated subagent\'s bracket glob in a known folder gets the folder check, 
   const refused = run('rm -f .aidrian/[c]onfig.json*');
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /\.aidrian\/config\.json/u);
+});
+
+test('a subagent, and a session the background route started, may not write in the session folders; an attended main session may', (t) => {
+  const { dir, state, full } = unattendedSetting(t);
+  const sessions = path.join(state, 'sessions');
+  const own = path.join(sessions, 'abc-1');
+  mkdirSync(own, { recursive: true, mode: 0o700 });
+  symlinkSync(path.join(own, 'prs.jsonl'), path.join(dir, 'into-sessions'));
+  const run = (session, tool, toolInput, { agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: session, tool_name: tool, tool_input: toolInput, cwd: dir, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
+    cwd: dir, encoding: 'utf8',
+  });
+  const blocked = [
+    ['Write', { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' }],
+    ['Write', { file_path: path.join(own, 'links.jsonl'), content: '{}\n' }],
+    ['Bash', { command: `echo '{}' >> ${own}/prs.jsonl` }],
+    ['Bash', { command: `rm -rf ${sessions}` }],
+    ['Bash', { command: `cp /tmp/x ${state}/sess*/x/prs.jsonl` }],
+    ['Bash', { command: `echo '{}' > ${path.join(dir, 'into-sessions')}` }],
+    ['Bash', { command: `chmod -R 777 ${state}` }],
+    ['Bash', { command: `chmod 777 ${sessions}` }],
+    ['Bash', { command: 'cd "$X" && echo {} > sessions/x/prs.jsonl' }],
+    // Interpreter code, where a closing quote follows the path.
+    ['Bash', { command: `python3 -c "open('${own}/prs.jsonl', 'a').write('{}')"` }],
+    ['Bash', { command: `node -e "require('fs').appendFileSync('${own}/links.jsonl', '{}')"` }],
+    ['Bash', { command: 'python3 -c "open(\'sessions/abc-1/usage.json\', \'w\')"' }],
+    // A file appended in place, by its name alone, after a `cd` the guard cannot follow.
+    ['Bash', { command: 'cd "$X" && echo {} >> prs.jsonl' }],
+    ['Bash', { command: 'cd "$X" && echo {} >> links.jsonl' }],
+    ['Bash', { command: 'cd "$X" && echo {} > prs-cache.json' }],
+    ['Bash', { command: 'cd "$X" && echo {} > merged-heads-cache.json' }],
+    // A native Windows path in interpreter code, its `\` doubled in a string or not.
+    ...['usage.json', 'prs-cache.json', 'merged-heads-cache.json'].flatMap((file) => [
+      ['Bash', { command: `python3 -c 'open("C:\\\\state\\\\sessions\\\\abc-1\\\\${file}", "w")'` }],
+      ['Bash', { command: `node -e 'require("fs").writeFileSync("C:\\state\\sessions\\abc-1\\${file}", "{}")'` }],
+    ]),
+  ];
+  const passing = [
+    ['Write', { file_path: path.join(dir, 'src/sessions/store.js'), content: 'export {};\n' }],
+    ['Write', { file_path: path.join(dir, 'sessions'), content: 'notes\n' }],
+    ['Bash', { command: 'cd "$X" && echo {} > sessions/notes.md' }],
+    ['Bash', { command: 'cd "$X" && echo {} > usage.json' }],
+    ['Bash', { command: 'cd "$X" && echo {} > old-prs.jsonl.bak' }],
+  ];
+  for (const [session, agent] of [['plain-session', true], [full, false]]) {
+    for (const [tool, toolInput] of blocked) {
+      const result = run(session, tool, toolInput, { agent });
+      assert.equal(result.status, 2, `${session}: ${JSON.stringify(toolInput)}`);
+    }
+    for (const [tool, toolInput] of passing) assert.equal(run(session, tool, toolInput, { agent }).status, 0, `${session}: ${JSON.stringify(toolInput)}`);
+  }
+  const named = run('plain-session', 'Write', { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' }, { agent: true });
+  assert.match(named.stderr, /the session folders, where only the hooks and the `aidrian` commands write/u);
+  for (const [tool, toolInput] of blocked.filter(([, input]) => !String(input.command ?? '').startsWith('chmod -R'))) {
+    assert.equal(run('plain-session', tool, toolInput).status, 0, `an attended session may: ${JSON.stringify(toolInput)}`);
+  }
+});
+
+// A session folder of `session` under the state folder of the project at `dir`, as the hooks make it.
+function sessionFolderOf(dir, session) {
+  const found = findProject(dir);
+  const made = sessionFolder(stateDir(found), session, { checkouts: found.checkouts });
+  assert.ok(made, 'the session folder is made');
+  return made;
+}
+
+const subagentWrite = (cwd, session, toolInput) => spawnSync(process.execPath, [HOOK], {
+  input: JSON.stringify({ session_id: session, tool_name: 'Write', tool_input: toolInput, cwd, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
+  cwd, encoding: 'utf8',
+});
+
+test('a subagent that works in another project, or in no project, may not write the session folders of the project it started in', (t) => {
+  const { dir: home } = project(t, { version: 1 });
+  const { dir: elsewhere } = project(t, { version: 1 });
+  const loose = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-loose-')));
+  t.after(() => rmSync(loose, { recursive: true, force: true }));
+  const own = sessionFolderOf(home, 'moved-1');
+  const homeState = stateDir(findProject(home));
+  t.after(() => rmSync(homeState, { recursive: true, force: true }));
+  const write = { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' };
+  for (const cwd of [elsewhere, loose]) {
+    const result = subagentWrite(cwd, 'moved-1', write);
+    assert.equal(result.status, 2, `from ${cwd}: ${result.stderr}`);
+    assert.match(result.stderr, /the session folders/u);
+  }
+  assert.equal(subagentWrite(elsewhere, 'moved-1', { file_path: path.join(elsewhere, 'src/app.js'), content: 'x\n' }).status, 0, 'its own work in the other project');
+});
+
+test('a subagent in another project meets the session folders of a state.dir its gate snapshot`s project moves', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-origin-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const moved = path.join(base, 'moved-state');
+  const gates = { 'some-other-agent': { deny: ['WebFetch'] } };
+  const { dir: home } = project(t, { version: 1, state: { dir: moved }, agents: gates });
+  const { dir: elsewhere } = project(t, { version: 1 });
+  const session = 'origin-1';
+  assert.ok(saveGateSnapshot(session, home, gates));
+  t.after(() => forgetGateSnapshot(session));
+  const own = sessionFolderOf(home, session);
+  assert.ok(own.startsWith(realpathSync(moved)));
+  const result = subagentWrite(elsewhere, session, { file_path: path.join(own, 'links.jsonl'), content: '{}\n' });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /the session folders/u);
+});
+
+test('a state.dir of ".." in a checkout named sessions leaves the checkout writable: no session folder lies there', { skip: process.platform === 'win32' }, (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-parent-state-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = path.join(base, 'sessions');
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '..' } }));
+  assert.equal(stateDir(findProject(dir)), base);
+  for (const file of ['src/app.js', 'README.md']) {
+    const result = subagentWrite(dir, 'plain-session', { file_path: path.join(dir, file), content: 'x\n' });
+    assert.equal(result.status, 0, `${file}: ${result.stderr}`);
+  }
+});
+
+const SESSION_START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
+const gitIn = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+
+test('an ungated session`s subagent in another project may not write the session folders the session started with, before they exist', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-origins-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const moved = path.join(base, 'moved-state');
+  const { dir: custom } = project(t, { version: 1, state: { dir: moved } });
+  const { dir: plain } = project(t, { version: 1 });
+  const { dir: elsewhere } = project(t, { version: 1 });
+  const started = (cwd, session) => {
+    const ran = spawnSync(process.execPath, [SESSION_START], { input: JSON.stringify({ session_id: session, cwd, hook_event_name: 'SessionStart' }), cwd, encoding: 'utf8' });
+    assert.equal(ran.status, 0, ran.stderr);
+  };
+  started(custom, 'origin-custom-1');
+  started(plain, 'origin-plain-1');
+  const plainState = stateDir(findProject(plain));
+  t.after(() => rmSync(plainState, { recursive: true, force: true }));
+  const targets = [
+    ['origin-custom-1', path.join(moved, 'sessions', 'origin-custom-1', 'prs.jsonl')],
+    ['origin-plain-1', path.join(plainState, 'sessions', 'origin-plain-1', 'links.jsonl')],
+  ];
+  for (const [session, file] of targets) {
+    assert.equal(existsSync(path.dirname(path.dirname(file))), false, 'no sessions folder yet');
+    const result = subagentWrite(elsewhere, session, { file_path: file, content: '{}\n' });
+    assert.equal(result.status, 2, `${file}: ${result.stderr}`);
+    assert.match(result.stderr, /the session folders/u);
+  }
+  const record = path.join(originFolder(), 'origin-custom-1.json');
+  assert.ok(existsSync(record));
+  const forged = subagentWrite(elsewhere, 'origin-custom-1', { file_path: record, content: '{"states":[]}\n' });
+  assert.equal(forged.status, 2, 'a subagent may not rewrite the session`s origins');
+  assert.match(forged.stderr, /the session origins/u);
+});
+
+test('the sessions folder of a state.dir the session folder writer refuses, below a repository or in a sibling worktree, stays writable', { skip: process.platform === 'win32' }, (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-refused-store-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const repo = path.join(base, 'repo');
+  const sub = path.join(repo, 'sub');
+  mkdirSync(path.join(sub, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(repo, 'sessions', 'notes'), { recursive: true });
+  writeFileSync(path.join(sub, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.' } }));
+  writeFileSync(path.join(repo, 'sessions/notes/a.md'), 'x\n');
+  gitIn(repo, 'init', '-q', '-b', 'main');
+  gitIn(repo, 'add', '.');
+  gitIn(repo, 'commit', '-q', '-m', 'start');
+  assert.equal(stateDir(findProject(sub)), repo, 'a relative state.dir resolves against the repository root');
+  const nested = subagentWrite(sub, 'plain-session', { file_path: path.join(repo, 'sessions/notes/a.md'), content: 'y\n' });
+  assert.equal(nested.status, 0, nested.stderr);
+  const sibling = path.join(base, 'sibling');
+  gitIn(repo, 'worktree', 'add', '-q', '-b', 'side', sibling);
+  writeFileSync(path.join(sub, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: sibling } }));
+  const inSibling = subagentWrite(sub, 'plain-session', { file_path: path.join(sibling, 'sessions/notes/a.md'), content: 'y\n' });
+  assert.equal(inSibling.status, 0, inSibling.stderr);
+});
+
+test('the default sessions folders are scanned once a call, with the guards` deadline checked at each', () => {
+  const projects = path.join(stateRoot(), 'projects');
+  for (let i = 0; i < 40; i += 1) mkdirSync(path.join(projects, `scan-${i}`, 'sessions'), { recursive: true });
+  const input = { tool_name: 'Write', tool_input: {}, cwd: '/' };
+  let reads = 0;
+  const read = (folder) => (reads += 1, readdirSync(folder));
+  const first = defaultSessionsFolders(input, { read });
+  assert.ok(first.length >= 40);
+  assert.equal(defaultSessionsFolders(input, { read }), first, 'the second pass reuses the first');
+  assert.equal(reads, 1);
+  let entries = 0;
+  assert.throws(() => withinDeadline(0, () => defaultSessionsFolders({}, { entry: () => (entries += 1, true) })), PastDeadline);
+  assert.ok(entries <= 1, `${entries} folders read past the deadline`);
+});
+
+test('a gated subagent`s Read in the project its session started in runs one git, to find the project, and no other', { skip: process.platform === 'win32' }, (t) => {
+  const { dir } = project(t, GATED);
+  gitIn(dir, 'init', '-q', '-b', 'main');
+  const session = 'git-count-1';
+  assert.ok(saveGateSnapshot(session, dir, GATED.agents));
+  t.after(() => forgetGateSnapshot(session));
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-log-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const log = path.join(bin, 'calls.log');
+  const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho "$*" >> ${JSON.stringify(log)}\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+  const calls = (toolName, toolInput) => {
+    rmSync(log, { force: true });
+    const ran = spawnSync(process.execPath, [HOOK], {
+      input: JSON.stringify({ session_id: session, tool_name: toolName, tool_input: toolInput, cwd: dir, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
+      cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+    });
+    assert.equal(ran.status, 0, ran.stderr);
+    return existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+  };
+  assert.equal(calls('Read', { file_path: path.join(dir, 'src/app.js') }).length, 1, 'the project lookup alone');
+  assert.equal(calls('Grep', { pattern: 'x', path: dir }).length, 1);
+});
+
+test('a session that starts with a state folder its repository holds records no origin, so the folder stays writable from elsewhere', { skip: process.platform === 'win32' }, (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-refused-origin-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const repo = path.join(base, 'repo');
+  const sub = path.join(repo, 'sub');
+  mkdirSync(path.join(sub, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(repo, 'sessions', 'notes'), { recursive: true });
+  writeFileSync(path.join(sub, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.' } }));
+  writeFileSync(path.join(repo, 'sessions/notes/a.md'), 'x\n');
+  gitIn(repo, 'init', '-q', '-b', 'main');
+  gitIn(repo, 'add', '.');
+  gitIn(repo, 'commit', '-q', '-m', 'start');
+  const { dir: elsewhere } = project(t, { version: 1 });
+  const session = 'refused-origin-1';
+  const ran = spawnSync(process.execPath, [SESSION_START], { input: JSON.stringify({ session_id: session, cwd: sub, hook_event_name: 'SessionStart' }), cwd: sub, encoding: 'utf8' });
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(readOrigins(session), [], 'the writer would refuse the repository root as a state folder');
+  const result = subagentWrite(elsewhere, session, { file_path: path.join(repo, 'sessions/notes/a.md'), content: 'y\n' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('the session-folder guard`s checkout read stops at what is left of the guards` budget', { skip: process.platform === 'win32' }, (t) => {
+  const { dir } = project(t, { version: 1 });
+  gitIn(dir, 'init', '-q', '-b', 'main');
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-stall-git-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const timed = (pattern) => {
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase "$*" in ${pattern}) exec sleep 30;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const near = path.join(stateRoot(), 'projects', 'stall-probe', 'notes.txt');
+    const started = Date.now();
+    const ran = spawnSync(process.execPath, [HOOK], {
+      input: JSON.stringify({ session_id: 'stall-1', tool_name: 'Write', tool_input: { file_path: near, content: 'x' }, cwd: dir, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
+      cwd: dir, encoding: 'utf8', timeout: 15_000, env: { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '600', PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+    });
+    assert.notEqual(ran.status, null, 'the hook ended');
+    return Date.now() - started;
+  };
+  const baseline = timed('no-such-call');
+  const over = timed('*"worktree list"*') - baseline;
+  // git's own 2 s limit would show as well over a second; the guards' 0.6 s budget as less.
+  assert.ok(over < 1200, `the stalled checkout read cost ${over} ms over the ${baseline} ms baseline`);
 });

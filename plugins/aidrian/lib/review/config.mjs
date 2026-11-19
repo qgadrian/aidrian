@@ -42,7 +42,7 @@ export const REVIEW_DEFAULTS = Object.freeze({
   // Whether a judge's ruling (`aidrian pr settle`) may close an unverified or disputed invariant in place of the Human
   // (lib/review/approvals.mjs). The base branch's value is the one in force, and the machine must turn it on too.
   unattendedSignoff: Object.freeze({ allow: false }),
-  productFeedback: Object.freeze({ auto: false, files: null, maxPersonas: 2 }),
+  productFeedback: Object.freeze({ auto: false, files: null, maxPersonas: 2, allWidths: null }),
 });
 
 export const FEEDBACK_NO_LIST = '"review.productFeedback.auto" is true, and neither review.productFeedback.files nor review.visual.targets says which files are user-facing';
@@ -144,7 +144,8 @@ function checkPublish(publish, bad) {
 }
 
 // `review.productFeedback`: how many personas persona-audit picks for a pull request, whether a pull request owes
-// product feedback, and the files that make it owe it. A bad value keeps the default.
+// product feedback, the files that make it owe it, and `allWidths`, the files whose change walks each in-scope task at
+// every width of review.visual.viewports. A bad value keeps the default.
 function checkProductFeedback(feedback, bad) {
   const out = { ...REVIEW_DEFAULTS.productFeedback };
   if (!isObject(feedback)) {
@@ -162,9 +163,29 @@ function checkProductFeedback(feedback, bad) {
       if (value === null || (someTexts(value) && !pathsProblem(value))) out.files = value;
       else if (someTexts(value)) bad(`"review.productFeedback.files" ${pathsProblem(value)}`);
       else bad('"review.productFeedback.files" must be null or a non-empty list of globs');
-    } else bad(`unknown key "review.productFeedback.${key}"`);
+    } else if (key === 'allWidths') out.allWidths = checkAllWidths(value, bad);
+    else bad(`unknown key "review.productFeedback.${key}"`);
   }
   return out;
+}
+
+// `review.productFeedback.allWidths`: null, or { files }, a non-empty list of globs or `re:` patterns. Any error keeps null.
+function checkAllWidths(value, bad) {
+  if (value === null) return null;
+  if (!isObject(value)) {
+    bad('"review.productFeedback.allWidths" must be null or { "files": <a non-empty list of globs> }');
+    return null;
+  }
+  const unknown = Object.keys(value).filter((key) => key !== 'files');
+  for (const key of unknown) bad(`unknown key "review.productFeedback.allWidths.${key}"`);
+  const { files } = value;
+  if (!someTexts(files)) {
+    bad('"review.productFeedback.allWidths.files" must be a non-empty list of globs');
+    return null;
+  }
+  const problem = pathsProblem(files);
+  if (problem) bad(`"review.productFeedback.allWidths.files" ${problem}`);
+  return problem || unknown.length ? null : { files };
 }
 
 // `review.visual`: the screens a change to the UI is captured on, for the visual reviewers. A bad entry drops the whole

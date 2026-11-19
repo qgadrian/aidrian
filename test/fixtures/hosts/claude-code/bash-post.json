@@ -1,0 +1,24 @@
+{
+  "live": false,
+  "provenance": "NOT LIVE as a hook payload: no hook received it, since a session may not start another here. The tool_response is the result Claude Code 2.1.326 recorded in its transcript (toolUseResult) for a real Bash call of gh pr create, the object it gives a PostToolUse hook as tool_response, with the repository and number replaced. The other hook fields follow Claude Code's documented PostToolUse payload.",
+  "env": { "CLAUDECODE": "1", "CLAUDE_PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0" },
+  "number": 12,
+  "post": {
+    "session_id": "2f6c1e0a-9b3d-4c7e-8a15-6d0f4b2c9e11",
+    "transcript_path": "/nowhere/transcript.jsonl",
+    "cwd": "<cwd>",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Bash",
+    "tool_input": { "command": "gh pr create --draft --title \"feat: a title\" --body-file /nowhere/body.md", "description": "Open the draft pull request" },
+    "tool_response": {
+      "stdout": "https://github.com/acme/widgets/pull/12",
+      "stderr": "",
+      "interrupted": false,
+      "isImage": false,
+      "noOutputExpected": false,
+      "gitOperation": { "pr": { "number": 12, "url": "https://github.com/acme/widgets/pull/12", "action": "created" } }
+    },
+    "tool_use_id": "toolu_01Redacted"
+  }
+}

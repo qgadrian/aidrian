@@ -15,10 +15,9 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { agentNameProblem, patternProblem } from './agent-gates.mjs';
 import { isObject } from './fs.mjs';
+import { SESSION_ID } from './handoff-markers.mjs';
 import { stateRoot } from './project.mjs';
 
-// A session id that may name a file.
-const SESSION_ID = /^[\w-]{1,128}$/u;
 // A snapshot left by a session that never reached SessionEnd, such as one that crashed, goes after this many days.
 const STALE_DAYS = 30;
 

@@ -74,13 +74,13 @@ Pick each owner by the `knowledge` skill's agent rule; this plugin's agents are 
 ## 5. Fix loop
 
 Read `steps/fix-loop.md` before the first dispatch, and run it once per slice.
-Each slice is briefed, verified, reviewed by the agent that raised its findings, committed and pushed by its owner,
-and written back to the manifest.
+Each slice is briefed, verified on its touched files, committed and pushed by its owner, reviewed on the pushed head
+by the agent that raised its findings, and written back to the manifest.
 Each finding gets at most 2 passes, as the review rules say; a `blocked` finding keeps the reason in `note`.
 
 ## 6. Commit and push
 
-- One Conventional Commits commit per slice, made by the slice's owner once the review passes, with only that slice's files staged.
+- One Conventional Commits commit per slice pass, made and pushed by the slice's owner once its touched files' tests pass, with only that slice's files staged.
   Its body has one line per finding: `Addresses <id> from pr-review round <raised_in>`.
 - A failing hook is a verdict: the owner fixes the cause and commits again. Never bypass a hook.
 - The owner runs `git push`, to the fork's remote when the head lives in a fork. Never to the default branch.

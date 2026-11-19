@@ -68,8 +68,8 @@ open no preview or local build in any browser, start no app, run no `product-acc
 
 For each persona, for each task in scope:
 
-1. Start where the persona starts: their device (the nearest width `product-access` lists), and their language,
-   from `## Context`, where the tool allows.
+1. Start where the persona starts: their device (the nearest width `product-access` lists; a non-empty
+   `walk_widths`: reaching-the-product.md § Every width), and their language, from `## Context`, where the tool allows.
 2. Do the task with only what `## Who` says they know and what the product gives them: its screens, or for a
    technical persona its public docs, SDK, `--help`, and responses (`product-access` names them). Never the source behind them.
 3. Record each step: what the persona did, and what came back, as a screen or a response.
@@ -96,7 +96,7 @@ finding only from a walk: report-format.md § A task the product cannot do.
 
 ## 5. Report
 
-Write the report to `<state>/audits/<personas>-<date>.md`, named and shaped as [references/report-format.md](references/report-format.md) says.
+Write the report to `<state>/audits/<personas>-<date>.md`, named and shaped as report-format.md § The report says.
 Beside it, write its sidecar, the same name with `.json`, as § The sidecar there says; then run
 `aidrian audits check <report>.md` and fix the report or the sidecar until it prints `ok`.
 A run that repeats a report `aidrian audits list` shows replaces it: § A run that replaces a report.

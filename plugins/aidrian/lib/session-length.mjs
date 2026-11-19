@@ -6,24 +6,13 @@
 
 import path from 'node:path';
 
+import { SESSION_ID } from './handoff-markers.mjs';
 import { continueRoutes } from './hosts/index.mjs';
 import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './model-prices.mjs';
 import { hookCountsFolder } from './project.mjs';
 import { aggregateUsage } from './transcript.mjs';
 
 // B: the tokens a fresh session reads to resume from a brief, the measured median before its first edit or dispatch.
-// The marker of the stop hook's last session-length reminder for `session`, in the hooks' counts folder, or null when
-// the session id cannot name a file: hook-stop.mjs reads and writes it as this user's own file (fs.mjs readOwnText,
-// writeOwnText), and hook-session-end.mjs removes it.
-export function sessionLengthMarker(session, { env = process.env } = {}) {
-  if (typeof session !== 'string' || !/^[\w-]{1,128}$/u.test(session)) return null;
-  try {
-    return path.join(hookCountsFolder(env), `aidrian-session-length-${session}`);
-  } catch {
-    return null;
-  }
-}
-
 export const RESUME_TOKENS = 44_000;
 // H: the calls the long session spends writing the brief, from the measured quartiles.
 export const BRIEF_CALLS = 8;
@@ -33,31 +22,76 @@ const OUTPUT_MULT = 5;
 
 const contextOf = (usage = {}) =>
   (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+const oneHourOf = (usage) => usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
 
-// What the cost model reads from a main-session transcript: { calls, first, last, model, oneHourCache, compactions }.
-// `first` and `last` are the context of the first and the last model call; `model` is the last call's model;
-// `oneHourCache` is whether any call wrote 1-hour cache; `compactions` counts the compact_boundary entries.
-export function sessionUsage(text) {
-  const requests = [...aggregateUsage(text).requests.values()];
-  let compactions = 0;
+// The Stop hook's marker of the session `sessionId`, `aidrian-session-length-<session id>` in the hooks' counts folder,
+// or null when the id fails SESSION_ID or no counts folder resolves: the hook and `aidrian session snapshot` both build
+// the path here. hook-stop.mjs reads and writes it as this user's own file (fs.mjs readOwnText, writeOwnText), and
+// hook-session-end.mjs removes it.
+export function stopMarkerPath(sessionId, { env = process.env } = {}) {
+  if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return null;
+  try {
+    return path.join(hookCountsFolder(env), `aidrian-session-length-${sessionId}`);
+  } catch {
+    return null;
+  }
+}
+// The same path under the name the project-run guards use.
+export const sessionLengthMarker = stopMarkerPath;
+
+// The fold sessionUsage reads a transcript with, and the usage cache (lib/session-usage-cache.mjs) keeps between reads:
+// { requests, compactions }. `requests` is aggregateUsage's Map of each request's { model, usage } in first-seen order,
+// keyed by its id, or by a Symbol for a line with no id; `compactions` counts the compact_boundary entries.
+export const newUsageFold = () => ({ requests: new Map(), compactions: 0 });
+
+// Folds the whole lines of `text` into `fold`, and returns it. Text split at a line feed folds as the whole would.
+export function foldUsage(fold, text) {
+  aggregateUsage(text, { firstTs: null, lastTs: null, requests: fold.requests, tools: new Map(), effort: null, efforts: new Set() });
   for (const line of text.split('\n')) {
     if (!line.includes('compact_boundary')) continue;
     try {
       const entry = JSON.parse(line);
-      if (entry?.type === 'system' && entry.subtype === 'compact_boundary') compactions += 1;
+      if (entry?.type === 'system' && entry.subtype === 'compact_boundary') fold.compactions += 1;
     } catch {
       // A line that is not JSON is no compaction.
     }
   }
+  return fold;
+}
+
+// The usage numbers of one request the fold reads, flat, as the usage cache stores them.
+export const USAGE_FIELDS = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'ephemeral_1h_input_tokens'];
+export const storedUsage = (usage) => ({
+  input_tokens: usage.input_tokens ?? 0,
+  cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+  cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
+  ephemeral_1h_input_tokens: oneHourOf(usage),
+});
+// A stored request's usage as the fold reads it: storedUsage's inverse on every number the fold reads.
+export const usageFromStored = (stored) => ({
+  input_tokens: stored.input_tokens,
+  cache_read_input_tokens: stored.cache_read_input_tokens,
+  cache_creation_input_tokens: stored.cache_creation_input_tokens,
+  cache_creation: { ephemeral_1h_input_tokens: stored.ephemeral_1h_input_tokens },
+});
+
+// What the cost model reads from a fold: { calls, first, last, model, oneHourCache, compactions }.
+// `first` and `last` are the context of the first and the last model call; `model` is the last call's model;
+// `oneHourCache` is whether any call wrote 1-hour cache; `compactions` counts the compact_boundary entries.
+export function foldedUsage({ requests: byKey, compactions }) {
+  const requests = [...byKey.values()];
   return {
     calls: requests.length,
     first: contextOf(requests[0]?.usage),
     last: contextOf(requests.at(-1)?.usage),
     model: requests.at(-1)?.model ?? null,
-    oneHourCache: requests.some(({ usage }) => (usage.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0),
+    oneHourCache: requests.some(({ usage }) => oneHourOf(usage) > 0),
     compactions,
   };
 }
+
+// foldedUsage of a main-session transcript's text.
+export const sessionUsage = (text) => foldedUsage(foldUsage(newUsageFold(), text));
 
 // The cost of continuing against handing off, in input tokens of the last call's model: { ratio, breakEven }.
 // `ratio` is r = C / (W + B), what each call here costs against one in a fresh session; 0 with no calls.
@@ -130,22 +164,52 @@ const costLine = ({ ratio, breakEven }) =>
   `each call costs ${ratio.toFixed(1)} times what it would in a fresh session started from a handoff brief, ` +
   `and a handoff pays back after about ${Math.round(breakEven)} more model calls, an estimate`;
 
-// What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
-// marker's text or null. A compaction since the marker resets both triggers, so the session is reminded from costRatio
-// again. A firing changes only what the trigger that fired holds: the cost one records its ratio, the ceiling raises its
-// count past every doubling it reached. `continuation` is the hooks' { route, how }.
-export function stopReminder(text, handoff, markerText, continuation = {}) {
-  const usage = sessionUsage(text);
-  if (!usage.calls) return null;
+// Whether the plan offer's threshold holds: { byCost, byTokens }. Halfway from a fresh session's 1 to costRatio,
+// r ≥ 1 + (costRatio − 1) / 2, with a break-even, or half of maxTokens when the ceiling is set. `cost` is handoffCost's.
+function offerReached(handoff, usage, cost) {
+  return {
+    byCost: cost.breakEven !== null && cost.ratio >= 1 + (handoff.costRatio - 1) / 2,
+    byTokens: handoff.maxTokens > 0 && usage.last >= Math.ceil(handoff.maxTokens / 2),
+  };
+}
+
+// The one trigger decision the Stop hook and any reader share, from sessionUsage's `usage`, config.json
+// `session.handoff`, and the marker's text or null: { ratio, breakEven, level, nextRatio, context, ceiling, byCost,
+// byTokens, counts }. `counts` is the marker after the compaction reset: a compaction since the marker resets both
+// triggers. `byCost` and `byTokens` say whether each trigger fires on its own; `nextRatio` is the ratio the cost trigger
+// fires at, `ceiling` the context the token one fires at, or null when it is off. It reads `mode` only for the step of
+// nextRatio, as the Stop hook does, so `off` is the caller's to honour. `level` names the first that holds of:
+// - `ceiling`: the token trigger fires; `due`: the cost trigger fires.
+// - `reminded`: the marker records a firing, and the trigger that fired still holds at its first threshold, the ratio at
+//   or past costRatio with a break-even, or the context at or past maxTokens.
+// - `offer`: the plan offer's threshold holds; `quiet`: none does.
+export function handoffStatus(usage, handoff, markerText) {
   let counts = readMarker(markerText, usage.compactions, handoff.costRatio);
   if (usage.compactions > counts.compactions) counts = { lastRatio: 0, tokens: 0, compactions: usage.compactions };
   const cost = handoffCost(usage);
-  const ceiling = tokenCeiling(handoff.maxTokens, counts.tokens);
-  const byCost = cost.breakEven !== null && cost.ratio >= nextRatio(handoff.costRatio, counts.lastRatio, handoff.mode);
-  const byTokens = handoff.maxTokens > 0 && usage.last >= ceiling;
+  const next = nextRatio(handoff.costRatio, counts.lastRatio, handoff.mode);
+  const ceiling = handoff.maxTokens > 0 ? tokenCeiling(handoff.maxTokens, counts.tokens) : null;
+  const byCost = cost.breakEven !== null && cost.ratio >= next;
+  const byTokens = ceiling !== null && usage.last >= ceiling;
+  const held = (counts.lastRatio > 0 && cost.breakEven !== null && cost.ratio >= handoff.costRatio) ||
+    (counts.tokens > 0 && handoff.maxTokens > 0 && usage.last >= handoff.maxTokens);
+  const offer = offerReached(handoff, usage, cost);
+  const level = [[byTokens, 'ceiling'], [byCost, 'due'], [held, 'reminded'], [offer.byCost || offer.byTokens, 'offer']]
+    .find(([holds]) => holds)?.[1] ?? 'quiet';
+  return { ...cost, level, nextRatio: next, context: usage.last, ceiling, byCost, byTokens, counts };
+}
+
+// What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
+// marker's text or null; handoffStatus decides whether a trigger fires. A firing changes only what the trigger that fired
+// holds: the cost one records its ratio, the ceiling raises its count past every doubling it reached. `continuation` is
+// the hooks' { route, how }.
+export function stopReminder(text, handoff, markerText, continuation = {}) {
+  const usage = sessionUsage(text);
+  if (!usage.calls) return null;
+  const { ratio, breakEven, byCost, byTokens, counts } = handoffStatus(usage, handoff, markerText);
   if (!byCost && !byTokens) return null;
   const marker = {
-    lastRatio: byCost ? cost.ratio : counts.lastRatio,
+    lastRatio: byCost ? ratio : counts.lastRatio,
     tokens: byTokens ? tokensPassed(usage.last, handoff.maxTokens, counts.tokens) : counts.tokens,
     compactions: usage.compactions,
   };
@@ -153,7 +217,7 @@ export function stopReminder(text, handoff, markerText, continuation = {}) {
   if (byTokens) next.push(`the context reaches ${Math.round(tokenCeiling(handoff.maxTokens, marker.tokens) / 1000)}k tokens`);
   if (byCost) next.push(`each call costs ${round(nextRatio(handoff.costRatio, marker.lastRatio, handoff.mode))} times what a fresh session's would`);
   return {
-    reason: handoffReason(handoff.mode, { cost: byCost ? cost : null, tokens: byTokens ? usage.last : null, next, ...continuation }),
+    reason: handoffReason(handoff.mode, { cost: byCost ? { ratio, breakEven } : null, tokens: byTokens ? usage.last : null, next, ...continuation }),
     marker,
   };
 }
@@ -216,13 +280,13 @@ export function handoffReason(mode, { cost = null, tokens = null, next, route = 
 // What the plan hook adds once the Human approves a plan, or null. Halfway to costRatio is enough here: the plan is on
 // disk and nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning
 // context. It fires at r ≥ 1 + (costRatio − 1) / 2, halfway from a fresh session's 1 to costRatio, or at half of
-// maxTokens when the ceiling is set. `continuation` is the hooks' { route, how }: with the clear route the build starts in
-// the session the clear begins, and with the background route in the session the gate starts, never here.
+// maxTokens when the ceiling is set (offerReached, which handoffStatus's `offer` reads too). `continuation` is the hooks'
+// { route, how }: with the clear route the build starts in the session the clear begins, and with the background route in
+// the session the gate starts, never here.
 export function planApprovedContext(handoff, usage, { route = 'none', how = null } = {}) {
   if (handoff.mode === 'off' || !usage.calls) return null;
   const cost = handoffCost(usage);
-  const byCost = cost.breakEven !== null && cost.ratio >= 1 + (handoff.costRatio - 1) / 2;
-  const byTokens = handoff.maxTokens > 0 && usage.last >= Math.ceil(handoff.maxTokens / 2);
+  const { byCost, byTokens } = offerReached(handoff, usage, cost);
   if (!byCost && !byTokens) return null;
   const found = [byTokens && `this session already carries ${kTokens(usage.last)}`, byCost && costLine(cost)].filter(Boolean).join(', and ');
   const head = `The plan is approved, and ${found}. ` +

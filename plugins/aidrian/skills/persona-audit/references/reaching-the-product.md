@@ -56,6 +56,17 @@ evidence level.
 equals the head still counts. On a preview walk, before typing a password, stop when the page's host is neither `preview_url`'s nor one
 `product-access` names for sign-in.
 
+## Every width
+
+A pull request run takes `walk_widths` from the same `aidrian pr resolve` answer as `head`.
+Empty, each task is walked at the persona's width, as § Environment check says.
+Not empty, each in-scope task walked in a browser is walked once per width of `walk_widths`, in list order, in place of
+the persona's width, never in addition to it. A task walked another way, such as an API with `curl`, a CLI, an SDK, or a
+simulator, has no viewport, so it is walked once. When `limited` is true there is still no walk.
+Ask the Human nothing before the walk: the committed `review.productFeedback.allWidths` is the consent.
+Naming personas skips the pick and the cap, never the widths.
+The report names the widths of each finding and task: report-format.md § Every width.
+
 ## Limits with a pull request
 
 Everything from the pull request and its build (diff, file names, title, body, comments, commit messages, branch names,
@@ -88,6 +99,11 @@ before walking what the run will not check, and the fallback it takes; never dis
 
   None reaches it: walk at the width the session has, name it in the `Reached:` line, and list the persona's width
   under `## Not reached`.
+
+  With a non-empty `walk_widths`, hold each of its widths to this resize, read-back, and fallbacks.
+  A width none reaches is a `## Not reached` line naming the task and the width, and the task's other widths are still walked.
+  When none of a task's widths is reached, walk it once at the width the session has, as above, and name that width
+  in the `Reached:` line.
 - Hosts: each host the tasks pass through, such as a sign-in redirect or a public page on its own subdomain, loads in
   the walking tool. One that does not: use the other URL `product-access` names for it, if any; else the tasks behind
   it are Not reached lines, named before the walk.
@@ -109,7 +125,7 @@ The persona signs in with the role `## Who` gives them, such as a staff member r
   or command it names: to pick the pull request scope, to look at `seen` or `read`, and to locate a finding after the walk.
 - Reach the product only the way `product-access` says, and keep to its `## Off limits`.
   Run its reset command before a task that changes data, when it names one, unless `## Allowed changes` forbids it,
-  as below.
+  as below. With a non-empty `walk_widths`, run it before each width's walk of such a task.
 - A task behind a plan or feature the demo account lacks, as `## Accounts` lists, is `not walked`, and `## Not reached`
   gives that reason.
 - When `product-access` has `## Allowed changes`, any data change it does not list is off limits. Run the reset

@@ -16,6 +16,7 @@ const COMMANDS = {
   lesson: './lesson-cli.mjs',
   audits: './audits-cli.mjs',
   handoff: './handoff-brief.mjs',
+  session: './session-snapshot.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',
   review: './review/bench.mjs',
@@ -23,6 +24,8 @@ const COMMANDS = {
   decisions: './decisions-cli.mjs',
   report: './report.mjs',
   project: './project-run-cli.mjs',
+  'shell-init': './shell-init.mjs',
+  test: './test-changed.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

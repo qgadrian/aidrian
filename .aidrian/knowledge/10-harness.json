@@ -32,11 +32,11 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": "The .aidrian/ folder: init, check, lint, state, worktrees, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating.",
+      "summary": ".aidrian/: init, check, lint, state, sessions/, worktrees, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating.",
       "tags": []
     },
     "personas.md": {
-      "summary": "Personas: contract, lint, product-access, persona-audit runs, aidrian pr resolve (a pull request link alone), product feedback, audits list, import, triage.",
+      "summary": "Personas: contract, lint, product-access, persona-audit, aidrian pr resolve (pull request link alone, walk_widths), product feedback, audits, import, triage.",
       "tags": []
     },
     "review.md": {
@@ -52,11 +52,15 @@
       "tags": []
     },
     "handoff.md": {
-      "summary": "Reminder, plan offer, break-even, continuation, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, background route, brief sections.",
+      "summary": "Reminder, plan offer, break-even, continuation, background, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, brief sections, snapshot",
+      "tags": []
+    },
+    "claude-mod.md": {
+      "summary": "Claude mod, aidrian-mod: band, pane, and alerts from the session snapshot, handoff verdict, install, settings, status line fallback, folder trust, limits.",
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback items/diff, PR body, gate, project run, aidrian project init/next/summary",
+      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback allWidths/items, PR body, gate, projectRun, project init/next/summary",
       "tags": []
     },
     "dispatch-log.md": {

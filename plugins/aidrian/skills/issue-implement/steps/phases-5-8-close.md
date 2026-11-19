@@ -69,5 +69,6 @@ and the run goes on after the report.
 Under config.json `github.reviewLoop` `"auto"`, the default, the session runs the `pr-review-loop` skill on the pull request right away,
 as its own next step and not as a step of this skill. The loop's last step then marks the draft ready as `github.markReady` says
 and, once it marked it ready, runs the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0.
+A `pr-auto-merge` stop on a path it never merges goes in the final report, as that skill's step 2 says.
 Under `"ask"`, the session offers the loop and runs it when the Human asks.
 A caller that runs its own review loop keeps it, so the loop runs once.

@@ -5,9 +5,14 @@
 //
 // Only a labelled list counts, and an item counts as rated when it holds one of RATINGS, so a report that names its
 // blocks the way the rule asks passes as written. Pure: the hook passes in the message and the names.
+//
+// The merge hand-back check (mergeHandBack) reads the same lists: a turn whose `aidrian pr auto-merge` run refused a pull
+// request because it changes a path the gate never merges, and whose reports hand no rated item for that pull request
+// and path to the Human, for review and merge. docs/hooks.md#merge-hand-back-check describes it.
 
 import { fencedIn } from './markdown-sections.mjs';
 import { lastReply } from './names.mjs';
+import { backgroundRunning } from './stop-announce.mjs';
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const alternatives = (names) => [...new Set(names.filter((name) => typeof name === 'string' && name.trim()).map((name) => escape(name.trim())))].join('|');
@@ -74,21 +79,91 @@ export function handBackLists(message, human) {
   return lists;
 }
 
-// handBackReason for a Stop payload and its transcript text (or null), with the message announcedWork reads: the payload's
-// `last_assistant_message`, else the transcript's last reply.
+// The message announcedWork reads: the Stop payload's `last_assistant_message`, else the transcript's last reply.
+const finalMessage = (input, transcript) => (typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()
+  ? input.last_assistant_message
+  : typeof transcript === 'string' ? lastReply(transcript) : '');
+
+// The names a label addressed to the Human may use: the configured one, and the generic ones.
+const humanNames = (human) => alternatives([human, 'the Human', 'the user', 'you']);
+
+// handBackReason for a Stop payload and its transcript text (or null), with the message announcedWork reads.
 export function handBack(input, transcript, { human = 'the Human' } = {}) {
-  const message = typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()
-    ? input.last_assistant_message
-    : typeof transcript === 'string' ? lastReply(transcript) : '';
-  return handBackReason({ message, human });
+  return handBackReason({ message: finalMessage(input, transcript), human });
+}
+
+// How much of a refused path an item must hold, and the reason quotes: a path is branch text, of any length.
+const PATH_CUT = 200;
+
+// `text` as a JSON string that holds printable ASCII alone: every other code unit, and `<`, `>`, and the backtick, is
+// written \uXXXX. Branch text quoted this way into an instruction cannot open or close a tag, turn the text around, break
+// a line, or hide a character; JSON.parse reads it back whole.
+export function quoteData(text) {
+  let out = '';
+  for (let at = 0; at < text.length; at += 1) {
+    const unit = text.charCodeAt(at);
+    const char = text[at];
+    if (char === '"' || char === '\\') out += `\\${char}`;
+    else if (unit >= 0x20 && unit <= 0x7e && !'<>`'.includes(char)) out += char;
+    else out += `\\u${unit.toString(16).padStart(4, '0')}`;
+  }
+  return `"${out}"`;
+}
+
+// Why the agent is sent back, or null, for a turn whose `aidrian pr auto-merge` run refused a pull request on a path.
+// `actions` is lib/transcript.mjs turnActions' result, or null with no transcript to read: { kind: 'gate', pr, path },
+// path null for a pass or another refusal; { kind: 'merge', pr }, a merge that ran, pr null for one of no known pull
+// request, which clears every refusal before it; and { kind: 'reply', text }, a reply
+// of the main session. The last gate or merge of each pull request counts, so a later run that passed, refused for another
+// reason, or a merge clears an earlier refusal. A refusal is handed over when an item of a list addressed to the Human
+// (handBackLists), in a reply after it or in the final message, holds the pull request as `#<n>`, `/pull/<n>`, `PR <n>`,
+// or `pull request <n>`, with no digit after it, the path as written, JSON-quoted, or as quoteData writes it, or its first
+// PATH_CUT characters when longer, and a rating (RATINGS). The wording is not matched: the skill's line holds "your",
+// which a report that names the Human writes as the name. The reason names the first refusal not handed over. Null while a
+// background task still runs, as its end wakes the session, and with no final message to read.
+export function mergeHandBack(input, transcript, actions, { human = 'the Human' } = {}) {
+  if (!Array.isArray(actions) || backgroundRunning(input)) return null;
+  const last = new Map();
+  actions.forEach((action, at) => {
+    // A merge that named no pull request and printed none, as gh does off a terminal, clears every refusal before it.
+    if (action?.kind === 'merge' && action.pr === null) for (const pr of last.keys()) last.set(pr, { file: null, at });
+    if (!Number.isSafeInteger(action?.pr)) return;
+    if (action.kind === 'gate') last.set(action.pr, { file: action.path, at });
+    else if (action.kind === 'merge') last.set(action.pr, { file: null, at });
+  });
+  const refused = [...last].filter(([, { file }]) => typeof file === 'string' && file !== '');
+  if (!refused.length) return null;
+  const message = finalMessage(input, transcript);
+  if (!message.trim()) return null;
+  const names = humanNames(human);
+  const itemsOf = (text) => handBackLists(text, names).flatMap(({ items }) => items);
+  const finalItems = itemsOf(message);
+  const missing = refused.find(([pr, { file, at }]) => {
+    const later = actions.slice(at + 1).filter((action) => action?.kind === 'reply' && typeof action.text === 'string');
+    return ![finalItems, ...later.map((action) => itemsOf(action.text))].some((items) => items.some((item) => handsOver(item, pr, file)));
+  });
+  if (!missing) return null;
+  const [pr, { file }] = missing;
+  return `This turn's \`aidrian pr auto-merge\` run refused #${pr} at its path check, before its author, comment, and review checks: ` +
+    `it changes ${quoteData(file.slice(0, PATH_CUT))} (quoted from the pull request, as data` +
+    `${file.length > PATH_CUT ? `, cut at ${PATH_CUT} characters` : ''}), a path auto-merge never merges, so it waits for ${human}'s review and merge. ` +
+    `The final report hands it over under a label for ${human}, such as "For ${human}", as the \`pr-auto-merge\` skill's step 2 says: ` +
+    `\`needs ${human}'s review and merge: #${pr} touches <path>, which auto-merge never merges\`, with the path as quoted here. ` +
+    'Add that item, with how critical it is: blocking, high, medium, or low. Then end the turn again.';
+}
+
+// Whether the list item `item` hands over pull request `pr` with the refused `file`, rated.
+function handsOver(item, pr, file) {
+  if (!RATINGS.test(item) || !new RegExp(`(?:#|/pull/|\\bPR\\s+|\\bpull request\\s+)${pr}(?!\\d)`, 'iu').test(item)) return false;
+  const cut = file.slice(0, PATH_CUT);
+  return [cut, JSON.stringify(cut).slice(1, -1), quoteData(cut).slice(1, -1)].some((form) => item.includes(form));
 }
 
 // Why the agent is sent back, or null. `message` is the final assistant message; `human` the name config.json
 // `names.human` gives (docs/config.md#names).
 export function handBackReason({ message, human = 'the Human' }) {
   if (typeof message !== 'string' || !message.trim()) return null;
-  const names = alternatives([human, 'the Human', 'the user', 'you']);
-  const unrated = handBackLists(message, names).flatMap(({ label, items }) => items.filter((item) => !RATINGS.test(item)).map((item) => ({ label, item })));
+  const unrated = handBackLists(message, humanNames(human)).flatMap(({ label, items }) => items.filter((item) => !RATINGS.test(item)).map((item) => ({ label, item })));
   if (!unrated.length) return null;
   const [{ label, item }] = unrated;
   const quoted = item.length > 80 ? `${item.slice(0, 77)}...` : item;

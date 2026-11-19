@@ -34,7 +34,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), the [review-loop check](#review-loop-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop check Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
+| The main session ends a turn | The [announce check](#announced-work), the [review-loop check](#review-loop-check), the [merge hand-back check](#merge-hand-back-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop and merge hand-back checks Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
 | A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
@@ -149,6 +149,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 
 The knowledge, names, and lessons start lines and the [announce check](#announced-work) have no switch; they act only inside a project folder.
 The [review-loop check](#review-loop-check) has no switch of its own: it follows `github.reviewLoop`.
+The [merge hand-back check](#merge-hand-back-check) has no switch: it acts only on a refusal the gate printed in the turn.
 The main-checkout start lines follow the commit guard, so they are off with it.
 [config.md](config.md#telemetry) lists the other `telemetry` keys.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
@@ -1236,7 +1237,49 @@ or when the Human asked the run to stop at the draft. Its second stop always end
 - A subagent's calls are not read, so a draft an `orchestrator` opens is its own loop's.
 
 It reads Claude Code transcripts only (`lib/transcript.mjs` `turnActions`); on Codex, whose rollout is not read, it is silent.
-It runs after the announce check and before the hand-back check.
+It runs after the announce check and before the merge hand-back check.
+
+## Merge hand-back check
+
+When the main session ends a turn in which [`aidrian pr auto-merge`](config.md#auto-merge) refused a pull request because
+it changes a path the gate never merges, and no report of the turn hands that pull request to the Human, the Stop hook
+sends it back once (`lib/stop-handback.mjs` `mergeHandBack`). The gate stopped at its path check, before its author,
+comment, and review checks, so the pull request waits for the Human's review and merge, and a report that ended on
+"ready, not merged" left the Human to find that out. The agent adds the item the `pr-auto-merge` skill's step 2 gives,
+`needs your review and merge: #<n> touches <path>, which auto-merge never merges`, with the Human's name in place of
+"your", and a rating. Its second stop always ends.
+
+- A refusal counts when the gate's line reads `auto-merge off for #<n>: it changes "<path>", …`, or its `--json` object
+  has `effective` false, `reason` `"paths"`, and a `why` of that shape: a guarded path, a policy file, a file the gate
+  reads its policy from, the release script, a knowledge doc the start hook loads, or a file outside the project's folder.
+  A refusal for a rename, a file count, or any other reason names no path and does not count.
+- The gate counts only as a Bash call that runs `aidrian pr auto-merge`, by any path to aidrian, and printed one verdict
+  per gate command it ran, for the pull request each was given when each was given one. It is read after the lines that
+  quote the command are dropped, as a refusal quoting it shows: a line holding the whole command or its first line, or
+  equal, trimmed, to another of its lines. An `echo` of the line, an error exit with no verdict, a verdict line another
+  command of the call printed, and a path that holds the command text count as no gate run.
+- The last gate run or merge of each pull request in the turn counts: a later run that passed, or refused for another
+  reason, and a `gh pr merge` of that pull request whose result is no error clear an earlier refusal. A merge with no
+  target counts for the number gh printed in its `merged pull request` line; gh prints that line on a terminal only, so
+  one that printed no number clears every refusal before it. A refused or failed merge clears nothing.
+- The turn is the one the [review-loop check](#review-loop-check) reads: since the Human's last prompt. A refusal before
+  the Human last wrote never counts.
+- The item counts in any reply of the main session after the refusal in the turn, or in the final message, as an item of
+  a list addressed to the Human, as the [hand-back check](#hand-back-check) reads one. It holds the pull request as `#<n>`,
+  `/pull/<n>`, `PR <n>`, or `pull request <n>`, with no digit after it; the path as the gate quoted it, or as the reason
+  quotes it, or its first 200 characters when longer; and one of the hand-back check's ratings. The wording is not
+  matched, so the named form passes. A sentence outside such a list does not. A wake, such as a task notification,
+  does not start a new turn, so a report before it still counts, and a short reply after it with no item before it is
+  sent back.
+- The path is branch text. The reason quotes it as one JSON string that holds printable ASCII alone, every other
+  character and `<`, `>`, and the backtick written `\uXXXX`, cut at 200 characters, and calls it data.
+- A background task still running holds it, as it holds the announce check, and so does a stop with no final message.
+- It has no switch and follows no `github.reviewLoop` setting. The transcript is parsed for it only when it holds a
+  refusal as the gate prints it.
+- A subagent's calls are not read, so a gate an `orchestrator` runs is its own report's to hand over.
+
+It reads Claude Code transcripts only (`lib/transcript.mjs` `turnActions`); on Codex, whose rollout is not read, it is silent.
+It runs after the review-loop check and before the hand-back check, since its item carries the rating that check asks for.
 
 ## Hand-back check
 
@@ -1255,7 +1298,7 @@ do it, and how critical it is. Its second stop always ends.
   a Markdown example the message quotes is not work handed back, and a code block inside an item does not end its list.
 - An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
 
-The announce and review-loop checks run first; a stop either sends back is not checked here.
+The announce, review-loop, and merge hand-back checks run first; a stop any of them sends back is not checked here.
 
 ## Session length
 

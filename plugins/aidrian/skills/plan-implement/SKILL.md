@@ -72,6 +72,7 @@ A slice's closure criterion changes during the run only as the `orchestration` s
 Phase 8's end holds here, with this skill as the one run: on a direct run under `github.reviewLoop` `"auto"`
 the session goes on into the `pr-review-loop` skill, its ready step, and the `pr-auto-merge` skill,
 which merges only when `aidrian pr auto-merge <n>` exits 0.
+A `pr-auto-merge` stop on a path it never merges goes in the final report, as that skill's step 2 says.
 
 ## Rules
 

@@ -568,6 +568,29 @@ test('a direct run of an implementing skill goes on into the review loop, and a 
   assert.match(readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8'), /\| `github\.reviewLoop` \|[^\n]*a top-level `issue-implement` or `plan-implement`/);
 });
 
+test('a pull request pr-auto-merge refuses on a path goes to the Human in the final report, rated, and each route says so', () => {
+  // A direct run whose gate refused a protected path ended on "ready, not merged", and the merge only the Human could make
+  // was never asked for.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const auto = read('skills/pr-auto-merge/SKILL.md');
+  const step2 = auto.slice(auto.indexOf('2. Run `aidrian pr auto-merge <n>`'), auto.indexOf('3. Read `../pr-merge-when-green'));
+  assert.match(step2, /When the line says `it changes "<path>"`, the gate stopped at its path check, before its author, comment, and review checks, so the pull request waits for the Human's review and merge\./);
+  assert.match(step2, /under a label for the Human such as `For <name>`, `needs your review and merge: #<n> touches <path>, which auto-merge never merges`/);
+  assert.match(step2, /how critical it is: blocking, high, medium, or low\./, 'the four ratings the hand-back check reads');
+  assert.match(step2, /A report that names the Human writes the name in place of "your", as in `needs <name>'s review and merge: …`\./, 'the named form');
+  assert.match(step2, /The Stop hook sends back a turn whose reports leave it out\./);
+  const route = /A `pr-auto-merge` stop on a path it never merges goes in the final report, as that skill's step 2 says\./;
+  const close = read('skills/issue-implement/steps/phases-5-8-close.md');
+  const phase8 = close.slice(close.indexOf('## Phase 8'));
+  assert.match(phase8, route);
+  assert.doesNotMatch(phase8, /orchestrator/, 'phase 8 still names no caller');
+  const plan = read('skills/plan-implement/SKILL.md');
+  assert.match(plan.slice(plan.indexOf('## After the draft'), plan.indexOf('## Rules')), route);
+  const write = read('skills/pr-write/SKILL.md');
+  assert.match(write.slice(write.indexOf('## Then the review loop')), /`pr-auto-merge`'s step 2 says how the final report hands the Human a path it refused\./);
+  for (const skill of ['pr-auto-merge', 'pr-write', 'plan-implement']) assert.ok(statSync(path.join(PLUGIN, 'skills', skill, 'SKILL.md')).size <= MAX_SKILL_BYTES, skill);
+});
+
 test('a calling skill such as autopilot owns what follows the implementing skill, so the review loop runs once', () => {
   // In an orchestrator session that runs autopilot, both the orchestrator's continuation and autopilot's phases would run the loop.
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');

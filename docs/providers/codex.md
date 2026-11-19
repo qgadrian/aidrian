@@ -83,8 +83,8 @@ export PATH="${aidrian_dir}bin:$PATH"
   continuation prompt: both come from the schema and messages the 0.167.0 binary embeds, and no live session has run them.
   So the [announce check](../hooks.md#announced-work) sends a Codex main session back once, naming `request_user_input`
   as its question tool, and the [hand-back check](../hooks.md#hand-back-check) reads the same message;
-  the [review-loop check](../hooks.md#review-loop-check) and the session-length reminder read Claude Code transcripts only
-  and stay quiet.
+  the [review-loop check](../hooks.md#review-loop-check), the [merge hand-back check](../hooks.md#merge-hand-back-check),
+  and the session-length reminder read Claude Code transcripts only and stay quiet.
 - The adapter lists no [model prices](../dispatch-log.md#model-prices): no Codex transcript is read, so no cost is estimated.
   OpenAI's price page is `https://developers.openai.com/api/docs/pricing`; rows come with a transcript reader.
 - The subagent-stop and session-end inputs are not verified.

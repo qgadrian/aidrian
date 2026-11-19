@@ -379,6 +379,9 @@ So a checkout whose lists differ from the default branch's does not auto-merge, 
 The `pr-review-loop`, `orchestration`, and `autopilot` skills run the `pr-auto-merge` skill, only after that same run marked the draft ready.
 `pr-auto-merge` stops unless this run marked the pull request ready and the command exits 0,
 and otherwise reads `pr-merge-when-green` and follows its steps as an unattended run.
+When the command refuses because the pull request changes a path it never merges, it has stopped before its author,
+comment, and review checks, so the run's final report hands the pull request to the Human for review and merge, rated,
+and the [merge hand-back check](hooks.md#merge-hand-back-check) sends back a turn whose reports leave it out.
 The first condition is a step of the skill, not a check the command makes.
 The model cannot start `pr-merge-when-green` itself: the skill merges only on the Human's request in the session, or in that run.
 An unattended run waits for every check, runs the command again right before the merge, and stops unless it still

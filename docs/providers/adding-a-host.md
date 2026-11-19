@@ -221,6 +221,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   base on the forge, only while its head is `expectedHead`, by merging the base in or, with `method: 'rebase'`, by a
   rebase. `changeCommits(repo, n, { host })` lists its commits with their messages, for the auto-merge gate's
   closing-word check ([config.md](../config.md#when-it-is-on)).
+- A project run's preflight (`lib/project-preflight.mjs`): `reviewerSeen(repo, login, { host, limit })`, whether the
+  reviewer reviewed any of the repository's last `limit` pull requests, as `{ changes, seen }`, a bot's login compared
+  with or without its `[bot]` suffix; and `ciWorkflows(repo, { host })`, the names of its active CI workflows.
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,

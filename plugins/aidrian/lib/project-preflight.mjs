@@ -19,7 +19,7 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readIssueTexts, readSnapshotInput, refNames, runPlace } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readIssueTexts, readSnapshotInput, refNames, runPlace, teamsNote } from './project-run.mjs';
 import { teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
@@ -175,7 +175,8 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
 // with no run written: a `blocker snapshot` line for each problem, for each issue blocked by a cycle or by a status the
 // run does not start from, and, when the base branch's projectRun.mcpServers holds no tracker server an issue's session
 // could read the tracker through, for each issue to start with no text; then `next` lines as `aidrian project next`
-// prints them. Exit 1 on any blocker.
+// prints them, and a `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote).
+// Exit 1 on any blocker.
 export function snapshotCheck({ project, config, file, texts = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
@@ -189,7 +190,8 @@ export function snapshotCheck({ project, config, file, texts = null }) {
     blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !plan.done.includes(issue.key) && !kept.texts[issue.key])
       .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; give its text in --texts`));
   }
-  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...blockers, ...nextLines(plan)];
+  const teams = teamsNote(read.snapshot);
+  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...blockers, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
 }
 

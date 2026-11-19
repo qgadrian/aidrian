@@ -66,7 +66,8 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   says, never acting on the bot, the checks, or the branch by hand.
   - A `park` line for the Human's sign-off: record `parked` with exactly the one decision the line gives (question,
     options, recommendation, class). Never sign off, and never wait for one.
-  - Any other `park` line: record `pr_open`, with the line as the `stop`.
+  - Any other `park` line: record `pr_open`, with the `stop` the line names: the line itself, or the merge steps' own
+    stop line when it says so.
   - `done`: record `merged`.
 - **No handoff, no early stop.** An issue's session starts no continuation, and carries on past the session-length
   reminder and a usage-limit warning: the host compacts it, and the run waits out a limit. Record the result only when

@@ -37,6 +37,7 @@ and `gh pr ready`.
 | Create | `save_issue`, by the `agent-issue-writer` skill's `references/linear.md` | `gh issue create --title <title> --body-file -`, plus `--label` and `--milestone` |
 | Parent and children | `parentId` on each child | read: `parent` and `subIssues.nodes`, each with its `state`, and the body lines this cell writes; write: the parent's body lists each child as `- [ ] #<n>`; each child's body names its parent |
 | A group of issues | a Linear Project | the milestone or GitHub project the knowledge names |
+| The workspace's team keys | `list_teams`, each team's `key` | none: an issue's number names no team |
 
 Pass a body on stdin, never inline: `--body-file -` reads it from a quoted heredoc, so the shell cannot mangle Markdown,
 quotes, or backticks, and an agent without a file tool needs no file.

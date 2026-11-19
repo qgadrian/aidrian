@@ -423,6 +423,7 @@ export function initRun({ project, config, run, file, texts: textsFile = null, s
     const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
     // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (recordIssue).
     appendRow(ledgerFile(state, run), row);
+    const teams = teamsNote(read.snapshot);
     return {
       exitCode: 0,
       out: [
@@ -431,6 +432,7 @@ export function initRun({ project, config, run, file, texts: textsFile = null, s
         `repository: ${repository.host}/${repository.owner}/${repository.name}`,
         ...(kept ? [`issue text: ${kept} of ${read.snapshot.issues.length} kept for the issues' sessions to read`] : []),
         ...(read.dropped ? [`dropped: ${read.dropped} fields the snapshot never keeps, such as titles and bodies`] : []),
+        ...(teams ? [`teams: ${teams}`] : []),
         `folder: ${runFolder(state, run)}`,
       ],
       err: [],
@@ -439,6 +441,14 @@ export function initRun({ project, config, run, file, texts: textsFile = null, s
 }
 
 const refuse = (reason) => ({ exitCode: 1, out: [], err: [`aidrian project init: ${reason}`] });
+
+// Why init and its check name the snapshot's teams, or null: a snapshot whose issue keys carry a team, with no `teams`,
+// leaves the closing-word check (closing-words.mjs) only the run's own teams, so a key of a team outside the run that a
+// pull request names after a closing word is not seen. Issue keys that are numbers alone carry no team to name.
+export function teamsNote(snapshot) {
+  if (snapshot.teams?.length || !snapshot.issues.some((issue) => issue.key.includes('-'))) return null;
+  return 'the snapshot names no "teams", so keys of teams outside the run will not be seen by the closing-word check; give every team key of the tracker workspace in "teams"';
+}
 
 // The lstat of `file`, or null when there is nothing there.
 function entryAt(file) {

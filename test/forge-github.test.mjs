@@ -24,6 +24,7 @@ const FACADE = [
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
   'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'workflowRun',
+  'reviewerSeen', 'ciWorkflows',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.

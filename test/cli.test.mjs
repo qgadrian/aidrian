@@ -1864,7 +1864,9 @@ test('project init starts a run for a session the host names, and records that s
   const { dir, state } = projectRun(t, [runIssue('ENG-1'), runIssue('ENG-2', { blockedBy: ['ENG-1'] })], { start: false });
   const session = 'abcd1234-0000-4000-8000-00000000dd01';
   const init = projectIn(t, dir, ['init', 'launch', '--file', 'snapshot.json.input'], session);
-  assert.deepEqual(init, { exitCode: 0, out: ['run: launch', 'issues: 2', 'repository: github.com/acme/widgets', `folder: ${runFolder(state, 'launch')}`], err: [] });
+  // The snapshot names no `teams`, so init says the closing-word check sees only the run's own teams.
+  const teams = 'teams: the snapshot names no "teams", so keys of teams outside the run will not be seen by the closing-word check; give every team key of the tracker workspace in "teams"';
+  assert.deepEqual(init, { exitCode: 0, out: ['run: launch', 'issues: 2', 'repository: github.com/acme/widgets', teams, `folder: ${runFolder(state, 'launch')}`], err: [] });
   const [first] = readFileSync(path.join(runFolder(state, 'launch'), 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual([first.event, first.session], ['init', session]);
   assert.equal(run(['project', 'next', 'launch'], dir).stdout.split('\n')[0], 'next ENG-1 feat/eng-1');

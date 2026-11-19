@@ -335,6 +335,12 @@ test('init --check prints the order and blockers and writes no run; init comes l
   const file = input(ISSUES);
   const clean = fx.cmd(['init', 'launch', '--file', file, '--check']);
   assert.deepEqual([clean.exitCode, clean.out[0], clean.out[1]], [0, 'ok snapshot 3 issues, 0 with text', 'next ENG-1 feat/eng-1-export']);
+  assert.match(clean.out.at(-1), /^note teams: the snapshot names no "teams", so keys of teams outside the run will not be seen by the closing-word check/u);
+  const teamed = path.join(fx.dir, 'teamed.input');
+  writeFileSync(teamed, JSON.stringify({ issues: ISSUES, teams: ['ENG', 'OPS'] }));
+  const withTeams = fx.cmd(['init', 'launch', '--file', teamed, '--check']);
+  assert.equal(withTeams.exitCode, 0, withTeams.out.join('\n'));
+  assert.equal(withTeams.out.some((line) => line.startsWith('note teams')), false, withTeams.out.join('\n'));
   assert.equal(existsSync(runFolder(fx.state, 'launch')), false);
   assert.equal(fx.cmd(['init', 'launch', '--file', file]).exitCode, 0);
   assert.match(fx.cmd(['preflight']).out.find((line) => line.startsWith('blocker run')) ?? '', /the run launch is still active/u);
@@ -525,6 +531,13 @@ test('init --check blocks an issue with no text only when no tracker server is l
   assert.equal(missing.out[0], 'ok snapshot 3 issues, 1 with text');
   const served = check({ mcpServers: { linear: { type: 'http', url: 'https://mcp.linear.app/mcp' } } }, { 'ENG-1': { title: 'Export' } });
   assert.equal(served.exitCode, 0, served.out.join('\n'));
+});
+
+test('the driver\'s first turn writes every team key of the tracker workspace into the snapshot as `teams`', () => {
+  const text = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/preflight.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.ok(text.includes('Read the tracker\'s team list, Linear\'s `list_teams` page by page, and keep every team\'s key, of the whole workspace and not only the project\'s, as `teams`'), 'the snapshot rule');
+  assert.ok(text.includes('Write `{ "issues": [...], "outside": [...], "teams": [...] }` to the snapshot file.'), 'the snapshot shape');
+  assert.match(text, /a `note teams` line when the snapshot names no `teams`/u);
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

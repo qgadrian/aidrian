@@ -43,9 +43,13 @@ where `<state>` is the folder `aidrian state` prints, and these rules:
 - Read with the tracker's tools (`knowledge/references/tracker.md`): Linear's `list_issues` with the project and
   `fields` `id`, `title`, `description`, `labels`, `gitBranchName`, `statusType`, `priority`, `parentId`, page by page;
   then each issue's blockers through `get_issue` with relations.
+- Read the tracker's team list, Linear's `list_teams` page by page, and keep every team's key, of the whole workspace
+  and not only the project's, as `teams`: a pull request may close only its own issue, and the closing-word check sees
+  a key only of a team it knows. A tracker whose keys are numbers alone, such as GitHub Issues, has no teams: leave
+  `teams` out.
 - The snapshot keeps for each issue only `key`, `branch`, `status` (its status type), `blockedBy` (keys), and
   `priority` (0 to 4); a blocker outside the project goes in `outside` as `{ key, status }`. Write
-  `{ "issues": [...], "outside": [...] }` to the snapshot file.
+  `{ "issues": [...], "outside": [...], "teams": [...] }` to the snapshot file.
 - The texts file holds each issue's text as data, an object of key to `{ title, description, criteria, labels }`, the
   acceptance criteria as written. The run keeps it apart from the snapshot and writes it to a file each issue's session
   reads instead of the tracker. No comment.
@@ -55,7 +59,8 @@ where `<state>` is the folder `aidrian state` prints, and these rules:
 Then run `aidrian project init <run> --file <snapshot file> --texts <texts file> --check`. It checks both inputs as init
 will, writes no run, and prints `ok snapshot <n> issues, <m> with text`, a `blocker snapshot:` line for each problem,
 cycle, or issue started outside the run, a `blocker texts:` line for each issue with no text when
-`projectRun.mcpServers` holds no tracker server its session could read it through, and the `next` lines.
+`projectRun.mcpServers` holds no tracker server its session could read it through, the `next` lines, and a
+`note teams` line when the snapshot names no `teams`: read the team list again and add them before init.
 
 ## 4. Tell the Human
 

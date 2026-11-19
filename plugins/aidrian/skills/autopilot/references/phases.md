@@ -121,7 +121,7 @@ run `aidrian project stop-action <run> <issue>`, with the run and the issue the 
 It prints one line whose first word is the action, and has already taken the forge's part of it.
 
 - Do what the line says, then run the `pr-auto-merge` skill again. On the next stop, run `stop-action` again.
-- `park`: record the result the line names, `pr_open` with the line as its stop, or `parked` with the one decision it names.
+- `park`: record the result the line names, `pr_open` with the stop it names, or `parked` with the one decision it names.
   `done`: record the result `merged`.
 - Exit 1: record the result `pr_open`, with its error line as the stop.
 - The command keeps the caps. Run no action it did not print: never rerun checks, update the branch, or ask the bot by hand.

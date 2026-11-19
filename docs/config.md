@@ -1841,6 +1841,8 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
 - `teams`, optional, lists every team key of the tracker workspace, at most 500, each a capital letter then capitals or
   digits, such as `ENG`. The [`closes`](#when-it-is-on) check reads a token as an issue key only when its team is one of
   these or of the run's issues. With no `teams`, a key of a team outside the run is not seen: a named residual.
+  The `project-autopilot` skill's first turn reads the tracker's team list into it. When the run's issue keys carry a
+  team and `teams` is missing or empty, `init` prints a `teams:` line and `init --check` a `note teams` line that say so.
 - Every other field, such as a title or a description, is dropped: no other tracker text enters the run's state.
 
 The state folder is held as the [background route](handoff.md#the-background-route) holds its continuation store.

@@ -93,6 +93,26 @@ test('init keeps the snapshot without tracker text but the branch, and pins the 
   assert.match(first.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
 });
 
+test('init names the workspace\'s teams the snapshot leaves out, which the closing-word check reads keys against', (t) => {
+  const note = 'teams: the snapshot names no "teams", so keys of teams outside the run will not be seen by the closing-word check; give every team key of the tracker workspace in "teams"';
+  const missing = setup(t);
+  const bare = missing.init('launch', missing.input(SNAPSHOT));
+  assert.equal(bare.exitCode, 0, bare.err.join('\n'));
+  assert.ok(bare.out.includes(note), bare.out.join('\n'));
+  const empty = setup(t);
+  assert.ok(empty.init('launch', empty.input({ ...SNAPSHOT, teams: [] })).out.includes(note), 'an empty list names no team');
+  const named = setup(t);
+  const full = named.init('launch', named.input({ ...SNAPSHOT, teams: ['ENG', 'OPS', 'WEB'] }));
+  assert.equal(full.exitCode, 0, full.err.join('\n'));
+  assert.equal(full.out.some((line) => line.startsWith('teams:')), false, full.out.join('\n'));
+  assert.deepEqual(JSON.parse(readFileSync(path.join(runFolder(named.state, 'launch'), 'snapshot.json'), 'utf8')).teams, ['ENG', 'OPS', 'WEB']);
+  // Keys that are numbers alone, as a forge's issues have, carry no team to name.
+  const numbered = setup(t);
+  const plain = numbered.init('launch', numbered.input({ issues: [{ key: '12', branch: 'feat/12-export', status: 'unstarted' }] }));
+  assert.equal(plain.exitCode, 0, plain.err.join('\n'));
+  assert.equal(plain.out.some((line) => line.startsWith('teams:')), false, plain.out.join('\n'));
+});
+
 test('the run stores no projectRun value from the working copy', (t) => {
   const state = folder(t, 'aidrian-run-state-');
   const { input, init } = setup(t, { config: { version: 1, state: { dir: state }, projectRun: { maxParallel: 4 } } });

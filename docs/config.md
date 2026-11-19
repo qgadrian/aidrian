@@ -1794,7 +1794,8 @@ the first hook files an [automatic lesson](lessons.md#automatic-lessons), `track
 It never refuses the call. The lesson asks for the tool in `writeTools` when it writes.
 A tool that only reads is told apart by its name's first word:
 `get`, `list`, `search`, `read`, `find`, `fetch`, `query`, `view`, `show`, `describe`, or `whoami`.
-That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted.
+That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted
+(the [project run rule](#project-run) reads names stricter).
 A read tool named otherwise is noted, and rejecting its lesson ends that, since the same tool never reopens it.
 A tool on a server neither list names is not noted, so a connection under another server name stays out of sight.
 
@@ -2077,7 +2078,11 @@ names. A server `projectRun.mcpServers` lists that no adapter maps, such as Line
 under a name of the team's choosing, may be a tracker connection the rule cannot screen: on it, both are refused every
 call whose name does not say it reads (`get_`, `list_`, `search_`, `read_`, and the other read verbs of the
 [first-word check](#how-a-write-is-judged)), unless `projectRun.nonTrackerServers` names it as reaching no tracker.
-`aidrian project preflight` notes each such server. When the base branch's config cannot be read, or the mark names no
+To this rule a name says it reads only with a read verb other than `query`, which may run any statement, first, and no
+write verb after it, such as `create`, `update`, `delete`, `add`, `set`, or `save`, in any of its words, so
+`get_or_create_item`, `list_and_update`, and `getOrCreate` are writes. The driver runs with the user's own servers, not
+`projectRun.mcpServers` alone, so it is held so on every server no adapter maps that `projectRun.nonTrackerServers`
+does not name. `aidrian project preflight` notes each such server. When the base branch's config cannot be read, or the mark names no
 project, which servers reach a tracker cannot be told, so both are refused that on every server no adapter maps; a held
 session, which reads no base branch, always is. The rule runs under the [agent gate hook's time budget](hooks.md#agent-gates):
 a call it cannot judge in time is refused to a marked, held, or driving session unless its name says it reads.

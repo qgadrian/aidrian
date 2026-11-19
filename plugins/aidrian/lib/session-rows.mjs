@@ -2,7 +2,9 @@
 // request ledger `prs.jsonl` (lib/session-prs.mjs) and the links `links.jsonl` (lib/session-links.mjs), and appended to. Display data only: no hook, gate, skill, or agent decides anything
 // from them. This file names no host, forge, or tracker.
 
-import { appendSessionFile, readSessionTail, reserveSessionFile, writeSessionFile } from './session-folder.mjs';
+import { appendSessionFile, exclusive, LOCK_WINDOW_MS, readSessionTail, reserveSessionFile, writeSessionFile } from './session-folder.mjs';
+
+export { LOCK_WAIT_MS, LOCK_WINDOW_MS } from './session-folder.mjs';
 
 // The row objects of the last `maxBytes` of the file `name` in `folder`, oldest first, read no-follow and non-blocking
 // through readSessionTail: a first line the cut fell inside and a last line still being written are dropped, and so is
@@ -50,7 +52,8 @@ export function appendRows(folder, name, rows, { maxBytes, select = (lines, give
   if (typeof folder !== 'string' || !Array.isArray(rows) || rows.length === 0) return false;
   // A file the session folder's rules refuse waits for no reservation: it would never be written.
   if (readSessionTail(folder, name, { ...options, maxBytes: 0 }) === null) return false;
-  return exclusive(folder, name, options, () => {
+  const ids = { ...(options.uid === undefined ? {} : { uid: options.uid }), ...(options.gid === undefined ? {} : { gid: options.gid }) };
+  return exclusive((at) => reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now: at, ...ids }), () => {
     const read = readSessionTail(folder, name, { ...options, maxBytes });
     if (read === null) return false;
     const lines = tailLines(read);
@@ -80,36 +83,4 @@ function newestLines(lines, budget) {
     bytes += size;
   }
   return kept;
-}
-
-// The length of a reservation window, and how long a writer waits for another's step to end, in steps of RETRY_MS.
-export const LOCK_WINDOW_MS = 5_000;
-export const LOCK_WAIT_MS = 1_000;
-const RETRY_MS = 5;
-const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-// `step()`'s answer, run while this process holds the file's reservations (reserveSessionFile) for the window that holds
-// now and the next one, taken in that order and released after; false when it cannot take them within LOCK_WAIT_MS.
-// Two writers whose steps overlap in time share a window, so one waits for the other: an append never lands on a file
-// that a compaction is about to rename over, and two compactions never drop each other's rows. A killed writer's
-// reservations hold only their two windows, after which writes go on. `options` gives reserveSessionFile its ids.
-function exclusive(folder, name, { uid, gid }, step) {
-  const ids = { ...(uid === undefined ? {} : { uid }), ...(gid === undefined ? {} : { gid }) };
-  const until = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    const now = Date.now();
-    const first = reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now, ...ids });
-    const second = first && reserveSessionFile(folder, name, { windowMs: LOCK_WINDOW_MS, now: now + LOCK_WINDOW_MS, ...ids });
-    if (first && second) {
-      try {
-        return step();
-      } finally {
-        second();
-        first();
-      }
-    }
-    first?.();
-    if (Date.now() >= until) return false;
-    pause(RETRY_MS);
-  }
 }

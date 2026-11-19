@@ -16,6 +16,10 @@ npm run check    # what CI runs
 
 `make` lists the same tasks.
 
+A change under `plugins/aidrian-claude-mod/` also passes `claude plugin validate plugins/aidrian-claude-mod` and
+`claude plugin test plugins/aidrian-claude-mod` before a push. CI does not run them, so they are the local gate for
+the [Claude mod](claude-mod.md).
+
 Every test file imports `scripts/test-state.mjs` first, and `test/test-state.test.mjs` fails on one that does not.
 It gives the run its own state folder, temporary folder, and fake `gh`, so a file run alone, `node --test test/<name>.test.mjs`,
 writes no fixture lesson or state folder into this machine's own state folder.
@@ -39,8 +43,10 @@ These are warnings, and never fail the check.
 
 ## What the tests hold
 
-- Both marketplaces publish the one plugin from `./plugins/aidrian`.
-  Both plugin manifests have the same `name`, `version`, `description`, `author`, and `repository`.
+- The Claude Code marketplace lists `aidrian`, from `./plugins/aidrian`, then the optional Claude mod `aidrian-mod`,
+  from `./plugins/aidrian-claude-mod`; the Codex marketplace lists `aidrian` alone.
+  Both `aidrian` manifests have the same `name`, `version`, `description`, `author`, and `repository`,
+  and the Claude mod's manifest has their `author` and `repository`.
 - Every agent preloads the `knowledge` skill, and asks only for tags that skill lists.
 - [Agents and skills](agents-and-skills.md) lists every agent and skill shipped, once.
   Its agent tables match the [group folders](agent-sources.md#groups) of the agent sources.
@@ -115,7 +121,7 @@ names each plugin's folder, its tag prefix, and the files that carry its version
 | Plugin | Folder | Tags | Version files |
 | --- | --- | --- | --- |
 | `aidrian` | `plugins/aidrian/` | `vX.Y.Z` | both plugin manifests, `package.json`, `package-lock.json` |
-| `aidrian-claude-mod` | `plugins/aidrian-claude-mod/` | `aidrian-claude-mod-vX.Y.Z` | `.claude-plugin/plugin.json` |
+| `aidrian-mod` | `plugins/aidrian-claude-mod/` | `aidrian-mod-vX.Y.Z` | `.claude-plugin/plugin.json` |
 
 A marketplace entry that sets a version is one more version file, for the plugin its name matches; an entry that sets
 a version under a name no plugin has fails `npm run check`. A table plugin whose folder does not exist yet is skipped.
@@ -134,7 +140,7 @@ runs `release` and writes its commit and result lines as outputs, then installs 
 is on `origin/main`. It installs nothing, caches nothing, and runs no repository code but `scripts/version.mjs`, one call
 per step: `release --expect` runs `release` again on that commit and fails, before it writes, unless its result lines
 are the first job's; `commit-and-tag --results` commits the version files once as
-`chore(release): aidrian vX.Y.Z, aidrian-claude-mod vX.Y.Z` and tags each released plugin, deciding by each place a
+`chore(release): aidrian vX.Y.Z, aidrian-mod vX.Y.Z` and tags each released plugin, deciding by each place a
 version is written, so a marketplace that versions both plugins serves one plugin's release and another's first.
 The job then pushes the commit and the tags at once, with no git hook, and publishes each tag's release notes; only
 aidrian's release is marked the repository's latest. A plugin's notes list every pull request merged since that
@@ -166,7 +172,7 @@ the plugin's manifest, with no bump, changes no file, and tags the commit that a
 main. When a later commit changes the plugin's folder before that first tag exists, the first release is refused, since
 the tag would name a version whose installs got later content: the release log names the tag and the commit, the other
 plugins still release, and the run fails at its last step, `tag-check`, until a person pushes that tag by hand:
-`git tag -a aidrian-claude-mod-vX.Y.Z <commit> -m "aidrian-claude-mod vX.Y.Z" && git push origin refs/tags/aidrian-claude-mod-vX.Y.Z`.
+`git tag -a aidrian-mod-vX.Y.Z <commit> -m "aidrian-mod vX.Y.Z" && git push origin refs/tags/aidrian-mod-vX.Y.Z`.
 The next run releases the later commits from it.
 
 The release fails, changing no file, when a plugin's tag exists but none is reachable from main, or its latest tag is
@@ -177,4 +183,4 @@ as `aidrian`'s does in a clone with no tags. Tag the commit that set the version
 ## Not included
 
 - OpenCode support, or a tracker other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
-- The optional Claude mod, `aidrian-claude-mod`, a Claude Code plugin: its row is in the `PLUGINS` table, and `release` skips it while `plugins/aidrian-claude-mod/` does not exist.
+- A band for Codex: the optional Claude mod, `aidrian-mod`, is a Claude Code mod alone.

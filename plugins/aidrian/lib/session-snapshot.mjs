@@ -100,7 +100,7 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   }
   const { project, state, checkouts, folder } = ctx;
   // What the handoff, prs, and ticket sections share: one store listing, and one read of each session file.
-  const links = validId ? sessionLinks({ state, checkouts, maxChain: ctx.config.session.handoff.maxChain, folder, session, cwd, files: ROW_FILES, git: KILL, io }) : null;
+  const links = validId ? sessionLinks({ state, checkouts, maxChain: ctx.config.session.handoff.maxChain, folder, session, cwd, files: ROW_FILES, forge: forgeFor(cwd), git: KILL, io }) : null;
   if (validId && transcript !== null) section('handoff', () => handoffSection(ctx, links, session, transcript));
   const forge = forgeBudget(budgetMs);
   if (validId) section('prs', () => prsSection(ctx, links, cwd, forge));

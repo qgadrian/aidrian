@@ -34,7 +34,7 @@ import path from 'node:path';
 import { gateDenial, readOnlyDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
-import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
+import { bashCall, configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial, writeTargets } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, sessionFoldersWriteDenial, startedUnattended, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
@@ -66,8 +66,16 @@ async function gate(input) {
   const marked = mark?.root ? findProject(mark.root) : null;
   // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started
   // in, and the mark the one the gate ran in.
-  const origin = snapshot?.root ? openProject(snapshot.root) : null;
-  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? origin ?? marked;
+  const found = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
+  // The project the snapshot names, opened only when a guard asks for it, and never when it is the call's own: opening it
+  // runs git, and a call that writes nowhere near the state root runs none of its own.
+  let opened;
+  const origin = () => {
+    if (!snapshot?.root || found?.checkouts.some((each) => canonical(each) === canonical(snapshot.root))) return null;
+    opened ??= openProject(snapshot.root);
+    return opened;
+  };
+  const project = found ?? origin() ?? marked;
   if (snapshot?.problem) {
     const settings = project ? loadConfig(project).config : DEFAULTS;
     const denial = unreadableConfigDenial(input, snapshot.file, snapshot.problem, settings, 'to start a new session, which takes the gates from the config again');
@@ -106,7 +114,7 @@ async function gate(input) {
   const unattended = () => mark !== null || (alone ??= startedUnattended(project, config, input.session_id));
   let denial;
   try {
-    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, [marked, origin], unattended));
+    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, [() => marked, origin], unattended));
   } catch (error) {
     if (!(error instanceof PastDeadline)) throw error;
     denial = deadlineDenial(input, config, { unattended });
@@ -116,7 +124,7 @@ async function gate(input) {
 
 // The first guard's denial of the call, or null. The store guard runs first without its link walk, which reads folders
 // on disk, and with it last, so a call the other guards refuse by the paths and names it gives is refused before any walk.
-// `others` are the project the session's unattended mark names and the one its gate snapshot names, each or null: each
+// `others` give, each when first asked, the project the session's unattended mark names and the one its gate snapshot names, each or null: each
 // that is another project than the call's has its store, its session folders, and its machine's switches guarded too,
 // so a subagent that moved to another project still meets the folders of the session's own. `unattended()` says whether
 // no Human attends the session.
@@ -140,11 +148,16 @@ function guards(input, project, config, gated, snapshot, others, unattended) {
     ?? otherProjects(input, project, others, unattended);
 }
 
-// The first denial of the guards of each of `others` that is another project than the call's, each asked once.
+// The first denial of the guards of each of `others` that is another project folder than the call's, each asked once:
+// by its own folder, so a linked checkout whose config moves `state.dir` elsewhere than the main checkout's is its own.
 function otherProjects(input, project, others, unattended) {
-  const seen = new Set([canonical(project.checkouts.at(-1))]);
-  for (const other of others) {
-    const key = other ? canonical(other.checkouts.at(-1)) : null;
+  // A call with no write target of a tool that is no shell, such as a Read, writes nothing any guard reads.
+  const { files, names, globs } = writeTargets(input);
+  if (files.length === 0 && names.length === 0 && globs.length === 0 && !bashCall(input)) return null;
+  const seen = new Set([canonical(project.root)]);
+  for (const ask of others) {
+    const other = ask();
+    const key = other ? canonical(other.root) : null;
     if (key === null || seen.has(key)) continue;
     seen.add(key);
     const denial = otherProject(input, other, unattended);

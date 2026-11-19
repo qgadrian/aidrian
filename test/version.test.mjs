@@ -324,23 +324,23 @@ const tagsAt = (git, ref) => git('tag', '--points-at', ref).split('\n').filter(B
 // The released fixture with the Claude mod's manifest at `version` committed on main; tagged when `tag` is true.
 function withClaudeMod(t, { version = '0.1.0', tag = true } = {}) {
   const repo = released(t);
-  write(repo.dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-claude-mod', version }, null, 2)}\n`);
+  write(repo.dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-mod', version }, null, 2)}\n`);
   repo.commit('feat(claude-mod): add the Claude mod');
-  if (tag) repo.git('tag', `aidrian-claude-mod-v${version}`);
+  if (tag) repo.git('tag', `aidrian-mod-v${version}`);
   return repo;
 }
 
 test('the PLUGINS table keeps aidrian on v* tags and its four files, and the tag patterns never cross', (t) => {
   assert.deepEqual(PLUGINS.map(({ name, dir, prefix }) => [name, dir, prefix]), [
     ['aidrian', 'plugins/aidrian', 'v'],
-    ['aidrian-claude-mod', 'plugins/aidrian-claude-mod', 'aidrian-claude-mod-v'],
+    ['aidrian-mod', 'plugins/aidrian-claude-mod', 'aidrian-mod-v'],
   ]);
   assert.deepEqual(PLUGINS[0].files.map(([file]) => file), ['plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json', 'package.json', 'package-lock.json']);
   const { dir, git, commit } = withClaudeMod(t);
   git('tag', 'v0.65.0');
   const [aidrian, claudeMod] = PLUGINS.map(tagPattern);
   assert.deepEqual(git('tag', '--list', aidrian).split('\n').filter(Boolean).sort(), ['v0.65.0', 'v1.4.2']);
-  assert.deepEqual(git('tag', '--list', claudeMod).split('\n').filter(Boolean), ['aidrian-claude-mod-v0.1.0']);
+  assert.deepEqual(git('tag', '--list', claudeMod).split('\n').filter(Boolean), ['aidrian-mod-v0.1.0']);
   git('tag', '-d', 'v0.65.0');
   // aidrian releases after the Claude mod's tag, so the newest tag is a v tag: the Claude mod still counts from its own.
   setVersion('1.5.0', dir);
@@ -350,7 +350,7 @@ test('the PLUGINS table keeps aidrian on v* tags and its four files, and the tag
   commit('fix(claude-mod): a fix');
   const result = run(dir, 'release');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'aidrian-claude-mod=0.1.1 aidrian-claude-mod-v0.1.1 aidrian-claude-mod-v0.1.0\n');
+  assert.equal(result.stdout, 'aidrian-mod=0.1.1 aidrian-mod-v0.1.1 aidrian-mod-v0.1.0\n');
 });
 
 test('--check and release skip a table plugin with no folder, and a folder without its manifest fails', (t) => {
@@ -368,23 +368,25 @@ test('--check and release skip a table plugin with no folder, and a folder witho
 
 test('--check treats a plugin new on the branch as new, then holds its version like any other', (t) => {
   const { dir, git, commit } = fixture(t);
-  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-claude-mod', version: '0.1.0' }, null, 2)}\n`);
+  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-mod', version: '0.1.0' }, null, 2)}\n`);
   const fresh = run(dir, '--check');
   assert.equal(fresh.status, 0, fresh.stderr);
-  assert.match(fresh.stdout, /\nok: aidrian-claude-mod version 0\.1\.0 in all 1 places; the plugin is new on this branch/);
+  assert.match(fresh.stdout, /\nok: aidrian-mod version 0\.1\.0 in all 1 places; the plugin is new on this branch/);
   commit('feat(claude-mod): add');
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
-  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-claude-mod', version: '0.2.0' }, null, 2)}\n`);
+  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-mod', version: '0.2.0' }, null, 2)}\n`);
   const changed = run(dir, '--check');
   assert.equal(changed.status, 1);
-  assert.match(changed.stderr, /^this branch changes the aidrian-claude-mod version/);
+  assert.match(changed.stderr, /^this branch changes the aidrian-mod version/);
 });
 
 test('a marketplace entry counts for the plugin its name matches, and a versioned entry with an unknown name fails --check', (t) => {
   const { dir } = withClaudeMod(t);
   const file = path.join(dir, '.claude-plugin/marketplace.json');
   const market = JSON.parse(readFileSync(file, 'utf8'));
-  market.plugins.push({ name: 'aidrian-claude-mod', source: './plugins/aidrian-claude-mod', version: '0.1.0' });
+  // The marketplace lists the Claude mod after aidrian, with no version of its own; give its entry one.
+  assert.deepEqual(market.plugins.map(({ name }) => name), ['aidrian', 'aidrian-mod']);
+  market.plugins[1].version = '0.1.0';
   writeFileSync(file, `${JSON.stringify(market, null, 2)}\n`);
   assert.deepEqual(versionLocations(dir, PLUGINS[1]).map(({ where }) => where), [`${CLAUDE_MOD}: version`, '.claude-plugin/marketplace.json: plugins.1.version']);
   assert.deepEqual(versions(dir), Array(5).fill('1.4.2'), "the Claude mod's entry is not aidrian's");
@@ -403,13 +405,13 @@ test('release raises each plugin from its own tag, and commit-and-tag makes one 
   commit('feat(demo): a feature');
   const result = run(dir, 'release');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'aidrian=1.5.0 v1.5.0 v1.4.2\naidrian-claude-mod=0.1.1 aidrian-claude-mod-v0.1.1 aidrian-claude-mod-v0.1.0\n');
+  assert.equal(result.stdout, 'aidrian=1.5.0 v1.5.0 v1.4.2\naidrian-mod=0.1.1 aidrian-mod-v0.1.1 aidrian-mod-v0.1.0\n');
   assert.equal(resultsProblem(result.stdout), null);
-  const done = run(dir, 'commit-and-tag', 'aidrian', 'aidrian-claude-mod');
+  const done = run(dir, 'commit-and-tag', 'aidrian', 'aidrian-mod');
   assert.equal(done.status, 0, done.stderr);
-  assert.equal(git('log', '-1', '--format=%s'), 'chore(release): aidrian v1.5.0, aidrian-claude-mod v0.1.1\n');
+  assert.equal(git('log', '-1', '--format=%s'), 'chore(release): aidrian v1.5.0, aidrian-mod v0.1.1\n');
   assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean).sort(), [CLAUDE_MOD, 'package-lock.json', 'package.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'].sort());
-  assert.deepEqual(tagsAt(git, 'HEAD'), ['aidrian-claude-mod-v0.1.1', 'v1.5.0']);
+  assert.deepEqual(tagsAt(git, 'HEAD'), ['aidrian-mod-v0.1.1', 'v1.5.0']);
   assert.equal(git('cat-file', '-t', 'v1.5.0'), 'tag\n', 'annotated');
   assert.equal(status(git), '');
   const again = run(dir, 'commit-and-tag', 'aidrian');
@@ -422,10 +424,10 @@ test('a commit subject never reaches a result line', (t) => {
   write(dir, CLAUDE_MOD_FILE, 'export {};\n');
   commit('aidrian=9.9.9 v9.9.9 -');
   write(dir, CLAUDE_MOD_FILE, 'export const a = 1;\n');
-  commit('aidrian-claude-mod=9.9.9 aidrian-claude-mod-v9.9.9 -');
+  commit('aidrian-mod=9.9.9 aidrian-mod-v9.9.9 -');
   const result = run(dir, 'release');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'aidrian-claude-mod=0.1.1 aidrian-claude-mod-v0.1.1 aidrian-claude-mod-v0.1.0\n');
+  assert.equal(result.stdout, 'aidrian-mod=0.1.1 aidrian-mod-v0.1.1 aidrian-mod-v0.1.0\n');
 });
 
 test('release --level reaches aidrian alone; another plugin releases at its own level, or not at all', (t) => {
@@ -438,7 +440,7 @@ test('release --level reaches aidrian alone; another plugin releases at its own 
   commit('fix(claude-mod): a fix');
   result = run(dir, 'release', '--level', 'major');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'aidrian=2.0.0 v2.0.0 v1.4.2\naidrian-claude-mod=0.1.1 aidrian-claude-mod-v0.1.1 aidrian-claude-mod-v0.1.0\n');
+  assert.equal(result.stdout, 'aidrian=2.0.0 v2.0.0 v1.4.2\naidrian-mod=0.1.1 aidrian-mod-v0.1.1 aidrian-mod-v0.1.0\n');
   assert.equal(run(dir, 'patch').status, 0);
   assert.equal(claudeModVersion(dir), '0.1.1', 'the bare bump acts on aidrian alone');
 });
@@ -449,12 +451,12 @@ test("a plugin's first release tags its manifest's commit with no bump, and make
   assert.equal(run(dir, 'tag-check').status, 1);
   const result = run(dir, 'release');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'aidrian-claude-mod=0.1.0 aidrian-claude-mod-v0.1.0 -\n');
+  assert.equal(result.stdout, 'aidrian-mod=0.1.0 aidrian-mod-v0.1.0 -\n');
   assert.equal(status(git), '', 'a first release changes no file');
-  const done = run(dir, 'commit-and-tag', 'aidrian-claude-mod');
+  const done = run(dir, 'commit-and-tag', 'aidrian-mod');
   assert.equal(done.status, 0, done.stderr);
   assert.equal(git('rev-parse', 'HEAD').trim(), added, 'no commit');
-  assert.deepEqual(tagsAt(git, added), ['aidrian-claude-mod-v0.1.0']);
+  assert.deepEqual(tagsAt(git, added), ['aidrian-mod-v0.1.0']);
   assert.equal(run(dir, 'tag-check').status, 0);
 });
 
@@ -467,11 +469,11 @@ test('a refused first release lets the other plugins release, and tag-check fail
   const result = run(dir, 'release');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'aidrian=1.4.3 v1.4.3 v1.4.2\n');
-  assert.match(result.stderr, /^aidrian-claude-mod: its first release is refused\. .*git tag -a aidrian-claude-mod-v0\.1\.0 [0-9a-f]{40} -m "aidrian-claude-mod v0\.1\.0" && git push origin refs\/tags\/aidrian-claude-mod-v0\.1\.0$/m);
+  assert.match(result.stderr, /^aidrian-mod: its first release is refused\. .*git tag -a aidrian-mod-v0\.1\.0 [0-9a-f]{40} -m "aidrian-mod v0\.1\.0" && git push origin refs\/tags\/aidrian-mod-v0\.1\.0$/m);
   assert.equal(claudeModVersion(dir), '0.1.0');
   const check = run(dir, 'tag-check');
   assert.equal(check.status, 1);
-  assert.match(check.stderr, /aidrian-claude-mod$/m);
+  assert.match(check.stderr, /aidrian-mod$/m);
 });
 
 test('release is all or nothing: an unreachable or disagreeing tag fails with no result and no file changed', (t) => {
@@ -481,17 +483,17 @@ test('release is all or nothing: an unreachable or disagreeing tag fails with no
   git('switch', '-q', '-c', 'side');
   write(dir, 'side.md', 'x\n');
   commit('side');
-  git('tag', 'aidrian-claude-mod-v0.1.0');
+  git('tag', 'aidrian-mod-v0.1.0');
   git('switch', '-q', 'main');
   let result = run(dir, 'release');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /^aidrian-claude-mod: a aidrian-claude-mod-v\[0-9\]\* tag exists, but none is reachable from HEAD/);
+  assert.match(result.stderr, /^aidrian-mod: a aidrian-mod-v\[0-9\]\* tag exists, but none is reachable from HEAD/);
   assert.equal(result.stdout, '');
-  git('tag', '-d', 'aidrian-claude-mod-v0.1.0');
-  git('tag', 'aidrian-claude-mod-v0.0.9');
+  git('tag', '-d', 'aidrian-mod-v0.1.0');
+  git('tag', 'aidrian-mod-v0.0.9');
   result = run(dir, 'release');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /^aidrian-claude-mod: the latest tag reachable from HEAD is aidrian-claude-mod-v0\.0\.9, but the files hold 0\.1\.0/);
+  assert.match(result.stderr, /^aidrian-mod: the latest tag reachable from HEAD is aidrian-mod-v0\.0\.9, but the files hold 0\.1\.0/);
   assert.equal(result.stdout, '');
   assert.deepEqual(versions(dir), Array(5).fill('1.4.2'), "aidrian's waiting fix wrote nothing");
   assert.equal(status(git), '');
@@ -502,7 +504,7 @@ test("commit-and-tag decides per version location, so a marketplace that version
   const file = path.join(dir, '.claude-plugin/marketplace.json');
   const market = JSON.parse(readFileSync(file, 'utf8'));
   market.plugins[0].version = '1.4.2';
-  market.plugins.push({ name: 'aidrian-claude-mod', source: './plugins/aidrian-claude-mod', version: '0.1.0' });
+  market.plugins.push({ name: 'aidrian-mod', source: './plugins/aidrian-claude-mod', version: '0.1.0' });
   writeFileSync(file, `${JSON.stringify(market, null, 2)}\n`);
   commit('chore: version both plugins in the marketplace');
   const added = git('log', '--diff-filter=A', '--format=%H', '--', CLAUDE_MOD).trim();
@@ -510,15 +512,15 @@ test("commit-and-tag decides per version location, so a marketplace that version
   commit('fix(demo): a fix');
   const result = run(dir, 'release');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-claude-mod=0.1.0 aidrian-claude-mod-v0.1.0 -\n');
+  assert.equal(result.stdout, 'aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-mod=0.1.0 aidrian-mod-v0.1.0 -\n');
   const before = git('rev-parse', 'HEAD').trim();
-  const done = run(dir, 'commit-and-tag', 'aidrian', 'aidrian-claude-mod');
+  const done = run(dir, 'commit-and-tag', 'aidrian', 'aidrian-mod');
   assert.equal(done.status, 0, done.stderr);
   assert.equal(git('rev-parse', 'HEAD~1').trim(), before, 'one commit');
-  assert.equal(git('log', '-1', '--format=%s'), 'chore(release): aidrian v1.4.3, aidrian-claude-mod v0.1.0\n', 'the subject names each released plugin');
+  assert.equal(git('log', '-1', '--format=%s'), 'chore(release): aidrian v1.4.3, aidrian-mod v0.1.0\n', 'the subject names each released plugin');
   assert.ok(git('show', '--name-only', '--format=', 'HEAD').split('\n').includes('.claude-plugin/marketplace.json'), 'the shared file is staged once');
   assert.deepEqual(tagsAt(git, 'HEAD'), ['v1.4.3']);
-  assert.deepEqual(tagsAt(git, added), ['aidrian-claude-mod-v0.1.0']);
+  assert.deepEqual(tagsAt(git, added), ['aidrian-mod-v0.1.0']);
   assert.equal(status(git), '');
 });
 
@@ -533,13 +535,13 @@ test("a missing tag fails with the tag-by-hand message in a shallow clone, and w
   assert.equal(result.status, 1, result.stdout);
   assert.match(result.stderr, /^aidrian: no v\[0-9\]\* tag is reachable from HEAD, and this clone is shallow, so there is nothing to count commits from\. Tag the commit that set 1\.4\.2 once, then push the tag: git tag v1\.4\.2 <commit> && git push origin v1\.4\.2\n$/);
   assert.equal(result.stdout, '');
-  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-claude-mod', version: '0.0.0' }, null, 2)}\n`);
+  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-mod', version: '0.0.0' }, null, 2)}\n`);
   commit('feat(claude-mod): add at 0.0.0');
-  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-claude-mod', version: '0.1.0' }, null, 2)}\n`);
+  write(dir, CLAUDE_MOD, `${JSON.stringify({ name: 'aidrian-mod', version: '0.1.0' }, null, 2)}\n`);
   commit('feat(claude-mod): raise to 0.1.0');
   result = run(dir, 'release');
   assert.equal(result.status, 1, result.stdout);
-  assert.match(result.stderr, /^aidrian-claude-mod: no aidrian-claude-mod-v\[0-9\]\* tag is reachable from HEAD, and the commit that added .* holds 0\.0\.0, not 0\.1\.0, so there is nothing to count commits from\. Tag the commit that set 0\.1\.0 once/);
+  assert.match(result.stderr, /^aidrian-mod: no aidrian-mod-v\[0-9\]\* tag is reachable from HEAD, and the commit that added .* holds 0\.0\.0, not 0\.1\.0, so there is nothing to count commits from\. Tag the commit that set 0\.1\.0 once/);
   assert.equal(result.stdout, '');
   assert.deepEqual(versions(dir), Array(5).fill('1.4.2'), "aidrian's waiting fix wrote nothing");
 });
@@ -605,12 +607,12 @@ test('commit-and-tag --results takes the plugins and their tags from result line
 
 test('check-results passes only well-formed result lines of PLUGINS names', (t) => {
   const { dir } = fixture(t);
-  for (const good of ['', 'aidrian=1.4.3 v1.4.3 v1.4.2\n', 'aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-claude-mod=0.1.0 aidrian-claude-mod-v0.1.0 -\n']) {
+  for (const good of ['', 'aidrian=1.4.3 v1.4.3 v1.4.2\n', 'aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-mod=0.1.0 aidrian-mod-v0.1.0 -\n']) {
     assert.equal(resultsProblem(good), null, good);
   }
   for (const bad of [
     'version=1.4.3\n', 'aidrian=1.4.3 v1.4.3 v1.4.2\nnoise\n', 'stranger=1.0.0 v1.0.0 -\n', 'aidrian=01.4.3 v01.4.3 -\n',
-    'aidrian=1.4.3 aidrian-claude-mod-v1.4.3 -\n', 'aidrian-claude-mod=0.1.0 v0.1.0 -\n', 'aidrian=1.4.3 v1.4.3 aidrian-claude-mod-v0.1.0\n',
+    'aidrian=1.4.3 aidrian-mod-v1.4.3 -\n', 'aidrian-mod=0.1.0 v0.1.0 -\n', 'aidrian=1.4.3 v1.4.3 aidrian-mod-v0.1.0\n',
     'aidrian=1.4.3 v1.4.3 -\naidrian=1.4.4 v1.4.4 -\n', 'aidrian=1.4.3 v1.4.3 - x\n', 'aidrian=1.4.3 v1.4.3 $(id)\n',
   ]) {
     assert.match(resultsProblem(bad), /^not a result line: /, bad);
@@ -738,13 +740,13 @@ test('the push step pushes the release commit and each tag of the result lines a
     const args = path.join(result.log, 'git.args');
     return existsSync(args) ? { args: readFileSync(args, 'utf8').split('\n').filter(Boolean), config: readFileSync(path.join(result.log, 'git.env'), 'utf8') } : null;
   };
-  const both = push('aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-claude-mod=0.1.0 aidrian-claude-mod-v0.1.0 -', 'a'.repeat(40));
-  assert.deepEqual(both.args, ['push', '--atomic', 'origin', 'HEAD:refs/heads/main', 'refs/tags/v1.4.3', 'refs/tags/aidrian-claude-mod-v0.1.0']);
+  const both = push('aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-mod=0.1.0 aidrian-mod-v0.1.0 -', 'a'.repeat(40));
+  assert.deepEqual(both.args, ['push', '--atomic', 'origin', 'HEAD:refs/heads/main', 'refs/tags/v1.4.3', 'refs/tags/aidrian-mod-v0.1.0']);
   assert.match(both.config, /^GIT_CONFIG_COUNT=2$/mu);
   assert.match(both.config, /^GIT_CONFIG_KEY_1=core\.hooksPath$/mu);
   assert.match(both.config, /^GIT_CONFIG_VALUE_1=\/dev\/null$/mu);
-  const first = push('aidrian-claude-mod=0.1.0 aidrian-claude-mod-v0.1.0 -', 'b'.repeat(40));
-  assert.deepEqual(first.args, ['push', '--atomic', 'origin', 'refs/tags/aidrian-claude-mod-v0.1.0'], 'a first release alone pushes only its tag');
+  const first = push('aidrian-mod=0.1.0 aidrian-mod-v0.1.0 -', 'b'.repeat(40));
+  assert.deepEqual(first.args, ['push', '--atomic', 'origin', 'refs/tags/aidrian-mod-v0.1.0'], 'a first release alone pushes only its tag');
   assert.equal(push('', 'b'.repeat(40)), null, 'nothing released, nothing pushed');
 });
 
@@ -752,12 +754,12 @@ test('the notes step publishes each tag from its previous one, and only aidrian 
   const body = await tokenStep(/gh release create/u);
   const result = runStep(t, `${body}\ncat "$LOG/gh.calls"`, {
     cwd: tmpdir(),
-    env: { RESULTS: 'aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-claude-mod=0.1.0 aidrian-claude-mod-v0.1.0 -\n' },
+    env: { RESULTS: 'aidrian=1.4.3 v1.4.3 v1.4.2\naidrian-mod=0.1.0 aidrian-mod-v0.1.0 -\n' },
     stubs: { gh: 'printf \'%s|\' "$@" >> "$LOG/gh.calls"; echo >> "$LOG/gh.calls"' },
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.stdout.split('\n').filter(Boolean), [
     'release|create|v1.4.3|--verify-tag|--generate-notes|--title|aidrian v1.4.3|--notes-start-tag|v1.4.2|',
-    'release|create|aidrian-claude-mod-v0.1.0|--verify-tag|--generate-notes|--title|aidrian-claude-mod v0.1.0|--latest=false|',
+    'release|create|aidrian-mod-v0.1.0|--verify-tag|--generate-notes|--title|aidrian-mod v0.1.0|--latest=false|',
   ]);
 });

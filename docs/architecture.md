@@ -31,6 +31,11 @@ plugins/aidrian/
 └── codex/
     ├── agents/aidrian-*.toml       generated Codex roles; never edit
     └── install-agents.mjs          copies those roles into $CODEX_HOME/agents (~/.codex/agents by default)
+plugins/aidrian-claude-mod/         the optional Claude mod, aidrian-mod, for Claude Code alone (docs/claude-mod.md)
+├── .claude-plugin/plugin.json      its manifest, settings, and version
+├── hooks/                          register.ts, the alerts, and pane.tsx, the band and the /aidrian-mod pane
+├── lib/                            what they draw from the snapshot, and the one resolver that starts its processes
+└── sounds/, tests/                 the alert sounds, and the tests claude plugin test runs
 scripts/build.mjs                   generates the flat agents/ and codex/agents from agents-src/ and providers/
 scripts/version.mjs                 checks a branch keeps each plugin's version, and raises and tags each on release
 scripts/code-shape.mjs              warns about long files, long functions, and nested ternaries in lib/

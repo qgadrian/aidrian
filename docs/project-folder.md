@@ -76,7 +76,8 @@ It writes nothing at all when a symlink would take a write outside the project, 
 `aidrian check` validates the whole folder. Run it locally and in CI. It prints `ok`, or one line per problem and exits 1:
 
 - `.aidrian.json`, when present: valid JSON, no key but `dir`, and `dir` inside the project.
-- `config.json`: the version first, then every key and value.
+- `config.json`: the version first, then every key and value. With `github.autoMerge.allow` true and `review.visual`
+  unset, a screen file git tracks is a warning, not a failure: [Auto-merge](config.md#auto-merge).
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes,
   `models`, as [config.md](config.md#models) describes, `names`, as [config.md](config.md#names) describes,
@@ -171,7 +172,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, and
   `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
   60 seconds, deleted when the shell reads it, and `follows-<shell pid>`, the session the shell's terminal shows, deleted
-  when that program exits ([Replacing the terminal](handoff.md#replacing-the-terminal)).
+  when that program exits ([Replacing the terminal](handoff.md#replacing-the-terminal)), and
+  `session-origins/`, the state folders each session started with, which the session-folder guard holds for its
+  subagents wherever they work ([hooks.md](hooks.md#agent-gates)), owner-only, kept 30 days.
 - The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of
   [`aidrian session snapshot`](handoff.md#the-snapshot), display data no hook, gate, skill, or agent decides from. Every write goes through `lib/session-folder.mjs`: the session id passes
   `SESSION_ID`; the `sessions` folder and each session folder are real folders, no symlink, owned by the user, with

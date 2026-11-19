@@ -63,9 +63,9 @@ export const PLUGINS = [
     ],
   },
   {
-    name: 'aidrian-claude-mod',
+    name: 'aidrian-mod',
     dir: 'plugins/aidrian-claude-mod',
-    prefix: 'aidrian-claude-mod-v',
+    prefix: 'aidrian-mod-v',
     files: [['plugins/aidrian-claude-mod/.claude-plugin/plugin.json', [['version']]]],
   },
 ];
@@ -74,7 +74,7 @@ const MARKETPLACES = ['.claude-plugin/marketplace.json', '.agents/plugins/market
 const VERSION = String.raw`(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)`;
 
 const pluginNamed = (name) => PLUGINS.find((plugin) => plugin.name === name);
-// The tag glob of a plugin: `v[0-9]*` never matches `aidrian-claude-mod-v0.1.0`, and the Claude mod's never matches `v0.65.0`.
+// The tag glob of a plugin: `v[0-9]*` never matches `aidrian-mod-v0.1.0`, and the Claude mod's never matches `v0.65.0`.
 export const tagPattern = (plugin) => `${plugin.prefix}[0-9]*`;
 // The table plugins whose folder exists in the working tree.
 export const presentPlugins = (root = ROOT) => PLUGINS.filter((plugin) => existsSync(path.join(root, plugin.dir)));

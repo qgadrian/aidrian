@@ -387,6 +387,8 @@ test('a malformed ledger row gives no ticket, the session`s own or an earlier se
   const bad = [
     row({ kind: 'unknown', branch: 'fix/42-x' }, 5), row({ kind: 'pushed', branch: 'fix/43..bad' }, 6), row({ kind: 'pushed', branch: 'fix/44-x', cwd: 'relative' }, 7),
     row({ kind: 'pushed', branch: 'fix/45-x', host: 'Not A Host' }, 8), row({ kind: 'pushed', branch: 'fix/46-x', number: -1 }, 9),
+    // Rows on github.com that its adapter's ref check refuses: a one-part repository path, and a number past GraphQL's Int.
+    row({ kind: 'pushed', branch: 'fix/47-x', path: 'notes' }, 10), row({ kind: 'pushed', branch: 'fix/48-x', number: 2 ** 31 }, 11),
   ];
   env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/1-good' }, 1), ...bad]);
   assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#1', source: 'ledger' }, 'the newest well-formed row');

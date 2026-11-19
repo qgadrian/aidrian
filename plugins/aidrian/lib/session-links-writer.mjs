@@ -5,7 +5,7 @@
 
 import { isRefName, runGit } from './git.mjs';
 import { hasHidden } from './hidden-text.mjs';
-import { isRepository, outputTail, remoteRepository, validCwd } from './session-prs.mjs';
+import { isRepository, knownFolders, outputTail, printsAlone, remoteRepository, validCwd } from './session-prs.mjs';
 import { appendRows, parsed } from './session-rows.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
@@ -28,23 +28,29 @@ export const isWorktreeRow = (row) => row !== null && typeof row === 'object' &&
 const VALUE_OPTIONS = new Set(['--base', '--slug']);
 const FLAG_OPTIONS = new Set(['--fetch', '--reuse-existing']);
 
-// Each `aidrian worktree new` the shell line `command` runs from the folder `cwd`, read with lib/shell-lex.mjs:
-// [{ branch, folder }], `folder` the folder it runs in as walkCommands follows a `cd`, once each. None for a call with a
-// word the shell fills in, `--plan`, an option it does not know, a branch that starts with `-`, other than one branch,
-// or a folder walkCommands cannot know, as after a `cd "$X"`.
+// The `aidrian worktree new` the shell line `command` runs, from the payload's folder `cwd`, whose output the call's
+// output is alone, read with lib/shell-lex.mjs as the pull request ledger reads a `gh pr create` (session-prs.mjs):
+// [{ branch, folder }], one at most. `folder` is the folder it runs in by the ledger's rule (knownFolders), which holds
+// whether a host's payload names the folder the line started in or the one it ended in: one an absolute leading `cd`
+// names, else `cwd` only when nothing on the line changes directory. None for a command that is not the line's one
+// printing command (printsAlone), so another command's output cannot claim a worktree, nor for a word the shell fills
+// in, `--plan`, an option it does not know, a branch that starts with `-`, other than one branch, or a folder the rule
+// cannot know, as after a relative `cd` or `cd "$X"`.
 export function worktreeBranches(command, cwd) {
   if (typeof command !== 'string' || typeof cwd !== 'string' || !/\bworktree\b/u.test(command)) return [];
-  const found = new Map();
-  for (const { invocation, folder } of walkCommands(command, cwd)) {
-    const branch = invocation.dynamic || typeof folder !== 'string' ? null : newBranch(aidrianArgs(invocation));
-    if (branch !== null) found.set(JSON.stringify([branch, folder]), { branch, folder });
-  }
-  return [...found.values()];
+  const entries = walkCommands(command, cwd);
+  const known = knownFolders(command, cwd, entries);
+  return entries.flatMap((entry, index) => {
+    const branch = entry.invocation.dynamic || typeof known[index] !== 'string' ? null : newBranch(aidrianArgs(entry.invocation));
+    return branch !== null && printsAlone(entries, entry, command) ? [{ branch, folder: known[index] }] : [];
+  });
 }
 
-// What `aidrian worktree new` printed for each worktree it created in the call's output `output`: [{ branch, path }],
-// from each line that is its JSON result with `status: "created"`, a branch, and an absolute `worktree_path`. A call
-// that was skipped, refused (`status: "blocked"`), or only planned prints none, so it records nothing.
+// What `aidrian worktree new` printed for the worktree it created in the call's output `output`: [{ branch, path }],
+// from each line of the output's last 64 KiB (outputTail) that is its JSON result with `status: "created"`, a branch,
+// and an absolute `worktree_path`. A call that was skipped, refused (`status: "blocked"`), or only planned prints none,
+// so it records nothing. The command prints that one line, and worktreeBranches takes it only as the line's one printing
+// command, so the tail holds it whole.
 export function createdWorktrees(output) {
   if (typeof output !== 'string') return [];
   return outputTail(output).split('\n').flatMap((line) => {
@@ -95,10 +101,11 @@ export function worktreeRows({ branches, created, main, origin, at = new Date().
   });
 }
 
-// The repository origin names in the main checkout `main`, or null: session-prs.mjs remoteRepository, the read the
-// snapshot's remotes take (remoteRepos), so a row's repository and the reader's spell it alike, `url.<base>.insteadOf`
-// rewrites left out on both sides. `git` options are runGit's.
-export const originRepository = (main, git = {}) => remoteRepository(main, 'origin', (args, dir) => runGit(args, dir, git));
+// The repository origin names in the folder `folder`, the checkout the command ran in, so a worktree-specific origin
+// (`config.worktree`, `includeIf.onbranch`) is the one that checkout's later sessions read; or null:
+// session-prs.mjs remoteRepository, the read the snapshot's remotes take (remoteRepos), so a row's repository and the
+// reader's spell it alike, `url.<base>.insteadOf` rewrites left out on both sides. `git` options are runGit's.
+export const originRepository = (folder, git = {}) => remoteRepository(folder, 'origin', (args, dir) => runGit(args, dir, git));
 
 // Appends the worktree rows `rows` to the links of the session folder `folder`, through appendRows with no key: every
 // row is written, and the reader settles repeats. Returns whether it wrote. Never throws.

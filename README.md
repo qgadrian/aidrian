@@ -58,6 +58,13 @@ claude plugin marketplace add qgadrian/aidrian
 claude plugin install aidrian@aidrian-harness
 ```
 
+Optional: the [Claude mod](docs/claude-mod.md), a band above the prompt with the handoff verdict and the session's
+pull requests, a pane, and notifications. It needs the `aidrian` plugin:
+
+```sh
+claude plugin install aidrian-mod@aidrian-harness
+```
+
 ### Codex
 
 Run these in a terminal:
@@ -213,6 +220,7 @@ Codex names an agent `aidrian-<agent>`; ask for a skill by name.
 | [Adopting in a project](docs/adopting.md) | Finish setting up a project. |
 | [Claude Code](docs/providers/claude-code.md) | Update the plugin and see how Claude Code runs it. |
 | [Codex](docs/providers/codex.md) | Update the plugin and see how Codex runs it. |
+| [Claude mod](docs/claude-mod.md) | Install the band, pane, and notifications, or the status line fallback. |
 | [Agents and skills](docs/agents-and-skills.md) | Find the agent or skill for a job. |
 | [Agents](docs/agent-sources.md) | See how the agent sources are written and built. |
 | [Architecture](docs/architecture.md) | See how the plugin's parts fit together. |

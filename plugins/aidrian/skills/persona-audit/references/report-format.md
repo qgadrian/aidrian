@@ -2,7 +2,7 @@
 
 The shape of a finding, of `<state>/audits/<personas>-<date>.md`, and of its sidecar. Read it before the first finding.
 
-Sections: A finding; An untraced cause; A task the product cannot do; The report; A run that replaces a report; The sidecar.
+Sections: A finding; An untraced cause; A task the product cannot do; The report; Every width; A run that replaces a report; The sidecar.
 
 ## A finding
 
@@ -128,6 +128,44 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
   as "as this person I would now try to...", beyond those tasks. It was not walked and has no finding.
   It goes under `## Persona doc gaps`. Its shape: `Suggested task for <persona id>: <title>: <the job, one line>; from <the Goals or
   Cares about line it comes from>`. The author adds the ones worth walking, with a `Success:` line, and the next run walks them.
+
+## Every width
+
+A run that walks, with a non-empty `walk_widths` (reaching-the-product.md § Every width), names the width of what it walked.
+Any other run keeps the shape above, with no width in it.
+
+- A finding of a task walked in a browser gets a `- Width:` bullet after its first line, naming the widths it was seen at and the
+  widths walked without it, such as `- Width: 390 px. Not at 1024 or 1440 px.`, or `- Width: 390, 1024, and 1440 px.`
+  It always lists each width in px, never a word for all of them: the re-check walks only the widths it names.
+  The first line stays `- Persona: ... Task: ... Evidence: ... Label: ...`. Any other finding, walked another way or not
+  walked, has none.
+- Seen at several widths, it is one finding naming each, as one finding two personas share is written once and names both.
+  When the personas or tasks of a shared finding were seen at different widths, its `Width:` bullet names each persona
+  with its own widths, such as `- Width: floor-manager at 390 px; host at 1440 px. Not at 1024 px.`, and each task in
+  brackets after its persona when the tasks differ. `Not at` then names the widths none of them saw it at.
+  The re-check walks each persona at its own widths alone, so a merge never drops which persona saw which width.
+- The task table gets a `Width` column after `Task`, and one row per task and width, so each width has its own outcome.
+  A task not walked in a browser keeps one row, with `-` in the Width column.
+- The `Reached:` line names the widths walked, such as `walked at 390, 1024, and 1440 px`.
+- A width the browser could not reach is a `## Not reached` line naming the task and the width, such as
+  `Seat a walk-in party at 390 px: the browser would not go below 1024 px.`; its row is `not walked`.
+- A task none of whose widths was reached is walked once at the session's width (reaching-the-product.md § Environment
+  check). That walk gets its own row, with the session's width in the Width column, and its findings' `Width:` bullet
+  names that width, such as `- Width: 1280 px.`
+- The sidecar holds no width: the `Width:` bullet is the one record.
+
+```markdown
+| Persona | Task | Width | Evidence | Outcome |
+| --- | --- | --- | --- | --- |
+| floor-manager | Move a booking to another table | 390 | walked | blocked: no table offered after the move |
+| floor-manager | Move a booking to another table | 1024 | walked | done |
+| floor-manager | Check how busy tonight is | - | read | not walked |
+
+### blocker: a moved booking cannot be saved
+
+- Persona: floor-manager. Task: Move a booking to another table. Evidence: walked. Label: observed.
+- Width: 390 px. Not at 1024 px.
+```
 
 ## A run that replaces a report
 

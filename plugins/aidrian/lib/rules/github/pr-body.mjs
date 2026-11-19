@@ -451,7 +451,8 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
 
 // Whether the body is for the branch checked out in `folder`, as { body }: the pull request's current body on an edit
 // the open list holds, else null. Null when it is for another branch, or an edit of a pull request the list cannot
-// show: a `--head` that names another branch, or a pull request whose head is another branch.
+// show: a `--head` that names another branch, or a pull request whose head is another branch. Several open pull requests
+// the edit's branch name fits, which nothing settles, leave the body null, so every clause is judged.
 function ownBranch(call, folder, listOpenPrs) {
   const read = runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], folder);
   const branch = read.status === 0 ? read.stdout.trim() : null;
@@ -461,21 +462,47 @@ function ownBranch(call, folder, listOpenPrs) {
     const head = call.head?.text?.replace(/^[^:]+:/u, '') ?? branch;
     return head === branch ? { body: null } : null;
   }
-  const text = call.target?.dynamic ? null : call.target?.text ?? '';
-  if (text === null) return null;
-  const number = /^#?\d+$/u.test(text) ? Number(text.replace('#', '')) : Number(/\/pull\/(\d+)(?:[/?#]|$)/u.exec(text)?.[1] ?? Number.NaN);
+  const target = editTarget(call);
+  if (!target) return null;
   let open = null;
   try {
     open = listOpenPrs(call.repo?.text ?? null);
   } catch {
     open = null;
   }
-  const pull = Array.isArray(open)
-    ? open.find((pr) => (text === '' ? pr?.headRefName === branch : pr?.number === number))
-    : undefined;
-  if (pull) return pull.headRefName === branch ? { body: typeof pull.body === 'string' ? pull.body : null } : null;
+  const named = namedPulls(open, target, branch);
+  if (named.length === 1) {
+    const [pull] = named;
+    if (pull.headRefName !== branch) return null;
+    return { body: typeof pull.body === 'string' ? pull.body : null };
+  }
+  if (named.length > 1) return named.every((pr) => pr.headRefName === branch) ? { body: null } : null;
   // No list, or no such open pull request: an edit of this branch's own pull request is still this branch's.
-  return text === '' || text === branch ? { body: null } : null;
+  return target.number === undefined && (target.head ?? branch) === branch ? { body: null } : null;
+}
+
+// The pull request an edit names, as gh reads its target: { number } for a number or a pull request URL (targetUrl),
+// else { head, owner } for a branch name, `feat/x` or `owner:feat/x`, with `head` null for no target, the checked-out
+// branch's. `team/pull/3` is a branch name. Null for a target the rule cannot read.
+function editTarget(call) {
+  if (call.target?.dynamic) return null;
+  const text = call.target?.text ?? '';
+  if (/^#?\d+$/u.test(text)) return { number: Number(text.replace('#', '')) };
+  const url = targetUrl(call)?.text;
+  if (url) return { number: Number(/\/pull\/(\d+)(?:[/?#]|$)/u.exec(url)[1]) };
+  if (text === '') return { head: null, owner: null };
+  const owned = /^([^:/]+):(.+)$/u.exec(text);
+  return owned ? { head: owned[2], owner: owned[1] } : { head: text, owner: null };
+}
+
+// The open pull requests of `open` that `target` (editTarget) fits: the one of its number, or each whose head branch
+// is its branch name (`branch` for none) and, for an `owner:` name, whose head repository that owner holds. [] with no list.
+function namedPulls(open, target, branch) {
+  if (!Array.isArray(open)) return [];
+  if (target.number !== undefined) return open.filter((pr) => pr?.number === target.number);
+  const head = target.head ?? branch;
+  const owner = target.owner?.toLowerCase() ?? null;
+  return open.filter((pr) => pr?.headRefName === head && (owner === null || pr?.headRepositoryOwner?.login?.toLowerCase() === owner));
 }
 
 // The check-run rows of the session `input` names, through its session folder, or null when it has none.
@@ -557,22 +584,25 @@ function deferralProblem(item, { field, reasons, neverValid = [] }, key) {
 const VALUE_WRAPPER = /^[\s`*_"'\u201c\u201d\u2018\u2019]+|[\s`*_"'\u201c\u201d\u2018\u2019]+$/gu;
 
 // A body identical to another open pull request's describes a different branch: a stale or another session's body file.
-// Only where the target is known: a create, or an edit that names its pull request by number or URL. Fails open.
+// Only where the target is known: a create, or an edit that names its pull request by number, URL, or a branch name
+// that one open pull request alone fits (editTarget, namedPulls). Fails open.
 function judgeDuplicate(body, call, contract, listOpenPrs) {
   if (!contract.duplicateBody || body.trim() === '' || call.repo?.dynamic) return null;
-  let self = null;
-  if (call.subcommand === 'edit') {
-    const text = call.target?.dynamic ? '' : call.target?.text ?? '';
-    self = /^\d+$/u.test(text) ? Number(text) : Number(/\/pull\/(\d+)(?:[/?#]|$)/u.exec(text)?.[1] ?? Number.NaN);
-    if (Number.isNaN(self)) return null;
-  }
+  const target = call.subcommand === 'edit' ? editTarget(call) : null;
+  if (call.subcommand === 'edit' && (!target || target.head === null)) return null;
   // Without -R, a pull request URL names the repository the edit goes to.
-  const urlRepo = /github\.com\/([^/]+\/[^/]+)\/pull\//u.exec(call.target?.dynamic ? '' : call.target?.text ?? '')?.[1] ?? null;
+  const urlRepo = target?.number === undefined ? null : /github\.com\/([^/]+\/[^/]+)\/pull\//u.exec(targetUrl(call)?.text ?? '')?.[1] ?? null;
   let open;
   try {
     open = listOpenPrs(call.repo?.text ?? urlRepo);
   } catch {
     return null;
+  }
+  let self = null;
+  if (target) {
+    const named = namedPulls(open, target, null);
+    if (target.number === undefined && named.length !== 1) return null;
+    self = target.number ?? named[0].number;
   }
   const twin = Array.isArray(open) ? open.find((pr) => pr?.number !== self && typeof pr?.body === 'string' && pr.body.trim() === body.trim()) : null;
   return twin ? deny(`the body is identical to open pull request #${twin.number}'s, so it describes another branch; ` +
@@ -679,7 +709,7 @@ export function openPrBodies(cwd, forge = listForge(cwd)) {
   return (repo) => {
     if (!listed.has(repo)) {
       try {
-        listed.set(repo, forge.openChanges(200, 'number,body,headRefName', { repo }));
+        listed.set(repo, forge.openChanges(200, 'number,body,headRefName,headRepositoryOwner', { repo }));
       } catch {
         listed.set(repo, null);
       }

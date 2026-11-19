@@ -143,6 +143,12 @@ test('a body identical to another open pull request is refused; the edited one i
   assert.match(run(`gh pr edit --body '${BODY}' -- https://github.com/a/b/pull/8`), /#7's/, 'a URL after --');
   assert.equal(lookups.at(-1), 'a/b');
   assert.equal(run(`gh pr edit my-branch --body '${BODY}'`), null, 'a branch selector cannot be told from itself');
+  // A branch name one open pull request alone fits names that one, as `team/pull/3` does: it is no URL.
+  const heads = project(t, CONFIG, { open: [{ number: 3, headRefName: 'other', body: `${BODY}\n` }, { number: 8, headRefName: 'team/pull/3', body: 'old' }] });
+  assert.match(heads.run(`gh pr edit team/pull/3 --body '${BODY}'`) ?? '', /#3's/, 'a branch named like a URL path');
+  assert.equal(heads.run(`gh pr edit other --body '${BODY}'`), null, 'its own body, by branch name');
+  const twins = project(t, CONFIG, { open: [{ number: 3, headRefName: 'feat/y', body: `${BODY}\n` }, { number: 8, headRefName: 'feat/y', body: 'old' }] });
+  assert.equal(twins.run(`gh pr edit feat/y --body '${BODY}'`), null, 'two pull requests of that name: which is itself is unknown');
   run(`gh pr create -R acme/notes -t "[NOISSUE] feat: x" -b '${BODY}'`);
   assert.equal(lookups.at(-1), 'acme/notes');
   assert.equal(run(`gh pr create -R "$REPO" -t "[NOISSUE] feat: x" -b '${BODY}'`), null, 'a repo the rule cannot read');

@@ -17,6 +17,7 @@
 // The evidence check: a final report that says a test command passed, with no run of it on the session's check-run
 // record that passed (lib/check-runs.mjs), is sent back once, on the first stop of its turn, to quote a run a tool
 // returned or call the run "not finished". A report once claimed a full suite passed after its runs were stopped.
+// What the report quotes from another source, such as a pull request body or another agent's claim, is not its own.
 // config.json `telemetry.enabled: false` drops the row, never the checks or the lessons.
 
 import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendBacks } from '../lib/child-send-backs.mjs';
@@ -75,7 +76,7 @@ function unsupportedReport(input, project, config) {
   if (input.stop_hook_active !== false) return [];
   const report = finalReport(input);
   if (typeof report !== 'string' || !report.trim()) return [];
-  const claims = passClaims(report, { section: null, testing: config.testing });
+  const claims = passClaims(report, { section: null, testing: config.testing, ownOnly: true });
   if (!claims.length) return [];
   const folder = sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) });
   const all = folder ? readCheckRuns(folder) : null;

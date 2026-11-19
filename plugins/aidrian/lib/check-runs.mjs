@@ -12,14 +12,15 @@
 // call that exited 0, as Claude Code's, a run whose status is the line's own (only `&&` before and after it) passed unless
 // its counts show a failure. Any other run, and every run on a host that sends the hook failed calls too, as Codex, is
 // judged by its counts alone: passed with a pass count above 0 and a fail count of 0, failed with a fail count above 0,
-// and `unjudged` when it printed no count, since its exit status is unknown.
+// and `unjudged` when it printed no count, since its exit status is unknown. A call whose output the host kept in a file,
+// as Claude Code does with one too long for the payload, is read from the tail of that file (outputText).
 
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, constants, copyFileSync, fstatSync, mkdtempSync, openSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
-import { sectionLines, unfencedLines } from './markdown-sections.mjs';
+import { closes, fencedLines, fenceOf, sectionLines, unfencedLines } from './markdown-sections.mjs';
 import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
 import { aidrianArgs, lexPipeline, readInvocation, walkCommands } from './shell-lex.mjs';
 
@@ -27,8 +28,9 @@ import { aidrianArgs, lexPipeline, readInvocation, walkCommands } from './shell-
 // would pass it keeps the newest rows within half of it.
 export const CHECK_RUNS = 'checks.jsonl';
 export const CHECK_RUNS_MAX_BYTES = 64 * 1024;
-// How much of a call's output is read, from its end, for the counts.
+// How much of a call's output is read, from its end, for the counts: of its text, or of the file the host kept it in.
 const OUTPUT_TAIL = 64 * 1024;
+const READ_FILE = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0) | (constants.O_NOCTTY ?? 0);
 const COMMAND_MAX = 300;
 
 // Programs that run a command given after them: `npx vitest`, `pnpm exec jest`, `python -m pytest`, `bundle exec rspec`.
@@ -138,8 +140,11 @@ export function testRuns(command, cwd, testing = {}) {
 // 2. `Tests` lines, as vitest (`Tests  1 failed | 11 passed (12)`) and jest (`Tests:  1 failed, 11 passed, 12 total`)
 //    print them, also behind a task prefix such as turbo's `web:test: `;
 // 3. cargo's `test result: ok. 12 passed; 0 failed; ...`, one a test binary and the doc-tests;
-// 4. any other line with "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===` and Playwright's own lines;
-// 5. rspec's and mix's `12 examples, 0 failures`.
+// 4. go test's (goCounts): with `-v`, the `--- PASS: TestX` and `--- FAIL: TestX` lines at the start of a line, one a
+//    top-level test, subtests left out; else, since go test prints no pass count, the `ok  <package>  0.01s` and
+//    `FAIL  <package>  0.01s` lines, one a package;
+// 5. any other line with "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===` and Playwright's own lines;
+// 6. rspec's and mix's `12 examples, 0 failures`.
 // A family that names passes and no failure counts 0 failures. Unless node's runner counted, whose fail count stands, a
 // line that is only "N failed" above 0, ANSI colours stripped, as Playwright's standalone `  1 failed` line, makes the
 // fail count at least N. A test's name, such as `✔ lists 2 failed payments`, is never such a line.
@@ -149,6 +154,14 @@ const TESTS_LINE = new RegExp(String.raw`^\s*${TASK_PREFIX}Tests:?\s+\d`, 'u');
 const CARGO_LINE = /\btest result:\s+\w+\.\s+\d+\s+passed;/u;
 const WORDS_LINE = /\b\d+\s+(?:passed|failed)\b/u;
 const EXAMPLES_LINE = /\b(\d+)\s+(?:examples?|tests?),\s+(\d+)\s+failures?\b/u;
+// go test's lines (runCounts family 4): a `-v` run's, a top-level test's result, and a package's.
+const GO_VERBOSE = /^(?:=== RUN\s|--- (?:PASS|FAIL|SKIP): \S)/u;
+const GO_TEST = { pass: /^--- PASS: \S/u, fail: /^--- FAIL: \S/u };
+const GO_PACKAGE = {
+  any: /^(?:(?:ok|FAIL)\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\)|\[(?:build|setup) failed\])|\?\s+\S+\s+\[no test files\])/u,
+  pass: /^ok\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\))(?!.*\[no tests to run\])/u,
+  fail: /^FAIL\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\)|\[(?:build|setup) failed\])/u,
+};
 const BARE_FAILED = /^\s*([1-9]\d*)\s+failed\s*$/gmu;
 // An ANSI colour code, which a runner wraps its summary in.
 const ANSI = /\u001b\[[0-9;]*m/gu;
@@ -170,9 +183,14 @@ export function runCounts(output) {
   return failed > (counts.fail ?? 0) ? { pass: counts.pass, fail: failed } : counts;
 }
 
-// The counts of the first family of summary lines in `lines` (runCounts, families 2 to 5).
+// The counts of the first family of summary lines in `lines` (runCounts, families 2 to 6).
 function familyCounts(lines) {
-  for (const family of [TESTS_LINE, CARGO_LINE, WORDS_LINE]) {
+  for (const family of [TESTS_LINE, CARGO_LINE, 'go', WORDS_LINE]) {
+    if (family === 'go') {
+      const go = goCounts(lines);
+      if (go) return go;
+      continue;
+    }
     const held = lines.filter((line) => family.test(line));
     if (!held.length) continue;
     const pass = lineSum(held, /\b(\d+)\s+passed\b/u);
@@ -181,9 +199,25 @@ function familyCounts(lines) {
     return { pass, fail: fail ?? (pass === null ? null : 0) };
   }
   const examples = lines.map((line) => EXAMPLES_LINE.exec(line)).filter(Boolean);
-  if (!examples.length) return { pass: null, fail: null };
+  // go test lines that counted nothing, and no other family: a run of no tests, which passes nothing.
+  if (!examples.length) return lines.some((line) => GO_PACKAGE.any.test(line) || GO_VERBOSE.test(line)) ? { pass: 0, fail: 0 } : { pass: null, fail: null };
   const fail = examples.reduce((total, found) => total + Number(found[2]), 0);
   return { pass: examples.reduce((total, found) => total + Number(found[1]), 0) - fail, fail };
+}
+
+// go test's counts, or null when `lines` hold none of its lines. A `-v` run counts its top-level tests, and fails at
+// least once a package of it failed, so a package that did not build, a test binary that timed out and panicked, or a
+// TestMain that exited 1 after its tests passed fails the run. Any other run counts its packages: a package whose tests
+// all were skipped or filtered out (`[no tests to run]`), or that has none, counts no pass. Either run that counts
+// nothing, as one whose tests were all skipped, leaves the counts to a later family, as a script that runs go test and
+// then pytest prints.
+function goCounts(lines) {
+  const count = (pattern) => lines.filter((line) => pattern.test(line)).length;
+  const packagesFailed = count(GO_PACKAGE.fail);
+  const verbose = lines.some((line) => GO_VERBOSE.test(line));
+  const pass = count(verbose ? GO_TEST.pass : GO_PACKAGE.pass);
+  const fail = verbose ? Math.max(count(GO_TEST.fail), packagesFailed) : packagesFailed;
+  return pass + fail > 0 ? { pass, fail } : null;
 }
 
 // A run's status from its counts and whether the host saw its exit status as 0 (`exitZero`, true only when the line's
@@ -234,13 +268,43 @@ export function workingTree(cwd, read = runGit) {
   }
 }
 
+// The last `maxBytes` of the file at `file`, an absolute path, as text, or null when it is no regular file this process
+// can read. It is opened no-follow, so a symlink is never read.
+export function fileTail(file, maxBytes = OUTPUT_TAIL) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  let fd;
+  try {
+    fd = openSync(file, READ_FILE);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    const bytes = Buffer.alloc(Math.min(stat.size, maxBytes));
+    const start = stat.size - bytes.length;
+    let read = 0;
+    for (let n = 1; n > 0 && read < bytes.length; read += n) n = readSync(fd, bytes, read, bytes.length - read, start + read);
+    return bytes.subarray(0, read).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The text a call's counts are read from: `output`, or, when the host kept the call's whole output in a file,
+// `persisted` as `{ file, after }`, the last OUTPUT_TAIL bytes of that file and then `after`, the text the host shows
+// after it, such as stderr. A file it cannot read leaves `output`, which then holds only the head the host kept.
+export function outputText(output, persisted = null) {
+  const tail = persisted ? fileTail(persisted.file) : null;
+  if (tail === null) return output;
+  return typeof persisted.after === 'string' && persisted.after !== '' ? `${tail}\n${persisted.after}` : tail;
+}
+
 // The rows a finished shell call adds, one a test run on its top level: `exitZero` as runStatus takes it, before the
-// line's own reach. `tree` reads a folder's trees (workingTree), once a folder; a row whose trees git cannot give keeps
-// them null, so a claim it cannot support names why.
-export function checkRows({ command, cwd, output, exitZero, testing = {}, agentId = null, at = new Date().toISOString(), tree = workingTree }) {
+// line's own reach, and `persisted` as outputText takes it. `tree` reads a folder's trees (workingTree), once a folder;
+// a row whose trees git cannot give keeps them null, so a claim it cannot support names why.
+export function checkRows({ command, cwd, output, persisted = null, exitZero, testing = {}, agentId = null, at = new Date().toISOString(), tree = workingTree }) {
   const runs = testRuns(command, cwd, testing);
   if (!runs.length) return [];
-  const counts = runCounts(output);
+  const counts = runCounts(outputText(output, persisted));
   const trees = new Map();
   return runs.map(({ key, folder, carries }) => {
     const where = folder ?? cwd;
@@ -297,6 +361,141 @@ const PASS_WORD = /\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|all\s+\d+\s+te
 const FAIL_WORD = /\bnot\s+finished\b|\b(?:failed|failing|red|timed\s+out|stopped|interrupted)\b|\b[1-9]\d*\s+(?:fail(?:s|ed|ures?)?)\b|\bfail(?:s|ures?)?\s*:?\s*[1-9]/iu;
 // A clause about CI, which the record cannot see: its results are quoted from the forge.
 const CI_WORD = /\bCI\b|\bpipeline\b|\bworkflow\b/u;
+// An outside source a report may quote: another agent, a pull request, an issue, a review. The writer's own words are
+// none: a report, handoff, or review after "this", "my", or "our", with at most one word between, as "my final report";
+// "this agent" and "this subagent"; "the test report"; and "the test output" or "my run", which name no source here.
+// "My subagent" is another agent.
+const SELF = String.raw`(?<!\b(?:this|my|our)\s+(?:[A-Za-z-]+\s+)?)`;
+const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|${SELF}review|(?<!\bthis\s)subagent|(?<!\bthis\s)agent|dispatcher|issue|ticket|comment|thread|${SELF}handoff|${SELF}(?<!\btest\s)report|brief|author|commit\s+message|bot)`;
+const SAYS = String.raw`(?:says?|said|claim(?:s|ed)?|states?|stated|reports?|reported|writes|wrote|lists?|listed|quotes?|quoted|asserts?|asserted)`;
+// A clause an outside source governs: one that opens with "according to" it, or a part of it, split at a coordinating
+// "and", in which a source and a verb of saying come right before the command (saidBefore, built with the suites).
+const ACCORDING = new RegExp(String.raw`^\W*according\s+to\s+(?:\S+\s+){0,2}?${SOURCE}\b`, 'iu');
+const commandWords = (suites) => ['`[^`\\n]*`', ...suites.map((suite) => `(?<![\\w-])${escape(suite)}\\b`)];
+const saidBefore = (suites) => {
+  const command = ['`', ...suites.map((suite) => `${escape(suite)}\\b`)].join('|');
+  return new RegExp(String.raw`\b${SOURCE}(?:'s)?\s+(?:\S+\s+){0,2}?${SAYS}(?:\s+that)?\s*:?\s+["“]?(?=${command})`, 'iu');
+};
+// A part that ends at its list of commands, with no predicate after them, as "the PR body says `npm test`" before
+// "and `vitest run` passed": what the source says of them follows.
+const endsAtCommand = (suites) => new RegExp(`(?:${commandWords(suites).join('|')})[\\s,.;:]*$`, 'u');
+
+// The most JSON values a report's reading parses (reportTexts): past it, a fence stays fenced code and a `{` line text.
+const HANDOFF_PARSES = 100;
+
+// The texts of a report, each its writer's own, read in one pass over its lines with fences found as unfencedLines
+// finds them. A machine handoff's JSON gives each string value of it as a text: a ```json fence whose content parses,
+// or an object that opens on a line starting with `{` outside any fence. Any other fence, a ```jsonc one or a ```json
+// one that does not parse, stays fenced code, and the prose around them is text, so a claim after a fence still counts.
+function reportTexts(report) {
+  const lines = report.split(/\r?\n/u);
+  const fenced = fencedLines(report);
+  const texts = [];
+  let prose = [];
+  let parses = 0;
+  const handoff = (value) => {
+    if (prose.length) texts.push(prose.join('\n'));
+    prose = [];
+    for (const text of stringsOf(value)) texts.push(text);
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (fenced[index]) {
+      const { end, last } = fenceBlock(lines, fenced, index);
+      const json = /^\s*(?:`{3,}|~{3,})\s*json\s*$/iu.test(line) && parses < HANDOFF_PARSES;
+      parses += json ? 1 : 0;
+      const value = json ? parsed(lines.slice(index + 1, end).join('\n')) : undefined;
+      if (value !== null && typeof value === 'object') handoff(value);
+      else for (const each of lines.slice(index, last + 1)) prose.push(each);
+      index = last;
+    } else if (line.startsWith('{') && parses < HANDOFF_PARSES) {
+      parses += 1;
+      const object = bareObject(lines, index);
+      if (!object) {
+        prose.push(line);
+        continue;
+      }
+      handoff(object.value);
+      if (object.after.trim()) prose.push(object.after);
+      index = object.through;
+    } else {
+      prose.push(line);
+    }
+  }
+  if (prose.length) texts.push(prose.join('\n'));
+  return texts;
+}
+
+// The fenced block that opens on line `index` of `lines`, `fenced` marking each fenced line (fencedLines), as
+// { end, last }: `end` the closing fence's line, or the first line past the block when none closes it, and `last` the
+// block's last line.
+function fenceBlock(lines, fenced, index) {
+  const open = fenceOf(lines[index]);
+  let end = index + 1;
+  while (end < lines.length && fenced[end] && !(open && closes(fenceOf(lines[end]), open))) end += 1;
+  return { end, last: end < lines.length && fenced[end] ? end : end - 1 };
+}
+
+// The JSON object that opens on line `index` of `lines`, as { value, through, after }: the line it ends on, and the
+// text after it there; or null when it does not close or parse.
+function bareObject(lines, index) {
+  const rest = lines.slice(index).join('\n');
+  const end = jsonEnd(rest, 0);
+  const value = end === null ? undefined : parsed(rest.slice(0, end));
+  if (value === undefined) return null;
+  const text = rest.slice(0, end);
+  const through = index + (text.match(/\n/gu)?.length ?? 0);
+  return { value, through, after: lines[through].slice(end - text.lastIndexOf('\n') - 1) };
+}
+
+// `text` parsed as JSON, or undefined when it does not parse.
+function parsed(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+// The index after the JSON value that opens at `start` of `text`, by its brackets outside strings, or null.
+function jsonEnd(text, start) {
+  let depth = 0;
+  let inString = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (char === '\\') index += 1;
+      else if (char === '"') inString = false;
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === '{' || char === '[') {
+      depth += 1;
+    } else if ((char === '}' || char === ']') && --depth === 0) {
+      return index + 1;
+    }
+  }
+  return null;
+}
+
+// Every string value in a parsed JSON value, in order.
+// Read with a stack, not recursion, so no nesting depth throws.
+function stringsOf(value) {
+  const strings = [];
+  const stack = [value];
+  while (stack.length) {
+    const next = stack.pop();
+    if (typeof next === 'string') strings.push(next);
+    else if (next !== null && typeof next === 'object') {
+      // One push a value, from the last, so the first is read first; a spread of a large array would throw.
+      const values = Object.values(next);
+      for (let index = values.length - 1; index >= 0; index -= 1) stack.push(values[index]);
+    }
+  }
+  return strings;
+}
+
+// A Markdown block quote line.
+const BLOCK_QUOTE = /^\s{0,3}>/u;
 // A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one.
 const COMMIT_ID = /\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b/gu;
 // The pass counts a clause states: "4071/4071", "12 pass", "pass 12", "12 tests passed". A number after a word, as in
@@ -309,12 +508,27 @@ const PASS_COUNT = /(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s*\/\s*\d+\b|(?<!\
 // `testing.fullSuite` command, also as plain words.
 // Each is { clause, key, counts, commits }: `key` the command's (commandKey), `counts` the pass counts it states, and
 // `commits` the commit ids it names, such as "at 056c3c2", which the pull request body rule reads the tree of.
-export function passClaims(body, { section = 'Tests run', testing = {} } = {}) {
-  const lines = section === null ? [...unfencedLines(body)] : sectionLines(body, section);
+// `ownOnly` leaves out what the text quotes from another: block quote lines, and what an outside source governs
+// (ownClause). Words in double quotes are the writer's, as "reported \"126/126 pass\"" quotes its own run. A whole report
+// (`section` null) with a machine handoff's JSON object is read a string value at a time (reportTexts). A subagent's
+// report quotes other agents and pull request bodies; a pull request body's `## Tests run` section is its author's own,
+// so that rule reads every line.
+export function passClaims(body, { section = 'Tests run', testing = {}, ownOnly = false } = {}) {
   const suites = (testing.fullSuite ?? []).map(keyOfText).filter(Boolean);
+  const own = { said: saidBefore(suites), ends: endsAtCommand(suites) };
+  const texts = ownOnly && section === null ? reportTexts(String(body)) : [body];
+  return texts.flatMap((text) => textClaims(text, { section, testing, ownOnly, suites, own }));
+}
+
+// The claims of one text, as passClaims reads them.
+function textClaims(body, { section, testing, ownOnly, suites, own }) {
+  let lines = section === null ? [...unfencedLines(body)] : sectionLines(body, section);
+  // A block quote line ends its paragraph, as a blank line does.
+  if (ownOnly) lines = lines?.map((line) => (BLOCK_QUOTE.test(line) ? '' : line));
   const claims = [];
   for (const unit of units(lines ?? [])) {
-    for (const clause of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
+    for (const written of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
+      const clause = ownOnly ? ownClause(written, own) : written;
       if (!PASS_WORD.test(clause) || FAIL_WORD.test(clause) || CI_WORD.test(clause)) continue;
       const keys = [...clause.matchAll(/`([^`\n]+)`/gu)].flatMap(([, code]) => {
         const [segment] = lexPipeline(code).segments.filter((each) => !CHANGES_DIRECTORY.has(readInvocation(each).program));
@@ -329,6 +543,27 @@ export function passClaims(body, { section = 'Tests run', testing = {} } = {}) {
     }
   }
   return claims;
+}
+
+// The part of `clause` that is the writer's own: '' when it opens with "according to" an outside source, else its parts,
+// split at a coordinating "and", but those in which an outside source says the command (`said`). A dropped part that
+// ends at its list of commands (`ends`) carries the saying into the next part, whose predicate is the source's:
+// "the PR body says `npm test` and `vitest run` passed" is all the body's, while in "the issue says `npm test` hangs,
+// and `vitest run` passed 3/3" the second part is the writer's. "Fixed the issue reported in the ticket and `npm test`
+// passed" keeps its claim.
+function ownClause(clause, { said, ends }) {
+  if (ACCORDING.test(clause)) return '';
+  const parts = clause.split(/(,?\s+and\s+)/iu);
+  const kept = [];
+  let carried = false;
+  for (let index = 0; index < parts.length; index += 2) {
+    const part = parts[index];
+    const dropped = carried || said.test(part);
+    carried = dropped && ends.test(part);
+    // A joining "and" stays before a kept part that follows another kept one.
+    if (!dropped) kept.push(kept.length ? parts[index - 1] : '', part);
+  }
+  return kept.join('');
 }
 
 // The list items and paragraphs of `lines`, each one string: a list marker starts one, a blank line or a heading ends it,

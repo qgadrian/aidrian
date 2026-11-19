@@ -503,7 +503,7 @@ It runs only where every switch of the background route is on, and `session.hand
    follows the new session, for 12 hours, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
    hooks and shows the last message. It checks the process is still the host's program that shell started, and sends
    the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
-   A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
+   A stop the announce, review-loop, or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
    skips the session-length reminder.
 3. The host's program exits, and the shell function opens the new session in the same terminal.
 

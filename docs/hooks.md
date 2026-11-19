@@ -34,7 +34,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)); the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
+| The main session ends a turn | The [announce check](#announced-work), the [review-loop check](#review-loop-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop check Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
 | A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
@@ -139,6 +139,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
 | [Tracker write guard](config.md#tracker) | Off unless config.json sets `"tracker": { "enabled": true }`, with the keys that key needs |
+| [Review-loop check](#review-loop-check) | `"github": { "reviewLoop": "ask" }` |
 | Session-length reminder and plan handoff offer | `"session": { "handoff": { "mode": "off" } }` |
 | [Handoff continuation](handoff.md#continue), and its session start, new turn, and session end steps | No config turns the steps off: on a host with a route they run, and act only on a continuation the gate armed. The gate arms one only for `session.handoff.continue`, such as `"session": { "handoff": { "continue": "clear" } }`, or the `session-handoff` skill's `--continue`; with `"none"`, the default, and no `--continue`, nothing is armed |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery and background checks still run |
@@ -147,6 +148,7 @@ A session that reaches a known server the key leaves out hears it at the start.
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
 The knowledge, names, and lessons start lines and the [announce check](#announced-work) have no switch; they act only inside a project folder.
+The [review-loop check](#review-loop-check) has no switch of its own: it follows `github.reviewLoop`.
 The main-checkout start lines follow the commit guard, so they are off with it.
 [config.md](config.md#telemetry) lists the other `telemetry` keys.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
@@ -1204,6 +1206,38 @@ It runs on both hosts, from the same `hooks.json` entry. Claude Code is verified
 Codex's transcript is not read, so there the message is the payload's alone;
 the reason names the question tool as each host's model calls it, `AskUserQuestion` or `request_user_input`.
 
+## Review-loop check
+
+When the main session ends a turn that opened or updated a draft pull request and ran no review after it, and config.json
+[`github.reviewLoop`](config.md#keys) is `"auto"`, the default, the Stop hook sends it back once (`lib/stop-review-loop.mjs`).
+A direct run of a skill such as `issue-implement` ends at the draft and its report, so a turn that stopped there left the
+review loop, marking the draft ready, and [auto-merge](config.md#auto-merge) undone. The agent runs the `pr-review-loop`
+skill on the pull request as the session's own step, or ends the turn again when a skill or agent that runs its own loop
+owns the pull request, when none was opened or updated, when the run is stopped on a question only the Human can answer,
+or when the Human asked the run to stop at the draft. Its second stop always ends.
+
+- The turn is what the transcript holds since the Human's last prompt: a `user` entry that is a prompt, not `isMeta`,
+  `isSidechain`, or `isCompactSummary`, with no `origin` or `origin.kind` `"human"`, or a message the Human typed while
+  the agent worked, which Claude Code writes as a `queued_command` attachment. A task notification marked with its own
+  `origin.kind` is not the Human's prompt; a peer session's message with no `origin` reads as one, which only narrows the
+  turn and keeps the check silent. With no such prompt, the whole transcript is the turn. A draft opened before the
+  Human last wrote, such as before a request to stop, never counts.
+- A draft is a `gh pr create` with `--draft` whose result is no error and names a pull request URL, or a `gh pr edit`
+  that ran after a `pr-write` run, a Skill call whose result is no error or a typed slash command.
+  A `pr-write` run that published nothing, such as one stopped on a failed check, is no draft.
+  A `pr-write` update after a review earlier in the turn is the loop's own, such as copying residuals into the body
+  before it marks the draft ready, and is no draft either, even when the turn started at the loop on a pull request
+  from an earlier turn. A draft create after a review is a new pull request and counts.
+- A review is what the health report counts as a review run: a `pr-review-loop` or `pr-review` Skill call that ran, or
+  such a typed slash command, or an `aidrian pr review` or `aidrian pr await-review` call whose result printed its JSON.
+  It counts only after the turn's last draft: a review before it leaves that draft unreviewed.
+- `"ask"` turns it off, and the transcript is then not parsed for it. A background task still running holds it, as it
+  holds the announce check: its end wakes the session.
+- A subagent's calls are not read, so a draft an `orchestrator` opens is its own loop's.
+
+It reads Claude Code transcripts only (`lib/transcript.mjs` `turnActions`); on Codex, whose rollout is not read, it is silent.
+It runs after the announce check and before the hand-back check.
+
 ## Hand-back check
 
 When the main session ends a turn on a message that lists items for the Human and any item says nothing of how critical
@@ -1221,7 +1255,7 @@ do it, and how critical it is. Its second stop always ends.
   a Markdown example the message quotes is not work handed back, and a code block inside an item does not end its list.
 - An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
 
-The announce check runs first; a stop it sends back is not checked here.
+The announce and review-loop checks run first; a stop either sends back is not checked here.
 
 ## Session length
 

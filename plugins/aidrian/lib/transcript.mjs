@@ -1,11 +1,13 @@
 // Reads Claude Code transcripts (JSON Lines) for the dispatch log: token use per model, an estimated cost, the effort
 // and tool calls of each request, the subagent transcripts of a session, which files an agent read, and the skills,
-// draft pull requests, and review runs of a session. Counts, names, and paths only; no message text leaves this file.
+// draft pull requests, and review runs of a session or of its last turn. Counts, names, and paths only; no message text
+// leaves this file.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { costUsd, priceFor, promptTokens } from './model-prices.mjs';
+import { isPrompt } from './names.mjs';
 import { readPrCall } from './rules/github/pr-body.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
@@ -229,6 +231,9 @@ const createsDraft = ({ segment }) => {
   return call?.subcommand === 'create' && call.draft;
 };
 
+// A pull request update: `gh pr edit`, which a pr-write run uses to publish into a pull request that is open already.
+const editsPr = ({ segment }) => readPrCall(segment)?.subcommand === 'edit';
+
 // Whether a walked command runs a review: `aidrian pr review` or `aidrian pr await-review`, by any path to aidrian.
 function runsReview({ invocation }) {
   const words = aidrianArgs(invocation);
@@ -282,12 +287,13 @@ const resultText = (content) =>
 function actionOf(block) {
   if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
     const skill = block.input.skill.replace(/^\//u, '');
-    return { skill, review: REVIEW_SKILLS.has(skill.split(':').at(-1)), draft: false };
+    return { skill, review: REVIEW_SKILLS.has(baseName(skill)), draft: false, edit: false };
   }
   if (block.name !== 'Bash' || typeof block.input?.command !== 'string') return null;
   const review = runs(block.input.command, runsReview);
   const draft = runs(block.input.command, createsDraft);
-  return review || draft ? { skill: null, review, draft, command: block.input.command } : null;
+  const edit = runs(block.input.command, editsPr);
+  return review || draft || edit ? { skill: null, review, draft, edit, command: block.input.command } : null;
 }
 
 // What a session did that the health report judges, over its transcripts: { skills, drafts_opened, review_runs }.
@@ -308,31 +314,11 @@ export function sessionActions(texts) {
   for (const text of texts) {
     for (const line of text.split('\n')) {
       const entry = parseLine(line);
-      const content = entry?.message?.content;
-      if (entry?.type === 'user') {
-        const typed = typeof content === 'string' ? content
-          : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => block.text).join('\n') : '';
-        for (const match of typed.matchAll(COMMAND_NAME)) {
-          if (!isPluginSkill(match[1])) continue;
-          skills.add(match[1]);
-          if (REVIEW_SKILLS.has(match[1].split(':').at(-1))) commandReviews.add(entry.uuid ?? line);
-        }
+      for (const skill of typedSkills(entry)) {
+        skills.add(skill);
+        if (REVIEW_SKILLS.has(baseName(skill))) commandReviews.add(entry.uuid ?? line);
       }
-      if (!Array.isArray(content)) continue;
-      for (const block of content) {
-        if (block?.type === 'tool_use' && typeof block.id === 'string' && !calls.has(block.id)) {
-          const action = actionOf(block);
-          if (action) calls.set(block.id, { ...action, ran: false, opened: false, reviewed: false });
-        }
-        const call = block?.type === 'tool_result' ? calls.get(block.tool_use_id) : undefined;
-        if (!call) continue;
-        const output = resultText(block.content);
-        if (block.is_error !== true) {
-          call.ran = true;
-          if (call.draft && PR_URL.test(output)) call.opened = true;
-        }
-        call.reviewed ||= call.review && (call.skill ? call.ran : printedReview(output, call.command));
-      }
+      settleCalls(entry, calls);
     }
   }
   const all = [...calls.values()];
@@ -342,6 +328,94 @@ export function sessionActions(texts) {
     drafts_opened: all.filter((call) => call.opened).length,
     review_runs: commandReviews.size + all.filter((call) => call.reviewed).length,
   };
+}
+
+const baseName = (skill) => skill.split(':').at(-1);
+
+// This plugin's skills a slash command typed in a user entry names; none for any other entry. Only the entry's string or
+// text blocks are read, so a tool result that quotes a command is none.
+function typedSkills(entry) {
+  if (entry?.type !== 'user') return [];
+  const content = entry.message?.content;
+  const typed = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => block.text).join('\n') : '';
+  return [...typed.matchAll(COMMAND_NAME)].map((match) => match[1]).filter(isPluginSkill);
+}
+
+// Reads one entry's tool calls and results into `calls`, as sessionActions counts them: a call actionOf counts is added
+// under its id, once, and a result settles the call of its id. `ran` is a result that is no error, `opened` a draft
+// create's such result that names a pull request URL, and `reviewed` a review skill that ran or a review command whose
+// result printed its JSON. Returns the calls a result settled in this entry, in order.
+function settleCalls(entry, calls) {
+  const settled = [];
+  const content = entry?.message?.content;
+  if (!Array.isArray(content)) return settled;
+  for (const block of content) {
+    if (block?.type === 'tool_use' && typeof block.id === 'string' && !calls.has(block.id)) {
+      const action = actionOf(block);
+      if (action) calls.set(block.id, { ...action, ran: false, opened: false, reviewed: false });
+    }
+    const call = block?.type === 'tool_result' ? calls.get(block.tool_use_id) : undefined;
+    if (!call) continue;
+    const output = resultText(block.content);
+    if (block.is_error !== true) {
+      call.ran = true;
+      if (call.draft && PR_URL.test(output)) call.opened = true;
+    }
+    call.reviewed ||= call.review && (call.skill ? call.ran : printedReview(output, call.command));
+    settled.push(call);
+  }
+  return settled;
+}
+
+// The skills whose run opens or updates a pull request through a draft create or `gh pr edit`.
+const DRAFT_SKILLS = new Set(['pr-write']);
+
+// A prompt the Human wrote: a user entry names.mjs reads as a prompt, not the host's own (isMeta), a subagent's
+// (isSidechain), or a compaction summary, with no origin or a human one; or a message the Human typed while the agent
+// worked, which Claude Code writes as a `queued_command` attachment with no user entry (rules/review-extend.mjs names the
+// shape). A task notification marked as such is none. The reading is broad on purpose: a boundary it misses can only
+// send a turn back wrongly, while an extra one only narrows the turn, which keeps the check silent.
+const humanPrompt = (entry) => {
+  if (entry.type === 'attachment') return entry.attachment?.type === 'queued_command' && (entry.attachment.origin?.kind ?? 'human') === 'human';
+  return entry.type === 'user' && entry.isMeta !== true && entry.isSidechain !== true && entry.isCompactSummary !== true
+    && (entry.origin?.kind ?? 'human') === 'human' && isPrompt(entry.message?.content);
+};
+
+// What the main session did since the Human's last prompt, in transcript order: [{ kind: 'draft' | 'review' }], or the
+// whole transcript's with no such prompt. A draft is a draft create that opened a pull request, or a `gh pr edit` that
+// ran after a pr-write run (a Skill call that ran, or a typed command) with no review earlier in the turn: a pr-write run
+// that published nothing, such as one stopped on a failed check, is none, and an update after a review is the loop's
+// own, as when it copies residuals into the body, even when the turn started at the loop on an earlier turn's pull
+// request. A draft create after a review still counts. A review is what sessionActions counts as a review run. A call
+// counts only by its result, as there. A subagent's entries are skipped. The stop hook's review-loop check reads it
+// (stop-review-loop.mjs); kinds only: no message text leaves this function.
+export function turnActions(text) {
+  const entries = text.split('\n').map(parseLine).filter((entry) => entry && entry.isSidechain !== true);
+  const start = Math.max(entries.findLastIndex(humanPrompt), 0);
+  const calls = new Map();
+  const actions = [];
+  let writing = false;
+  let reviewed = false;
+  const review = () => {
+    actions.push({ kind: 'review' });
+    reviewed = true;
+  };
+  for (const entry of entries.slice(start)) {
+    for (const skill of typedSkills(entry)) {
+      if (DRAFT_SKILLS.has(baseName(skill))) writing = true;
+      if (REVIEW_SKILLS.has(baseName(skill))) review();
+    }
+    for (const call of settleCalls(entry, calls)) {
+      if (call.skill && call.ran && DRAFT_SKILLS.has(baseName(call.skill))) writing = true;
+      if (call.opened || (writing && !reviewed && call.edit && call.ran)) {
+        actions.push({ kind: 'draft' });
+        writing = false;
+      }
+      if (call.reviewed) review();
+    }
+  }
+  return actions;
 }
 
 // The text of the transcript's first user message: a subagent's brief, the prompt its dispatcher wrote. A string, or the

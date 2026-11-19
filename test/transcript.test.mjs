@@ -11,7 +11,7 @@ import { awaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -241,6 +241,77 @@ test('sessionActions reads the commands a Bash call runs, not the text that name
   assert.deepEqual(actions('/opt/plugin/bin/aidrian pr await-review 12'), { drafts_opened: 0, review_runs: 1 }, 'aidrian by its path');
   assert.deepEqual(actions('node /opt/plugin/lib/cli.mjs pr review 12'), { drafts_opened: 0, review_runs: 1 }, 'the cli run by node');
   assert.deepEqual(actions('aidrian pr status 12'), { drafts_opened: 0, review_runs: 0 }, 'another pr subcommand');
+});
+
+// turnActions fixtures, as Claude Code writes them: a prompt the Human typed, a tool call, and its result.
+const turn = {
+  human: (content, extra = {}) => JSON.stringify({ type: 'user', origin: { kind: 'human' }, message: { role: 'user', content }, ...extra }),
+  call: (id, name, input) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } }),
+  result: (id, content, isError = false) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } }),
+};
+const draftOpened = (id, pr = 40) => [turn.call(id, 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }), turn.result(id, `https://github.com/acme/notes/pull/${pr}`)];
+const loopRan = (id) => [turn.call(id, 'Skill', { skill: 'aidrian:pr-review-loop' }), turn.result(id, 'Launching skill: aidrian:pr-review-loop')];
+const kinds = (...lines) => turnActions(lines.flat().join('\n')).map((action) => action.kind);
+
+test('turnActions lists the draft and review actions since the Human`s last prompt, in transcript order', () => {
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), loopRan('k1')), ['draft', 'review']);
+  assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), draftOpened('d1')), ['review', 'draft']);
+  assert.deepEqual(kinds(draftOpened('d1')), ['draft'], 'with no prompt, the whole transcript is the turn');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.human('thanks')), [], 'a draft before the Human`s last prompt');
+  const plain = JSON.stringify({ type: 'user', message: { role: 'user', content: 'thanks' } });
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), plain), [], 'a prompt with no origin is the Human`s too');
+  const write = [turn.call('p1', 'Skill', { skill: 'aidrian:pr-write' }), turn.result('p1', 'Launching skill: aidrian:pr-write')];
+  const edit = (id, output = 'https://github.com/acme/notes/pull/40', isError = false) =>
+    [turn.call(id, 'Bash', { command: 'gh pr edit 40 --body-file b.md' }), turn.result(id, output, isError)];
+  assert.deepEqual(kinds(turn.human('go'), write, edit('e1')), ['draft'], 'a pr-write run that updated a pull request');
+  assert.deepEqual(kinds(turn.human('go'), write, draftOpened('d1')), ['draft'], 'a pr-write run that opened a draft counts once');
+  assert.deepEqual(kinds(turn.human('go'), write), [], 'a pr-write run that published nothing');
+  assert.deepEqual(kinds(turn.human('go'), write, edit('e1', 'GraphQL: Could not resolve to a PullRequest', true)), [], 'a refused edit');
+  assert.deepEqual(kinds(turn.human('go'), edit('e1')), [], 'an edit with no pr-write run before it');
+  assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), write, edit('e1')), ['review'], 'a pr-write update after a review is the loop`s own');
+  assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), write, draftOpened('d1', 41)), ['review', 'draft'], 'a draft create after a review still counts');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.call('r1', 'Skill', { skill: 'pr-review' }), turn.result('r1', 'Launching skill: pr-review')),
+    ['draft', 'review'], 'a pr-review Skill run');
+  const printed = JSON.stringify({ status: 'received', pr: 40 }, null, 2);
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.call('r1', 'Bash', { command: 'aidrian pr review 40' }), turn.result('r1', printed)),
+    ['draft', 'review'], 'a review command that printed its JSON');
+  assert.deepEqual(turnActions(''), []);
+});
+
+test('turnActions: only the Human`s prompt starts the turn, and a typed slash command is an action', () => {
+  const notification = JSON.stringify({ type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>done</task-notification>' } });
+  const peer = JSON.stringify({ type: 'user', origin: { kind: 'peer' }, message: { role: 'user', content: 'From the scout: done.' } });
+  const meta = turn.human('Base directory for this skill: /p/skills/pr-write', { isMeta: true });
+  const summary = turn.human('This session is being continued from a previous conversation.', { isCompactSummary: true });
+  const sidechain = turn.human('A subagent brief.', { isSidechain: true });
+  for (const [name, line] of Object.entries({ notification, peer, meta, summary, sidechain })) {
+    assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), line), ['draft'], `a ${name} entry is not the Human's prompt`);
+  }
+  const typed = (skill) => turn.human(`<command-message>${skill}</command-message>\n<command-name>/${skill}</command-name>`);
+  assert.deepEqual(kinds(typed('aidrian:pr-write')), [], 'a typed pr-write that published nothing');
+  assert.deepEqual(kinds(typed('aidrian:pr-write'), turn.call('e1', 'Bash', { command: 'gh pr edit 40 --title t' }), turn.result('e1', 'https://github.com/acme/notes/pull/40')),
+    ['draft'], 'a typed pr-write that updated a pull request');
+  const queued = (origin = { kind: 'human' }) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', humanTurn: true, origin, prompt: 'stop at the draft' } });
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued()), [], 'a message the Human typed mid-turn starts the turn');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued({ kind: 'task-notification' })), ['draft'], 'a queued task notification does not');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued({ kind: 'peer' })), ['draft'], 'a queued peer message does not');
+  assert.deepEqual(kinds(draftOpened('d1'), typed('aidrian:pr-review-loop')), ['review'], 'a typed review skill starts the turn and is its action');
+  assert.deepEqual(kinds(typed('aidrian:pr-review')), ['review']);
+  assert.deepEqual(kinds(typed('clear')), [], 'the host`s own command');
+  const sideCall = JSON.stringify({ type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'tool_use', id: 's1', name: 'Bash', input: { command: 'gh pr create --draft --fill' } }] } });
+  const sideResult = JSON.stringify({ type: 'user', isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: 'https://github.com/acme/notes/pull/41' }] } });
+  assert.deepEqual(kinds(turn.human('go'), sideCall, sideResult), [], 'a subagent`s call is not the main session`s');
+});
+
+test('turnActions counts a call only by its result: refused, unanswered, URL-less, and non-draft creates count nowhere', () => {
+  const none = (...lines) => assert.deepEqual(kinds(turn.human('go'), ...lines), []);
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --draft --fill' }), turn.result('d1', 'pr-body: the body has no ## Summary heading.', true));
+  none(turn.call('k1', 'Skill', { skill: 'aidrian:pr-review-loop' }), turn.result('k1', 'Permission to use Skill has been denied.', true));
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --draft --fill' }));
+  none(turn.call('k1', 'Skill', { skill: 'aidrian:pr-review-loop' }));
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --draft --fill' }), turn.result('d1', 'Creating pull request for fix/x into main'));
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --title t --body-file b.md' }), turn.result('d1', 'https://github.com/acme/notes/pull/40'));
+  none(turn.call('r1', 'Bash', { command: 'false && aidrian pr review 40' }), turn.result('r1', 'Exit code 1', true));
 });
 
 test('launchedTaskIds takes ids from the structured result of the calls that launched or resumed a task, never from text', () => {

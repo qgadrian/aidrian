@@ -70,7 +70,10 @@ export function announcedWork(input, transcript, { ai = null, human = 'the Human
   const message = typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()
     ? input.last_assistant_message
     : typeof transcript === 'string' ? lastReply(transcript) : '';
-  const running = Array.isArray(input.background_tasks)
-    && input.background_tasks.some((task) => typeof task?.id === 'string' && !ENDED_STATUSES.has(task.status));
-  return announceReason({ message, ai, human, running, questionTool });
+  return announceReason({ message, ai, human, running: backgroundRunning(input), questionTool });
 }
+
+// Whether a Stop payload lists a background task that still runs: its end wakes the main session, and the notification
+// it sends is not the Human's prompt. The review-loop check holds on it too (stop-review-loop.mjs).
+export const backgroundRunning = (input) => Array.isArray(input.background_tasks)
+  && input.background_tasks.some((task) => typeof task?.id === 'string' && !ENDED_STATUSES.has(task.status));

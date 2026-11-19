@@ -1,0 +1,28 @@
+// The review-loop check behind the Stop hook: a main-session turn that opened or updated a draft pull request, under
+// config.json `github.reviewLoop` "auto", and ran no review after it. A direct run of a skill such as issue-implement
+// ends at the draft and its report, and the turn then stopped there, so the review loop, marking the draft ready, and
+// auto-merge never ran. The hook sends the agent back once, to run the loop as the session's own step.
+// docs/hooks.md#review-loop-check describes it.
+//
+// The turn is what lib/transcript.mjs turnActions reads: since the Human's last prompt, so a draft opened before the
+// Human wrote, such as before a request to stop, never counts. Pure: the hook passes in the payload and the actions.
+
+import { backgroundRunning } from './stop-announce.mjs';
+
+// Why the agent is sent back, or null. `actions` is turnActions' result, or null with no transcript to read; `reviewLoop`
+// is config.json `github.reviewLoop`; `human` the name config.json `names` gives (docs/config.md#names). Null unless the
+// loop is "auto", no background task still runs, and the turn's last draft action has no review action after it.
+// The loop's own update after its review, as when it copies residuals into the body through pr-write before it marks
+// the draft ready, is no draft action (transcript.mjs turnActions), so a draft after a review is a new pull request.
+export function reviewLoopOwed(input, actions, { reviewLoop, human = 'the Human' } = {}) {
+  if (reviewLoop !== 'auto' || !Array.isArray(actions) || backgroundRunning(input)) return null;
+  const lastDraft = actions.findLastIndex((action) => action?.kind === 'draft');
+  if (lastDraft === -1 || actions.findLastIndex((action) => action?.kind === 'review') > lastDraft) return null;
+  return 'This turn opened or updated a draft pull request and ran no review after it. ' +
+    'config.json `github.reviewLoop` is "auto", so run the `pr-review-loop` skill on it now, as the session\'s own step and not ' +
+    'as a step of the skill that opened it: its last step marks the draft ready as `github.markReady` says and runs ' +
+    '`pr-auto-merge`, which merges only when `aidrian pr auto-merge <n>` exits 0. ' +
+    'End the turn again instead when a skill or agent that runs its own review loop owns the pull request, ' +
+    'when no pull request was opened or updated, when the run is stopped on a question only ' +
+    `${human} can answer, or when ${human} asked the run to stop at the draft.`;
+}

@@ -1,12 +1,16 @@
-// Stop hook: two checks that can send the main session back for one more turn. Claude Code and Codex both run it from
+// Stop hook: three checks that can send the main session back for one more turn. Claude Code and Codex both run it from
 // hooks.json, and both send `stop_hook_active` and `last_assistant_message` (docs/providers/codex.md#hooks).
 // - The announce check (lib/stop-announce.mjs): the turn's last message announces work the AI is about to start, such
 //   as "Starting now unless the Human says otherwise", and stops without starting it. The agent is sent back to do it,
 //   or to ask the Human with the question tool, named as the host's model calls it. It goes first: the Human is waiting
 //   on that work now, and the session-length reminder writes its marker only when it fires, so it fires at the next stop.
+// - The review-loop check (lib/stop-review-loop.mjs): under config.json `github.reviewLoop` "auto", the turn opened or
+//   updated a draft pull request and ran no review after it, as lib/transcript.mjs turnActions reads the turn since the
+//   Human's last prompt. The agent is sent back to run the `pr-review-loop` skill. It comes second: work the run still
+//   owes comes before the wording of its report. It reads Claude Code transcripts only.
 // - The hand-back check (lib/stop-handback.mjs): the last message lists items for the Human, under a label such as
 //   "For Adrian", and an item says nothing of how critical it is. The agent is sent back to try each item, keep only
-//   real blocks, and rate each. It comes second: like the announce check, it is about the message the Human reads now.
+//   real blocks, and rate each. It comes third: like the announce check, it is about the message the Human reads now.
 // - The session-length reminder. Once continuing the main session costs config.json `session.handoff.costRatio` times
 //   what a fresh session started from a handoff brief would, or its context passes the optional `maxTokens` ceiling, the
 //   agent is sent back for one more turn to judge whether a handoff is worth it: in `ask` mode to ask the user, in `auto`
@@ -19,7 +23,7 @@
 //   is stopMarkerPath's, which `aidrian session snapshot` reads too; it is read no-follow, capped, and only when this user
 //   owns it, and written as a new temporary file, mode 0600, renamed over it, so no write follows a symlink there.
 // `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
-// sent back, so nothing can loop: each stop sends back at most once, for one of the three.
+// sent back, so nothing can loop: each stop sends back at most once, for one of the four.
 // - The terminal hand-over (lib/terminal-replace.mjs endAfterTurn): on a stop no check sends back, sent back before or
 //   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it, or
 //   follows it, opens the background session that took the work; a background session no terminal follows only stops
@@ -37,7 +41,8 @@ import { findProject } from '../lib/project.mjs';
 import { continuation, stopMarkerPath, stopReminder } from '../lib/session-length.mjs';
 import { announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
 import { handBack } from '../lib/stop-handback.mjs';
-import { readText } from '../lib/transcript.mjs';
+import { reviewLoopOwed } from '../lib/stop-review-loop.mjs';
+import { readText, turnActions } from '../lib/transcript.mjs';
 
 await runHook(async (input) => {
   const settled = input.stop_hook_active === false;
@@ -54,6 +59,11 @@ await runHook(async (input) => {
       ai: names.ai ?? host.ai, human: names.human, questionTool: host.nativeToolName(QUESTION_TOOL),
     });
     if (announced) deny(announced);
+    // The transcript is parsed for it only under "auto": the parse is the check's whole cost on a long session.
+    const { reviewLoop } = config.github;
+    const actions = reviewLoop === 'auto' && typeof transcriptText === 'string' ? turnActions(transcriptText) : null;
+    const owed = reviewLoopOwed(input, actions, { reviewLoop, human: names.human });
+    if (owed) deny(owed);
     const handedBack = handBack(input, transcriptText, { human: names.human });
     if (handedBack) deny(handedBack);
   }

@@ -90,6 +90,18 @@ const PYTEST_PASS = '============================= test session starts =========
 const PYTEST_FAIL = '========================= 1 failed, 11 passed in 0.10s =========================\n';
 const RSPEC = 'Finished in 0.01 seconds (files took 0.1 seconds to load)\n12 examples, 2 failures\n';
 const MIX = 'Finished in 0.03 seconds (0.02s async, 0.01s sync)\n10 tests, 0 failures\n';
+const PLAYWRIGHT = 'Running 5 tests using 2 workers\n\n  1) [chromium] › tests/a.spec.ts:3:5 › opens the page ─────────────\n\n' +
+  '    Error: expect(received).toBe(expected)\n\n  1 failed\n    [chromium] › tests/a.spec.ts:3:5 › opens the page ─────────────\n' +
+  '  4 passed (3.2s)\n';
+const CARGO = 'running 3 tests\ntest a ... ok\ntest b ... ok\ntest c ... ok\n\n' +
+  'test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n' +
+  '     Running tests/it.rs (target/debug/deps/it-0a1b2c)\n\nrunning 2 tests\n' +
+  'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n' +
+  '   Doc-tests mycrate\n\nrunning 0 tests\n\n' +
+  'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n';
+const JEST_TWO = 'Tests:       1 failed, 4 passed, 5 total\nTime:        1.2 s\n...\nTests:       3 passed, 3 total\nTime:        0.4 s\n';
+const TURBO = 'web:test:  Test Files  2 passed (2)\nweb:test:       Tests  5 passed (5)\napi:test: Tests:       3 passed, 3 total\n' +
+  ' Tasks:    2 successful, 2 total\n';
 
 test('counts come from one summary: node\'s, else the Tests line, else the last summary line', () => {
   assert.deepEqual(runCounts('ℹ tests 5\nℹ pass 4\nℹ fail 1\n12 passed elsewhere'), { pass: 4, fail: 1 });
@@ -99,12 +111,17 @@ test('counts come from one summary: node\'s, else the Tests line, else the last 
   assert.deepEqual(runCounts(JEST_PASS), { pass: 5, fail: 0 }, 'the Tests line, not Test Suites plus Tests');
   assert.deepEqual(runCounts(PYTEST_PASS), { pass: 12, fail: 0 });
   assert.deepEqual(runCounts(PYTEST_FAIL), { pass: 11, fail: 1 });
-  assert.deepEqual(runCounts(`lint: 3 passed\n${PYTEST_PASS}`), { pass: 12, fail: 0 }, 'the last summary line, never a sum');
+  assert.deepEqual(runCounts(`lint: 3 passed\n${VITEST_PASS}`), { pass: 5, fail: 0 }, 'the Tests family alone, never another family added');
+  assert.deepEqual(runCounts(PLAYWRIGHT), { pass: 4, fail: 1 }, 'Playwright\'s own lines');
+  assert.deepEqual(runCounts(CARGO), { pass: 5, fail: 0 }, 'every cargo test result, the doc-tests\' 0 included');
+  assert.deepEqual(runCounts(JEST_TWO), { pass: 7, fail: 1 }, 'two jest runs, the first failing');
+  assert.deepEqual(runCounts(TURBO), { pass: 8, fail: 0 }, 'Tests lines behind a task prefix, not Test Files');
+  assert.deepEqual(runCounts(`${VITEST_PASS}  2 failed\n`), { pass: 5, fail: 2 }, 'a failed line anywhere fails the run');
   assert.deepEqual(runCounts(RSPEC), { pass: 10, fail: 2 });
   assert.deepEqual(runCounts(MIX), { pass: 10, fail: 0 });
   assert.deepEqual(runCounts('lint ok'), { pass: null, fail: null });
-  for (const output of [VITEST_PASS, JEST_PASS, PYTEST_PASS, MIX]) assert.equal(runStatus(runCounts(output), false), 'passed', output);
-  for (const output of [VITEST_FAIL, PYTEST_FAIL, RSPEC]) assert.equal(runStatus(runCounts(output), false), 'failed', output);
+  for (const output of [VITEST_PASS, JEST_PASS, PYTEST_PASS, MIX, CARGO, TURBO]) assert.equal(runStatus(runCounts(output), false), 'passed', output);
+  for (const output of [VITEST_FAIL, PYTEST_FAIL, RSPEC, PLAYWRIGHT, JEST_TWO]) assert.equal(runStatus(runCounts(output), false), 'failed', output);
   assert.equal(runStatus({ pass: null, fail: null }, true), 'passed', 'an exit of 0 the line carries passes');
   assert.equal(runStatus({ pass: 4, fail: 1 }, true), 'failed');
   assert.equal(runStatus({ pass: null, fail: null }, false), 'unjudged', 'no exit status and no counts is no verdict');
@@ -122,21 +139,25 @@ test('the working trees count uncommitted files, with and without the untracked 
   git('add', '-A');
   git('commit', '-q', '-m', 'third');
   assert.equal(before.tree, git('rev-parse', 'HEAD^{tree}'), 'a commit that holds it');
-  assert.deepEqual(workingTree(path.join(dir, '.aidrian')), { tree: before.tree, trackedTree: before.tree }, 'from a subfolder too');
+  assert.deepEqual(before.untrackedCode, [], 'a text file is no code');
+  assert.deepEqual(workingTree(path.join(dir, '.aidrian')), { tree: before.tree, trackedTree: before.tree, untrackedCode: [] }, 'from a subfolder too');
   assert.equal(git('status', '--porcelain'), '', 'the checkout\'s own index is untouched');
+  mkdirSync(path.join(dir, 'lib'));
+  writeFileSync(path.join(dir, 'lib/new.mjs'), 'x\n');
+  assert.deepEqual(workingTree(path.join(dir, '.aidrian')).untrackedCode, ['lib/new.mjs'], 'untracked code, from the top');
 });
 
 test('a row a finished run, with the status the line carries', () => {
   const tree = () => ({ tree: 'abc', trackedTree: 'abd' });
   const row = (command, output, exitZero = true) => checkRows({ command, cwd: '/w', output, exitZero, tree, at: 't', testing: TESTING });
-  assert.deepEqual(row('npm run check', 'ℹ pass 4\nℹ fail 0'), [{ at: 't', agentId: null, command: 'npm run check', tree: 'abc', trackedTree: 'abd', status: 'passed', pass: 4, fail: 0 }]);
+  assert.deepEqual(row('npm run check', 'ℹ pass 4\nℹ fail 0'), [{ at: 't', agentId: null, command: 'npm run check', tree: 'abc', trackedTree: 'abd', untrackedCode: [], status: 'passed', pass: 4, fail: 0 }]);
   assert.equal(row('npm run check | tail -3', 'lint ok')[0].status, 'unjudged', 'a pipe hides the exit status, and no count says');
   assert.equal(row('npm run check | tail -3', 'ℹ pass 9\nℹ fail 0')[0].status, 'passed');
   assert.equal(row('npm run check', 'ℹ pass 9\nℹ fail 0', false)[0].status, 'passed', 'a host with no exit status judges by counts');
   assert.equal(row('npm run check', 'lint ok', false)[0].status, 'unjudged', 'and leaves a run with no count unjudged');
   assert.deepEqual(row('git status', ''), []);
   assert.deepEqual(checkRows({ command: 'npm test', cwd: '/w', output: '', exitZero: true, tree: () => ({ tree: null, trackedTree: null }), at: 't' }),
-    [{ at: 't', agentId: null, command: 'npm test', tree: null, trackedTree: null, status: 'passed', pass: null, fail: null }], 'no tree: the row says so');
+    [{ at: 't', agentId: null, command: 'npm test', tree: null, trackedTree: null, untrackedCode: [], status: 'passed', pass: null, fail: null }], 'no tree: the row says so');
 });
 
 const BODY = (lines) => `## Summary\n\n- x\n\n## Tests run\n\n${lines.join('\n')}\n`;
@@ -171,6 +192,8 @@ test('a claim needs a run of its command that passed, at the tree, with the coun
   const run = { command: 'npm run check', status: 'passed', pass: 4071, fail: 0, tree: 't1', trackedTree: 't3' };
   assert.deepEqual(unsupportedClaims(claims, [run], { tree: 't1' }), []);
   assert.deepEqual(unsupportedClaims(claims, [run], { tree: 't3' }), [], 'the tracked files\' tree');
+  assert.equal(unsupportedClaims(claims, [{ ...run, untrackedCode: ['lib/new.mjs'] }], { tree: 't3' }).length, 1, 'not beside untracked code');
+  assert.deepEqual(unsupportedClaims(claims, [{ ...run, untrackedCode: ['lib/new.mjs'] }], { tree: 't1' }), [], 'whose full tree still counts');
   assert.equal(unsupportedClaims(claims, [run], { tree: 't2' }).length, 1, 'another tree');
   assert.equal(unsupportedClaims(claims, [{ ...run, pass: 4031, fail: 40, status: 'failed' }], { tree: 't1' }).length, 1, 'a failed run');
   assert.equal(unsupportedClaims(claims, [{ ...run, status: 'unjudged', pass: null, fail: null }], { tree: 't1' }).length, 1, 'an unjudged run');
@@ -264,12 +287,21 @@ test('the pull request body rule refuses a pass the session record does not supp
   assert.equal(judge([claim], null), null, 'a session with no readable record is not judged');
   assert.equal(judge([claim], [], { command: `${create} --head other-branch` }), null, 'a body for another branch is not judged');
 
-  // A run made beside an untracked scratch file, then a commit that leaves the file out.
+  // A run made beside an untracked code file, then a commit that leaves the file out: the run may have loaded it.
   writeFileSync(path.join(dir, 'README.md'), 'fixed\n');
-  writeFileSync(path.join(dir, 'scratch.txt'), 's\n');
-  const ran = workingTree(dir);
+  mkdirSync(path.join(dir, 'lib'));
+  writeFileSync(path.join(dir, 'lib/new.mjs'), 'export const n = 1;\n');
+  const withCode = workingTree(dir);
   git('add', 'README.md');
   git('commit', '-q', '-m', 'fix');
+  assert.match(judge([claim], [{ ...run, ...withCode }]) ?? '', /Untracked code beside the run, which the commit lacks: `lib\/new\.mjs`; `git add` it, or remove it, and rerun\./u);
+  // The same beside an untracked scratch note: the tracked files' tree matches the commit.
+  rmSync(path.join(dir, 'lib'), { recursive: true });
+  writeFileSync(path.join(dir, 'README.md'), 'fixed again\n');
+  writeFileSync(path.join(dir, 'scratch.md'), 's\n');
+  const ran = workingTree(dir);
+  git('add', 'README.md');
+  git('commit', '-q', '-m', 'fix again');
   assert.equal(judge([claim], [{ ...run, ...ran }]), null, 'the tracked files\' tree matches the commit');
 
   const first = git('rev-parse', 'HEAD');

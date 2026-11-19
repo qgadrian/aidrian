@@ -41,6 +41,10 @@ const TEST_PREFIXES = [
 ].map((words) => words.join(' '));
 
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
+// A test file, as the review's quiet test patterns name one: `*.test.*`, `*.spec.*`, `*_test.*`, or one in a test
+// folder; and a code file, by its extension. `aidrian test changed` and the untracked-file rule read both.
+export const TEST_FILE = /(?:^|\/)(?:test|tests|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/u;
+export const CODE_FILE = /\.(?:[cm]?[jt]sx?|json|py|go|rs|rb|ex|exs|php|java|kt|swift|cs)$/u;
 // Programs that run no test suite, so a line of only these needs no config read (mayRunTests).
 const NEVER_TESTS = new Set([
   'git', 'ls', 'cat', 'echo', 'printf', 'grep', 'egrep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr',
@@ -127,16 +131,28 @@ export function testRuns(command, cwd, testing = {}) {
   return runs;
 }
 
-// The pass and fail counts a run printed, or null for each it never printed. Node's test runner (`ℹ pass 12`, TAP
-// `# fail 0`) is read first, summed over its summaries, and alone when present: a script around the runner may print
-// other "passed" lines. Else one summary line, never a sum across lines: the last `Tests` line of vitest
-// (`Tests  1 failed | 11 passed (12)`) or jest (`Tests:  1 failed, 11 passed, 12 total`), else the last line with
-// "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===`, else rspec's and mix's `12 examples, 0 failures`.
-// A summary that names passes and no failure counts 0 failures.
+// The pass and fail counts a run printed, or null for each it never printed, from one family of summary lines, summed
+// over every line of that family and never added to another family's: a script around a runner, or a monorepo tool that
+// runs one per package, prints one summary each. The first family the output's tail holds counts:
+// 1. node's test runner: `ℹ pass 12`, TAP `# fail 0`;
+// 2. `Tests` lines, as vitest (`Tests  1 failed | 11 passed (12)`) and jest (`Tests:  1 failed, 11 passed, 12 total`)
+//    print them, also behind a task prefix such as turbo's `web:test: `;
+// 3. cargo's `test result: ok. 12 passed; 0 failed; ...`, one a test binary and the doc-tests;
+// 4. any other line with "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===` and Playwright's own lines;
+// 5. rspec's and mix's `12 examples, 0 failures`.
+// A family that names passes and no failure counts 0 failures. A summary-shaped "N failed" above 0 anywhere in the tail,
+// as Playwright's standalone `  1 failed` line, makes the fail count at least N, whichever family counted.
 const NODE_COUNTS = { pass: /^\s*(?:ℹ|#)\s*pass\s+(\d+)\s*$/gmu, fail: /^\s*(?:ℹ|#)\s*fail\s+(\d+)\s*$/gmu };
-const TESTS_LINE = /^\s*Tests:?\s+\d/u;
+const TASK_PREFIX = String.raw`(?:[\w@./-]+:\s*)*`;
+const TESTS_LINE = new RegExp(String.raw`^\s*${TASK_PREFIX}Tests:?\s+\d`, 'u');
+const CARGO_LINE = /\btest result:\s+\w+\.\s+\d+\s+passed;/u;
 const WORDS_LINE = /\b\d+\s+(?:passed|failed)\b/u;
 const EXAMPLES_LINE = /\b(\d+)\s+(?:examples?|tests?),\s+(\d+)\s+failures?\b/u;
+const ANY_FAILED = /(?:^|[\s,;|(:])([1-9]\d*)\s+failed\b/gmu;
+const lineSum = (lines, pattern) => lines.reduce((total, line) => {
+  const found = pattern.exec(line);
+  return found ? (total ?? 0) + Number(found[1]) : total;
+}, null);
 export function runCounts(output) {
   const text = typeof output === 'string' ? output.slice(-OUTPUT_TAIL) : '';
   const sum = (pattern) => {
@@ -144,20 +160,26 @@ export function runCounts(output) {
     for (const match of text.matchAll(pattern)) total = (total ?? 0) + Number(match[1]);
     return total;
   };
-  const node = { pass: sum(NODE_COUNTS.pass), fail: sum(NODE_COUNTS.fail) };
-  if (node.pass !== null || node.fail !== null) return node;
-  const lines = text.split(/\r?\n/u);
-  const line = lines.findLast((each) => TESTS_LINE.test(each)) ?? lines.findLast((each) => WORDS_LINE.test(each));
-  if (line) {
-    const pass = /\b(\d+)\s+passed\b/u.exec(line);
-    const fail = /\b(\d+)\s+failed\b/u.exec(line);
-    // A summary with passes and no failure count has none.
-    const failures = fail ? Number(fail[1]) : 0;
-    return { pass: pass ? Number(pass[1]) : null, fail: fail || pass ? failures : null };
+  let counts = { pass: sum(NODE_COUNTS.pass), fail: sum(NODE_COUNTS.fail) };
+  if (counts.pass === null && counts.fail === null) counts = familyCounts(text.split(/\r?\n/u));
+  const failed = Math.max(0, ...[...text.matchAll(ANY_FAILED)].map((match) => Number(match[1])));
+  return failed > (counts.fail ?? 0) ? { pass: counts.pass, fail: failed } : counts;
+}
+
+// The counts of the first family of summary lines in `lines` (runCounts, families 2 to 5).
+function familyCounts(lines) {
+  for (const family of [TESTS_LINE, CARGO_LINE, WORDS_LINE]) {
+    const held = lines.filter((line) => family.test(line));
+    if (!held.length) continue;
+    const pass = lineSum(held, /\b(\d+)\s+passed\b/u);
+    const fail = lineSum(held, /\b(\d+)\s+failed\b/u);
+    // A family with passes and no failure count has none.
+    return { pass, fail: fail ?? (pass === null ? null : 0) };
   }
-  const examples = lines.map((each) => EXAMPLES_LINE.exec(each)).findLast(Boolean);
-  if (examples) return { pass: Number(examples[1]) - Number(examples[2]), fail: Number(examples[2]) };
-  return { pass: null, fail: null };
+  const examples = lines.map((line) => EXAMPLES_LINE.exec(line)).filter(Boolean);
+  if (!examples.length) return { pass: null, fail: null };
+  const fail = examples.reduce((total, found) => total + Number(found[2]), 0);
+  return { pass: examples.reduce((total, found) => total + Number(found[1]), 0) - fail, fail };
 }
 
 // A run's status from its counts and whether the host saw its exit status as 0 (`exitZero`, true only when the line's
@@ -172,13 +194,18 @@ export function runStatus({ pass, fail }, exitZero) {
   return pass !== null && pass > 0 && fail === 0 ? 'passed' : 'failed';
 }
 
-// The trees of the checkout's files at `cwd` as they are now, as { tree, trackedTree }, each null when git cannot say:
-// `tree` with the untracked files git does not ignore, `trackedTree` with the tracked files alone, so a run made beside
-// an untracked scratch file still matches the commit that leaves it out. Each is a copy of the index, the files added
+// The most untracked code and test files a row names.
+const UNTRACKED_MAX = 20;
+
+// The trees of the checkout's files at `cwd` as they are now, as { tree, trackedTree, untrackedCode }, each tree null
+// when git cannot say: `tree` with the untracked files git does not ignore, `trackedTree` with the tracked files alone, so
+// a run made beside an untracked scratch file still matches the commit that leaves it out, and `untrackedCode` the
+// untracked code and test files (CODE_FILE, TEST_FILE), UNTRACKED_MAX at most, which a run may have loaded: a match of
+// `trackedTree` alone does not count while it names any (supports). Each tree is a copy of the index, the files added
 // to it (`git add -A`, or `-u`), written as a tree; the checkout's own index is not touched.
 export function workingTree(cwd, read = runGit) {
   const index = read(['rev-parse', '--path-format=absolute', '--git-path', 'index'], cwd);
-  if (index.status !== 0) return { tree: null, trackedTree: null };
+  if (index.status !== 0) return { tree: null, trackedTree: null, untrackedCode: [] };
   const folder = mkdtempSync(path.join(tmpdir(), 'aidrian-tree-'));
   const write = (mode) => {
     const copy = path.join(folder, `index${mode}`);
@@ -192,8 +219,12 @@ export function workingTree(cwd, read = runGit) {
     const tree = read(['write-tree'], cwd, { env });
     return tree.status === 0 ? tree.stdout.trim() : null;
   };
+  const others = read(['ls-files', '--others', '--exclude-standard', '--full-name', ':/'], cwd);
+  const untrackedCode = others.status === 0
+    ? others.stdout.split('\n').filter((file) => file && (CODE_FILE.test(file) || TEST_FILE.test(file))).slice(0, UNTRACKED_MAX)
+    : [];
   try {
-    return { tree: write('-A'), trackedTree: write('-u') };
+    return { tree: write('-A'), trackedTree: write('-u'), untrackedCode };
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
@@ -210,10 +241,11 @@ export function checkRows({ command, cwd, output, exitZero, testing = {}, agentI
   return runs.map(({ key, folder, carries }) => {
     const where = folder ?? cwd;
     if (!trees.has(where)) trees.set(where, tree(where) ?? {});
-    const { tree: full = null, trackedTree = null } = trees.get(where);
+    const { tree: full = null, trackedTree = null, untrackedCode = [] } = trees.get(where);
     // One count for the line: with two runs on it, only the one whose status the line carries is judged by its exit.
     const own = runs.length === 1 ? counts : { pass: null, fail: null };
-    return { at, agentId, command: key, tree: full, trackedTree, status: runStatus(own, exitZero && carries), pass: own.pass, fail: own.fail };
+    const status = runStatus(own, exitZero && carries);
+    return { at, agentId, command: key, tree: full, trackedTree, untrackedCode, status, pass: own.pass, fail: own.fail };
   });
 }
 
@@ -314,11 +346,12 @@ function units(lines) {
 }
 
 // Whether a row supports a claim at `tree`: the same command, passed with more than 0 passes when it printed a count
-// (a run of no tests proves nothing), at that tree, its full or its tracked one, when one is given, and with each count
-// the claim states.
+// (a run of no tests proves nothing), at that tree when one is given, and with each count the claim states. The tree is
+// the row's full one, or its tracked one only while no untracked code or test file sat beside the run, which it may
+// have loaded and the commit lacks.
+const atTree = (run, tree) => tree === null || run.tree === tree || (run.trackedTree === tree && !run.untrackedCode?.length);
 const supports = (run, { key, counts }, tree) => run.command === key && run.status === 'passed' && run.pass !== 0
-  && (tree === null || run.tree === tree || run.trackedTree === tree)
-  && (run.pass === null || run.pass === undefined || counts.every((count) => count === run.pass));
+  && atTree(run, tree) && (run.pass === null || run.pass === undefined || counts.every((count) => count === run.pass));
 
 // The claims no row of `runs` supports (supports).
 export function unsupportedClaims(claims, runs, { tree = null } = {}) {
@@ -334,8 +367,12 @@ export function claimProblem(missing, runs, { where }) {
   const shown = held.slice(-3).map((run) => `${run.status}${counted(run)} ${at(run)}`);
   const record = held.length ? `The record holds ${shown.join('; ')}.` : 'The record holds no finished run of it.';
   const stated = missing.some((each) => each.counts.length) ? 'with the count it states, ' : '';
+  const beside = [...new Set(held.flatMap((run) => run.untrackedCode ?? []))];
+  const untracked = beside.length
+    ? ` Untracked code beside the run, which the commit lacks: ${beside.map((file) => `\`${file}\``).join(', ')}; \`git add\` it, or remove it, and rerun.`
+    : '';
   return `${where} says ${named} passed, but no run of it that a shell call finished with a pass, ${stated}` +
-    `is on this session's record. ${record} Quote only output a tool returned in this session; a run stopped or still running ` +
+    `is on this session's record. ${record}${untracked} Quote only output a tool returned in this session; a run stopped or still running ` +
     'is "not finished", never a result, and a CI result is quoted from the checks the forge shows. ' +
     'To get a result, run the command in the foreground to its end, or `aidrian test changed` for the test files this change touches.';
 }

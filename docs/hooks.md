@@ -1311,8 +1311,8 @@ result was 40 failures. So a result a report states must be one a tool returned,
 After each Bash call, the PostToolUse hook appends a row to the session folder's `checks.jsonl` for each test run on the
 command line's top level that the call finished (`lib/check-runs.mjs`): its command, the agent whose call ran it
 (`agentId`), two git trees of the checkout's files as they are when the run ends, one with the untracked files git does
-not ignore and one with the tracked files alone, each null when git cannot read it, its pass and fail counts, and
-`passed`, `failed`, or `unjudged`.
+not ignore and one with the tracked files alone, each null when git cannot read it, the untracked code and test files
+beside the run (20 at most), its pass and fail counts, and `passed`, `failed`, or `unjudged`.
 A test run is a command of config.json [`testing.fullSuite`](config.md#testing) or `testing.changedCommand`, `npm test`
 and its pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `mix test`, rspec,
 `make test`, `make check`, or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with
@@ -1327,9 +1327,13 @@ for a failed call too and sends no exit status, is judged by its counts alone: p
 fail count of 0, failed with a fail count above 0, and `unjudged` when it printed no count. A counts-only verdict reads
 the runner's summary, not the command's exit, so a script that runs the tests and then fails a later step reads as
 passed there: an accepted limit until a host sends an exit status.
-The counts are node's runner summary (`ℹ pass 12`, `# fail 0`), summed over its summaries; else one summary line, never
-a sum across lines: the last `Tests` line of vitest or jest, else the last line with "N passed" or "N failed", as
-pytest's, else rspec's and mix's "12 examples, 0 failures". A summary that names passes and no failure counts 0 failures.
+The counts come from one family of summary lines, summed over every line of it and never added to another family's,
+since a script or a monorepo tool prints one summary a runner: the first of node's runner summary (`ℹ pass 12`,
+`# fail 0`); `Tests` lines, as vitest and jest print them, also behind a task prefix such as turbo's `web:test: `;
+cargo's `test result:` lines, one a test binary and the doc-tests; any other line with "N passed" or "N failed", as
+pytest's and Playwright's; rspec's and mix's "12 examples, 0 failures". A family that names passes and no failure counts
+0 failures, and a summary-shaped "N failed" above 0 anywhere in the output, as Playwright's own `1 failed` line, makes
+the run failed whichever family counted.
 The record keeps its newest rows within 64 KB.
 
 Two checks read it:
@@ -1340,7 +1344,8 @@ Two checks read it:
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. A number after a
   word, as in "Node 22", is no count. Either of the row's trees may match, so a run made beside an untracked scratch file
-  still proves the commit that leaves it out.
+  still proves the commit that leaves it out; the tracked files' tree alone does not count while an untracked code or
+  test file sat beside the run, which it may have loaded and the commit lacks, and the deny names that file.
   A clause that names a failure, "not finished", or CI is not a pass claim: a CI result is quoted from the checks the
   forge shows, such as `gh pr checks` on GitHub. A session whose record cannot be read is not judged. The record is this
   checkout's, so a body for another branch is not judged: a `--head` that names another branch, or an edit of a pull

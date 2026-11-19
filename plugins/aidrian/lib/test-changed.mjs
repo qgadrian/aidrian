@@ -13,14 +13,13 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { CODE_FILE, TEST_FILE } from './check-runs.mjs';
 import { commandConfig } from './config.mjs';
 import { currentRoot, runGit } from './git.mjs';
 import { findProject } from './project.mjs';
 import { remoteCopy } from './rules/push-first.mjs';
 
-// A test file, as the review's quiet test patterns name one: `*.test.*`, `*.spec.*`, `*_test.*`, or one in a test folder.
-export const TEST_FILE = /(?:^|\/)(?:test|tests|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/u;
-const CODE_FILE = /\.(?:[cm]?[jt]sx?|json|py|go|rs|rb|ex|exs|php|java|kt|swift|cs)$/u;
+export { TEST_FILE };
 
 const lines = (result) => (result.status === 0 ? result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : null);
 

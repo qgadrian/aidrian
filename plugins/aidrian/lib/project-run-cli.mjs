@@ -21,6 +21,7 @@ import { commandConfig } from './config.mjs';
 import { resolvedPath } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { projectAt } from './project.mjs';
+import { pauseOf } from './project-limit.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
 import { endRun, recordHandoff, recordResult, resumeRun, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
@@ -96,7 +97,8 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
   if (action === 'next') {
     const plan = planRun(found.snapshot, found.states);
     const halt = haltOf(found);
-    return { exitCode: 0, out: values.json ? [JSON.stringify({ ...plan, halt }, null, 2)] : nextLines(plan, { halt }), err: [] };
+    const pause = pauseOf(found, now ?? Date.now());
+    return { exitCode: 0, out: values.json ? [JSON.stringify({ ...plan, halt, pause }, null, 2)] : nextLines(plan, { halt, pause }), err: [] };
   }
   const written = writeSummary(place.state, run);
   if (written.problem) return refused('summary', written.problem);

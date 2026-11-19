@@ -30,6 +30,7 @@ export const STARTED = [
   { id: 'c0ffee01', session: 'c0ffee01-0000-4000-8000-00000000c001' },
   { id: 'c0ffee02', session: 'c0ffee02-0000-4000-8000-00000000c002' },
   { id: 'c0ffee03', session: 'c0ffee03-0000-4000-8000-00000000c003' },
+  { id: 'c0ffee04', session: 'c0ffee04-0000-4000-8000-00000000c004' },
 ];
 export const ISSUES = [
   { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted', priority: 1 },

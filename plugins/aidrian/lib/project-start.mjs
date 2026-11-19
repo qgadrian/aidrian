@@ -109,17 +109,20 @@ export function guardedFolders({ main, state, env, home }) {
   return [...new Set(folders.map((each) => resolvedPath(each) ?? path.resolve(each)))];
 }
 
-// The run log of issue `key`'s attempt `attempt`, `logs/<issue>.<attempt>.jsonl` in the run's folder, whose folder is
-// made owner-only: { file } or { problem }.
+// The run log of issue `key`'s attempt `attempt`: `logs/<issue>.<attempt>.jsonl` in the run's folder.
+export const runLogFile = (state, run, key, attempt) => path.join(runFolder(state, run), 'logs', `${key}.${attempt}.jsonl`);
+
+// The run log of issue `key`'s attempt `attempt` (runLogFile), whose folder is made owner-only: { file } or { problem }.
 export function runLog(state, run, key, attempt) {
-  const folder = path.join(runFolder(state, run), 'logs');
+  const file = runLogFile(state, run, key, attempt);
+  const folder = path.dirname(file);
   try {
     mkdirSync(folder, { recursive: true, mode: 0o700 });
   } catch (error) {
     return { problem: `the run's log folder ${folder} cannot be made (${error.code ?? 'no code'})` };
   }
   const plain = plainFolderProblem(folder);
-  return plain ? { problem: plain } : { file: path.join(folder, `${key}.${attempt}.jsonl`) };
+  return plain ? { problem: plain } : { file };
 }
 
 // Why a file a session could change the run's state through has a second hard link, or null: the run's ledger and

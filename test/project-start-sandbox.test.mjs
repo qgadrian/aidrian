@@ -119,6 +119,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     permissions: { deny: unread.flatMap((each) => [`Read(/${each})`, `Read(/${each}/**)`]) },
     disableClaudeAiConnectors: true,
     worktree: { bgIsolation: 'none' },
+    autoContinueAtUsageLimit: true,
   });
   assert.equal(settings.sandbox.excludedCommands, undefined);
   assert.equal(settings.sandbox.network.allowUnixSockets, undefined);

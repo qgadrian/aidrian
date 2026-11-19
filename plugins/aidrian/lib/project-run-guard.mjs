@@ -34,8 +34,13 @@ export const DROP_FILE = 'result.json';
 const DAY = 24 * 60 * 60 * 1000;
 // How far back a start record of an issue's chain is read: the window of a chain floor.
 export const FLOOR_WINDOW = 30 * DAY;
-// The most times an issue is started, whatever any config says.
+// The most attempts of an issue that count, whatever any config says: an attempt a usage or rate limit ended does not
+// (spentAttempts), since the run's own cap on pauses, LIMIT_WAITS, bounds those.
 export const ISSUE_ATTEMPTS = 3;
+// The most pauses on a usage or rate limit one run waits out (lib/project-limit.mjs); the next limit halts it.
+export const LIMIT_WAITS = 24;
+// The highest attempt number a start row may carry: every attempt that counts, and one per pause besides.
+export const ATTEMPT_CEILING = ISSUE_ATTEMPTS + LIMIT_WAITS;
 // Every `aidrian project` subcommand, today's and those a later step adds: a command that names one is the run's.
 export const SUBCOMMANDS = PROJECT_SUBCOMMANDS;
 // The subcommands a subagent may run.
@@ -145,7 +150,7 @@ export function ownAttemptFolder(project, config, mark, { base, home } = {}) {
 
 // Whether `row` is a start row as the gate writes it.
 export const isStartRow = (row) => row?.event === 'start' && typeof row.key === 'string' && ISSUE_KEY.test(row.key)
-  && Number.isInteger(row.attempt) && row.attempt >= 1 && row.attempt <= ISSUE_ATTEMPTS && START_OUTCOMES.includes(row.outcome)
+  && Number.isInteger(row.attempt) && row.attempt >= 1 && row.attempt <= ATTEMPT_CEILING && START_OUTCOMES.includes(row.outcome)
   && isSession(row.session) && Number.isFinite(timeOf(row)) && typeof row.cwd === 'string' && path.isAbsolute(row.cwd) && typeof row.name === 'string'
   && (row.outcome !== 'started' || (isSession(row.id) && (row.child === null || isSession(row.child))));
 
@@ -159,6 +164,13 @@ export function startRows(found) {
 
 // The start rows of issue `key`, one an attempt, in order.
 export const startsOf = (found, key) => startRows(found).filter((row) => row.key === key);
+
+// The attempts of issue `key` that count toward ISSUE_ATTEMPTS: each start not given back (`void`), but one a usage or
+// rate limit ended (an `ended` row with reason `limit`).
+export function spentAttempts(found, key) {
+  const limited = new Set(found.rows.filter((row) => row.event === 'ended' && row.key === key && row.reason === 'limit').map((row) => row.attempt));
+  return startsOf(found, key).filter((row) => row.outcome !== 'void' && !limited.has(row.attempt)).length;
+}
 
 // The latest start of issue `key` that held its session, or null.
 export const latestStart = (found, key) => startsOf(found, key).filter((row) => row.outcome === 'started').at(-1) ?? null;

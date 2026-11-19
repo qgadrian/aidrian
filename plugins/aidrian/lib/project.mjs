@@ -64,7 +64,7 @@ const GUARDED_LIB = [
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-registries', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-trust', 'remotes', 'review-gate', 'run-driver', 'session-length',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-limit', 'project-registries', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-trust', 'remotes', 'review-gate', 'run-driver', 'session-length',
   'session-start-gate', 'shell-lex', 'solo',
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell', 'unattended-write', 'usage',
 ].join('|');

@@ -707,10 +707,12 @@ function topological(issues, byId, cycles, isDone) {
 }
 
 // The lines `aidrian project next` prints for `plan`: one `next KEY BRANCH` line for each issue to start, or `wait N
-// running`, or `done`; then a line for each issue that runs, waits, or is skipped.
-export function nextLines(plan, { halt = null } = {}) {
+// running`, or `done`; then a line for each issue that runs, waits, or is skipped. A halted run's cause comes first, and
+// then the end of a pause on a usage or rate limit (lib/project-limit.mjs pauseOf), until which no start runs.
+export function nextLines(plan, { halt = null, pause = null } = {}) {
   return [
     ...(halt ? [`halted ${halt}`] : []),
+    ...(pause ? [`paused until ${pause.until}`] : []),
     ...verdictLines(plan),
     ...plan.running.map((key) => `running ${key}`),
     ...plan.blocked.map(({ key, reason, on }) => `blocked ${key} ${reason} ${on.join(',')}`),

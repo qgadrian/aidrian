@@ -200,7 +200,8 @@ export const CONFIG_COMMANDS = Object.freeze([
 
 // The forge CLI's subcommands that change what the forge releases or runs, or the repository's own settings, which the
 // agent gate hook refuses to a project run's issue session (lib/issue-forge-guard.mjs): with the token its sandbox
-// keeps, one would publish a release, start a workflow with the repository's secrets, or rerun a deploy. Each is
+// keeps, one would publish a release, start a workflow with the repository's secrets, rerun a deploy, or make a
+// repository or gist to push the work to. Each is
 // { programs, subcommands, valueOptions, what }, as CONFIG_COMMANDS; the forms that only read, such as `gh release
 // list`, pass.
 export const REF_COMMANDS = Object.freeze([
@@ -210,6 +211,7 @@ export const REF_COMMANDS = Object.freeze([
   { programs: ['gh'], subcommands: [['secret', 'set'], ['secret', 'delete'], ['secret', 'remove'], ['variable', 'set'], ['variable', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s secrets or variables' },
   { programs: ['gh'], subcommands: [['repo', 'edit'], ['repo', 'delete'], ['repo', 'rename'], ['repo', 'archive'], ['repo', 'unarchive'], ['repo', 'sync'], ['repo', 'deploy-key', 'add'], ['repo', 'deploy-key', 'delete'], ['cache', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s settings, keys, or caches' },
   { programs: ['gh'], subcommands: [['ssh-key', 'add'], ['ssh-key', 'delete'], ['gpg-key', 'add'], ['gpg-key', 'delete']], valueOptions: GH_VALUES, what: 'the keys of the forge account' },
+  { programs: ['gh'], subcommands: [['repo', 'create'], ['repo', 'fork'], ['gist', 'create']], valueOptions: GH_VALUES, what: 'a new repository, fork, or gist on the forge, where the token it keeps could copy the work and push anything' },
 ]);
 
 // The folders of a repository whose files the forge runs, with the repository's secrets, on a push to any branch:

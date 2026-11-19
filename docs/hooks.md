@@ -1240,14 +1240,24 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `--all`, `--delete`, `-d`, a `:ref` delete, any other ref or a second refspec, a URL or another remote, `--repo`,
     `-o`, `--no-verify`, any other option, a word built at run time, a git `-c`, `--git-dir`, or `--work-tree`, a
     variable that moves git's repository or config (`GIT_DIR`, `GIT_CONFIG_*`, `HOME`, `XDG_CONFIG_HOME`) on the line,
-    a push from any other folder, and every push while no running start of its issue names a branch. `git send-pack`,
-    `git http-push`, and a git subcommand that is no command of git's own but an alias, set on the line or in a config
-    git reads, are refused.
+    a push from any other folder, and every push while no running start of its issue names a branch. The exact push is
+    refused too when its commits change a file of the forge's workflow folders (`forgeWorkflowFolders`) from their merge
+    base with origin's default branch (`refs/remotes/origin/HEAD`, else `origin/main`), however the file got there, as by
+    `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`, which the write rule above does not see; a merge of
+    the default branch brings none of its own changes into that diff, and a git that cannot answer within the hook's
+    budget, or names no such base, refuses the push. `git send-pack`, `git http-push`, and every git subcommand outside
+    the list of git's own commands an issue session runs, such as an alias or `git subtree`, are refused; of `git lfs`,
+    only `ls-files`, `status`, `env`, `version`, `fetch`, `pull`, `checkout`, `track`, `untrack`, `logs`, and `pointer`
+    pass. `git submodule`, `rebase`, `bisect`, `difftool`, and `mergetool` are refused when the command they run names
+    git, the forge CLI, or a push.
+  - git or the forge CLI run through `xargs`, `xcrun`, or `find -exec`, `-execdir`, `-ok`, or `-okdir`, which the shared
+    lexer does not unwrap, or a shell or a word built at run time they run whose words name git, the forge, or a push.
   - The forge CLI's subcommands its adapter declares (`forgeRefCommands`: on GitHub, `gh release create`, `delete`,
     `edit`, `upload`, and `delete-asset`, `gh workflow run`, `enable`, and `disable`, `gh run rerun`, `cancel`, and
     `delete`, `gh secret` and `gh variable` `set` and `delete`, `gh repo edit`, `delete`, `rename`, `archive`,
-    `unarchive`, `sync`, and `deploy-key add` and `delete`, `gh cache delete`, and `gh ssh-key` and `gpg-key` `add` and
-    `delete`), and a subcommand word built at run time. The read forms, such as `gh release list`, pass.
+    `unarchive`, `sync`, and `deploy-key add` and `delete`, `gh cache delete`, `gh ssh-key` and `gpg-key` `add` and
+    `delete`, and `gh repo create` and `fork` and `gh gist create`, where the token could copy the work and push
+    anything), and a subcommand word built at run time. The read forms, such as `gh release list`, pass.
   - A raw API call the adapter reads as a write the session never makes (`forgeApiWrite`): on GitHub, `gh api` with a
     writing method, or a field (`-f`, `-F`, `--input`) and no `-X`, which makes it a POST, to any REST route but its
     pull requests' and issues' own (comments, reviews, replies, labels, reactions, requested reviewers, and
@@ -1259,9 +1269,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     or the API.
 
   An attended session, a run's driver, and a session a pending mark holds are not held by it. Its residual: a script or
-  program the session runs, or `curl` with the token, can still push or call the forge; the forge itself holds that,
-  so `aidrian project preflight` blocks a run whose default branch has no protection, or whose release tags no tag rule
-  the signed-in user cannot bypass holds ([review.md](review.md)). The block is [recorded](#recorded-blocks) as
+  program the session runs, or `curl` with the token, can still push or call the forge, and git in the session's own
+  checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
+  that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
+  pull request, whose tags no rule that user cannot bypass stops being created or moved, or whose workflows see CI
+  secrets while that token may push a workflow file, unless the team sets `projectRun.workflowSecretsAccepted`
+  ([review.md](review.md)). When the guards run out of their time budget, an issue session's refusal says it works an
+  issue of a project run. The block is [recorded](#recorded-blocks) as
   `config-guard`.
 
 - A subagent, and a main session the background route started, may not write in the session folders,

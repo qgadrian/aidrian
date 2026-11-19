@@ -316,6 +316,14 @@ test('a session no Human attends is held as a subagent past the time budget and 
     assert.equal(words.status, 2, `${session}: more words than the guards read`);
     assert.match(words.stderr, unattended);
   }
+  // A project run's issue session is held the same, and its refusal says what it is, not that the handoff route started it.
+  const issue = 'feed000b-0000-4000-8000-00000000000b';
+  assert.ok(markUnattended(issue, { root: dir, cwd: dir, tags: { project: 'launch', issue: 'ENG-1' } }));
+  for (const [what, ran] of [['past the budget', run(as(issue, subagent(dir, 'Bash', 'echo x > src/app.js')), late)], ['more words', run(as(issue, subagent(dir, 'PowerShell', `Remove-Item ${Array.from({ length: 600 }, (_, i) => `w${i}`).join(' ')}`)))]]) {
+    assert.equal(ran.status, 2, `issue session ${what}`);
+    assert.match(ran.stderr, /only a session a Human attends may change, and this session works an issue of a project run, which no Human attends/u, what);
+    assert.doesNotMatch(ran.stderr, /background handoff route/u, what);
+  }
   // Outside any project, a marked session past the budget is refused too.
   assert.equal(run(as(marked, subagent(outside, 'Bash', 'aidrian handoff continue b.md')), late).status, 2, 'outside a project');
   // Once the gate removed its pending mark, an attended main session keeps its calls past the budget.

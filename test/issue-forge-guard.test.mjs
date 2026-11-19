@@ -9,7 +9,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -52,6 +52,11 @@ const REFUSED = [
   'gh api graphql -f query=\'mutation { createRef(input: {repositoryId: "x", name: "refs/tags/v1", oid: "y"}) { ref { name } } }\'',
   'gh api graphql -f query=\'mutation { a: resolveReviewThread(input: {threadId: "x"}) { thread { id } } b: mergePullRequest(input: {pullRequestId: "y"}) { clientMutationId } }\'',
   'gh api graphql -F query=@mutation.graphql', 'gh api graphql -f query="$Q"', 'gh api graphql --input body.json',
+  'git subtree push --prefix=lib origin main', 'git frobnicate', 'git lfs push origin main', 'git lfs install', 'git lfs "$SUB"',
+  'git submodule foreach "git push --tags"', 'git rebase -x "git push origin HEAD:refs/heads/main" origin/main', 'git bisect run sh -c "gh release create v1"',
+  'ls | xargs git push origin', 'echo v1 | xargs -I{} git push origin {}', 'xargs -n1 /usr/bin/gh release delete < tags.txt', 'echo x | xargs $CMD push --tags',
+  'find . -name x -exec git push --tags \\;', 'find . -execdir sh -c "git push origin HEAD:refs/heads/main" \\;', 'find . -ok gh release create v1 \\;',
+  'xcrun git push --tags', 'gh repo create acme/copy --public --source . --push', 'gh repo fork acme/widgets --clone', 'gh gist create notes.md',
 ];
 // The calls an issue session makes, each passing this guard.
 const PASSED = [
@@ -62,7 +67,9 @@ const PASSED = [
   'gh api repos/{owner}/{repo}/issues/3/comments -f body="$BODY"', 'gh api -X GET repos/acme/widgets/actions/runs -f branch=main',
   'gh api graphql -f query=\'mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }\' -F id="$ID"',
   'gh api graphql -f query=\'query { repository(owner: "acme", name: "widgets") { pullRequest(number: 3) { reviewThreads(first: 50) { nodes { id } } } } }\'',
-  'npm test', 'echo "push the tags later"',
+  'npm test', 'echo "push the tags later"', 'git lfs ls-files', 'git lfs pull', 'git submodule update --init', 'git rebase origin/main',
+  'git interpret-trailers --parse msg.txt', 'find . -name "*.js" -exec grep -l TODO {} +', 'ls | xargs grep -l TODO', 'find . -name "*.orig" -delete',
+  'gh repo view acme/widgets', 'gh gist list',
 ];
 
 // A run `launch` whose issue ENG-1 runs in a confined attempt clone, and SESSION marked as that issue's session.
@@ -144,6 +151,45 @@ test('the agent gate hook, run as the host runs it, refuses an issue session eac
     const ran = fx.hook(bash(command));
     assert.equal(ran.status, 0, `${command}: ${ran.stderr}`);
   }
+});
+
+test('an issue session\'s exact push is refused when its commits change a workflow file, however it got there, and not for a merge of the default branch', (t) => {
+  const fx = issueFixture(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const push = () => fx.ask(bash(EXACT))?.reason ?? null;
+  writeFileSync(path.join(fx.work, 'notes.md'), 'a change\n');
+  git(fx.work, 'add', '--', 'notes.md');
+  git(fx.work, 'commit', '-q', '-m', 'feat: a normal change');
+  assert.equal(push(), null, 'a normal change');
+  // The default branch changes a workflow, and the session merges it in: none of that branch's own change counts.
+  mkdirSync(path.join(fx.dir, '.github', 'workflows'), { recursive: true });
+  writeFileSync(path.join(fx.dir, '.github', 'workflows', 'ci.yml'), 'on: push\n');
+  git(fx.dir, 'add', '--', '.github/workflows/ci.yml');
+  git(fx.dir, 'commit', '-q', '-m', 'ci: a workflow on the default branch');
+  git(fx.work, 'fetch', '-q', 'origin');
+  git(fx.work, 'merge', '-q', '--no-edit', 'origin/main');
+  assert.equal(push(), null, 'a merge of the default branch');
+  // A patch applied to the index, past the file-write guard, puts a workflow file in the next commit.
+  const patch = path.join(fx.root, 'scratch', 'leak.patch');
+  writeFileSync(patch, ['diff --git a/.github/workflows/leak.yml b/.github/workflows/leak.yml', 'new file mode 100644', '--- /dev/null', '+++ b/.github/workflows/leak.yml', '@@ -0,0 +1 @@', '+on: push', ''].join('\n'));
+  git(fx.work, 'apply', '--cached', patch);
+  git(fx.work, 'commit', '-q', '-m', 'chore: tidy');
+  assert.match(push(), /it pushes commits that change \.github\/workflows\/leak\.yml, a workflow file the forge runs with the repository's secrets on that push/u);
+  const hooked = fx.hook(bash(EXACT));
+  assert.equal(hooked.status, 2, hooked.stderr);
+  assert.match(hooked.stderr, /\.github\/workflows\/leak\.yml/u);
+  // A change to the actions a workflow calls counts the same; taking the leak back out lets the push run.
+  git(fx.work, 'rm', '-q', '--', '.github/workflows/leak.yml');
+  mkdirSync(path.join(fx.work, 'src', '.github', 'actions'), { recursive: true });
+  writeFileSync(path.join(fx.work, 'src', '.github', 'actions', 'note.md'), 'not the root folder\n');
+  git(fx.work, 'add', '--', 'src');
+  git(fx.work, 'commit', '-q', '-m', 'chore: undo');
+  assert.equal(push(), null, 'the leak taken out, and a folder of that name below the root');
+  const ran = fx.hook(bash(EXACT));
+  assert.equal(ran.status, 0, ran.stderr);
+  git(fx.work, 'update-ref', '-d', 'refs/remotes/origin/HEAD');
+  git(fx.work, 'update-ref', '-d', 'refs/remotes/origin/main');
+  assert.match(push(), /git names no merge base with origin's default branch/u, 'no base to compare with');
 });
 
 test('an issue session writes no workflow file, no handoff brief or snapshot, no quorum ledger, and only its own issue\'s plans, scratch files, and handoffs', (t) => {

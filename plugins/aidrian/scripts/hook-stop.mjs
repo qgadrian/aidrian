@@ -136,6 +136,9 @@ function sentBack(actions) {
 // feedback:` on its first line and after the `[<command>]: ` the host writes before a hook's reason, when it does.
 // A mark inside a reason, as in a path the merge hand-back reason quotes or report text the hand-back reason quotes, is
 // data and marks nothing: each quotes it on the reason's one line.
+// SHORTCUT: another Stop hook's reason line that starts with a check's lead marks that check spent, since the host does
+// not name each reason's hook reliably. It can only skip a send-back, and another hook writing this plugin's words is
+// contrived.
 function marked(text) {
   return text.split('\n').flatMap((line) => {
     const reason = (line.startsWith(SENT_BACK) ? line.slice(SENT_BACK.length).trimStart() : line).replace(HOOK_PREFIX, '');

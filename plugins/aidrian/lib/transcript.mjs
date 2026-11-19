@@ -522,6 +522,9 @@ function settleCalls(entry, calls) {
       call.ran = true;
       if (call.draft && PR_URL.test(output)) call.opened = true;
       const named = call.edits.filter((target) => target !== null);
+      // SHORTCUT: a call that publishes several pull requests prints several URLs and reads as one draft of no known
+      // pull request, which matches any review, so it can only skip a send-back; one call publishing several is
+      // contrived. Reading one draft per URL would replace it.
       call.pull = named.length && named.length === call.edits.length ? onePull(named) : onePull(urlPulls(output));
     }
     const printed = call.skill ? [] : printedReviews(output, call.command);
@@ -529,6 +532,9 @@ function settleCalls(entry, calls) {
     if (call.loop && call.skill && call.ran) call.looped = [call.loopPull];
     else if (call.loop && printed.length) call.looped = loopedPulls(printed, call.reviews);
     if (call.gates.length) call.verdicts = callVerdicts(gateVerdicts(withoutCommand(output, call.command)), call.gates);
+    // SHORTCUT: a call whose result is no error counts each merge command in it as run, even one a shell expression
+    // skipped, as in `false && gh pr merge 12 || true`. It can only clear a refusal, never raise one, and such a line
+    // is contrived; reading which command ran would need its own output, which gh prints only on a terminal.
     if (call.merges.length && block.is_error !== true) call.merged = mergedPulls(call.merges, output);
     settled.push(call);
   }
@@ -543,15 +549,16 @@ function loopedPulls(printed, targets) {
   return [onePull(targets)];
 }
 
-// The verdicts of a gate call that count, in order, read from its output without the lines that quote the command, error
-// or not, since a refusal exits 1. A gate prints at most one verdict, and the gates run in the order the call names them,
-// so each verdict belongs to the next gate that could print it: one given its pull request, or one given none, which
-// reads the current branch's. Gates that never ran print none, as in `aidrian pr auto-merge 57 && aidrian pr
-// auto-merge 58`, where the first refusal exits 1 and the second gate never runs: fewer verdicts than gates count, and
-// a refusal is never dropped for the gates after it. Two gates on one pull request, a retry, print two verdicts, and the
-// later one stands where they are read. A verdict no gate is left for is another command's: one for a pull request no
-// gate names is dropped alone; one a gate could have printed leaves which is genuine unknown, so that pull request's
-// verdicts are dropped, and with a gate given none, every verdict is. A path that quotes the command drops its line.
+// The verdicts of a gate call that count, in order, read from its output without the lines that quote the command,
+// error or not, since a refusal exits 1. A gate prints at most one verdict, and the gates run in the order the call
+// names them, so each verdict belongs to the next gate that could print it: one given its pull request, or one given
+// none, which reads the current branch's. Gates that never ran print none, as in `aidrian pr auto-merge 57 && aidrian
+// pr auto-merge 58`, where the first refusal exits 1 and the second gate never runs: fewer verdicts than gates count,
+// and a refusal is never dropped for the gates after it. Two gates on one pull request, a retry, print two verdicts,
+// and the later one stands where they are read. A verdict no gate is left for is another command's: one for a pull
+// request no gate names is dropped alone; one a gate could have printed leaves which is genuine unknown, so that pull
+// request's verdicts are dropped, and with a gate given none, every verdict is. A path that quotes the command drops
+// its line.
 function callVerdicts(read, gates) {
   const counted = [];
   const extra = [];
@@ -621,6 +628,10 @@ export function turnActions(text) {
     actions.push({ kind: 'review', pr });
     reviewed.push(pr);
   };
+  // SHORTCUT: a loop run with no argument is of no known pull request and matches any later pr-write edit, and an edit
+  // of no known pull request matches any review, so an update of another pull request after them is read as the loop's
+  // own. It can only skip a send-back, which costs less than a false one; resolving the loop's pull request from the
+  // branch would replace it.
   const reviewedBefore = (pr) => reviewed.some((each) => each === null || pr === null || each === pr);
   for (const entry of entries.slice(start)) {
     if (entry.type === 'user' && entry.isMeta === true) {

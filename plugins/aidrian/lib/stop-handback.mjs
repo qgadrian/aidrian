@@ -132,6 +132,8 @@ export function mergeHandBack(input, transcript, actions, { human = 'the Human' 
   const last = new Map();
   actions.forEach((action, at) => {
     // A merge that named no pull request and printed none, as gh does off a terminal, clears the one refusal that stands.
+    // SHORTCUT: it clears that refusal even when it merged another pull request, the current branch's. That can only
+    // skip a send-back, and a turn that refuses one pull request and merges another by its branch alone is contrived.
     if (action?.kind === 'merge' && action.pr === null) {
       const standing = [...last].filter(([, { file }]) => typeof file === 'string' && file !== '');
       if (standing.length === 1) last.set(standing[0][0], { file: null, at });

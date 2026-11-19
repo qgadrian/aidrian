@@ -144,6 +144,7 @@ Two switches more hold it, both read as `github.autoMerge` reads its own, so nei
   [progress check](#the-progress-check) bounds the chain.
 - **The machine's**, `handoff.background: "on"` in the main checkout's `.aidrian.local.json`, a file git does not
   track. A copy in a worktree, a tracked file, and an error in the file read `"off"`, and a subagent may not set it.
+  Unset is off, unless the team sets [`solo`](config.md#solo).
 
 Without either, a handoff on the background route goes on by the clear route on a host that has it, else `none`, and
 the gate's `fallback:` line says which switch is off and, for the machine's, the exact edit that turns it on.

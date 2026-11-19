@@ -1900,6 +1900,11 @@ clone under its host's sandbox, and a host that is not halts the start. The sess
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
+The Stop hook holds the result: when the newest session of a running issue's chain ends a turn before it handed its
+result over, it is sent back once, before any other Stop check, to run `aidrian project result`, or to go on with the
+work (`lib/project-run-guard.mjs resultHoldReason`, run by `scripts/hook-stop.mjs`); a session that handed the work on,
+or whose mark, run, or ledger cannot be read, stops. It runs on Claude Code, the host whose project start is confined;
+Codex runs the same Stop hook, [not verified live](providers/codex.md#hooks).
 A session that meets a usage or rate limit pauses the run (`lib/project-limit.mjs`). `wait` asks the host adapter
 whether the session's last record is the host's own limit error, never a tool's output or the model's text, and writes
 a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to between

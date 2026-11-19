@@ -507,7 +507,8 @@ function localAutoMerge(raw, errors) {
 }
 
 // The local file's `github.unattendedWaiver`: githubGroup's, "off" when the group has any error. It adds none, since
-// localAutoMerge reports the group's errors once. Unset is off: the waiver has no team default.
+// localAutoMerge reports the group's errors once. Unset is "unset", which reads off unless the team sets solo
+// (config-local.mjs machineSwitch): the waiver has no team default of its own.
 function localUnattendedWaiver(raw) {
   const { unattendedWaiver, problems } = githubGroup(raw);
   return problems.length ? 'off' : unattendedWaiver;

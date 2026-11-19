@@ -74,7 +74,8 @@ At the start of every session and subagent, the hook prints:
      function, such as by a launcher, an editor command, or a terminal opened before the install, so its terminal will not
      switch at a background handoff. The line says a new terminal settles the last, and names
      `aidrian shell-init <shell> --install --wrap <launcher>`, for the shell whose file holds the block, for a launcher
-     on PATH that ends in `exec claude`.
+     on PATH that ends in `exec claude`. It adds that an older copy of the plugin refuses `--wrap` as an unknown
+     option, so the plugin is updated first, with the host's update command.
   3. The same session, with no block installed: after a background handoff its terminal stays on the old session, and
      the line names `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older
      copy of the plugin, which answers `unknown command: shell-init`, with the host's update command

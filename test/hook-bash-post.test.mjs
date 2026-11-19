@@ -697,15 +697,30 @@ test('a worktree the call did not create records no links row: no result, a refu
     // Another command's output: a saved result printed beside a skipped or refused call claims nothing.
     [`echo '${createdLine('feat/existing', tree)}'; aidrian worktree new feat/existing`, `${createdLine('feat/existing', tree)}\n`],
     ['false && aidrian worktree new feat/existing; cat saved.json', `${createdLine('feat/existing', tree)}\n`],
-    // A command after it prints too, so its result is not alone in the output.
-    ['aidrian worktree new feat/existing && npm test', `${createdLine('feat/existing', tree)}\ntest output\n`],
-    // Two creations on one line: neither is the line's one printing command.
-    ['aidrian worktree new feat/existing && aidrian worktree new feat/other', `${createdLine('feat/existing', tree)}\n`],
+    // A call that printed nothing, then a command that runs anyway and prints a saved result: not the call's own.
+    ['aidrian worktree new feat/existing; cat saved.json', `${createdLine('feat/existing', tree)}\n`],
+    ['aidrian worktree new feat/existing || cat saved.json', `${createdLine('feat/existing', tree)}\n`],
+    // A refused call, and the saved result of the next call's branch: that place is the refusal's.
+    ['aidrian worktree new feat/other && aidrian worktree new feat/existing', `${blockedLine('feat/other')}\n`],
     // A relative cd: the payload may name the folder the line started in or the one it ended in.
     ['cd sub && aidrian worktree new feat/existing', `${createdLine('feat/existing', tree)}\n`],
   ];
   for (const [command, stdout] of cases) assert.deepEqual(linkRows(command, dir, { stdout }), [], `${command} printing ${stdout || 'nothing'}`);
   assert.equal(linkRows('aidrian worktree new feat/existing', dir, { stdout: `output before\n${createdLine('feat/existing', tree)}\n` }).length, 1, 'the created result, among other lines');
+});
+
+test('a created result is recorded when other commands share its line: one after it, or a second creation', { skip: !POSIX }, () => {
+  const { dir, tree, listed } = worktreeRepo('feat/first');
+  const second = path.join(ROOT, `wt-${worktreeRepos}-second`);
+  assert.equal(spawnSync('git', ['worktree', 'add', '-q', '-b', 'feat/second', second], { cwd: dir, env: ENV }).status, 0);
+  const secondListed = realpathSync(second);
+  const branches = (rows) => rows.map(({ branch, cwd }) => [branch, cwd]);
+  assert.deepEqual(branches(linkRows('aidrian worktree new feat/first && npm test', dir, { stdout: `${createdLine('feat/first', tree)}\ntest output\n` })), [['feat/first', listed]]);
+  const both = linkRows('aidrian worktree new feat/first && aidrian worktree new feat/second && npm test', dir, { stdout: `${createdLine('feat/first', tree)}\n${createdLine('feat/second', second)}\nok\n` });
+  assert.deepEqual(branches(both), [['feat/first', listed], ['feat/second', secondListed]], 'two creations, in order');
+  // An echoed result of an existing worktree, before or after a call: never that call's own result.
+  assert.deepEqual(linkRows(`echo '${createdLine('feat/first', tree)}' && aidrian worktree new feat/first && npm test`, dir, { stdout: `${createdLine('feat/first', tree)}\n${blockedLine('feat/first')}\n` }), []);
+  assert.deepEqual(linkRows(`aidrian worktree new feat/first; echo '${createdLine('feat/first', tree)}'`, dir, { stdout: `${createdLine('feat/first', tree)}\n` }), []);
 });
 
 test('a worktree made after a cd is filed in the project of that folder, with its own checkout`s path', { skip: !POSIX }, () => {
@@ -762,11 +777,40 @@ test('a git that stalls, on the links` own list or on the session folder`s check
   }
 });
 
+test('project discovery`s tracked-file check of a local switch runs inside the links` budget, and the ledger row is written', { skip: !POSIX }, () => {
+  const here = worktreeRepo('feat/home');
+  // The worktree is made in another project, whose main checkout's local file sets a value only an untracked file keeps,
+  // so finding that project asks git whether it tracks the file.
+  const there = worktreeRepo('feat/made-there');
+  writeFileSync(path.join(there.dir, '.aidrian.local.json'), JSON.stringify({ review: { productFeedback: { auto: true } } }));
+  const realGit = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8', env: ENV }).stdout.trim();
+  const command = `cd ${there.dir} && aidrian worktree new feat/made-there && gh pr view 12`;
+  const timed = (name, pattern) => {
+    const bin = path.join(ROOT, `stalling-git-local-${name}`);
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase "$*" in ${pattern}) exec sleep 30;; esac\nexec ${realGit} "$@"\n`);
+    chmodSync(path.join(bin, 'git'), 0o755);
+    const session = nextSession();
+    const input = payload(command, { cwd: here.dir, session, stdout: `${createdLine('feat/made-there', there.tree)}\nx\n` });
+    const started = Date.now();
+    const ran = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env: { ...ENV, PATH: `${bin}${path.delimiter}${ENV.PATH}` }, timeout: 15_000 });
+    const took = Date.now() - started;
+    assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', ''], name);
+    const ledger = ledgerFiles(session).flatMap((file) => readFileSync(file, 'utf8').trim().split('\n')).map((line) => JSON.parse(line));
+    assert.deepEqual(ledger.map(({ kind, number }) => [kind, number]), [['touched', 12]], `${name}: the ledger row`);
+    return took;
+  };
+  const baseline = timed('none', 'no-such-call');
+  const over = timed('ls-files', '*"ls-files"*') - baseline;
+  // Git's own 2 s limit on that check would show as about 2 s over; the links' budget as 1 s at most.
+  assert.ok(over < 1500, `the stalled tracked-file check cost ${over} ms over the ${baseline} ms baseline, past the links budget`);
+});
+
 test('the ledger row of a call is written before its links are looked at, and apart from them', { skip: !POSIX }, () => {
   const { dir } = worktreeRepo('feat/both');
   const session = nextSession();
-  // A pull request and a worktree on one line: the worktree is not the line's one printing command, so it records
-  // nothing, and the pull request records its touched row all the same.
+  // A pull request and a worktree on one line: the pull request prints first, so the worktree's result has no known
+  // place and it records nothing, and the pull request records its touched row all the same.
   runHook(payload('gh pr view 12 && aidrian worktree new feat/both', { cwd: dir, session, stdout: 'x' }));
   const ledger = ledgerFiles(session).flatMap((file) => readFileSync(file, 'utf8').trim().split('\n')).map((line) => JSON.parse(line));
   assert.deepEqual(ledger.map(({ kind, number }) => [kind, number]), [['touched', 12]]);

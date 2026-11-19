@@ -1336,14 +1336,21 @@ The same hook records the worktree a session creates, in a second file, `<state>
 one row `{ at, kind: "worktree", host, path, branch, cwd }` for each worktree an `aidrian worktree new <branch>` of a
 shell call created. It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the
 shell fills in, a branch or an option it does not know that starts with `-`, or `--plan`, records nothing. A row also
-needs the command's own result in the call's output: the JSON line `aidrian worktree new` prints with
-`status: "created"`, that branch, and an absolute `worktree_path`, read from the output's last 64 KB. The command must
-be the line's one printing command, read as the ledger reads a `gh pr create` (`printsAlone` in
-`lib/session-prs.mjs`): only bare assignments and a `cd` the walk leaves out may come before it, and nothing after it,
-so the output is its result alone. So a call that was skipped, as after `false &&`, refused, as for a branch already
-checked out, or printed nothing records nothing, and neither does one beside another command, such as
-`echo '<saved result>'; aidrian worktree new <branch>` or `aidrian worktree new <branch> && npm test`, or a line with
-two of them. Within that rule an existing worktree is not recorded as one the session made, but the output is what the
+needs the command's own result in the call's output: the one JSON line `aidrian worktree new` prints, whatever happens,
+here with `status: "created"`, that branch, and an absolute `worktree_path`, read from the output's first 64 KB. Each
+result is matched to its own call by its place (`worktreeCalls` and `createdWorktrees`): the line must open with bare
+assignments and `cd`s the walk leaves out, joined by `&&`, `;`, or a newline, then one or more calls joined by `&&`, so
+nothing prints before the first call, each call runs only once the one before it succeeded, and the nth JSON line with a
+`status` is the nth call's. What follows the last call, joined by `&&` or ending the line, may print anything, so
+`aidrian worktree new <branch> && npm test` records its worktree, and
+`aidrian worktree new <a> && aidrian worktree new <b>` records both, in order. A call followed by anything else, such
+as `;`, `||`, or a pipe, may have printed nothing before another command prints, so it, and any call after it, records
+nothing; so does a call whose output is redirected, a negated one, every call on a line with a `&`, and every call
+after a substitution other than a plain `cat`, whose error output the shell does not capture. So a call that was
+skipped, as after `false &&`, refused, as for a branch already checked out, or printed nothing records nothing, and
+neither does an echoed or replayed result, such as `echo '<saved result>'; aidrian worktree new <branch>` or
+`aidrian worktree new <branch>; cat <saved result>`.
+Within that rule an existing worktree is not recorded as one the session made, but the output is what the
 host hands the hook, which the model's own shell call shapes: a call made to print a forged result, such as a wrapper
 named `aidrian`, can still claim one. That is accepted for display data. Each command is looked up in the folder it ran
 in by the ledger's rule (`knownFolders`), which holds whether a host's payload names the folder the line started in or
@@ -1356,8 +1363,10 @@ holds in the main checkout records nothing. `host` and `path` are origin's repos
 `remote.origin.url` in the folder the command ran in, so an origin only that checkout's own config sets
 (`config.worktree`, `includeIf.onbranch`) is the one recorded, as the snapshot there reads its remotes; a
 `url.<base>.insteadOf` rewrite applies on neither side; both null with no origin. Every step of the links, finding the
-project, its main checkout, origin, the list, and the session folder, shares a 1-second budget, each git read stopped
-by SIGKILL at what is left, and runs after the ledger's row is written and apart from it, so a git that stalls neither
+project, its main checkout, origin, the list, and the session folder, for every call of the line together, shares a
+1-second budget, each git read stopped by SIGKILL at what is left, the check whether git tracks the main checkout's
+`.aidrian.local.json`, which finding a project makes when that file sets a machine switch or
+`review.productFeedback.auto`, among them, and runs after the ledger's row is written and apart from it, so a git that stalls neither
 passes the host's 5-second hook timeout nor loses the call's ledger row. Every field is checked as the reader checks it, and the row is filed under
 the payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
 output and exit code are its own ([Session links](providers/adding-a-host.md#session-links) says why the hook and not

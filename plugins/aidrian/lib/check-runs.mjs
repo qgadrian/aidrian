@@ -200,7 +200,7 @@ function familyCounts(lines) {
   }
   const examples = lines.map((line) => EXAMPLES_LINE.exec(line)).filter(Boolean);
   // go test lines that counted nothing, and no other family: a run of no tests, which passes nothing.
-  if (!examples.length) return lines.some((line) => GO_PACKAGE.any.test(line)) ? { pass: 0, fail: 0 } : { pass: null, fail: null };
+  if (!examples.length) return lines.some((line) => GO_PACKAGE.any.test(line) || GO_VERBOSE.test(line)) ? { pass: 0, fail: 0 } : { pass: null, fail: null };
   const fail = examples.reduce((total, found) => total + Number(found[2]), 0);
   return { pass: examples.reduce((total, found) => total + Number(found[1]), 0) - fail, fail };
 }
@@ -208,14 +208,16 @@ function familyCounts(lines) {
 // go test's counts, or null when `lines` hold none of its lines. A `-v` run counts its top-level tests, and fails at
 // least once a package of it failed, so a package that did not build, a test binary that timed out and panicked, or a
 // TestMain that exited 1 after its tests passed fails the run. Any other run counts its packages: a package whose tests
-// all were skipped or filtered out (`[no tests to run]`), or that has none, counts no pass, and packages that count
-// nothing leave the counts to a later family, as a script that runs go test and then pytest prints.
+// all were skipped or filtered out (`[no tests to run]`), or that has none, counts no pass. Either run that counts
+// nothing, as one whose tests were all skipped, leaves the counts to a later family, as a script that runs go test and
+// then pytest prints.
 function goCounts(lines) {
   const count = (pattern) => lines.filter((line) => pattern.test(line)).length;
   const packagesFailed = count(GO_PACKAGE.fail);
-  if (lines.some((line) => GO_VERBOSE.test(line))) return { pass: count(GO_TEST.pass), fail: Math.max(count(GO_TEST.fail), packagesFailed) };
-  const pass = count(GO_PACKAGE.pass);
-  return pass + packagesFailed > 0 ? { pass, fail: packagesFailed } : null;
+  const verbose = lines.some((line) => GO_VERBOSE.test(line));
+  const pass = count(verbose ? GO_TEST.pass : GO_PACKAGE.pass);
+  const fail = verbose ? Math.max(count(GO_TEST.fail), packagesFailed) : packagesFailed;
+  return pass + fail > 0 ? { pass, fail } : null;
 }
 
 // A run's status from its counts and whether the host saw its exit status as 0 (`exitZero`, true only when the line's
@@ -360,40 +362,46 @@ const FAIL_WORD = /\bnot\s+finished\b|\b(?:failed|failing|red|timed\s+out|stoppe
 // A clause about CI, which the record cannot see: its results are quoted from the forge.
 const CI_WORD = /\bCI\b|\bpipeline\b|\bworkflow\b/u;
 // An outside source a report may quote: another agent, a pull request, an issue, a review. The writer's own words are
-// none: a report, handoff, review, or agent after "this", "my", or "our", with at most one word between, as "my final
-// report"; "the test report"; and "the test output" or "my run", which name no source here.
+// none: a report, handoff, or review after "this", "my", or "our", with at most one word between, as "my final report";
+// "this agent"; "the test report"; and "the test output" or "my run", which name no source here. "My subagent" is
+// another agent.
 const SELF = String.raw`(?<!\b(?:this|my|our)\s+(?:[A-Za-z-]+\s+)?)`;
-const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|${SELF}review|${SELF}subagent|${SELF}agent|dispatcher|issue|ticket|comment|thread|${SELF}handoff|${SELF}(?<!\btest\s)report|brief|author|commit\s+message|bot)`;
+const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|${SELF}review|subagent|(?<!\bthis\s)agent|dispatcher|issue|ticket|comment|thread|${SELF}handoff|${SELF}(?<!\btest\s)report|brief|author|commit\s+message|bot)`;
 const SAYS = String.raw`(?:says?|said|claim(?:s|ed)?|states?|stated|reports?|reported|writes|wrote|lists?|listed|quotes?|quoted|asserts?|asserted)`;
 // A clause an outside source governs: one that opens with "according to" it, or a part of it, split at a coordinating
-// "and", in which a source and a verb of saying come right before the command (SAID_BEFORE, built with the suites).
+// "and", in which a source and a verb of saying come right before the command (saidBefore, built with the suites).
 const ACCORDING = new RegExp(String.raw`^\W*according\s+to\s+(?:\S+\s+){0,2}?${SOURCE}\b`, 'iu');
+const commandWords = (suites) => ['`[^`\\n]*`', ...suites.map((suite) => `(?<![\\w-])${escape(suite)}\\b`)];
 const saidBefore = (suites) => {
   const command = ['`', ...suites.map((suite) => `${escape(suite)}\\b`)].join('|');
   return new RegExp(String.raw`\b${SOURCE}(?:'s)?\s+(?:\S+\s+){0,2}?${SAYS}(?:\s+that)?\s*:?\s+["“]?(?=${command})`, 'iu');
 };
-// A span in double quotes, straight or curly, that a verb of reading or saying introduces, as `it read "..."`: words
-// quoted from another. Other quotes, such as a JSON string's, are the writer's. A quote inside a code span, as in
-// `pytest -k "adds"`, is the command's own, so code spans are set aside while the quotes are read (unquoted).
-const CUED_QUOTE = new RegExp(String.raw`(\b(?:read|reads|reading|${SAYS})\s*[:,]?\s*(?:as\s+)?)(?:"[^"\n]*"|“[^”\n]*”)`, 'giu');
-function unquoted(text) {
-  const code = [];
-  const masked = text.replace(/`[^`\n]*`/gu, (span) => `\u0000${code.push(span) - 1}\u0000`);
-  return masked.replace(CUED_QUOTE, '$1 ').replace(/\u0000(\d+)\u0000/gu, (_, index) => code[Number(index)]);
+// A part that ends at its list of commands, with no predicate after them, as "the PR body says `npm test`" before
+// "and `vitest run` passed": what the source says of them follows.
+const endsAtCommand = (suites) => new RegExp(`(?:${commandWords(suites).join('|')})[\\s,.;:]*$`, 'u');
+
+// The texts of a report, each its writer's own. A machine handoff's JSON object, in a ```json fence or on its own from
+// the first line that opens with `{`, gives each string value of it, and the prose before and after it is text of its
+// own; any other report, or one whose object does not parse, is one text.
+function reportTexts(report) {
+  const fence = /^[ \t]*```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```[ \t]*$/mu.exec(report);
+  const fenced = fence ? parsed(fence[1]) : undefined;
+  if (fenced !== undefined) {
+    return [...reportTexts(report.slice(0, fence.index)), ...stringsOf(fenced), ...reportTexts(report.slice(fence.index + fence[0].length))];
+  }
+  const open = /^\{/mu.exec(report);
+  const end = open ? jsonEnd(report, open.index) : null;
+  const bare = end === null ? undefined : parsed(report.slice(open.index, end));
+  if (bare === undefined) return [report];
+  return [report.slice(0, open.index), ...stringsOf(bare), report.slice(end)];
 }
 
-// The texts of a report, each its writer's own: a report that is a JSON object, or opens with one, as a machine handoff
-// does, gives each string value of it and then the text after it; any other report, or one whose object does not
-// parse, is one text.
-function reportTexts(report) {
-  const start = report.search(/\S/u);
-  if (start < 0 || report[start] !== '{') return [report];
-  const end = jsonEnd(report, start);
-  if (end === null) return [report];
+// `text` parsed as JSON, or undefined when it does not parse.
+function parsed(text) {
   try {
-    return [...stringsOf(JSON.parse(report.slice(start, end))), report.slice(end)];
+    return JSON.parse(text);
   } catch {
-    return [report];
+    return undefined;
   }
 }
 
@@ -437,26 +445,27 @@ const PASS_COUNT = /(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s*\/\s*\d+\b|(?<!\
 // `testing.fullSuite` command, also as plain words.
 // Each is { clause, key, counts, commits }: `key` the command's (commandKey), `counts` the pass counts it states, and
 // `commits` the commit ids it names, such as "at 056c3c2", which the pull request body rule reads the tree of.
-// `ownOnly` leaves out what the text quotes: block quote lines, spans in double quotes a verb of reading or saying
-// introduces, outside code, and what an outside source governs (ownClause). A whole report (`section` null) that is or
-// opens with a JSON object is read a string value at a time (reportTexts). A subagent's report quotes other agents and
-// pull request bodies; a pull request body's `## Tests run` section is its author's own, so that rule reads every line.
+// `ownOnly` leaves out what the text quotes from another: block quote lines, and what an outside source governs
+// (ownClause). Words in double quotes are the writer's, as "reported \"126/126 pass\"" quotes its own run. A whole report
+// (`section` null) with a machine handoff's JSON object is read a string value at a time (reportTexts). A subagent's
+// report quotes other agents and pull request bodies; a pull request body's `## Tests run` section is its author's own,
+// so that rule reads every line.
 export function passClaims(body, { section = 'Tests run', testing = {}, ownOnly = false } = {}) {
   const suites = (testing.fullSuite ?? []).map(keyOfText).filter(Boolean);
-  const said = saidBefore(suites);
+  const own = { said: saidBefore(suites), ends: endsAtCommand(suites) };
   const texts = ownOnly && section === null ? reportTexts(String(body)) : [body];
-  return texts.flatMap((text) => textClaims(text, { section, testing, ownOnly, suites, said }));
+  return texts.flatMap((text) => textClaims(text, { section, testing, ownOnly, suites, own }));
 }
 
 // The claims of one text, as passClaims reads them.
-function textClaims(body, { section, testing, ownOnly, suites, said }) {
+function textClaims(body, { section, testing, ownOnly, suites, own }) {
   let lines = section === null ? [...unfencedLines(body)] : sectionLines(body, section);
   // A block quote line ends its paragraph, as a blank line does.
   if (ownOnly) lines = lines?.map((line) => (BLOCK_QUOTE.test(line) ? '' : line));
   const claims = [];
   for (const unit of units(lines ?? [])) {
     for (const written of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
-      const clause = ownOnly ? ownClause(written, said) : written;
+      const clause = ownOnly ? ownClause(written, own) : written;
       if (!PASS_WORD.test(clause) || FAIL_WORD.test(clause) || CI_WORD.test(clause)) continue;
       const keys = [...clause.matchAll(/`([^`\n]+)`/gu)].flatMap(([, code]) => {
         const [segment] = lexPipeline(code).segments.filter((each) => !CHANGES_DIRECTORY.has(readInvocation(each).program));
@@ -474,11 +483,12 @@ function textClaims(body, { section, testing, ownOnly, suites, said }) {
 }
 
 // The part of `clause` that is the writer's own: '' when it opens with "according to" an outside source, else its parts,
-// split at a coordinating "and", but those in which an outside source says the command (`said`), with its quoted spans
-// dropped (unquoted). A dropped part with no pass word of its own carries its saying into the parts after it, up to and
-// with the first that has one: "the PR body says `npm test` and `vitest run` passed" is all the body's.
-// "Fixed the issue reported in the ticket and `npm test` passed" keeps its claim.
-function ownClause(clause, said) {
+// split at a coordinating "and", but those in which an outside source says the command (`said`). A dropped part that
+// ends at its list of commands (`ends`) carries the saying into the next part, whose predicate is the source's:
+// "the PR body says `npm test` and `vitest run` passed" is all the body's, while in "the issue says `npm test` hangs,
+// and `vitest run` passed 3/3" the second part is the writer's. "Fixed the issue reported in the ticket and `npm test`
+// passed" keeps its claim.
+function ownClause(clause, { said, ends }) {
   if (ACCORDING.test(clause)) return '';
   const parts = clause.split(/(,?\s+and\s+)/iu);
   const kept = [];
@@ -486,11 +496,11 @@ function ownClause(clause, said) {
   for (let index = 0; index < parts.length; index += 2) {
     const part = parts[index];
     const dropped = carried || said.test(part);
-    carried = dropped && !PASS_WORD.test(part);
+    carried = dropped && ends.test(part);
     // A joining "and" stays before a kept part that follows another kept one.
     if (!dropped) kept.push(kept.length ? parts[index - 1] : '', part);
   }
-  return unquoted(kept.join(''));
+  return kept.join('');
 }
 
 // The list items and paragraphs of `lines`, each one string: a list marker starts one, a blank line or a heading ends it,

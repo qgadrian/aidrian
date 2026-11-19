@@ -185,6 +185,7 @@ test('a go package with no tests to run counts no pass', () => {
   assert.equal(unsupportedClaims(passClaims('`go test -run TestNone ./...` passed', { section: null }), [row], { tree: 't' }).length, 1, 'supports no claim');
   // Go packages that count nothing leave the counts to the next family a script's output holds.
   assert.deepEqual(runCounts('?   \texample.test/cmd\t[no test files]\n============== 12 passed in 0.50s ==============\n'), { pass: 12, fail: 0 }, 'go, then pytest');
+  assert.deepEqual(runCounts(`${skipped}============== 12 passed in 0.50s ==============\n`), { pass: 12, fail: 0 }, 'an all-skipped go -v run, then pytest');
 });
 
 test('the working trees count uncommitted files, with and without the untracked ones, and match the commit that holds them', () => {
@@ -256,7 +257,7 @@ test('a report\'s own claims leave out what it quotes from another source', () =
     'The pull request body says `npm test` passed, which the record does not show.',
     'According to the reviewer, `npm test` passed.',
     'PR #383 claimed `node --test test/a.test.mjs` passed; the backend-developer handoff reported `vitest run` passed.',
-    'Earlier it read "`npm test` passed" in a comment.',
+    'The reviewer wrote "`npm test` passed" in a comment.',
     'The output says `pytest` passed, 12 passed.',
   ].join('\n');
   const own = passClaims(report, { section: null, ownOnly: true });
@@ -267,7 +268,23 @@ test('a report\'s own claims leave out what it quotes from another source', () =
   assert.deepEqual(passClaims('The reviewer says `npm test` passed, and `vitest run` passed 3/3.', { section: null, ownOnly: true }).map(({ key }) => key),
     ['vitest run'], 'the part after a coordinating "and" is the writer\'s');
   assert.deepEqual(passClaims('The PR body says `npm test` and `vitest run` passed.', { section: null, ownOnly: true }), [],
-    'a source\'s part with no pass word of its own carries into the next part');
+    'a source\'s part that ends at its commands carries into the next part');
+});
+
+test('a source\'s part carries into the next only when it ends at its commands', () => {
+  const own = (text) => passClaims(text, { section: null, ownOnly: true, testing: TESTING }).map(({ key, counts }) => ({ key, counts }));
+  assert.deepEqual(own('The reviewer reported `npm test` failed on Node 22, and `npm test` now passes: 12/12.'), [{ key: 'npm test', counts: [12] }]);
+  assert.deepEqual(own('The issue says `npm test` hangs, and `vitest run` passed 3/3.'), [{ key: 'vitest run', counts: [3] }]);
+  assert.deepEqual(own('The reviewer said `npm run lint` needs a fix and `npm test` passed 40/40'), [{ key: 'npm test', counts: [40] }]);
+  assert.deepEqual(own('The PR body says npm run check and `vitest run` passed.'), [], 'a full suite as plain words ends the list too');
+});
+
+test('words in double quotes are the writer\'s own; an outside source is what drops a claim', () => {
+  const own = (text) => passClaims(text, { section: null, ownOnly: true, testing: TESTING }).map(({ key, counts }) => ({ key, counts }));
+  assert.deepEqual(own('`npm run check` reported "4071/4071 pass".'), [{ key: 'npm run check', counts: [4071] }]);
+  assert.deepEqual(own('Ran `npm test`, which reported "126/126 pass".'), [{ key: 'npm test', counts: [126] }]);
+  assert.deepEqual(own('The output reads: "`npm test` 40/40 pass".'), [{ key: 'npm test', counts: [40] }]);
+  assert.deepEqual(own('The reviewer wrote "`npm test` passed"'), [], 'a source and a verb of saying');
 });
 
 test('a report that is or opens with a JSON object is read a string value at a time', () => {
@@ -279,7 +296,10 @@ test('a report that is or opens with a JSON object is read a string value at a t
   assert.deepEqual(own(`${JSON.stringify(quoting)}\n\nDone. \`npm run check\`: 12/12 pass.`), [{ key: 'npm run check', counts: [12] }],
     'a JSON object then prose: the source\'s value is dropped, the prose kept');
   assert.deepEqual(own('{"status": "done", unparsed `npm test` passed 3/3'), [{ key: 'npm test', counts: [3] }], 'an object that does not parse is plain text');
-  assert.deepEqual(own('Earlier it read "`npm test` passed" in a comment.'), [], 'a quote a reading verb introduces');
+  const later = { evidence: ['The PR body says `npm test` passed', '`npm run check`: 12/12 pass'] };
+  assert.deepEqual(own(`Done.\n\n${JSON.stringify(later)}`), [{ key: 'npm run check', counts: [12] }], 'prose, then the JSON object on a line of its own');
+  assert.deepEqual(own(`Done.\n\n\`\`\`json\n${JSON.stringify(later, null, 2)}\n\`\`\`\n\nAll good.`), [{ key: 'npm run check', counts: [12] }],
+    'a JSON object in a json fence');
 });
 
 test('a report\'s own claim stays one when it names a source that does not say the command', () => {
@@ -298,6 +318,7 @@ test('a report\'s own claim stays one when it names a source that does not say t
     ['This agent reports `npm test` passed 40/40.', [40]],
   ]) assert.deepEqual(own(text), [{ key: 'npm test', counts }], text);
   assert.deepEqual(own('The final report states `npm test` passed 40/40.'), [], 'a report not the writer\'s');
+  assert.deepEqual(own('My subagent reports `npm test` passed 40/40.'), [], 'a subagent is another agent');
   assert.deepEqual(own('The PR body says npm run check passed.'), [], 'a full suite named as plain words, said by a source');
 });
 

@@ -518,7 +518,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   base tip, or one git does not track or ignores: `the attempt's clone <path> is not started: it holds host config or
   instruction files git does not track, which no review saw: <files>`. It refuses too when a folder above the clone
   holds a host instruction file, such as a `CLAUDE.md`, that lies outside the main checkout, or that no review saw
-  there; move it away. What a session no Human attends may never do is write those files in the main checkout
+  there; move it away. A file inside a host's own user folder, such as `~/.claude/CLAUDE.md` above a state folder in
+  the home folder, is the user's, which the host reads for every session, and refuses no start. What a session no Human attends may never do is write those files in the main checkout
   ([agent gates](hooks.md#agent-gates)).
 
 ### Replacing the terminal

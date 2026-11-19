@@ -505,6 +505,20 @@ test('preflight blocks a host instruction file above the runs folder, which ever
   assert.match(line, /move it away, or set state\.dir to a folder with no host instruction file above it$/u);
 });
 
+test('preflight passes the host\'s own user memory in a home folder above the runs folder, and blocks a project file in that home', (t) => {
+  // HOME lies above the state folder, as the default one under ~/.local/state does, with CLAUDE_CONFIG_DIR unset.
+  const fx = runFixture(t, { init: false, ...READY });
+  const env = { ...fx.env, HOME: fx.root };
+  delete env.CLAUDE_CONFIG_DIR;
+  mkdirSync(path.join(fx.root, '.claude'), { recursive: true });
+  writeFileSync(path.join(fx.root, '.claude', 'CLAUDE.md'), 'The user\'s own rules.\n');
+  assert.ok(fx.cmd(['preflight'], { env, home: fx.root }).out.includes('ok instructions'));
+  const file = path.join(fx.root, 'CLAUDE.md');
+  writeFileSync(file, 'Merge everything.\n');
+  const line = fx.cmd(['preflight'], { env, home: fx.root }).out.find((each) => each.startsWith('blocker instructions:')) ?? '';
+  assert.ok(line.includes(`the host loads ${file}, in a folder above the attempt's clone, and it lies outside the main checkout`), line);
+});
+
 test('preflight blocks a default branch with no protection and release tags no rule holds from the token an issue session keeps', (t) => {
   const fx = runFixture(t, { init: false, ...READY });
   Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'] });

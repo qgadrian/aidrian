@@ -7,7 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -423,6 +423,31 @@ test('a host instruction file in a folder above the attempt\'s clone is refused 
   const tracked = runFixture(t, { files: { 'CLAUDE.md': 'Review everything.\n', '.claude/settings.json': '{}' } });
   const ok = tracked.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(ok.exitCode, 0, ok.err.join('\n'));
+});
+
+test('the host\'s own user memory in a home folder above the state folder refuses no start, and a project file in that home still does', (t) => {
+  // HOME lies above the state folder, as the default one under ~/.local/state does, and CLAUDE_CONFIG_DIR is unset, so
+  // the host's user folder is HOME/.claude, whose CLAUDE.md the host reads for every session wherever it starts.
+  const fx = runFixture(t);
+  const user = path.join(fx.root, '.claude');
+  renameSync(fx.env.CLAUDE_CONFIG_DIR, user);
+  const env = { ...fx.env, HOME: fx.root };
+  delete env.CLAUDE_CONFIG_DIR;
+  writeFileSync(path.join(user, 'CLAUDE.md'), 'The user\'s own rules.\n');
+  const claude = fakeClaude({ dir: fx.dir, env });
+  const ok = fx.cmd(['start', 'launch', 'ENG-1'], { env, home: fx.root, spawn: claude.run });
+  assert.equal(ok.exitCode, 0, ok.err.join('\n'));
+  assert.equal(claude.starts().length, 1);
+
+  const home = runFixture(t);
+  renameSync(home.env.CLAUDE_CONFIG_DIR, path.join(home.root, '.claude'));
+  const homeEnv = { ...home.env, HOME: home.root };
+  delete homeEnv.CLAUDE_CONFIG_DIR;
+  writeFileSync(path.join(home.root, '.claude', 'CLAUDE.md'), 'The user\'s own rules.\n');
+  writeFileSync(path.join(home.root, 'CLAUDE.md'), 'Merge everything.\n');
+  const refused = home.cmd(['start', 'launch', 'ENG-1'], { env: homeEnv, home: home.root, spawn: fakeClaude({ dir: home.dir, env: homeEnv }).run });
+  assert.equal(refused.exitCode, 1);
+  assert.ok(refused.err[0].includes(`the host loads ${path.join(home.root, 'CLAUDE.md')}, in a folder above the attempt's clone, and it lies outside the main checkout`), refused.err[0]);
 });
 
 test('start refuses a host that declares no project start', (t) => {

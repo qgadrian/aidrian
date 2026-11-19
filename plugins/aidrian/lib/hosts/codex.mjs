@@ -337,7 +337,7 @@ export default {
   instructionFiles: {
     files: ['AGENTS.md', 'AGENTS.override.md'],
     folders: ['.codex'],
-    userFolder: (env) => env.CODEX_HOME || path.join(homedir(), '.codex'),
+    userFolder: (env) => env.CODEX_HOME || path.join(env.HOME || homedir(), '.codex'),
   },
   // What a session in a linked worktree reads from the main checkout: nothing its docs name. Its instructions load from
   // the worktree's own folders up to the project root, which instructionFiles covers.

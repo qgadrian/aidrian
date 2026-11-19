@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { isWithin, resolvedPath } from './fs.mjs';
+import { foldCase, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
 import { GATE_CONFIG, gateGit } from './git.mjs';
 import { instructionNames } from './hosts/index.mjs';
@@ -271,12 +271,19 @@ export function trustProblem(dir, tip) {
 // folder, or null. Each folder above it, up to but not including the file system's root, may hold a host instruction
 // file or folder (lib/hosts/index.mjs instructionNames), which every host that reads it loads into the session. One is
 // allowed only inside the main checkout of `project`, tracked by git, and the same as the commit `tip`, or an ancestor
-// of it the main checkout is at (reviewedMismatch), with nothing untracked or ignored in a folder; a host's own user
-// folder, read for every session wherever it starts, is the user's. `env` names those user folders. The state folder
-// lies outside every checkout (project-run.mjs runPlace), so the advice moves the file or the state folder.
+// of it the main checkout is at (reviewedMismatch), with nothing untracked or ignored in a folder. A file or folder that
+// lies inside any host's own user folder, read for every session wherever it starts, is the user's, such as Claude
+// Code's `.claude/CLAUDE.md` in the home folder, which a default state folder lies under: by its path, or by its real
+// path, so a user folder or a file in it that is a symlink, as a dotfiles checkout makes, stays the user's. `env` names
+// those user folders. The state folder lies outside every checkout (project-run.mjs runPlace), so the advice moves the
+// file or the state folder.
 export function ancestorProblem(dir, { project, tip, env = process.env }) {
   const { files, folders, userFolders } = instructionNames(env);
-  const users = new Set(userFolders.map((each) => resolvedPath(each) ?? path.resolve(each)));
+  const users = userFolders.flatMap((each) => {
+    const given = path.resolve(each);
+    return [given, path.join(resolvedPath(path.dirname(given)) ?? path.dirname(given), path.basename(given)), resolvedPath(given) ?? given];
+  }).map(foldCase);
+  const usersHold = (file) => [file, resolvedPath(file) ?? file].some((each) => users.some((user) => isWithin(user, foldCase(each))));
   const main = resolvedPath(project.checkouts.at(-1)) ?? project.checkouts.at(-1);
   const start = resolvedPath(dir) ?? path.resolve(dir);
   for (let folder = path.dirname(start); folder !== path.dirname(folder); folder = path.dirname(folder)) {
@@ -288,7 +295,7 @@ export function ancestorProblem(dir, { project, tip, env = process.env }) {
       } catch {
         continue;
       }
-      if (folders.includes(name) && users.has(resolvedPath(file) ?? file)) continue;
+      if (usersHold(file)) continue;
       const why = reviewedProblem({ main, file, folder: stat.isDirectory(), tip });
       if (why) return `the host loads ${file}, in a folder above the attempt's clone, and ${why}; move it away, or set state.dir to a folder with no host instruction file above it`;
     }

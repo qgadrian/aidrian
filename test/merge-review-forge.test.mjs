@@ -701,28 +701,44 @@ test('an in-process sign-off is refused to a session with an unattended mark or 
   assert.equal(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows.payments.head, r.commit, 'a session the Human attends');
 });
 
+// A record stopped at the round cap on HEAD with nothing but findings behind it, naming no flow for the Human, and a
+// judge's waive there.
+const waivedCap = (state) => {
+  state.outcome = {
+    status: 'round_limit', head: HEAD, at: '2026-11-18T09:00:00.000Z',
+    cap: { head: HEAD, reviewed: HEAD, items: [], counted: 0, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [] },
+  };
+  state.signoffable = { head: HEAD, flows: [] };
+  state.waivers = [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'unknown', at: '2026-11-18T09:30:00.000Z' }];
+};
+
 test('a session no Human attends merging on a judge`s verdict at the round cap: the guard reads the review trail once, and still asks merge trust', (t) => {
   const config = configOf({ github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: { allow: true } } });
   const r = repo(t, config);
   // The machine opts in to the waiver beside auto-merge, which repo() turned on.
   const local = path.join(r.dir, '.aidrian.local.json');
   writeFileSync(local, JSON.stringify({ github: { ...JSON.parse(readFileSync(local, 'utf8')).github, unattendedWaiver: 'on' } }));
-  r.record((state) => {
-    state.outcome = { status: 'round_limit', head: HEAD, at: '2026-11-18T09:00:00.000Z' };
-    state.waivers = [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'unknown', at: '2026-11-18T09:30:00.000Z' }];
-  });
+  r.record(waivedCap);
   const text = JSON.stringify(config);
-  const run = (trail) => {
+  const run = (trail, { url = 'https://github.com/acme/notes/pull/7', mark = { root: r.dir } } = {}) => {
     const calls = [];
-    const forge = () => ({ ...guardForge(text, trail, calls)(), change: (ref) => (calls.push(['change', ref]), { number: 7, headRefOid: HEAD, baseRefName: 'main', url: 'https://github.com/acme/notes/pull/7' }) });
-    const reason = check(MERGE, { cwd: r.dir, env: {}, input: { session_id: 'unattended-1' }, viewPr: viewer, unattendedMark: () => ({ root: r.dir }), waiverForge: forge, trustForge: forge });
-    return { reason, trails: calls.filter(([name]) => name === 'reviewTrail').length, rest: calls.filter(([name]) => name === 'repository' || name === 'contents').length };
+    const forge = () => ({ ...guardForge(text, trail, calls)(), change: (ref) => (calls.push(['change', ref]), { number: 7, headRefOid: HEAD, baseRefName: 'main', url }) });
+    const reason = check(MERGE, { cwd: r.dir, env: {}, input: { session_id: 'unattended-1' }, viewPr: viewer, unattendedMark: () => mark, waiverForge: forge, trustForge: forge });
+    return { reason, trails: calls.filter(([name]) => name === 'reviewTrail').length, rest: calls.filter(([name]) => name === 'repository' || name === 'contents').length, calls };
   };
-  assert.deepEqual(run(trailOf(text)), { reason: null, trails: 1, rest: 0 }, 'the waiver`s trail serves merge trust, and no policy is read over REST');
+  const { calls: _calls, ...once } = run(trailOf(text));
+  assert.deepEqual(once, { reason: null, trails: 1, rest: 0 }, 'the waiver`s trail serves merge trust, and no policy is read over REST');
   // Merge trust still holds the waived merge: a draft is refused on the same trail.
   const draft = run(trailOf(text, { draft: true }));
   assert.match(draft.reason ?? '', /^Blocked: no Human attends this session, .* it is a draft/u);
   assert.equal(draft.trails, 1);
   // With no bot pass, the verdict does not stand, and the guard's own denial names why.
-  assert.match(run(noBot(r)).reason ?? '', /is `round_limit`.*stands only once the review bot passed this head/su);
+  assert.match(run(noBot(r)).reason ?? '', /is `round_limit`.*A judge's verdict cannot stand for this head: it never stands in for the review bot/su);
+  // The waiver's view names another repository than the one this session is pinned to: merge trust does not take the
+  // waiver's trail, and reads its own of the pinned repository.
+  const other = run(trailOf(text), { url: 'https://github.com/other/fork/pull/7' });
+  assert.deepEqual(other.calls.filter(([name]) => name === 'reviewTrail').map((call) => call[1]), ['other/fork', 'acme/notes']);
+  // A session of a project run is held to the run's budget of waived merges in the guard too: a run whose ledger cannot
+  // be read counts nothing, and the verdict does not stand.
+  assert.match(run(trailOf(text), { mark: { root: r.dir, project: 'gone', issue: 'WID-1' } }).reason ?? '', /A judge's verdict cannot stand for this head: the ledger of project run gone cannot be read/u);
 });

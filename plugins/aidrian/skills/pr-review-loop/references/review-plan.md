@@ -198,10 +198,11 @@ step again on it.
 
 - First run `aidrian pr waive <n> --gate`. Only exit 0 lets a judge rule. It reads the team's
   `github.unattendedWaiver.allow` on the default and base branches through the forge, and this machine's switch,
-  and checks that every finding open at the cap is this machine's reviewers' own, of medium severity or lower, and
-  no security finding; that the review bot passed exactly this head on the forge; that no judge ruled on this head
-  yet; and, in a project run, that the run has not spent its waived merges. Exit 1: report the stop with the line it
-  prints. A verdict never stands in for the review bot.
+  and checks that the review bot passed exactly this head on the forge; that open findings of this machine's own
+  reviewers, each medium or lower and no security finding, are the whole cause of the cap; that no sign-off of the
+  Human's is owed on the head; that this host confirms a judge; that no judge ruled on this head yet; and, in a
+  project run, that the run has not spent its waived merges. Exit 1: report the stop with the line it prints. A
+  verdict never stands in for the review bot, and never lifts a sign-off the Human owes.
 - Dispatch a fresh `code-reviewer` as the waiver's judge, read-only, as `extension_check` dispatches its judge: never
   the agent that wrote the change, and never one that reviewed a round of this pull request. One judge per head:
   never dispatch another to get a different verdict. Keep the agent id the host returns for it. Brief it with the

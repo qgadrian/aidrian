@@ -81,7 +81,7 @@ import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_
 import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
-import { sessionIdentity } from './hosts/index.mjs';
+import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
 import { driverHold } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
@@ -466,8 +466,9 @@ const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, 
 // The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does. `unattended`
 // says whether no Human attends the session that runs it: its unattended mark, by the session id its host gives the
 // command (hosts/index.mjs sessionIdentity), a pending or unreadable mark included. `run` gives the project run that
-// mark names (waiver-stand.mjs runOf), for the run's budget of waived merges.
-export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), run = () => runOf(readUnattendedMark(session, home ? { home } : {})) } = {}) {
+// mark names (waiver-stand.mjs runOf), for the run's budget of waived merges; `runHost` the host it runs under, which
+// must confirm a waiver's judge (waiver-stand.mjs judgeHostProblem).
+export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), run = () => runOf(readUnattendedMark(session, home ? { home } : {})), runHost = detectHost() } = {}) {
   const fail = (message) => {
     console.error(`aidrian pr auto-merge: ${message}`);
     return 3;
@@ -561,7 +562,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
         let stand;
         try {
           stand = waivedReview({
-            project, config: loadConfig(project).config, state, pr: pr.number, head: pr.head, policies, repo: pr.repo, host: pr.host, base: pr.base, prefix, trail: readTrail, run: run(),
+            project, config: loadConfig(project).config, state, pr: pr.number, head: pr.head, policies, repo: pr.repo, host: pr.host, base: pr.base, prefix, trail: readTrail, run: run(), runHost,
           });
         } catch (error) {
           return fail(`could not read the review trail of #${pr.number} with gh (${ghError(error)})`);

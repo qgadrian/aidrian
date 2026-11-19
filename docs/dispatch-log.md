@@ -12,6 +12,11 @@ Three Claude Code hooks append the dispatch, stop, and session rows, the last th
 the review commands append a `review_extension` row, and `aidrian decisions` appends the decision rows,
 only inside a project folder, and only while config.json `telemetry.enabled` is on:
 [config.md](config.md#telemetry) has the switches.
+
+The log is no longer only a record: under the [unattended waiver](config.md#unattended-waiver), `aidrian pr auto-merge`
+takes a judge's verdict at the round cap only when a `dispatch` row of the recording session names that judge, so a
+`dispatch` row now decides a merge. It is not proof: a session that can write the state folder can write a row.
+
 A row holds names, counts, durations, costs, and file paths. It never holds a prompt, a command, or tool output.
 
 ## Rows

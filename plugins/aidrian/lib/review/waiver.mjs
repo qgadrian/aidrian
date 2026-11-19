@@ -34,7 +34,7 @@
 // `review.record` is "comment" and the post succeeds (`summary_error` says when it did not). For proof, protect the
 // default and base branches with a required review from a second account.
 
-import { machineSwitch, resolveUnattendedWaiver } from '../config.mjs';
+import { loadConfig, machineSwitch, resolveUnattendedWaiver } from '../config.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { knownPrefix } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
@@ -42,13 +42,15 @@ import { sessionIdentity } from '../hosts/index.mjs';
 // other's exports only inside functions, never while it loads: keep it that way.
 import { branchPolicies, refusingBranches, soloOn, trailPaths, trailPolicies } from '../pr-auto-merge.mjs';
 import { isObject } from '../fs.mjs';
+import { stateFolders } from '../handoff-guard.mjs';
+import { readRun } from '../project-run.mjs';
 import { mayFollowTeamDefault } from '../project.mjs';
 import { hostOf } from '../remotes.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
 import { localRefSolo, viewSolo } from '../solo.mjs';
-import { noHigher, severityOf } from './findings.mjs';
+import { isFindingId, noHigher, severityOf } from './findings.mjs';
 import { boundedReads, holdToBase } from './in-force.mjs';
-import { botProblem } from './merge-trust.mjs';
+import { botProblem, flowsFloor, readHumanSignoffs, recordedFlows, signoffProblem } from './merge-trust.mjs';
 import { postContext, readReading } from './dispatch.mjs';
 import { heldWaiver } from './settled.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
@@ -113,25 +115,123 @@ export const WAIVER_CEILING = 'medium';
 // A reviewer of the security stage, by the name a plan or a pass result gives it.
 const SECURITY_REVIEWER = /security-engineer/iu;
 
-// Why the findings open at the cap keep a judge's verdict from standing for `head`, or null. Read from the record's
-// finding index: every open entry must be a local reviewer's (the local or independent stage, never the review bot's
-// `remote` stage or `pr-bot`), of a severity the disposition table knows and no higher than WAIVER_CEILING, and no
-// security finding: marked (findings.mjs tieTwins marks critical, high, and their twins) or from the security reviewer.
-// A last round on `head` that counts more open findings than the index holds cannot be read one by one, so it refuses;
-// so does an accepted residual above low on any pass record (settled.mjs heldWaiver), which only the Human lets merge.
+// The stages whose open findings a verdict may waive: this machine's own reviewers.
+const WAIVABLE_STAGES = new Set(['local', 'independent']);
+// What a refusal prints of a value a record holds: the value only when it has the shape it should, else a placeholder.
+const shown = (value, pattern, placeholder) => (typeof value === 'string' && pattern.test(value) ? value : placeholder);
+const FLOW_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u;
+const PASS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/u;
+const findingName = (id) => (isFindingId(id) ? `finding ${id}` : 'a finding');
+
+// Why one open item keeps a verdict from standing, or null: `item` is { id, severity, security, stage, reviewer, pass }.
+function itemProblem(item, stageOf) {
+  const name = findingName(item.id);
+  const stage = item.stage ?? stageOf(item.pass);
+  if (!WAIVABLE_STAGES.has(stage) || item.reviewer === 'pr-bot') return `${name} is not one of this machine's reviewers' (stage ${shown(stage, PASS_NAME, 'unknown')}), and a verdict waives only theirs`;
+  if (!noHigher(item.severity, WAIVER_CEILING)) return `${name} is ${severityOf(item.severity) ?? 'of no known severity'}, above ${WAIVER_CEILING}, which only the Human lets merge`;
+  if (item.security === true || SECURITY_REVIEWER.test(String(item.reviewer ?? '')) || SECURITY_REVIEWER.test(String(item.pass ?? ''))) return `${name} is a security finding, which only the Human lets merge`;
+  return null;
+}
+
+// Why what stopped the review at the cap keeps a judge's verdict from standing for `head`, or null. It reads the cap's
+// cause, which the review step keeps on the outcome (review/run.mjs capCause): a verdict stands only when open findings
+// of this machine's own reviewers are the whole cause. Refused: a record with no cause for `head` (an older record); the
+// review bot's own round limit; a flow left with an invariant violated, unverified, or unsigned, on this round or, for
+// a head no round reviewed, the last one; a flow test deleted; a failing flow check; a pass of this machine that never
+// reviewed the head; open findings counted and not listed one by one; and any listed finding of the review bot or a
+// stage not this machine's, above WAIVER_CEILING or of no known severity, or a security finding (marked, which
+// findings.mjs tieTwins does for critical, high, and their twins, from a security pass, or the security reviewer's).
+// The finding index is read too: every open entry meets the same rules, its stage from the entry or the plan note.
+// An accepted residual above low on any pass record (settled.mjs heldWaiver) refuses as well. The Human's sign-offs are
+// signoffOwed's.
 export function capProblem(state, head) {
   if (heldWaiver(state)) return 'an accepted residual waived a finding above low severity, and only the Human lets that merge';
-  const open = Object.values(isObject(state?.index) ? state.index : {}).filter((entry) => isObject(entry) && entry.state === 'open');
-  const last = Array.isArray(state?.rounds) ? state.rounds.at(-1) : null;
-  const counted = isObject(last) && sameCommit(last.head, head) && Number.isInteger(last.open) ? last.open : 0;
-  if (counted > open.length) return `the last round counts ${counted} open findings, and the record names ${open.length} of them, so each one's severity cannot be told`;
-  for (const entry of open) {
-    const id = typeof entry.id === 'string' ? entry.id : 'with no id';
-    if (entry.stage === 'remote' || entry.reviewer === 'pr-bot') return `finding ${id} is the review bot's, and a verdict waives only this machine's reviewers' findings`;
-    if (!noHigher(entry.severity, WAIVER_CEILING)) return `finding ${id} is ${severityOf(entry.severity) ?? 'of no known severity'}, above ${WAIVER_CEILING}, which only the Human lets merge`;
-    if (entry.security === true || SECURITY_REVIEWER.test(String(entry.reviewer ?? '')) || SECURITY_REVIEWER.test(String(entry.pass ?? ''))) return `finding ${id} is a security finding, which only the Human lets merge`;
+  const cause = state?.outcome?.cap;
+  if (!isObject(cause) || typeof cause.head !== 'string' || !sameCommit(cause.head, head)) {
+    return 'the record keeps no cause of the round cap on this head, as a record from an older plugin, so what stopped the review cannot be told';
+  }
+  if (cause.bot === true) return 'the review bot reached its own round limit, and a verdict never stands in for the bot';
+  const listOf = (value) => (Array.isArray(value) ? value : null);
+  const flows = [...(listOf(cause.flows) ?? []), ...(listOf(cause.unsigned) ?? [])];
+  if (listOf(cause.unsigned) === null) return 'the round the record kept for the cap names no flows it left unsigned, so whether one was cannot be told';
+  if (flows.length) return `flow ${shown(flows[0], FLOW_NAME, 'with no readable name')} has an invariant violated, unverified, or unsigned, which a fix or the Human settles, never a verdict`;
+  if (listOf(cause.tests_removed)?.length) return `the change deletes a test of flow ${shown(cause.tests_removed[0], FLOW_NAME, 'with no readable name')}, which only the Human accepts`;
+  if (cause.checks_failing !== 0) return 'a check the flows require fails on this head';
+  if (listOf(cause.unrun) === null || cause.unrun.length) return `pass ${shown(cause.unrun?.[0], PASS_NAME, 'of this machine')} never reviewed this head`;
+  if (cause.itemized !== true || !Number.isInteger(cause.counted)) return `${Number.isInteger(cause.counted) ? `${cause.counted} open findings are` : 'the open findings are'} counted, not each listed with its severity`;
+  const stageOf = (pass) => state.planNote?.passes?.[pass]?.stage ?? state.dispatched?.[pass]?.stage ?? null;
+  for (const item of listOf(cause.items) ?? []) {
+    const problem = itemProblem(isObject(item) ? item : {}, stageOf);
+    if (problem) return problem;
+  }
+  for (const entry of Object.values(isObject(state?.index) ? state.index : {})) {
+    if (!isObject(entry) || entry.state !== 'open') continue;
+    const problem = itemProblem(entry, stageOf);
+    if (problem) return problem;
   }
   return null;
+}
+
+// Why a sign-off of the Human's that a merge of `head` owes keeps a verdict from standing, or null. A verdict never
+// lifts one: every flow the record names for the Human on that head (`signoffable`, which it must name for exactly that
+// head), every flow the forge's file list and both branches' configs may select (merge-trust.mjs flowsFloor), and every
+// flow the cap's cause names, needs a sign-off on exactly `head` in the sign-off store (merge-trust.mjs signoffProblem),
+// attended or not. `trail` is the forge's review trail, `policies` branchPolicies' answer.
+export function signoffOwed({ state, head, trail, policies, prefix, repo, pr, signoffs = null }) {
+  if (!isObject(state?.signoffable) || typeof state.signoffable.head !== 'string' || !sameCommit(state.signoffable.head, head)) {
+    return 'the record names no flows the Human signs off on this head, so whether a sign-off is owed cannot be told';
+  }
+  const floor = flowsFloor({ files: Array.isArray(trail?.files) ? trail.files : [], complete: trail?.filesComplete === true, configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles });
+  const human = Array.isArray(state.outcome?.cap?.human) ? state.outcome.cap.human.filter((flow) => typeof flow === 'string') : [];
+  const flows = new Set([...recordedFlows(state, head), ...floor.flows, ...human]);
+  return signoffProblem({ flows, reasons: floor.reasons, signoffs: signoffs ?? readHumanSignoffs({ repo, pr }), head });
+}
+
+// The most pull requests one project run merges on a judge's verdict; past it, the issue is parked for the Human.
+export const WAIVED_MERGES = 3;
+
+// The project run a session's unattended mark names: undefined for none, the run id, or null when the mark carries run
+// tags that cannot be read, which no budget can count.
+export function runOf(mark) {
+  if (!mark || !Object.hasOwn(mark, 'project')) return undefined;
+  return typeof mark.project === 'string' ? mark.project : null;
+}
+
+// The ledger of the project run `run`, readRun's answer from the first state folder that holds it, or null.
+export function runLedger({ project, config, run }) {
+  for (const state of stateFolders(project, config, { lazy: true })) {
+    const found = readRun(state, run);
+    if (!found.problem) return found;
+  }
+  return null;
+}
+
+// How many pull requests the project run `run` merged, other than `pr`, on a judge's verdict: its ledger's merged
+// results whose review record holds a `waive` that stands for the head its outcome names, the head that merged
+// (waiverFor); or null when the run's ledger cannot be read.
+export function waivedMerges({ project, config, run, pr }) {
+  const found = runLedger({ project, config, run });
+  if (!found) return null;
+  const { owner, name } = found.init.repository;
+  const merged = new Set(found.rows.filter((row) => row?.event === 'result' && row.status === 'merged' && Number.isInteger(row.pr) && row.pr !== pr).map((row) => row.pr));
+  return [...merged].filter((n) => {
+    const record = readLocalState(project, n, `${owner}/${name}`);
+    return typeof record?.outcome?.head === 'string' && waiverFor(record, record.outcome.head, 'round_cap') !== null;
+  }).length;
+}
+
+// Why the run's budget keeps a verdict from standing for `pr`, or null. `run` is runOf's answer.
+export function budgetProblem({ project, config, run, pr }) {
+  if (run === undefined) return null;
+  if (run === null) return 'this session\'s unattended mark names a project run that cannot be read, so the run\'s waived merges cannot be counted';
+  let spent;
+  try {
+    spent = waivedMerges({ project, config, run, pr });
+  } catch {
+    spent = null;
+  }
+  if (spent === null) return `the ledger of project run ${shown(run, PASS_NAME, 'named')} cannot be read, so its waived merges cannot be counted`;
+  return spent >= WAIVED_MERGES ? `project run ${run} merged ${spent} pull requests on a judge's verdict already, its most (${WAIVED_MERGES}): park the issue for the Human` : null;
 }
 
 // Why no verdict may be recorded for `head`, for runWaive's error and the gate's.
@@ -285,19 +385,26 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   const gate = waiverGate({ project, forge: reads, repo: home, host, base, prefix, localSolo, memo, policies });
   if (gate.reason === 'unread') return unread;
   if (!gate.on) return none;
+  // A verdict never stands in for the review bot, and never lifts what else stopped the review or a sign-off the Human
+  // owes: each is read before the verdict, so the denial says why none can stand.
+  const cannot = (why) => ({ ...none, route: ` A judge's verdict cannot stand for this head: ${why}.` });
+  const bot = botProblem(trail, head, policies.policy.github.reviewer);
+  if (bot) return cannot(`it never stands in for the review bot, and ${bot}`);
   const cap = capProblem(state, head);
-  if (cap) return { ...none, route: ` A judge's verdict cannot stand for this head: ${cap}.` };
+  if (cap) return cannot(cap);
+  const owes = signoffOwed({ state, head, trail, policies, prefix, repo: home, pr });
+  if (owes) return cannot(owes);
+  // A session of a project run is held to the run's budget of waived merges (`memo.run`, merge-review.mjs check).
+  const budget = memo && memo.run !== undefined ? budgetProblem({ project, config: loadConfig(project).config, run: memo.run, pr }) : null;
+  if (budget) return cannot(budget);
   const verdict = waiverFor(state, head, kind);
-  // A verdict never stands in for the review bot: it stands only once the bot passed exactly this head.
-  const bot = verdict ? botProblem(trail, head, policies.policy.github.reviewer) : null;
-  if (bot) return { ...none, route: ` A judge's recorded verdict waives only this machine's reviewers' findings, and stands only once the review bot passed this head: ${bot}.` };
   if (verdict && named) return { allow: true, note: '', route: '' };
   if (verdict) {
     return { ...none, route: ` A judge's recorded verdict waives this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.` };
   }
   return {
     ...none,
-    route: ` Or an unattended run the Human told to merge records the verdict of a fresh judge, as the pr-review-loop skill's references/review-plan.md § At the cap says, with \`aidrian pr waive ${pr} --verdict waive|refuse --reason "<evidence>" --head ${head}\`, which this repository allows (github.unattendedWaiver), then merges naming that head.`,
+    route: ` Or, under the unattended waiver this repository allows (github.unattendedWaiver), a run with no Human present first checks \`aidrian pr waive ${pr} --gate\`, then records the verdict of one fresh judge, as the pr-review-loop skill's references/review-plan.md § At the cap says, with \`aidrian pr waive ${pr} --verdict waive|refuse --reason "<evidence>" --head ${head} --judge <agent id>\`, then merges naming that head.`,
   };
 }
 

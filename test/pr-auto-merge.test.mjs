@@ -14,6 +14,7 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { classify, evaluateRules } from '../plugins/aidrian/lib/review/plan.mjs';
 import { emptyState, noteOutcome, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { recordHumanSignoff, signoffFolder } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 const OLD = '1234567890abcdef1234567890abcdef12345678';
@@ -1418,8 +1419,14 @@ const botCard = (sha = HEAD) => ({
 // The default branch's config with the unattended waiver allowed, or as `waiver` says.
 const waiverConfig = (waiver = { allow: true }) => JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: waiver } });
 // A record stopped at the round cap on `head`, with a judge's `waive` there, its agent id and session named.
-const capped = (head = HEAD, entry = {}) => (state) => {
-  state.outcome = { status: 'round_limit', head, at: CAP_AT };
+// Its cause is open findings of this machine's reviewers alone, here none (review/run.mjs capCause), and it names no flow
+// for the Human on that head.
+const capped = (head = HEAD, entry = {}, cause = {}) => (state) => {
+  state.outcome = {
+    status: 'round_limit', head, at: CAP_AT,
+    cap: { head, reviewed: head, items: [], counted: 0, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [], ...cause },
+  };
+  state.signoffable = { head, flows: [] };
   state.waivers = [{ head, kind: 'round_cap', verdict: 'waive', reason: 'every open finding is a nit', judge: 'unknown', judge_id: 'judge-1', session: 'sess-1', at: '2026-11-03T14:40:00.000Z', ...entry }];
 };
 // The judge's dispatch in the recording session's dispatch log.
@@ -1430,7 +1437,9 @@ function logJudge(r, rows = [{ event: 'dispatch', ts: '2026-11-03T14:30:00.000Z'
 }
 
 // auto-merge over fakeForge with the default branch's config `config` and a review trail whose bot card passes `card`.
-function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, unattended = false, head = HEAD } = {}) {
+// A host whose hook confirms a judge's dispatch, as Claude Code's does.
+const CONFIRMS = { name: 'claude-code', capabilities: { judgeDispatch: true } };
+function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, unattended = false, head = HEAD, runHost = CONFIRMS } = {}) {
   const out = [];
   t.mock.method(console, 'log', (line) => out.push(line));
   t.mock.method(console, 'error', () => {});
@@ -1444,7 +1453,7 @@ function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, u
       branches: { default: { name: 'main', pointer: null, config, knowledge: null }, base: { name: 'main', pointer: null, config } },
     };
   };
-  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => unattended, run: () => run });
+  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => unattended, run: () => run, runHost });
   t.mock.restoreAll();
   return { code, result: JSON.parse(out.join('\n')), calls };
 }
@@ -1463,7 +1472,7 @@ test('auto-merge takes round_limit on the head with a judge\'s waive there, the 
   assert.deepEqual([held.code, held.result.waived], [0, true]);
   assert.equal(held.calls.filter(([name]) => name === 'reviewTrail').length, 1, 'merge trust reuses the waiver\'s trail');
   // Without a verdict, round_limit is the review refusal as ever, and no waived field.
-  r.record((state) => (state.outcome = { status: 'round_limit', head: HEAD, at: CAP_AT }));
+  r.record((state) => (capped()(state), (state.waivers = [])));
   const none = waived(t, r);
   assert.deepEqual([none.code, none.result.reason, none.result.waived], [1, 'review', undefined]);
   assert.match(none.result.why, /is `round_limit`, and no judge's verdict lets it merge: no judge's `waive` verdict stands for head abcdef1/u);
@@ -1473,9 +1482,11 @@ test('auto-merge refuses round_limit unless every part of the waiver holds: the 
   const cases = [
     ['a new push voids the verdict', { head: OLD }, (r) => r.record(capped(HEAD)), /the last review covered abcdef1, not head 1234567/u],
     ['the team does not allow it', { config: waiverConfig({ allow: false }) }, (r) => r.record(capped()), /no judge's verdict lets it merge: the team does not allow it \(github\.unattendedWaiver\.allow on acme\/notes main\)/u],
-    ['the bot has not passed the head', { card: null }, (r) => r.record(capped()), /stands only once the review bot passed the head: chatgpt-codex-connector\[bot\] has not passed head abcdef1/u],
+    ['the bot has not passed the head', { card: null }, (r) => r.record(capped()), /a verdict never stands in for the review bot, and chatgpt-codex-connector\[bot\] has not passed head abcdef1/u],
     ['the bot passed another head', { card: OLD }, (r) => r.record(capped()), /has not passed head abcdef1/u],
-    ['a high finding open', {}, (r) => r.record((state) => (capped()(state), (state.index = { 'R1-1': { id: 'R1-1', title: 'the loop retries forever', file: 'src/app.js', state: 'open', severity: 'high', stage: 'local', reviewer: 'self' } }))), /finding R1-1 is high, above medium/u],
+    ['a high finding open', {}, (r) => r.record(capped(HEAD, {}, { items: [{ id: 'R1-1', severity: 'high', stage: 'local', reviewer: 'self', pass: 'self:0' }], counted: 1 })), /finding R1-1 is high, above medium/u],
+    ['a violated invariant behind the cap', {}, (r) => r.record(capped(HEAD, {}, { flows: ['payments'] })), /flow payments has an invariant violated, unverified, or unsigned/u],
+    ['a host that does not confirm a judge', { runHost: { name: 'codex', capabilities: {} } }, (r) => r.record(capped()), /this host \(codex\) does not confirm a judge's dispatch/u],
     ['a refuse after the waive', {}, (r) => r.record((state) => (capped()(state), state.waivers.push({ ...state.waivers[0], verdict: 'refuse', at: '2026-11-03T14:50:00.000Z' }))), /no judge's `waive` verdict stands for head abcdef1/u],
     ['a verdict naming no judge', {}, (r) => r.record(capped(HEAD, { judge_id: undefined, session: undefined })), /the verdict names no judge agent and session/u],
     ['a judge the dispatch log does not show', {}, (r) => r.record(capped(HEAD, { judge_id: 'judge-9' })), /the dispatch log holds no dispatch of the code-reviewer judge-9 by session sess-1/u],
@@ -1502,4 +1513,21 @@ test('auto-merge refuses round_limit unless every part of the waiver holds: the 
   working.record(capped());
   logJudge(working);
   assert.equal(waived(t, working, { config: waiverConfig({ allow: false }) }).code, 1);
+});
+
+test('a waived round cap never lets auto-merge skip the Human\'s sign-off of a flow, attended or not: with it in the store, it merges', (t) => {
+  t.after(() => rmSync(signoffFolder(), { recursive: true, force: true }));
+  const r = waiverRepo(t);
+  r.record((state) => (capped()(state), (state.signoffable.flows = ['payments'])));
+  logJudge(r);
+  const attended = waived(t, r);
+  assert.deepEqual([attended.code, attended.result.reason], [1, 'review']);
+  assert.match(attended.result.why, /flow payments needs the Human's sign-off on head abcdef1/u);
+  // The Human signs it off on that head, in the store only a session they attend writes.
+  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: HEAD, by: 'Adrian' });
+  const signed = waived(t, r);
+  assert.deepEqual([signed.code, signed.result.waived], [0, true]);
+  // A deleted flow test in the cause needs the same, and the cause refuses it whatever the store holds.
+  r.record(capped(HEAD, {}, { tests_removed: ['payments'] }));
+  assert.match(waived(t, r).result.why, /deletes a test of flow payments/u);
 });

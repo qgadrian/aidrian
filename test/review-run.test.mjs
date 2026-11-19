@@ -20,6 +20,7 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { check as checkSignoff } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
@@ -462,9 +463,19 @@ test('the round cap with extraRounds off: the last round goes to the final stage
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: last.dispatch[0].pass, head: last.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
   const capped = await r.step({ exec: clean });
   assert.deepEqual([capped.status, capped.open[0].open], ['round_limit', 1], 'a fix needs a new head, and there is no round left');
+  // The outcome keeps what stopped it, for a judge's waiver: the flow left unsigned, and one open finding counted and not
+  // listed, so none may stand.
+  const cause = readLocalState(r.project, 7).outcome.cap;
+  assert.deepEqual([cause.head, cause.reviewed, cause.counted, cause.itemized, cause.flows, cause.unrun, cause.bot], [capped.head, capped.head, 1, false, ['booking'], [], false]);
+  assert.match(capProblem(readLocalState(r.project, 7), capped.head) ?? '', /flow booking has an invariant violated, unverified, or unsigned/u);
+  assert.equal(stateFromComment(r.comments[0].body, 7).outcome.cap, undefined, 'the posted copy keeps no cause');
   r.write('src/booking/a.js', '3\n');
-  r.commit();
+  const pushed = r.commit();
   assert.equal((await r.step({ exec: clean })).status, 'round_limit');
+  // A fix no round reviewed: the cause is the last round's, on the head before.
+  const unreviewed = readLocalState(r.project, 7).outcome.cap;
+  assert.deepEqual([unreviewed.head, unreviewed.reviewed, unreviewed.counted, unreviewed.itemized, unreviewed.unsigned], [pushed, capped.head, 1, false, ['booking']]);
+  assert.match(capProblem(readLocalState(r.project, 7), pushed) ?? '', /flow booking has an invariant violated/u);
 });
 
 test('a failing reviewer is incomplete, then stuck after three attempts; a quota is not a failure', async (t) => {

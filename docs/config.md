@@ -166,7 +166,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.unreviewedPaths` | The files a pull request whose review was `none_needed` may change and still auto-merge, as globs or `re:` entries in the syntax of the review's lists, from the project root. Each entry matches the whole path: `README.md` is the top-level file only, not `prompts/README.md`, and a `re:` entry is anchored at both ends. `[]`, the default, keeps every such pull request for the Human. It counts only when the repository's default branch and the pull request's base both list the file, read from GitHub as `allow` is, never from the checkout, so a branch cannot list its own files. A bad entry, such as a `re:` that does not compile or an empty `re:`, is a config error, and the gate refuses on it. The gate cannot know how a file is read, so list only files that no AI session reads as instructions, through an import, a link, a command, or a plugin, and that no build, docs site, or test reads as code or as an expected result. Common cases that do not qualify: Markdown a docs site parses as MDX, such as Docusaurus, or as pages with script, such as VitePress; a README whose code blocks run as doctests, such as cargo's or pytest's `--doctest-glob`; and an end-to-end test's expected files. A top-level `README.md` that nothing builds or runs is the usual case. The rest of the `review` row under [When it is on](#when-it-is-on) still applies to a listed file. An older plugin rejects the key as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`; unset follows [`solo`](#solo). |
-| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard, and auto-merge under `autopilot`, may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap, once the review bot passed the head. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard, and any `aidrian pr auto-merge` under these switches, may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap, once the review bot passed the head. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
 | `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off, unless the team runs the project [`solo`](#solo). |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. The record commands read it as the pull request's base branch commits it, not from the working copy; only a command the forge names no base for reads no comment, keeps this machine's record, and publishes nothing. Another machine builds on the comment's copy only on a private repository; on one that is not private it restarts from its own record, with the copy's round count and id counter as floors, so the round cap still holds, or holds and names the machine that wrote the copy while that copy has an open, blocking finding it holds no text for ([A second machine](review.md#the-posted-copy)). |
@@ -204,7 +204,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
 | `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
-| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
+| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). It also refuses recording a judge with `aidrian pr waive --judge`, and keeps auto-merge from taking a judge's verdict, since the log confirms the judge: [Unattended waiver](#unattended-waiver). |
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
@@ -406,9 +406,10 @@ It does not reach a fork: gh never deletes a head branch in another repository.
 ## Unattended waiver
 
 It lets a session that runs without the Human merge a pull request whose review stopped at the round cap,
-on the word of a fresh judge instead of the Human's answer to the merge guard's question, through the merge guard or,
-under `autopilot`, through [auto-merge](#auto-merge). A verdict never stands in for the review bot: it waives only the
-findings of this machine's own reviewers, and only once the bot passed the head.
+on the word of a fresh judge instead of the Human's answer to the merge guard's question, through the merge guard or
+through [auto-merge](#auto-merge): with both switches on, any `aidrian pr auto-merge` takes a standing verdict, not only
+one under `autopilot`. A verdict never stands in for the review bot: it waives only the findings of this machine's own
+reviewers, and only once the bot passed the head. It never lifts a sign-off the Human owes.
 
 ### Turn it on
 
@@ -438,10 +439,18 @@ Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an 
 One case only: the review step stopped at the round cap (`round_limit`) on the very head being merged, with no
 review owed, and every one of these holds on that head:
 
-- Every finding open at the cap is one of this machine's reviewers' (the local and independent stages), of `medium`
-  severity or lower, and no security finding: none `critical` or `high`, none marked as one, none the security
-  reviewer's. No accepted residual above `low` holds the record. A last round that counts more open findings than the
-  record names refuses, since each one's severity cannot be told.
+- Open findings of this machine's reviewers (the local and independent stages) are the whole cause of the cap. The
+  review step keeps the cause on the record's outcome, and a verdict stands only on it: never on a flow left with an
+  invariant violated, unverified, or unsigned, a deleted flow test, a failing flow check, the review bot's own round
+  limit, or a pass of this machine that never reviewed the head; and never on a record from an older plugin, which
+  keeps no cause. When a fix was pushed that no round reviewed, the last round's own open findings and flows decide.
+- Each of those findings is listed, of `medium` severity or lower, and no security finding: none `critical` or
+  `high`, none marked as one, none from a security pass or the security reviewer. Findings only counted refuse, since
+  each one's severity cannot be told. No accepted residual above `low` holds the record.
+- No sign-off of the Human's is owed on the head: every flow the record names for the Human on that head, which it
+  must name, every flow the forge's file list and both branches' configs may select, as
+  [merge trust](review.md#merge-trust) reads them, and every flow the cap's cause names has a sign-off on exactly that
+  head in the sign-off store. This holds attended or not.
 - The review bot, the default branch's `github.reviewer`, passed exactly that head on GitHub, read from the review
   trail as [merge trust](review.md#merge-trust) reads it. With no bot set, nothing is waived.
 
@@ -449,8 +458,11 @@ The verdict binds to that head: a new push moves the head, and the verdict no lo
 The merge guard takes it only for a merge that names the head: `gh pr merge <PR> --match-head-commit <sha>`.
 [Auto-merge](#auto-merge) takes it in place of `received` when, beside the above, the verdict names its judge
 (`--judge <agent id>`) and the recording session's [dispatch log](dispatch-log.md) holds that judge's dispatch, a
-`code-reviewer`, between the cap and the verdict; and, in a project run, the run has merged fewer than 3 pull requests
-on a verdict. Its JSON then says `"waived": true`.
+`code-reviewer`, between the cap and the verdict. Only a host whose hook writes that row confirms a judge: Claude Code
+does; Codex does not, so on Codex no verdict stands for auto-merge and the gate exits 1. With `telemetry.enabled`
+false no log is written, and the same holds. In a project run, the run must have merged fewer than 3 pull requests on
+a verdict, counted by the verdicts that stand on each merged head; the merge guard holds a run's session to that too.
+Its JSON then says `"waived": true`.
 The waiver lifts a denial; it merges nothing itself. A session no Human attends still meets every check of
 [merge trust](review.md#merge-trust): the waiver changes only the `round_limit` stop.
 
@@ -459,8 +471,10 @@ The waiver lifts a denial; it merges nothing itself. A session no Human attends 
 `aidrian pr waive <PR> --gate [--json]` exits 0 only when the waiver may run on the pull request's current head:
 the round cap there, the team's `allow` on the default branch and the base, read through the forge, never the working
 copy, this machine's switch, the open findings as above, the bot's pass of the head, no judge's verdict on that head
-yet (one judge rules per head), and, in a project run, its budget of waived merges. Exit 1 says why; exit 3 is a read
-that failed. `autopilot` runs it at the cap and dispatches a judge only on exit 0.
+yet (one judge rules per head), a host that confirms a judge with telemetry on, no sign-off owed, and, in a project
+run, its budget of waived merges and a pull request of the run's pinned repository. It also refuses a working copy
+whose state folder is not the default branch's. Exit 1 says why; exit 3 is a read that failed. `autopilot` runs it at
+the cap and dispatches a judge only on exit 0.
 
 ### What it never covers
 
@@ -469,13 +483,14 @@ that failed. `autopilot` runs it at the cap and dispatches a judge only on exit 
 - A head pushed after the last review step. Run `aidrian pr review` on it instead.
 - A finding of the review bot, a finding above `medium`, or a security finding.
 - A head the review bot has not passed.
+- Any other cause of the cap, or a sign-off the Human owes on the head.
 
 ### Example
 
 1. The review of pull request #151 stops with `round_limit` on head `abc1234`.
 2. The session runs `gh pr merge 151`. The merge guard denies it and names `aidrian pr waive` as a second route.
-3. The session dispatches a fresh read-only judge, as the `pr-review-loop` skill's `references/review-plan.md`
-   § At the cap says. The judge rules that the change may merge.
+3. The session runs `aidrian pr waive 151 --gate`, which exits 0, then dispatches a fresh read-only judge, as the
+   `pr-review-loop` skill's `references/review-plan.md` § At the cap says. The judge rules that the change may merge.
 4. The session records that verdict, naming the judge's agent id:
    `aidrian pr waive 151 --verdict waive --reason "<the judge's evidence>" --judge <agent id>`.
 5. `gh pr merge 151 --squash --match-head-commit abc1234` passes the guard. Give the full SHA, as the denial prints it.

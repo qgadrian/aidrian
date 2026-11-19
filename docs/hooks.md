@@ -552,10 +552,12 @@ for that answer, for one denial only: `round_limit` on the merge's own head, wit
 last review step, whatever its outcome, is never waived, and its denial names no `aidrian pr waive` route: the review
 can still run on it. Every other denial keeps its reason. A verdict counts only for
 a merge that names its head, `--match-head-commit <sha>`, `sha=` in a `gh api` merge, or the merge tool's `sha`; for
-any other, the denial says to name it. It never stands in for the review bot: it stands only when every finding open
-at the cap is this machine's reviewers' own, of `medium` severity or lower, and no security finding, and the review bot
-passed exactly that head in the review trail; otherwise the denial says which. `aidrian pr auto-merge` takes a verdict
-too, under `autopilot`, with the judge's dispatch and a project run's budget checked as well. The guard reads the waiver only when the denial is that one and this
+any other, the denial says to name it. It never stands in for the review bot: it stands only when the review bot
+passed exactly that head in the review trail, open findings of this machine's own reviewers, each of `medium`
+severity or lower and no security finding, are the whole cause of the cap the record keeps, no sign-off of the Human's
+is owed on the head in the sign-off store, and, for a project run's session, the run has not spent its budget of
+waived merges; otherwise the denial says which, and offers no route to record a verdict. Any `aidrian pr auto-merge`
+under these switches takes a verdict too, with the judge's dispatch checked as well. The guard reads the waiver only when the denial is that one and this
 machine's `github.unattendedWaiver` switch is on, or unset under the team's [`solo`](config.md#solo), so with the
 switch off it makes no network call it did not make before. With the switch unset it reads git first, once, each
 read held to the deadline below: the default branch's local ref, and whether git tracks the local file. It reads the

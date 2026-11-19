@@ -1232,7 +1232,11 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   machine does not see them.
 - **Waivers.** `waivers` lists the judge verdicts `aidrian pr waive` recorded, each `{ head, kind, verdict, reason, judge, at }`,
   where `kind` is `round_cap` and `verdict` is `waive` or `refuse`, and, with `--judge`, `judge_id` and `session`: the
-  judge's agent id and the recording session, which auto-merge finds in the dispatch log. Each binds to one head and
+  judge's agent id and the recording session, which auto-merge finds in the dispatch log. A `round_limit` outcome also
+  keeps `cap`, what stopped the review (`plugins/aidrian/lib/review/run.mjs` capCause): the open findings by pass and
+  stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
+  reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. The posted
+  copy keeps neither `cap` nor a waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the
   posted copy keeps no `judge_id` or `session`.
   A record without the list has none. The [merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read them only
@@ -1247,8 +1251,9 @@ session no Human attends never rests on the record alone. Such a session is one 
 [unattended mark](handoff.md#the-background-route), a pending or unreadable one included, read by the session id its
 host gives, or a project run's driver, by its driver mark ([hooks.md](hooks.md#agent-gates)). For it, `aidrian pr auto-merge` and the [merge guard](hooks.md#merge-guard), on Claude Code and Codex alike,
 also ask for two things no such session writes (`plugins/aidrian/lib/review/merge-trust.mjs`); the guard first asks the
-team's auto-merge policy of the forge too, as `aidrian pr auto-merge` does. A merge in a session the Human attends is
-unchanged: neither reads anything more. A judge's verdict at the round cap
+team's auto-merge policy of the forge too, as `aidrian pr auto-merge` does. A merge in a session the Human attends
+reads nothing more, except a judge's verdict: under the unattended waiver, the guard and auto-merge read the review
+trail for the bot's pass, and the sign-off store, before one stands, attended or not. A judge's verdict at the round cap
 ([Unattended waiver](config.md#unattended-waiver)) changes only the record's `round_limit` stop: it never stands in for
 the review bot, waives only this machine's reviewers' findings of `medium` severity or lower, and stands only once the
 bot passed the head, so a waived merge meets both checks below as any other does. The guard reads the review trail once

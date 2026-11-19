@@ -333,7 +333,8 @@ A terminal the Human attached by a name, as `claude attach 'staff-perm · 6'`, f
 `replaceTerminal.nameMatcher` (`nameMatcher` in `lib/hosts/claude-code-background.mjs`) reads `claude agents --json`
 once, every row, with or without a `startedAt`. A typed target opens the session only when it is the session's whole
 `name`, case and all; no other row's `name` holds it; and no row's `sessionId` or `id`, the session's own included, is
-the target or starts with it. A part of a name never opens it. A listing that fails, or a row whose `sessionId` or
+the target or starts with it. The row whose `sessionId` is the session the handoff just started, and only that row,
+is left out of these checks. A part of a name never opens it. A listing that fails, or a row whose `sessionId` or
 `name` is not a string, or whose `id` is neither a string nor absent, opens nothing. `claude attach --help` on 2.1.328
 gives `claude attach <id|name>` and says part of the session name works in place of the id. Not verified live: which
 session the command picks when several names hold the target, or whether it ignores case; the test follows nothing

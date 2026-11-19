@@ -469,8 +469,10 @@ all of these hold:
   opens a session by its name.
 
 A listing the host cannot read, or one with a session no check can read, counts as no match. The listing is read after
-the next session started, so a session whose name has no hop count, such as `widget`, does not follow when its next
-session's name, `widget · 1`, holds it; a hop's own name, such as `staff-perm · 6` before `staff-perm · 7`, does.
+the next session started, so the gate leaves out that one session, by its full id, and no other: no terminal attached
+to it before it existed. A session named `widget` therefore follows though its next session is `widget · 1`, while any
+other session whose name holds `widget` still blocks it. When the host has not listed the next session's full id yet,
+nothing is left out, and such a name only stops.
 A name that reads as a plain id, such as `staff-perm`, is recorded as one, and the gate asks the host about it too when
 no id matches. The request then names the session by its own full id.
 

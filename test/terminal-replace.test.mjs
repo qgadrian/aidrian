@@ -597,6 +597,20 @@ test('Claude Code\'s adapter says a name opens a session only when it is its who
   }
   assert.equal(matcher('zzzz0000-0000'), null, 'a session the listing does not name');
   assert.equal(matcher(BG_SESSION, [...listing, listing[0]]), null, 'a session the listing names twice');
+
+  // The session the handoff just started, and that row alone, is left out: its name holds this one's.
+  const chain = [
+    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION, name: 'widget' },
+    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION, name: 'widget · 1' },
+  ];
+  const skipping = (skip, list = chain) => nameMatcher({ session: BG_SESSION, skip, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: JSON.stringify(list) }) });
+  assert.equal(skipping(NEXT_SESSION)('widget'), true, 'the next session\'s name does not block it');
+  assert.equal(skipping(null)('widget'), false, 'without the next session\'s id, its name blocks it');
+  assert.equal(skipping('efgh5678')('widget'), false, 'only a full session id leaves a row out');
+  assert.equal(skipping(NEXT_SESSION, [...chain, { kind: 'background', sessionId: 'mnop3456-0000', name: 'widget build' }])('widget'), false, 'any other row whose name holds it still blocks it');
+  assert.equal(skipping(NEXT_SESSION, [...chain, { kind: 'background', sessionId: 'mnop3456-0000', name: 'widget' }])('widget'), false, 'and so does a row with the same name');
+  assert.equal(skipping(NEXT_SESSION, [...chain, { sessionId: NEXT_SESSION, name: 7 }]), null, 'a malformed row is never left out to pass the check');
+  assert.equal(skipping(BG_SESSION), null, 'it never leaves out the session itself');
   assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => null, run: () => assert.fail('no claude, no run') }), null);
   assert.equal(typeof claudeCode.capabilities.handoffContinue.replaceTerminal.nameMatcher, 'function', 'the adapter declares it');
 });

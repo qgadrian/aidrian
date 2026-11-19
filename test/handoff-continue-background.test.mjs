@@ -1110,7 +1110,9 @@ test('a background session the gate started ends itself once its turn ends, in a
     // `staff-perm · 0` hands off to `staff-perm · 1`, whose name does not hold it.
     ['the shell function opened it by its whole name, with spaces and a middle dot', { mode: 'auto' }, 'dotted', 'switch', { name: 'staff-perm · 0' }],
     ['the shell function opened it by its name, which another session\'s name holds', { mode: 'auto' }, 'dotted', 'stop', { name: 'staff-perm · 0', holder: true }],
-    ['the shell function opened it by its name, which the next session\'s name holds', { mode: 'auto' }, 'name', 'stop'],
+    // `widget` hands off to `widget · 1`, which the gate just started: its name does not block the terminal.
+    ['the shell function opened it by its name, which only the session it just started also holds', { mode: 'auto' }, 'name', 'switch', { name: 'widget' }],
+    ['the shell function opened it by its name, which another session\'s name holds besides the one it just started', { mode: 'auto' }, 'name', 'stop', { name: 'widget', holder: true }],
     ['the shell function opened it by a part of its name', { mode: 'auto' }, 'part', 'stop', { name: 'staff-perm · 0' }],
     ['the shell function opened another session by its name', { mode: 'auto' }, 'other name', 'stop'],
     ['no terminal follows it', { mode: 'auto' }, null, 'stop'],
@@ -1133,13 +1135,13 @@ test('a background session the gate started ends itself once its turn ends, in a
     // As the shell function writes a typed `claude attach '<name>'`: a name that reads as a plain id as it is, any other
     // as the hex of its bytes.
     const byName = (text) => followsRecord(env, 4242, `~${Buffer.from(text, 'utf8').toString('hex')}`);
-    if (follows === 'name') followsRecord(env, 4242, 'harness-handoff');
+    if (follows === 'name') followsRecord(env, 4242, 'widget');
     if (follows === 'dotted') byName('staff-perm · 0');
-    if (follows === 'other name') byName('widget · 3');
+    if (follows === 'other name') byName('release · 3');
     if (follows === 'part') byName('staff-perm');
     const { name: sessionName, holder = false } = options;
     const others = [
-      { id: 'wxyz0000', sessionId: 'wxyz0000-0000', name: 'widget · 3', kind: 'background', cwd: setting.dir },
+      { id: 'wxyz0000', sessionId: 'wxyz0000-0000', name: 'release · 3', kind: 'background', cwd: setting.dir },
       ...(holder ? [{ sessionId: 'vwxy0000-0000', name: `old ${sessionName}`, kind: 'background', cwd: setting.dir }] : []),
     ];
     const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir, others, ...(sessionName ? { name: sessionName } : {}) }).run, rows), env });

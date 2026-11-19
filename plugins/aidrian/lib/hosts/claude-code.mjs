@@ -173,7 +173,7 @@ export default {
         endOwn: ({ id, session, env, run }) => stopOwnBackground({ id, session, env, run }),
         hasClient: ({ shell, run }) => hasClient({ shell, run }),
         // `claude attach` takes a session's name, or part of it, in place of its id.
-        nameMatcher: ({ session, env, run }) => nameMatcher({ session, env, run }),
+        nameMatcher: ({ session, skip, env, run }) => nameMatcher({ session, skip, env, run }),
         signal: END_SIGNAL,
       },
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference

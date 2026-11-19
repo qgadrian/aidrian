@@ -334,13 +334,16 @@ export function stopOwnBackground({ id, session, env, run = runCommand, resolve 
 // this session's own included, is the target or starts with it, so a target that reads as an id never opens by a name.
 // A part of a name never matches. Null when the listing cannot be read, does not name the session once, or holds a row
 // whose `sessionId` or `name` is not a string, or whose `id` is neither a string nor absent, as no check can then run.
-export function nameMatcher({ session, env, run = runCommand, resolve = claudeOnPath }) {
+// `skip`, when a string, is the full id of the session the handoff just started, whose row alone is left out: no
+// terminal attached to it before it existed, and its name, such as `widget · 1`, holds this one's, `widget`.
+export function nameMatcher({ session, skip = null, env, run = runCommand, resolve = claudeOnPath }) {
   const claude = resolve(env);
-  if (!claude || typeof session !== 'string' || !ID.test(session)) return null;
-  const rows = listedRows(run, claude, undefined);
+  if (!claude || typeof session !== 'string' || !ID.test(session) || skip === session) return null;
+  const listing = listedRows(run, claude, undefined);
   const whole = (row) => row !== null && typeof row === 'object' && typeof row.sessionId === 'string' && typeof row.name === 'string'
     && (row.id === undefined || typeof row.id === 'string');
-  if (rows === null || !rows.every(whole)) return null;
+  if (listing === null || !listing.every(whole)) return null;
+  const rows = typeof skip === 'string' && skip !== '' ? listing.filter((row) => row.sessionId !== skip) : listing;
   const own = rows.filter((row) => row.sessionId === session);
   if (own.length !== 1) return null;
   const { name } = own[0];

@@ -321,13 +321,13 @@ test('a pending handoff the report names on a delivery line is not missing; anot
   const named = stop(`Waiting for the explorer.\nHandoff: ${file}`);
   assert.equal(named.status, 0, `the pending handoff sent the agent back: ${named.stderr}`);
   assert.deepEqual([...all(), ...plugin()].map((lesson) => lesson.key), [], 'the pending handoff is no lesson');
-  assert.equal(rows().at(-1).delivered, 'file', 'the pending handoff is not missing on the stop row');
+  assert.deepEqual([rows().at(-1).delivered, rows().at(-1).paths], ['pending', []], 'the stop row shows the handoff pending, never as a file delivered');
   assert.ok(!existsSync(file), 'nothing is written while the task runs');
   const other = stop(`Waiting for the explorer.\nHandoff: ${file}\nWrote out/notes.md`);
   assert.equal(other.status, 2, 'a path that exists nowhere still sends the agent back');
   assert.match(other.stderr, /^Your report names `out\/notes\.md`, which does not exist\./u);
   assert.ok(!other.stderr.includes(file), 'the pending handoff is not among the missing paths');
-  assert.equal(rows().at(-1).delivered, 'missing');
+  assert.deepEqual([rows().at(-1).delivered, rows().at(-1).paths], ['missing', ['out/notes.md']], 'only the other path is a claim');
   assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.note]), [['delivery-check:aidrian:product-manager', 'aidrian:product-manager presented out/notes.md as written, and it did not exist.']]);
 });
 

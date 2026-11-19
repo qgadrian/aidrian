@@ -1139,7 +1139,7 @@ turn, or while the [background check](#background-check) sends it back; this is 
 still sends the agent back for a shell. On Claude Code a background shell's end notice and a background agent's report
 each wake it ([Background agents](providers/claude-code.md#background-agents)), so the file waits for the stop after the
 wake, even past the check's cap. The file is then neither a send-back reason, an occurrence of the lesson, nor `missing`
-on the row, even when the report names it on a delivery line; another path the report names still counts. Such stops
+on the row, which says `delivered: pending` and leaves it out of `paths`, even when the report names it on a delivery line; another path the report names still counts. Such stops
 once made most of the lesson's occurrences, though the next stop wrote the file. A stop let end with only tasks that
 nothing wakes the agent for, such as any task on a host that declares no wake, may be its last, so the hook writes the
 file then. A shell that never ends, such as a dev server, never wakes the agent either, and its file waits for a stop

@@ -36,7 +36,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
-| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written, past one not due while a background task of its own still runs and a later stop is sure ([delivery check](hooks.md#delivery-check)), `chat` for none. |
+| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written, `pending` when nothing is missing but such a handoff file is not due yet, since a background task of its own still runs and a later stop is sure ([delivery check](hooks.md#delivery-check)), `chat` for none. A pending file is never in `paths`, even when the message names it. |
 | `paths` | Those paths, at most 20. |
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
 | `handoffs_written` | How many handoff files its brief asked for the hook wrote from its final report, as the [delivery check](hooks.md#delivery-check) does when the agent did not write one. A row written before the field has none. |
@@ -204,7 +204,7 @@ Hook denies: 6 in 2 sessions
   `1 - distinct (session, description) / dispatches`. A high rate means agents are sent back to redo work.
 - **median time and tokens**: per dispatch, from the `dispatch` and `stop` rows.
 - **cost**: the sum of the agent type's `stop` rows. The session total already includes it; do not add them.
-- **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist.
+- **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist; `/ N pending` follows when a run's last stop left its handoff file waiting on a background task.
 - **runs**: the subagents of that type that stopped, and the cost of each on average.
 - **sent back by the delivery check**: the share of runs with any `stop` row whose `sent_back` is `true`.
   A run that named a missing file before rows recorded `sent_back` is unknown: the share leaves it out, and a `Partial:` line counts it.

@@ -142,7 +142,7 @@ export function stopRow(input, project, {
     tool_requests: part.tool_requests,
     tool_calls: part.tool_calls,
     docs_read: !docReads ? null : transcript ? knowledgeDocsRead(filesRead(transcript, own), project) : [],
-    delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
+    delivered: missing.length ? 'missing' : delivery.pending?.length ? 'pending' : claims.length ? 'file' : 'chat',
     paths: claims,
     running: children.length,
     handoffs_written: (delivery.written ?? []).length,

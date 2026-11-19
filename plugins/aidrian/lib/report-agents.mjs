@@ -50,7 +50,7 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
       median_duration_ms: median(sent.map((row) => row.duration_ms)),
       median_tokens: median(done.map((row) => (row.tokens ? row.tokens.input + row.tokens.output + row.tokens.cache_read + row.tokens.cache_write : NaN))),
       cost_usd: round(cost),
-      delivered: Object.fromEntries(['file', 'chat', 'missing'].map((kind) => [kind, done.filter((row) => row.delivered === kind).length])),
+      delivered: Object.fromEntries(['file', 'chat', 'missing', 'pending'].map((kind) => [kind, done.filter((row) => row.delivered === kind).length])),
       top_docs: [...docs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 5),
       runs: done.length,
       cost_per_run_usd: done.length ? round(cost / done.length) : null,
@@ -121,11 +121,11 @@ export function formatReport(summary, { file, since, skipped, notes = [] }) {
   const thousands = (value) => (value === null ? '-' : `${Math.round(value / 1000)}k`);
   const percent = (rate) => (rate === null ? '-' : `${Math.round(rate * 100)}%`);
   for (const agent of summary.agents) {
-    const { file: written, chat, missing } = agent.delivered;
+    const { file: written, chat, missing, pending = 0 } = agent.delivered;
     lines.push(
       `${agent.agent_type}: ${agent.dispatches} dispatches, ${percent(agent.redispatch_rate)} re-dispatched, ` +
         `median ${seconds(agent.median_duration_ms)} and ${thousands(agent.median_tokens)} tokens, $${agent.cost_usd.toFixed(2)}, ` +
-        `delivered ${written} file / ${chat} chat / ${missing} missing`,
+        `delivered ${written} file / ${chat} chat / ${missing} missing${pending ? ` / ${pending} pending` : ''}`,
     );
     if (agent.runs) {
       lines.push(

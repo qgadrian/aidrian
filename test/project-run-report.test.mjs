@@ -709,7 +709,7 @@ test('resume names the rescue for a driver it cannot read as an ended background
   assert.match(out[1], /resume that same host session, which keeps its id and so the run's custody/u);
 });
 
-test('a forge that cannot answer the team\'s policy now makes start and wait exit 75 with a retry line', (t) => {
+test('a forge that cannot answer the team\'s policy now makes start exit 75 with a retry line, and wait settle with a note', (t) => {
   const fx = runFixture(t, { config: { tracker: { provider: 'linear' } } });
   const contents = fx.forge.contents;
   let fails = 2;
@@ -723,8 +723,11 @@ test('a forge that cannot answer the team\'s policy now makes start and wait exi
   const start = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(start.exitCode, 75, start.err.join('\n'));
   assert.match(start.out[0], /^retry: the forge's copy of the default branch's config\.json cannot be read \(.*gh: HTTP 502/u);
+  // wait starts nothing, so a sustained outage never dead-ends the driver's halt wait: it settles the run with a note.
   const wait = fx.cmd(['wait', 'launch', '--max-wait', '0']);
-  assert.equal(wait.exitCode, 75);
+  assert.equal(wait.exitCode, 0, wait.err.join('\n'));
+  assert.match(wait.out[0], /^note policy: the forge's copy of the default branch's config\.json cannot be read \(.*gh: HTTP 502.*; wait starts nothing and settles the issues that run, stopping any past projectRun\.issueHours, 6$/u);
+  assert.equal(wait.out.at(-1), 'idle');
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'once the forge answers');
   const refusing = runFixture(t, { forgeConfig: { version: 1, projectRun: { allow: false } } });
   assert.equal(refusing.cmd(['start', 'launch', 'ENG-1']).exitCode, 1, 'a policy the forge answers and refuses');
@@ -904,6 +907,9 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   const stop = text.slice(text.indexOf('## Stop'), text.indexOf('## Finish'));
   assert.ok(!halt.includes('aidrian project end') && !stop.includes('aidrian project end'), 'no end for the Human');
   assert.match(text, /## Hand off .*A run left with no driver is taken up by the Human:/u, 'the list Halt points to');
+  // wait's first `note policy:` line, on a policy the forge withdrew or cannot answer, sends the driver to § Stop.
+  const wait = text.slice(text.indexOf('3. `aidrian project wait <run> --max-wait 150`:'), text.indexOf('4. `aidrian project report'));
+  assert.ok(wait.includes('- `note policy: <why>`: the run may start nothing more; § Stop (wait still settles the run). A `<why>` that says the forge\'s copy cannot be read is an outage, not a refusal: go on by the other lines; `start`\'s exit 75 goes to § Retry.'), 'the note line');
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

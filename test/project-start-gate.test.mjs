@@ -367,6 +367,37 @@ test('once the forge no longer allows project runs, wait still settles the run t
   assert.equal(fx.claude.starts().length, 1, 'wait and the refused start started nothing');
 });
 
+test('a policy the forge withdraws or cannot answer never loosens the hours wait stops a session at past the forge\'s or the default', (t) => {
+  // The base branch's local ref allows 24 hours, the forge 1: once the forge withdraws projectRun.allow, the 1 it held
+  // still stops a session at 2 hours.
+  let allow = true;
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 24 } });
+  const contents = fx.forge.contents;
+  fx.forge.contents = (...args) => {
+    const read = contents(...args);
+    const config = JSON.parse(Buffer.from(read.content, 'base64').toString('utf8'));
+    return { ...read, content: Buffer.from(JSON.stringify({ ...config, projectRun: { ...config.projectRun, issueHours: 1, allow } })).toString('base64') };
+  };
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  allow = false;
+  const twoHours = Date.now() + 2 * 60 * 60 * 1000;
+  const withdrawn = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: twoHours });
+  assert.deepEqual(withdrawn.out, ['note policy: the default branch main on the forge does not set projectRun.allow to true; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, 1', 'ended ENG-1 timeout -> open', 'idle']);
+  assert.equal(fx.claude.states[STARTED[0].session], 'stopped');
+
+  // A forge that cannot answer at all leaves the default, 6, not the local 24: a session at 7 hours is stopped.
+  const down = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 24 } });
+  assert.equal(down.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  down.forge.contents = () => {
+    throw new Error('gh: HTTP 429');
+  };
+  const sevenHours = Date.now() + 7 * 60 * 60 * 1000;
+  const outage = down.cmd(['wait', 'launch', '--max-wait', '0'], { now: sevenHours });
+  assert.equal(outage.exitCode, 0, outage.err.join('\n'));
+  assert.match(outage.out[0], /^note policy: .*gh: HTTP 429.*stopping any past projectRun\.issueHours, 6$/u);
+  assert.deepEqual(outage.out.slice(1), ['ended ENG-1 timeout -> open', 'idle']);
+});
+
 test('after wait stops an issue\'s session past its hours, the host lists it stopped, and the issue starts again', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 1 } });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);

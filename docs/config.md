@@ -2056,12 +2056,13 @@ a bidirectional mark, or a zero-width character, becomes `the host's own command
 The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
-A command whose ledger another process holds locked, and a `start` or `wait` whose read of the team's policy the forge
-cannot answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such
-as `projectRun.allow` turned off on the default branch while the run's sessions run, makes `start` exit 1, but not
-`wait`, which starts nothing: it prints a first `note policy: <why>` line and settles the run as before, stopping each
-session past `projectRun.issueHours` as the base branch's local ref sets it, or the default, within its ceiling of 24,
-so the driver's halt wait reaches `idle` and `end` can follow.
+A command whose ledger another process holds locked, and a `start` whose read of the team's policy the forge cannot
+answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such as
+`projectRun.allow` turned off on the default branch while the run's sessions run, makes `start` exit 1. Neither stops
+`wait`, which starts nothing: through a forge outage or rate limit as through a refusal, it prints a first
+`note policy: <why>` line and settles the run as before, exit 0, stopping each session past `projectRun.issueHours`:
+the lowest of the default, 6, its ceiling of 24, the base branch's local ref, and the forge's own when it answered, so
+a bound the forge no longer confirms never loosens. So the driver's halt wait reaches `idle` and `end` can follow.
 `resume` names a driver it cannot read as an ended background session, such as the first one the Human ran: the Human
 resumes that same host session, which keeps its id and custody.
 

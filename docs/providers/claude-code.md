@@ -329,6 +329,14 @@ It reads `claude agents --json` and runs `claude stop <id>` only when exactly
 one background row has that `id`, or a `sessionId` that starts with it, and its `sessionId` is the session's own.
 It never signals a process: the supervisor owns the background session's process.
 
+A terminal the Human attached by a name, as `claude attach 'staff-perm · 6'`, follows the session too:
+`replaceTerminal.nameMatcher` (`nameMatcher` in `lib/hosts/claude-code-background.mjs`) reads `claude agents --json`
+once and says a typed target opens the session when it is that session's whole name and no other listed session has
+that name, or part of its name and of no other listed session's, case and all. `claude attach --help` on 2.1.328 gives
+`claude attach <id|name>` and says part of the session name works in place of the id. Not verified live: how the
+command picks between a whole name and a part another name holds, or whether it ignores case; the test above follows
+nothing it is unsure of.
+
 Checked by hand on Claude Code 2.1.326, in a pseudo-terminal: `claude attach <id>` on a live background session exits 0
 about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the next session.
 

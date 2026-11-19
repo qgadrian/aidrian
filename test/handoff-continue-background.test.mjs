@@ -1100,17 +1100,22 @@ function followsRecord(env, shell, id, seconds = Math.floor(Date.now() / 1000)) 
 }
 
 test('a background session the gate started ends itself once its turn ends, in auto mode: its terminal switches when one follows, else it stops', (t) => {
-  for (const [name, handoff, follows, ending, { attended = {}, rows = ATTACHED } = {}] of [
+  for (const [name, handoff, follows, ending, options = {}] of [
     ['followed in the store, auto mode', { mode: 'auto' }, 'store', 'switch'],
     ['the shell function opened it by its id', { mode: 'auto' }, 'shell', 'switch'],
     ['the shell function opened it by a short id it starts with', { mode: 'auto' }, 'short', 'switch'],
     ['the shell function opened it in one terminal while the store names another', { mode: 'auto' }, 'both', 'switch', { rows: [...ATTACHED, '4343 900 -zsh', '5001 4343 claude'] }],
     ['followed, but the shell runs no client any more', { mode: 'auto' }, 'store', 'stop', { rows: ['1 0 launchd', '4242 900 -zsh'] }],
     ['the shell function\'s record names another session', { mode: 'auto' }, 'other', 'stop'],
+    ['the shell function opened it by its name', { mode: 'auto' }, 'name', 'switch'],
+    ['the shell function opened it by a name with spaces and a middle dot', { mode: 'auto' }, 'dotted', 'switch', { name: 'staff-perm · 6' }],
+    ['the shell function opened another session by its name', { mode: 'auto' }, 'other name', 'stop'],
     ['no terminal follows it', { mode: 'auto' }, null, 'stop'],
     ['ask mode', { mode: 'ask', continue: 'background' }, 'store', null],
     ['a Human attends it, as a former background session resumed', { mode: 'auto' }, 'store', null, { attended: { CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
+    ['ask mode, opened by its name', { mode: 'ask', continue: 'background' }, 'name', null],
   ]) {
+    const { attended = {}, rows = ATTACHED } = options;
     const setting = setup(t, { handoff });
     passCheck(setting);
     const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
@@ -1122,9 +1127,19 @@ test('a background session the gate started ends itself once its turn ends, in a
     if (follows === 'short') followsRecord(env, 4242, 'session-');
     if (follows === 'other') followsRecord(env, 4242, 'zzzz9999');
     if (follows === 'both') followsRecord(env, 4343, SESSION);
-    const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir }).run, rows), env });
+    // As the shell function writes a typed `claude attach '<name>'`: the hex of its bytes.
+    const byName = (text) => followsRecord(env, 4242, `~${Buffer.from(text, 'utf8').toString('hex')}`);
+    if (follows === 'name') byName('harness-handoff');
+    if (follows === 'dotted') byName('staff-perm · 6');
+    if (follows === 'other name') byName('widget · 3');
+    const sessionName = typeof options.name === 'string' ? options.name : undefined;
+    const others = [{ id: 'wxyz0000', sessionId: 'wxyz0000-0000', name: 'widget · 3', kind: 'background', cwd: setting.dir }];
+    const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir, others, ...(sessionName ? { name: sessionName } : {}) }).run, rows), env });
     assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
-    assert.ok(result.out[1].endsWith({ switch: SWITCHES, stop: STOPS }[ending] ?? PLAIN), `${name}: ${result.out[1]}`);
+    const said = { switch: SWITCHES, stop: STOPS }[ending] ?? PLAIN;
+    // A session named otherwise names its next hop otherwise too.
+    const switched = /This session has ended its work; this terminal switches to the new one, `[^`]+`, once this turn ends\.$/u;
+    assert.ok(sessionName ? switched.test(result.out[1]) : result.out[1].endsWith(said), `${name}: ${result.out[1]}`);
     const own = follows === 'short' ? 'session-' : SESSION;
     const expected = { switch: { own, shell: follows === 'both' ? 4343 : 4242 }, stop: { own: SESSION, shell: null } }[ending];
     assert.deepEqual(takeEnding(setting.store, SESSION), expected ? { ...expected, id: 'abcd1234', next: NEW_SESSION } : null, name);

@@ -13,8 +13,10 @@
 //      it, and opens the session `id` when it is fresh and `id` is plain, again after that session's program exits.
 // The next hops chain the same way. When a session ends itself, the Stop hook also notes in the store that the shell's
 // terminal now follows the new session (handoff-markers.mjs noteFollow). The shell function says so too, each time it
-// opens a session by a plain id, typed or from a record: `<state root>/handoff-terminals/follows-<shell pid>`, `<id>
-// <epoch seconds>`, deleted once that program exits (readFollows). A background session runs with no Human attending it
+// opens a session by a plain id, typed or from a record, or by another typed target, such as the session's name:
+// `<state root>/handoff-terminals/follows-<shell pid>`, `<id> <epoch seconds>` or `~<hex of the target> <epoch seconds>`,
+// deleted once that program exits (readFollows); the host adapter says which session a name opens (nameMatcher).
+// A background session runs with no Human attending it
 // as the hooks know it, and it carries no SHELL_VAR; when it hands off in turn, the gate notes a request that names its
 // own id instead of a host process, with the shell whose terminal follows it, by the store or the shell's own record,
 // while that shell runs the host's client (replaceTerminal.hasClient), or with no shell. Its Stop hook ends that session
@@ -48,13 +50,17 @@ export const NEXT_MARGIN = 5 * 1000;
 export const END_DELAY = 2000;
 // An id the shell function opens; the shell function holds it to the same pattern.
 export const OPEN_ID = /^[0-9A-Za-z][-_0-9A-Za-z]{3,127}$/u;
-// The shell function's record of the session its terminal shows, `follows-<shell pid>`, and its one line.
+// The shell function's record of the session its terminal shows, `follows-<shell pid>`, and its one line: `<id> <epoch
+// seconds>` for a plain id, or `~<hex> <epoch seconds>` for any other attach target, such as a session's name, its bytes
+// in lowercase hexadecimal, at most NAME_BYTES of them, so no character of it reaches the line as it was typed.
 export const FOLLOWS_PREFIX = 'follows-';
 const FOLLOWS_FILE = new RegExp(`^${FOLLOWS_PREFIX}(\\d{1,10})$`, 'u');
 // The shortest id a follows record may name a session by when it is not the full id: the short id a host lists, such as
 // the first 8 characters of a Claude Code session id. A shorter typed name never matches another session by prefix.
 export const SHORT_ID_MIN = 8;
-const FOLLOWS_LINE = new RegExp(`^(${OPEN_ID.source.slice(1, -1)}) (\\d{1,12})\\n?$`, 'u');
+export const NAME_BYTES = 128;
+const FOLLOWS_LINE = new RegExp(`^(?:(${OPEN_ID.source.slice(1, -1)})|~((?:[0-9a-f]{2}){1,${NAME_BYTES}})) (\\d{1,12})\\n?$`, 'u');
+const FOLLOWS_CAP = 512;
 const HELPER = path.resolve(import.meta.dirname, '../scripts/end-host.mjs');
 
 export const replacer = (host) => host.capabilities.handoffContinue?.replaceTerminal ?? null;
@@ -121,11 +127,13 @@ export function writeNext({ shell, id, env = process.env, now = Date.now() }) {
 }
 
 // The shell whose terminal shows the background session `session`, as the shell function recorded when it opened it by
-// its full id or a short one it starts with, in the last FOLLOW_AGE: { shell, id }, where `id` is the id it opened, the
-// latest if several; or null. Only a regular file this user owns, no symlink, in a folder no other user may write.
+// its full id, a short id it starts with, or another target `named(target)` says the host opens this session for, such as
+// its name (replaceTerminal.nameMatcher), in the last FOLLOW_AGE: { shell, id }, where `id` is the id it opened, or the
+// session's own for a target opened by name, the latest if several; or null. `named` is asked only of a fresh record no
+// id matches. Only a regular file this user owns, no symlink, in a folder no other user may write.
 // The shell may have moved on since; replaceTerminal.hasClient says whether it still runs the host's client, and
 // `live(shell)`, asked of a newer record only, skips one whose shell does not, so a dead one never hides a live one.
-export function readFollows(session, { env = process.env, now = Date.now(), live = () => true } = {}) {
+export function readFollows(session, { env = process.env, now = Date.now(), live = () => true, named = () => false } = {}) {
   if (typeof session !== 'string' || !OPEN_ID.test(session)) return null;
   let folder;
   let names;
@@ -141,12 +149,15 @@ export function readFollows(session, { env = process.env, now = Date.now(), live
   for (const name of names) {
     const shell = Number(FOLLOWS_FILE.exec(name)?.[1]);
     if (!isPid(shell)) continue;
-    const match = FOLLOWS_LINE.exec(readOwnFile(path.join(folder, name), { cap: 256 })?.text ?? '');
+    const match = FOLLOWS_LINE.exec(readOwnFile(path.join(folder, name), { cap: FOLLOWS_CAP })?.text ?? '');
     if (!match) continue;
-    const at = Number(match[2]) * 1000;
-    const id = match[1];
-    if (at > now + NEXT_MARGIN || now - at > FOLLOW_AGE || !(id === session || (id.length >= SHORT_ID_MIN && session.startsWith(id)))) continue;
-    if ((!latest || at > latest.at) && live(shell)) latest = { shell, id, at };
+    const [, plain, hex, seconds] = match;
+    const at = Number(seconds) * 1000;
+    if (at > now + NEXT_MARGIN || now - at > FOLLOW_AGE || (latest && at <= latest.at)) continue;
+    let id = null;
+    if (plain !== undefined && (plain === session || (plain.length >= SHORT_ID_MIN && session.startsWith(plain)))) id = plain;
+    else if (named(plain ?? Buffer.from(hex, 'hex').toString('utf8')) === true) id = session;
+    if (id !== null && live(shell)) latest = { shell, id, at };
   }
   return latest && { shell: latest.shell, id: latest.id };
 }

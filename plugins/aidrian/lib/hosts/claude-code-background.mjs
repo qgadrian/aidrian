@@ -321,6 +321,23 @@ export function stopOwnBackground({ id, session, env, run = runCommand, resolve 
   return !result.error && result.status === 0;
 }
 
+// Which session `claude attach <target>` opens for a target that is no id: `claude attach --help` on 2.1.328 says the
+// command takes `<id|name>`, and that part of a session's name works in place of the id. For the session `session`, a
+// test of a typed target, from one read of the listing: whether it is that session's whole name and no other listed
+// session has that name, or part of its name and of no other listed session's. Null when the listing cannot be read or
+// does not name the session. It compares case and all, so a target the host may read another way follows nothing.
+export function nameMatcher({ session, env, run = runCommand, resolve = claudeOnPath }) {
+  const claude = resolve(env);
+  if (!claude || typeof session !== 'string' || !ID.test(session)) return null;
+  const list = (listed(run, claude, undefined) ?? []).filter((each) => typeof each.name === 'string' && each.name !== '');
+  const own = list.filter((each) => each.sessionId === session);
+  if (own.length !== 1) return null;
+  const { name } = own[0];
+  const only = (fits) => list.filter(fits).length === 1;
+  return (target) => typeof target === 'string' && target !== ''
+    && ((target === name && only((each) => each.name === target)) || (name.includes(target) && only((each) => each.name.includes(target))));
+}
+
 // How the Human finds and stops a session a start may have made, when the gate cannot name it.
 export const findLine = () => '`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one';
 

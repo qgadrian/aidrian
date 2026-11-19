@@ -14,13 +14,13 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectStore } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { ENDING_WINDOW, FOLLOW_AGE, noteEnding, noteFollow, openStore, readFollow, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { nameMatcher, stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { shellInit } from '../plugins/aidrian/lib/shell-init.mjs';
-import { END_DELAY, endAfterTurn, endHost, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
+import { END_DELAY, endAfterTurn, endHost, NAME_BYTES, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
@@ -368,6 +368,56 @@ test('the shell function\'s record says which shell shows a session, under its i
   assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4242, id: 'abcd1234' });
 });
 
+test('a shell record that opened a session by a name says which shell shows it, when the host says that name opens it', (t) => {
+  const env = { ...process.env, XDG_STATE_HOME: folder(t, 'aidrian-xdg-') };
+  const records = terminalFolder(env);
+  mkdirSync(records, { recursive: true, mode: 0o700 });
+  const now = Date.now();
+  const seconds = Math.floor(now / 1000);
+  const hex = (text) => `~${Buffer.from(text, 'utf8').toString('hex')}`;
+  const asked = [];
+  const named = (target) => {
+    asked.push(target);
+    return target === 'staff-perm · 6' || target === 'staff';
+  };
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 6')} ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named }), { shell: 4242, id: BG_SESSION }, 'by its name: the session is its own id');
+  assert.deepEqual(asked, ['staff-perm · 6'], 'the name is decoded before it is asked');
+  assert.equal(readFollows(BG_SESSION, { env, now }), null, 'with no host to say what a name opens, a name opens nothing');
+  assert.equal(readFollows(BG_SESSION, { env, now, named: () => 'yes' }), null, 'only a true answer counts');
+
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 7')} ${seconds}\n`);
+  assert.equal(readFollows(BG_SESSION, { env, now, named }), null, 'another name');
+  writeFileSync(path.join(records, 'follows-4242'), `staff ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named }), { shell: 4242, id: BG_SESSION }, 'a name that reads as a plain id');
+
+  asked.length = 0;
+  writeFileSync(path.join(records, 'follows-4242'), `${BG_SESSION} ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named }), { shell: 4242, id: BG_SESSION });
+  assert.deepEqual(asked, [], 'a record its id matches asks the host nothing');
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 6')} ${seconds - FOLLOW_AGE / 1000 - 120}\n`);
+  assert.equal(readFollows(BG_SESSION, { env, now, named }), null, 'past FOLLOW_AGE');
+  assert.deepEqual(asked, [], 'a stale record asks the host nothing');
+
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 6')} ${seconds}\n`);
+  writeFileSync(path.join(records, 'follows-4343'), `${hex('staff-perm · 6')} ${seconds - 30}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named, live: (shell) => shell !== 4242 }), { shell: 4343, id: BG_SESSION }, 'a newer record whose shell runs no client hides no live one');
+  rmSync(path.join(records, 'follows-4343'));
+
+  for (const [why, text] of [
+    ['an odd count of hex digits', `~abc ${seconds}\n`],
+    ['capital hex digits', `~4A4B ${seconds}\n`],
+    ['no hex at all', `~ ${seconds}\n`],
+    ['more than NAME_BYTES bytes', `${hex('x'.repeat(NAME_BYTES + 1))} ${seconds}\n`],
+    ['a name typed as it is', `staff-perm · 6 ${seconds}\n`],
+  ]) {
+    writeFileSync(path.join(records, 'follows-4242'), text);
+    assert.equal(readFollows(BG_SESSION, { env, now, named: () => true }), null, why);
+  }
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('x'.repeat(NAME_BYTES))} ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named: () => true }), { shell: 4242, id: BG_SESSION }, 'NAME_BYTES bytes');
+});
+
 test('the shell function records the session it opens by a plain id, typed or from a record, while that program runs', { skip: !ZSH }, (t) => {
   for (const shell of ['zsh', ...(BASH ? ['bash'] : [])]) {
     const typed = inShell(t, { shell, script: 'claude attach abcd1234; echo rc=$?' });
@@ -396,10 +446,25 @@ test('the shell function records the session it opens by a plain id, typed or fr
     assert.deepEqual(open.follows, ['abcd1234'], `${shell}: written in a folder others could write`);
     assert.equal((statSync(open.records).mode & 0o777), 0o700, `${shell}: and that folder is made the user's alone first`);
 
-    for (const script of ['claude attach "ab;cd"', 'claude attach \'harness · 2\'', 'claude agents', 'set -eu; claude attach']) {
+    for (const script of ['claude agents', 'set -eu; claude attach', 'set -eu; claude attach ""', `claude attach '${'\u00b7'.repeat(NAME_BYTES / 2 + 1)}'`]) {
       const plain = inShell(t, { shell, script });
       assert.equal(plain.calls.length, 1, `${shell}: ${script}: ${plain.result.stderr}`);
       assert.deepEqual(plain.follows, [''], `${shell}: ${script}`);
+    }
+  }
+});
+
+test('the shell function records a session it opens by a name, as the hex of its bytes, under set -eu too', { skip: !ZSH }, (t) => {
+  const hex = (text) => `~${Buffer.from(text, 'utf8').toString('hex')}`;
+  for (const shell of ['zsh', ...(BASH ? ['bash'] : [])]) {
+    // NAME_BYTES bytes in half as many characters: the cap counts bytes.
+    for (const name of ['staff-perm · 6', 'ab;cd $(exit 3) `false` \'q\' "d" *', '\u00b7'.repeat(NAME_BYTES / 2)]) {
+      const quoted = `'${name.replaceAll('\'', '\'\\\'\'')}'`;
+      const typed = inShell(t, { shell, script: `set -eu; claude attach ${quoted} || echo rc=$?` });
+      assert.deepEqual(typed.calls, [`${typed.shell} attach ${name}`], `${shell}: ${name}: ${typed.result.stderr}`);
+      assert.deepEqual(typed.follows, [hex(name)], `${shell}: ${name}`);
+      assert.match(typed.result.stdout, /rc=5$/mu, `${shell}: ${name}: the exit code stays the program's`);
+      assert.equal(existsSync(path.join(typed.records, `follows-${typed.shell}`)), false, `${shell}: ${name}: deleted once the program exits`);
     }
   }
 });
@@ -480,6 +545,35 @@ test('the helper ends a background session through the host\'s own stop, and the
   assert.deepEqual(stop('abcd1234', NEXT_SESSION), { ok: false, stops: [] }, 'a session that is not the id\'s');
   assert.deepEqual(stop('session-1', 'session-1'), { ok: false, stops: [] }, 'an interactive session is never stopped this way');
   assert.deepEqual(stop('abcd1234', BG_SESSION, [...listing, { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION }]), { ok: false, stops: [] }, 'two that fit are none');
+});
+
+test('Claude Code\'s adapter says a name opens a session when it is its whole name, or a part of no other listed session\'s', () => {
+  const listing = [
+    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION, name: 'staff-perm · 6' },
+    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION, name: 'staff-perm · 60' },
+    { kind: 'background', id: 'ijkl9012', sessionId: 'ijkl9012-0000', name: 'widget · 1' },
+    { kind: 'interactive', sessionId: 'session-1', name: 7 },
+  ];
+  const lists = [];
+  const matcher = (session, list = listing, status = 0) => nameMatcher({ session, env: {}, resolve: () => '/bin/claude', run: (command, args) => {
+    lists.push(args);
+    return { status, stdout: JSON.stringify(list) };
+  } });
+  const own = matcher(BG_SESSION);
+  assert.deepEqual(lists, [['agents', '--json']], 'one read of the listing');
+  assert.equal(own('staff-perm · 6'), true, 'its whole name, though another name holds it');
+  assert.equal(own('perm · 6'), false, 'a part another session\'s name holds too');
+  assert.equal(own('staff-perm'), false);
+  assert.equal(own('Staff-perm · 6'), false, 'case and all');
+  assert.equal(own('widget'), false, 'another session\'s name');
+  assert.equal(own(''), false);
+  assert.equal(lists.length, 1, 'each test reads nothing more');
+  assert.equal(matcher(NEXT_SESSION)('· 60'), true, 'a part only its name holds');
+  assert.equal(matcher(BG_SESSION, [...listing, { kind: 'background', sessionId: 'other-0000', name: 'staff-perm · 6' }])('staff-perm · 6'), false, 'a name two sessions share');
+  assert.equal(matcher('zzzz0000-0000'), null, 'a session the listing does not name');
+  assert.equal(matcher(BG_SESSION, listing, 1), null, 'a listing that cannot be read');
+  assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => null, run: () => assert.fail('no claude, no run') }), null);
+  assert.equal(typeof claudeCode.capabilities.handoffContinue.replaceTerminal.nameMatcher, 'function', 'the adapter declares it');
 });
 
 test('the Stop hook of a background session the terminal follows stops that session itself, and leaves the shell its record', { skip: process.platform === 'win32' }, async (t) => {

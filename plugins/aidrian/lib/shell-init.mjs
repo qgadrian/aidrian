@@ -14,7 +14,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { HOSTS } from './hosts/index.mjs';
-import { FOLLOWS_PREFIX, NEXT_MARGIN, NEXT_WINDOW, OPEN_ID, replacer, shellPid, SHELL_VAR, TERMINAL_FOLDER } from './terminal-replace.mjs';
+import { FOLLOWS_PREFIX, NAME_BYTES, NEXT_MARGIN, NEXT_WINDOW, OPEN_ID, replacer, shellPid, SHELL_VAR, TERMINAL_FOLDER } from './terminal-replace.mjs';
 
 export const SHELLS = ['zsh', 'bash'];
 export const BEGIN = '# >>> aidrian shell-init >>>';
@@ -58,19 +58,23 @@ export function shellInit(shell, hosts = HOSTS) {
 // Each time it opens a session by a plain id, typed as `program attach <id>`, after any options an alias adds, each with at most one value, or from
 // the record, it first writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, and deletes
 // it once that program exits: the gate of that session, run in the background, reads it to know this terminal follows
-// it (terminal-replace.mjs readFollows). A write it cannot make is skipped.
+// it (terminal-replace.mjs readFollows). A typed target that is no plain id, such as a session's name, it writes as
+// `~<hex> <epoch seconds>`, its bytes in lowercase hexadecimal through `od`, when it is 1 to NAME_BYTES bytes, so no
+// character of it reaches the record as typed; the gate asks the host which session that target opens. A write it
+// cannot make is skipped.
 function shellFunction(shell, program, attach) {
   return [
     `function ${program} {`,
     ...(shell === 'zsh' ? ['  emulate -L zsh'] : []),
     `  local rc=0 id='' expires='' now=0 base="\${HOME:-}/.local/state" pattern='${OPEN_ID.source}' digits='^[0-9]{1,12}$'`,
+    `  local follow='' hex='' bytes='^([0-9a-f]{2}){1,${NAME_BYTES}}$'`,
     '  [[ ${XDG_STATE_HOME:-} == /* ]] && base=$XDG_STATE_HOME',
     `  local dir="$base/aidrian/${TERMINAL_FOLDER}"`,
     `  local next="$dir/$$" follows="$dir/${FOLLOWS_PREFIX}$$"`,
     '  command rm -f -- "$follows" 2>/dev/null || :',
     "  local arg='' want=0 value=0",
     '  for arg in "$@"; do',
-    '    if (( want )); then [[ $arg =~ $pattern ]] && id=$arg; break; fi',
+    ...typedTarget('    '),
     `    [[ $arg == ${attach} ]] && { want=1; continue; }`,
     '    if [[ $arg == -* ]]; then [[ $arg == *=* ]] && value=0 || value=1; continue; fi',
     '    (( value )) || break',
@@ -86,7 +90,7 @@ function shellFunction(shell, program, attach) {
     '    [[ $id =~ $pattern && $expires =~ $digits ]] || break',
     '    now=$(command date +%s)',
     `    (( expires >= now && expires <= now + ${LATEST} )) || break`,
-    '    rc=0',
+    '    rc=0 follow=$id',
     ...followsWrite('    '),
     `    ${SHELL_VAR}=$$ command ${program} ${attach} "$id" || rc=$?`,
     '    command rm -f -- "$follows" 2>/dev/null || :',
@@ -96,12 +100,24 @@ function shellFunction(shell, program, attach) {
   ];
 }
 
-// The lines that write this shell's `follows-` record for a plain `$id`, at `indent`: in a subshell, so its umask and
-// noclobber stay there, into a folder that is a real one this user owns, made owner-only first, never through a file
-// left in its place. The function deletes its record before it runs anything, so one an earlier run left never counts.
+// The lines, at `indent`, that read the attach target `$arg` once the loop reached it, into `$follow`: the target itself
+// when it is a plain id, else `~` and the hex of its bytes, when it is 1 to NAME_BYTES bytes; then they end the loop.
+const typedTarget = (indent) => [
+  `${indent}if (( want )); then`,
+  `${indent}  if [[ $arg =~ $pattern ]]; then follow=$arg`,
+  `${indent}  elif [[ -n $arg ]]; then hex=$(command printf '%s' "$arg" | command od -An -tx1 -v | command tr -d ' \\t\\n') || hex=''; [[ $hex =~ $bytes ]] && follow="~$hex" || :`,
+  `${indent}  fi`,
+  `${indent}  break`,
+  `${indent}fi`,
+];
+
+// The lines that write this shell's `follows-` record for `$follow`, a plain id or `~<hex>`, at `indent`: in a subshell,
+// so its umask and noclobber stay there, into a folder that is a real one this user owns, made owner-only first, never
+// through a file left in its place. The function deletes its record before it runs anything, so one an earlier run left
+// never counts.
 const followsWrite = (indent) => [
-  `${indent}[[ -n $id ]] && { ( umask 077 && command mkdir -p -- "$dir" && [[ -d $dir && ! -L $dir && -O $dir ]] && command chmod 700 "$dir" && command rm -f -- "$follows" \\`,
-  `${indent}  && set -C && command printf '%s %s\\n' "$id" "$(command date +%s)" > "$follows" ) 2>/dev/null || :; }`,
+  `${indent}[[ -n $follow ]] && { ( umask 077 && command mkdir -p -- "$dir" && [[ -d $dir && ! -L $dir && -O $dir ]] && command chmod 700 "$dir" && command rm -f -- "$follows" \\`,
+  `${indent}  && set -C && command printf '%s %s\\n' "$follow" "$(command date +%s)" > "$follows" ) 2>/dev/null || :; }`,
 ];
 
 // One line on stderr when an alias of `program` remains whose value does not start with `program`: typed, it runs past

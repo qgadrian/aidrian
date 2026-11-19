@@ -19,8 +19,9 @@
 // The guards then run under a time budget (lib/deadline.mjs), GUARD_BUDGET_MS from the hook's start, well inside the
 // host's 5 second hook timeout, past which the host runs the call with no guard: a call of a subagent, of a session no
 // Human attends, or of a session a project run's driver mark holds, that they cannot finish reading in time is refused
-// (config-guard.mjs deadlineDenial), and an attended main session's runs, as the guards allow it anyway. The same three
-// are refused a command longer than the guards read.
+// (config-guard.mjs deadlineDenial), and an attended main session's runs, as the guards allow it anyway; a call that is
+// no shell and writes no file, which no guard refuses, runs for all (writesNothing). The same three are refused a
+// command longer than the guards read. The driver's run's state folder is guarded by its mark (runStateDenial).
 // A session the gate is starting, whose id the host has not listed yet, is held by the gate's pending mark
 // (lib/unattended-mark.mjs): every session with no mark of its own, wherever its call runs, but the one that ran the gate
 // and those the host listed before the start. Such a session's call files its beacon, which a start adapter that cannot
@@ -51,7 +52,7 @@ import { gateDenial, projectRuleReason, readOnlyDenial, unreadableConfigDenial }
 import { anchorClones, cloneConfigProblem } from '../lib/attempt-clone.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
-import { bashCall, configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial, writeTargets } from '../lib/config-guard.mjs';
+import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial, writesNothing } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, sessionFoldersWriteDenial, startedUnattended, stateFolders, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
@@ -146,6 +147,8 @@ async function gate(input) {
         ?? projectCommandDenial(input, DEFAULTS, { unattended })
         ?? stateFoldersWriteDenial(input, DEFAULTS, { unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
         ?? sessionFoldersWriteDenial(input, null, DEFAULTS, null, { unattended })
+        // A driver whose run's main checkout no longer resolves to a project, as when its config was removed.
+        ?? runStateDenial(input, driven, DEFAULTS, { unattended, drives })
         // A session its own mark holds, with no project it can read, cannot tell its own places, so it writes nothing; a
         // pending or unreadable hold keeps only the entries refused wherever they lie (lib/unattended-write.mjs).
         ?? unattendedWriteDenial(input, DEFAULTS, { mark, places: () => unattendedPlaces({ cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), mark, project: null }) }));
@@ -189,6 +192,8 @@ async function gate(input) {
     }));
     // The driver's run project is one of `others`, so a call from another project's folder still meets its run's stores.
     denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, [() => marked, origin, drivenProject], { unattended, drives, drove }, base, own)
+      // The run's state folder, by the driver mark itself, from any project: its own may no longer resolve.
+      ?? runStateDenial(input, driven, config, { unattended, drives, own, checkouts: () => drivenProject()?.checkouts ?? [] })
       ?? unattendedWriteDenial(input, config, { mark, places: placesOf }));
   } catch (error) {
     if (!(error instanceof PastDeadline)) throw error;
@@ -249,9 +254,7 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
 // The first denial of the guards of each of `others` that is another project folder than the call's, each asked once:
 // by its own folder, so a linked checkout whose config moves `state.dir` elsewhere than the main checkout's is its own.
 function otherProjects(input, project, others, holds, own) {
-  // A call with no write target of a tool that is no shell, such as a Read, writes nothing any guard reads.
-  const { files, names, globs } = writeTargets(input);
-  if (files.length === 0 && names.length === 0 && globs.length === 0 && !bashCall(input)) return null;
+  if (writesNothing(input)) return null;
   const seen = new Set([canonical(project.root)]);
   for (const ask of others) {
     const other = ask();
@@ -277,6 +280,23 @@ function otherProject(input, marked, { unattended, drives }, own) {
   return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended, drives, base })
     ?? sessionFoldersWriteDenial(input, marked, config, state, { unattended })
     ?? projectRunWriteDenial(input, marked, config, state, { unattended, drives, base, own }) ?? mainCheckoutWriteDenial(input, marked, config, { unattended, runSession });
+}
+
+// The denial of the continuation store and the runs folder in the state folder that `driven`, the session's driver
+// mark, names, or null: the folder whose ledger alone says whether the run is under way (run-driver.mjs runDriver),
+// guarded by the mark itself, so a run whose main checkout no longer resolves to a project, as when its config was
+// removed or moved state.dir away, still holds its driver there while `drives()`, from any folder. `config.state.dir`
+// is set to that folder, so the guards ask it whatever the call's targets, and no base branch is read for it.
+// `checkouts()` are the run's main checkout's, when it resolves, read only when a guard asks, for its reading of a
+// target that holds a checkout.
+function runStateDenial(input, driven, config, { unattended, drives, own = null, checkouts = () => [] }) {
+  if (!driven?.state) return null;
+  const settings = { ...config, state: { ...config.state, dir: driven.state } };
+  const state = () => [driven.state];
+  const base = () => ({ config: null, failed: false });
+  const project = { root: driven.root, get checkouts() { return checkouts(); } };
+  return continueStoreWriteDenial(input, project, settings, state, { unattended, drives, base })
+    ?? projectRunWriteDenial(input, project, settings, state, { unattended, drives, base, own });
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

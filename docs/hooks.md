@@ -1003,7 +1003,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the unattended marks, and the sign-off store, from `aidrian project init` on, wherever its call runs, its first
   driver too, which has no unattended mark of its own: from another project's folder, the run's project, which the
   driver mark names, is guarded as the call's own, and a call the guards cannot read whole or in time is refused.
-  A refusal names the driver's run as what holds it. The same holds for the
+  The state folder the driver mark names is guarded by the mark itself, so a run whose main checkout no longer resolves
+  to a project, as when its config was removed, still holds its driver from the store and the runs folder there, from
+  any folder. A refusal names the driver's run as what holds it. The same holds for the
   [merge guard](#merge-guard), `aidrian pr auto-merge`, and the review-signoff rule. `aidrian project init` files its
   driver mark, `driver.<session id>.json` beside the unattended marks, naming the run, its main checkout, and its state
   folder, before the init row, and refuses when it cannot; each start and wait by the current driver files it again,
@@ -1013,7 +1015,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   run's end (`aidrian project end`); a mark it cannot read, a missing state folder, or a ledger it cannot read holds
   the session too, and authorizes nothing. The driver's own `aidrian project` commands still write the ledger.
   After the run's end, a session that drove it stays held for the unattended marks and the sign-off store for the rest
-  of the session (`droveRun`), so it can neither remove nor rewrite its own driver mark to lift the sign-off hold.
+  of the session (`droveRun`), so it can neither remove nor rewrite its own driver mark to lift the sign-off hold,
+  and it is still refused a shell call or a write the guards cannot read whole or in time, which may reach either.
+  Past the time budget, a driver's call that is no shell and writes no file, such as a Read, runs; its shell calls,
+  `aidrian project wait` among them, are refused until the guards read them in time.
 - The same two, and a project run's driver, may not write in the
   [sign-off store](review.md#merge-trust), `$XDG_STATE_HOME/aidrian/signoffs/` or `~/.local/state/aidrian/signoffs/`,
   read the same way, with the part named `signoffs`: a merge no Human asks for reads the Human's flow sign-offs there,
@@ -1280,7 +1285,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
   a call of a subagent, of a main session the background handoff route started, or of a main session a project run's
   driver mark holds, its run's first driver included, is refused, as the guards could not finish reading the command
-  in time, and an attended main session's runs, as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
+  in time, and an attended main session's runs, as the guards allow it anyway. A call that is no shell and has no
+  write target, such as a Read, a search, or an MCP tool's call, runs past it for every session, since every guard
+  reads a shell command or the files a call writes. The walk checks it at each entry it tests, so a folder of many long names cannot hold
   the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it
   does not match. A Bash call of more than 1024 write targets, counting each folder a path may
   be in, of a subagent, of a session the background route started, or of a run's driver, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may

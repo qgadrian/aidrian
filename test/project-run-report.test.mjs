@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -327,6 +327,68 @@ test('the first driver is held from its run\'s stores past the guards\' time bud
   assert.equal(long.status, 2, long.stderr);
   assert.match(long.stderr, /the guards read at most 512 in a shell command they cannot parse, so it may change a file only a main session a Human attends may change, and this session has driven a project run/u);
   assert.equal(gates(fx, OTHER, 'PowerShell', { command: words }).status, 0, 'an attended session\'s long command');
+});
+
+// Past the budget the driver still reads, so a loaded machine never stalls it on a Read; a shell call is held, and at a
+// budget of 0 none is read in time: the Bash lexer checks the deadline at its first step (rules/main-checkout/bash-writes.mjs).
+test('past the guards\' time budget, the first driver still reads, and is refused a write or a shell call', (t) => {
+  const fx = started(t);
+  const late = { AIDRIAN_GUARD_BUDGET_MS: '0' };
+  const ledger = path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl');
+  for (const [tool, input] of [['Read', { file_path: ledger }], ['Grep', { pattern: 'init', path: fx.state }], ['Glob', { pattern: '*', path: fx.state }]]) {
+    const read = gates(fx, DRIVER, tool, input, fx.dir, late);
+    assert.equal(read.status, 0, `${tool}: ${read.stderr}`);
+  }
+  const write = gates(fx, DRIVER, 'Write', { file_path: ledger, content: '{}' }, fx.dir, late);
+  assert.equal(write.status, 2, write.stderr);
+  assert.match(write.stderr, /the guards could not finish reading this command in time, so it may change a file only a main session a Human attends may change, and this session has driven a project run/u);
+  const wait = gates(fx, DRIVER, 'Bash', { command: 'aidrian project wait launch' }, fx.dir, late);
+  assert.equal(wait.status, 2, wait.stderr);
+  assert.match(wait.stderr, /could not finish reading this command in time/u);
+  assert.equal(gates(fx, DRIVER, 'Bash', { command: 'aidrian project wait launch' }).status, 0, 'in time, its wait runs');
+});
+
+test('the driver\'s refusals for the marks, the sign-off store, and a call of more write targets than the guards read name its run', (t) => {
+  const fx = started(t);
+  const marks = path.join(fx.env.XDG_STATE_HOME, 'aidrian', 'unattended');
+  const signoff = path.join(signoffFolder(fx.env), 'acme', 'widgets', '7.json');
+  const drove = /this session has driven a project run, whose driver mark holds it as one no Human attends/u;
+  for (const [what, file] of [['marks', path.join(marks, `driver.${OTHER}.json`)], ['sign-off store', signoff]]) {
+    for (const [tool, input] of [['Write', { file_path: file, content: '{}' }], ['Bash', { command: `printf x > ${file}` }]]) {
+      const refused = gates(fx, DRIVER, tool, input);
+      assert.equal(refused.status, 2, `${what} by ${tool}: ${refused.stderr}`);
+      assert.match(refused.stderr, drove, `${what} by ${tool}`);
+      assert.doesNotMatch(refused.stderr, /background handoff route started this session/u, `${what} by ${tool}`);
+    }
+  }
+  const many = Array.from({ length: 20000 }, (_, i) => `: > a${i}`).join('; ');
+  const refused = gates(fx, DRIVER, 'Bash', { command: many });
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.stderr, /its command writes 20000 targets, counting each folder a path may be in, and the guards read at most 1024 in one call/u);
+  assert.match(refused.stderr, drove);
+  assert.equal(gates(fx, OTHER, 'Bash', { command: many }).status, 0, 'an attended session');
+});
+
+// The driver mark names the run's state folder, which the guards hold the driver from by the mark itself: a run whose
+// main checkout lost its config, so it is no project any more, still holds its driver from the ledger and the store.
+test('a driver whose run\'s main checkout no longer resolves to a project is still held from its run\'s store and ledger', (t) => {
+  const fx = started(t);
+  const store = path.join(fx.state, 'handoffs', '.continue');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  rmSync(path.join(fx.dir, '.aidrian', 'config.json'));
+  const loose = mkdtempSync(path.join(fx.root, 'loose-'));
+  const targets = [['store', path.join(store, 'armed-x.json'), /the handoff continuation store/u], ['ledger', path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl'), /the folder of the project runs/u]];
+  for (const cwd of [loose, fx.dir]) {
+    for (const [what, file, guard] of targets) {
+      for (const [tool, input] of [['Write', { file_path: file, content: '{}' }], ['Bash', { command: `echo {} > ${file}` }]]) {
+        const refused = gates(fx, DRIVER, tool, input, cwd);
+        assert.equal(refused.status, 2, `${what} by ${tool} from ${cwd}: ${refused.stderr}`);
+        assert.match(refused.stderr, guard, `${what} by ${tool} from ${cwd}`);
+        assert.match(refused.stderr, /this session drives a project run, which no Human attends/u, `${what} by ${tool} from ${cwd}`);
+      }
+      assert.equal(gates(fx, OTHER, 'Write', { file_path: file, content: '{}' }, cwd).status, 0, `${what} from ${cwd}: an attended session`);
+    }
+  }
 });
 
 test('from another project\'s folder, the first driver is still held from its run\'s store and ledger', (t) => {

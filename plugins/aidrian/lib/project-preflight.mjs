@@ -206,11 +206,11 @@ function protectionLines({ facade, repository, policy, lines, check, asks }) {
       if (read.protected === null) asks.push(`ask branch-protection: confirm on the forge that the default branch ${read.branch} asks for a pull request of the signed-in user too, since ${read.why}; a missing one is a blocker`);
       else check('branch-protection', read.protected ? null : `no rule on the forge holds the signed-in user, whose token an issue's session keeps, to a pull request on the default branch ${read.branch} (${read.why}), so a script it runs could push to it; protect it with a rule that asks for a pull request, includes administrators, and lets that user bypass nothing, before the run`);
       const held = read.tags.filter((rule) => rule.all && rule.creation && rule.update && rule.bypass === 'never');
-      check('release-tags', held.length ? null : 'no active tag rule on the forge names every tag and stops the signed-in user, whose token an issue\'s session keeps, creating or moving one, so a script it runs could push a release tag; add a tag ruleset over all tags (~ALL or refs/tags/*, excluding none) that restricts creations and updates, with no bypass for that user, before the run');
+      check('release-tags', held.length ? null : 'no active tag rule on the forge names every tag and stops the signed-in user, whose token an issue\'s session keeps, creating or moving one, so a script it runs could push a release tag; add a tag ruleset over all tags (~ALL or refs/tags/**/*, excluding none; refs/tags/* stops at a slash) that restricts creations and updates, with no bypass for that user, before the run');
     }
   } else asks.push('ask protection: confirm on the forge that the default branch asks for a pull request of the signed-in user, admin or not, and that a tag rule the signed-in user cannot bypass stops a tag being created or moved; a missing one is a blocker');
   secretsLine({ facade, named, repository, policy, check, asks });
-  lines.push('note workflows: the forge runs a branch\'s own workflow files with the repository\'s secrets on every push, and an issue\'s session pushes its branch: keep release and deploy secrets in environments limited to protected branches and tags; the hook refuses an issue session\'s writes to the workflow files and a push whose commits change them, and a script it runs is the residual');
+  lines.push('note workflows: the forge runs a branch\'s own workflow files with the repository\'s secrets on every push, and an issue\'s session pushes its branch: keep release and deploy secrets in environments limited to protected branches and tags, or held for a reviewer; a cloud role trusted through OIDC federation for any ref of the repository (a subject such as repo:<owner>/<name>:*) can be assumed from any branch, so limit its trust to a protected branch, or to an environment held as above; the hook refuses an issue session\'s writes to the workflow files and a push whose commits change them, and a script it runs is the residual');
   lines.push('note triggers: other services that act on a push or a pull request comment, such as preview deploys and ChatOps bots, run for an issue\'s branch too, with their own secrets; keep them to protected branches or reviewed pull requests');
 }
 
@@ -236,7 +236,7 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
   }
   const token = read.workflowPush === null ? 'the signed-in token names no scopes, so it may' : 'the signed-in token\'s scopes include workflow, so it may';
   const exposed = read.secrets > 0 && read.workflowPush !== false;
-  check('workflow-secrets', exposed ? `the repository's workflows see ${read.secrets} CI secrets, and ${token} push a change to a workflow file, which a script an issue's session runs could do to read them; sign the forge CLI in with a token without that scope, or move the secrets to environments limited to protected branches, or set projectRun.workflowSecretsAccepted on the default branch` : null);
+  check('workflow-secrets', exposed ? `the repository's workflows see ${read.secrets} CI secrets, and ${token} push a change to a workflow file, which a script an issue's session runs could do to read them; sign the forge CLI in with a token without that scope, or move the secrets to environments limited to protected branches or held for a required reviewer, or set projectRun.workflowSecretsAccepted on the default branch` : null);
 }
 
 // `aidrian project init RUN --file PATH --check`: the input's checks, as init makes them, and the order, with no run

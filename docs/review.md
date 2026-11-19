@@ -1404,9 +1404,12 @@ branch: that is an accepted residual, which only the forge closes. So `aidrian p
 default branch asks the signed-in user, administrator or not, for no pull request, or whose tags no tag rule holds that
 names every tag, restricts creating and updating one, and that the signed-in user can never bypass. The forge also runs
 a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
-whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags,
-never in repository secrets a pushed branch's workflow can read, and the preflight blocks a run whose workflows see CI
-secrets while the token may push a workflow file, unless the team sets `projectRun.workflowSecretsAccepted`.
+whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags
+or held for a required reviewer, never in repository secrets or an open environment a pushed branch's workflow can
+read, and the preflight blocks a run whose workflows see CI secrets while the token may push a workflow file, unless
+the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,
+`repo:<owner>/<name>:*`, is a secret by another name: any pushed branch's workflow can assume it, so its trust names a
+protected branch or a held environment.
 
 ### Finding ids
 

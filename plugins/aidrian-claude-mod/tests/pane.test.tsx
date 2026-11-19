@@ -266,6 +266,31 @@ describe('aidrian-mod band', () => {
     expect(await drawing.find({ type: 'Text', text: /^ ↻2d2h$/ })).toBeDefined()
   })
 
+  test('draws no 5-hour limit when the engine reports none, as on a plan without one', async ($, on) => {
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('session.measure', () => ({ changed: [] }))
+    mock.clock(on, { now: 0 })
+    await $.session.measure({
+      context: { percent: 40, window: 200_000 },
+      rateLimits: [{ kind: 'seven_day', percentUsed: 15, resetsAt: new Date(50 * 3_600_000).toISOString() }],
+    } as never)
+
+    for (const drawing of [await band($), await pane($)]) {
+      const texts = (await drawing.findAll({ type: 'Text' })).map(found => found.text)
+
+      expect(texts.filter(text => /5h/.test(text))).toEqual([])
+      expect(texts.filter(text => /7d/.test(text)).length).toBeGreaterThan(0)
+    }
+  })
+
+  test('draws no limit before the engine measures one', async ($, on) => {
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+
+    const texts = (await (await band($)).findAll({ type: 'Text' })).map(found => found.text)
+
+    expect(texts.filter(text => /5h|7d/.test(text))).toEqual([])
+  })
+
   test('draws no renewal for a reset time that is not a date', async ($, on) => {
     on('session.model', () => ({ value: 'claude-opus-5-5' }))
     on('session.measure', () => ({ changed: [] }))
@@ -520,7 +545,9 @@ describe('the snapshot rows', () => {
 
     expect(await drawing.find({ type: 'Text', text: /^2\.3x · handoff due, pays back in ~24 calls$/ })).toBeDefined()
     expect(await drawing.find({ type: 'Text', text: /^armed 1\/3$/ })).toBeDefined()
-    expect(await drawing.find({ type: 'Text', text: /^2 PRs · $/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /^PRs $/ })).toBeDefined()
+    expect((await drawing.find({ type: 'Text', text: /^#12$/ }))?.props.color).toBe('success')
+    expect((await drawing.find({ type: 'Text', text: /^#13$/ }))?.props.color).toBe('error')
     expect((await drawing.find({ type: 'Text', text: /^✓1$/ }))?.props.color).toBe('success')
     expect((await drawing.find({ type: 'Text', text: /^✗1$/ }))?.props.color).toBe('error')
     expect(await drawing.find({ type: 'Text', text: /^📥 1 P1$/ })).toBeDefined()

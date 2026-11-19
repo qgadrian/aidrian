@@ -94,19 +94,37 @@ function summaryWords(rows) {
   return forges.size === 1 ? [...forges][0] : NO_FORGE;
 }
 
-// The changes summary, `3 PRs · ✓2 ✗0 ⏳1`, counting changes, not checks: a change with no check counts in none.
+// How many change numbers the summary lists before it counts the rest as `+N`.
+export const LISTED_CHANGES = 5;
+
+// Whether `rows` come from more than one repository. Such a summary lists no number, since `#42` could then name a
+// change in either; the pane names each change with its repository.
+export const spansRepositories = (rows) => new Set(rows.map((row) => `${row.host}/${String(row.repo).toLowerCase()}`)).size > 1;
+
+// The changes summary, `PRs ✓2 ✗0 ⏳1 · #12, #34, +1`: the noun, the counts of changes, not checks (a change with no
+// check counts in none), then the first LISTED_CHANGES numbers, each in the color of its checks, and `+N` for the rest
+// and any row with no number. The counts come first so a narrow terminal cuts numbers, never a failure. With no
+// number to list, or rows from more than one repository, `3 PRs · ✓2 ✗0 ⏳1`.
 export function changesParts(prs) {
   const rows = changeRowsOf(prs);
   if (rows.length === 0) return [];
   const words = summaryWords(rows);
   const states = rows.map((row) => checksState(row.checks));
   const count = (state) => states.filter((each) => each === state).length;
+  const numbered = rows.map((row, index) => ({ row, state: states[index] })).filter(({ row }) => Number.isSafeInteger(row.number) && row.number > 0);
+  const listed = spansRepositories(rows) ? [] : numbered.slice(0, LISTED_CHANGES);
+  const rest = rows.length - listed.length;
   const noun = rows.length === 1 ? words.one : words.many;
-  return [
-    part(`${rows.length} ${noun}${SEPARATOR}`),
+  const counts = [
     part(`✓${count('passed')}`, COLORS.passed), part(' '),
     part(`✗${count('failed')}`, COLORS.failed), part(' '),
     part(`⏳${count('pending')}`, COLORS.pending),
+  ];
+  if (listed.length === 0) return [part(`${rows.length} ${noun}${SEPARATOR}`), ...counts];
+  return [
+    part(`${noun} `), ...counts, part(SEPARATOR),
+    ...listed.flatMap(({ row, state }, index) => [...(index ? [part(', ')] : []), part(`#${row.number}`, state === null ? COLORS.text : COLORS[state])]),
+    ...(rest > 0 ? [part(`, +${rest}`)] : []),
   ];
 }
 

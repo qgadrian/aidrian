@@ -314,6 +314,8 @@ test('a `{` line inside fenced code is no handoff, and a claim after the fence s
   assert.deepEqual(own(`${many}\n\`npm run check\`: 12/12 pass.`), [{ key: 'npm run check', counts: [12] }], '10,000 json fences, then an own claim');
   const deep = `${'['.repeat(5000)}"\`npm test\` passed 1/1"${']'.repeat(5000)}`;
   assert.deepEqual(own(`\`\`\`json\n${deep}\n\`\`\``), [{ key: 'npm test', counts: [1] }], 'deep nesting reads with no recursion');
+  const wide = JSON.stringify(Array.from({ length: 300_000 }, () => 0));
+  assert.deepEqual(own(`\`\`\`json\n${wide}\n\`\`\`\n\n\`npm run check\`: 12/12 pass.`), [{ key: 'npm run check', counts: [12] }], 'a 300,000-element array, then an own claim');
 });
 
 test('a report\'s own claim stays one when it names a source that does not say the command', () => {

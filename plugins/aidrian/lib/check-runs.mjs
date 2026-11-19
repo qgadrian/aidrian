@@ -485,7 +485,11 @@ function stringsOf(value) {
   while (stack.length) {
     const next = stack.pop();
     if (typeof next === 'string') strings.push(next);
-    else if (next !== null && typeof next === 'object') stack.push(...Object.values(next).reverse());
+    else if (next !== null && typeof next === 'object') {
+      // One push a value, from the last, so the first is read first; a spread of a large array would throw.
+      const values = Object.values(next);
+      for (let index = values.length - 1; index >= 0; index -= 1) stack.push(values[index]);
+    }
   }
   return strings;
 }

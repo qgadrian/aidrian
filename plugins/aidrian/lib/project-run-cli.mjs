@@ -1,7 +1,8 @@
 // `aidrian project`: the record of a project run and the order of its issues (lib/project-run.mjs).
 //
 //   aidrian project init RUN --file PATH   # validate the driver's snapshot input and start run RUN; the attended main session only
-//                    [--check]             # only check the input and print its order and blockers, writing no run
+//                    [--texts PATH]        # each issue's text, apart from the snapshot input, for its session to read
+//                    [--check]             # only check the inputs and print their order and blockers, writing no run
 //   aidrian project next RUN [--json]      # the next issue or issues to start, `wait N running`, or `done`
 //   aidrian project summary RUN            # write and print summary.md from the ledger
 //   aidrian project end RUN                # the driver records the run's end, which releases its driver mark
@@ -34,7 +35,7 @@ import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } 
 import { endRun, recordHandoff, recordResult, resumeRun, RETRY_EXIT, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
-const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
+const USAGE = 'init RUN --file PATH [--texts PATH] [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
   'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR] | ' +
   'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
@@ -84,7 +85,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     options: {
       project: word,
       ...(['init', 'result'].includes(action) ? { file: word } : {}),
-      ...(action === 'init' ? { check: { type: 'boolean' } } : {}),
+      ...(action === 'init' ? { check: { type: 'boolean' }, texts: word } : {}),
       ...(['next', 'report'].includes(action) ? { json: { type: 'boolean' } } : {}),
       ...(action === 'wait' ? { 'max-wait': word } : {}),
     },
@@ -97,11 +98,12 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   const config = commandConfig(project);
   if (action === 'init') {
     if (!values.file) return fail('project init needs --file');
-    if (values.check) return snapshotCheck({ project, config, file: path.resolve(cwd, values.file) });
+    const texts = values.texts === undefined ? null : path.resolve(cwd, values.texts);
+    if (values.check) return snapshotCheck({ project, config, file: path.resolve(cwd, values.file), texts });
     if (values.project !== undefined && !sameMainCheckout(project, projectAt(cwd))) {
       return refused('init', '--project names a project outside the main checkout of the current folder; run init from that project');
     }
-    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home });
+    return initRun({ project, config, run, file: path.resolve(cwd, values.file), texts, session: sessionIdentity(env).session, env, home });
   }
   if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });

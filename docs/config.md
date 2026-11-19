@@ -1841,10 +1841,12 @@ the forge's default branch with `github.requiredChecks` listed and this machine'
 set to `"background"`, since `"clear"` waits on a person; and `github.reviewer`, with the bot seen on a recent
 pull request and an active CI workflow, read through the forge. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
-blocker. `init RUN --file PATH --check` checks a snapshot input as `init` would, prints its blockers (problems, cycles,
-issues started outside the run) and its `next` lines, and writes no run. An issue of the input may carry `text`,
-`{ title, description, criteria, labels }`: `init` keeps it capped, with hidden characters removed, in
-`<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`, and each start writes it read-only to the attempt's
+blocker. `init RUN --file PATH [--texts PATH] --check` checks the inputs as `init` would, prints their blockers
+(problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue
+to start with no text) and the `next` lines, and writes no run. `--texts` is a second input, apart from the snapshot
+input and its 1 MiB cap: an object of issue key to `{ title, description, criteria, labels }`, read as the snapshot
+input is, under a cap of 500 issues at each field's cap. `init` keeps each text capped, with hidden characters removed,
+in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`, and each start writes it read-only to the attempt's
 `issue.md`, fenced and marked as untrusted text from the tracker, which the issue's session reads instead of the tracker. The `project-autopilot` skill runs both in its
 attended first turn, and `init` last, once nothing blocks.
 

@@ -1,7 +1,8 @@
 // The text of a project run's issues, which an issue's session reads from a file instead of the tracker: a confined
-// session may not reach the tracker at all. The driver's snapshot input may give each issue a `text`, { title,
-// description, criteria, labels }; init keeps it, capped and with hidden characters removed, in `<run>/issues/<KEY>.json`,
-// never in snapshot.json, which keeps no tracker text. Each start writes it to `<attempt>/issue.md`, beside the clone and
+// session may not reach the tracker at all. The driver writes the texts to a second input, apart from the snapshot input
+// and under its own cap (`aidrian project init --texts`): an object of issue key to { title, description, criteria,
+// labels }. Init keeps each, capped and with hidden characters removed, in `<run>/issues/<KEY>.json`, never in
+// snapshot.json, which keeps no tracker text. Each start writes it to `<attempt>/issue.md`, beside the clone and
 // outside its tracked files, read-only, fenced, and marked as untrusted text from the tracker.
 
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -17,26 +18,33 @@ export const ISSUE_FILE = 'issue.md';
 
 const kept = (value, cap) => (typeof value === 'string' ? stripHidden(value).slice(0, cap) : '');
 
-// The text of each issue `input` (the parsed snapshot input) gives, for the keys in `keys`: { [key]: { title,
-// description, criteria, labels } }, each field capped. An issue with no `text`, or none of these fields, is left out.
+// The most bytes one issue's text takes in the texts input: each field at its cap, four bytes a character, and room for
+// the JSON around it. The input's cap is MAX_ISSUES times this (project-run.mjs TEXTS_CAP).
+export const TEXT_BYTES = (TEXT_CAPS.title + TEXT_CAPS.description + TEXT_CAPS.criteria + TEXT_CAPS.label * TEXT_CAPS.labels) * 4 + 4096;
+
+// The text of each issue `input` (the parsed texts input, issue key to text) gives, for the keys in `keys`: { [key]:
+// { title, description, criteria, labels } }, each field capped. A key not in `keys`, or a text with none of these
+// fields, is left out.
 export function issueTextsOf(input, keys) {
   const texts = {};
-  for (const issue of Array.isArray(input?.issues) ? input.issues : []) {
-    if (!isObject(issue) || !keys.has(issue.key) || !isObject(issue.text)) continue;
-    const { title, description, criteria, labels } = issue.text;
+  if (!isObject(input)) return texts;
+  for (const [key, given] of Object.entries(input)) {
+    if (!keys.has(key) || !isObject(given)) continue;
+    const { title, description, criteria, labels } = given;
     const text = {
       title: kept(title, TEXT_CAPS.title),
       description: kept(description, TEXT_CAPS.description),
       criteria: kept(criteria, TEXT_CAPS.criteria),
       labels: (Array.isArray(labels) ? labels : []).slice(0, TEXT_CAPS.labels).map((label) => kept(label, TEXT_CAPS.label)).filter(Boolean),
     };
-    if (text.title || text.description || text.criteria || text.labels.length) texts[issue.key] = text;
+    if (text.title || text.description || text.criteria || text.labels.length) texts[key] = text;
   }
   return texts;
 }
 
 // Writes each text of `texts` to `<runFolder>/issues/<KEY>.json`, owner-only: the count written.
 export function writeIssueTexts(runFolder, texts) {
+  if (Object.keys(texts).length === 0) return 0;
   const folder = path.join(runFolder, 'issues');
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   let count = 0;

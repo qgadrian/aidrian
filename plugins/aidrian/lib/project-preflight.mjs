@@ -19,7 +19,7 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readIssueTexts, readSnapshotInput, refNames, runPlace } from './project-run.mjs';
 import { teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
@@ -171,15 +171,33 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
   } else asks.push('ask ci: confirm the default branch runs CI on pull requests');
 }
 
-// `aidrian project init RUN --file PATH --check`: the snapshot input's checks, as init makes them, and its order, with
-// no run written: a `blocker snapshot` line for each problem, and for each issue blocked by a cycle or by a status the
-// run does not start from; then `next` lines as `aidrian project next` would print them. Exit 1 on any blocker.
-export function snapshotCheck({ project, config, file }) {
+// `aidrian project init RUN --file PATH [--texts PATH] --check`: the inputs' checks, as init makes them, and the order,
+// with no run written: a `blocker snapshot` line for each problem, for each issue blocked by a cycle or by a status the
+// run does not start from, and, when the base branch's projectRun.mcpServers holds no tracker server an issue's session
+// could read the tracker through, for each issue to start with no text; then `next` lines as `aidrian project next`
+// prints them. Exit 1 on any blocker.
+export function snapshotCheck({ project, config, file, texts = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
+  const kept = readIssueTexts(texts, new Set(read.snapshot.issues.map((issue) => issue.key)));
+  if (kept.problem) return { exitCode: 1, out: [`blocker texts: ${kept.problem}`], err: ['aidrian project init --check: fix the texts input, then check it again'] };
   const plan = planRun(read.snapshot, new Map());
   const blockers = plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
     .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`);
-  const out = [`ok snapshot ${read.snapshot.issues.length} issues`, ...blockers, ...nextLines(plan)];
+  if (!trackerReachable(baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {})) {
+    const startable = new Set(plan.order);
+    blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !plan.done.includes(issue.key) && !kept.texts[issue.key])
+      .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; give its text in --texts`));
+  }
+  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...blockers, ...nextLines(plan)];
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
+}
+
+// Whether the base branch's config, as `base` (baseBranchConfig) reads it, lists in projectRun.mcpServers a server of its
+// tracker, by name or endpoint.
+function trackerReachable(base) {
+  const tracker = base.config?.tracker ?? {};
+  const adapter = (typeof tracker.provider === 'string' ? trackerById(tracker.provider) : null) ?? trackerOfTools([...(tracker.writeTools ?? []), ...(tracker.readTools ?? [])]);
+  if (!adapter) return false;
+  return Object.entries(base.config?.projectRun?.mcpServers ?? {}).some(([name, definition]) => (trackerOfEndpoint(definition) ?? TRACKERS.find((each) => knownServers(each).includes(name))) === adapter);
 }

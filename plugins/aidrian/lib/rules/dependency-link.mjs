@@ -1,8 +1,13 @@
 // Bash rule: no `ln` that links a dependency folder, `node_modules` or `.venv`, into another copy of a project.
 // A package manager run in the copy, such as `pnpm exec` with no lockfile there, installs through the link and changes
 // the original's packages: a read-only reviewer that ran mutations in a scratch copy once moved the reviewed worktree to
-// newer package versions that way. The deny names the copy that keeps the original intact: a worktree of its own, with
-// the project's install from the lockfile, offline.
+// newer package versions that way. The deny names the way to get dependencies in the agent's own task worktree: install
+// there, where `aidrian worktree new` already runs the project's bootstrap. For a worktree under review it names no install
+// at all: a reviewer installs nothing, and reviews read-only or reports that a mutation or test run needs the pull
+// request's own task worktree. A pull request controls its tree, its config's bootstrap, and its package manager's hooks,
+// so any install or bootstrap the deny pointed a reviewer to would run that pull request's code; an earlier deny quoted the
+// checkout's bootstrap command, and one after it advised an install in a scratch copy of the reviewed tree.
+// Agents that needed dependencies in a task worktree hit the rule again and again while the deny named the scratch copy alone.
 // Read through wrappers, subshells, and the substitutions that run (commandLines, readInvocation); a link made from a
 // script or an interpreter is out of reach, so this guards against accidents, not intent.
 
@@ -16,9 +21,10 @@ const DEPENDENCY_FOLDERS = new Set(['node_modules', '.venv']);
 // The first sentence stays as it is: lessons and reports group this rule's denies by it.
 export const REASON =
   'Blocked: linking a dependency folder lets a package manager run in the copy install through the link and change the original\'s packages. ' +
-  'Give the copy its own install: `git -C <worktree> archive HEAD | tar -x -C <scratch>`, which brings the lockfile, then the ' +
-  'project\'s install in the copy from that lockfile, offline, such as `pnpm install --frozen-lockfile --offline`, and run the mutation or test there. ' +
-  'Never run a package manager install against a worktree under review. ' +
+  'For dependencies in your own task worktree, install them in that worktree: `aidrian worktree new` already runs the ' +
+  'project\'s bootstrap there. ' +
+  'In a worktree under review, install nothing, there or in any copy of it: review it read-only, or report that the ' +
+  'mutation or test run needs the pull request\'s own task worktree, and leave that run to its owner. ' +
   `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +
   "(agents must never set it on the user's behalf).";
 

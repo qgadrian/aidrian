@@ -1,7 +1,7 @@
 // Records a block by one of the plugin's own hooks: the Bash rules, the main-checkout rule for writes, the agent gates,
 // and the config guard. It records the block twice over: a `hook_deny` row in the dispatch log while config.json
 // `telemetry.enabled` and `telemetry.hookDenies` are on, and one count toward the automatic lesson for a rule that blocks
-// one session again and again (lesson-signals.mjs noteDenial), which counts whether or not telemetry is on. The row names
+// one agent run again and again for the same cause (lesson-signals.mjs noteDenial), which counts whether or not telemetry is on. The row names
 // the rule and what it matched, never the command. hook-io.mjs block() loads this file only when a hook blocks, so a
 // call the hooks let run never pays for it.
 
@@ -27,5 +27,5 @@ export function recordBlock(input, rule, reason, { match = firstSentence(reason)
   } catch {
     // The row is lost; the lesson count still happens.
   }
-  noteDenial(input, rule);
+  noteDenial(input, rule, { cause: match });
 }

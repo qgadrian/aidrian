@@ -12,20 +12,35 @@ gives the snapshot's line without it.
 ```text
 🪐 Opus 5.5 xhigh · ctx 48% ━━━━──── · ♨️ cache 5m · 5h 26% ↻3h09m · 7d 15%
    ⧉  feature-band · ABC-12 In Progress · ◐ 2 agents
-   2.3x · handoff due, pays back in ~24 calls · armed 1/3 · 2 PRs · ✓1 ✗1 ⏳0 · 📥 1 P1 · 🧹 1 worktree
+   2.3x · handoff due, pays back in ~24 calls · armed 1/3 · 📥 1 P1 · 🧹 1 worktree
+   PRs ✓5 ✗1 ⏳1 · #4012, #4019, #4023, #4031, #4036, +2
 ```
 
-- **The band.** The model and effort, context use, the prompt cache time left, the 5-hour and 7-day limits, the branch
+- **The band.** The model and effort, context use, the prompt cache time left, the 5-hour and 7-day limits (each only
+  once Claude Code reports it, so a plan with no 5-hour limit shows none), the branch
   or linked worktree (`detached` with no branch), the branch's ticket with its title and state, and the running
-  subagents. A row below them is `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): the handoff verdict the Stop hook would give,
-  the pull requests the session touched with their checks, and the harness signals to act on, P1 lessons,
-  provisional decisions, merged worktrees to clean, and untriaged persona findings. At 70% context or more, a context
+  subagents. Two rows below them are `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): first the handoff verdict the Stop hook would give
+  and the harness signals to act on, P1 lessons, provisional decisions, merged worktrees to clean, and untriaged
+  persona findings; then, on a row of their own so a long list never cuts the signals off, the pull requests the
+  session touched: the check counts first, so a narrow terminal cuts numbers and never a failure, then up to five
+  numbers, each in the color of its checks, and `+N` for the rest. When the numbers come from more than one
+  repository, each carries its repository's letter, `PRs ✓1 ✗1 ⏳0 · a#42, b#42`: `a` is the first repository when
+  their hosts and paths are sorted, so one name under two owners, or on two hosts, gets two letters, and a letter
+  changes only when the set of repositories does. A pull request with no number takes no letter. The summary is at
+  most 58 characters, which fits a 64-column band, and lists fewer numbers and a larger `+N` rather than cut one.
+  At 70% context or more, a context
   alert row follows it. Each part shows only when it holds something, in the words of the snapshot's `--line`, but
-  for three: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws
-  `armed <n>` where the line prints `<n>/unlimited`; and pull requests from mixed forges, or from a forge with no
-  entry in the mod's table, count as `changes` where the line says `PRs`.
+  for four: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws
+  `armed <n>` where the line prints `<n>/unlimited`; pull requests from mixed forges, or from a forge with no
+  entry in the mod's table, count as `changes` where the line says `PRs`; and, since that word is longer, near the
+  58-character budget the band may list fewer numbers than the line, with a larger `+N`: one or more, since dropping a
+  short number such as `#1` for a larger `+N` can free no room.
+  The band's numbers are always the first of the line's.
+  The line keeps one row: the handoff, then the pull requests, then the harness signals.
 - **The pane.** `/aidrian-mod` shows the same data with one row per pull request and a link to it, the ticket's
-  link, and one row per subagent; `/aidrian-mod hide` closes it. When there is no snapshot, the pane says why, in
+  link, and one row per subagent. Each pull request's row starts with its number as the band lists it, `PR a#42`,
+  then its repository, so each letter shows beside the repository it names.
+  `/aidrian-mod hide` closes the pane. When there is no snapshot, the pane says why, in
   one of six notices: the `aidrian` plugin is not installed for the folder, is off for it, or failed the mod's safety
   checks; the mod found no `node` on a PATH folder outside the session's folder; or the plugin returned no snapshot
   (update it), or took longer than 10 seconds.

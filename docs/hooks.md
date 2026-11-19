@@ -162,7 +162,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
-| Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny names a copy with its own offline install from the lockfile | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
+| Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny sends the agent to install in its own task worktree, where `aidrian worktree new` already runs the project's bootstrap. For a worktree under review it names no install and no command: the reviewer installs nothing, there or in a copy, reviews read-only or reports that the run needs the pull request's own task worktree, and leaves that run to its owner. A pull request controls its tree, its bootstrap, and its package manager's hooks, so any install there runs its code | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract); a `## Tests run` line that says a test command passed with no [finished run](#check-runs) to show it | `AIDRIAN_ALLOW_PR_BODY=1` |
 | Public text, when turned on | An issue, pull request, or comment whose text matches [`github.publicText.patterns` or `.banned-terms.local`](config.md#public-text), or that the rule cannot read | `AIDRIAN_ALLOW_PUBLIC_TEXT=1` |
 | Attribution, when turned on | An agent's commit or new pull request without the [attribution](config.md#attribution) lines | `AIDRIAN_ALLOW_UNATTRIBUTED=1` |
@@ -469,8 +469,9 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 - A `hook_deny` row in the [dispatch log](dispatch-log.md#hook_deny-when-one-of-the-plugins-rules-blocks-a-tool-call):
   the rule, the tool, the agent, and what the rule matched, never the command.
   `"telemetry": { "hookDenies": false }` turns the row off. `aidrian report` lists the rows by rule and agent.
-- A count toward an [automatic lesson](lessons.md#automatic-lessons): when one rule blocks the same session a third time,
-  an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
+- A count toward an [automatic lesson](lessons.md#automatic-lessons): when one rule blocks the same agent run a third time
+  for the same cause, the rule's own words for what it matched, an agent that keeps trying was not shown the allowed way.
+  The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
 `shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
@@ -863,7 +864,7 @@ so `xargs git push` passes `Bash(git push)`; a `deny` list can name `Bash(xargs)
 `allow` list that names no shell keeps them out.
 The reason also tells the agent not to reach the same result with another tool, and to tell the human what the task needs.
 The block is [recorded](#recorded-blocks) as `agent-gates`, with that gate as its reason.
-A gate that blocks one session a third time becomes a lesson for the project, not the plugin: the gates are the project's.
+A gate that blocks one agent run a third time for the same cause becomes a lesson for the project, not the plugin: the gates are the project's.
 The hook runs for every tool, so a project without gates still pays for one process that finds the project, reads its config, and exits.
 It asks the gates before any guard below, so a call a gate denies is denied before the guards read its paths and globs,
 however long they would take.
@@ -1131,9 +1132,18 @@ when no text follows it, else its last message. A report that is a JSON object, 
 written as that object; any other report as `{ "written_by": "stop-hook", "report": "<text>" }`. A file that appeared
 in the meantime, such as one its dispatcher wrote, is kept. So a brief that names the file for an agent with no file tool
 or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
-The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write,
-or while a background task of its own still runs, since that stop is no end of its work. It writes the file only on a
-stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
+The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write.
+While a background task of its own still runs and a later stop is sure to come, that stop is no end of its work, so the
+file is not due yet. A later stop is sure while a running task is one whose end starts the agent again after it ended its
+turn, or while the [background check](#background-check) sends it back; this is decided apart from that check, which
+still sends the agent back for a shell. On Claude Code a background shell's end notice and a background agent's report
+each wake it ([Background agents](providers/claude-code.md#background-agents)), so the file waits for the stop after the
+wake, even past the check's cap. The file is then neither a send-back reason, an occurrence of the lesson, nor `missing`
+on the row, which says `delivered: pending` and leaves it out of `paths`, even when the report names it on a delivery line; another path the report names still counts. Such stops
+once made most of the lesson's occurrences, though the next stop wrote the file. A stop let end with only tasks that
+nothing wakes the agent for, such as any task on a host that declares no wake, may be its last, so the hook writes the
+file then. A shell that never ends, such as a dev server, never wakes the agent either, and its file waits for a stop
+with that shell stopped. It writes the file only on a stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
 the corrected one. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
 a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief
@@ -1159,13 +1169,21 @@ The stop the cap lets end with the task still running is an occurrence of an [au
 for the plugin, once per run of send-backs. The count is written before each send-back, and a stop whose count cannot be
 written is let end, so the check never loops.
 
+A host that delivers a background agent's report to the subagent that started it after that subagent ended its turn,
+and starts it again, declares it in its adapter (`capabilities.wakesOnChildReport`), and the check leaves such a task out:
+the agent is neither sent back for it nor an occurrence of the lesson. Claude Code does
+([Background agents](providers/claude-code.md#background-agents)): there the send-backs only cost turns, and an agent
+with no shell, which cannot wait in the foreground, answered them by handing back before the report came.
+
 The send-back alone did not hold: subagents still ended their turn with a background agent running. So the Agent hook
 also rewrites the dispatch before it runs: a call a subagent makes, one whose payload has `agent_id`, runs with
 `run_in_background: false` unless it already sets that. A call that leaves the flag out is rewritten too: Claude Code
 launches a subagent's dispatch in the background by default. The subagent then gets the child's report as the call's result, and
 several dispatches in one turn still run side by side. The main session's background dispatches run as written, since a
 background agent's report wakes it. A background shell is left as it is, for a server the subagent polls; the stop hook
-still checks it. A host whose agent tool reaches no hook, such as Codex, is not rewritten.
+still checks it. A host whose agent tool reaches no hook, such as Codex, is not rewritten. Claude Code applies the rewrite
+but still runs the dispatch in the background while its fork-subagent mode is on, its default in an interactive session
+([Background agents](providers/claude-code.md#background-agents)).
 
 Claude Code's SubagentStop payload lists the session's in-flight tasks in `background_tasks`, without the agent that started each.
 A task is the subagent's own only when one of its own calls launched or resumed it, as the structured result Claude Code

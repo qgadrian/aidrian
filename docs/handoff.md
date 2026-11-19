@@ -825,7 +825,11 @@ that section at once, as at a cache file or the ledger of the session's folder.
 **The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
 line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,
 `2.3x · handoff due, pays back in ~24 calls` at `due` and `reminded`, `handoff now` at `ceiling`, and ` · armed 1/3`
-while a continuation is armed), then the pull requests, `3 PRs · ✓2 ✗0 ⏳1`, when `prs` holds an entry, then
+while a continuation is armed), then the pull requests, `PRs ✓2 ✗0 ⏳1 · #12, #34, #56`, when `prs` holds an entry (the counts, then the first five
+numbers, then `+N` for the rest and any with no number; `3 PRs · ✓2 ✗0 ⏳1` with no number to list; when the numbers
+come from more than one repository, each carries its repository's letter, `PRs ✓1 ✗1 ⏳0 · a#42, b#42`, `a` the first
+when their hosts and paths are sorted, and a pull request with no number takes none; the segment is at most 58
+characters, and lists fewer numbers and a larger `+N` rather than cut one), then
 `📥 1 P1 · ⚖️ 2 decisions · 🧹 1 worktree · 🔎 3 findings`, each part only above 0. The pull request summary counts pull
 requests, not checks: `✗` one with a failed check, `⏳` one with a pending check and none failed, `✓` one whose checks
 all passed or were skipped; one with no check counts in none.

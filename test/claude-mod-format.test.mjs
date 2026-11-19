@@ -6,8 +6,9 @@ import test from 'node:test';
 
 import {
   alertText, bandSegments, changeRows, changesParts, COLORS, DISPLAY_CAPS, displayText, FORGES, handoffParts, harnessParts,
-  isIssueLink, NOTICES, noticeOf, plainText, ticketRow,
+  isIssueLink, NOTICES, noticeOf, plainText, SUMMARY_BUDGET, ticketRow,
 } from '../plugins/aidrian-claude-mod/lib/format.mjs';
+import { SUMMARY_BUDGET as LINE_BUDGET } from '../plugins/aidrian/lib/session-prs.mjs';
 import { DISPLAY_CAPS as SNAPSHOT_CAPS, displayText as snapshotText, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -102,21 +103,139 @@ test('the summary counts pull requests, not checks', () => {
     pull(4, { checks: { passed: 0, failed: 0, pending: 0, skipped: 0 } }),
     pull(5, { checks: null }),
   ];
-  assert.equal(textsOf(changesParts(rows)), '5 PRs · ✓1 ✗1 ⏳1');
-  assert.equal(textsOf(changesParts([rows[0]])), '1 PR · ✓0 ✗1 ⏳0', 'a failed and a pending check: counted as failed');
+  assert.equal(textsOf(changesParts(rows)), 'PRs ✓1 ✗1 ⏳1 · #1, #2, #3, #4, #5');
+  assert.equal(textsOf(changesParts([rows[0]])), 'PR ✓0 ✗1 ⏳0 · #1', 'a failed and a pending check: counted as failed');
   assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
   const colors = changesParts(rows).filter((each) => /[✓✗⏳]/u.test(each.text)).map((each) => each.color);
   assert.deepEqual(colors, [COLORS.passed, COLORS.failed, COLORS.pending]);
 });
 
+test('the summary lists the first five numbers, each in the color of its checks, and counts the rest', () => {
+  const rows = [1, 2, 3, 4, 5, 6, 7].map((number) => pull(number));
+  rows[1] = pull(2, { checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } });
+  rows.push(pull(8, { number: null }));
+  assert.equal(textsOf(changesParts(rows)), 'PRs ✓7 ✗1 ⏳0 · #1, #2, #3, #4, #5, +3', 'two past the five, and one with no number');
+  assert.equal(changesParts(rows).find((each) => each.text === '#2').color, COLORS.failed);
+  assert.equal(changesParts(rows).find((each) => each.text === '#1').color, COLORS.passed);
+  assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
+  assert.equal(textsOf(changesParts([pull(1, { number: null }), pull(2, { number: 0 })])), '2 PRs · ✓2 ✗0 ⏳0', 'no number to list');
+});
+
+test('the counts come before the numbers, so a narrow terminal cuts numbers and never a failure', () => {
+  const rows = [1, 2, 3, 4, 5].map((number) => pull(number * 10_000_000)).concat(pull(6, { checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } }));
+  assert.match(textsOf(changesParts(rows)).slice(0, 20), /✗1/u);
+});
+
+test('changes from more than one repository list each number with its repository`s letter, in host and path order', () => {
+  const failed = { checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } };
+  for (const [rows, words] of [
+    [[pull(42, { repo: 'acme/api' }), pull(42, { repo: 'acme/web', ...failed })], 'PRs ✓1 ✗1 ⏳0 · a#42, b#42'],
+    [[pull(42, { repo: 'upstream/widget' }), pull(42, { repo: 'fork/widget', ...failed })], 'PRs ✓1 ✗1 ⏳0 · b#42, a#42'],
+    [[pull(42, { repo: 'acme/widget' }), pull(42, { host: 'git.example.com', repo: 'acme/widget', ...failed })], 'PRs ✓1 ✗1 ⏳0 · b#42, a#42'],
+  ]) {
+    const parts = changesParts(rows);
+    assert.equal(textsOf(parts), words, rows[1].repo);
+    const [first, second] = words.split(' · ')[1].split(', ');
+    assert.notEqual(first, second, 'one name under two owners or two hosts: two labels');
+    assert.equal(parts.find((each) => each.text === first).color, COLORS.passed, first);
+    assert.equal(parts.find((each) => each.text === second).color, COLORS.failed, second);
+    const reversed = [...rows].reverse();
+    assert.equal(textsOf(changesParts(reversed)), `PRs ✓1 ✗1 ⏳0 · ${second}, ${first}`, 'a letter names a repository, not a place in the list');
+    assert.deepEqual(changeRows(rows).map((row) => row.parts[0].text), [`PR ${first}`, `PR ${second}`]);
+    for (const each of [rows, reversed]) assert.equal(plainText(bandSegments(snap({ prs: each }))), snapshotLine(snap({ prs: each })));
+  }
+  assert.equal(textsOf(changesParts([pull(1), pull(2, { repo: 'ACME/Notes' })])), 'PRs ✓2 ✗0 ⏳0 · #1, #2', 'one repository, in any case');
+});
+
+test('past z the letters go on as aa, ab, so every repository gets its own label', () => {
+  const rows = Array.from({ length: 27 }, (_, index) => pull(index + 1, { repo: `acme/r${String(index).padStart(2, '0')}` }));
+  const firsts = changeRows(rows).map((row) => row.parts[0].text);
+  assert.deepEqual(firsts, [...'abcdefghijklmnopqrstuvwxyz'].map((letter, index) => `PR ${letter}#${index + 1}`).concat('PR aa#27'));
+  assert.equal(new Set(firsts).size, 27);
+  const newest = [...rows].reverse();
+  assert.equal(textsOf(changesParts(newest)), 'PRs ✓27 ✗0 ⏳0 · aa#27, z#26, y#25, x#24, w#23, +22');
+  assert.equal(plainText(bandSegments(snap({ prs: newest }))), snapshotLine(snap({ prs: newest })));
+});
+
+test('on a 64-column band, long repository names still show the counts and at least one whole number', () => {
+  assert.equal(SUMMARY_BUDGET, 58);
+  assert.equal(SUMMARY_BUDGET, LINE_BUDGET, 'the band and the line keep one budget');
+  const failed = { checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } };
+  const long = (end) => `acme/${'x'.repeat(95)}${end}`;
+  const pair = [pull(4012, { repo: long(1) }), pull(4012, { repo: long(2), ...failed })];
+  assert.equal(textsOf(changesParts(pair)), 'PRs ✓1 ✗1 ⏳0 · a#4012, b#4012');
+  assert.ok(changesParts(pair).every((each) => !each.text.includes('xx')), 'no repository text on the band');
+  const top = Number.MAX_SAFE_INTEGER;
+  const many = Array.from({ length: 25 }, (_, index) => pull(top - index, { repo: `acme/r${String(index).padStart(2, '0')}` }));
+  const dirty = HOSTILE.join('');
+  const unsupported = (number) => ({ ...FIXTURE_ROWS[4], number });
+  const sets = [
+    [many, true],
+    [[...many.slice(0, 24), { ...many[24], forge: 'gitlab' }], false],
+    [Array.from({ length: 6 }, (_, index) => pull(10_000_001 + index)), true],
+    [pair.map((row) => ({ ...row, host: `github.com${dirty}`, repo: `${row.repo}${dirty}` })), true],
+    [[unsupported(12345), unsupported(12346), unsupported(12347), pull(12348), pull(12349)], false],
+  ];
+  // The labels a summary lists, without its `+N`.
+  const labelsOf = (summary) => summary.split(' · ')[1].split(', ').filter((each) => !each.startsWith('+'));
+  for (const [rows, github] of sets) {
+    const parts = changesParts(rows);
+    const text = textsOf(parts);
+    const length = [...text].length;
+    assert.ok(length <= SUMMARY_BUDGET, text);
+    assert.ok(length + (text.match(/⏳/gu) ?? []).length <= 64 - 3, `${text}: the band's changes row is 61 columns`);
+    assert.match(text, /^(?:PRs|changes) ✓\d+ ✗\d+ ⏳\d+ · [a-z]*#\d+(?:, [a-z]*#\d+)*(?:, \+\d+)?$/u);
+    const label = changeRows(rows)[0].parts[0].text.split(' ')[1];
+    assert.equal(text.split(' · ')[1].split(', ')[0], label, 'the first label is whole');
+    for (const each of parts) assert.match(each.text, CLEAN);
+    const band = plainText(bandSegments(snap({ prs: rows })));
+    const line = snapshotLine(snap({ prs: rows }));
+    if (github) assert.equal(band, line, text);
+    else {
+      // `changes` is longer than the line's `PRs`, so the band may list fewer numbers, never others.
+      const [shown, listed] = [labelsOf(band), labelsOf(line)];
+      assert.ok(shown.length <= listed.length, `${band}: no more labels than ${line}`);
+      assert.deepEqual(shown, listed.slice(0, shown.length), `${band}: its labels lead ${line}`);
+    }
+  }
+  assert.match(textsOf(changesParts(many)), /^PRs ✓25 ✗0 ⏳0 · a#9007199254740991, \+24$/u);
+  assert.match(textsOf(changesParts(sets[1][0])), /^changes /u);
+  const near = sets[4][0];
+  assert.equal(plainText(bandSegments(snap({ prs: near }))), 'changes ✓2 ✗0 ⏳0 · b#12345, b#12346, b#12347, a#12348, +1');
+  assert.equal(snapshotLine(snap({ prs: near })), 'PRs ✓2 ✗0 ⏳0 · b#12345, b#12346, b#12347, a#12348, a#12349', 'near the budget the band lists one number fewer');
+});
+
+test('the budget lists fewer numbers and a larger +N rather than cut one', () => {
+  const six = [1, 2, 3, 4, 5, 6].map((n) => pull(123_450 + n));
+  const alternating = [1, 2, 3, 4, 5, 6].map((n) => pull(12_340 + n, { repo: n % 2 ? 'a/b' : 'c/d' }));
+  for (const [rows, words] of [
+    [six, 'PRs ✓6 ✗0 ⏳0 · #123451, #123452, #123453, #123454, +2'],
+    [six.slice(0, 5), 'PRs ✓5 ✗0 ⏳0 · #123451, #123452, #123453, #123454, #123455'],
+    [alternating, 'PRs ✓6 ✗0 ⏳0 · a#12341, b#12342, a#12343, b#12344, +2'],
+  ]) {
+    assert.equal(textsOf(changesParts(rows)), words);
+    assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })), words);
+  }
+  assert.equal([...textsOf(changesParts(six.slice(0, 5)))].length, SUMMARY_BUDGET, 'a summary of exactly the budget lists all five');
+});
+
+test('a row with no number takes no letter and makes no numbers span repositories', () => {
+  const rows = [pull(3), pull(8, { number: null, repo: 'acme/other' })];
+  assert.equal(textsOf(changesParts(rows)), 'PRs ✓2 ✗0 ⏳0 · #3, +1');
+  assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
+  const texts = changeRows(rows).map(rowText);
+  assert.match(texts[0], /^PR #3github\.com\/acme\/notes/u);
+  assert.match(texts[1], /^PRgithub\.com\/acme\/other/u);
+});
+
 test('the words of a change come from the forge table', () => {
   assert.deepEqual(Object.keys(FORGES), ['github']);
-  assert.equal(textsOf(changesParts([pull(1)])), '1 PR · ✓1 ✗0 ⏳0');
-  assert.equal(textsOf(changesParts([pull(1), pull(2), pull(3)])), '3 PRs · ✓3 ✗0 ⏳0');
+  assert.equal(textsOf(changesParts([pull(1)])), 'PR ✓1 ✗0 ⏳0 · #1');
+  assert.equal(textsOf(changesParts([pull(1), pull(2), pull(3)])), 'PRs ✓3 ✗0 ⏳0 · #1, #2, #3');
   const elsewhere = pull(7, { forge: 'gitlab' });
-  assert.match(textsOf(changesParts([elsewhere])), /^1 change · /u);
-  assert.match(textsOf(changesParts([pull(1), elsewhere])), /^2 changes · /u, 'rows of two forges');
-  assert.match(textsOf(changesParts([pull(1), FIXTURE_ROWS[4]])), /^2 changes · /u, 'a forge row and an unsupported one');
+  assert.match(textsOf(changesParts([elsewhere])), /^change ✓1 ✗0 ⏳0 · #7$/u);
+  assert.match(textsOf(changesParts([pull(1), elsewhere])), /^changes ✓2 ✗0 ⏳0 · #1, #7$/u, 'rows of two forges');
+  assert.match(textsOf(changesParts([pull(1), FIXTURE_ROWS[4]])), /^changes ✓1 ✗0 ⏳0 · a#1, b#9$/u, 'a forge row and an unsupported one, on two hosts');
   const [row] = changeRows([elsewhere]);
   assert.match(rowText(row), /^change #7/u);
   assert.equal(row.link, null, 'a forge with no entry gets no link, though its url is a github.com pull request');
@@ -138,11 +257,11 @@ test('a pull request link only for its own repository and number on github.com',
 
 test('the pane reads each value the snapshot lists for a row, and an unsupported row with no forge', () => {
   const texts = changeRows(FIXTURE_ROWS).map(rowText);
-  assert.match(texts[0], /^PR #1github\.com\/acme\/notesChange 1draftreview required✓3✗0⏳0$/u);
-  assert.match(texts[1], /^PR #2.*mergedapproved/u);
-  assert.match(texts[2], /^PR #3.*closedconflictschanges requested💬 2/u);
-  assert.match(texts[3], /^PR #4.*open✓1✗1⏳1$/u);
-  assert.equal(texts[4], 'change #9gitlab.com/acme/notesunsupported');
+  assert.match(texts[0], /^PR a#1github\.com\/acme\/notesChange 1draftreview required✓3✗0⏳0$/u);
+  assert.match(texts[1], /^PR a#2.*mergedapproved/u);
+  assert.match(texts[2], /^PR a#3.*closedconflictschanges requested💬 2/u);
+  assert.match(texts[3], /^PR a#4.*open✓1✗1⏳1$/u);
+  assert.equal(texts[4], 'change b#9gitlab.com/acme/notesunsupported');
   assert.equal(changeRows(FIXTURE_ROWS)[4].link, null);
   const states = new Set(FIXTURE_ROWS.map((row) => row.state));
   for (const value of ['open', 'closed', 'merged']) assert.ok(states.has(value), value);

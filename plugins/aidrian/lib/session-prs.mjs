@@ -470,8 +470,52 @@ export const isChangeCache = (value) => value !== null && typeof value === 'obje
   && value.refs.length === value.rows.length && value.refs.length <= MAX_REFS
   && value.refs.every((key) => typeof key === 'string' && key.length <= REF_KEY_MAX_BYTES) && value.rows.every((row) => row === null || isChangeRow(row));
 
-// The pull request summary of a status line: how many, then how many have a failed check, a pending one and none failed,
-// or only passed or skipped ones. One with no check counts in none.
+// How many pull request numbers the summary lists before it counts the rest as `+N`.
+export const LISTED_CHANGES = 5;
+
+// The most characters, by code point, a summary holds. Its one `⏳` is two columns wide, so 58 characters fit the 61
+// columns a 64-column band leaves its changes row. A constant, never the terminal's width, so the band and the line
+// print the same words. The Claude mod's lib/format.mjs holds the same number.
+export const SUMMARY_BUDGET = 58;
+
+// The label rule, written again in the Claude mod's lib/format.mjs, which cannot import this file: a row has a number
+// when it is a safe integer above 0.
+// A row's key is its host, as written, plus its lower-cased path, since GitHub's paths ignore case. Repositories on one
+// host whose paths differ only in letter case share one key, so they never get different letters, even on a forge with
+// case-sensitive paths: an accepted residual of pull request #426. Letters appear only when the numbered rows hold two
+// or more distinct keys; otherwise every number is bare. A row with no number never counts.
+const hasNumber = (row) => Number.isSafeInteger(row.number) && row.number > 0;
+const repositoryOf = (row) => `${row.host}/${String(row.repo).toLowerCase()}`;
+
+// The letters of a repository's place in the sorted list: 0 is `a`, 25 `z`, 26 `aa`, 701 `zz`, 702 `aaa`.
+function lettersOf(index) {
+  let letters = '';
+  for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) letters = String.fromCharCode(97 + ((n - 1) % 26)) + letters;
+  return letters;
+}
+
+// Each row's label, null for a row with no number. When the numbered rows hold more than one key, each number carries
+// its key's letter, `a#42`: `a` is the first of their keys sorted by UTF-16 code unit, so a letter changes only when
+// the set of keys does, never with the rows' order. One key: bare `#42`.
+function changeLabels(rows) {
+  const repositories = [...new Set(rows.filter(hasNumber).map(repositoryOf))].sort();
+  const letters = new Map(repositories.length > 1 ? repositories.map((key, index) => [key, lettersOf(index)]) : []);
+  return rows.map((row) => (hasNumber(row) ? `${letters.get(repositoryOf(row)) ?? ''}#${row.number}` : null));
+}
+
+// How many of `count` labels the summary lists: the most whose text, `textAt(k)`, keeps within SUMMARY_BUDGET, or 0.
+// A summary never cuts a label; it lists fewer and counts the rest in `+N`.
+function listedCount(count, textAt) {
+  let listed = count;
+  while (listed > 0 && [...textAt(listed)].length > SUMMARY_BUDGET) listed -= 1;
+  return listed;
+}
+
+// The pull request summary of a status line: `PRs ✓2 ✗0 ⏳1 · #12, #34, +1`, the counts first, then the labels of the
+// first LISTED_CHANGES numbered pull requests (changeLabels), as many as SUMMARY_BUDGET holds, and `+N` for the rest
+// and any with no number; with no number to list, `3 PRs · ✓2 ✗0 ⏳1`. A count is of pull requests: one with a failed
+// check, one with a pending check and none failed, or one with only passed or skipped checks. One with no check counts
+// in none.
 export function changesSummary(prs) {
   const states = prs.map(({ checks }) => {
     if (!checks) return null;
@@ -480,5 +524,10 @@ export function changesSummary(prs) {
     return checks.passed + checks.skipped > 0 ? 'passed' : null;
   });
   const count = (state) => states.filter((each) => each === state).length;
-  return `${prs.length} PR${prs.length === 1 ? '' : 's'} · ✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
+  const counts = `✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
+  const noun = `PR${prs.length === 1 ? '' : 's'}`;
+  const labels = changeLabels(prs).filter((label) => label !== null).slice(0, LISTED_CHANGES);
+  const textAt = (listed) => `${noun} ${counts} · ${labels.slice(0, listed).join(', ')}${prs.length > listed ? `, +${prs.length - listed}` : ''}`;
+  const listed = listedCount(labels.length, textAt);
+  return listed === 0 ? `${prs.length} ${noun} · ${counts}` : textAt(listed);
 }

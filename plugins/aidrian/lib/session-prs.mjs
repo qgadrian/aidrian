@@ -479,11 +479,11 @@ export const LISTED_CHANGES = 5;
 export const SUMMARY_BUDGET = 58;
 
 // The label rule, written again in the Claude mod's lib/format.mjs, which cannot import this file: a row has a number
-// when it is a safe integer above 0, and its repository is its host and its path in lower case.
-// Lower case matches GitHub's case-insensitive paths. On a forge with case-sensitive paths, repositories on one host whose
-// paths differ only in letter case share one repository key, so they share a letter prefix: an accepted residual of pull
-// request #426. Only numbered rows decide the prefix: it is empty when the numbered rows hold one distinct repository
-// key, and a row with no number never counts, whatever its repository.
+// when it is a safe integer above 0.
+// A row's key is its host, as written, plus its lower-cased path, since GitHub's paths ignore case. Repositories on one
+// host whose paths differ only in letter case share one key, so they never get different letters, even on a forge with
+// case-sensitive paths: an accepted residual of pull request #426. Letters appear only when the numbered rows hold two
+// or more distinct keys; otherwise every number is bare. A row with no number never counts.
 const hasNumber = (row) => Number.isSafeInteger(row.number) && row.number > 0;
 const repositoryOf = (row) => `${row.host}/${String(row.repo).toLowerCase()}`;
 
@@ -494,9 +494,9 @@ function lettersOf(index) {
   return letters;
 }
 
-// Each row's label, null for a row with no number. When the numbered rows come from more than one repository, each
-// number carries its repository's letter, `a#42`: `a` is the first of their repositories sorted by UTF-16 code unit, so
-// a letter changes only when the set of repositories does, never with the rows' order. One repository: bare `#42`.
+// Each row's label, null for a row with no number. When the numbered rows hold more than one key, each number carries
+// its key's letter, `a#42`: `a` is the first of their keys sorted by UTF-16 code unit, so a letter changes only when
+// the set of keys does, never with the rows' order. One key: bare `#42`.
 function changeLabels(rows) {
   const repositories = [...new Set(rows.filter(hasNumber).map(repositoryOf))].sort();
   const letters = new Map(repositories.length > 1 ? repositories.map((key, index) => [key, lettersOf(index)]) : []);

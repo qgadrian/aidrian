@@ -89,6 +89,9 @@ export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
     const rule = typeof row.rule === 'string' ? row.rule : 'unknown';
     const entry = rules.get(rule) ?? { agents: new Map(), runs: new Map(), reasons: new Map() };
     add(entry.agents, row.agent_type ?? 'main');
+    // An accepted residual, which affects only the report's wording: a run is grouped by the row's display reason, cut to
+    // 120 characters (dispatch-rows.mjs REASON_CHARS), while the lesson counts the full cause, so causes that share that
+    // prefix can read here as an automatic lesson that never fired; and a legacy row with no agent_id counts with the main thread.
     if (row.session_id) add(entry.runs, JSON.stringify([row.session_id, row.agent_id ?? 'main', row.reason ?? '']));
     if (row.reason) add(entry.reasons, row.reason);
     rules.set(rule, entry);

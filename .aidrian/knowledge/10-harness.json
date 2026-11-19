@@ -36,7 +36,7 @@
       "tags": []
     },
     "personas.md": {
-      "summary": "Personas: contract, lint, product-access, persona-audit runs, aidrian pr resolve (PR link alone, walk_widths), product feedback, audits list, import, triage.",
+      "summary": "Personas: contract, lint, product-access, persona-audit, aidrian pr resolve (pull request link alone, walk_widths), product feedback, audits, import, triage.",
       "tags": []
     },
     "review.md": {
@@ -60,7 +60,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths (walk every width), feedback items/diff, PR body.",
+      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths (every width), feedback items/diff, PR body, gate.",
       "tags": []
     },
     "dispatch-log.md": {

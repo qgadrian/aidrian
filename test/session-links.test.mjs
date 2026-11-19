@@ -368,7 +368,7 @@ test('worktreeCalls takes the calls that open the line joined by &&, and what fo
     'aidrian worktree new feat/x && npm test || cat saved.json', "aidrian worktree new feat/x <<'EOF'\nbody\nEOF\ncat saved.json",
     // Its output goes elsewhere, or runs beside another command's.
     'aidrian worktree new feat/x | jq .', 'aidrian worktree new feat/x > out.json && cat out.json', 'aidrian worktree new feat/x & cat saved.json',
-    'aidrian worktree new feat/x && npm test & cat saved.json',
+    'aidrian worktree new feat/x && npm test & cat saved.json', 'aidrian worktree new feat/x &', 'aidrian worktree new feat/x && npm test &',
     '! aidrian worktree new feat/x && cat saved.json', 'X=1 || aidrian worktree new feat/x && cat saved.json',
     // A substitution in the lead whose error output reaches the call's output.
     'X=$(git rev-parse HEAD 2>&1); aidrian worktree new feat/x',

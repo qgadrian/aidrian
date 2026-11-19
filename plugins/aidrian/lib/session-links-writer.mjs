@@ -55,7 +55,6 @@ const KEEPS_OUTPUT = /^(?:2>|0?<(?!>))/u;
 export function worktreeCalls(command, cwd) {
   if (typeof command !== 'string' || typeof cwd !== 'string' || !/\bworktree\b/u.test(command)) return [];
   const { segments, separators } = lexPipeline(command);
-
   // The line's own segments the walk keeps, in its order: it leaves out a `cd`, `pushd`, or `popd`.
   const kept = segments.flatMap((segment, index) => (CHANGES_DIRECTORY.has(readInvocation(segment).program) ? [] : [index]));
   const entries = walkCommands(command, cwd);

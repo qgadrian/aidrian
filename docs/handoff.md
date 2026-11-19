@@ -457,20 +457,26 @@ attached by hand switches on that session's handoff too.
 A typed target that is no plain id, such as `claude attach 'staff-perm · 6'`, by a name, is recorded the same way as
 `~<hex> <epoch seconds>`: the target's bytes in lowercase hexadecimal, through `od`, so no character of it reaches the
 record as typed, when it is 1 to 128 bytes (`NAME_BYTES`); a longer one writes no record. The gate of a session asks
-the host which session such a target opens (`replaceTerminal.nameMatcher`), once, and only for a fresh record no id
-matches. Two rules bind the answer:
+the host whether such a target opens this session alone (`replaceTerminal.nameMatcher`), once, and only for a fresh
+record no id matches. It reads the host's whole current listing, every session in it, and the target counts only when
+all of these hold:
 
-- Only a session the host lists as started at or before the record's time, plus 5 seconds (`NEXT_MARGIN`), may be
-  the match, and uniqueness is judged among those sessions alone. A terminal that attached to `widget build` by the
-  part `widget` keeps following it when a session named `widget` starts later.
-- The target must resolve to exactly one of those sessions, across ids and names: a session's full id, its short id,
-  or a prefix of at least 8 characters (`SHORT_ID_MIN`) of either counts, as well as its name. A target that is another
-  session's id or id prefix never matches this session, even when this session's name holds it.
+- It is this session's whole name, case and all. A terminal attached by a part of a name does not follow, and that
+  session's handoff only stops it, as before.
+- No other listed session's name holds it, so a name two sessions share, a longer name such as `staff-perm · 60` for
+  `staff-perm · 6`, and a session renamed to it since each block it.
+- No listed session's id, this one's included, is the target or starts with it, so a target that reads as an id never
+  opens a session by its name.
 
-On Claude Code, `claude attach` takes a session's name, or part of it, in place of its id, so among those sessions the
-target resolves to the one whose whole name it is, when only one has that name, or else to every one whose name holds
-it, case and all. A name that reads as a plain id, such as `staff-perm`, is recorded as one, and the gate asks the host
-about it too when no id matches. The request then names the session by its own full id.
+A listing the host cannot read, or one with a session no check can read, counts as no match. The listing is read after
+the next session started, so a session whose name has no hop count, such as `widget`, does not follow when its next
+session's name, `widget · 1`, holds it; a hop's own name, such as `staff-perm · 6` before `staff-perm · 7`, does.
+A name that reads as a plain id, such as `staff-perm`, is recorded as one, and the gate asks the host about it too when
+no id matches. The request then names the session by its own full id.
+
+The plain-id path is unchanged: a typed target that is this session's full id, or starts it with at least 8 characters
+(`SHORT_ID_MIN`), follows without asking the host. A target that is another session's name and also starts this
+session's id would follow this one; that takes a session name that looks like an id, and the harness accepts it.
 
 An alias for `claude` takes the place of the function when typed. One whose value starts with `claude`, such as
 `alias claude='claude --dangerously-skip-permissions'`, still reaches the function, flag and all. One that points

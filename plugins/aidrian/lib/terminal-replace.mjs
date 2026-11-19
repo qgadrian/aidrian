@@ -127,12 +127,10 @@ export function writeNext({ shell, id, env = process.env, now = Date.now() }) {
 }
 
 // The shell whose terminal shows the background session `session`, as the shell function recorded when it opened it by
-// its full id, a short id it starts with, or another target `named(target, { before, shortId })` says the host opens this
-// session for, such as its name (replaceTerminal.nameMatcher), in the last FOLLOW_AGE: { shell, id }, where `id` is the id
-// it opened, or the session's own for a target opened by name, the latest if several; or null. `named` is asked only of a
-// fresh record no id matches, with `before` the record's time plus NEXT_MARGIN, so only a session that existed when the
-// terminal attached may resolve the target, and `shortId` SHORT_ID_MIN, the shortest id prefix the target may name a
-// session by. Only a regular file this user owns, no symlink, in a folder no other user may write.
+// its full id, a short id it starts with, or another target `named(target)` says can open this session alone, such as
+// its whole name (replaceTerminal.nameMatcher), in the last FOLLOW_AGE: { shell, id }, where `id` is the id it opened,
+// or the session's own for a target opened by name, the latest if several; or null. `named` is asked only of a fresh
+// record no id matches. Only a regular file this user owns, no symlink, in a folder no other user may write.
 // The shell may have moved on since; replaceTerminal.hasClient says whether it still runs the host's client, and
 // `live(shell)`, asked of a newer record only, skips one whose shell does not, so a dead one never hides a live one.
 export function readFollows(session, { env = process.env, now = Date.now(), live = () => true, named = () => false } = {}) {
@@ -158,7 +156,7 @@ export function readFollows(session, { env = process.env, now = Date.now(), live
     if (at > now + NEXT_MARGIN || now - at > FOLLOW_AGE || (latest && at <= latest.at)) continue;
     let id = null;
     if (plain !== undefined && (plain === session || (plain.length >= SHORT_ID_MIN && session.startsWith(plain)))) id = plain;
-    else if (named(plain ?? Buffer.from(hex, 'hex').toString('utf8'), { before: at + NEXT_MARGIN, shortId: SHORT_ID_MIN }) === true) id = session;
+    else if (named(plain ?? Buffer.from(hex, 'hex').toString('utf8')) === true) id = session;
     if (id !== null && live(shell)) latest = { shell, id, at };
   }
   return latest && { shell: latest.shell, id: latest.id };

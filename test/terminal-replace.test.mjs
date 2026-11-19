@@ -20,7 +20,7 @@ import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { shellInit } from '../plugins/aidrian/lib/shell-init.mjs';
-import { END_DELAY, endAfterTurn, endHost, NAME_BYTES, NEXT_MARGIN, NEXT_WINDOW, readFollows, SHORT_ID_MIN, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
+import { END_DELAY, endAfterTurn, endHost, NAME_BYTES, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
@@ -376,15 +376,12 @@ test('a shell record that opened a session by a name says which shell shows it, 
   const seconds = Math.floor(now / 1000);
   const hex = (text) => `~${Buffer.from(text, 'utf8').toString('hex')}`;
   const asked = [];
-  const whens = [];
-  const named = (target, when) => {
+  const named = (target) => {
     asked.push(target);
-    whens.push(when);
     return target === 'staff-perm · 6' || target === 'staff';
   };
   writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 6')} ${seconds}\n`);
   assert.deepEqual(readFollows(BG_SESSION, { env, now, named }), { shell: 4242, id: BG_SESSION }, 'by its name: the session is its own id');
-  assert.deepEqual(whens, [{ before: seconds * 1000 + NEXT_MARGIN, shortId: SHORT_ID_MIN }], 'only sessions that existed when the terminal attached may resolve it');
   assert.deepEqual(asked, ['staff-perm · 6'], 'the name is decoded before it is asked');
   assert.equal(readFollows(BG_SESSION, { env, now }), null, 'with no host to say what a name opens, a name opens nothing');
   assert.equal(readFollows(BG_SESSION, { env, now, named: () => 'yes' }), null, 'only a true answer counts');
@@ -550,78 +547,58 @@ test('the helper ends a background session through the host\'s own stop, and the
   assert.deepEqual(stop('abcd1234', BG_SESSION, [...listing, { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION }]), { ok: false, stops: [] }, 'two that fit are none');
 });
 
-test('Claude Code\'s adapter says a name opens a session when it is its whole name, or a part of no other listed session\'s', () => {
-  // The terminal attached at ATTACHED; every session below started before it.
-  const ATTACHED = Date.parse('2026-11-19T10:00:00Z');
-  const when = { before: ATTACHED + NEXT_MARGIN, shortId: SHORT_ID_MIN };
-  const earlier = ATTACHED - 3_600_000;
+test('Claude Code\'s adapter says a name opens a session only when it is its whole name, and no other row\'s name or any id holds it', () => {
   const listing = [
-    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION, name: 'staff-perm · 6', startedAt: earlier },
-    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION, name: 'staff-perm · 60', startedAt: earlier },
-    { kind: 'background', id: 'ijkl9012', sessionId: 'ijkl9012-0000', name: 'widget · 1', startedAt: earlier },
-    { kind: 'interactive', sessionId: 'session-1', name: 7, startedAt: earlier },
+    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION, name: 'staff-perm · 6', startedAt: 1 },
+    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION, name: 'staff-perm · 7', startedAt: 2 },
+    { kind: 'background', id: 'ijkl9012', sessionId: 'ijkl9012-0000', name: 'widget build', startedAt: 3 },
+    { kind: 'interactive', sessionId: 'session-1', name: 'deploy' },
   ];
   const lists = [];
-  const matcher = (session, list = listing, status = 0) => nameMatcher({ session, env: {}, resolve: () => '/bin/claude', run: (command, args) => {
+  const matcher = (session, list = listing, result = {}) => nameMatcher({ session, env: {}, resolve: () => '/bin/claude', run: (command, args) => {
     lists.push(args);
-    return { status, stdout: JSON.stringify(list) };
+    return { status: 0, stdout: JSON.stringify(list), ...result };
   } });
   const own = matcher(BG_SESSION);
   assert.deepEqual(lists, [['agents', '--json']], 'one read of the listing');
-  assert.equal(own('staff-perm · 6', when), true, 'its whole name, though another name holds it');
-  assert.equal(own('perm · 6', when), false, 'a part another session\'s name holds too');
-  assert.equal(own('staff-perm', when), false);
-  assert.equal(own('Staff-perm · 6', when), false, 'case and all');
-  assert.equal(own('widget', when), false, 'another session\'s name');
-  assert.equal(own('', when), false);
-  assert.equal(own('staff-perm · 6'), false, 'no time the terminal attached, no match');
+  assert.equal(own('staff-perm · 6'), true, 'its exact name, which no other row\'s name holds');
+  assert.equal(own('staff-perm'), false, 'a part of its name');
+  assert.equal(own('perm · 6'), false, 'another part');
+  assert.equal(own('Staff-perm · 6'), false, 'case and all');
+  assert.equal(own('staff-perm · 7'), false, 'another session\'s name');
+  assert.equal(own(''), false);
+  assert.equal(own(undefined), false);
   assert.equal(lists.length, 1, 'each test reads nothing more');
-  assert.equal(matcher(NEXT_SESSION)('· 60', when), true, 'a part only its name holds');
-  assert.equal(matcher(BG_SESSION, [...listing, { kind: 'background', sessionId: 'other-0000', name: 'staff-perm · 6', startedAt: earlier }])('staff-perm · 6', when), false, 'a name two sessions share');
+  assert.equal(matcher('session-1')('deploy'), true, 'a row with no start time and no short id is a whole row');
+
+  // Another row whose name holds the target blocks it: the same name, a longer one, dated or not.
+  for (const [why, row] of [
+    ['a row with the same name', { kind: 'background', id: 'mnop3456', sessionId: 'mnop3456-0000', name: 'staff-perm · 6', startedAt: 4 }],
+    ['a row whose name holds it', { kind: 'background', id: 'mnop3456', sessionId: 'mnop3456-0000', name: 'staff-perm · 60', startedAt: 4 }],
+    ['an undated row whose name holds it', { kind: 'background', id: 'mnop3456', sessionId: 'mnop3456-0000', name: 'old staff-perm · 6' }],
+    ['a row renamed to it since', { kind: 'background', sessionId: 'mnop3456-0000', name: 'staff-perm · 6' }],
+  ]) assert.equal(matcher(BG_SESSION, [...listing, row])('staff-perm · 6'), false, why);
+
+  // A target that is an id, or the start of one, of any row, this one included, never opens by a name.
+  const named = (name, extra = []) => [{ ...listing[0], name }, ...listing.slice(1), ...extra];
+  assert.equal(matcher(BG_SESSION, named('ijkl9012'))('ijkl9012'), false, 'another row\'s short id');
+  assert.equal(matcher(BG_SESSION, named('ijkl'))('ijkl'), false, 'the start of another row\'s id, however short');
+  assert.equal(matcher(BG_SESSION, named('ijkl9012-0000'))('ijkl9012-0000'), false, 'another row\'s full id');
+  assert.equal(matcher(BG_SESSION, named('abcd'))('abcd'), false, 'the start of its own id');
+  assert.equal(matcher(BG_SESSION, named('abcd1234-0000-4000-8000-000000000001'))(BG_SESSION), false, 'its own full id');
+
+  // A listing that fails, or a row no check can read, gives no test at all.
+  assert.equal(matcher(BG_SESSION, listing, { status: 1 }), null, 'a listing that exits non-zero');
+  assert.equal(matcher(BG_SESSION, listing, { error: new Error('timeout') }), null, 'a listing that did not finish');
+  assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: 'not json' }) }), null, 'output that is not JSON');
+  assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: '{}' }) }), null, 'output that is no list');
+  for (const [why, row] of [['a row that is no object', null], ['a row with no name', { sessionId: 'x-0000' }], ['a row whose name is a number', { sessionId: 'x-0000', name: 7 }], ['a row with no session id', { name: 'x' }], ['a row whose id is no string', { sessionId: 'x-0000', name: 'x', id: 7 }]]) {
+    assert.equal(matcher(BG_SESSION, [...listing, row]), null, why);
+  }
   assert.equal(matcher('zzzz0000-0000'), null, 'a session the listing does not name');
-  assert.equal(matcher(BG_SESSION, listing, 1), null, 'a listing that cannot be read');
+  assert.equal(matcher(BG_SESSION, [...listing, listing[0]]), null, 'a session the listing names twice');
   assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => null, run: () => assert.fail('no claude, no run') }), null);
   assert.equal(typeof claudeCode.capabilities.handoffContinue.replaceTerminal.nameMatcher, 'function', 'the adapter declares it');
-});
-
-test('a name resolves only among the sessions that existed when the terminal attached, so a later one never takes it', () => {
-  // The terminal attached to `widget build` by the part `widget`; an hour later a session named `widget` started.
-  const attached = Date.parse('2026-11-19T10:00:00Z');
-  const when = { before: attached + NEXT_MARGIN, shortId: SHORT_ID_MIN };
-  const listing = [
-    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION, name: 'widget build', startedAt: attached - 600_000 },
-    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION, name: 'widget', startedAt: attached + 3_600_000 },
-  ];
-  const matcher = (session, list = listing) => nameMatcher({ session, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: JSON.stringify(list) }) });
-  assert.equal(matcher(BG_SESSION)('widget', when), true, 'the session the terminal attached to keeps it');
-  assert.equal(matcher(NEXT_SESSION)('widget', when), false, 'a session started since never claims it, though the name is all of its own');
-  const later = { ...when, before: attached + 2 * 3_600_000 };
-  assert.equal(matcher(NEXT_SESSION)('widget', later), true, 'a terminal that attached once both existed: the whole name wins');
-  assert.equal(matcher(BG_SESSION)('widget', later), false, 'and the part is no longer this one\'s');
-  assert.equal(matcher(BG_SESSION, [{ ...listing[0], startedAt: attached + NEXT_MARGIN }])('widget', when), true, 'a start within NEXT_MARGIN of the attach counts');
-  assert.equal(matcher(BG_SESSION, [{ ...listing[0], startedAt: attached + NEXT_MARGIN + 1 }])('widget', when), false, 'a start after it does not');
-  const { startedAt, ...unknown } = listing[0];
-  assert.ok(startedAt);
-  assert.equal(matcher(BG_SESSION, [unknown])('widget', when), false, 'a session with no start time is never a match');
-});
-
-test('a target that names another session by its id never matches this session by its name', () => {
-  const at = Date.parse('2026-11-19T10:00:00Z');
-  const when = { before: at + NEXT_MARGIN, shortId: SHORT_ID_MIN };
-  const listing = [
-    { kind: 'background', id: 'deploy-a', sessionId: BG_SESSION, name: 'deploy-api-review', startedAt: at - 1000 },
-    { kind: 'background', id: 'deploy-api', sessionId: 'deploy-api-0000-4000-8000-000000000009', name: 'other', startedAt: at - 1000 },
-    { kind: 'background', id: 'ijkl9012', sessionId: NEXT_SESSION, name: 'build-ijkl9012-x', startedAt: at - 1000 },
-  ];
-  const own = nameMatcher({ session: BG_SESSION, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: JSON.stringify(listing) }) });
-  const next = nameMatcher({ session: NEXT_SESSION, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: JSON.stringify(listing) }) });
-  assert.equal(own('deploy-api', when), false, 'another session\'s id, though part of this session\'s name');
-  assert.equal(own('deploy-api-0000', when), false, 'a prefix of another session\'s full id');
-  assert.equal(own('deploy-api-review', when), true, 'its whole name, which no id holds');
-  assert.equal(own('deploy-a', when), false, 'its own short id, which the other session\'s ids also start with');
-  assert.equal(next('ijkl9012', when), true, 'its own id, which its name holds too, resolves to it alone');
-  assert.equal(next('ijkl', when), true, 'shorter than SHORT_ID_MIN, a target names no session by an id prefix');
-  assert.equal(own('deploy-api', { ...when, before: at - 2000 }), false, 'with no session listed before the attach, nothing resolves');
 });
 
 test('the Stop hook of a background session the terminal follows stops that session itself, and leaves the shell its record', { skip: process.platform === 'win32' }, async (t) => {

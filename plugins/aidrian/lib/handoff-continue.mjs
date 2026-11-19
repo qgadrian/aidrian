@@ -365,16 +365,16 @@ function unhooked({ host, store, session, env, now, mode }) {
 // exits, or else as the store records once the session before it ended itself, which may be stale; the first of them
 // that still runs the host's client (replaceTerminal.hasClient); else null, and the session only stops. `own` is the id
 // that record names it by, or its own. A shell record that opened it by another target, such as its name, counts when
-// the host says that target resolved to this session alone among the sessions that existed when the terminal attached
-// (replaceTerminal.nameMatcher), read once, and only for such a record; `own` is then the session's own id.
+// the host says that target, such as its whole name, can open this session alone (replaceTerminal.nameMatcher), read
+// once, and only for such a record; `own` is then the session's own id.
 function followed({ host, store, session, env, run, now }) {
   const replace = replacer(host);
   if (typeof replace.endOwn !== 'function' || replace.attended(env)) return null;
   const alive = (shell) => safely(() => replace.hasClient?.({ shell, run })) === true;
   let matcher;
-  const named = (target, when) => {
+  const named = (target) => {
     matcher ??= safely(() => replace.nameMatcher?.({ session, env, run })) ?? (() => false);
-    return safely(() => matcher(target, when)) === true;
+    return safely(() => matcher(target)) === true;
   };
   const follows = [safely(() => readFollows(session, { env, now, live: alive, named })), safely(() => readFollow(store, session, { now, live: alive }))];
   const live = follows.find((follow) => follow !== null);

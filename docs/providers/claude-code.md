@@ -331,14 +331,13 @@ It never signals a process: the supervisor owns the background session's process
 
 A terminal the Human attached by a name, as `claude attach 'staff-perm · 6'`, follows the session too:
 `replaceTerminal.nameMatcher` (`nameMatcher` in `lib/hosts/claude-code-background.mjs`) reads `claude agents --json`
-once. It counts only the rows whose `startedAt`, in epoch milliseconds, is at or before the time the terminal attached,
-plus 5 seconds; a row with no `startedAt` never matches. Among those rows, a typed target resolves to every row whose
-`sessionId` or `id` it is, or starts, when it has at least 8 characters, then to the one row whose whole name it is,
-when only one has that name, or else to every row whose name holds it, case and all. It opens the session only when
-all of that resolves to this session alone. `claude attach --help` on 2.1.328 gives
-`claude attach <id|name>` and says part of the session name works in place of the id. Not verified live: how the
-command picks between a whole name and a part another name holds, or whether it ignores case; the test above follows
-nothing it is unsure of.
+once, every row, with or without a `startedAt`. A typed target opens the session only when it is the session's whole
+`name`, case and all; no other row's `name` holds it; and no row's `sessionId` or `id`, the session's own included, is
+the target or starts with it. A part of a name never opens it. A listing that fails, or a row whose `sessionId` or
+`name` is not a string, or whose `id` is neither a string nor absent, opens nothing. `claude attach --help` on 2.1.328
+gives `claude attach <id|name>` and says part of the session name works in place of the id. Not verified live: which
+session the command picks when several names hold the target, or whether it ignores case; the test follows nothing
+that could open another session.
 
 Checked by hand on Claude Code 2.1.326, in a pseudo-terminal: `claude attach <id>` on a live background session exits 0
 about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the next session.

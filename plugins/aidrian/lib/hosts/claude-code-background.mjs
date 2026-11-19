@@ -70,16 +70,21 @@ export function claudeOnPath(env) {
   return null;
 }
 
-// The sessions `claude agents --json` lists, or null when it cannot answer.
-function listed(run, claude, cwd) {
+// The rows `claude agents --json` lists, as it gives them, or null when it cannot answer.
+function listedRows(run, claude, cwd) {
   const result = run(claude, ['agents', '--json'], { cwd, timeout: LIST_TIMEOUT });
   if (result.error || result.status !== 0) return null;
   try {
     const list = JSON.parse(result.stdout);
-    return Array.isArray(list) ? list.filter((each) => each !== null && typeof each === 'object') : null;
+    return Array.isArray(list) ? list : null;
   } catch {
     return null;
   }
+}
+
+// The sessions `claude agents --json` lists, or null when it cannot answer.
+function listed(run, claude, cwd) {
+  return listedRows(run, claude, cwd)?.filter((each) => each !== null && typeof each === 'object') ?? null;
 }
 
 // The one listed background session the start made: a `sessionId` the listing before it did not hold, in `cwd`, with
@@ -321,30 +326,27 @@ export function stopOwnBackground({ id, session, env, run = runCommand, resolve 
   return !result.error && result.status === 0;
 }
 
-// Which session `claude attach <target>` opens for a target that is no id: `claude attach --help` on 2.1.328 says the
-// command takes `<id|name>`, and that part of a session's name works in place of the id. For the session `session`, a
-// test of a typed target, from one read of the listing: `(target, { before, shortId })`, whether the target resolves
-// to that session alone. Only a listed session whose `startedAt`, in epoch milliseconds, is at or before `before`, the
-// time the terminal attached, may resolve it, so a session started since never takes a terminal that shows another.
-// Among those, the target resolves to every session it names by id, its `sessionId` or `id`, or a prefix of at least
-// `shortId` characters of either, and to the one whose whole name it is, when only one has that name, or else to every
-// one whose name holds it. Null when the listing cannot be read or does not name the session. It compares case and all,
-// so a target the host may read another way follows nothing.
+// Whether `claude attach <target>` opens the session `session` for a typed target that is no id of it: a test of a
+// target, from one read of the whole listing, every row. `claude attach --help` on 2.1.328 takes `<id|name>`, and part
+// of a name works in place of the id; which session it picks when several names hold the target is not known, so the
+// test holds only when the target cannot open another: it is this session's whole name, case and all; no other row's
+// name holds it, which covers a name two sessions share and a session renamed since; and no row's `sessionId` or `id`,
+// this session's own included, is the target or starts with it, so a target that reads as an id never opens by a name.
+// A part of a name never matches. Null when the listing cannot be read, does not name the session once, or holds a row
+// whose `sessionId` or `name` is not a string, or whose `id` is neither a string nor absent, as no check can then run.
 export function nameMatcher({ session, env, run = runCommand, resolve = claudeOnPath }) {
   const claude = resolve(env);
   if (!claude || typeof session !== 'string' || !ID.test(session)) return null;
-  const list = (listed(run, claude, undefined) ?? []).filter((each) => typeof each.sessionId === 'string' && each.sessionId !== '');
-  if (list.filter((each) => each.sessionId === session).length !== 1) return null;
-  return (target, { before, shortId } = {}) => {
-    if (typeof target !== 'string' || target === '' || !Number.isFinite(before) || !Number.isInteger(shortId)) return false;
-    const eligible = list.filter((each) => Number.isFinite(each.startedAt) && each.startedAt <= before);
-    const named = eligible.filter((each) => typeof each.name === 'string' && each.name !== '');
-    const byId = (id) => typeof id === 'string' && (id === target || (target.length >= shortId && id.startsWith(target)));
-    const ids = eligible.filter((each) => byId(each.sessionId) || byId(each.id));
-    const whole = named.filter((each) => each.name === target);
-    const resolved = new Set([...ids, ...(whole.length === 1 ? whole : named.filter((each) => each.name.includes(target)))].map((each) => each.sessionId));
-    return resolved.size === 1 && resolved.has(session);
-  };
+  const rows = listedRows(run, claude, undefined);
+  const whole = (row) => row !== null && typeof row === 'object' && typeof row.sessionId === 'string' && typeof row.name === 'string'
+    && (row.id === undefined || typeof row.id === 'string');
+  if (rows === null || !rows.every(whole)) return null;
+  const own = rows.filter((row) => row.sessionId === session);
+  if (own.length !== 1) return null;
+  const { name } = own[0];
+  return (target) => typeof target === 'string' && target !== '' && target === name
+    && rows.every((row) => row === own[0] || !row.name.includes(target))
+    && !rows.some((row) => [row.sessionId, row.id].some((id) => typeof id === 'string' && id.startsWith(target)));
 }
 
 // How the Human finds and stops a session a start may have made, when the gate cannot name it.

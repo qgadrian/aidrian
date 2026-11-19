@@ -84,17 +84,17 @@ const passCheck = (setting) => assert.equal(checkBrief(setting.file, undefined, 
 // A stand-in for spawnSync that answers like Claude Code 2.1.326 and records each call. The handing-off session is
 // listed in `own`, beside the sessions `others`; the new one appears after the start, `lag` listings late, or never when
 // `lag` is Infinity.
-function fakeRun({ name = 'harness-handoff', own, others = [], start = null, lag = 0, printId = true, stop = { status: 0 }, startedAt = Date.now() - 3_600_000 } = {}) {
+function fakeRun({ name = 'harness-handoff', own, others = [], start = null, lag = 0, printId = true, stop = { status: 0 } } = {}) {
   const calls = [];
   let since = null;
   const run = (command, args, options) => {
     calls.push({ command, args, cwd: options.cwd });
     if (args[0] === 'stop') return { stdout: '', stderr: '', ...stop };
     if (args[0] === 'agents') {
-      const listed = [{ sessionId: SESSION, name, kind: 'interactive', cwd: own, startedAt }, ...others];
+      const listed = [{ sessionId: SESSION, name, kind: 'interactive', cwd: own }, ...others];
       const started = calls.find((call) => call.args[0] === '--bg');
       if (started && since !== null && (since += 1) > lag) {
-        listed.push({ id: 'abcd1234', sessionId: NEW_SESSION, name: started.args[started.args.indexOf('--name') + 1], kind: 'background', cwd: own, startedAt: Date.now() });
+        listed.push({ id: 'abcd1234', sessionId: NEW_SESSION, name: started.args[started.args.indexOf('--name') + 1], kind: 'background', cwd: own });
       }
       return { status: 0, stdout: JSON.stringify(listed), stderr: '' };
     }
@@ -1107,10 +1107,12 @@ test('a background session the gate started ends itself once its turn ends, in a
     ['the shell function opened it in one terminal while the store names another', { mode: 'auto' }, 'both', 'switch', { rows: [...ATTACHED, '4343 900 -zsh', '5001 4343 claude'] }],
     ['followed, but the shell runs no client any more', { mode: 'auto' }, 'store', 'stop', { rows: ['1 0 launchd', '4242 900 -zsh'] }],
     ['the shell function\'s record names another session', { mode: 'auto' }, 'other', 'stop'],
-    ['the shell function opened it by its name', { mode: 'auto' }, 'name', 'switch'],
-    ['the shell function opened it by a name with spaces and a middle dot', { mode: 'auto' }, 'dotted', 'switch', { name: 'staff-perm · 6' }],
+    // `staff-perm · 0` hands off to `staff-perm · 1`, whose name does not hold it.
+    ['the shell function opened it by its whole name, with spaces and a middle dot', { mode: 'auto' }, 'dotted', 'switch', { name: 'staff-perm · 0' }],
+    ['the shell function opened it by its name, which another session\'s name holds', { mode: 'auto' }, 'dotted', 'stop', { name: 'staff-perm · 0', holder: true }],
+    ['the shell function opened it by its name, which the next session\'s name holds', { mode: 'auto' }, 'name', 'stop'],
+    ['the shell function opened it by a part of its name', { mode: 'auto' }, 'part', 'stop', { name: 'staff-perm · 0' }],
     ['the shell function opened another session by its name', { mode: 'auto' }, 'other name', 'stop'],
-    ['the terminal attached by a part of another session\'s name, before this one, named that part, started', { mode: 'auto' }, 'later', 'stop', { name: 'widget', startedAt: Date.now() - 60_000 }],
     ['no terminal follows it', { mode: 'auto' }, null, 'stop'],
     ['ask mode', { mode: 'ask', continue: 'background' }, 'store', null],
     ['a Human attends it, as a former background session resumed', { mode: 'auto' }, 'store', null, { attended: { CLAUDE_CODE_SESSION_ATTENDED: '1' } }],
@@ -1132,17 +1134,15 @@ test('a background session the gate started ends itself once its turn ends, in a
     // as the hex of its bytes.
     const byName = (text) => followsRecord(env, 4242, `~${Buffer.from(text, 'utf8').toString('hex')}`);
     if (follows === 'name') followsRecord(env, 4242, 'harness-handoff');
-    if (follows === 'dotted') byName('staff-perm · 6');
+    if (follows === 'dotted') byName('staff-perm · 0');
     if (follows === 'other name') byName('widget · 3');
-    // Ten minutes ago, when only `widget build` held the part `widget`.
-    if (follows === 'later') followsRecord(env, 4242, 'widget', Math.floor(Date.now() / 1000) - 600);
-    const { name: sessionName, startedAt } = options;
-    const before = Date.now() - 7_200_000;
+    if (follows === 'part') byName('staff-perm');
+    const { name: sessionName, holder = false } = options;
     const others = [
-      { id: 'wxyz0000', sessionId: 'wxyz0000-0000', name: 'widget · 3', kind: 'background', cwd: setting.dir, startedAt: before },
-      { id: 'vwxy0000', sessionId: 'vwxy0000-0000', name: 'widget build', kind: 'background', cwd: setting.dir, startedAt: before },
+      { id: 'wxyz0000', sessionId: 'wxyz0000-0000', name: 'widget · 3', kind: 'background', cwd: setting.dir },
+      ...(holder ? [{ sessionId: 'vwxy0000-0000', name: `old ${sessionName}`, kind: 'background', cwd: setting.dir }] : []),
     ];
-    const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir, others, ...(sessionName ? { name: sessionName } : {}), ...(startedAt ? { startedAt } : {}) }).run, rows), env });
+    const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir, others, ...(sessionName ? { name: sessionName } : {}) }).run, rows), env });
     assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
     // A session named otherwise names its next hop otherwise too.
     const said = sessionName

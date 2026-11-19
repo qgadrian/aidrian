@@ -1133,10 +1133,14 @@ written as that object; any other report as `{ "written_by": "stop-hook", "repor
 in the meantime, such as one its dispatcher wrote, is kept. So a brief that names the file for an agent with no file tool
 or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
 The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write.
-While a background task of its own still runs, that stop is no end of its work, so the file is not due yet: the
-[background check](#background-check) sends the agent back, and the file is neither a send-back reason, an occurrence of the
-lesson, nor `missing` on the row, even when the report names it on a delivery line; another path the report names still counts. Such stops once made most of the lesson's occurrences, though the next stop wrote the file. It writes the file only on a
-stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
+While a background task of its own still runs and a later stop is sure to come, that stop is no end of its work, so the
+file is not due yet: the [background check](#background-check) sends the agent back, or each running task is a background
+agent whose report wakes it ([Claude Code](providers/claude-code.md#background-agents)). The file is then neither a
+send-back reason, an occurrence of the lesson, nor `missing` on the row, even when the report names it on a delivery line;
+another path the report names still counts. Such stops once made most of the lesson's occurrences, though the next stop
+wrote the file. A stop let end with a task running that nothing wakes the agent for, such as a background shell once the
+background check's send-backs reach their cap, or any task on a host that wakes for none, may be its last, so the hook
+writes the file then. It writes the file only on a stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
 the corrected one. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
 a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief

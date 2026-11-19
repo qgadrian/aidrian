@@ -10,7 +10,7 @@
 // When the agent stops without it, with none of its own background tasks running, and is not sent back for another reason,
 // the stop hook writes its final report there (deliverHandoffs): a brief can name the file for an agent with no file tool or shell, or make it optional,
 // and the report is the handoff either way. The agent is sent back for it only when it has no report to write.
-// While one of its own background tasks runs, the file is not due yet, and owes nothing.
+// While one of its own background tasks runs and a later stop is sure, the file is not due yet, and owes nothing.
 // docs/hooks.md#delivery-check.
 
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
@@ -70,7 +70,7 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 // `delivery` once the agent's final report is written to each handoff file it owes (`unwritten`), with `written`, the
 // files the hook wrote, and those files out of `unwritten` and `missing`. A stop with a background task of the agent's
-// own still `running` is no end of its work, so nothing is written then, and no handoff is due yet: the owed files move
+// own still `running`, and a later stop sure to come (the stop hook decides), is no end of its work, so nothing is written then, and no handoff is due yet: the owed files move
 // from `unwritten` to `pending`, and out of `missing` when the report names them, so they neither send the agent back nor
 // count as undelivered. The delivery check once
 // filed a lesson on every such stop, though the next stop, with the task done, wrote the file. Nothing is written with

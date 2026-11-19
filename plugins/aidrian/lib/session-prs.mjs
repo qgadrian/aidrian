@@ -199,13 +199,15 @@ export function knownFolders(command, cwd, fromCwd) {
   });
 }
 
+// Whether a walked command runs bare variable assignments alone, which print nothing.
+export const assigns = ({ invocation }) => !invocation.program && (invocation.args ?? []).length === 0;
+
 // Whether the output of the line `command`, its walked `entries`, is the create `entry`'s alone: the line's own commands
 // are bare variable assignments and then `entry`, last (a `cd` the walk leaves out), and every other command the walk
 // found runs inside a substitution, whose output the shell captures, as a `cat` with no redirection, such as the heredoc
 // of a `--body "$(cat <<'EOF' … EOF)"`. Any other command on the line could print a link.
 export function printsAlone(entries, entry, command) {
   const own = entries.filter(({ line }) => line === command);
-  const assigns = ({ invocation }) => !invocation.program && (invocation.args ?? []).length === 0;
   return own.at(-1) === entry && own.slice(0, -1).every(assigns)
     && entries.every((each) => each.line === command || (each.invocation.program === 'cat' && shellRedirections(each.segment).length === 0));
 }

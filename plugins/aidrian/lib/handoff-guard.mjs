@@ -313,8 +313,9 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
 
 // The `git remote` actions that point a remote at another repository, or move the ref of its default branch.
 const REMOTE_ACTIONS = new Set(['add', 'set-url', 'rename', 'set-head']);
-// A remote-tracking ref: a project run cuts and checks each issue's worktree against origin's default branch.
-const TRACKING_REF = /^refs\/remotes\//u;
+// A remote-tracking ref: a project run cuts and checks each issue's worktree against origin's default branch. `remotes`
+// in any case, since on a disk that folds case `refs/REMOTES/x` is the same loose ref file.
+const TRACKING_REF = /^refs\/[rR][eE][mM][oO][tT][eE][sS]\//u;
 // The git config keys that decide which repository a remote names, or what a git command runs, in any case: every key of
 // a remote (its URLs, and `gh-resolved`, gh's default repository), an included file, a URL rewrite, and an alias.
 const POLICY_KEY = /^(?:remote\..+|include\.path|includeif\..+|url\..+|alias\..+)$/iu;
@@ -330,7 +331,7 @@ const CONFIG_VALUES = new Set(['-f', '--file', '--blob', '--type', '--default', 
 const REMOTE_TEXTS = [
   [/\bremote\b/iu, /(?<![\w-])(?:add|set-url|rename|set-head)(?![\w-])/iu],
   [/\b(?:update-ref|symbolic-ref)\b/iu, /refs\/remotes\/|--stdin/iu],
-  [/\b(?:fetch|push)\b/iu, /:refs\/remotes\//iu],
+  [/\b(?:fetch|pull|push)\b/iu, /(?::\+?|--refmap[= ]\+?[^:\s]*:)(?:refs\/)?remotes\//iu],
   [/\bbranch\b/iu, /(?<![\w-])(?:-[a-z]*r[a-z]*|--remotes)(?![\w-])/iu, /(?<![\w-])(?:-[a-z]*[dD][a-z]*|--delete)(?![\w-])/u],
   [/\bconfig\b/iu, /\b(?:remote\.\S+|include\.path|includeif\.\S+|url\.\S+|alias\.\S+)/iu],
   [/\bconfig\b/iu, /(?<![\w-])(?:--edit|--rename-section|--remove-section|rename-section|remove-section)(?![\w-])/iu],
@@ -386,8 +387,9 @@ const aliasGlobal = (globals) => globals.some((token, i) => {
 // Whether one command the walk read changes a remote, gh's default repository, or how git reads either: `git remote
 // add`, `set-url`, or `rename`; a `git config` write of a remote, include, URL, or alias key (configWrites), or an edit,
 // rename, or removal of a section; an alias given by `-c` or `--config-env`; `git update-ref` of a remote-tracking ref,
-// or with `--stdin`, whose refs it cannot see; `git symbolic-ref` that writes or deletes one; `git remote set-head`;
-// `git branch` deleting remote-tracking branches; a fetch or push refspec whose destination is under refs/remotes/;
+// or with `--stdin`, whose refs it cannot see; `git symbolic-ref` that writes or deletes one, past its `-m` reason;
+// `git remote set-head` but with `--auto`, which reads the remote's own; `git branch` deleting remote-tracking
+// branches; a fetch, pull, or push refspec or `--refmap` that writes a remote-tracking ref (movesTracking);
 // `gh repo set-default` without `--view`;
 // or `gh alias set` or `import`. A command whose program is a variable or a substitution, and a git or gh call whose
 // words the lexer cannot all read, count when their plain words name such an action.
@@ -410,7 +412,10 @@ function changesRemote({ segment, invocation, unread }) {
   if (!git) return false;
   if (aliasGlobal(git.globals)) return true;
   const words = git.rest.filter((token) => !token.dynamic).map((token) => token.text);
-  if (git.subcommand === 'remote') return REMOTE_ACTIONS.has(words.find((text) => !text.startsWith('-')));
+  if (git.subcommand === 'remote') {
+    const action = words.find((text) => !text.startsWith('-'));
+    return REMOTE_ACTIONS.has(action) && !(action === 'set-head' && autoHead(words.slice(words.indexOf(action) + 1)));
+  }
   if (git.subcommand === 'config') return configWrites(words);
   if (git.subcommand === 'update-ref') return words.includes('--stdin') || words.some((text) => TRACKING_REF.test(text));
   // `git branch -d -r origin/main`: a deletion of remote-tracking branches, in any spelling of the flags.
@@ -419,15 +424,68 @@ function changesRemote({ segment, invocation, unread }) {
     const remotes = words.includes('--remotes') || short.includes('r');
     return remotes && (words.includes('--delete') || /[dD]/u.test(short));
   }
-  // A refspec whose destination is a remote-tracking ref, as `git fetch . +HEAD:refs/remotes/origin/main` or
-  // `git push . :refs/remotes/origin/main` writes.
-  if (git.subcommand === 'fetch' || git.subcommand === 'push') return words.some((text) => !text.startsWith('-') && text.includes(':') && TRACKING_REF.test(text.slice(text.lastIndexOf(':') + 1)));
+  if (['fetch', 'pull', 'push'].includes(git.subcommand)) return movesTracking(git.subcommand, words);
   // symbolic-ref writes with a second operand, or deletes; with one, it reads.
   if (git.subcommand === 'symbolic-ref') {
-    const operands = words.filter((text) => !text.startsWith('-'));
-    return TRACKING_REF.test(operands[0] ?? '') && (operands.length > 1 || words.some((text) => ['-d', '--delete'].includes(text)));
+    const { operands, deletes } = symbolicRef(words);
+    return TRACKING_REF.test(operands[0] ?? '') && (operands.length > 1 || deletes);
   }
   return false;
+}
+
+// Whether the words after `git remote set-head` only ask the remote for its own default branch: one remote and `-a` or
+// `--auto`, which is how a checkout whose origin/HEAD is gone sets it again from the forge.
+function autoHead(words) {
+  const options = words.filter((text) => text.startsWith('-'));
+  return words.length - options.length === 1 && options.length > 0 && options.every((text) => text === '-a' || text === '--auto');
+}
+
+// A fetch refspec's destination as git expands it (remote.c get_local_ref): a full ref as written, `heads/`, `tags/`, and
+// `remotes/` under refs/, anything else a branch.
+const fetchDestination = (dst) => {
+  if (dst.startsWith('refs/')) return dst;
+  return /^(?:heads|tags|remotes)\//u.test(dst) ? `refs/${dst}` : `refs/heads/${dst}`;
+};
+
+// Whether a fetch, pull, or push (`subcommand`, its words `words`) writes a remote-tracking ref through a refspec or a
+// `--refmap` value: a fetch or pull destination as git expands it, as `git fetch . +HEAD:remotes/origin/main`; a push
+// destination under refs/remotes/, or, to a repository on this disk such as `.`, any destination that is not a full
+// branch or tag, which git matches against that repository's own refs, as `git push . HEAD:origin/main` does.
+function movesTracking(subcommand, words) {
+  const specs = [];
+  const operands = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const text = words[i];
+    if (text === '--refmap') specs.push(words[(i += 1)] ?? '');
+    else if (text.startsWith('--refmap=')) specs.push(text.slice('--refmap='.length));
+    else if (!text.startsWith('-')) operands.push(text);
+  }
+  specs.push(...operands.slice(1).filter((text) => text.includes(':')));
+  const destinations = specs.filter((spec) => spec.includes(':')).map((spec) => spec.slice(spec.lastIndexOf(':') + 1)).filter(Boolean);
+  if (subcommand !== 'push') return destinations.some((dst) => TRACKING_REF.test(fetchDestination(dst)));
+  const local = /^(?:\.{1,2}|\.{0,2}\/.*|file:.*)$/u.test(operands[0] ?? '');
+  return destinations.some((dst) => TRACKING_REF.test(dst) || (local && !/^refs\/(?:heads|tags)\//u.test(dst)));
+}
+
+// The operands of `git symbolic-ref`'s words, past its options, and whether it deletes: `-m` takes the next word as the
+// reflog's reason, alone or at the end of a cluster as `-qm`, or the rest of its word as `-mreason`.
+function symbolicRef(words) {
+  const operands = [];
+  let deletes = false;
+  let ended = false;
+  for (let i = 0; i < words.length; i += 1) {
+    const text = words[i];
+    if (ended || !text.startsWith('-') || text === '-') operands.push(text);
+    else if (text === '--') ended = true;
+    else if (text === '--delete') deletes = true;
+    else if (!text.startsWith('--')) {
+      const at = text.indexOf('m');
+      const flags = at === -1 ? text.slice(1) : text.slice(1, at);
+      if (flags.includes('d')) deletes = true;
+      if (at === text.length - 1) i += 1;
+    }
+  }
+  return { operands, deletes };
 }
 
 // Why the call in `input` may not run because it changes which repository the checkout's remotes or gh's default
@@ -442,7 +500,7 @@ export function remoteChangeDenial(input, { names: { human } }, { unattended = (
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
   // Every form it refuses names one of these words, however quoted, so a call with none of them is not walked.
-  if (typeof command !== 'string' || !/remote|config|repo|alias|update-ref|symbolic-ref|branch/iu.test(unquoted(command))) return null;
+  if (typeof command !== 'string' || !/remote|config|repo|alias|update-ref|symbolic-ref|branch|fetch|pull|push/iu.test(unquoted(command))) return null;
   const hit = opaque !== null
     ? REMOTE_TEXTS.some((words) => words.every((word) => opaqueTexts(opaque).some((text) => word.test(text))))
     : walkCommands(command, null).some(changesRemote);

@@ -1038,6 +1038,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   change how git reads them: `git remote add`, `set-url`, or `rename`; a `git config` write of a `remote.*`,
   `include.path`, `includeIf.*`, `url.*`, or `alias.*` key, or any `--edit`, `--rename-section`, or `--remove-section`;
   an alias given by `git -c alias.*` or `--config-env`; `gh repo set-default`; and `gh alias set` or `import`.
+  Nor may they move a remote-tracking ref, which names the commit a project run cuts each issue from: `git update-ref`
+  of one or with `--stdin`; `git symbolic-ref` that writes or deletes one, past its `-m` reason; `git remote set-head`
+  but `git remote set-head <remote> --auto` (or `-a`), which sets it from the forge's own default branch; `git branch`
+  deleting remote-tracking branches; and a fetch, pull, or push refspec, or a `--refmap` value, whose destination git
+  expands to one (`remotes/x` is `refs/remotes/x`, and `refs/REMOTES/x` the same file on a disk that folds case), or a
+  push to a repository on the disk, such as `.`, whose destination is no full branch or tag, as `git push . HEAD:origin/main`.
   The plugin reads the team's policy, such as [`solo`](config.md#solo), from the repository a remote names on GitHub.
   A read, such as `git remote -v`, `git config --get remote.origin.url`, or `gh repo set-default --view`, runs;
   a shell it cannot read that names such an action counts. Its known limits: a write by its path to `.git/config`,

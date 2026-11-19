@@ -21,10 +21,56 @@ const MACHINE = {
   'full-autonomy': '{ "github": { "unattendedWaiver": { "enabled": true } }, "unattendedSignoff": "on", "handoff": { "background": "on" } }',
   autopilot: '{ "handoff": { "background": "on" } }',
   'hands-on': null,
+  // `solo: true` turns the three unattended switches on for a machine that leaves them unset, so it needs no local file.
+  'full-autonomy-solo': null,
 };
+// The projectRun keys that open a confined session's sandbox further: a team sets each after reading its risk.
+const SANDBOX_OPT_INS = ['registries', 'unverifiedHosts', 'outsideSandbox', 'mcpServers'];
 
-test('the recipes are the three the doc describes', () => {
-  assert.deepEqual(names, ['autopilot', 'full-autonomy', 'hands-on']);
+const recipe = (name) => JSON.parse(readFileSync(path.join(RECIPES, `${name}.json`), 'utf8'));
+// Every leaf of `value` as a dotted path.
+const leaves = (value, prefix = '') => (value !== null && typeof value === 'object' && !Array.isArray(value)
+  ? Object.entries(value).flatMap(([key, each]) => leaves(each, `${prefix}${key}.`))
+  : [prefix.slice(0, -1)]);
+const has = (value, dotted) => dotted.split('.').every((key) => {
+  if (value === null || typeof value !== 'object' || !Object.hasOwn(value, key)) return false;
+  value = value[key];
+  return true;
+});
+
+test('the recipes are the four the doc describes', () => {
+  assert.deepEqual(names, ['autopilot', 'full-autonomy', 'full-autonomy-solo', 'hands-on']);
+});
+
+test('the solo recipe is the full-autonomy recipe with solo and project runs, and nothing else', () => {
+  const { solo, projectRun, ...rest } = recipe('full-autonomy-solo');
+  assert.equal(solo, true);
+  assert.deepEqual(projectRun, { allow: true });
+  assert.deepEqual(rest, recipe('full-autonomy'), 'every key full-autonomy sets, as it sets it');
+});
+
+test('no recipe turns on a machine switch, which only the main checkout\'s local file may hold', () => {
+  const switches = Object.values(MACHINE).filter(Boolean).flatMap((text) => leaves(JSON.parse(text)));
+  assert.ok(switches.length > 0);
+  for (const name of names) for (const dotted of switches) assert.equal(has(recipe(name), dotted), false, `${name} sets ${dotted}`);
+});
+
+test('no recipe opens a project run\'s sandbox further', () => {
+  for (const name of names) for (const key of SANDBOX_OPT_INS) assert.equal(has(recipe(name), `projectRun.${key}`), false, `${name} sets projectRun.${key}`);
+});
+
+test('the setup reference offers every recipe', () => {
+  for (const name of names) assert.ok(SETUP.includes(`(\`${name}\`)`), `the setup reference does not offer ${name}`);
+});
+
+// Claude Code's AskUserQuestion takes 2 to 4 choices a question, so a fifth choice is a call the host rejects.
+test('each working-style question of the setup reference offers 2 to 4 choices', () => {
+  const section = SETUP.split(/^## The question$/mu)[1]?.split(/^## /mu)[0];
+  assert.ok(section, 'the setup reference has no "## The question" section');
+  const numbered = section.match(/^\d+\. /gmu) ?? [];
+  assert.ok(numbered.length >= 2 && numbered.length <= 4, `the working-style question offers ${numbered.length} numbered choices`);
+  const followUp = section.match(/^- \*\*/gmu) ?? [];
+  assert.ok(followUp.length === 0 || (followUp.length >= 2 && followUp.length <= 4), `the follow-up question offers ${followUp.length} choices`);
 });
 
 for (const name of names) {

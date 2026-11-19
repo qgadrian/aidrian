@@ -243,6 +243,11 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   `continuesAtLimit`: `wait` stops the session and the issue starts again after the pause. These come from Codex's
   source, not a live run: until one shows them, a limit the reader misses ends the session with no result, or past
   `issueHours` ([Project run](../config.md#project-run)).
+- A driver on Codex has no route to continue itself: Codex lists no handoff route, so `aidrian project preflight`
+  prints a `note handoff` line, and the driver keeps driving in its one session, which Codex compacts
+  ([Handoff](../handoff.md#a-project-run)). An issue's session starts no continuation on any host.
+- No judge's verdict stands for auto-merge on Codex ([Limits](#limits)), so an issue whose review stops at the round
+  cap does not merge on a waiver: its session reports the stop, as `aidrian pr waive --gate` prints it.
 - A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
   time is the one recorded. The table is read whole, up to 64 MiB of command lines, so a busy machine's listing still
   finds a start by its folder.

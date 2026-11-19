@@ -390,6 +390,64 @@ Limits:
   A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
   closed.
 
+### A project run
+
+A [project run](config.md#project-run), which the `project-autopilot` skill drives, starts many sessions with nothing
+typed. None of them lifts the cap of 5 background continuations in a row (`BACKGROUND_HOPS` in
+`lib/handoff-continue.mjs`): the cap counts per chain, and the run starts new chains instead of making one longer.
+
+- **Each issue's session is its own start.** `aidrian project start` holds it as the background route holds a
+  continuation, with a chain floor of 0 under the slug `project-<run>`, so it carries neither the driver's count nor
+  another issue's. What bounds the sessions a run starts is the run's own caps in code: 1,000 starts a run and 4 at
+  once, each also under the base branch's `projectRun.maxStarts` and `maxParallel`, 200 starts a day for a project,
+  and 3 attempts an issue.
+- **An issue's session starts no continuation.** Every host starts it confined, in a fresh clone under its sandbox,
+  and a continuation would start outside both. `aidrian handoff route` prints `route: none` for it, and
+  `aidrian handoff continue` answers `continue: none`, before any store or mark write, with the line
+  `a confined issue session starts no continuation; push the work and hand the result over` ([The gate](#the-gate),
+  step 3). So the cap of 5, `maxChain`, and the chain floor never come into play for it: it pushes its work and records
+  its result, and any later attempt of the issue starts in a fresh clone of the branch as the forge holds it.
+- **The driver hands off on the normal route.** It is a main session like any other: at the session-length reminder,
+  a usage-limit warning, or the plan offer, between passes and never mid-start, it writes its brief with the
+  `session-handoff` skill under the slug `project-<run>`. The run's ledger is its state, so the brief names the run and
+  the skill and no issue's detail. It runs `aidrian project handoff <run> <brief>` first, which records the brief's
+  sha256 in the ledger, then `aidrian handoff continue <brief>`. The background route files the run's driver mark for
+  the new session as it starts it, so the hooks hold it as a driver from its first call, and it takes custody on its
+  first `aidrian project wait <run> --max-wait 0`: only when the driver's start record names it, is dated after the
+  ledger row that made that driver, and holds the sha256 of a brief that driver recorded. A slug or a session name
+  never moves custody.
+- **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
+  `session.handoff.maxChain`, at most 5. At the limit the gate prints `continue: none`, and the driver keeps driving in
+  its own session, which the host compacts; it does the same on `continue: clear`, which would wait on a person, and
+  when the host lists no route at all, as on Codex. So a run never stops for its chain: at worst one long session
+  drives it. A person who resumes the brief by hand starts the count again, and that session takes custody only
+  through `aidrian project resume <run>`, once the host lists the old driver as ended.
+- **Each attempt hands its result over in a drop folder.** `<state>/runs/<run>/attempts/<issue>.<attempt>/drop/`, made
+  owner-only for that attempt, is the one place in the runs folder the issue's session writes besides its clone's
+  `work`, `git`, and `cache` folders. `aidrian project result` writes `result.json` there and no ledger row. The
+  driver's `wait` takes it in: it reads the file without following a link, as a regular file of the user with one
+  link, under 64 KiB, checks every field again, and holds a merged or open pull request to the issue's own on the forge;
+  anything else ends the attempt `bad_result`. `wait` removes an attempt's folder once its session ended, but never
+  while its drop holds a result not yet taken in.
+- **A halt, or a driver that ended, waits for `aidrian project resume <run>`.** A start whose proof failed, and a
+  usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the
+  Human's own shell, or from another session a person attends that never drove the run: the hooks and the command
+  refuse it to the driver, to any session that drove the run, and to the continuation custody would move to, so the
+  driver never runs it. It writes a `resume` row that lifts the halt. Run from a session, it also takes custody of a
+  run whose driver the host lists as ended, as a background driver that ended with no successor, and that session
+  then drives on. A driver the host does not list so, such as the first one, a session the Human started, keeps
+  custody: on a run that is not halted, the command prints `not halted <run>`, and, run from a session, says to resume
+  that same host session, which keeps its id; on a halted run, it lifts the halt and the driver stays.
+- **Host files no review saw.** The session works in its attempt's clone, which loads no host file of the main
+  checkout, and on Claude Code its sandbox also denies reads there, so the main checkout's own host files, such as a
+  git-ignored `.claude/settings.local.json` or an untracked skill under `.claude/skills/`, refuse no start. A start
+  refuses, and records nothing, when the clone itself holds a host config or instruction file that differs from the
+  base tip, or one git does not track or ignores: `the attempt's clone <path> is not started: it holds host config or
+  instruction files git does not track, which no review saw: <files>`. It refuses too when a folder above the clone
+  holds a host instruction file, such as a `CLAUDE.md`, that lies outside the main checkout, or that no review saw
+  there; move it away. What a session no Human attends may never do is write those files in the main checkout
+  ([agent gates](hooks.md#agent-gates)).
+
 ## The cost model
 
 All costs are in input tokens of the model of the session's last main-session call.

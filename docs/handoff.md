@@ -288,6 +288,11 @@ left must be plain ASCII: a host name with at least one dot, then two or more pa
 `.`, `_`, `~`, `%`, `+`, or `-`. Anything else answers `unknown` and is never sent or printed, such as what a password
 holding an `@` or a `:` leaves behind, a query or a fragment, an invisible or right-to-left character, or a host with
 no dot, such as an SSH host alias in `git@github-work:acme/widget.git`, which names no host a setting would.
+An SSH host alias with a dot, such as `github.com-work` in `git@github.com-work:acme/widget.git`, is a host name to
+the preflight, which never reads `~/.ssh/config`. It is judged under that name: an entry that names
+`acme/widget` still allows it, but one that names only the organisation, such as `github.com/acme`, does not, so the
+push can read as `denied` though the alias points at that organisation. Name the repository in the setting, or push to
+a remote whose URL names the real host.
 
 Two entry points run it, both through `pushPreflight` in `lib/push-preflight.mjs`:
 

@@ -713,6 +713,22 @@ test('Claude Code answers unknown, not denied, when a permission rule allows a g
   assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { allow: 'Bash' } })), { answer: 'unknown' }, 'user rules of another shape');
 });
 
+// A project's checked-in `.claude/settings.json` chooses its rules' globs, so matching one against `git push` takes time
+// linear in its length, never time that grows with its stars. Run in a child process, so a hang fails, not blocks.
+test('Claude Code answers unknown at once for a project allow rule with thousands of stars', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const root = path.join(config, 'work');
+  mkdirSync(path.join(root, '.claude'), { recursive: true });
+  mkdirSync(path.join(root, '.git'));
+  const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+  // `g` starts some `git push`, so the rule may allow one: no denial stands beside it.
+  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: [`Bash(g${'*'.repeat(10000)}z)`] } }));
+  const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(root)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+  assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}']);
+});
+
 test('Claude Code answers unknown at once for a named pipe at its user settings, alone or behind a symlink', { skip: process.platform === 'win32' }, (t) => {
   for (const linked of [false, true]) {
     const config = claudeSettings(t, undefined);

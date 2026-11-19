@@ -88,9 +88,34 @@ function namesRepository(repository) {
   return (entry) => repo.test(entry.toLowerCase()) || owner.test(entry.toLowerCase());
 }
 
-// Whether the glob `glob`, where `*` is any text, matches all of `text`.
+// Whether the glob `glob`, where `*` is any text, matches all of `text`, compared by code point. It goes back only to
+// the last `*` it passed, so it takes at most the product of the two lengths. A regex with a `[\s\S]*` for each star
+// backtracks exponentially, and a project's checked-in settings file chooses the glob.
 function matchesAll(glob, text) {
-  return new RegExp(`^${glob.split('*').map(escape).join('[\\s\\S]*')}$`, 'u').test(text);
+  const pattern = [...glob];
+  const chars = [...text];
+  let at = 0;
+  let next = 0;
+  let star = -1;
+  let resume = 0;
+  while (next < chars.length) {
+    if (pattern[at] === '*') {
+      star = at;
+      at += 1;
+      resume = next;
+    } else if (at < pattern.length && pattern[at] === chars[next]) {
+      at += 1;
+      next += 1;
+    } else if (star !== -1) {
+      at = star + 1;
+      resume += 1;
+      next = resume;
+    } else {
+      return false;
+    }
+  }
+  while (pattern[at] === '*') at += 1;
+  return at === pattern.length;
 }
 
 // Whether the glob `glob` matches some command that starts with `prefix`: its text before the first `*`, or all of it

@@ -549,6 +549,8 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     true` halt the start on macOS and on Linux; a macOS configuration profile in the `com.anthropic.claudecode` domain
     does too; and whether server-managed settings, which the start does not read, leave a local cache a later check
     could read.
+23. Claude Code's file tools expand a leading `~` and `~/` to the home folder of the user the host runs as, as the
+    adapter's `filePath` does for every guard of a file tool; and a Glob pattern's `..` reaches above its path.
 
 ### The sandbox proof
 
@@ -584,12 +586,14 @@ its start stays as [its page](codex.md#project-start) says.
    read saw, salted with the nonce, to the start. It writes the verdict, `confine.json`, in the drop folder.
 4. The start, outside the sandbox, reads the verdict once the beacon came, for at most 180 seconds: one of its own
    plan that passed, names no other session, holds no read that saw a target's fingerprint, with the listener the
-   start ran alive on its recorded port and pid (`ps` shows it, no zombie) and no connection on it, no probe path left,
-   and `cache` and `drop` plain folders that keep their keep files, passes. It then files `confine: "passed"` in the
-   session's mark, and the hook lets the session's calls through to the other guards. Any other verdict, or none in
-   time, stops the session, files `confine: "failed"`, gives the attempt back, and halts the run until an attended
-   `aidrian project resume`; when the stop itself fails, the start stays for `wait` to settle, and the run halts all the
-   same. The hook refuses that session every later call. The listener stops when the start ends.
+   start ran alive on its recorded port and pid, no zombie, and no connection on it, no probe path left, and `cache`
+   and `drop` plain folders that keep their keep files, passes. The start reads its listener's state from
+   `/proc/<pid>/stat` on Linux and from `/bin/ps` elsewhere, and a start that can read neither refuses before its
+   launch. It then files `confine: "passed"` in the session's mark, and the hook lets the session's calls through to
+   the other guards. Any other verdict, or none in time, stops the session, files `confine: "failed"`, rewrites the
+   verdict without what its reads saw, gives the attempt back, and halts the run until an attended
+   `aidrian project resume`; when the stop itself fails, the start stays for `wait` to settle, and the run halts all
+   the same. The hook refuses that session every later call. The listener stops when the start ends.
 
 A start whose proof cannot be prepared refuses with `the sandbox proof cannot be prepared`, records nothing, and leaves
 no attempt folder; [Project run](../config.md#project-run) names each cause and its fix.
@@ -608,7 +612,8 @@ sandbox. Before a start, the start reads each managed source the host documents 
 `/Library/Managed Preferences/com.anthropic.claudecode.plist` and the same under the user's own folder there, read
 through `plutil`. Each is judged by the user settings' rules for `sandbox` keys, granted folders, and commands, with
 one more: a scalar the session's own settings set, such as `allowUnsandboxedCommands`, passes only at the session's
-value. Its `enabledPlugins` switches count over the user's for the plugin checks. A source that is there and cannot
+value, and `allowManagedPermissionRulesOnly` halts, since the host then drops the session's own permission rules that
+keep its file tools from the stores its sandbox hides. Its `enabledPlugins` switches count over the user's for the plugin checks. A source that is there and cannot
 be read halts the start; a platform with no documented sources halts it too.
 
 Server-managed settings, which the host fetches from the claude.ai console and caches where its docs do not say, are

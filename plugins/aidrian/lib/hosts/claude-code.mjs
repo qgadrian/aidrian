@@ -100,15 +100,27 @@ function mapInput(input) {
 // Its file tools that read, and the path each names (code.claude.com/docs/en/tools-reference): Read's `file_path`, Grep's
 // and Glob's `path`, the call's folder when unset, and Glob's `pattern` when it is absolute, up to its first glob
 // character. They run outside the sandbox, so the agent gate hook holds a confined session's reads (lib/confine-guard.mjs).
-const READ_TOOLS = Object.freeze(['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
+export const READ_TOOLS = Object.freeze(['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
 function fileRead(tool, given) {
   if (tool === 'Read' || tool === 'NotebookRead') return [given.file_path ?? given.notebook_path ?? null];
-  const named = [typeof given.path === 'string' ? given.path : null];
-  if (tool === 'Glob' && typeof given.pattern === 'string' && path.isAbsolute(given.pattern)) {
+  const base = typeof given.path === 'string' ? given.path : null;
+  const named = [base];
+  if (tool === 'Glob' && typeof given.pattern === 'string') {
+    // The pattern's literal folder: up to the last `/` before its first glob character, `..` included, from its `path`
+    // or the call's folder when it is relative.
     const at = given.pattern.search(/[*?[{]/u);
-    named.push(at < 0 ? given.pattern : given.pattern.slice(0, at));
+    const literal = at < 0 ? given.pattern : given.pattern.slice(0, given.pattern.lastIndexOf('/', at) + 1);
+    const expanded = filePath(literal);
+    named.push(path.isAbsolute(expanded) || base === null ? expanded || null : path.join(filePath(base), expanded));
   }
   return named;
+}
+
+// A path its file tools name, as they resolve it: a leading `~` or `~/` is the home folder of the user the host runs as
+// (live check 23). Every other path is as it is, relative ones from the call's folder.
+function filePath(file) {
+  if (typeof file !== 'string') return file;
+  return file === '~' || file.startsWith('~/') ? path.join(homedir(), file.slice(1)) : file;
 }
 
 const startsSession = (args) => {
@@ -146,11 +158,13 @@ export default {
   rawToolName: (standard) => standard,
   toolResponse: responseObjects,
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
-  // as `Monitor` in an agent gate does for a Monitor call read as Bash. A shell call's `dangerouslyDisableSandbox: true`,
-  // its ask to run outside the sandbox (code.claude.com/docs/en/sandboxing), reads as the standard `sandbox_escape: true`.
+  // as `Monitor` in an agent gate does for a Monitor call read as Bash. A shell call's `dangerouslyDisableSandbox`, its ask
+  // to run outside the sandbox (code.claude.com/docs/en/sandboxing), with any value but false or null, reads as the
+  // standard `sandbox_escape: true`, failing closed on a value the host may read as true.
   hookInput(input) {
     const mapped = mapInput(input);
-    return input?.tool_input?.dangerouslyDisableSandbox === true ? { ...mapped, sandbox_escape: true } : mapped;
+    const escape = input?.tool_input?.dangerouslyDisableSandbox;
+    return escape === undefined || escape === null || escape === false ? mapped : { ...mapped, sandbox_escape: true };
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   sessionStart: { programs: ['claude'], starts: startsSession },
@@ -164,6 +178,7 @@ export default {
   },
   fileReadTools: READ_TOOLS,
   fileRead,
+  filePath,
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];

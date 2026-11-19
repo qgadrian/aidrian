@@ -2,28 +2,64 @@
 // commands. Paths are relative to `root` where a function takes one. No dependencies: this file runs from the installed
 // plugin, which has no node_modules.
 
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, statSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
-// The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason.
+// The largest JSON file readJson reads.
+const JSON_CAP = 16 * 1024 * 1024;
+
+// The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason. The
+// file is read from one open that never waits, as on a FIFO, checked as a regular file through that open (readOnce): a
+// session may swap the file between a check by path and a read by path.
 export function readJson(root, rel, errors, scope = 'the project') {
   const file = path.join(root, rel);
-  if (!isFile(file)) {
-    errors.push(`${rel}: not found`);
+  if (linksOutside(root, rel)) {
+    errors.push(isFile(file) ? `${rel}: links outside ${scope}` : `${rel}: not found`);
     return null;
   }
-  if (linksOutside(root, rel)) {
-    errors.push(`${rel}: links outside ${scope}`);
+  const read = readOnce(file, JSON_CAP);
+  if (read.text === undefined) {
+    errors.push(read.missing ? `${rel}: not found` : `${rel}: ${read.problem}`);
     return null;
   }
   try {
-    const value = JSON.parse(readFileSync(file, 'utf8'));
+    const value = JSON.parse(read.text);
     if (isObject(value)) return value;
     errors.push(`${rel}: must be a JSON object`);
   } catch (error) {
     errors.push(`${rel}: invalid JSON (${error.message})`);
   }
   return null;
+}
+
+// The text of `file`, following a link as a plain read does, from one open that never waits, checked as a regular file
+// of at most `cap` bytes through that open: { text }, { missing: true } when nothing, or no regular file, is there, or
+// { problem }. Every hook read of a file under a folder a session may write goes through it or readSmallJson.
+export function readOnce(file, cap = JSON_CAP) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    return error.code === 'ENOENT' || error.code === 'ENOTDIR' ? { missing: true } : { problem: `cannot be read (${error.code ?? 'no code'})` };
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return { missing: true };
+    if (stat.size > cap) return { problem: `is larger than ${cap} bytes` };
+    // A file that reports no size, as one of /proc, is read to its end, up to the cap.
+    const buffer = Buffer.alloc(stat.size > 0 ? stat.size : Math.min(cap, 64 * 1024));
+    let read = 0;
+    while (read < buffer.length) {
+      const got = readSync(fd, buffer, read, buffer.length - read, null);
+      if (got === 0) break;
+      read += got;
+    }
+    return { text: buffer.subarray(0, read).toString('utf8') };
+  } catch (error) {
+    return { problem: `cannot be read (${error.code ?? 'no code'})` };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // True when `rel`, with symlinks resolved, lies outside the folder `within` (both relative to `root`; `within` is the
@@ -350,5 +386,38 @@ export function readSmallJson(file, cap = 64 * 1024) {
     return null;
   } finally {
     if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The text of this user's own regular file `file` of one link, at most `cap` bytes, read without following a link or
+// waiting (openOwnFile), or null: a hook's marker in its counts folder.
+export function readOwnText(file, cap = 64 * 1024) {
+  const fd = openOwnFile(file, constants.O_RDONLY);
+  if (fd === null) return null;
+  try {
+    const size = Math.min(fstatSync(fd).size, cap);
+    const buffer = Buffer.alloc(size);
+    return buffer.subarray(0, readSync(fd, buffer, 0, size, 0)).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Writes `text` to `file` in an owner-only folder of this user, a new file when `exclusive`, else replacing the text of
+// this user's own regular file there, never following a link or waiting (ownFolderSync, openOwnFile): whether it did.
+export function writeOwnText(file, text, { exclusive = false } = {}) {
+  if (!ownFolderSync(path.dirname(file))) return false;
+  const fd = openOwnFile(file, constants.O_WRONLY | constants.O_CREAT | (exclusive ? constants.O_EXCL : 0));
+  if (fd === null) return false;
+  try {
+    ftruncateSync(fd, 0);
+    writeSync(fd, text, 0);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    closeSync(fd);
   }
 }

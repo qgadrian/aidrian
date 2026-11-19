@@ -4,11 +4,26 @@
 // Both texts follow the route the session goes on by after its handoff, `session.handoff.continue` as the host can do it
 // (continuation); with `none` they are what they were before the routes existed.
 
+import path from 'node:path';
+
 import { continueRoutes } from './hosts/index.mjs';
 import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './model-prices.mjs';
+import { hookCountsFolder } from './project.mjs';
 import { aggregateUsage } from './transcript.mjs';
 
 // B: the tokens a fresh session reads to resume from a brief, the measured median before its first edit or dispatch.
+// The marker of the stop hook's last session-length reminder for `session`, in the hooks' counts folder, or null when
+// the session id cannot name a file: hook-stop.mjs reads and writes it as this user's own file (fs.mjs readOwnText,
+// writeOwnText), and hook-session-end.mjs removes it.
+export function sessionLengthMarker(session, { env = process.env } = {}) {
+  if (typeof session !== 'string' || !/^[\w-]{1,128}$/u.test(session)) return null;
+  try {
+    return path.join(hookCountsFolder(env), `aidrian-session-length-${session}`);
+  } catch {
+    return null;
+  }
+}
+
 export const RESUME_TOKENS = 44_000;
 // H: the calls the long session spends writing the brief, from the measured quartiles.
 export const BRIEF_CALLS = 8;

@@ -31,7 +31,7 @@ import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { CONFINE_LOCK, CONFINE_PLAN, CONFINE_VERDICT, exists, SHELL_VARS, VERDICT_CAP, writeJson } from './confine-guard.mjs';
-import { pauseSync, readSmallJson } from './fs.mjs';
+import { pauseSync, readOnce, readSmallJson } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { REGISTRY_NAMES, registryHosts } from './project-registries.mjs';
 import { markFolders } from './unattended-mark.mjs';
@@ -159,7 +159,9 @@ function fingerprint(file, nonce, reopened = []) {
 // folder, which the sandbox opens again; `env` and `home` the environment and home folder the mark folders are named
 // under. { plan, listener, prints } or { problem }, with the listener stopped; `prints` maps each read target to its
 // fingerprint, for confineCheck.
-export function prepareConfine({ folder, run, key, attempt, work, git, drop, cache, domains, reads = [], main = null, mainGit = null, env = process.env, home, listen = startListener }) {
+export function prepareConfine({ folder, run, key, attempt, work, git, drop, cache, domains, reads = [], main = null, mainGit = null, env = process.env, home, listen = startListener, watch = WATCH }) {
+  const unwatched = watchProblem(watch);
+  if (unwatched) return { problem: unwatched };
   const unlisted = unlistedHost(domains);
   if (!unlisted) return { problem: `every host the proof names as unlisted (${UNLISTED.join(', ')}) is an allowed domain of the session, the user's settings, or the organization's, so no probe can show an unlisted host refused; remove "*" or the example domains from sandbox.network.allowedDomains` };
   const marks = markFolders({ env, home }).filter((dir) => {
@@ -277,7 +279,8 @@ function readProbe(target, nonce) {
   let fd;
   try {
     fd = openSync(target.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
-    if (fstatSync(fd).isDirectory()) return { outcome: 'opened', seen: readdirSync(target.path).slice(0, SEEN_CAP).map((name) => salted(nonce, name)) };
+    // Sorted before the cap, as the start's fingerprint takes the first entry by name.
+    if (fstatSync(fd).isDirectory()) return { outcome: 'opened', seen: readdirSync(target.path).sort().slice(0, SEEN_CAP).map((name) => salted(nonce, name)) };
     const bytes = Number.isInteger(target.bytes) && target.bytes > 0 ? Math.min(target.bytes, FIRST_BYTES) : FIRST_BYTES;
     const buffer = Buffer.alloc(bytes);
     return { outcome: 'opened', seen: [salted(nonce, buffer.subarray(0, readSync(fd, buffer, 0, bytes, 0)))] };
@@ -407,15 +410,41 @@ export async function runConfine({ run, key, cwd = process.cwd(), env = process.
   return { exitCode: 1, out: [`halt the sandbox does not hold for this session: ${problems.join('; ')}`], err: ['aidrian project confine: the start stops this session and halts the run; nothing more runs here'] };
 }
 
-// Whether the process `pid` is alive and no zombie, as `ps` lists it; `run` is spawnSync's shape, a test's.
-function alive(pid, run = spawnSync) {
+// Where the start reads a process's state: on Linux the state field of /proc/<pid>/stat, elsewhere `ps` by its absolute
+// path, so no PATH entry stands in for it. `watch` is a test's: { platform, proc, ps, run }.
+const WATCH = Object.freeze({ platform: process.platform, proc: '/proc', ps: '/bin/ps', run: spawnSync });
+
+// Why the start could not tell whether its listener lives, or null: on Linux no readable /proc, elsewhere no `ps` at
+// its absolute path. A start refuses before its launch on it (prepareConfine).
+export function watchProblem(watch = WATCH) {
+  if (watch.platform === 'linux') return readOnce(path.join(watch.proc, 'self', 'stat'), 4096).text === undefined ? `${watch.proc}/self/stat cannot be read, so the start cannot tell whether the sandbox proof's localhost listener lives` : null;
+  return exists(watch.ps) ? null : `${watch.ps} is not there, so the start cannot tell whether the sandbox proof's localhost listener lives`;
+}
+
+// Rewrites the verdict of the attempt in `folder` as failed, without what its reads saw, once the start filed the failed
+// proof: the drop folder outlives the session, and a landed read's sight is the store's, salted. Never throws.
+export function closeVerdict(folder) {
+  const file = path.join(folder, 'drop', CONFINE_VERDICT);
+  const verdict = readSmallJson(file, VERDICT_CAP);
+  if (!verdict) return;
+  const { reads, ...rest } = verdict;
+  writeJson(file, { ...rest, pass: false });
+}
+
+// Whether the process `pid` is alive and no zombie: its /proc state on Linux, else what `ps` lists.
+export function alive(pid, watch = WATCH) {
   if (!Number.isInteger(pid) || pid <= 1) return false;
+  if (watch.platform === 'linux') {
+    const text = readOnce(path.join(watch.proc, String(pid), 'stat'), 4096).text;
+    const state = typeof text === 'string' ? text.slice(text.lastIndexOf(')') + 2).split(' ')[0] : '';
+    return state !== '' && state !== 'Z' && state !== 'X';
+  }
   try {
     process.kill(pid, 0);
   } catch (error) {
     if (error.code !== 'EPERM') return false;
   }
-  const listed = run('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8', timeout: 5000 });
+  const listed = watch.run(watch.ps, ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8', timeout: 5000 });
   const stat = String(listed.stdout ?? '').trim();
   return listed.status === 0 && stat !== '' && !stat.startsWith('Z');
 }

@@ -109,6 +109,19 @@ test('a session no Human attends may not write git config or hooks, the user\'s 
   assert.ok(fx.ask(bash(`rm -f ${fx.home}/.z*`)));
 });
 
+test('a file tool`s `~` path is the home folder, as the host resolves it: a write to ~/.zshrc or ~/.gitconfig is refused', (t) => {
+  const fx = fixture(t);
+  const saved = process.env.HOME;
+  process.env.HOME = fx.home;
+  t.after(() => (saved === undefined ? delete process.env.HOME : (process.env.HOME = saved)));
+  assert.ok(fx.ask(write('~/.zshrc')), 'Write ~/.zshrc');
+  assert.ok(fx.ask({ tool_name: 'Edit', tool_input: { file_path: '~/.gitconfig', old_string: 'a', new_string: 'b' } }), 'Edit ~/.gitconfig');
+  assert.ok(fx.ask({ tool_name: 'NotebookEdit', tool_input: { notebook_path: '~/x.ipynb', new_source: 'x' } }), 'NotebookEdit ~/x.ipynb');
+  // A `~` that is not the whole first part is a plain name: a file in the call's folder.
+  assert.equal(fx.ask(write('~notes.md')), null);
+  assert.equal(fx.ask(write(path.join(fx.worktree, 'notes.md'))), null);
+});
+
 test('the system git config is the one git names, wherever it was built to keep it', (t) => {
   const fx = fixture(t);
   const elsewhere = path.join(fx.root, 'opt', 'homebrew', 'etc', 'gitconfig');

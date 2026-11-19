@@ -94,11 +94,11 @@ const BIN = path.resolve(import.meta.dirname, '../bin/aidrian');
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 // Whether the call in `input` is exactly `aidrian project confine <run> <issue>` for `attempt`, alone, on one line, its
-// words apart by spaces or tabs only.
+// words apart by spaces or tabs only, with at most one line end after it.
 export function isConfineCall(input, attempt) {
   if (!bashCall(input) || typeof input.tool_input?.command !== 'string') return false;
   const program = `(?:aidrian|${escaped(BIN)}|'${escaped(BIN)}')`;
-  return new RegExp(`^[ \\t]*${program}[ \\t]+project[ \\t]+confine[ \\t]+${escaped(attempt.run)}[ \\t]+${escaped(attempt.key)}[ \\t]*$`, 'u').test(input.tool_input.command);
+  return new RegExp(`^[ \\t]*${program}[ \\t]+project[ \\t]+confine[ \\t]+${escaped(attempt.run)}[ \\t]+${escaped(attempt.key)}[ \\t]*\\n?$`, 'u').test(input.tool_input.command);
 }
 
 // The real path of `file`, or of the nearest folder above it that is there, joined with the rest.

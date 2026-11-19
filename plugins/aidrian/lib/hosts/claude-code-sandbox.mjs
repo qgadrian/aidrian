@@ -461,7 +461,7 @@ const strictScalars = (platform) => ({
 // for `user` (code.claude.com/docs/en/managed-settings, delivery mechanisms). The host ranks each above --settings.
 const MANAGED_DIRS = Object.freeze({ darwin: '/Library/Application Support/ClaudeCode', linux: '/etc/claude-code' });
 const PLIST_DOMAIN = 'com.anthropic.claudecode';
-const managedPlists = (user) => [`/Library/Managed Preferences/${PLIST_DOMAIN}.plist`, ...(user ? [`/Library/Managed Preferences/${user}/${PLIST_DOMAIN}.plist`] : [])];
+export const managedPlists = (user) => [`/Library/Managed Preferences/${PLIST_DOMAIN}.plist`, ...(user ? [`/Library/Managed Preferences/${user}/${PLIST_DOMAIN}.plist`] : [])];
 
 // The managed settings documents the host reads on `platform`, lowest rank first: `managed-settings.json` and each
 // `managed-settings.d/*.json` in the system folder, by name, then on macOS the managed preferences of the host's
@@ -522,6 +522,8 @@ function managedProblem(documents, { home, guarded, platform, allowed }) {
     if (weakened) return weakened;
     const key = COMMAND_KEYS.find((each) => isSet(at(value, each)) && !named.has(each));
     if (key) return `${label} set ${key}, a command the host runs outside the sandbox of a session no Human attends; the team names it in projectRun.outsideSandbox, or the organization removes it`;
+    // The host then drops the session's own permission rules, which hold its file tools from the credential stores.
+    if (value.allowManagedPermissionRulesOnly === true) return `${label} set allowManagedPermissionRulesOnly, so the host drops the permission rules the session's own settings pass, which keep its file tools from the stores its sandbox hides`;
   }
   return null;
 }
@@ -538,7 +540,7 @@ const withManagedPlugins = (settings, documents) => ({
 export function confineDomains({ env, home, platform = process.platform, managed = null }) {
   const user = home ?? env.HOME ?? homedir();
   const settings = userSettings(configFolder(env, user));
-  const documents = managedSettings({ platform, managed }).documents ?? [];
+  const documents = managedSettings({ platform, managed, user: userName() }).documents ?? [];
   return [settings.value ?? {}, ...documents.map((each) => each.value)].flatMap((value) => listAt(value, 'sandbox.network.allowedDomains')).filter((each) => typeof each === 'string');
 }
 

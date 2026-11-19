@@ -1703,7 +1703,7 @@ of the local dispatch log, so the values may reach it, cut to 120 characters. Th
 
 The refusal of rule 1 that names a read to call is the guard's normal flow: a session that writes meets it once, reads, and goes on.
 When it happens it writes no `hook_deny` row and adds no block count, so healthy sessions and a batch of first writes read as no hot spot.
-It leaves a marker in the system's temporary folder instead, and the session's end settles it.
+It leaves a marker in the hooks' counts folder, `<state root>/hook-counts`, instead, and the session's end settles it.
 A session that ends with no read recorded writes one `hook_deny` row, whichever way the read was lost: failing, renamed upstream, or never tried.
 Over several sessions those rows raise the usual hot spot in `aidrian report health`, and the row counts once toward the session's block count.
 With `telemetry.enabled` or `telemetry.hookDenies` off, a session stuck on this refusal leaves no row and no lesson,

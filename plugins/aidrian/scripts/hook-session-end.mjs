@@ -8,15 +8,16 @@
 // promoted, bound to the host process this hook runs under, for the session the clear starts (lib/handoff-continue.mjs).
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
 import { forgetGateSnapshot, snapshotPath } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
-import { forgetDenials } from '../lib/lesson-signals.mjs';
+import { readOwnText } from '../lib/fs.mjs';
+import { forgetDenials, sweepHookCounts } from '../lib/lesson-signals.mjs';
+import { sessionLengthMarker } from '../lib/session-length.mjs';
 import { findProject } from '../lib/project.mjs';
 import { NO_READ_LANDED, refusalMarker } from '../lib/tracker-guard.mjs';
 
@@ -27,10 +28,12 @@ await runHook(async (input) => {
   // First: it reads the tracker record the next lines delete, and the recorder's count lands in the folder they delete.
   await settleRefusal(input);
   forgetDenials(input.session_id);
+  sweepHookCounts();
   forgetGateSnapshot(input.session_id);
   forgetTrackerRecord(input.session_id);
   if (typeof input.session_id === 'string' && /^[\w-]+$/u.test(input.session_id)) {
-    rmSync(path.join(tmpdir(), `aidrian-session-length-${input.session_id}`), { force: true });
+    const marker = sessionLengthMarker(input.session_id);
+    if (marker) rmSync(marker, { force: true });
   }
   // A subagent's payload promotes nothing: the continuation is the main session's.
   const cleared = input.reason === 'clear' && !input.agent_id;
@@ -73,8 +76,9 @@ async function settleRefusal(input) {
   try {
     const marker = refusalMarker(input.session_id);
     if (!marker) return;
-    const refusal = readFileSync(marker, 'utf8');
-    unlinkSync(marker);
+    const refusal = readOwnText(marker);
+    rmSync(marker, { force: true });
+    if (refusal === null) return;
     const record = trackerRecord(input.session_id);
     if (record && existsSync(record)) return;
     const { tool, agent_type: agent, cwd } = JSON.parse(refusal);

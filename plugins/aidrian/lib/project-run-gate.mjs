@@ -51,7 +51,7 @@ import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } fro
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
-import { confineCheck, prepareConfine } from './project-confine.mjs';
+import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
@@ -443,7 +443,10 @@ function launchStart(context, place) {
     const answer = confineCheck({ folder, session: own, prints: confine.prints });
     if (answer === null) return null;
     const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
-    if (!answer.pass) return { problem: answer.problem };
+    if (!answer.pass) {
+      closeVerdict(folder);
+      return { problem: answer.problem };
+    }
     return filed ? true : { problem: 'the start could not file the passed proof in the session\'s mark' };
   } : undefined;
   const name = sessionName(run, key, attempt);

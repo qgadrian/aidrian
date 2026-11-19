@@ -10,21 +10,24 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { ATTEMPT_KEEP, KEPT_FOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { CONFINE_LOCK, sandboxEscapeDenial } from '../plugins/aidrian/lib/confine-guard.mjs';
-import { readSmallJson } from '../plugins/aidrian/lib/fs.mjs';
+import { readOwnText, readSmallJson, writeOwnText } from '../plugins/aidrian/lib/fs.mjs';
+import { HOOK_COUNTS_AGE, sweepHookCounts } from '../plugins/aidrian/lib/lesson-signals.mjs';
+import { sessionLengthMarker } from '../plugins/aidrian/lib/session-length.mjs';
+import { refusalMarker } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
-import { accessProblem, confineDomains, managedSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { accessProblem, confineDomains, managedPlists, managedSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { childSendBacks, storeChildSendBacks } from '../plugins/aidrian/lib/child-send-backs.mjs';
-import { CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, SHELL_VARS, shellVarsProblem, startListener, unlistedHost } from '../plugins/aidrian/lib/project-confine.mjs';
+import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
 import { ACTIONS, projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectPrompt } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -34,6 +37,7 @@ import { markFolder, markFolders, markPending, markUnattended, readUnattendedMar
 import { fakeClaude, OTHER, OWN_PLUGIN, passVerdict, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
+const FS_LIB = path.resolve(import.meta.dirname, '../plugins/aidrian/lib/fs.mjs');
 const NAMES = { names: { human: 'the Human' } };
 const SESSION = 'confined-session-1';
 const GITHUB = ['github.com', 'api.github.com'];
@@ -587,4 +591,155 @@ test('the organization`s managed settings, which rank above --settings, are judg
   assert.match(managedSettings({ platform: 'darwin', managed: { dir, plists: [plist] }, run: plutil('', 1) }).problem, /plutil cannot convert it to JSON/u);
   assert.deepEqual(managedSettings({ platform: 'darwin', managed: { dir, plists: [path.join(fx.root, 'none.plist')] } }).documents, []);
   assert.deepEqual(readdirSync(dir), []);
+});
+
+// Fix pass 2.
+
+test('a file-tool read through `~`, or a relative Glob that climbs out of the clone, reaches the store it names', (t) => {
+  const at = attempt(t);
+  plan(at);
+  const saved = process.env.HOME;
+  process.env.HOME = at.home;
+  t.after(() => (saved === undefined ? delete process.env.HOME : (process.env.HOME = saved)));
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  for (const [tool, input] of [['Read', { file_path: '~/.ssh/id_test' }], ['Read', { file_path: '~/.npmrc' }], ['Grep', { pattern: 'x', path: '~' }],
+    ['Glob', { pattern: '~/.ssh/*' }], ['Glob', { pattern: '../../../../../../home/.ssh/*' }], ['Glob', { pattern: '.s*/*', path: '../../../../../../home' }], ['Glob', { pattern: '../../../../../../home/.ss*' }]]) {
+    assert.match(call(tool, input)?.reason ?? '', /hides/u, `${tool} ${JSON.stringify(input)}`);
+  }
+  assert.equal(call('Glob', { pattern: 'src/**/*.mjs' }), null);
+  assert.equal(call('Read', { file_path: '~notes' }), null, 'a `~` that is not the first part');
+});
+
+test('a read probe sorts a folder`s entries before it caps them, so the fingerprint entry is always among them', async (t) => {
+  const at = attempt(t);
+  // More entries than a read reports, the first by name planted last.
+  for (let i = 0; i < 700; i += 1) writeFileSync(path.join(at.keys, `k${String(i).padStart(4, '0')}`), '');
+  writeFileSync(path.join(at.keys, 'a-first'), '');
+  const made = plan(at, { reads: [at.keys] });
+  offline(at, made);
+  await runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: at.vars });
+  writeVerdict(at, { ...passVerdict(made.plan, SESSION), reads: verdictAt(at).reads });
+  assert.match(confineCheck({ folder: at.folder, session: SESSION, prints: made.prints }).problem, /^read .*\.ssh/u);
+});
+
+test('the hook`s sandbox escape reads any value but absent, false, or null as asked, and the confine command may end its line', () => {
+  const map = (value) => claudeCode.hookInput({ tool_name: 'Bash', tool_input: { command: 'ls', dangerouslyDisableSandbox: value } }).sandbox_escape;
+  for (const value of [true, 'true', 'false', 1, 0, '', {}, []]) assert.equal(map(value), true, JSON.stringify(value));
+  for (const value of [false, null, undefined]) assert.equal(map(value), undefined, String(value));
+  const attemptOf = { run: 'launch', key: 'ENG-1' };
+  assert.equal(isConfineCall(bash('aidrian project confine launch ENG-1\n', '/'), attemptOf), true);
+  assert.equal(isConfineCall(bash('aidrian project confine launch ENG-1\n\n', '/'), attemptOf), false);
+  assert.equal(isConfineCall(bash('aidrian project confine launch ENG-1\n;x', '/'), attemptOf), false);
+});
+
+test('a failed proof`s verdict keeps no reads once the start filed the failure', (t) => {
+  const fx = runFixture(t);
+  const claude = fakeClaude({ dir: fx.dir, env: fx.env, confine: (made, session) => ({ ...passVerdict(made, session), pass: false, failed: ['write /x'], reads: [{ target: '/x', seen: ['a'.repeat(64)] }] }) });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run }).exitCode, 1);
+  const verdict = readSmallJson(path.join(realpathSync(fx.state), 'runs', 'launch', 'attempts', 'ENG-1.1', 'drop', CONFINE_VERDICT));
+  assert.deepEqual([verdict.pass, verdict.reads, verdict.failed], [false, undefined, ['write /x']]);
+});
+
+test('the start reads its listener`s state from /proc on Linux and from /bin/ps elsewhere, and refuses when it can read neither', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-watch-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const proc = path.join(root, 'proc');
+  mkdirSync(path.join(proc, '4242'), { recursive: true });
+  const linux = { platform: 'linux', proc, ps: '/none', run: () => assert.fail('no ps on Linux') };
+  assert.match(watchProblem(linux), /self\/stat cannot be read/u);
+  mkdirSync(path.join(proc, 'self'));
+  writeFileSync(path.join(proc, 'self', 'stat'), '1 (node) S 0');
+  assert.equal(watchProblem(linux), null);
+  writeFileSync(path.join(proc, '4242', 'stat'), '4242 (node -e (x)) Z 1 4242');
+  assert.equal(alive(4242, linux), false, 'a zombie');
+  writeFileSync(path.join(proc, '4242', 'stat'), '4242 (node -e (x)) S 1 4242');
+  assert.equal(alive(4242, linux), true);
+  assert.equal(alive(4343, linux), false, 'no such process');
+  const other = { platform: 'darwin', proc, ps: path.join(root, 'no-ps'), run: () => ({ status: 0, stdout: 'S\n' }) };
+  assert.match(watchProblem(other), /no-ps is not there/u);
+  const at = attempt(t);
+  const refused = prepareConfine({ folder: at.folder, run: 'launch', key: 'ENG-1', attempt: 1, work: at.work, git: at.git, drop: at.drop, cache: at.cache, domains: GITHUB, env: at.env, home: at.home, listen: fakeListen, watch: other });
+  assert.match(refused.problem, /no-ps is not there, so the start cannot tell whether the sandbox proof's localhost listener lives/u);
+  assert.equal(existsSync(path.join(at.folder, CONFINE_PLAN)), false);
+});
+
+test('the organization`s rule that only managed permission rules count halts a start, and the per-user profile is read', (t) => {
+  const fx = runFixture(t, { init: false });
+  const dir = path.join(fx.root, 'managed');
+  mkdirSync(dir);
+  writeFileSync(path.join(dir, 'managed-settings.json'), JSON.stringify({ allowManagedPermissionRulesOnly: true }));
+  const problem = accessProblem({ env: fx.env, home: fx.home, guarded: [], pushUrl: 'https://github.com/acme/widgets.git', platform: 'linux', managed: { dir, plists: [] } });
+  assert.match(problem, /allowManagedPermissionRulesOnly/u);
+  assert.deepEqual(managedPlists('alice'), ['/Library/Managed Preferences/com.anthropic.claudecode.plist', '/Library/Managed Preferences/alice/com.anthropic.claudecode.plist']);
+});
+
+test('a JSON read under a folder a session may write never waits on a FIFO swapped in for the file', { skip: process.platform === 'win32' }, (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-race-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, '.aidrian'));
+  const config = path.join(root, '.aidrian', 'config.json');
+  const plain = path.join(root, '.aidrian', 'a.json');
+  const fifo = path.join(root, '.aidrian', 'b.fifo');
+  writeFileSync(plain, '{}');
+  execFileSync('mkfifo', [fifo]);
+  // A FIFO at the path: the read answers at once.
+  const once = (file) => spawnSync(process.execPath, ['--input-type=module', '-e', `import { readJson } from ${JSON.stringify(FS_LIB)}; const errors = []; readJson(${JSON.stringify(root)}, ${JSON.stringify(file)}, errors); process.stdout.write(JSON.stringify(errors));`], { encoding: 'utf8', timeout: 3000 });
+  const direct = once('.aidrian/b.fifo');
+  assert.equal(direct.signal, null);
+  assert.deepEqual(JSON.parse(direct.stdout), ['.aidrian/b.fifo: not found']);
+  // A file and a FIFO swapped at the path while it is read, as a session may: no read waits.
+  const toggler = spawn(process.execPath, ['-e', `const fs = require('node:fs'); const [cfg, file, fifo] = process.argv.slice(1);
+    for (;;) { try { fs.renameSync(file, cfg); fs.renameSync(cfg, file); fs.renameSync(fifo, cfg); fs.renameSync(cfg, fifo); } catch {} }`, config, plain, fifo], { stdio: 'ignore' });
+  t.after(() => toggler.kill());
+  let hung = 0;
+  for (let run = 0; run < 8; run += 1) {
+    const reads = spawnSync(process.execPath, ['--input-type=module', '-e', `import { readJson } from ${JSON.stringify(FS_LIB)}; for (let k = 0; k < 2000; k += 1) readJson(${JSON.stringify(root)}, '.aidrian/config.json', []);`], { timeout: 4000 });
+    if (reads.signal) hung += 1;
+  }
+  assert.equal(hung, 0);
+});
+
+test('the session-length and tracker-refusal markers live in the counts folder, and a FIFO or a link there stalls and leads nothing', { skip: process.platform === 'win32' }, (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-markers-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const env = { XDG_STATE_HOME: path.join(root, 'state') };
+  const counts = path.join(env.XDG_STATE_HOME, 'aidrian', 'hook-counts');
+  assert.equal(sessionLengthMarker('s-1', { env }), path.join(counts, 'aidrian-session-length-s-1'));
+  assert.equal(refusalMarker('s-1', { env }), path.join(counts, 'aidrian-tracker-refused-s-1'));
+  mkdirSync(counts, { recursive: true });
+  const target = path.join(root, 'target');
+  writeFileSync(target, 'kept\n');
+  for (const marker of [sessionLengthMarker('s-1', { env }), refusalMarker('s-1', { env })]) {
+    execFileSync('mkfifo', [marker]);
+    assert.equal(readOwnText(marker), null, 'a FIFO reads as none, at once');
+    assert.equal(writeOwnText(marker, 'x'), false);
+    rmSync(marker);
+    symlinkSync(target, marker);
+    assert.equal(readOwnText(marker), null, 'a link reads as none');
+    assert.equal(writeOwnText(marker, 'x'), false, 'and is never written through');
+    assert.equal(writeOwnText(marker, 'x', { exclusive: true }), false);
+    rmSync(marker);
+  }
+  assert.equal(readFileSync(target, 'utf8'), 'kept\n');
+  // The session's end, with a FIFO at the refusal marker, ends in time.
+  execFileSync('mkfifo', [refusalMarker('s-1', { env })]);
+  const end = spawnSync(process.execPath, [path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-end.mjs')], {
+    input: JSON.stringify({ session_id: 's-1', cwd: root }), encoding: 'utf8', timeout: 8000, env: { ...process.env, ...env, TMPDIR: root },
+  });
+  assert.equal(end.signal, null, 'never waits on the FIFO');
+  assert.equal(existsSync(refusalMarker('s-1', { env })), false, 'and removes it');
+});
+
+test('the counts folder sweeps entries a session that never ended left, past their age', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sweep-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const old = path.join(root, 'aidrian-denials-gone');
+  mkdirSync(old);
+  writeFileSync(path.join(old, 'config-guard'), '...');
+  const stale = Date.now() / 1000 - (HOOK_COUNTS_AGE / 1000 + 3600);
+  utimesSync(old, stale, stale);
+  writeFileSync(path.join(root, 'aidrian-session-length-now'), '{}');
+  sweepHookCounts({ dir: root });
+  assert.deepEqual(readdirSync(root), ['aidrian-session-length-now']);
 });

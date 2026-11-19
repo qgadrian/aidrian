@@ -1411,7 +1411,8 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   for one more turn, with the ratio and the calls a handoff needs to pay back. The agent judges first whether a handoff
   is worth it, and may end the turn without a word; otherwise it asks the Human (`ask`) or writes the brief (`auto`).
   It fires once, then again once the ratio doubles in `ask` mode, or climbs a step of `max(costRatio − 1, 1)` in `auto`:
-  a marker in the system's temporary folder holds the ratio of the last firing, and a compaction resets it.
+  a marker in the hooks' counts folder, `<state root>/hook-counts`, holds the ratio of the last firing, and a compaction
+  resets it.
 - When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan hook tells the agent to offer the same handoff
   before its first build step, from halfway to `costRatio`: a cost ratio of 1.5 by default.
 - Both word the handoff for the [continue route](handoff.md#continue) the session's host can do. With `clear`, `auto`

@@ -2,10 +2,11 @@
 // for the GitHub MCP server a plugin installs.
 // docs/providers/adding-a-host.md lists the fields; docs/providers/claude-code.md says what was checked on this host.
 
-import { homedir } from 'node:os';
+import { lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { attachLine, findLine, nameMatcher, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { configDir } from './claude-code-config.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
@@ -13,6 +14,22 @@ import { responseObjects } from './response.mjs';
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
 const agentName = (env) => env.CLAUDE_CODE_AGENT || null;
 const effort = (env) => env.CLAUDE_EFFORT || null;
+
+// The file a Bash payload's `persistedOutputPath` names, or null unless it is a regular file, by lstat, so no symlink, in a
+// `tool-results` folder whose real path is under Claude Code's real projects folder (configDir, then `projects`), where
+// Claude Code keeps a long output. Any other path is no output of a call, and is never read.
+function persistedFile(file, env) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  try {
+    const projects = realpathSync(path.join(configDir(env), 'projects'));
+    const folder = realpathSync(path.dirname(file));
+    if (path.basename(folder) !== 'tool-results' || !folder.startsWith(`${projects}${path.sep}`)) return null;
+    const real = path.join(folder, path.basename(file));
+    return lstatSync(real).isFile() ? real : null;
+  } catch {
+    return null;
+  }
+}
 
 // CLAUDECODE=1 marks its hooks and its Bash tool; the others say the same for a process that lost that one.
 const MARKERS = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_AGENT', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_EFFORT'];
@@ -101,13 +118,18 @@ export default {
   // A Bash call's response, `{ stdout, stderr, interrupted, … }`, as `{ output, interrupted }`: its stdout, or null when the
   // response holds none (test/fixtures/hosts/claude-code/bash-post.json).
   shellOutput: (response) => ({ output: typeof response?.stdout === 'string' ? response.stdout : null, interrupted: response?.interrupted === true }),
-  // A finished Bash call, as the check-run record reads it (lib/check-runs.mjs): `{ output, finished, exitZero }`, its
-  // stdout then stderr; `finished` false for a call stopped, or one started in or moved to the background, whose end no
-  // hook sees (`backgroundTaskId`); `exitZero` true, since Claude Code runs PostToolUse only for a call that exited 0.
-  shellRun: (response) => {
+  // A finished Bash call, as the check-run record reads it (lib/check-runs.mjs): `{ output, persisted, finished, exitZero }`,
+  // `output` its stdout then stderr; `persisted`, for a stdout too long for the payload, `{ file, after }`: the file
+  // Claude Code kept the whole stdout in (`persistedOutputPath`), whose head alone `stdout` holds, and the stderr after
+  // it, else null (persistedFile); `finished` false for a call stopped, or one started in or moved to the background,
+  // whose end no hook sees (`backgroundTaskId`); `exitZero` true, since Claude Code runs PostToolUse only for a call that
+  // exited 0.
+  shellRun: (response, env = process.env) => {
     const parts = [response?.stdout, response?.stderr].filter((part) => typeof part === 'string');
     const finished = parts.length > 0 && response?.interrupted !== true && !response?.backgroundTaskId;
-    return { output: parts.length ? parts.join('\n') : null, finished, exitZero: true };
+    const file = persistedFile(response?.persistedOutputPath, env);
+    const after = typeof response?.stderr === 'string' ? response.stderr : '';
+    return { output: parts.length ? parts.join('\n') : null, persisted: file ? { file, after } : null, finished, exitZero: true };
   },
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
   // as `Monitor` in an agent gate does for a Monitor call read as Bash.
@@ -135,7 +157,7 @@ export default {
     prFooterSettings: (root, env) => [
       path.join(root, '.claude/settings.local.json'),
       path.join(root, '.claude/settings.json'),
-      path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'settings.json'),
+      path.join(configDir(env), 'settings.json'),
     ],
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },

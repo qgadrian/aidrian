@@ -7,7 +7,7 @@
 // written first, and the links apart from it, under their own time budget, so a link that fails or a git that stalls
 // loses no ledger row. The check-run record (docs/hooks.md#check-runs): one row in `checks.jsonl` for each test run on the
 // call's top level that the call ran to its end, with its status and counts (lib/check-runs.mjs), read through the
-// adapter's `shellRun`; a call stopped, or started in or moved to the background, records none. The hook writes nothing
+// adapter's `shellRun`, and from the tail of the file the host kept a long output in; a call stopped, or started in or moved to the background, records none. The hook writes nothing
 // outside the session folders, always exits 0, and prints nothing, so no record or output text reaches the model. It
 // writes nothing for a call the host stopped, a session id that fails SESSION_ID, or a folder with no project.
 
@@ -78,7 +78,7 @@ async function recordCheckRuns(input, command) {
   if (!project) return;
   const { config } = loadConfig(project);
   const agentId = typeof input.agent_id === 'string' ? input.agent_id : null;
-  const rows = checkRows({ command, cwd: input.cwd, output: run.output, exitZero: run.exitZero, testing: config.testing, agentId });
+  const rows = checkRows({ command, cwd: input.cwd, output: run.output, persisted: run.persisted ?? null, exitZero: run.exitZero, testing: config.testing, agentId });
   if (rows.length === 0) return;
   const folder = sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) });
   if (folder) appendCheckRuns(folder, rows);

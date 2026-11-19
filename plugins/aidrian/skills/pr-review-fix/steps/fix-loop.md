@@ -20,7 +20,7 @@ under test, see the test fail by assertion, undo only that edit, and report both
 Run only the tests of the touched files (`aidrian test changed`), never the full suite: CI runs it on the pushed head.
 Then `git add -- <paths>`, check that `git diff --cached --name-only` lists exactly these files, commit with a Conventional
 Commits subject and one body line per finding, `Addresses <id> from pr-review round <raised_in>`, and `git push`
-(in a project run's issue session, exactly `git push origin HEAD:refs/heads/<branch>`; with `--no-push`, skip the push). Return the machine handoff from the `knowledge` skill, with the tests you added or changed,
+(in a project run's issue session, exactly `git push origin HEAD:refs/heads/<branch>`, in a call of its own after the commit's; with `--no-push`, skip the push). Return the machine handoff from the `knowledge` skill, with the tests you added or changed,
 each command and its result, the short SHA, and `not_bypassed` or `hook_failed`.
 ```
 

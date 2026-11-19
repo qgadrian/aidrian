@@ -6,10 +6,14 @@
 //   - A session is held when its unattended mark names an issue, with any tag shape, or cannot be read; a pending
 //     mark's hold, an attended session, and a run's driver are not (unattended-mark.mjs issueHeld).
 //   - `git push`: only `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one the run's snapshot names for its
-//     issue (project-run-guard.mjs ownIssue), from a folder of its own clone or worktree, with a `+` or a force option
-//     that names only that branch, and switches that change nothing else, whose commits change none of the forge's
-//     workflow files (forges/index.mjs forgeWorkflowFolders) from where they leave origin's default branch, however the
-//     session made them: a `git apply`, `patch`, or `tar -x` puts such a file in a commit past the file-write guard.
+//     issue (project-run-guard.mjs ownIssue), with a `+` or a force option that names only that branch, and switches
+//     that change nothing else, in a call of its own: beside it only `cd`, git's reads (BESIDE_GIT), and text filters
+//     (BESIDE_PROGRAMS), so no command of the call changes the commits it carries after the guard read them. git then
+//     holds the checkout (issue-push-checkout.mjs): its own clone or worktree, not a repository nested in it, with origin
+//     pushing to the URL its issue's start pinned, and commits that change none of the forge's workflow files
+//     (forges/index.mjs forgeWorkflowFolders) from where they leave origin's default branch, however the session made
+//     them, as a `git apply`, `patch`, or `tar -x` puts such a file in a commit past the file-write guard, and no
+//     uncommitted change to one.
 //     git's other ways to push, `send-pack` and `http-push`, are refused, and so is every git subcommand outside
 //     GIT_COMMANDS, such as an alias or `subtree`, but for `git lfs`'s forms that push nothing (LFS_READS).
 //   - The forge CLI: the subcommands forges/index.mjs forgeRefCommands lists, and a raw API call forgeApiWrite reads
@@ -21,12 +25,12 @@
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { bashCall, opaqueTexts } from './config-guard.mjs';
-import { checkDeadline, remainingMs } from './deadline.mjs';
-import { forgeApiWrite, forgeRefCommands, forgeWorkflowFolders } from './forges/index.mjs';
+import { checkDeadline } from './deadline.mjs';
+import { forgeApiWrite, forgeRefCommands } from './forges/index.mjs';
 import { isWithin } from './fs.mjs';
-import { runGit } from './git.mjs';
 import { changesGitTarget, plainGlobals } from './git-push.mjs';
 import { opaqueShellCommand } from './hosts/index.mjs';
+import { pushCheckoutProblem } from './issue-push-checkout.mjs';
 import { changesVariable, GIT_VALUE_GLOBALS, readShortOptions, walkCommands } from './shell-lex.mjs';
 import { issueHeld } from './unattended-mark.mjs';
 import { runsDeclared } from './unattended-shell.mjs';
@@ -62,9 +66,11 @@ const RUNS_COMMANDS = new Set(['submodule', 'rebase', 'bisect', 'difftool', 'mer
 const RUNNERS = new Set(['xargs', 'xcrun', 'find']);
 const FIND_RUNS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
-// The refs a push's commits are compared with, the first that git resolves: origin's default branch, as config-committed.mjs
-// originDefaultTip names it, origin/HEAD, then the plugin's default branch name.
-const BASE_REFS = ['refs/remotes/origin/HEAD', 'refs/remotes/origin/main'];
+// What may share a call with the exact push, since none changes HEAD, the index, or the working tree: git's reads, with
+// `git branch` only as `--show-current`, and programs that only read their input or files and print. A fetch moves
+// origin's remote-tracking ref, the base of the workflow diff, so it runs in a call of its own too.
+const BESIDE_GIT = new Set(['status', 'log', 'diff', 'show', 'rev-parse']);
+const BESIDE_PROGRAMS = new Set(['echo', 'printf', 'true', 'head', 'tail', 'wc', 'cat', 'grep']);
 // The variables, besides git-push.mjs GIT_VARIABLES, that move the config files git reads, and so where a push goes.
 const CONFIG_HOMES = ['HOME', 'XDG_CONFIG_HOME'];
 // The forge CLI's global options that take the next word, skipped before its subcommand.
@@ -73,7 +79,8 @@ const FORGE_VALUES = new Set(['-R', '--repo', '--hostname', '-h']);
 // Why the call in `input` may not run because a project run's issue session, which `mark` holds (unattended-mark.mjs issueHeld), asks the
 // forge for what it never asks, or null: { match, reason }. `issue()` gives the session's { key, branch }
 // (project-run-guard.mjs ownIssue), or null when it cannot be told, which refuses every push; `roots()`, the folders a
-// push may run in, its own clone's and worktree's real, case-folded paths. `fold(path)` gives a path as roots holds them.
+// push may run in, its own clone's and worktree's, each { root, common }, the real, case-folded paths of its top folder
+// and its git common folder. `fold(path)` gives a path as roots holds them.
 export function issueForgeDenial(input, { names: { human } }, { mark = null, issue = () => null, roots = () => [], fold = (each) => each, cwd = process.cwd() } = {}) {
   if (!issueHeld(mark)) return null;
   const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}, and a project run's issue session never does that: only ${human} does`, human, 'to make that change, or record the issue parked with the decision it needs') });
@@ -85,13 +92,29 @@ export function issueForgeDenial(input, { names: { human } }, { mark = null, iss
   if (command === null || !/push|send-pack|gh|git|release|workflow|api|secret|variable|alias|repo|run|key|cache/iu.test(command)) return null;
   const entries = [...walkCommands(command, cwd)];
   const moved = entries.some(({ invocation }) => changesGitTarget(invocation) || CONFIG_HOMES.some((name) => changesVariable(invocation, name)));
+  const beside = entries.find((entry) => !besidePush(entry)) ?? null;
   for (const entry of entries) {
     checkDeadline();
-    const found = entryProblem(entry, { moved, issue, roots, fold });
+    const found = entryProblem(entry, { moved, issue, roots, fold, beside });
     if (found) return deny(found.match, found.why);
   }
   return null;
 }
+
+// Whether one walked command (shell-lex walkCommands) may run in the call of the exact push: a git push, whose own words
+// pushProblem holds, a read of BESIDE_GIT, `git branch --show-current`, or a program of BESIDE_PROGRAMS, none built at run
+// time or feeding a shell the walk could not read.
+function besidePush({ invocation, unread }) {
+  if (unread !== undefined || invocation.dynamic) return false;
+  if (invocation.program !== 'git') return BESIDE_PROGRAMS.has(invocation.program);
+  const git = gitCall(invocation.args ?? []);
+  if (!git || git.built || !plainGlobals(git.globals) || git.rest.some((token) => token.dynamic)) return false;
+  if (git.subcommand === 'branch') return git.rest.length === 1 && git.rest[0].text === '--show-current';
+  return git.subcommand === 'push' || BESIDE_GIT.has(git.subcommand);
+}
+
+// The words of a walked command, for a refusal.
+const spelled = ({ invocation }) => [invocation.program ?? '', ...(invocation.args ?? []).map((token) => token.text)].join(' ').slice(0, 80);
 
 // What one walked command (shell-lex walkCommands) asks that the session never asks: { match, why }, or null.
 function entryProblem(entry, holds) {
@@ -142,13 +165,13 @@ function gitCall(args) {
 }
 
 // What a git call asks that the session never asks (entryProblem).
-function gitProblem(entry, { moved, issue, roots, fold }) {
+function gitProblem(entry, { moved, issue, roots, fold, beside }) {
   const git = gitCall(entry.invocation.args ?? []);
   if (!git) return null;
   if (git.built) return { match: 'issue session git command built at run time', why: 'it runs git with a subcommand or an option built at run time, which may push any ref' };
   if (OTHER_PUSHES.has(git.subcommand)) return { match: 'issue session push', why: `it pushes with \`git ${git.subcommand}\`, which may push any ref to any repository` };
   if (git.subcommand === 'push') {
-    const why = pushProblem(git, { moved, issue, folder: entry.folder, roots, fold });
+    const why = pushProblem(git, { moved, issue, folder: entry.folder, roots, fold, beside });
     return why ? { match: 'issue session push', why } : null;
   }
   if (git.subcommand === 'lfs') {
@@ -163,9 +186,10 @@ function gitProblem(entry, { moved, issue, roots, fold }) {
 }
 
 // Why a `git push` (gitCall's `git`) is not the session's own exact push, or null: `git push origin
-// HEAD:refs/heads/<branch>`, with `+` or a lease that names only that branch, run in one of its roots. What the words
-// alone refuse is read first: the branch (`issue()`) and the roots are read only for a push shaped like its own.
-function pushProblem(git, { moved, issue, folder, roots, fold }) {
+// HEAD:refs/heads/<branch>`, with `+` or a lease that names only that branch, run in a call of its own (`beside`, the
+// first command of the call that may not share it, or null) in one of its roots. What the words alone refuse is read
+// first: the branch (`issue()`) and the roots are read only for a push shaped like its own, and git only past them all.
+function pushProblem(git, { moved, issue, folder, roots, fold, beside }) {
   if (moved || !plainGlobals(git.globals)) return 'it pushes with a git option or variable that changes the repository or the config git reads, which may point the push anywhere';
   if (git.rest.some((token) => token.dynamic)) return 'it pushes with a word built at run time, which may name any ref or remote';
   const operands = [];
@@ -183,34 +207,17 @@ function pushProblem(git, { moved, issue, folder, roots, fold }) {
   }
   const shaped = operands.length === 2 && operands[0] === 'origin' && /^\+?HEAD:refs\/heads\/./u.test(operands[1]);
   if (!shaped) return `it pushes \`${operands.join(' ').slice(0, 120) || 'with no remote or refspec'}\`, and the one push it makes is \`git push origin HEAD:refs/heads/<its branch>\``;
-  const branch = issue()?.branch ?? null;
+  const own = issue();
+  const branch = own?.branch ?? null;
   if (branch === null) return 'it pushes, and no running start of its issue names the branch it may push';
   const exact = `HEAD:refs/heads/${branch}`;
   if (operands[1] !== exact && operands[1] !== `+${exact}`) return `it pushes \`${operands.join(' ').slice(0, 120)}\`, and the one push it makes is \`git push origin ${exact}\``;
   const lease = leases.find((each) => each !== branch && each !== `refs/heads/${branch}`);
   if (lease !== undefined) return `it pushes with a lease on ${lease.slice(0, 80)}, not on its own branch ${branch}`;
-  if (typeof folder !== 'string' || !roots().some((root) => isWithin(root, fold(folder)))) return 'it pushes from a folder that is not its own clone or worktree, whose origin may be any repository';
-  return workflowProblem(folder);
-}
-
-// Why the commits a push from `folder` carries change the forge's workflow files (forges/index.mjs
-// forgeWorkflowFolders), or null: the paths HEAD changes from its merge base with origin's default branch (BASE_REFS),
-// so a merge of the default branch brings none of that branch's own changes in. git runs within the guards' budget: a
-// call that fails, or finds no base, refuses the push.
-// SHORTCUT: origin's remote-tracking ref is the session's own copy, which git in its checkout can move; the forge's
-// branch and tag rules and its secrets' environments stand behind it (docs/hooks.md#agent-gates names the residual).
-function workflowProblem(folder) {
-  const pathspecs = forgeWorkflowFolders().map((each) => `:(top,literal)${each}`);
-  for (const base of BASE_REFS) {
-    checkDeadline();
-    const budget = Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : {};
-    const diff = runGit(['diff', '--name-only', '--no-renames', `${base}...HEAD`, '--', ...pathspecs], folder, budget);
-    if (diff.status === null) return 'it pushes, and git could not say in time which files its commits change, so they may change the forge\'s workflow files';
-    if (diff.status !== 0) continue;
-    const changed = diff.stdout.split('\n').filter(Boolean);
-    return changed.length ? `it pushes commits that change ${changed[0].slice(0, 120)}, a workflow file the forge runs with the repository's secrets on that push, before any review; an issue that needs such a change is parked for the Human, and one the default branch made counts once \`git fetch origin\` brings it` : null;
-  }
-  return 'it pushes from a checkout where git names no merge base with origin\'s default branch (refs/remotes/origin/HEAD or origin/main), so its commits may change the forge\'s workflow files; run `git fetch origin` and `git remote set-head origin -a`, then push again';
+  if (beside) return `it pushes in a call that also runs \`${spelled(beside)}\`, which may change the commits the push carries after the guard read them; an issue session pushes in a call of its own: commit first, then run \`git push origin ${exact}\` alone`;
+  const root = typeof folder === 'string' ? roots().find((each) => isWithin(each.root, fold(folder))) : undefined;
+  if (!root) return 'it pushes from a folder that is not its own clone or worktree, whose origin may be any repository';
+  return pushCheckoutProblem(folder, { root, pushUrl: own.pushUrl ?? null, fold });
 }
 
 // What a forge CLI call asks that the session never asks (entryProblem): a refused subcommand, or a raw API write.

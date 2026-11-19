@@ -244,7 +244,9 @@ test('refProtection holds the default branch protected only by a rule the signed
   assert.throws(() => classic(new Error('gh: connection reset')), /connection reset/u, 'any other failure throws');
   // A tag rule names every tag, excluding none, and says what it restricts and who may bypass it.
   const tag = (ruleset) => routed({ ...HELD, 'repos/acme/notes/rulesets/7': { ...HELD['repos/acme/notes/rulesets/7'], ...ruleset } }).forge.refProtection('acme/notes').tags[0];
-  assert.equal(tag({ conditions: { ref_name: { include: ['refs/tags/*'] } } }).all, true);
+  assert.equal(tag({ conditions: { ref_name: { include: ['refs/tags/**/*'] } } }).all, true);
+  // A rule's `*` and `**` stop at a slash, so these let a tag such as release/v1 through.
+  for (const pattern of ['refs/tags/*', 'refs/tags/**', 'refs/tags/v*']) assert.equal(tag({ conditions: { ref_name: { include: [pattern] } } }).all, false, pattern);
   assert.equal(tag({ conditions: { ref_name: { include: ['refs/tags/foo-*'] } } }).all, false, 'a narrow pattern');
   assert.equal(tag({ conditions: { ref_name: { include: ['~ALL'], exclude: ['refs/tags/v*'] } } }).all, false, 'an exclusion');
   assert.deepEqual(tag({ rules: [{ type: 'creation' }], current_user_can_bypass: 'always' }), { ...ALL_HELD, update: false, bypass: 'always' });
@@ -254,7 +256,10 @@ test('refProtection holds the default branch protected only by a rule the signed
 
 test('workflowSecrets counts the repository\'s and its organization\'s Actions secrets, and reads the token\'s workflow scope', () => {
   const headers = (scopes) => `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n${scopes === null ? '' : `X-Oauth-Scopes: ${scopes}\r\n`}\r\n{"login":"octo"}`;
-  const secrets = (more) => routed({ 'repos/acme/notes/actions/secrets': { total_count: 2 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 1 }, user: headers('gist, read:org, repo, workflow'), ...more });
+  const secrets = (more) => routed({
+    'repos/acme/notes/actions/secrets': { total_count: 2 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 1 }, 'repos/acme/notes/environments': [{ total_count: 0, environments: [] }],
+    user: headers('gist, read:org, repo, workflow'), ...more,
+  });
   const { forge, args } = secrets();
   assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 3, workflowPush: true });
   assert.ok(args().some((each) => each.includes('--include') && each.includes('user')), 'the scopes come from the user read\'s headers');
@@ -263,6 +268,30 @@ test('workflowSecrets counts the repository\'s and its organization\'s Actions s
   assert.deepEqual(secrets({ 'repos/acme/notes/actions/organization-secrets': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 2, 'no organization');
   assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
   assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': {} }).forge.workflowSecrets('acme/notes'), /no count of secrets/u);
+});
+
+test('workflowSecrets counts the secrets of an environment any branch may deploy to, and not those of one held to protected branches or reviewers', () => {
+  const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
+  const open = { name: 'prod deploy', deployment_branch_policy: null, protection_rules: [{ type: 'wait_timer', wait_timer: 5 }] };
+  const branches = { name: 'staging', deployment_branch_policy: { protected_branches: true, custom_branch_policies: false }, protection_rules: [{ type: 'branch_policy' }] };
+  const reviewed = { name: 'release', deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', reviewers: [] }] };
+  const read = (environments, more = {}) => routed({
+    'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 }, user: headers,
+    'repos/acme/notes/environments': [{ total_count: environments.length, environments }],
+    'repos/acme/notes/environments/prod%20deploy/secrets': { total_count: 4 }, 'repos/acme/notes/environments/staging/secrets': { total_count: 2 },
+    'repos/acme/notes/environments/release/secrets': { total_count: 3 }, ...more,
+  });
+  // Every secret in an environment no rule holds: the preflight sees them.
+  const { forge, args } = read([open]);
+  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 4, workflowPush: true });
+  assert.ok(args().some((each) => each.includes('repos/acme/notes/environments/prod%20deploy/secrets')), 'the name of the environment is encoded in its route');
+  // Held to protected branches, or to a reviewer: not counted.
+  assert.equal(read([branches, reviewed]).forge.workflowSecrets('acme/notes').secrets, 0);
+  assert.ok(!read([branches, reviewed]).args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
+  assert.equal(read([open, branches]).forge.workflowSecrets('acme/notes').secrets, 4);
+  // A repository GitHub keeps no environments for has none; any other failure throws.
+  assert.equal(read([], { 'repos/acme/notes/environments': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 0);
+  assert.throws(() => read([open], { 'repos/acme/notes/environments/prod%20deploy/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
 });
 
 test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {

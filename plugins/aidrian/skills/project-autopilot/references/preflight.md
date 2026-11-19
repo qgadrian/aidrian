@@ -29,13 +29,14 @@ Each line is `ok <name>`, `blocker <name>: <why and fix>`, `note <name>: <what>`
 | `reviewer`, `reviewer-seen` | `github.reviewer` is set, and the bot reviewed a recent pull request | install the bot and request one review; with no pull request yet, a `note`: the first one proves it, and the merge's trust check holds every merge until then |
 | `ci` | the repository has an active CI workflow | merge one before the run |
 | `branch-protection` | a rule on the default branch asks the signed-in user, whose token an issue's session keeps, for a pull request, administrator or not, and lets that user bypass nothing | a ruleset that asks for a pull request with no bypass for that user, or branch protection that includes administrators; an `ask` when only an administrator can read the protection |
-| `release-tags` | an active tag rule names every tag (`~ALL` or `refs/tags/*`, excluding none), restricts creating and updating one, and that user can never bypass it | such a tag ruleset, with no bypass for that user |
-| `workflow-secrets` | no CI secret of the repository or its organization, or a token that cannot push a workflow file | a token without the `workflow` scope, the secrets in environments limited to protected branches, or the team sets `projectRun.workflowSecretsAccepted` |
+| `release-tags` | an active tag rule names every tag (`~ALL` or `refs/tags/**/*`, excluding none; `refs/tags/*` stops at a slash), restricts creating and updating one, and that user can never bypass it | such a tag ruleset, with no bypass for that user |
+| `workflow-secrets` | no CI secret of the repository, its organization, or an environment with no deployment branch policy and no required reviewer, or a token that cannot push a workflow file | a token without the `workflow` scope, the secrets in environments limited to protected branches or held for a reviewer, or the team sets `projectRun.workflowSecretsAccepted` |
 
 Answer each `ask` line with the tool it names, or the forge's and tracker's own tools; a `no` is a blocker.
 A `note mcp-servers` line names servers the run rule maps to no tracker: each must be no tracker connection.
 A `note workflows` line says the forge runs a pushed branch's workflow files with the repository's secrets: keep release
-and deploy secrets in environments limited to protected branches and tags. A `note triggers` line names other services,
+and deploy secrets in environments limited to protected branches and tags or held for a reviewer, and trust a cloud role
+through OIDC only for a protected branch or such an environment, never `repo:<owner>/<name>:*`. A `note triggers` line names other services,
 such as preview deploys and ChatOps bots, that act on an issue's push or comment.
 `ask labels` names the tracker's label and status reads: the decision label, and `projectRun.blockedStatus` when set,
 must exist in the team.

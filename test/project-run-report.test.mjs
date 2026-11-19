@@ -547,7 +547,10 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   ]) assert.ok(blocker(lines({ ...GUARDED, tags }), 'release-tags'), JSON.stringify(tags));
   const held = lines(GUARDED);
   assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags'), blocker(held, 'workflow-secrets')], [null, null, null]);
-  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags; the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
+  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags, or held for a reviewer;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
+  // A cloud role trusted for any ref of the repository is named: any branch's workflow can assume it.
+  assert.match(held.find((line) => line.startsWith('note workflows:')), /OIDC federation for any ref of the repository \(a subject such as repo:<owner>\/<name>:\*\) can be assumed from any branch/u);
+  assert.match(blocker(lines({ ...GUARDED, tags: [{ ...GUARDED.tags[0], all: false }] }), 'release-tags'), /~ALL or refs\/tags\/\*\*\/\*, excluding none; refs\/tags\/\* stops at a slash/u);
   assert.match(held.find((line) => line.startsWith('note triggers:')), /preview deploys and ChatOps bots/u);
   const failed = lines(() => {
     throw new Error('gh: Not Found (HTTP 404)');

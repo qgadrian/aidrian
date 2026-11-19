@@ -31,7 +31,8 @@ Every brief to an agent that pushes says:
 
 - Push only after the verification passed, chained with `&&`: `<test command> && git push`.
   Never `;`, a new line, or a script that pushes whatever the run returned.
-  In a project run's issue session, the push is the one its first message names, `git push origin HEAD:refs/heads/<branch>`.
+  In a project run's issue session, the push is the one its first message names, `git push origin HEAD:refs/heads/<branch>`,
+  in a call of its own once the verification and the commit passed: the hook refuses it beside a test, commit, or merge.
 - Write logs and other scratch output to `<state>/tmp/<issue or slice>/`, a folder named for this agent's issue or slice,
   where `<state>` is the folder `aidrian state` prints. In a project run's issue session, the name starts with the issue key, as `<key>-<slice>`. Never a shared name, such as `scratchpad/test.log`:
   another agent may overwrite it. Report numbers only from a log this agent wrote in this run.

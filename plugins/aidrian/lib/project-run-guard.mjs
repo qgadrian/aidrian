@@ -140,8 +140,9 @@ export function ownAttemptFolder(project, config, mark, { base, home } = {}) {
   return null;
 }
 
-// The issue a session works, for the session whose unattended mark `mark` names the run and issue: { key, branch }, the
-// branch the run's snapshot names for that issue, while the issue runs and its latest start row was written ahead or
+// The issue a session works, for the session whose unattended mark `mark` names the run and issue: { key, branch,
+// pushUrl }, the branch the run's snapshot names for that issue and the URL its latest start pinned its clone's origin
+// to push to (null when the start recorded none), while the issue runs and its latest start row was written ahead or
 // started, in a state folder of `project` (as ownAttemptFolder reads it), or null. The agent gate hook lets that session
 // push only that branch (lib/issue-forge-guard.mjs), and write by hand only the files named for its issue or branch in
 // the plans, tmp, and dispatch folders (lib/unattended-write.mjs).
@@ -153,7 +154,8 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
     const start = startsOf(found, mark.issue).at(-1);
     if (!start || !['started', 'uncertain'].includes(start.outcome)) continue;
     const issue = found.snapshot.issues.find((each) => each.key === mark.issue);
-    if (typeof issue?.branch === 'string' && issue.branch !== '') return { key: issue.key, branch: issue.branch };
+    const pushUrl = typeof start.pushUrl === 'string' && start.pushUrl !== '' ? start.pushUrl : null;
+    if (typeof issue?.branch === 'string' && issue.branch !== '') return { key: issue.key, branch: issue.branch, pushUrl };
   }
   return null;
 }

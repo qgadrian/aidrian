@@ -215,11 +215,28 @@ test('a subagent and an unattended session may not move a remote-tracking ref; a
     'git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/evil',
     'git symbolic-ref -d refs/remotes/origin/HEAD',
     'git remote set-head origin evil',
+    // The spellings git expands to a remote-tracking ref, and a reason that is no ref.
+    'git symbolic-ref -m x refs/remotes/origin/HEAD refs/heads/main',
+    'git symbolic-ref -qm x refs/remotes/origin/HEAD refs/heads/main',
+    'git fetch . +HEAD:remotes/origin/main',
+    'git fetch . +HEAD:refs/REMOTES/origin/main',
+    'git pull . +HEAD:refs/remotes/origin/main',
+    'git fetch . refs/heads/main --refmap=+refs/heads/main:refs/remotes/origin/main',
+    'git fetch . refs/heads/main --refmap +refs/heads/main:remotes/origin/main',
+    'git push . HEAD:origin/main',
+    'git push . HEAD:remotes/origin/main',
+    'git remote set-head origin -a evil',
   ]) {
     assert.match(ask(command, unattended)?.reason ?? '', /or a remote-tracking ref/u, command);
     assert.equal(ask(command, attended), null, `${command} (attended)`);
   }
-  for (const command of ['git symbolic-ref refs/remotes/origin/HEAD', 'git update-ref refs/heads/feat/x HEAD', 'git fetch origin']) assert.equal(ask(command, unattended), null, command);
+  for (const command of [
+    'git symbolic-ref refs/remotes/origin/HEAD', 'git symbolic-ref -q --short refs/remotes/origin/HEAD', 'git update-ref refs/heads/feat/x HEAD', 'git fetch origin',
+    'git fetch origin main', 'git pull origin main', 'git pull --rebase origin main', 'git fetch . +HEAD:origin/main', 'git fetch origin main:refs/heads/main',
+    'git push origin HEAD:refs/heads/feat/x', 'git push . HEAD:refs/heads/feat/x', 'git fetch --refmap= origin main',
+    // origin/HEAD set again from the forge's own default branch, as the issue session's push refusal advises.
+    'git remote set-head origin -a', 'git remote set-head origin --auto',
+  ]) assert.equal(ask(command, unattended), null, command);
 });
 
 test('the hook scripts hold the new guards: a subagent\'s project start, an unattended write into the runs, and an issue session\'s stop', (t) => {

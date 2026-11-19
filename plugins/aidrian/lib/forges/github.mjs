@@ -537,8 +537,26 @@ function workflowIds(rows, listRuns) {
   return rows;
 }
 
-// The tag rule patterns that name every tag: GitHub's own `~ALL`, and every name under refs/tags/.
-const ALL_TAGS = new Set(['~ALL', 'refs/tags/*', 'refs/tags/**']);
+// The tag rule patterns that name every tag: GitHub's own `~ALL`, and `refs/tags/**/*`. A rule's `*` and `**` stop at a
+// slash, as fnmatch's do, so `refs/tags/*` and `refs/tags/**` let a tag such as `release/v1` through.
+const ALL_TAGS = new Set(['~ALL', 'refs/tags/**/*']);
+
+// The names of the environments of `repo` a workflow on any branch may deploy to, and so read the secrets of: those with
+// no deployment branch policy and no required reviewers. A repository GitHub keeps no environments for has none.
+// SHORTCUT: an environment limited by custom branch patterns counts as held, though a pattern may match an issue's branch;
+// listing each pattern would replace this when a team keeps secrets so.
+function openEnvironments(list, repo, host) {
+  let pages;
+  try {
+    pages = list(`repos/${repo}/environments`, { host });
+  } catch (error) {
+    if (notFound(error)) return [];
+    throw error;
+  }
+  const environments = pages.flatMap((page) => (Array.isArray(page?.environments) ? page.environments : []));
+  const reviewed = (each) => (Array.isArray(each?.protection_rules) ? each.protection_rules : []).some((rule) => rule?.type === 'required_reviewers');
+  return environments.filter((each) => typeof each?.name === 'string' && !each.deployment_branch_policy && !reviewed(each)).map((each) => each.name);
+}
 
 // One tag ruleset, as GitHub answers it, in the preflight's shape: { name, all, creation, update, bypass }: whether it
 // names every tag and excludes none, whether it restricts creating and updating a matching tag, and whether the
@@ -782,8 +800,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       return { branch, protected: classic.held, why, tags };
     },
     // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
-    // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository and those its organization
-    // shares with it (none for a repository with no organization); `workflowPush` is whether the signed-in token's
+    // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository, those its organization
+    // shares with it (none for a repository with no organization), and those of each environment any branch may deploy
+    // to (openEnvironments); `workflowPush` is whether the signed-in token's
     // scopes include `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that
     // names no scopes, as a fine-grained one.
     workflowSecrets: (repo, { host } = {}) => {
@@ -798,7 +817,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       } catch (error) {
         if (!notFound(error)) throw error;
       }
-      const secrets = count(`repos/${repo}/actions/secrets`) + shared;
+      const open = openEnvironments(list, repo, host).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
+      const secrets = count(`repos/${repo}/actions/secrets`) + shared + open;
       const answer = gh(['api', '--include', ...(host ? ['--hostname', host] : []), 'user']);
       const line = String(answer).split(/\r?\n/u).find((each) => /^x-oauth-scopes:/iu.test(each));
       const scopes = line === undefined ? null : line.slice(line.indexOf(':') + 1).split(',').map((each) => each.trim());

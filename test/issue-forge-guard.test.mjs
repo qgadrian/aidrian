@@ -9,7 +9,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -84,7 +84,7 @@ function issueFixture(t, options = {}) {
   mkdirSync(temp);
   const at = new Date().toISOString();
   appendToRun(fx.state, 'launch', () => ({ rows: [
-    { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name: 'launch · ENG-1 · 1', cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
+    { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name: 'launch · ENG-1 · 1', cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), ...(options.pushUrl === undefined ? { pushUrl: fx.dir } : options.pushUrl), at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
     { event: 'issue', key: 'ENG-1', state: 'running', at },
   ] }));
   assert.ok(markUnattended(SESSION, { root: fx.dir, cwd: work, env: fx.env, tags: { project: 'launch', issue: 'ENG-1' } }));
@@ -107,7 +107,7 @@ const write = (file) => ({ tool_name: 'Write', tool_input: { file_path: file, co
 
 test('an issue session pushes only its own branch to origin, and asks the forge for no release, workflow, or write outside its pull request', (t) => {
   const fx = issueFixture(t);
-  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH });
+  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir });
   for (const command of REFUSED) {
     const denial = fx.ask(bash(command));
     assert.match(denial?.reason ?? '', /a project run's issue session never does that: only the Human does/u, command);
@@ -189,7 +189,82 @@ test('an issue session\'s exact push is refused when its commits change a workfl
   assert.equal(ran.status, 0, ran.stderr);
   git(fx.work, 'update-ref', '-d', 'refs/remotes/origin/HEAD');
   git(fx.work, 'update-ref', '-d', 'refs/remotes/origin/main');
-  assert.match(push(), /git names no merge base with origin's default branch/u, 'no base to compare with');
+  const lost = push();
+  assert.match(lost, /git names no merge base with origin's default branch/u, 'no base to compare with');
+  // The advice runs: the remote-change rule lets an issue session run both commands, and the fetch alone repairs the base.
+  for (const advised of lost.match(/`git (?:fetch|remote)[^`]*`/gu).map((each) => each.slice(1, -1))) assert.equal(fx.hook(bash(advised)).status, 0, advised);
+  git(fx.work, 'fetch', '-q', 'origin');
+  assert.equal(push(), null, 'git fetch origin gives the push its base again');
+});
+
+test('an issue session pushes in a call of its own, so no command beside it changes the commits it carries after the guard read them', (t) => {
+  const fx = issueFixture(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const patch = path.join(fx.root, 'scratch', 'leak.patch');
+  writeFileSync(patch, ['diff --git a/.github/workflows/leak.yml b/.github/workflows/leak.yml', 'new file mode 100644', '--- /dev/null', '+++ b/.github/workflows/leak.yml', '@@ -0,0 +1 @@', '+on: push', ''].join('\n'));
+  git(fx.work, 'branch', '-q', 'side');
+  for (const command of [
+    `git apply --cached ${patch} && git commit -m x && ${EXACT}`, `git commit -qam x && ${EXACT}`, `git merge side && ${EXACT}`, `git reset --hard side; ${EXACT}`,
+    `${EXACT} && git commit -m later`, `git fetch origin && ${EXACT}`, `git branch -f side && ${EXACT}`, `npm run release; ${EXACT}`, `(git commit -m x) && ${EXACT}`,
+    `bash -c "git commit -m x" && ${EXACT}`, `$TOOL && ${EXACT}`, `git -c core.hooksPath=x status && ${EXACT}`,
+  ]) {
+    assert.match(fx.ask(bash(command))?.reason ?? '', /an issue session pushes in a call of its own: commit first, then run `git push origin HEAD:refs\/heads\/feat\/eng-1-export` alone/u, command);
+  }
+  // Reads and text filters may share its call.
+  for (const command of [EXACT, `cd ${fx.work} && ${EXACT}`, `git status --short && git log --oneline -1 && ${EXACT} 2>&1 | tail -5`, `git rev-parse HEAD; git branch --show-current; ${EXACT}; echo done`, `${EXACT} | grep -v hint | head -3`]) {
+    assert.equal(fx.ask(bash(command)), null, command);
+  }
+  const hooked = fx.hook(bash(`git commit --allow-empty -qm x && ${EXACT}`));
+  assert.equal(hooked.status, 2, hooked.stderr);
+  assert.match(hooked.stderr, /in a call of its own/u);
+});
+
+test('an issue session\'s exact push is refused while its checkout holds an uncommitted workflow change, or a .github that is no folder', (t) => {
+  const fx = issueFixture(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const push = () => fx.ask(bash(EXACT))?.reason ?? null;
+  assert.equal(push(), null, 'a clean checkout');
+  // An untracked file, as a patch or an archive leaves it, which a later commit would carry.
+  mkdirSync(path.join(fx.work, '.github', 'workflows'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'workflows', 'leak.yml'), 'on: push\n');
+  assert.match(push(), /holds an uncommitted change to \.github\/workflows\/leak\.yml, a workflow file.*`git clean -f -- \.github\/workflows\/leak\.yml`/u, 'untracked');
+  git(fx.work, 'add', '--', '.github/workflows/leak.yml');
+  assert.match(push(), /holds an uncommitted change to \.github\/workflows\/leak\.yml.*`git restore --staged --worktree -- \.github\/workflows\/leak\.yml`/u, 'staged');
+  git(fx.work, 'rm', '-q', '--cached', '--', '.github/workflows/leak.yml');
+  git(fx.work, 'clean', '-qf', '--', '.github');
+  assert.equal(push(), null, 'taken out again');
+  // A .github that becomes a link leads the forge to files no workflow diff names.
+  mkdirSync(path.join(fx.work, 'ci', 'workflows'), { recursive: true });
+  writeFileSync(path.join(fx.work, 'ci', 'workflows', 'x.yml'), 'on: push\n');
+  symlinkSync('ci', path.join(fx.work, '.github'));
+  git(fx.work, 'add', '--', 'ci', '.github');
+  git(fx.work, 'commit', '-q', '-m', 'chore: move ci');
+  assert.match(push(), /it pushes commits that change \.github, a workflow file/u, 'a link in place of .github');
+});
+
+test('an issue session pushes only from its own clone\'s repository, to the URL its start pinned, never from a clone nested in it', (t) => {
+  const fx = issueFixture(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  // Another repository, cloned inside the attempt's clone, whose origin is anywhere.
+  const other = path.join(fx.root, 'other');
+  mkdirSync(other);
+  git(other, 'init', '-q', '-b', 'main');
+  git(other, 'commit', '-q', '--allow-empty', '-m', 'other');
+  git(fx.work, 'clone', '-q', other, 'sub');
+  for (const command of [`cd sub && ${EXACT}`, `git -C sub push origin HEAD:refs/heads/${BRANCH}`]) {
+    assert.match(fx.ask(bash(command))?.reason ?? '', /a folder inside its clone or worktree that is another repository/u, command);
+  }
+  const hooked = fx.hook(bash(`cd sub && ${EXACT}`));
+  assert.equal(hooked.status, 2, hooked.stderr);
+  assert.equal(fx.ask(bash(EXACT)), null, 'the clone itself');
+  // The clone's origin made to push elsewhere, past the guards, as a config write by a program would.
+  git(fx.work, 'remote', 'set-url', '--push', 'origin', other);
+  assert.match(fx.ask(bash(EXACT))?.reason ?? '', new RegExp(`it pushes to ${other.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, and origin pushes only to .*, the URL its issue's start pinned`, 'u'));
+});
+
+test('an issue session whose start pinned no push URL pushes nothing', (t) => {
+  const fx = issueFixture(t, { pushUrl: {} });
+  assert.match(fx.ask(bash(EXACT))?.reason ?? '', /its issue's start recorded no URL its clone pushes to/u);
 });
 
 test('an issue session writes no workflow file, no handoff brief or snapshot, no quorum ledger, and only its own issue\'s plans, scratch files, and handoffs', (t) => {

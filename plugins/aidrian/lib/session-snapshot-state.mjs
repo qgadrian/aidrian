@@ -38,7 +38,7 @@ export function snapshotContext(project, { session, transcript, validId }, error
   const loose = state !== null && !stateHeld(state);
   const folder = validId && !inside ? sessionFolder(state, session, { checkouts }) : null;
   if (session !== null && folder === null) {
-    const failed = [['prs', !validId || inside], ['worktrees', true], ['handoff', !validId || transcript !== null]];
+    const failed = [['prs', !validId || inside], ['worktrees', true], ['handoff', !validId || transcript !== null], ['links', true]];
     for (const [name, failing] of failed) if (failing) errors.add(name);
   }
   return { project, config, state, checkouts, inside, loose, folder };

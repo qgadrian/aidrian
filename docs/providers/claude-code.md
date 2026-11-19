@@ -158,6 +158,15 @@ This rests on the [tools reference](https://code.claude.com/docs/en/tools-refere
 [hooks reference](https://code.claude.com/docs/en/hooks#powershell), which give its command as `tool_input.command`, the
 Bash tool's field, and on test fixtures of that shape. It has not run live: no session here had the PowerShell tool on.
 
+## Session ids
+
+`CLAUDE_CODE_SESSION_ID` in the Bash tool is the session the host gives its hooks. Seen live on 2026-11-18, in a
+subagent of a main session: its Bash tool's `CLAUDE_CODE_SESSION_ID` and the `session_id` its hooks recorded in the
+dispatch log were both the main session's id, never another one; the live runs under
+[Handoff continuation](#handoff-continuation) show it follows a clear and is a background session's own. The
+snapshot's [worktree links](adding-a-host.md#session-links) are still written by the PostToolUse Bash hook, under the
+payload's `session_id`, since Codex's shell variable is not its hooks' id in a subagent, and one writer serves both hosts.
+
 ## Handoff continuation
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human

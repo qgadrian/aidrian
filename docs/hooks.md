@@ -950,6 +950,39 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `follow-up.json` stays allowed. That is an accepted limit
   of a guard for agents that cooperate; the store still never delivers a marker of the wrong shape, time, owner, or host process.
   Both blocks are [recorded](#recorded-blocks) as `config-guard`.
+- A subagent, and a main session the background route started, may not write in the session folders,
+  `<state>/sessions/`, read as the continuation store is: a target in them, a folder that holds them and no checkout,
+  a glob that may reach them by its path or through a link on disk, and a change of mode or owner of them or of a
+  folder that holds them. The folders are those of the call's project; those of the state folders the session started
+  with, which the main session's `SessionStart` hook records in `<state root>/session-origins/<session id>.json`
+  (`lib/session-origins.mjs`), whether or not the hooks have written there yet. It records a state folder only when the
+  session folder writer would keep folders there by its own repository's checkouts, writes the record as the
+  unattended marks are written (a folder the user's alone, 0700, and a random temporary file created only where nothing
+  is, then a rename), reads and writes it as one step under its reservations (`exclusive` in `lib/session-folder.mjs`),
+  and writes it again on a resume, so a resumed session's record is never pruned as stale; the guard reads it once a
+  call as the store reads its own files: no-follow, non-blocking, a regular file the user owns, mode 0600, within
+  16 KB, so a link, a named pipe, or a record others may read gives none. Also those of every project's default state
+  folder under the state root (`<root>/projects/<id>/sessions`) that are there, listed one entry at a time with the
+  guards' deadline checked at each, their real paths kept for both passes of the call; the writer's checkout list it
+  reads stops its git at what is left of the deadline. And those of the project the session's gate snapshot or unattended mark names, each
+  project folder by itself, so a linked checkout whose config moves `state.dir` is its own. The snapshot's project is
+  opened, which runs git, only for a call that may write, a shell call or one with a write target, and never when it
+  is the call's own project, so a subagent's Read runs one git, to find its project. So a subagent that works in
+  another project, another checkout, or a folder with no project still meets the session folders of the project its
+  session started in, gated or not. No subagent or unattended session may write the origins folder, as for the marks.
+  A sessions folder that a checkout holds is no session folder, by the checkouts the session folder's writer keeps it
+  out of (`projectCheckouts`: the project's, the repository root, and every worktree), so a `state.dir` of `..` in a
+  checkout named `sessions`, of `.` in a project below the repository root, or in a sibling worktree leaves those
+  checkouts writable. A target in a folder no path gives, interpreter code such as
+  `python3 -c "open('…/prs.jsonl', 'a')"`, and a word of a command in a shell the lexer cannot read count when they
+  name `sessions/<a part>/<a session file>`, with `/` or `\` between the parts, one or more, as a native Windows path in
+  a string spells it, or a session file but `usage.json` by its name alone, read as a path part, whatever quote stands
+  around it, so `cd "$X" && echo {} >> prs.jsonl` is refused; the word `sessions` alone never counts, so a project's
+  own folder of that name stays writable, and nor does `usage.json` alone, a name other tools use.
+  The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the
+  [ledger](#session-ledger) still records a subagent's push. An attended main session is not held. The guard shares
+  the store guard's reach check (`reachesStateFolder` in `lib/handoff-guard.mjs`) and its limits, and runs where it
+  runs, first without its link walk and again with it.
 - A Claude Code Monitor call that runs a shell command reads as a Bash call, its `command` included, for every rule
   above and the gates ([provider page](providers/claude-code.md#shell-commands-of-the-monitor-tool)).
 - A command in a shell the shared lexer cannot read, Claude Code's PowerShell tool today, is never read as Bash:
@@ -1277,11 +1310,64 @@ is not a folder on disk, and a row whose fields, all but `at` and `agentId`, the
 branch holds, when that row was written within the last 60 s (`REPEAT_WINDOW_MS`), so a call made again at once adds
 nothing. Any other repeat is written with its new time, so a touch, a push, then a touch again of one branch writes all
 three and the branch resolves as its last call did, and a
-pull request acted on again shows first again and stays among the 25 the snapshot shows while newer ones come. The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
-last 256 KB, so it reads every row, and drops a first line the cut fell inside if two writes passed the cap together): a write that would pass it, or that finds the ledger past it, as two writes together can leave it, rewrites the
-ledger, through a temporary file and a rename under the same checks, with the newest rows of that tail that fit in half
-of it and then the new ones, so the newest pull requests always show. The `SessionEnd` hook and
-worktree cleanup leave it alone, so a resumed session keeps its pull requests.
+pull request acted on again shows first again and stays among the 25 the snapshot shows while newer ones come.
+The ledger stays within 256 KB (`LEDGER_MAX_BYTES` in `lib/session-prs.mjs`, the most the snapshot reads: it reads the
+last 256 KB, so it reads every row, and drops a first line the cut fell inside if an older writer left the ledger past
+the cap): a write that would pass it, or that finds the ledger past it, rewrites the ledger, through a temporary file
+and a rename under the same checks, with the newest of the new rows that fit in the cap, after the newest rows of that
+tail that fit in what is left and in half of it at most, so the file never passes its cap and the newest pull requests
+always show. Each write, append or rewrite, is one step no other writer of the file runs beside: it holds the file's
+reservations (`<file>.<window>.lock`, `reserveSessionFile`) for the 5-second window that holds its start and the next
+one, and a second writer waits up to a second for them, so two hooks of one session that write together within that
+second lose no row. These are the accepted limits, for display data: a writer that waits past its second, as while a
+killed writer's reservations hold their two windows, writes nothing and its row is lost, and the hook does not try
+again; and a writer paused for more than both windows, past the hook's own timeout, may rename a compaction over a
+later append. A write after a line cut short, as a killed writer leaves it, starts on a new line, so the new row is
+read and only the cut one is dropped. The `SessionEnd` hook and worktree
+cleanup leave it alone, so a resumed session keeps its pull requests.
+
+The snapshot also reads the ledgers of the sessions a handoff came from, through the `parent` each chain floor names
+([Across a handoff](handoff.md#across-a-handoff)): at most 5 of them, the last 64 KB of each, from a folder it finds by
+the full id and never creates. Of those it keeps only `created` and `pushed` rows on a repository the project's remotes
+name, written at or before the hop, and it reads no further ledger once it holds 25 refs. A row more than 60 seconds
+ahead of the snapshot's clock, of any ledger, is dropped when read.
+
+The same hook records the worktree a session creates, in a second file, `<state>/sessions/<session id>/links.jsonl`:
+one row `{ at, kind: "worktree", host, path, branch, cwd }` for each worktree an `aidrian worktree new <branch>` of a
+shell call created. It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the
+shell fills in, a branch or an option it does not know that starts with `-`, or `--plan`, records nothing. A row also
+needs the command's own result in the call's output: the JSON line `aidrian worktree new` prints with
+`status: "created"`, that branch, and an absolute `worktree_path`, read from the output's last 64 KB. The command must
+be the line's one printing command, read as the ledger reads a `gh pr create` (`printsAlone` in
+`lib/session-prs.mjs`): only bare assignments and a `cd` the walk leaves out may come before it, and nothing after it,
+so the output is its result alone. So a call that was skipped, as after `false &&`, refused, as for a branch already
+checked out, or printed nothing records nothing, and neither does one beside another command, such as
+`echo '<saved result>'; aidrian worktree new <branch>` or `aidrian worktree new <branch> && npm test`, or a line with
+two of them. Within that rule an existing worktree is not recorded as one the session made, but the output is what the
+host hands the hook, which the model's own shell call shapes: a call made to print a forged result, such as a wrapper
+named `aidrian`, can still claim one. That is accepted for display data. Each command is looked up in the folder it ran
+in by the ledger's rule (`knownFolders`), which holds whether a host's payload names the folder the line started in or
+the one it ended in: the folder an absolute leading `cd` names, else the payload's folder only when nothing on the line
+changes directory; after a relative `cd`, a `cd` the walk cannot follow, or in a folder with no project, it records
+nothing. It is filed in that folder's project's session folder. `cwd` is the worktree's path as `git worktree list`
+prints it in that project's main checkout, read after the call, so the snapshot compares two spellings by git; it must
+be the folder the result names, through any symlink, and a branch git lists no worktree for, lists as prunable, or
+holds in the main checkout records nothing. `host` and `path` are origin's repository read from the raw
+`remote.origin.url` in the folder the command ran in, so an origin only that checkout's own config sets
+(`config.worktree`, `includeIf.onbranch`) is the one recorded, as the snapshot there reads its remotes; a
+`url.<base>.insteadOf` rewrite applies on neither side; both null with no origin. Every step of the links, finding the
+project, its main checkout, origin, the list, and the session folder, shares a 1-second budget, each git read stopped
+by SIGKILL at what is left, and runs after the ledger's row is written and apart from it, so a git that stalls neither
+passes the host's 5-second hook timeout nor loses the call's ledger row. Every field is checked as the reader checks it, and the row is filed under
+the payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
+output and exit code are its own ([Session links](providers/adding-a-host.md#session-links) says why the hook and not
+the command is the writer). `links.jsonl` keeps to 64 KB under the ledger's rules, through the same append
+(`appendRows` in `lib/session-rows.mjs`), but with no key: every row is appended, and the reader settles repeats. Its
+read-time key is `host/path:branch`, or the branch alone with no origin, and for each key the row with the newest `at`
+decides, the later line on a tie. That differs from the pull request ledger on purpose: the ledger leaves out a repeat
+within a minute of the row it repeats, so that row keeps its `at`, while a repeat after the minute is written with its
+new `at`, and the snapshot orders its refs, and the ticket its rows, by the latest; `links.jsonl` keeps every row, so
+its newest `at` is the real latest, which a worktree that went needs.
 
 A `created` or `touched` row records what the command line names, not what each command did. Claude Code runs
 `PostToolUse` only for a Bash call that succeeded, but one command's status inside a line is not seen, so

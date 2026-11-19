@@ -21,7 +21,7 @@ const LIB = path.join(ROOT, 'plugins/aidrian/lib');
 const FIXTURES = path.join(ROOT, 'test/fixtures/transcripts');
 const POSIX = process.platform !== 'win32';
 const ID = 'snap-1';
-const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket'];
+const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket', 'links'];
 // What a terminal must never receive: C0 but the line feed, DEL, and C1.
 const CLEAN = /^[^\u0000-\u0009\u000b-\u001f\u007f-\u009f]*\n?$/u;
 
@@ -262,7 +262,7 @@ test('a state folder inside the checkout gives no session folder, and no handoff
   assert.equal(status, 0);
   assert.ok(ms < 10_000, `${ms} ms`);
   assert.deepEqual([json.handoff, json.lessons, json.audits], [null, null, null]);
-  assert.deepEqual(json.errors, ['handoff', 'prs', 'lessons', 'worktrees', 'audits']);
+  assert.deepEqual(json.errors, ['handoff', 'prs', 'lessons', 'worktrees', 'audits', 'links']);
   assert.equal(existsSync(path.join(env.dir, '.state', 'sessions')), false, 'no cache is written inside the checkout');
 });
 
@@ -550,7 +550,7 @@ test('the ticket comes from the prefixes the caller passes, else from a numbered
     const { json, status } = numbered.run(['--ticket-prefixes', prefixes]);
     assert.equal(status, 0);
     assert.equal(json.ticket, null, prefixes);
-    assert.deepEqual(json.errors, ['worktrees', 'ticket'].filter((name) => json.errors.includes(name)));
+    assert.deepEqual(json.errors, ['worktrees', 'ticket', 'links'].filter((name) => json.errors.includes(name)));
     assert.ok(json.errors.includes('ticket'), prefixes);
   }
   assert.deepEqual(numbered.run(['--ticket-prefixes', Array.from({ length: 32 }, (_, i) => `P${i}`).join('|')]).json.ticket, { key: '#42', source: 'branch' });
@@ -758,7 +758,7 @@ test('a state folder in any checkout of the repository gets no session folder: a
     const { json, status } = env.run(['--session', ID, '--transcript', transcript], { cwd });
     assert.equal(status, 0);
     assert.deepEqual([json.handoff, json.lessons, json.audits], [null, null, null]);
-    assert.deepEqual(json.errors, ['handoff', 'prs', 'lessons', 'worktrees', 'audits']);
+    assert.deepEqual(json.errors, ['handoff', 'prs', 'lessons', 'worktrees', 'audits', 'links']);
   };
   // A project in a subfolder: a relative state.dir resolves against the repository root, inside the checkout.
   const sub = path.join(env.dir, 'sub');
@@ -852,7 +852,7 @@ test('a state folder every user may write gives no lessons or audits section, as
   assert.deepEqual(json.errors, ['lessons', 'audits']);
   const session = env.run(['--session', ID]).json;
   assert.equal(session.prs, null, 'nor a pull request ledger read');
-  assert.deepEqual(session.errors, ['prs', 'lessons', 'worktrees', 'audits']);
+  assert.deepEqual(session.errors, ['prs', 'lessons', 'worktrees', 'audits', 'links']);
   assert.equal(existsSync(path.join(state, 'sessions', ID)), false);
 });
 
@@ -902,7 +902,7 @@ const prNode = (number, fields = {}) => ({
   ...fields,
 });
 const PR_ROW = { forge: 'github', host: 'github.com', repo: 'acme/notes', number: 7, title: 'Change 7', url: 'https://github.com/acme/notes/pull/7', isDraft: false, state: 'open',
-  mergeable: true, reviewDecision: 'approved', unresolvedThreads: 0, checks: { passed: 2, failed: 0, pending: 0, skipped: 0 } };
+  mergeable: true, reviewDecision: 'approved', unresolvedThreads: 0, checks: { passed: 2, failed: 0, pending: 0, skipped: 0 }, inherited: false };
 
 test('prs: a pushed and a created row of one pull request give one entry and 1 PR; three touched rows of one branch send one ref', { skip: !POSIX }, (t) => {
   const env = withLedger(t);
@@ -954,7 +954,7 @@ test('prs: rows on gitlab.com or a made-up host show as unsupported, with no gh 
     ledgerRow(env.dir, { host: 'gitlab.com', branch: 'a..b' }, 5),
   ]);
   const { json } = env.run(['--session', ID]);
-  const unknown = { title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null, unsupported: true };
+  const unknown = { title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null, unsupported: true, inherited: false };
   assert.deepEqual(json.prs, [{ host: 'git.example.test', repo: 'team/sub/notes', number: null, ...unknown }, { host: 'gitlab.com', repo: 'acme/notes', number: 3, ...unknown }]);
   assert.deepEqual([json.errors, env.calls()], [[], []]);
   assert.equal(env.run(['--session', ID, '--line']).stdout, '2 PRs · ✓0 ✗0 ⏳0\n');
@@ -985,7 +985,7 @@ test('prs: a cached row`s key the docs do not name, at the top or inside checks,
   const stored = JSON.parse(readFileSync(cache, 'utf8'));
   const hostile = 'x\u202e\u009b2J';
   const [row] = stored.value.rows;
-  writeFileSync(cache, JSON.stringify({ ...stored, value: { ...stored.value, rows: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile }, stale: hostile, unsupported: hostile }] } }), { mode: 0o600 });
+  writeFileSync(cache, JSON.stringify({ ...stored, value: { ...stored.value, rows: [{ ...row, smuggled: hostile, checks: { ...row.checks, smuggled: hostile }, stale: hostile, unsupported: hostile, inherited: 'yes' }] } }), { mode: 0o600 });
   const { json, stdout } = env.run(['--session', ID]);
   assert.deepEqual(json.prs, [{ ...PR_ROW, stale: false, unsupported: false }], 'the documented keys alone, checks its four counts, and each flag a boolean');
   assert.equal(env.calls().length, 1, 'the cached row was read, with no new forge call');
@@ -1079,7 +1079,7 @@ test('prs: a named pipe at prs.jsonl fails the section, one at prs-cache.json is
   spawnSync('mkfifo', [path.join(env.folder, 'prs.jsonl')]);
   const piped = env.run(['--session', ID]);
   assert.ok(piped.ms < 10_000, `${piped.ms} ms`);
-  assert.deepEqual([piped.json.prs, piped.json.errors], [null, ['prs']]);
+  assert.deepEqual([piped.json.prs, piped.json.errors], [null, ['prs', 'ticket']]);
   rmSync(path.join(env.folder, 'prs.jsonl'));
   env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
   env.answer({ data: { r0: { pullRequest: prNode(7) } } });
@@ -1098,7 +1098,7 @@ test('prs: a symlinked prs.jsonl and a symlinked session folder receive no write
   symlinkSync(target, path.join(env.folder, 'prs.jsonl'));
   env.answer({ data: { r0: { pullRequest: prNode(7) } } });
   const linked = env.run(['--session', ID]).json;
-  assert.deepEqual([linked.prs, linked.errors], [null, ['prs']]);
+  assert.deepEqual([linked.prs, linked.errors], [null, ['prs', 'ticket']]);
   assert.deepEqual([readFileSync(target, 'utf8').split('\n').length, env.calls().length], [2, 0]);
   const elsewhere = path.join(env.base, 'folder-elsewhere');
   mkdirSync(elsewhere, { mode: 0o700 });
@@ -1145,7 +1145,7 @@ test('a state.dir of ".." in a repository folder named sessions makes no session
   assert.equal(status, 0);
   assert.equal(existsSync(path.join(env.dir, ID)), false, 'no session folder inside the work tree');
   assert.equal(json.prs, null);
-  assert.deepEqual(json.errors, ['prs', 'worktrees']);
+  assert.deepEqual(json.errors, ['prs', 'worktrees', 'links']);
 });
 
 test('lessons and audits read the state folder the context resolved, though its symlink is repointed after', { skip: !POSIX }, (t) => {

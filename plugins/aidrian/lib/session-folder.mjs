@@ -8,10 +8,10 @@
 // process's user, that no other user may read or write; and the session folder's real path is `<real state>/sessions/<id>`,
 // and is still the folder's own path at each write, read, and sweep (boundFolder), so a folder above it swapped for a
 // symlink since gets none. Its files are written as a temporary file and a rename, mode 0600, under the names in
-// SESSION_FILES alone, with two exceptions: the session's pull request ledger, `prs.jsonl`, and its check-run record,
-// `checks.jsonl` (APPENDED_FILES), which lib/session-prs.mjs and lib/check-runs.mjs read by their tail through
+// SESSION_FILES alone, with one exception: the files of APPENDED_FILES, the pull request ledger `prs.jsonl`, `links.jsonl`,
+// and the check-run record `checks.jsonl`, which lib/session-rows.mjs and lib/check-runs.mjs read by their tail through
 // readSessionTail, and append to in place through appendSessionFile,
-// no-follow, mode 0600, only while it is a regular file with one link this user alone may read, and rewrites through
+// no-follow, mode 0600, only while it is a regular file with one link this user alone may read, and rewrites each through
 // writeSessionFile when it is past its cap or an append would pass it; a file's reservation for one fixed
 // window, which lets one process alone read, check, and write it in that window, is `<name>.<window>.lock`, created only
 // where nothing is, mode 0600, and never renamed, linked, or deleted by any process but its creator. Creating a session folder sweeps the ones
@@ -29,7 +29,7 @@ import { readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 export const SWEEP_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
 // The files a session folder holds: nothing else is written there, and the sweep deletes nothing else.
-export const SESSION_FILES = Object.freeze(['usage.json', 'prs.jsonl', 'prs-cache.json', 'merged-heads-cache.json', 'checks.jsonl']);
+export const SESSION_FILES = Object.freeze(['usage.json', 'prs.jsonl', 'links.jsonl', 'prs-cache.json', 'merged-heads-cache.json', 'checks.jsonl']);
 // The random part of a temporary file's name, and the names of the temporary files, `.<file>.<pid>.<token>.tmp`.
 const TOKEN = /^[0-9a-f]{12}$/u;
 const newToken = () => randomBytes(6).toString('hex');
@@ -41,8 +41,9 @@ export const reservationName = (name, index) => `${name}.${index}.lock`;
 export const SESSION_RESERVATION = new RegExp(String.raw`^(?:${SESSION_FILES.map(escaped).join('|')})\.\d+\.lock$`, 'u');
 // A temporary file or a reservation is created only where nothing is, and never through a symlink.
 const CREATE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
-// The files appended to in place, never renamed over: the session ledger and the check-run record.
-export const APPENDED_FILES = Object.freeze(['prs.jsonl', 'checks.jsonl']);
+// The files appended to in place, never renamed over but to compact them: the session ledger, the session's links, and
+// the check-run record.
+export const APPENDED_FILES = Object.freeze(['prs.jsonl', 'links.jsonl', 'checks.jsonl']);
 // An append opens where no symlink is, and never waits on a named pipe.
 const APPEND = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
@@ -71,6 +72,54 @@ export function sessionFolder(state, sessionId, { checkouts, uid = processUid(),
   } catch {
     return null;
   }
+}
+
+// The folder of `sessionId` as sessionFolder would give it, with nothing created and nothing swept, for a reader of
+// another session's files, such as an ancestor's in the snapshot (lib/session-links.mjs): { folder, refused }. `folder`
+// is its real path, or null; `refused` is true when the id fails SESSION_ID, `checkouts` is no list, or the state folder,
+// the sessions folder, or the session folder fails its rule, and false when a folder that would hold it is not there.
+// Never throws.
+export function existingSessionFolder(state, sessionId, { checkouts, uid = processUid(), gid = processGid() } = {}) {
+  const refused = { folder: null, refused: true };
+  const none = { folder: null, refused: false };
+  if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return refused;
+  try {
+    const sessions = heldSessions(state, checkouts, { uid, gid });
+    if (sessions === undefined) return refused;
+    if (sessions === null) return none;
+    const folder = path.join(sessions, sessionId);
+    if (!isEntry(folder)) return none;
+    return outside(folder, checkouts) && boundFolder(folder, { uid, gid }) ? { folder, refused: false } : refused;
+  } catch {
+    return refused;
+  }
+}
+
+// The names of the folders under the sessions folder that pass SESSION_ID, [] when there is none, or null when the
+// state folder or the sessions folder fails its rule, as existingSessionFolder holds them. Creates nothing. Never throws.
+export function sessionFolderNames(state, { checkouts, uid = processUid(), gid = processGid() } = {}) {
+  try {
+    const sessions = heldSessions(state, checkouts, { uid, gid });
+    if (sessions === undefined) return null;
+    return sessions === null ? [] : readdirSync(sessions).filter((name) => SESSION_ID.test(name));
+  } catch {
+    return null;
+  }
+}
+
+// The real path of the sessions folder under the state folder `state`, checked as sessionFolder checks it, with nothing
+// made: undefined when a rule fails, and null when the state folder or the sessions folder is not there.
+function heldSessions(state, checkouts, ids) {
+  if (!Array.isArray(checkouts)) return undefined;
+  const resolved = resolvedPath(state);
+  if (resolved === null || checkoutHolding(resolved, checkouts) || !stateHeld(state, ids)) return undefined;
+  if (!isEntry(state)) return null;
+  const real = realpathSync(state);
+  if (checkoutHolding(real, checkouts) || !heldChain(real, ids, false)) return undefined;
+  const sessions = path.join(real, 'sessions');
+  if (!outside(sessions, checkouts)) return undefined;
+  if (!isEntry(sessions)) return null;
+  return privateFolder(sessions, ids.uid) ? sessions : undefined;
 }
 
 // The real path of the state folder, made when missing, or null when it resolves inside one of `checkouts`, or it fails
@@ -268,8 +317,16 @@ export function appendSessionFile(folder, name, text, { maxBytes, uid = processU
 // one this call made, or null when the name is not one of SESSION_FILES, `folder` fails boundFolder, any entry holds the
 // name, or it cannot be made. Never throws.
 export function reserveSessionFile(folder, name, { windowMs, now = Date.now(), uid = processUid(), gid = processGid() } = {}) {
+  if (!SESSION_FILES.includes(name) || !boundFolder(folder, { uid, gid })) return null;
+  return reserveFile(folder, name, { windowMs, now });
+}
+
+// The reservation reserveSessionFile takes, `<name>.<window>.lock` in `folder`, for a caller that has checked the folder
+// itself, such as lib/session-origins.mjs: created only where nothing is, never through a symlink, mode 0600. Returns
+// the release function, or null. Never throws.
+export function reserveFile(folder, name, { windowMs, now = Date.now() } = {}) {
   const index = Math.floor(now / windowMs);
-  if (!SESSION_FILES.includes(name) || !Number.isSafeInteger(index) || index < 0 || !boundFolder(folder, { uid, gid })) return null;
+  if (!Number.isSafeInteger(index) || index < 0) return null;
   const file = path.join(folder, reservationName(name, index));
   let fd;
   try {
@@ -327,4 +384,38 @@ function sweepFolder(dir, ids, now) {
     if (SESSION_FILES.includes(name) || reservation || SESSION_TEMPORARY.test(name)) unlinkSync(file);
   }
   rmdirSync(dir);
+}
+
+// The length of a reservation window, and how long a writer waits for another's step to end, in steps of RETRY_MS.
+export const LOCK_WINDOW_MS = 5_000;
+export const LOCK_WAIT_MS = 1_000;
+const RETRY_MS = 5;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// `step()`'s answer, run while this process holds the reservations `reserve(at)` takes, each a release function or
+// null, for the window that holds now and the next one (`at` a window later), taken in that order and released after;
+// `fallback` when it cannot take them within LOCK_WAIT_MS. Two writers whose steps overlap in time share a window, so
+// one waits for the other while the first's step takes less than a window: an append does not land on a file a
+// compaction is about to rename over, and two compactions do not drop each other's rows. The accepted limits, for
+// display data (docs/hooks.md#session-ledger): a writer that waits past LOCK_WAIT_MS, as while a killed writer's
+// reservations hold their two windows, writes nothing and its rows are lost; and a step paused past both windows is no
+// longer alone. lib/session-rows.mjs appendRows and lib/session-origins.mjs noteOrigin take their writes this way.
+export function exclusive(reserve, step, fallback = false) {
+  const until = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    const now = Date.now();
+    const first = reserve(now);
+    const second = first && reserve(now + LOCK_WINDOW_MS);
+    if (first && second) {
+      try {
+        return step();
+      } finally {
+        second();
+        first();
+      }
+    }
+    first?.();
+    if (Date.now() >= until) return fallback;
+    pause(RETRY_MS);
+  }
 }

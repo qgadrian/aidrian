@@ -5,7 +5,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -476,4 +476,40 @@ test('a Claude Code PowerShell call is never read as Bash: its command is opaque
   assert.equal(opaqueShellCommand(UNKNOWN_HOST.hookInput(call)), call.tool_input.command);
   for (const tool of ['Bash', 'Monitor', 'Read']) assert.equal(opaqueShellCommand(UNKNOWN_HOST.hookInput({ ...call, tool_name: tool })), null, tool);
   assert.equal(opaqueShellCommand({ ...call, tool_input: {} }), null, 'a call with no command');
+});
+
+// The writer of a session's links.jsonl is the ledger's PostToolUse Bash hook, on every host (docs/providers/adding-a-host.md
+// Session links): each host's recorded payload of a shell call, its command an `aidrian worktree new`, files the row under
+// the payload's session id. A host added without the fixture fails here.
+test('each host`s PostToolUse Bash payload of aidrian worktree new files a links row under the payload`s session', { skip: process.platform === 'win32' }, () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-links-hosts-')));
+  const state = path.join(root, 'state');
+  const env = { PATH: process.env.PATH, HOME: root, XDG_STATE_HOME: state, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const dir = path.join(root, 'project');
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  for (const args of [['init', '-q', '-b', 'main'], ['add', '.'], ['commit', '-q', '-m', 'start'], ['worktree', 'add', '-q', '-b', 'feat/linked', path.join(root, 'tree')]]) {
+    assert.equal(spawnSync('git', args, { cwd: dir, env }).status, 0, args.join(' '));
+  }
+  const hook = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash-post.mjs');
+  try {
+    for (const host of HOSTS) {
+      const file = path.resolve(import.meta.dirname, 'fixtures/hosts', host.id, 'bash-post.json');
+      assert.ok(existsSync(file), `${host.id} has no bash-post.json fixture`);
+      const fixture = JSON.parse(readFileSync(file, 'utf8'));
+      // The result `aidrian worktree new` prints, in the place the host's response holds the call's output: the whole
+      // response when it is the output as one string, else its stdout.
+      const printed = `${JSON.stringify({ status: 'created', worktree_path: path.join(root, 'tree'), branch: 'feat/linked' })}\n`;
+      const response = typeof fixture.post.tool_response === 'string' ? printed : { ...fixture.post.tool_response, stdout: printed };
+      const input = { ...fixture.post, cwd: dir, tool_input: { ...fixture.post.tool_input, command: 'aidrian worktree new feat/linked' }, tool_response: response };
+      const ran = spawnSync(process.execPath, [hook], { input: JSON.stringify(input), encoding: 'utf8', env: { ...env, ...fixture.env, CLAUDECODE: fixture.env?.CLAUDECODE ?? '' } });
+      assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', ''], host.id);
+      const projects = path.join(state, 'aidrian/projects');
+      const files = readdirSync(projects).map((id) => path.join(projects, id, 'sessions', fixture.post.session_id, 'links.jsonl')).filter((each) => existsSync(each));
+      assert.equal(files.length, 1, host.id);
+      assert.deepEqual(readFileSync(files[0], 'utf8').trim().split('\n').map((line) => JSON.parse(line).branch), ['feat/linked'], host.id);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

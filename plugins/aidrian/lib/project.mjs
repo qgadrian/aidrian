@@ -38,8 +38,8 @@ const GUARDED_LIB = [
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'git-push', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-folder', 'session-length', 'session-prs', 'shell-init', 'shell-lex',
-  'stop-announce', 'stop-handback', 'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins', 'session-prs', 'session-rows', 'shell-init', 'shell-lex',
+  'stop-announce', 'stop-handback', 'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage', 'worktree',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
@@ -80,14 +80,15 @@ export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|
 // even inside a main checkout that has one. Outside git it goes on to the file-system root.
 // Every hook starts here, some on every tool call: with no project folder above `start` it runs no git, and with one it
 // runs git once, for the checkout's top folder and its main checkout together, and once more when the local auto-merge
-// switch is on, to ask whether git tracks that file.
-export function findProject(start) {
+// switch is on, to ask whether git tracks that file. `read`, when given, gives the options of the first of those reads,
+// as stateDir's does, for a caller under a deadline.
+export function findProject(start, read) {
   const from = path.resolve(start);
   const found = nearestFolder(from);
   if (found === null) return null;
   let probe = from;
   while (!isDirectory(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
-  const roots = checkoutRoots(probe);
+  const roots = checkoutRoots(probe, typeof read === 'function' ? read() : undefined);
   if (roots !== null) {
     for (let dir = from; ; dir = path.dirname(dir)) {
       if (outside(dir, roots.current)) return null;

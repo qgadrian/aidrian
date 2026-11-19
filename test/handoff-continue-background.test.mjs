@@ -17,7 +17,7 @@ import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS, UNHOOKED } from '../plugins/aidrian/lib/handoff-continue.mjs';
-import { CHAIN_CEILING, noteFollow, noteFrom, openStore, readArmed, readFrom, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { CHAIN_CEILING, noteFollow, noteFrom, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -129,9 +129,10 @@ test('the background route starts the new session in this session\'s folder, rec
 
   const floor = readFrom(setting.store, NEW_SESSION);
   const tree = setting.git('rev-parse', 'HEAD^{tree}').trim();
-  assert.deepEqual({ ...floor, at: 0 }, { slug: 'widget', chain: 1, brief: setting.file, route: 'background', tree, done: 0, stalls: 0, at: 0 }, 'the floor of the new session, as a clear delivery writes it, with the progress it starts from');
+  assert.deepEqual({ ...floor, at: 0 }, { slug: 'widget', chain: 1, brief: setting.file, route: 'background', tree, done: 0, stalls: 0, parent: SESSION, at: 0 }, 'the floor of the new session, as a clear delivery writes it, with the progress it starts from');
   assert.equal(readStarted(setting.store, SESSION).session, NEW_SESSION);
   assert.equal(readArmed(setting.store, SESSION), null, 'nothing is armed: nothing waits for a clear');
+  assert.deepEqual({ ...readHop(setting.store, NEW_SESSION), at: 0 }, { parent: SESSION, at: 0, short: null, read: 1 }, 'filed under the full id, naming the session that handed off');
 });
 
 test('the background route marks the new session unattended under the state root, owner-only, with the project it ran in', (t) => {
@@ -468,6 +469,7 @@ test('a listing that lags still holds the new session to its floor, by the short
   assert.ok(waits.reduce((sum, ms) => sum + ms, 0) <= 10_000);
   assert.ok(existsSync(path.join(setting.store.dir, 'from-abcd1234.json')), 'the floor under the short id');
   assert.equal(readFrom(setting.store, NEW_SESSION).chain, 1, 'the new session\'s full id starts with it');
+  assert.deepEqual({ ...readHop(setting.store, NEW_SESSION), at: 0 }, { parent: SESSION, at: 0, short: 'abcd1234', read: 2 }, 'the floor under the short id names the session that handed off');
 
   // In the new session, a brief that restarts the count at Chain 0 is refused by the check and the gate.
   const inNew = { ...setting.env, CLAUDE_CODE_SESSION_ID: NEW_SESSION };

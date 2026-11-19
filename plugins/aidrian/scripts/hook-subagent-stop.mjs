@@ -113,6 +113,8 @@ await runHook((input) => {
   // A handoff waits for a later stop only when one is sure to come, decided apart from the background check's filter:
   // a running task whose end wakes the agent (wakingChildren), or this stop sent back for its tasks. With none, as for a
   // task on a host that wakes the agent for none, this stop may be its last: its handoff is written now.
+  // Accepted residual: a background shell that never ends, such as a dev server, keeps the handoff pending past the cap,
+  // since its end never comes to wake the agent. The stop row records `delivered: pending`, so the case stays measurable.
   const running = wakingChildren(input, tasks).length > 0 || (tasks.length > 0 && forChildren);
   // The send-back is decided on the delivery as it would be once the handoff files are written, and they are written
   // only when the stop ends.

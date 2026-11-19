@@ -73,6 +73,7 @@ test('no review agent advises an install in the reviewed worktree or a copy of i
     }
     if (/A test or mutation run leaves the reviewed worktree as it was/u.test(text)) {
       assert.match(text.replace(/\s+/gu, ' '), /install nothing, in it or in a copy of it/u, `${name} names no install for the reviewed tree`);
+      assert.match(text.replace(/\s+/gu, ' '), /For a pull request from a fork, whose head is another repository's branch, run no test/u, `${name} runs a fork's tests`);
     }
   }
 });

@@ -1443,9 +1443,9 @@ Two checks read it:
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits
   alone, as about one abbreviated id in 27 is, names a commit only after "at" or "commit", and only when git knows that
-  commit; otherwise it is a number, such as "at 1234567 ms", and the clause is judged at HEAD. A clause that names a
-  commit git cannot read is not judged.
-  A number after a word, as in "Node 22", is no count. Either of the row's trees may match, so a run made beside an untracked scratch file
+  commit; otherwise it is a number, such as "at 1234567 ms", and is not the commit the clause names. A clause that
+  names a commit git cannot read is not judged. A number after a word, as in "Node 22", is no count.
+  Either of the row's trees may match, so a run made beside an untracked scratch file
   still proves the commit that leaves it out; the tracked files' tree alone does not count while an untracked code or
   test file sat beside the run, which it may have loaded and the commit lacks, and the deny names that file.
   A clause that names a failure, "not finished", or CI is not a pass claim: a CI result is quoted from the checks the

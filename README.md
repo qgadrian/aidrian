@@ -184,6 +184,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pre-commit` | Refuses a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief, and arms the continuation that resumes from it. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
+| `aidrian push-preflight` | Says whether the host would let a run no Human attends push to the repository's remote, before it starts work. | [The push preflight](docs/handoff.md#the-push-preflight) |
 | `aidrian shell-init` | Prints the shell function that opens the new session in the same terminal after a background handoff; `--install` adds it to the shell's startup file once, `--uninstall` removes it. | [Let the terminal follow a handoff](#let-the-terminal-follow-a-handoff) |
 | `aidrian quorum` | Runs Codex as a quorum adversary or advocate, checks a quorum ledger's citations, prints a mode's roles and caps from config.json, says what happens to one product decision, and records work continuing on a product ruling. | [Local state](docs/project-folder.md#local-state) |
 | `aidrian decisions resolve` | Says whether an agent may settle one decision or must ask the Human. | [Decisions](docs/config.md#decisions) |

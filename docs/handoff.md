@@ -165,6 +165,8 @@ It reads the config, the machine's local file, and the base branch's config, wri
 unknown `--route` or a config with errors.
 The `session-handoff` skill runs it in its first step, so it settles every running agent only when a continuation can
 follow. The gate may still fall back for what only the brief or the store tells, such as the brief's chain.
+It does not run the [push preflight](#the-push-preflight), which reads host settings: only the gate does, so a push
+the host would refuse can still send a background route to the clear route there.
 
 ### The gate
 
@@ -187,6 +189,7 @@ whatever the config says, and `background` only when the config says `"backgroun
    reports every writable folder as writable by others); or the brief's chain is `maxChain` or more, on the
    background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
    On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
+   push to the repository's remote the host would refuse ([the push preflight](#the-push-preflight)), a
    working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
    the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
    `continue: clear`, the `fallback:` line, and the clear route's `say:` line, with the clear continuation armed.
@@ -261,6 +264,51 @@ over two hops, which is why `maxChain` stays the default bound. Under `"unlimite
 floor records at most 10,000 continuations and 10,000 Done items, and a hop past either starts no session and arms no
 clear: a person resumes the brief. A clear's delivery past 10,000 loads nothing either, and says why.
 
+### The push preflight
+
+A run no Human attends that does its work and then cannot push leaves it stranded on the machine, with no one there to
+let the push through. So before such a run starts work, the push preflight asks the host whether it would let a
+session push to the repository's remote, `origin`, at the URL a push goes to:
+`git remote get-url --push --all origin`, which is `remote.origin.pushurl` when that is set, and the fetch URL
+otherwise. More than one push URL answers `unknown`.
+The host's adapter answers
+through its `capabilities.pushPermission` ([the adapter's fields](providers/adding-a-host.md#the-adapters-fields)):
+
+- `allowed` and `unknown`: the run starts as before, and nothing is shown. A host that cannot tell, a session not in
+  the mode the host judges pushes in, settings it cannot read, no `origin`, and an `origin` on this machine, such as a
+  path or a `file:` URL, all answer `unknown`: a host that cannot answer never stops a run.
+- `denied`: one line names the host, the setting, the settings file, and the repository, and what the Human changes in
+  that file before a run no Human attends. The AI never changes that file.
+
+The host sees the remote only as `host/owner/repo`, in lower case, with no scheme, user name, password, port, or
+`.git`, so the user name and password of the remote URL are never sent to the adapter or printed. What is left must be
+plain ASCII: a host name, then two or more path segments of letters, digits, and `.`, `_`, `~`, `%`, `+`, or `-`.
+Anything else answers `unknown` and is never sent or printed, such as what a password holding an `@` or a `:` leaves
+behind, a query or a fragment, or an invisible or right-to-left character.
+
+Two entry points run it, both through `pushPreflight` in `lib/push-preflight.mjs`:
+
+| Entry point | On `denied` |
+| --- | --- |
+| The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief | `continue: clear`, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
+| The `autopilot` skill's launch, while the Human is still there | `aidrian push-preflight` exits 1: the skill tells the Human the line and starts no run unless the Human says to go on. |
+
+`aidrian push-preflight` takes no argument and needs no project folder. It prints `push: allowed` or `push: unknown`
+and exits 0 with nothing on stderr, or prints `push: denied` and exits 1 with `aidrian push-preflight: <the line>` on
+stderr. Any argument prints its usage and exits 2. [`aidrian handoff route`](#the-route-the-host-runs) and the hooks
+never run it. A session the Human works in meets it only at the `autopilot` launch, which runs it while the Human is
+there to decide.
+
+| Host | What it reads |
+| --- | --- |
+| Claude Code | In `auto` mode, auto mode's trusted repositories in the user settings: [Push permission in auto mode](providers/claude-code.md#push-permission-in-auto-mode) |
+| Codex | Nothing: `unknown`, so it never stops a run |
+
+Verified by `node --test` on fixtures (`test/push-preflight.test.mjs`, `test/handoff-continue-background.test.mjs`); not
+live: no real host's refusal of a push has been held against a `denied`.
+Limits: managed settings and a host's settings flag are not read, and a push to any remote other than `origin` is not
+judged.
+
 ### The clear route
 
 1. The session writes the brief, checks it, and runs the gate, which arms the continuation for this session. The
@@ -301,6 +349,9 @@ So must the store itself: the gate opens it with the command's environment, and 
 config names with no `XDG_STATE_HOME` and the home folder of the user it runs as, so a variable set on the command
 line cannot move the store where the hooks never read a floor. A machine whose own environment sets `XDG_STATE_HOME`
 to another folder falls back to the clear route with that reason; committing `state.dir` gives it the route back.
+Before it keeps the brief or starts anything, after the progress check, the gate runs the
+[push preflight](#the-push-preflight): when the host would refuse the new session's push to the repository's remote,
+the handoff goes on by the clear route with what to change, and nothing is kept, marked, or started.
 
 1. The session settles every running agent, writes the brief, checks it, and runs the gate, as on the clear route.
 2. The gate keeps the brief's checked bytes in the store, owner-only, as `continued-<sha256>.md`, so an edit to the

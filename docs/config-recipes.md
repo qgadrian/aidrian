@@ -33,6 +33,8 @@ Hands-on leaves that check out, since the Human tries the screens, and can add i
 [Screens checked on every device](#screens-checked-on-every-device).
 It sets nothing about the host's own permissions: how often Claude Code or Codex asks before a tool runs is the host's
 setting, and the more autonomous recipes pay off only with a permission mode that does not stop each command.
+They also need the host to let a session push to the repository's remote, which the
+[push preflight](handoff.md#the-push-preflight) checks before a run no Human attends starts work.
 
 ## Full autonomy
 

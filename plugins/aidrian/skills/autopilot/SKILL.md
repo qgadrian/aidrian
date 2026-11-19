@@ -23,19 +23,16 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 
 - `<task>`: an issue key or URL, a plan path, or a one-line task description.
 - `--continue`: take over the work this session has under way. Words typed with it are launch words, never a new task.
-- `--base`: the branch the pull request targets. Default: the one the implementing skill picks.
-- `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 calls for it.
+- `--base`: the branch the pull request targets; default: the implementing skill's pick.
+- `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 says.
 - `--handoff`: write a handoff brief at each checkpoint, as § Checkpoints says.
-
-## What it is, and is not
-
-- It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill
-  that `references/phases.md` § 4 runs. Any other merge needs the Human's explicit say-so.
 
 ## Before launch
 
 While the Human is here, record what the Human says at launch word for word, such as "skip the end-to-end run"
 or "five review rounds". The entry file of § Entry names what else to settle now.
+Run `aidrian push-preflight`. On exit 1, the host would refuse a push:
+tell the Human its printed line, and start no run unless the Human says to go on.
 
 ## Who decides
 
@@ -89,7 +86,8 @@ Write the brief first when checkpoints are allowed.
 
 ## Hard rules
 
-1. Merge only through the `pr-auto-merge` skill, as § 4 of the phases says: never `gh pr merge` yourself.
+1. Merge only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill that `references/phases.md` § 4 runs:
+   never `gh pr merge` yourself. Any other merge needs the Human's explicit say-so.
 2. Leave the pull request a draft, unless `github.markReady` is `"auto"`, the default, or the Human asked at launch to mark it ready;
    § 4 of the phases says when.
 3. Never approve a product or security gate yourself, and never guess a critical decision that cannot be undone.

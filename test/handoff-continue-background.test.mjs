@@ -16,7 +16,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS, UNHOOKED, unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, routeOf, STALL_HOPS, UNHOOKED, unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { CHAIN_CEILING, noteFollow, noteFrom, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -1244,5 +1244,78 @@ test('the terminal follows a chain of background hops the shell function attache
     // The client exits, and the shell function reads the record and attaches the next hop, as it does in a shell.
     rmSync(shellRecord);
     followsRecord(base, 4242, next.short);
+  }
+});
+
+// The push preflight (docs/handoff.md#the-push-preflight): before the gate keeps the brief or starts anything, it asks
+// the host whether a session could push to this repository's remote. Only a clear denial changes the route.
+const ONLY_OTHER = { autoMode: { environment: ['Trusted repo: github.com/acme/other'] } };
+const TRUSTED = { autoMode: { environment: ['Trusted repo: github.com/acme/widget'] } };
+// `setting`'s repository with `origin` at `url`, when given, whose `main` a fetch would have recorded at HEAD, as in a
+// clone, so the base branch's config still resolves; Claude Code's user settings `settings`, written as JSON unless a
+// string; and a state folder of its own for unattended marks.
+function preflighted(t, setting, { url = 'https://user:secret@github.com/acme/widget.git', settings } = {}) {
+  if (url) {
+    setting.git('remote', 'add', 'origin', url);
+    setting.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  }
+  if (settings !== undefined) writeFileSync(path.join(setting.env.CLAUDE_CONFIG_DIR, 'settings.json'), typeof settings === 'string' ? settings : JSON.stringify(settings));
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  return { env: { ...setting.env, XDG_STATE_HOME: xdg }, marks: path.join(xdg, 'aidrian', 'unattended') };
+}
+const storeFiles = (setting) => (existsSync(setting.store.dir) ? readdirSync(setting.store.dir) : []);
+
+test('a host that would refuse the push stops the background start before work: the handoff goes on by the clear route, and names what to change (AC2)', (t) => {
+  const setting = setup(t, { mode: 'auto' });
+  const { env, marks } = preflighted(t, setting, { settings: ONLY_OTHER });
+  // `aidrian handoff route` reads no host settings: it still answers the background route, and only the gate falls back.
+  assert.deepEqual(routeOf({ env, cwd: setting.dir }), { exitCode: 0, out: ['route: background'], err: [] });
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run, env });
+  assert.deepEqual([result.exitCode, result.err], [0, []]);
+  assert.equal(result.out[0], 'continue: clear');
+  const settings = path.join(setting.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  assert.ok(result.out[1].startsWith(`fallback: no background session started, since Claude Code would refuse a push to this repository's remote, github.com/acme/widget: autoMode.environment in ${settings} `), result.out[1]);
+  assert.ok(result.out[1].endsWith('; this handoff goes on by the clear route'), result.out[1]);
+  assert.ok(!result.out.join('\n').includes('secret'), 'no credential is printed');
+  assert.match(result.out[2], /^say: To continue from the brief widget, /u);
+  assert.deepEqual(calls, [], 'the host was never called: no listing, no start');
+  assert.equal(existsSync(marks), false, 'no pending mark');
+  assert.deepEqual(storeFiles(setting).filter((name) => /^(?:continued|from|started)-/u.test(name)), [], 'no kept copy, no chain floor, no start record');
+  assert.equal(readArmed(setting.store, SESSION).route, 'clear', 'a Human continues it');
+});
+
+test('a remote the host trusts starts the background session as before (AC3)', (t) => {
+  const setting = setup(t, { mode: 'auto' });
+  const { env } = preflighted(t, setting, { url: 'git@github.com:acme/widget.git', settings: TRUSTED });
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run, env });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.ok(!result.out.some((line) => line.startsWith('fallback:')), result.out.join('\n'));
+  assert.equal(bgCalls(calls).length, 1);
+});
+
+test('settings the preflight cannot read, no remote, and a session not in auto mode start the background session with nothing shown (AC4)', (t) => {
+  const cases = [
+    ['bad JSON', {}, { settings: '{"autoMode": {' }],
+    ['no autoMode', {}, { settings: {} }],
+    ['no settings file', {}, {}],
+    ['no remote', {}, { url: null, settings: ONLY_OTHER }],
+    ['a remote on disk', {}, { url: '/srv/git/widget.git', settings: ONLY_OTHER }],
+    ['acceptEdits with denying settings', { mode: 'acceptEdits' }, { settings: ONLY_OTHER }],
+  ];
+  for (const [label, given, remote] of cases) {
+    const setting = setup(t, { mode: 'auto', ...given });
+    const { env } = preflighted(t, setting, remote);
+    passCheck(setting);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    const result = gate(setting, { run, env });
+    assert.equal(result.out[0], 'continue: background', `${label}: ${result.out.join('\n')}`);
+    assert.ok(!result.out.some((line) => line.startsWith('fallback:')), label);
+    assert.deepEqual(result.err, [], label);
+    assert.equal(bgCalls(calls).length, 1, label);
   }
 });

@@ -484,8 +484,10 @@ The merge guard takes it only for a merge that names the head: `gh pr merge <PR>
 (`--judge <agent id>`) and the recording session's [dispatch log](dispatch-log.md) holds that judge's dispatch, a
 `code-reviewer`, between the cap and the verdict. Only a host whose hook writes that row confirms a judge: Claude Code
 does; Codex does not, so on Codex no verdict stands for auto-merge and the gate exits 1. With `telemetry.enabled`
-false no log is written, and the same holds. In a project run, the run must have merged fewer than 3 pull requests on
-a verdict, counted by the verdicts that stand on each merged head; the merge guard holds a run's session to that too.
+false no log is written, and the same holds. The merge guard asks the same of the verdict it takes, so a session that
+skips auto-merge cannot merge on a verdict it recorded with no `--judge`. In a project run, the run must have merged
+fewer than 3 pull requests on a verdict, counted by the verdicts that stand on each merged head; the merge guard holds
+a run's sessions to that too, its driver among them.
 Its JSON then says `"waived": true`.
 The waiver lifts a denial; it merges nothing itself. A session no Human attends still meets every check of
 [merge trust](review.md#merge-trust): the waiver changes only the `round_limit` stop.
@@ -501,10 +503,11 @@ whose state folder is not the default branch's. Exit 1 says why; exit 3 is a rea
 the cap and dispatches a judge only on exit 0.
 
 A project run merges at most 3 pull requests on a verdict. The gate and `aidrian pr auto-merge` only count that budget;
-the merge guard takes it at the merge itself, under the run's ledger lock: it counts again and writes a `waived` row
-for the pull request, or refuses the merge once 3 are spent, so the sessions of issues that run in parallel never
-spend more between them. A taken merge counts even if the merge then fails; one the ledger lock or a read refuses is
-not merged.
+the merge guard takes it at the merge itself, under the run's ledger lock, once every other check of the merge,
+merge trust included, has passed: it counts again and writes a `waived` row for the pull request, or refuses the merge
+once 3 are spent, so the sessions of issues that run in parallel never spend more between them. A merge the guard
+refuses spends nothing. A taken merge counts even if the merge then fails after the guard let it run; one the ledger
+lock or a read refuses is not merged.
 
 ### What it never covers
 

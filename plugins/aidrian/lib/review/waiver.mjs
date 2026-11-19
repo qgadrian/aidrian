@@ -16,9 +16,10 @@
 // the gate below reads no policy of its own. The record, the judge's verdict, and the dispatch log are all in folders a
 // project run's confined session can write: the bot's pass is the part of the waiver no such session writes.
 // `aidrian pr auto-merge` takes a standing verdict for `round_limit` too, and `aidrian pr waive --gate` says whether a
-// judge may be dispatched at all (waiver-stand.mjs): each also needs the judge in this session's dispatch log and holds a
-// project run to WAIVED_MERGES. A merge no Human attends still meets every merge-trust check; the waiver lifts only the
-// `round_limit` stop.
+// judge may be dispatched at all (waiver-stand.mjs): each holds a project run to WAIVED_MERGES. The guard and auto-merge
+// each take a verdict only for the judge the recording session's dispatch log shows (judgeProblem). A merge no Human
+// attends still meets every merge-trust check; the waiver lifts only the `round_limit` stop, and a project run's waived
+// merge is taken from its budget only after those checks pass (readWaiver `take`).
 //
 // The guard honors a verdict only while both switches are on: `github.unattendedWaiver.allow` true in config.json on both
 // the repository's default branch and the pull request's base, read from GitHub as each branch commits it now, never
@@ -35,6 +36,7 @@
 // default and base branches with a required review from a second account.
 
 import { loadConfig, machineSwitch, resolveUnattendedWaiver } from '../config.mjs';
+import { readLog } from '../dispatch-log.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { knownPrefix } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
@@ -133,6 +135,37 @@ function itemProblem(item, stageOf) {
   return null;
 }
 
+// The agent a waiver's judge is, as a host names it in the dispatch log: the plugin's code-reviewer, or a project's.
+const JUDGE_TYPE = /^(?:aidrian[:-])?code-reviewer$/u;
+// A session id as a refusal prints it: a host's ids are letters, digits, and dashes.
+const SESSION_SHAPE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/u;
+
+// Why the verdict `entry` names no judge this session dispatched, or null: the recording session's dispatch log
+// (`config`'s state folder) must hold a `dispatch` row of that session for the agent id `entry.judge_id`, a
+// code-reviewer, at or after the cap's outcome and at or before the verdict. `aidrian pr auto-merge` and the merge guard
+// each ask it of the verdict they take, so one recorded with no `--judge` never stands.
+export function judgeProblem({ project, config, state, entry }) {
+  if (typeof entry?.judge_id !== 'string' || typeof entry.session !== 'string' || entry.session === '') {
+    return 'the verdict names no judge agent and session (`aidrian pr waive --judge <agent id>`), so the dispatch log cannot show its judge was dispatched';
+  }
+  const since = Date.parse(state?.outcome?.at ?? '');
+  const until = Date.parse(entry.at ?? '');
+  let rows;
+  try {
+    rows = readLog(project, config).rows;
+  } catch {
+    return 'the dispatch log cannot be read, so the judge\'s dispatch cannot be confirmed';
+  }
+  const dispatched = rows.some((row) => {
+    if (row?.event !== 'dispatch' || row.session_id !== entry.session || row.agent_id !== entry.judge_id || !JUDGE_TYPE.test(String(row.agent_type ?? ''))) return false;
+    const at = Date.parse(row.ts ?? '');
+    return !Number.isNaN(since) && !Number.isNaN(at) && at >= since && at <= until;
+  });
+  const judge = JUDGE_ID.test(entry.judge_id) ? entry.judge_id : '(an id of no known shape)';
+  const session = SESSION_SHAPE.test(entry.session) ? entry.session : '(an id of no known shape)';
+  return dispatched ? null : `the dispatch log holds no dispatch of the code-reviewer ${judge} by session ${session} between the cap and the verdict`;
+}
+
 // Why what stopped the review at the cap keeps a judge's verdict from standing for `head`, or null. It reads the cap's
 // cause, which the review step keeps on the outcome (review/run.mjs capCause): a verdict stands only when open findings
 // of this machine's own reviewers are the whole cause. Refused: a record with no cause for `head` (an older record); the
@@ -196,11 +229,13 @@ export function owedSignoffs({ state, head, trail, policies, prefix, repo, pr, s
 // The most pull requests one project run merges on a judge's verdict; past it, the issue is parked for the Human.
 export const WAIVED_MERGES = 3;
 
-// The project run a session's unattended mark names: undefined for none, the run id, or null when the mark carries run
-// tags that cannot be read, which no budget can count.
+// The project run a session's unattended mark names, or the run a driver's hold drives (run-driver.mjs driverHold
+// `driving`): undefined for none, the run id, or null when the mark carries run tags that cannot be read, which no
+// budget can count.
 export function runOf(mark) {
-  if (!mark || !Object.hasOwn(mark, 'project')) return undefined;
-  return typeof mark.project === 'string' ? mark.project : null;
+  const key = ['project', 'driving'].find((each) => mark && Object.hasOwn(mark, each));
+  if (key === undefined) return undefined;
+  return typeof mark[key] === 'string' ? mark[key] : null;
 }
 
 // The ledger of the project run `run`, readRun's answer from the first state folder of `project` (the main checkout,
@@ -458,12 +493,20 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   if (budget) return cannot(budget);
   const verdict = waiverFor(state, head, kind);
   if (verdict && named) {
-    // The merge happens now: a session of a project run takes it from the run's budget under the ledger's lock, so
-    // parallel issues never spend more than it holds between them.
+    // A verdict stands only for the judge the recording session's dispatch log shows it dispatched, as auto-merge's does:
+    // a session that skips auto-merge cannot merge on a verdict it recorded with no judge.
+    if (late()) return unread;
+    const unseen = judgeProblem({ project, config: loadConfig(project).config, state, entry: verdict });
+    if (unseen) return cannot(unseen);
+    // A session of a project run takes the merge from the run's budget under the ledger's lock, so parallel issues never
+    // spend more than it holds between them, and only once the merge guard's every other check passed: `take()`, which
+    // the guard calls last (merge-review.mjs takeWaived), gives why the budget refuses, or null once it is taken.
     if (memo && memo.run !== undefined) {
-      if (late()) return unread;
-      const taken = takeWaivedMerge({ project, home: main, config: loadConfig(main).config, run: memo.run, pr, head, pastDeadline: late, waitMs: Math.max(0, Math.min(1000, Math.floor(deadline - now()))) });
-      if (taken) return cannot(taken);
+      const take = () => {
+        if (late()) return 'the hook ran out of time to take this merge from the project run\'s budget of waived merges';
+        return takeWaivedMerge({ project, home: main, config: loadConfig(main).config, run: memo.run, pr, head, pastDeadline: late, waitMs: Math.max(0, Math.min(1000, Math.floor(deadline - now()))) });
+      };
+      return { allow: true, note: '', route: '', take };
     }
     return { allow: true, note: '', route: '' };
   }
@@ -533,7 +576,7 @@ export async function runWaive(args, project, config, deps = {}) {
   const named = opts.judge === null ? {} : { judge_id: opts.judge, session: identity.session ?? null };
   const entry = { head: current, kind, verdict: opts.verdict, reason: opts.reason, judge: identity.agent ?? 'unknown', ...named, at: new Date().toISOString() };
   if (opts.judge !== null) {
-    const unseen = (await import('./waiver-stand.mjs')).judgeProblem({ project, config, state, entry });
+    const unseen = judgeProblem({ project, config, state, entry });
     if (unseen) throw new Error(unseen);
   }
   state.waivers = [...(Array.isArray(state.waivers) ? state.waivers : []), entry];

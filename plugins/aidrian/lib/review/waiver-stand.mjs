@@ -24,7 +24,6 @@
 // attends still meets every merge-trust check (merge-trust.mjs trustVerdict).
 
 import { loadConfig, stateDirProblem } from '../config.mjs';
-import { readLog } from '../dispatch-log.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { knownPrefix } from '../git.mjs';
 import { detectHost, sessionIdentity } from '../hosts/index.mjs';
@@ -35,14 +34,9 @@ import { recordFor, scoped } from '../rules/github/merge-review.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
 import { botProblem } from './merge-trust.mjs';
 import { SHA_REF } from './state.mjs';
-import { budgetProblem, capProblem, JUDGE_ID, notWaivable, owedSignoffs, runLedger, runOf, waiverFor, waiverGate, waiverKind } from './waiver.mjs';
+import { budgetProblem, capProblem, judgeProblem, notWaivable, owedSignoffs, runLedger, runOf, waiverFor, waiverGate, waiverKind } from './waiver.mjs';
 
-export { budgetProblem, runOf, WAIVED_MERGES, waivedMerges } from './waiver.mjs';
-
-// The agent a waiver's judge is, as a host names it in the dispatch log: the plugin's code-reviewer, or a project's.
-const JUDGE_TYPE = /^(?:aidrian[:-])?code-reviewer$/u;
-// A session id as a refusal prints it: a host's ids are letters, digits, and dashes.
-const SESSION_SHAPE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/u;
+export { budgetProblem, judgeProblem, runOf, WAIVED_MERGES, waivedMerges } from './waiver.mjs';
 
 // Why this host and config cannot confirm a judge, or null: the host must declare `capabilities.judgeDispatch` (its
 // hook writes a `dispatch` row with the agent id the host returned for each subagent), and `telemetry.enabled` must let
@@ -51,31 +45,6 @@ export function judgeHostProblem({ host, config }) {
   if (host?.capabilities?.judgeDispatch !== true) return `this host (${host?.name ?? 'unknown'}) does not confirm a judge's dispatch in the dispatch log, so no verdict can stand here`;
   if (config?.telemetry?.enabled === false) return 'telemetry.enabled is false, so the hooks write no dispatch log to confirm a judge\'s dispatch in';
   return null;
-}
-
-// Why the verdict `entry` names no judge this session dispatched, or null: the recording session's dispatch log
-// (`config`'s state folder) must hold a `dispatch` row of that session for the agent id `entry.judge_id`, a
-// code-reviewer, at or after the cap's outcome and at or before the verdict.
-export function judgeProblem({ project, config, state, entry }) {
-  if (typeof entry?.judge_id !== 'string' || typeof entry.session !== 'string' || entry.session === '') {
-    return 'the verdict names no judge agent and session (`aidrian pr waive --judge <agent id>`), so the dispatch log cannot show its judge was dispatched';
-  }
-  const since = Date.parse(state?.outcome?.at ?? '');
-  const until = Date.parse(entry.at ?? '');
-  let rows;
-  try {
-    rows = readLog(project, config).rows;
-  } catch {
-    return 'the dispatch log cannot be read, so the judge\'s dispatch cannot be confirmed';
-  }
-  const dispatched = rows.some((row) => {
-    if (row?.event !== 'dispatch' || row.session_id !== entry.session || row.agent_id !== entry.judge_id || !JUDGE_TYPE.test(String(row.agent_type ?? ''))) return false;
-    const at = Date.parse(row.ts ?? '');
-    return !Number.isNaN(since) && !Number.isNaN(at) && at >= since && at <= until;
-  });
-  const judge = JUDGE_ID.test(entry.judge_id) ? entry.judge_id : '(an id of no known shape)';
-  const session = SESSION_SHAPE.test(entry.session) ? entry.session : '(an id of no known shape)';
-  return dispatched ? null : `the dispatch log holds no dispatch of the code-reviewer ${judge} by session ${session} between the cap and the verdict`;
 }
 
 // Whether a judge may be dispatched for `head`, or would see its verdict stand: { may: true } or { why, kind?, unsigned? },

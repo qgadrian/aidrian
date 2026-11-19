@@ -7,13 +7,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { prEnvDenial, signoffWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { activeRuns, initRun, recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
-import { currentDriver, drivesRun, endedIn, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { activeRuns, appendToRun, initRun, recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
+import { currentDriver, driverHold, drivesRun, endedIn, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders, unsignedFlows } from '../plugins/aidrian/lib/review/merge-trust.mjs';
@@ -873,8 +874,33 @@ const waivedCap = (state) => {
     cap: { head: HEAD, reviewed: HEAD, items: [], counted: 0, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [] },
   };
   state.signoffable = { head: HEAD, flows: [] };
-  state.waivers = [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'unknown', at: '2026-11-18T09:30:00.000Z' }];
+  state.waivers = [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'unknown', judge_id: 'judge-1', session: 'sess-judge', at: '2026-11-18T09:30:00.000Z' }];
 };
+
+// The dispatch of the judge waivedCap names, between the cap and the verdict, in `project`'s dispatch log.
+function judgeDispatched(project) {
+  const log = logPath(project, loadConfig(project).config);
+  mkdirSync(path.dirname(log), { recursive: true });
+  appendFileSync(log, `${JSON.stringify({ event: 'dispatch', ts: '2026-11-18T09:10:00.000Z', session_id: 'sess-judge', dispatcher: 'main', agent_id: 'judge-1', agent_type: 'aidrian:code-reviewer' })}\n`);
+}
+
+// A project run whose pull request #7 stopped at the round cap with a judge's waive, under both waiver switches, merged
+// by `mark`'s session through the guard; `rows` are the run's ledger rows of waived merges taken so far.
+function waivedRun(t) {
+  const fx = runFixture(t, { local: { handoff: { background: 'on' }, github: { autoMerge: 'on', unattendedWaiver: 'on' } } });
+  t.after(() => rmSync(signoffFolder(), { recursive: true, force: true }));
+  const record = emptyState(7, 'acme/widgets');
+  waivedCap(record);
+  writeLocalState(fx.project, record);
+  judgeDispatched(fx.project);
+  const text = JSON.stringify({ ...fx.committed, github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: { allow: true } } });
+  const run = (mark, over = {}) => {
+    const forge = () => ({ ...guardForge(text, trailOf(text, over))(), change: () => ({ number: 7, headRefOid: HEAD, baseRefName: 'main', url: 'https://github.com/acme/widgets/pull/7' }) });
+    return check(MERGE, { cwd: fx.dir, env: {}, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, waiverForge: forge, trustForge: forge });
+  };
+  const taken = () => fx.rows().filter((row) => row.event === 'waived').map((row) => row.pr);
+  return { fx, run, taken };
+}
 
 test('a session no Human attends merging on a judge`s verdict at the round cap: the guard reads the review trail once, and still asks merge trust', (t) => {
   const config = configOf({ github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: { allow: true } } });
@@ -883,6 +909,7 @@ test('a session no Human attends merging on a judge`s verdict at the round cap: 
   const local = path.join(r.dir, '.aidrian.local.json');
   writeFileSync(local, JSON.stringify({ github: { ...JSON.parse(readFileSync(local, 'utf8')).github, unattendedWaiver: 'on' } }));
   r.record(waivedCap);
+  judgeDispatched(r.project);
   const text = JSON.stringify(config);
   const run = (trail, { url = 'https://github.com/acme/notes/pull/7', mark = { root: r.dir } } = {}) => {
     const calls = [];
@@ -905,4 +932,26 @@ test('a session no Human attends merging on a judge`s verdict at the round cap: 
   // A session of a project run is held to the run's budget of waived merges in the guard too: a run whose ledger cannot
   // be read counts nothing, and the verdict does not stand.
   assert.match(run(trailOf(text), { mark: { root: r.dir, project: 'gone', issue: 'WID-1' } }).reason ?? '', /A judge's verdict cannot stand for this head: the ledger of project run gone cannot be read/u);
+});
+
+test('a waived merge a trust check refuses takes nothing from the project run\'s budget; one every check passes takes it once', (t) => {
+  const { fx, run, taken } = waivedRun(t);
+  const mark = { root: fx.dir, project: 'launch', issue: 'ENG-1' };
+  assert.match(run(mark, { draft: true }) ?? '', /^Blocked: no Human attends this session, .* it is a draft/u);
+  assert.match(run(mark, { comments: [] }) ?? '', /A judge's verdict cannot stand for this head: it never stands in for the review bot/u);
+  assert.deepEqual(taken(), [], 'refused merges spend none of the budget');
+  assert.equal(run(mark), null);
+  assert.deepEqual(taken(), [7], 'taken once every check passed');
+  assert.equal(run(mark), null, 'a retry of the same pull request');
+  assert.deepEqual(taken(), [7]);
+});
+
+test('a project run\'s driver merging on a judge\'s verdict is held to the run\'s budget of waived merges', (t) => {
+  const { fx, run, taken } = waivedRun(t);
+  const hold = driverHold(DRIVER, { env: fx.env, home: fx.home });
+  assert.deepEqual(hold, { root: fx.dir, cwd: null, driving: 'launch' }, 'the driver\'s hold names its run');
+  appendToRun(fx.state, 'launch', () => ({ rows: [1, 2, 3].map((pr) => ({ event: 'waived', pr, head: HEAD, at: new Date().toISOString() })) }));
+  assert.match(run(hold) ?? '', /A judge's verdict cannot stand for this head: project run launch merged 3 pull requests on a judge's verdict already, its most \(3\)/u);
+  assert.deepEqual(taken(), [1, 2, 3]);
+  assert.match(run({ ...hold, driving: null }) ?? '', /A judge's verdict cannot stand for this head: this session's unattended mark names a project run that cannot be read/u, 'a driver mark that names no run counts nothing');
 });

@@ -465,13 +465,32 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   if (mergeApproved(answers, { pr, head, since, capped })) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now, memo });
-  if (waiver.allow) return null;
   const question = `Merge pull request #${pr} at ${sha7} before its review is finished?`;
   const ask = capped
     ? cappedAsk({ pr, sha7, count, last: state.extensions?.at(-1) ?? null })
     : `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
       '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';
-  return `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${waiver.note}. ${ask}Or the Human merges in their own shell.${waiver.route}`;
+  const blocked = (note, route) => `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${note}. ${ask}Or the Human merges in their own shell.${route}`;
+  if (waiver.allow) {
+    // A project run's waived merge is taken from its budget only after every other check of the merge passed (takeWaived).
+    if (waiver.take) {
+      memo.take = () => {
+        const why = waiver.take();
+        return why ? blocked('', ` A judge's verdict cannot stand for this head: ${why}.`) : null;
+      };
+    }
+    return null;
+  }
+  return blocked(waiver.note, waiver.route);
+}
+
+// Takes the waived merge judgeMerge let through from its project run's budget (waiver.mjs readWaiver `take`), once the
+// merge passed every other check, so a merge a trust check refuses spends none of it: the deny reason when the budget
+// refuses it, or null. Each merge's take is asked once.
+function takeWaived(memo) {
+  const take = memo.take;
+  memo.take = null;
+  return take ? take() : null;
 }
 
 const FULL_SHA = /^[0-9a-f]{40}$/iu;
@@ -633,10 +652,13 @@ function checkCommand(command, { cwd, env, input, viewPr, waiverForge, startedAt
     const planted = mark && merge.pr !== null ? recordProblem(project, merge.pr, { pastDeadline: () => now() >= startedAt + WAIVER_DEADLINE_MS }) : null;
     if (planted) return unattendedProblem({ project, home: places.home, merge, mark, startedAt, now, planted });
     answers ??= transcriptAnswers(readTranscript(input?.transcript_path));
+    memo.take = null;
     const reason = judgeMerge({ project, ...merge, viewPr, answers, waiverForge, startedAt, now, memo });
     if (reason) return reason;
     const trust = mark ? unattendedProblem({ project, home: places.home, merge, mark, forge: trustForge, startedAt, now, memo }) : null;
     if (trust) return trust;
+    const taken = takeWaived(memo);
+    if (taken) return taken;
   }
   return null;
 }
@@ -668,5 +690,6 @@ function checkTool(toolInput, { cwd, input, viewPr, waiverForge, startedAt, now,
   if (planted) return unattendedProblem({ project, home: places.home, merge: { pr, head, repo }, mark, startedAt, now, planted });
   const reason = judgeMerge({ project, pr, head, repo, viewPr, answers: transcriptAnswers(readTranscript(input?.transcript_path)), how, waiverForge, startedAt, now, memo });
   if (reason) return reason;
-  return mark ? unattendedProblem({ project, home: places.home, merge: { pr, head, repo, text }, mark, forge: trustForge, startedAt, now, memo }) : null;
+  const trust = mark ? unattendedProblem({ project, home: places.home, merge: { pr, head, repo, text }, mark, forge: trustForge, startedAt, now, memo }) : null;
+  return trust ?? takeWaived(memo);
 }

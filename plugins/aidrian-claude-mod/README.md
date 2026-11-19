@@ -17,10 +17,13 @@ It needs the `aidrian` plugin installed and enabled for the folder, and draws on
   Code reports it), the branch or worktree,
   the ticket key with its title and state, and running subagents.
 - From `aidrian session snapshot`: the handoff verdict the Stop hook would give, the pull requests the session
-  touched on a row of their own (the check counts, then the first five numbers colored by their checks, then `+N`), and the harness signals to act on: P1 lessons, provisional decisions, merged worktrees to
+  touched on a row of their own (the check counts, then up to five numbers colored by their checks, then `+N`; when
+  they span several repositories, each number carries its repository's letter, `a#42, b#42`),
+  and the harness signals to act on: P1 lessons, provisional decisions, merged worktrees to
   clean, and untriaged persona findings. Each part shows only when it holds something.
-- `/aidrian-mod`: the same data in a pane, with one row per pull request and a link to it, the ticket's link, and one
-  row per subagent. `/aidrian-mod hide` closes it. When the snapshot cannot be read, the pane says why.
+- `/aidrian-mod`: the same data in a pane, with one row per pull request and a link to it, each row showing its
+  repository's letter beside the repository, the ticket's link, and one row per subagent.
+  `/aidrian-mod hide` closes it. When the snapshot cannot be read, the pane says why.
 - Notifications, in an interactive terminal session only: a long turn done, a turn stopped on an API error, an
   approval or a question waiting, Claude Code's other notifications, a failed Bash command, a compaction, and the rate
   limits at 85% and 90%. Desktop notifications are skipped while the terminal app is in front.

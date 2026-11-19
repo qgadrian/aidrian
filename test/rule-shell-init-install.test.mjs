@@ -24,6 +24,12 @@ test('denies an install or uninstall of the shell function, however aidrian is r
   deny('echo "aidrian shell-init zsh --install" | bash');
 });
 
+test('denies an install that wraps a launcher, wherever --wrap sits', () => {
+  deny('aidrian shell-init zsh --install --wrap cc');
+  deny('aidrian shell-init zsh --wrap cc --install');
+  deny('aidrian shell-init zsh --wrap=cc --install');
+});
+
 test('denies the command carried by a program that runs its arguments or a string as a command', () => {
   deny('echo zsh | xargs aidrian shell-init --install');
   deny('find . -maxdepth 0 -exec aidrian shell-init zsh --install \\;');

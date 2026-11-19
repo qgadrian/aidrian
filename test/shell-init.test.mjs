@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { BEGIN, END, install, rcBlock } from '../plugins/aidrian/lib/shell-init.mjs';
+import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { BEGIN, commands, END, functionLines, install, rcBlock, WRAP_REFUSED, wrapProblem, wrapsOf } from '../plugins/aidrian/lib/shell-init.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
@@ -110,18 +111,19 @@ test('--uninstall refuses a start marker with no end, and keeps a startup file t
   assert.equal(statSync(target).mode & 0o777, 0o640, 'its mode stays');
 });
 
-// Runs `script` in `shell` with HOME and the state root in `root`, a fake `claude` and a fake `aidrian` first on PATH that
-// log their arguments and AIDRIAN_SHELL_PID, and bash told to expand aliases as an interactive bash does.
-function inShell(t, shell, script) {
+// Runs `script` in `shell` with HOME and the state root in `root`, fake `programs` (a `claude` and an `aidrian` unless
+// given) first on PATH that log their arguments and AIDRIAN_SHELL_PID, and bash told to expand aliases as an interactive
+// bash does. RC in `script` names `file`, or a file holding `block`, rcBlock(shell) unless given.
+function inShell(t, shell, script, { block = rcBlock(shell), file = null, programs = ['claude', 'aidrian'] } = {}) {
   const root = folder(t, 'aidrian-block-');
   const bin = path.join(root, 'bin');
   mkdirSync(bin);
   const log = path.join(root, 'log');
-  for (const name of ['claude', 'aidrian']) {
+  for (const name of programs) {
     writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $AIDRIAN_SHELL_PID $*" >> '${log}'\nexit 0\n`, { mode: 0o755 });
   }
-  const rc = path.join(root, 'rc');
-  writeFileSync(rc, `${rcBlock(shell)}\n`);
+  const rc = file ?? path.join(root, 'rc');
+  if (file === null) writeFileSync(rc, `${block}\n`);
   const prelude = shell === 'bash' ? 'shopt -s expand_aliases\n' : '';
   const result = spawnSync(shell, [...SHELL_ARGS[shell], `${prelude}${script.replaceAll('RC', `'${rc}'`)}`], {
     env: { PATH: `${bin}:${SYSTEM_PATH}`, HOME: root, XDG_STATE_HOME: path.join(root, 'state') }, encoding: 'utf8',
@@ -241,5 +243,280 @@ test('the session start names a startup file whose block differs from the curren
   assert.doesNotMatch(sessionStart(t, env, { home }), /Handoff terminal/u, 'the current block');
   writeFileSync(rc, old);
   assert.doesNotMatch(sessionStart(t, env, { home, local: null }), /Handoff terminal/u, 'the machine switch is off');
+});
+
+// The startup file `shell` reads under `home`, and its text.
+const startup = (home, shell) => path.join(home, shell === 'zsh' ? '.zshrc' : '.bashrc');
+const read = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null);
+const wrapArgs = (names) => names.flatMap((name) => ['--wrap', name]);
+const recordFor = (expires) => `mkdir -p "$XDG_STATE_HOME/aidrian/handoff-terminals"; echo "abcd1234 ${expires}" > "$XDG_STATE_HOME/aidrian/handoff-terminals/$$"`;
+
+test('with no wrapped name the block is today\'s, with no line of wrapped launchers, and the usage names --wrap', () => {
+  for (const shell of ['zsh', 'bash']) {
+    assert.doesNotMatch(rcBlock(shell), /# Wrapped launchers:/u);
+    const lines = rcBlock(shell, HOSTS, ['cc']).split('\n');
+    assert.equal(lines[2], '# Wrapped launchers: cc', 'the record is the third line');
+    // The cc lines start at the first line after the record that names cc: the guard before its function.
+    const start = lines.findIndex((line, index) => index > 2 && /\bcc\b/u.test(line));
+    assert.ok(start > 2 && start < lines.indexOf('function cc {'));
+    const unwrapped = [...lines.slice(0, 2), ...lines.slice(3, start), ...lines.slice(lines.indexOf(END))];
+    assert.equal(unwrapped.join('\n'), rcBlock(shell), `${shell}: less its record line and the cc function and alias check, the wrapped block is today's`);
+  }
+  assert.equal(commands['shell-init'].usage, '(zsh | bash) [--install [--wrap NAME]... | --uninstall]');
+  assert.match(commands['shell-init'].about, /--wrap/u);
+});
+
+test('a wrapped function is the host\'s own with its name and first run changed, and still opens the next session with the host program', () => {
+  const own = functionLines('zsh');
+  const lines = functionLines('zsh', HOSTS, ['cc']);
+  assert.deepEqual(lines.slice(0, own.length), own, 'the host\'s own function and alias check come first, unchanged');
+  const body = own.slice(0, own.indexOf('}') + 1);
+  const expected = body.map((line) => (line === 'function claude {' ? 'function cc {' : line.replace('command claude "$@"', 'command cc "$@"')));
+  const start = lines.indexOf('function cc {');
+  assert.deepEqual(lines.slice(start, start + body.length), expected);
+  assert.ok(expected.some((line) => line.includes('command claude attach "$id"')), 'the record loop runs the host program, never the launcher');
+  assert.match(lines.slice(start + body.length).join('\n'), /case \$_aidrian_alias in cc\|cc\\ \*\|claude\|claude\\ \*\) ;;/u);
+  assert.match(lines.slice(own.length, start).join('\n'), /^if builtin functions cc >\/dev\/null 2>&1 && /u, 'a guard comes before the wrapper');
+  assert.equal(lines.at(-1), 'fi', 'and closes after its alias check');
+});
+
+for (const shell of ['zsh', 'bash']) {
+  const notWrapped = 'aidrian shell-init: a shell function cc already exists, so the launcher cc was not wrapped\n';
+
+  test(`in ${shell}, a shell function of a wrapped name defined before the block stays, and the block says it did not wrap it`, { skip: !HAS(shell) }, (t) => {
+    const block = `function cc { echo mine; }\n${rcBlock(shell, HOSTS, ['cc'])}`;
+    const ran = inShell(t, shell, '. RC\ncc --resume x', { block, programs: ['cc', 'claude'] });
+    assert.equal(ran.result.status, 0, ran.result.stderr);
+    assert.equal(ran.result.stdout, 'mine\n', 'the earlier function still runs');
+    assert.equal(ran.result.stderr, notWrapped);
+    assert.deepEqual(ran.calls, [], 'no program of that name ran');
+  });
+
+  test(`in ${shell}, reading the startup file twice redefines the block's own wrapper and says nothing`, { skip: !HAS(shell) }, (t) => {
+    const ran = inShell(t, shell, '. RC\n. RC\ncc --resume x', { block: rcBlock(shell, HOSTS, ['cc']), programs: ['cc', 'claude'] });
+    assert.equal(ran.result.status, 0, ran.result.stderr);
+    assert.equal(ran.result.stderr, '', 'no line on the second read');
+    assert.equal(ran.calls.length, 1);
+    assert.match(ran.calls[0], /^cc \d+ --resume x$/u, 'cc is the wrapper, which set the shell pid');
+  });
+}
+
+test('in zsh, a hook function a terminal\'s setup registers before the block keeps running when the block names it', { skip: !HAS('zsh') }, (t) => {
+  const name = 'update_terminal_cwd';
+  const block = `function ${name} { echo hook-ran; }\nprecmd_functions+=(${name})\n${rcBlock('zsh', HOSTS, [name])}`;
+  const ran = inShell(t, 'zsh', '. RC\nfor hook in $precmd_functions; do $hook; done', { block, programs: [name, 'claude'] });
+  assert.equal(ran.result.status, 0, ran.result.stderr);
+  assert.equal(ran.result.stdout, 'hook-ran\n', 'the hook ran the original function');
+  assert.match(ran.result.stderr, /^aidrian shell-init: a shell function update_terminal_cwd already exists, so the launcher update_terminal_cwd was not wrapped$/mu);
+  assert.deepEqual(ran.calls, [], 'no program of that name ran');
+});
+
+test('functionLines refuses a wrapped name that fails the name rule, and wraps only for exactly one host that replaces a terminal', () => {
+  const host = (program) => ({ capabilities: { handoffContinue: { replaceTerminal: { program, attach: 'attach' } } } });
+  assert.throws(() => functionLines('zsh', HOSTS, ['x;y']), /--wrap/u);
+  assert.throws(() => functionLines('zsh', HOSTS, ['claude']), /--wrap/u);
+  assert.throws(() => functionLines('zsh', [host('claude'), host('other')], ['cc']), /exactly one host/u);
+  assert.throws(() => functionLines('zsh', [{ capabilities: {} }], ['cc']), /exactly one host/u);
+  assert.doesNotThrow(() => functionLines('zsh', [host('claude'), host('other')]), 'two hosts with no wrapped name, as before');
+  assert.equal(wrapProblem('cc'), null);
+  assert.equal(wrapProblem(`c${'x'.repeat(31)}`), null, '32 characters');
+  for (const name of ['if', 'command', 'local', 'cd', 'exit', 'rm', 'od', 'nocorrect']) assert.ok(WRAP_REFUSED.includes(name), name);
+  for (const name of [...WRAP_REFUSED, 'claude', '', 'a b', '1cc', 'é', `c${'x'.repeat(32)}`]) assert.notEqual(wrapProblem(name), null, name);
+});
+
+test('wrapProblem refuses the functions a shell runs as hooks, any TRAP or zle- name, and builtins of bash 4 and 5', () => {
+  const hooks = ['preexec', 'precmd', 'chpwd', 'periodic', 'zshaddhistory', 'zshexit', 'zsh_directory_name', 'command_not_found_handler', 'command_not_found_handle'];
+  const prefixed = ['TRAPZERR', 'TRAPDEBUG', 'TRAPEXIT', 'TRAPINT', 'TRAPanything', 'zle-line-init', 'zle-keymap-select'];
+  const builtins = ['shift', 'trap', 'setopt', 'mapfile', 'readarray', 'compopt', 'coproc', 'shopt'];
+  for (const name of [...hooks, ...prefixed, ...builtins]) assert.notEqual(wrapProblem(name), null, name);
+  for (const name of ['claude-work', 'trapper', 'Trap', 'zlestuff']) assert.equal(wrapProblem(name), null, `${name}: only the exact prefixes are refused`);
+});
+
+// The words `shell` names as its own builtins and reserved words, zsh with every module it can load, run with an
+// environment inside the test's temporary folder.
+function shellWords(t, shell) {
+  const root = folder(t, 'aidrian-words-');
+  const zsh = 'for d in $module_path; do for f in $d/zsh/**/*.(so|bundle)(N); do zmodload ${${f#$d/}%.*} 2>/dev/null; done; done; print -l ${(k)builtins} ${(k)reswords}';
+  const script = shell === 'zsh' ? zsh : 'compgen -b; compgen -k';
+  const result = spawnSync(shell, [...SHELL_ARGS[shell], script], { env: { PATH: SYSTEM_PATH, HOME: root, XDG_STATE_HOME: path.join(root, 'state') }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.split('\n').filter((word) => /^[A-Za-z][A-Za-z0-9_-]{0,31}$/u.test(word));
+}
+
+for (const shell of ['zsh', 'bash']) {
+  test(`wrapProblem refuses every reserved word and builtin ${shell} lists`, { skip: !HAS(shell) }, (t) => {
+    const words = shellWords(t, shell);
+    assert.ok(words.length > 40, `${shell} listed its words: ${words.length}`);
+    assert.deepEqual(words.filter((word) => wrapProblem(word) === null), [], `each word ${shell} lists is refused`);
+  });
+}
+
+test('wrapsOf reads the line of wrapped launchers this command writes, and calls any other unreadable', () => {
+  assert.deepEqual(wrapsOf(rcBlock('zsh')), { names: [], readable: true });
+  assert.deepEqual(wrapsOf(rcBlock('zsh', HOSTS, ['dd', 'cc', 'dd'])), { names: ['cc', 'dd'], readable: true });
+  const [begin, written, ...rest] = rcBlock('zsh').split('\n');
+  const nine = Array.from({ length: 9 }, (_, index) => `w${index}`).join(' ');
+  for (const line of ['# Wrapped launchers: claude', '# Wrapped launchers: preexec', '# Wrapped launchers: TRAPZERR cc', '# Wrapped launchers: x;y', '# Wrapped launchers: dd cc', '# Wrapped launchers: cc cc', '# Wrapped launchers: ', '# Wrapped launchers:', `# Wrapped launchers: ${nine}`]) {
+    assert.deepEqual(wrapsOf([begin, written, line, ...rest].join('\n')), { names: [], readable: false }, line);
+  }
+});
+
+for (const shell of ['zsh', 'bash']) {
+  test(`in ${shell}, --install --wrap cc writes a cc function that passes the shell's pid and opens the session a record names`, { skip: !HAS(shell) }, (t) => {
+    const home = folder(t, 'aidrian-home-');
+    const result = shellInit(home, shell, '--install', '--wrap', 'cc');
+    assert.equal(result.status, 0, result.stderr);
+    const rc = startup(home, shell);
+    const text = readFileSync(rc, 'utf8');
+    const inside = text.slice(text.indexOf(BEGIN), text.indexOf(END));
+    assert.match(inside, /^function cc \{$/mu);
+    assert.match(inside, /^# Wrapped launchers: cc$/mu);
+    const soon = Math.floor(Date.now() / 1000) + 30;
+    const ran = inShell(t, shell, `. RC\necho $$\n${recordFor(soon)}\ncc --resume x`, { file: rc, programs: ['cc', 'claude'] });
+    assert.equal(ran.result.status, 0, ran.result.stderr);
+    const pid = ran.result.stdout.trim();
+    assert.match(pid, /^\d+$/u);
+    assert.deepEqual(ran.calls, [`cc ${pid} --resume x`, `claude ${pid} attach abcd1234`]);
+  });
+
+  test(`in ${shell}, an alias of a wrapped name that starts with it or with claude says nothing, and one to another path is named`, { skip: !HAS(shell) }, (t) => {
+    const options = { block: rcBlock(shell, HOSTS, ['cc']), programs: ['cc', 'claude'] };
+    for (const alias of ["alias cc='claude --flag'", "alias cc='cc --flag'", 'alias cc=cc']) {
+      const quiet = inShell(t, shell, `${alias}\n. RC\necho done`, options);
+      assert.equal(quiet.result.status, 0, quiet.result.stderr);
+      assert.equal(quiet.result.stderr, '', alias);
+    }
+    const other = inShell(t, shell, 'alias cc=/opt/elsewhere/cc\n. RC\necho done', options);
+    assert.equal(other.result.status, 0, other.result.stderr);
+    assert.equal(other.result.stderr, 'aidrian shell-init: the alias cc runs past the shell function, so a handoff will not replace this terminal\n');
+  });
+}
+
+test('--uninstall after --install --wrap cc leaves the startup file as it was', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const rc = startup(home, 'zsh');
+  writeFileSync(rc, 'export EDITOR=nvim');
+  assert.equal(shellInit(home, 'zsh', '--install', '--wrap', 'cc').status, 0);
+  const gone = shellInit(home, 'zsh', '--uninstall');
+  assert.equal(gone.status, 0, gone.stderr);
+  assert.equal(read(rc), 'export EDITOR=nvim\n', 'the newline install added to a file that ended without one, and nothing else');
+});
+
+test('a re-install keeps the wrapped names, a later --wrap adds to them, and --uninstall then --install starts the list again', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const rc = startup(home, 'zsh');
+  writeFileSync(rc, 'alias g=git\n');
+  assert.equal(shellInit(home, 'zsh', '--install', '--wrap', 'cc').status, 0);
+  const wrapped = read(rc);
+  assert.equal(wrapped, `alias g=git\n${rcBlock('zsh', HOSTS, ['cc'])}\n`);
+  const again = shellInit(home, 'zsh', '--install');
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /^.* already holds the current aidrian shell-init block; nothing changed\.$/mu);
+  assert.match(again.stdout, /^It also wraps `cc`: each runs as before, and follows a handoff when it is a program on PATH that ends in `exec` of `claude`\. `--wrap` adds a name and never drops one; `--uninstall` then `--install` starts the list again\.$/mu);
+  assert.equal(read(rc), wrapped, 'nothing changed');
+
+  writeFileSync(rc, wrapped.replace('|| rc=$?', '; rc=$?'));
+  const replaced = shellInit(home, 'zsh', '--install');
+  assert.match(replaced.stdout, /^Replaced the aidrian shell-init block/mu);
+  assert.equal(read(rc), wrapped, 'an edited block is replaced, and cc is still wrapped');
+
+  const added = shellInit(home, 'zsh', '--install', '--wrap', 'dd');
+  assert.equal(added.status, 0, added.stderr);
+  assert.equal(read(rc), `alias g=git\n${rcBlock('zsh', HOSTS, ['cc', 'dd'])}\n`);
+  assert.match(added.stdout, /It also wraps `cc`, `dd`: .*`--uninstall` then `--install` starts the list again\.\n$/u, 'the output ends with how to start the list again');
+
+  assert.equal(shellInit(home, 'zsh', '--uninstall').status, 0);
+  assert.equal(shellInit(home, 'zsh', '--install', '--wrap', 'dd').status, 0);
+  assert.equal(read(rc), `alias g=git\n${rcBlock('zsh', HOSTS, ['dd'])}\n`, 'dd alone');
+});
+
+test('--wrap names in any order or repeated write the same bytes, and a ninth name is refused', (t) => {
+  const texts = [['b', 'a'], ['a', 'b', 'a']].map((names) => {
+    const home = folder(t, 'aidrian-home-');
+    assert.equal(shellInit(home, 'zsh', '--install', ...wrapArgs(names)).status, 0);
+    return read(startup(home, 'zsh'));
+  });
+  assert.equal(texts[0], texts[1]);
+  assert.match(texts[0], /^# Wrapped launchers: a b$/mu);
+
+  const home = folder(t, 'aidrian-home-');
+  const rc = startup(home, 'zsh');
+  const eight = ['ga', 'gb', 'gc', 'gd', 'ge', 'gf', 'gg', 'gh'];
+  writeFileSync(rc, `${rcBlock('zsh', HOSTS, eight)}\n`);
+  const before = read(rc);
+  const ninth = shellInit(home, 'zsh', '--install', '--wrap', 'gi');
+  assert.equal(ninth.status, 2, ninth.stdout);
+  assert.match(ninth.stderr, /^usage: aidrian shell-init /u);
+  assert.match(ninth.stderr, /at most 8/u);
+  assert.equal(read(rc), before, 'byte for byte');
+  assert.equal(shellInit(home, 'zsh', '--install', '--wrap', 'gh').status, 0, 'a name already recorded adds none');
+  assert.equal(read(rc), before);
+});
+
+test('--install refuses each --wrap name the rule refuses, by its position, never echoes it, and writes nothing', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const rc = startup(home, 'zsh');
+  writeFileSync(rc, 'alias g=git\n');
+  const nine = Array.from({ length: 9 }, (_, index) => `w${index}`);
+  const refused = [[''], ['claude'], ['a b'], ['x;y'], ['$(id)'], ['`id`'], ['./cc'], ['/usr/bin/cc'], ['a\nb'], ['a'.repeat(33)], ['1cc'], ['é'], ['if'], ['local'], ['exit'], nine, ['\u001b[31mred']];
+  for (const names of refused) {
+    const result = shellInit(home, 'zsh', '--install', ...wrapArgs(names));
+    assert.equal(result.status, 2, JSON.stringify(names));
+    const lines = result.stderr.trimEnd().split('\n');
+    assert.equal(lines.length, 2, `the usage line and one reason: ${result.stderr}`);
+    assert.match(lines[0], /^usage: aidrian shell-init /u);
+    assert.doesNotMatch(result.stderr, /\u001b/u, 'no escape byte reaches the terminal');
+    assert.equal(read(rc), 'alias g=git\n', JSON.stringify(names));
+  }
+  const second = shellInit(home, 'zsh', '--install', ...wrapArgs(['cc', 'x;y', 'dd']));
+  assert.match(second.stderr, /--wrap name 2 of 3 /u);
+  assert.doesNotMatch(second.stderr, /x;y/u, 'a value that failed the shape is never echoed');
+
+  const empty = folder(t, 'aidrian-home-');
+  assert.equal(shellInit(empty, 'zsh', '--install', '--wrap', 'x;y').status, 2);
+  assert.equal(existsSync(startup(empty, 'zsh')), false, 'no startup file is created');
+  for (const args of [['--wrap', '-x'], ['--wrap']]) {
+    const result = shellInit(home, 'zsh', '--install', ...args);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.equal(read(rc), 'alias g=git\n');
+  }
+});
+
+test('a line of the Human\'s own that runs aidrian shell-init, and no block, refuses --wrap and changes nothing', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const rc = startup(home, 'zsh');
+  const own = 'eval "$(aidrian shell-init zsh)"\n';
+  writeFileSync(rc, own);
+  const result = shellInit(home, 'zsh', '--install', '--wrap', 'cc');
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /already runs aidrian shell-init on line 1, outside a block; no launcher was wrapped/u);
+  assert.equal(read(rc), own);
+});
+
+test('a block whose line of wrapped launchers this command did not write is replaced, wrapping only what --wrap names', (t) => {
+  const [begin, written, ...rest] = rcBlock('zsh').split('\n');
+  for (const line of ['# Wrapped launchers: claude', '# Wrapped launchers: x;y']) {
+    const block = [begin, written, line, ...rest].join('\n');
+    for (const [wraps, expected] of [[[], rcBlock('zsh')], [['dd'], rcBlock('zsh', HOSTS, ['dd'])]]) {
+      const home = folder(t, 'aidrian-home-');
+      const rc = startup(home, 'zsh');
+      writeFileSync(rc, `alias g=git\n${block}\n`);
+      const result = shellInit(home, 'zsh', '--install', ...wrapArgs(wraps));
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(read(rc), `alias g=git\n${expected}\n`, `${line} ${wraps}`);
+      assert.match(result.stdout, /line of wrapped launchers was not one this command wrote.*`--wrap`/u);
+    }
+  }
+});
+
+test('the session start counts a block that wraps a launcher and is otherwise current as current', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const rc = startup(home, 'zsh');
+  const wrapped = `alias g=git\n${rcBlock('zsh', HOSTS, ['cc'])}\n`;
+  writeFileSync(rc, wrapped);
+  assert.doesNotMatch(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' }, { home }), /Handoff terminal/u, 'no stale line');
+  assert.doesNotMatch(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }, { home }), /Handoff terminal/u, 'it holds the current block');
+  writeFileSync(rc, wrapped.replace('|| rc=$?', '; rc=$?'));
+  assert.match(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' }, { home }), /^Handoff terminal: the aidrian shell function block in .*\.zshrc differs from this plugin's/mu);
 });
 

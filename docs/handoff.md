@@ -485,6 +485,33 @@ An alias for `claude` takes the place of the function when typed. One whose valu
 elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
 the block prints one line on stderr that says so when the shell reads it.
 
+A launcher, a program on PATH that sets something up and ends in `exec claude "$@"`, opts in with `--wrap`:
+`aidrian shell-init zsh --install --wrap claude-work`, repeatable. The block then also holds the same function under
+each name, `function claude-work`, whose first run is `command claude-work "$@"` with `AIDRIAN_SHELL_PID` set, and an
+alias check that accepts an alias whose value starts with `claude-work` or `claude`. Every later hop opens with
+`command claude attach <id>`, in the shell's own environment, never through the launcher. A name is 1 to 32 letters,
+digits, `_`, or `-`, starting with a letter. The command refuses a host's own program, such as `claude`; every reserved
+word and builtin of zsh and bash, such as `if`, `local`, `trap`, `setopt`, or `mapfile`, from a fixed list, so no shell
+runs at install; a function a shell runs by its name as a hook, such as `preexec`, `precmd`, `chpwd`, or
+`command_not_found_handler`, and any name that starts with `TRAP` or `zle-`; a core tool the block runs or a function
+would shadow, such as `rm`, `date`, or `od`; and a ninth name in one block. A refusal exits 2, writes nothing, and names
+the refused `--wrap` by its position, never its value; `--wrap` without `--install` exits 2 too. The block records its
+names on its third line, `# Wrapped launchers: claude-play claude-work`, sorted.
+A re-install keeps them, and a later `--wrap` adds to them and never drops one; to wrap fewer, `--uninstall`, then
+`--install` with a `--wrap` for each name to keep.
+`--uninstall` removes them with the block. A record line the command did not write, such as one naming `claude`, counts
+as no names: the re-install wraps only what its `--wrap` names, and says so. A startup file with a line of its own that
+runs `aidrian shell-init`, and no block, wraps nothing and exits 1, since a wrapped function lives in the block.
+The name must be a program on PATH that ends in `exec` of the host program by its name, so its process shows as
+`claude`: the gate reads the process name, so a launcher that execs a binary named for its version, by its path, does
+not pass. An alias or shell function that itself runs `claude` reaches the `claude` function and needs no wrap.
+A shell function of the wrapped name that the shell already has when it reads the block, such as one defined earlier in
+the startup file or a hook a terminal's own setup registers, stays: the block defines no wrapper for that name and
+prints one line on stderr that says the launcher was not wrapped. The block tells its own wrapper apart, by its first
+run, so reading the startup file again in the same shell, `source ~/.zshrc`, redefines the wrapper and prints nothing.
+A function of that name defined after the block replaces the wrapper, as any later definition does.
+Bash in POSIX mode refuses a function name with `-`, such as `claude-work`, so such a name suits zsh or a bash not in that mode.
+
 It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
 `"auto"`, on a host whose adapter declares `replaceTerminal` ([Adding a host](providers/adding-a-host.md)):
 
@@ -547,6 +574,13 @@ Limits:
   open a session by a plain id, within its minute, the next time a program the shell function ran exits.
 - A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
   mid-turn. Its transcript is kept, and the work goes on in the new session.
+- A wrapped launcher that does not end in `exec`, or execs the host program under another process name, carries the
+  shell's pid but fails the gate's check of the host process, so its terminal stays, and the handoff's last line names
+  the command that opens the new session.
+- Only the first session runs through a wrapped launcher: every later hop opens with `command claude attach <id>` in
+  the shell's own environment. What the launcher sets before its `exec`, such as a variable naming a config folder, or
+  flags, does not reach the later sessions, so a launcher that exists only to set such a variable may open the next
+  session with the shell's settings. Not verified live.
 
 ## The snapshot
 

@@ -57,6 +57,12 @@ function repo(t, { committed = SOLO, working = null, local = null, tracked = fal
   return { dir, project: () => projectAt(dir), state };
 }
 
+// The review bot's status card on HEAD, passing it with nothing found, as the review trail gives a comment.
+const BOT = 'chatgpt-codex-connector';
+const BOT_PASS = {
+  id: 9, login: BOT, bot: true, association: 'NONE', at: '2026-11-03T14:10:00Z', editors: [BOT], editsComplete: true,
+  body: `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 ${JSON.stringify({ code_review: { commit_sha: HEAD, has_any_findings: false, has_unresolved_findings: false, status: 'completed' } })} -->`,
+};
 const encode = (value) => ({ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(value)).toString('base64') });
 
 const notFound = () => {
@@ -78,6 +84,17 @@ function fakeForge(branches = { main: SOLO }, { base = 'main', down = false } = 
       if (down) fail();
       if (name !== REPO) notFound();
       return { default_branch: 'main' };
+    },
+    // The review trail the merge guard's waiver reads: both branches' config.json, and the review bot's pass of HEAD.
+    reviewTrail: (name, n, { host } = {}) => {
+      calls.push(['reviewTrail', name, n, host]);
+      if (down) fail();
+      if (name !== REPO) notFound();
+      const text = (branch) => (Object.hasOwn(branches, branch) ? JSON.stringify(branches[branch]) : null);
+      return {
+        head: HEAD, base, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true, comments: [BOT_PASS], commentsComplete: true,
+        branches: { default: { name: 'main', pointer: null, config: text('main'), knowledge: null }, base: { name: base, pointer: null, config: text(base) } },
+      };
     },
     contents: (name, file, ref) => {
       calls.push(['contents', name, file, ref]);
@@ -136,7 +153,13 @@ test('solo on the base branch, with no local setting, turns each of the three sw
   const forge = fakeForge();
   assert.deepEqual(onOff(switches(project, forge)), ALL_ON);
   // Through the merge guard: a recorded waive stands for a merge that names its head.
-  const state = { ...emptyState(5, 'acme/notes'), outcome: { status: 'round_limit', head: HEAD, at: T0 }, waivers: [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'judge', at: '2026-11-03T15:00:00.000Z' }] };
+  // The cap's cause is local findings alone, here none, and the record names no flow for the Human on the head: what a
+  // judge's verdict may waive, once the review bot passed the head.
+  const cap = { head: HEAD, reviewed: HEAD, items: [], counted: 0, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [] };
+  const state = {
+    ...emptyState(5, 'acme/notes'), outcome: { status: 'round_limit', head: HEAD, at: T0, cap }, signoffable: { head: HEAD, flows: [] },
+    waivers: [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'judge', at: '2026-11-03T15:00:00.000Z' }],
+  };
   assert.deepEqual(guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: fakeForge(), startedAt: Date.now() }), { allow: true, note: '', route: '' });
   // Through a pull request number, as aidrian pr settle reads it.
   assert.equal(prSolo(project, 5, { forge: fakeForge() }), true);

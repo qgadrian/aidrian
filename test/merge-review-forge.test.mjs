@@ -610,7 +610,9 @@ test('an end row a session other than the run`s driver wrote releases nothing: t
   assert.equal(currentDriver(DRIVER, seen)?.run, 'launch', 'and still the run`s driver');
   assert.deepEqual(activeRuns(fx.state), [{ run: 'launch' }], 'the run is still under way');
   assert.doesNotMatch(fx.cmd(['start', 'launch', 'ENG-1']).err.join('\n'), /ended/u, 'a stray end row ends no run');
-  // The driver's own end row, by custody, releases it.
+  // The driver's own end row, by custody, releases it, once the issue that start began has settled: end refuses while
+  // an issue runs.
+  recordIssue(fx.state, 'launch', { key: 'ENG-1', state: 'parked', decision: 'd1' });
   assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
   assert.equal(endedIn(fx.run()), true);
   assert.equal(runDriver(DRIVER, seen), null);

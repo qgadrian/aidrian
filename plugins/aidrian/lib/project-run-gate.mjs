@@ -854,7 +854,7 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
     const member = resumerProblem({ found: opened.found, store: opened.store, session, now });
     if (member) return refuse(member);
   }
-  if (endedIn(opened.found.rows)) return refuse(`the run ${run} ended`);
+  if (endedIn(opened.found)) return refuse(`the run ${run} ended`);
   // A run whose driver chain the host lists as ended is stranded: the attended session that resumes it takes custody.
   const stranded = named && strandedDriver({ found: opened.found, env, spawn });
   if (!haltOf(opened.found) && !stranded) {

@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { entryLimit, resetOf, transcriptLimit } from '../plugins/aidrian/lib/hosts/claude-code-limit.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
@@ -336,11 +337,27 @@ test('a host that does not continue has its limited session stopped; one that ca
   fx.limit([apiError('Claude AI usage limit reached|1763481600')]);
   const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : fx.claude.run(command, args, options));
   const before = fx.rows().length;
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, ['limited ENG-1 attempt 1: a session of it could not be stopped', 'running ENG-1']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, [`limited ENG-1 attempt 1: a session of it, ${STARTED[0].id}, could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
   assert.equal(fx.rows().length, before, 'nothing written');
   const out = fx.cmd(['wait', 'launch', '--max-wait', '0']).out;
   assert.match(out[0], /^limit ENG-1 usage until \S+ -> open$/u);
   assert.deepEqual(fx.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [CHILD], 'stopped once the stop works');
+});
+
+test('a limited chain whose second session cannot be stopped is named by that session, not the one the start held', (t) => {
+  noContinue(t);
+  const fx = started(t);
+  fx.limit([apiError('Claude AI usage limit reached|1763481600')]);
+  // A continuation of the session the run started, which the host lists working while it lists the first one ended.
+  const next = { id: 'beef0001', session: 'beef0001-0000-4000-8000-00000000be01' };
+  const brief = path.join(fx.state, 'handoffs', '2026-11-17-eng-1.md');
+  mkdirSync(path.dirname(brief), { recursive: true, mode: 0o700 });
+  writeFileSync(brief, '# Handoff\n');
+  noteStarted(fx.store, CHILD, { sha256: 'a'.repeat(64), slug: 'eng-1', brief, chain: 1, id: next.id, session: next.session, name: null, cwd: fx.dir });
+  fx.claude.sessions.push({ id: next.id, sessionId: next.session, name: 'eng-1', kind: 'background', cwd: fx.dir });
+  fx.claude.states[CHILD] = 'done';
+  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : fx.claude.run(command, args, options));
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, [`limited ENG-1 attempt 1: a session of it, ${next.id}, could not be stopped; \`claude stop ${next.id}\` stops it`, 'running ENG-1']);
 });
 
 test('a limit with no reset time backs off, and a far reset is held to 6 hours', (t) => {

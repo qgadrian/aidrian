@@ -428,10 +428,16 @@ export function attachLine({ id }) {
   return own ? `it runs as the process ${own.pid} under \`codex exec\`, with its events in the run's log` : 'it runs under `codex exec`, with its events in the run\'s log';
 }
 
-// How the Human stops one by hand, when the gate could not.
+// How the Human stops one by hand, when the gate could not. The listing it names prints no arguments, as the
+// process-kill rule asks (lib/rules/process-kill.mjs), and a name proves nothing of which process holds the pid: its
+// start time does, as the id's digest records it (processEnded), and the attempt's start rows in the run's ledger bound
+// it. The listing prints it in UTC, as the ledger's rows are, to the second: so the bound runs from the second of the
+// first row through the second of the last, both whole. An id that names no process points to the attempt's run log,
+// never to a process picked by name.
 export function stopLine({ id }) {
   const own = processOf(id);
-  return own ? `\`kill ${own.pid}\` stops it, once \`ps -p ${own.pid}\` shows it is still \`codex exec\`` : '`ps` lists the `codex exec` processes, and `kill <pid>` stops one';
+  if (!own) return 'the run recorded no process for it: the attempt\'s run log, in the run\'s log folder, holds its events and its session id; stop only the process that writes that log, never one picked by its name';
+  return `\`TZ=UTC ps -o pid=,lstart=,ucomm= -p ${own.pid}\` shows the start time of the process ${own.pid} in UTC, to the second, with no arguments; when it falls within the seconds of this attempt's two start rows in the run's ledger, from the second of the first through the second of the last, \`kill ${own.pid}\` stops it, and otherwise another process took the pid, so leave it`;
 }
 
 // What the session is told beside the project prompt: it works only in its attempt's folder, pushes its branch with a

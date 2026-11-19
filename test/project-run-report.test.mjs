@@ -16,7 +16,7 @@ import { owedReports, reportBody, reportCalls, runWriter } from '../plugins/aidr
 import { runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
-import { markDriver, markPending, markUnattended, readDriverMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { markDriver, markPending, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { signoffFolder } from '../plugins/aidrian/lib/review/signoff-store.mjs';
 import { drivesRun, droveRun } from '../plugins/aidrian/lib/run-driver.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
@@ -272,6 +272,88 @@ test('the driver may not rewrite the run\'s ledger or snapshot after init', (t) 
     const ran = spawnSync(process.execPath, [AGENT_GATES], { input: JSON.stringify(input), cwd: fx.dir, env: { ...fx.env, HOME: fx.home }, encoding: 'utf8' });
     assert.equal(ran.status, 2, `${file}: ${ran.stderr}`);
   }
+});
+
+// A run's first driver has its driver mark from init on and no unattended mark of its own: it is held from the
+// continuation store as a session no Human attends is, so it cannot write the marker it may not arm, while its own
+// `aidrian handoff continue` still runs.
+test('the driver may not write the handoff continuation store, though it runs the handoff gate', (t) => {
+  const fx = started(t);
+  assert.equal(readUnattendedMark(DRIVER, { env: fx.env, home: fx.home }), null, 'the first driver has no unattended mark');
+  assert.equal(drivesRun(DRIVER, { env: fx.env, home: fx.home }), true, 'its driver mark holds it');
+  const store = path.join(fx.state, 'handoffs', '.continue');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  const call = (tool, input) => spawnSync(process.execPath, [AGENT_GATES], { input: JSON.stringify({ cwd: fx.dir, session_id: DRIVER, tool_name: tool, tool_input: input }), cwd: fx.dir, env: { ...fx.env, HOME: fx.home }, encoding: 'utf8' });
+  for (const [tool, input] of [
+    ['Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' }],
+    ['Bash', { command: `echo {} > ${path.join(store, 'ready-x.json')}` }],
+    ['Bash', { command: `rm ${store}/from-*.json` }],
+  ]) {
+    const ran = call(tool, input);
+    assert.equal(ran.status, 2, `${JSON.stringify(input)}: ${ran.stderr}`);
+    assert.match(ran.stderr, /the handoff continuation store/u, JSON.stringify(input));
+  }
+  const gate = call('Bash', { command: `aidrian handoff continue ${path.join(fx.state, 'handoffs', '2026-11-19-project-launch.md')}` });
+  assert.equal(gate.status, 0, gate.stderr);
+  // A session neither mark holds still writes there, as before.
+  assert.equal(spawnSync(process.execPath, [AGENT_GATES], { input: JSON.stringify({ cwd: fx.dir, session_id: OTHER, tool_name: 'Write', tool_input: { file_path: path.join(store, 'armed-x.json'), content: '{}' } }), cwd: fx.dir, env: { ...fx.env, HOME: fx.home }, encoding: 'utf8' }).status, 0, 'an attended session');
+  // Its refusal names what holds it: its run, not a background start it never had.
+  const named = call('Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' });
+  assert.match(named.stderr, /only `aidrian handoff` commands write, and this session drives a project run, which no Human attends/u);
+  assert.doesNotMatch(named.stderr, /background handoff route started this session/u);
+  const ledger = call('Write', { file_path: path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl'), content: '{}' });
+  assert.match(ledger.stderr, /only `aidrian project` commands write, and this session drives a project run, which no Human attends/u);
+});
+
+// The agent gate hook, run as `session` on `tool` with `input`, from `cwd`, with `more` in its environment.
+const gates = (fx, session, tool, input, cwd = fx.dir, more = {}) => spawnSync(process.execPath, [AGENT_GATES], {
+  input: JSON.stringify({ cwd, session_id: session, tool_name: tool, tool_input: input }), cwd, env: { ...fx.env, HOME: fx.home, ...more }, encoding: 'utf8',
+});
+
+test('the first driver is held from its run\'s stores past the guards\' time budget and their word limit', (t) => {
+  const fx = started(t);
+  const store = path.join(fx.state, 'handoffs', '.continue');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  const late = { AIDRIAN_GUARD_BUDGET_MS: '0' };
+  for (const [what, file] of [['store', path.join(store, 'armed-x.json')], ['ledger', path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl')]]) {
+    const refused = gates(fx, DRIVER, 'Write', { file_path: file, content: '{}' }, fx.dir, late);
+    assert.equal(refused.status, 2, `${what}: ${refused.stderr}`);
+    assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only a main session a Human attends may change, and this session has driven a project run/u, what);
+  }
+  assert.equal(gates(fx, OTHER, 'Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' }, fx.dir, late).status, 0, 'an attended session past the budget');
+  // A PowerShell command longer than the guards read may hide the store in the words they skip.
+  const words = `Remove-Item ${Array.from({ length: 600 }, (_, i) => `w${i}`).join(' ')} ${path.join(store, 'armed-x.json')}`;
+  const long = gates(fx, DRIVER, 'PowerShell', { command: words });
+  assert.equal(long.status, 2, long.stderr);
+  assert.match(long.stderr, /the guards read at most 512 in a shell command they cannot parse, so it may change a file only a main session a Human attends may change, and this session has driven a project run/u);
+  assert.equal(gates(fx, OTHER, 'PowerShell', { command: words }).status, 0, 'an attended session\'s long command');
+});
+
+test('from another project\'s folder, the first driver is still held from its run\'s store and ledger', (t) => {
+  const fx = started(t);
+  const elsewhere = path.join(fx.root, 'elsewhere');
+  mkdirSync(path.join(elsewhere, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(elsewhere, '.aidrian', 'config.json'), JSON.stringify({ version: 1 }));
+  execFileSync('git', ['init', '-q', elsewhere]);
+  const store = path.join(fx.state, 'handoffs', '.continue');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  const targets = [['store', path.join(store, 'armed-x.json'), /the handoff continuation store/u], ['ledger', path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl'), /the folder of the project runs/u]];
+  for (const [what, file, guard] of targets) {
+    const refused = gates(fx, DRIVER, 'Write', { file_path: file, content: '{}' }, elsewhere);
+    assert.equal(refused.status, 2, `${what}: ${refused.stderr}`);
+    assert.match(refused.stderr, guard, what);
+    assert.match(refused.stderr, /this session drives a project run, which no Human attends/u, what);
+    const shell = gates(fx, DRIVER, 'Bash', { command: `echo {} > ${file}` }, elsewhere);
+    assert.equal(shell.status, 2, `${what} by Bash: ${shell.stderr}`);
+  }
+  // A session the background route started, marked in the run's project, is still refused there, by its own reason.
+  const marked = 'abcd1234-0000-4000-8000-00000000f001';
+  assert.ok(markUnattended(marked, { root: fx.dir, env: fx.env }));
+  const held = gates(fx, marked, 'Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' }, elsewhere);
+  assert.equal(held.status, 2, held.stderr);
+  assert.match(held.stderr, /background handoff route started this session/u);
+  // An attended session no mark names writes there from another project, as before.
+  for (const [what, file] of targets) assert.equal(gates(fx, OTHER, 'Write', { file_path: file, content: '{}' }, elsewhere).status, 0, `${what}: an attended session`);
 });
 
 test('preflight names every blocker at once, and starts nothing', (t) => {
@@ -657,8 +739,12 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   const text = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
   const halt = text.slice(text.indexOf('## Halt'), text.indexOf('## Stop'));
   assert.ok(halt.includes('Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session that a `could not be stopped` line named twice: no wait ends it.'), 'the bound on the wait');
-  assert.ok(halt.includes('Name each session step 2 left running by its issue and attempt, and its name in the host\'s list of background sessions, `<run> · <key> · <attempt>`: the Human stops it by hand with the host\'s own stop command, then runs `aidrian project end <run>`.'), 'the report names it');
-  assert.match(text, /## Stop Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then report the refusal as the cause, with what its line says fixes it, and each session step 2 left running, as § Halt step 4 names it\./u, 'Stop takes the same bounded wait and names the same sessions');
+  assert.ok(halt.includes('Name each session step 2 left running by its issue, its attempt, and the session id its `could not be stopped` line names, `a session of it, <id>, ...`, or, when that line names none, the id of its `started <key> attempt <n> session <id>` line: the Human stops it by hand with the host\'s command that `could not be stopped` line names. Only a driver ends the run: § Hand off\'s last list says how the Human takes the run up.'), 'the report names it');
+  assert.match(text, /## Stop Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue, its attempt, and its session id from its `could not be stopped` line, or else its `started` line, with how the Human stops it and takes the run up, as § Halt step 4 says\./u, 'Stop takes the same bounded wait and names the same sessions');
+  // Only the run's driver may end it: neither the halt report nor the stop sends the Human to `aidrian project end`.
+  const stop = text.slice(text.indexOf('## Stop'), text.indexOf('## Finish'));
+  assert.ok(!halt.includes('aidrian project end') && !stop.includes('aidrian project end'), 'no end for the Human');
+  assert.match(text, /## Hand off .*A run left with no driver is taken up by the Human:/u, 'the list Halt points to');
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

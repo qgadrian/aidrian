@@ -8,7 +8,7 @@ The hooks keep working, with the default in place of each bad value.
 Without a `config.json`, the commands use the defaults.
 
 [`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example,
-and [config-recipes.md](config-recipes.md) gives three checked starting configs by how much the Human steers.
+and [config-recipes.md](config-recipes.md) gives four checked starting configs by how much the Human steers.
 
 ## Keys
 
@@ -558,6 +558,8 @@ A local `off`, or a local file that git tracks or that has an error, always wins
 `solo` makes the default branch's content the switch: whoever can push to it turns the three switches on for every
 machine that sets none. A solo owner protects the default branch with no bypass, so only a reviewed pull request
 changes it. Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an older plugin rejects it.
+The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe sets it, beside every key of the full-autonomy
+recipe and `projectRun.allow`.
 
 ## Pull request contract
 
@@ -1249,8 +1251,8 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
 - The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
   denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
-  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, and the main
-  session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
+  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, as is one of a
+  main session no Human attends or a project run's driver, and an attended main session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
   than 1024 write targets are refused too, as the guards read no more ([hooks](hooks.md#agent-gates)).
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
 - An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
@@ -1811,6 +1813,9 @@ This depends on the session-end hook: on a host with no SessionEnd, and in a ses
 The driver reads the tracker with its own tools and writes a snapshot input; `init RUN --file PATH` validates it and starts the run.
 `next RUN` names the issues to start, and `summary RUN` writes the run's `summary.md` from its ledger.
 The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder.
+How its sessions relate to the cap of five background continuations in a row, and how the driver hands off, is
+[A project run](handoff.md#a-project-run). The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe
+allows project runs.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -2024,7 +2029,13 @@ refuses. `wait` prints `lingering <issue> attempt <n>` and waits on it as on an 
 the first time, and once 2 minutes have passed since that row it stops the session and writes a `gone` row with
 `how: "stopped"`, printing `lingered <issue> attempt <n> stopped`. One the host lists as ended gets a `gone` row with
 `how: "ended"`, from `wait`, `start`, or `end`, and `wait` prints `lingered <issue> attempt <n> ended` when it had seen it
-run on. A session that cannot be stopped prints `lingered <issue> attempt <n>: ... could not be stopped` each `wait`.
+run on. A session that cannot be stopped prints
+`lingered <issue> attempt <n>: a session of it, <id>, ran on after its issue settled and could not be stopped; <how>`
+each `wait`, where `<id>` is the session's id as its `started` line printed it, and `<how>` the host's own command that
+stops it by hand, such as `` `claude stop <id>` stops it ``; so do the `overdue` and `limited` lines of a session `wait`
+could not stop, `a session of it, <id>, could not be stopped; <how>`. An id of no session's shape is left out, and a
+`<how>` that is empty or holds a character no display text keeps, such as a control, a line or paragraph separator,
+a bidirectional mark, or a zero-width character, becomes `the host's own command stops it`.
 The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.

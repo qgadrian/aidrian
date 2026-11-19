@@ -479,14 +479,19 @@ test('a confined session hands its result over in its drop folder, and the drive
   assert.equal(fx.rows().length, before, 'no ledger write');
   assert.ok(!fx.forge.calls.some(([kind]) => kind === 'change'), 'no forge call');
   const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
-  assert.deepEqual(waited.out, ['result ENG-1 parked -> parked decision-1', 'idle']);
+  // The fake Codex process still runs once its result is in: the run answers for it as a lingering session
+  // (lib/project-linger.mjs), so the wait is not idle yet.
+  assert.deepEqual(waited.out, ['result ENG-1 parked -> parked decision-1', 'lingering ENG-1 attempt 1']);
+  assert.ok(fx.rows().some((row) => row.event === 'linger' && row.key === 'ENG-1' && row.attempt === 1), 'its linger row');
   const result = fx.rows().find((row) => row.event === 'result');
   assert.deepEqual([result.session, result.via, result.status], [THREAD, 'drop', 'parked']);
   assert.ok(existsSync(fx.attempt()), 'kept while its session runs');
   const [, , start] = fx.rows();
   codex.capabilities.projectStart.stop({ id: THREAD, started: start.id });
-  fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['lingered ENG-1 attempt 1 ended', 'idle'], 'nothing left to answer for once it ended');
   assert.equal(existsSync(fx.attempt()), false, 'removed once its session ended');
+  const gone = fx.rows().find((row) => row.event === 'gone');
+  assert.deepEqual([gone?.key, gone?.attempt, gone?.how], ['ENG-1', 1, 'ended'], 'the host lists it ended');
 });
 
 test('a drop the driver cannot trust ends the attempt bad_result', (t) => {

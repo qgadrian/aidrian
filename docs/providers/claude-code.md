@@ -317,6 +317,8 @@ the default branch, on the forge and by its local ref, sets [`projectRun.unverif
 Every start then prints an `unverified:` line. The sandbox's key names come from the host's settings reference and
 sandboxing page, read on 2026-11-18; a value the host does not validate in a session no Human attends is silently
 ignored, so the live checks below must show each one holds.
+How issue sessions and the driver relate to the cap of five background continuations in a row is
+[A project run](../handoff.md#a-project-run).
 
 - Each attempt works in a fresh clone, never a linked worktree: in a linked worktree, the host's sandbox lets a
   session write the main repository's whole shared `.git` but its `hooks/` and `config`.
@@ -350,7 +352,7 @@ ignored, so the live checks below must show each one holds.
   sandbox that the sandbox is in force ([The sandbox proof](#the-sandbox-proof)): its first call must be `aidrian
   project confine <run> <issue>`, and nothing else runs until the start confirmed it.
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
-  `aidrian handoff route` `route: none`, before any store or mark write. It pushes its work and records its result.
+  `aidrian handoff route` `route: none`, before any floor, mark, or start record. It pushes its work and records its result.
 - A usage or rate limit is read from the session's transcript alone (`lib/hosts/claude-code-limit.mjs`): its last
   `assistant` entry, only when the host marked it `isApiErrorMessage: true`. Its structured `error` decides where the
   host writes one, and only `rate_limit` is a limit; with none, its text must start with a limit's words, as

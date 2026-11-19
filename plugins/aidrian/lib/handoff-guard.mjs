@@ -44,6 +44,13 @@ import { MARK_FOLDER, markFolders, marksNaming } from './unattended-mark.mjs';
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 // How a denial names who may do what it refuses, for a subagent and for a session no Human attends.
 const UNATTENDED = 'and the background handoff route started this session, with no Human';
+// The same for a project run's driver, which its driver mark holds from the run's stores from its first call, with no
+// unattended mark of its own (scripts/hook-agent-gates.mjs): DRIVES while it drives the run, DROVE for the marks and the
+// sign-off store, which hold it after the run's end too (run-driver.mjs droveRun).
+const DRIVES = 'and this session drives a project run, which no Human attends';
+const DROVE = 'and this session has driven a project run, whose driver mark holds it as one no Human attends';
+// Why a main session a guard holds is held: `unattended()` says the background route started it, else `other` holds it.
+const heldAs = (unattended, other) => (unattended() ? UNATTENDED : other);
 
 // Whether the session `session` of `project`, whose loaded config is `config`, is one the background handoff route
 // started, so no Human attends it: its chain floor, under its full id or a short one, has route `background`
@@ -535,16 +542,17 @@ export function globReaches({ prefix, rest }, store) {
 // cannot read counts by those names, and when it names the store by its name, as `.con*`, `han*`, or `handoffs/*` do, from any folder
 // (globNamesFile), since such a shell may change its folder first. Such a command may only read what it names, so its
 // block says it may change the store. With `links` false it skips the link walk, which reads folders on disk, so the
-// agent gate hook asks it so first, and again with the walk after the other guards' cheaper checks.
-export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false, base = baseReader(project), home } = {}) {
+// agent gate hook asks it so first, and again with the walk after the other guards' cheaper checks. `drives()` holds a
+// main session as `unattended()` does, as the hook asks it for a project run's driver, and its denial says so.
+export function continueStoreWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false, drives = () => false, base = baseReader(project), home } = {}) {
   const subagent = isSubagent(input);
   const opaque = opaqueShellCommand(input) !== null;
   const { files, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
-  const writer = subagent ? 'only the main session\'s `aidrian handoff` commands write' : `only \`aidrian handoff\` commands write, ${UNATTENDED}`;
-  const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the handoff continuation store, where ${writer}`, human);
+  const writer = () => (subagent ? 'only the main session\'s `aidrian handoff` commands write' : `only \`aidrian handoff\` commands write, ${heldAs(unattended, DRIVES)}`);
+  const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the handoff continuation store, where ${writer()}`, human);
   // Asked last, once a call reaches the store: it reads the store, and git for the base branch's config.
-  const held = () => subagent || unattended();
+  const held = () => subagent || unattended() || drives();
   // A command no lexer reads may join `.continue` to a path it builds, as a path joiner does.
   const joined = opaque && names.some((name) => name.split('/').some((part) => STORE_FOLDER.test(part)));
   const unsure = (glob) => ((glob.unsure || glob.opaque) && globNamesStore(glob.text)) || (glob.opaque && globNamesFile(glob.text, STORE_TAIL));
@@ -819,7 +827,7 @@ export function stateFoldersWriteDenial(input, { names: { human } }, {
     placedOnce ??= placedTargets({ files, globs, modes });
     return placedOnce;
   };
-  const read = { input, names, globs, modes, project, links, walk, placed };
+  const read = { input, names, globs, modes, project, links, walk, placed, unattended };
   const specs = [
     { name: MARK_FOLDER, folders: marks, held: marksHeld, what: 'the unattended marks', tells: 'which tell the hooks a session no Human attends wherever it runs', writer: 'the handoff gate' },
     { name: TERMINAL_FOLDER, folders: terminals, held: unattended, what: 'the shell records', tells: 'which name the session a shell opens in its terminal next', writer: 'a session\'s own Stop hook' },
@@ -839,7 +847,7 @@ export function stateFoldersWriteDenial(input, { names: { human } }, {
 // The guard of a folder `name` under the state root, found in `folders`, which only `writer` writes (`subagentWriter`
 // as a subagent is told) and which `tells`: { match, reason } for a subagent's call, and for a call of a session `held()`
 // holds, that reaches it, else null. `read` is the call's write targets, read once.
-function stateFolderWriteDenial({ input, names, globs, modes, project, links, walk, placed }, human, { name, folders, held, what, tells, writer, subagentWriter = writer }) {
+function stateFolderWriteDenial({ input, names, globs, modes, project, links, walk, placed, unattended }, human, { name, folders, held, what, tells, writer, subagentWriter = writer }) {
   const subagent = isSubagent(input);
   const part = new RegExp(String.raw`^${name}$`, 'iu');
   // The folder as a glob from any folder may name it: by its own name, or with the state root's above it.
@@ -852,7 +860,8 @@ function stateFolderWriteDenial({ input, names, globs, modes, project, links, wa
   if (!hit || !(subagent || held())) return null;
   const opaque = opaqueShellCommand(input) !== null;
   const verb = opaque || byName ? 'may change' : 'changes';
-  const writes = subagent ? `which only ${subagentWriter} writes` : `which only ${writer} writes, ${UNATTENDED}`;
+  // A main session `held()` holds that `unattended()` does not is a run's driver (marksHeld, signoffsHeld).
+  const writes = subagent ? `which only ${subagentWriter} writes` : `which only ${writer} writes, ${heldAs(unattended, DROVE)}`;
   const why = `it ${verb} ${what}, ${tail}, ${tells}, and ${writes}`;
   return { match: `${verb} ${what}`, reason: projectRuleReason(input, why, human) };
 }
@@ -894,15 +903,16 @@ const RUN_NAME = /(?:^|\/)runs\/[a-z0-9*?[][a-z0-9*?[\]-]{0,63}(?:\/|$)|(?:^|\/)
 // guarded whatever the working copy's config says. When the base branch's config cannot be read in a repository with a
 // remote (`base`, a baseReader), a held session's write outside every checkout is refused when the project keeps a run
 // or a held session (holdsState): the folder is unknown. The store guard asks the same first. `own`, when given, names
-// the attempt folder of a confined session (ownAttempt), whose work, git, and drop folders it may write.
-export function projectRunWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false, base = baseReader(project), home, own = null } = {}) {
+// the attempt folder of a confined session (ownAttempt), whose work, git, and drop folders it may write. `drives()`
+// holds a main session as `unattended()` does, as the hook asks it for a project run's driver, and its denial says so.
+export function projectRunWriteDenial(input, project, { names: { human }, state: { dir } }, state, { links = true, unattended = () => false, drives = () => false, base = baseReader(project), home, own = null } = {}) {
   const subagent = isSubagent(input);
   const opaque = opaqueShellCommand(input) !== null;
   const { files: written, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
-  const writer = subagent ? 'only the main session\'s `aidrian project` commands write' : `only \`aidrian project\` commands write, ${UNATTENDED}`;
-  const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the folder of the project runs, whose ledger names the session that drives each run and the session that works each issue, where ${writer}`, human);
-  const held = () => subagent || unattended();
+  const writer = () => (subagent ? 'only the main session\'s `aidrian project` commands write' : `only \`aidrian project\` commands write, ${heldAs(unattended, DRIVES)}`);
+  const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the folder of the project runs, whose ledger names the session that drives each run and the session that works each issue, where ${writer()}`, human);
+  const held = () => subagent || unattended() || drives();
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   if (names.some((name) => RUN_NAME.test(name)) || globs.some((glob) => (glob.unsure || glob.opaque) && RUN_NAME.test(glob.text)) || unplaced.some(({ text }) => RUN_NAME.test(text))) {
     return held() ? { match: 'may change the project runs', reason: why('may change', `${RUNS_FOLDER}/`) } : null;

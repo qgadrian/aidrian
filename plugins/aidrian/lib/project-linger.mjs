@@ -7,10 +7,13 @@
 //     75 (a wait, not a refusal) while it meets one, and `end` refuses while one runs;
 //   - `wait` writes a `linger` row the first time it meets one, and once LINGER_GRACE has passed since, stops its chain
 //     and writes a `gone` row with `how: 'stopped'`; one the host lists as ended gets a `gone` row with `how: 'ended'`,
-//     from `wait`, `start`, or `end`. A session that cannot be stopped gets a line each wait, as an overdue one does.
+//     from `wait`, `start`, or `end`. A session that cannot be stopped gets a line each wait, as an overdue one does,
+//     which names that session and the host's command that stops it by hand (notStopped).
 // The write-ahead row of a start asks settledStarts again under the ledger's lock, from the ledger alone, so no start
 // passes beside a session the run still answers for.
 
+import { SESSION_ID } from './handoff-markers.mjs';
+import { hasHidden } from './hidden-text.mjs';
 import { appendToRun, readRun } from './project-run.mjs';
 import { issueChain, startRows, startsOf, timeOf } from './project-run-guard.mjs';
 import { safely } from './session-start-gate.mjs';
@@ -33,12 +36,26 @@ export function chainEnded({ cap, store, id, session, env, spawn, now }) {
   return true;
 }
 
-// Whether every session of the issue's chain from the start row `start` runs no more, as the host lists it or once
-// stopped now.
+// The line about the session `member` of an issue's chain (stopChain) that the run could not stop, after `doing`, what
+// it did first: `a session of it, <id>, ...could not be stopped; <how>`, with the id its start printed, the one the
+// `started` line names, and how the Human stops it by hand, from the host adapter's `stopLine`
+// (`capabilities.projectStart`, `cap`). An id of no session's shape (SESSION_ID) is neither printed nor passed to the
+// adapter, and an empty answer, or one with a character no display text keeps (hidden-text.mjs hasHidden), as a
+// control, a line or paragraph separator, a bidirectional mark, or a zero-width character, is not printed: the line
+// then points to the host's own command.
+export function notStopped(cap, member, doing = '') {
+  const id = typeof member?.id === 'string' && SESSION_ID.test(member.id) ? member.id : null;
+  const how = id && typeof cap?.stopLine === 'function' ? safely(() => cap.stopLine({ id })) : null;
+  const plain = typeof how === 'string' && how !== '' && !hasHidden(how);
+  return `a session of it${id ? `, ${id},` : ''} ${doing}could not be stopped; ${plain ? how : 'the host\'s own command stops it'}`;
+}
+
+// Stops every session of the issue's chain from the start row `start` that the host does not list as ended: the first
+// member, { id, session }, that still runs and could not be stopped, or null once every one runs no more.
 export function stopChain({ cap, store, start, env, spawn, now }) {
   const { chain } = issueChain(store, start, { now });
-  return chain.every((member) => safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn })) === true
-    || safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) === true);
+  return chain.find((member) => safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn })) !== true
+    && safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) !== true) ?? null;
 }
 
 // The held starts of the run `found` whose issue does not run from that very start, and that no `gone` row records
@@ -100,8 +117,9 @@ export function settleLingering({ state, run, store, cap, env, spawn, now, wait 
       still.push(row);
       continue;
     }
-    if (!stopChain({ cap, store, start: row, env, spawn, now })) {
-      lines.push(`lingered ${row.key} attempt ${row.attempt}: a session of it ran on after its issue settled and could not be stopped`);
+    const stuck = stopChain({ cap, store, start: row, env, spawn, now });
+    if (stuck) {
+      lines.push(`lingered ${row.key} attempt ${row.attempt}: ${notStopped(cap, stuck, 'ran on after its issue settled and ')}`);
       still.push(row);
       continue;
     }

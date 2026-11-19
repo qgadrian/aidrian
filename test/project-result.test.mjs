@@ -16,6 +16,7 @@ import test from 'node:test';
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, RESULT_CAP, validateResult } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
+import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -181,11 +182,46 @@ test('wait records an issue whose sessions all ended with no result, and stops a
   const later = Date.now() + 3 * 60 * 60 * 1000;
   assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', 'idle']);
   assert.deepEqual(late.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [CHILD]);
+  // One past issueHours that cannot be stopped is named with the host's own command that stops it by hand.
+  const stuck = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
+  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : stuck.claude.run(command, args, options));
+  assert.deepEqual(stuck.cmd(['wait', 'launch', '--max-wait', '0'], { now: later, spawn: failing }).out, [`overdue ENG-1 attempt 1: a session of it, ${STARTED[0].id}, could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
 
   const settled = started(t);
   settled.result({ status: 'blocked', stop: 'no token' });
   assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 blocked -> parked blocked', 'lingering ENG-1 attempt 1']);
   assert.match(settled.cmd(['wait', 'launch', '--max-wait', '9999']).err.at(-1), /takes --max-wait as whole seconds from 0 to 540/u);
+});
+
+// The second session of ENG-1's chain: a continuation of the session the run started, with the start record its
+// handoff wrote, which the fixture's host lists working while it lists the first one ended.
+const NEXT = { id: 'beef0001', session: 'beef0001-0000-4000-8000-00000000be01' };
+function chainOn(fx) {
+  const brief = path.join(fx.state, 'handoffs', '2026-11-17-eng-1.md');
+  mkdirSync(path.dirname(brief), { recursive: true, mode: 0o700 });
+  writeFileSync(brief, '# Handoff\n');
+  noteStarted(fx.store, CHILD, { sha256: 'a'.repeat(64), slug: 'eng-1', brief, chain: 1, id: NEXT.id, session: NEXT.session, name: null, cwd: fx.dir });
+  fx.claude.sessions.push({ id: NEXT.id, sessionId: NEXT.session, name: 'eng-1', kind: 'background', cwd: fx.dir });
+  fx.claude.states[CHILD] = 'done';
+}
+
+// A line about a session the run could not stop names that session, the chain's member that still runs, and its
+// host's stop command: never the session the start held, which the host lists ended.
+test('a chain whose second session cannot be stopped is named by that session, overdue and lingered alike', (t) => {
+  const later = Date.now() + 3 * 60 * 60 * 1000;
+  const stuck = `a session of it, ${NEXT.id}, could not be stopped; \`claude stop ${NEXT.id}\` stops it`;
+  const overdue = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
+  chainOn(overdue);
+  const failing = (fx) => (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : fx.claude.run(command, args, options));
+  assert.deepEqual(overdue.cmd(['wait', 'launch', '--max-wait', '0'], { now: later, spawn: failing(overdue) }).out, [`overdue ENG-1 attempt 1: ${stuck}`, 'running ENG-1']);
+
+  const settled = started(t);
+  chainOn(settled);
+  markUnattended(NEXT.session, { root: settled.dir, env: settled.env, tags: { project: 'launch', issue: 'ENG-1' } });
+  assert.equal(settled.result({ status: 'failed', stop: 'gave up' }, NEXT.session).exitCode, 0);
+  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'lingering ENG-1 attempt 1']);
+  const past = Date.now() + LINGER_GRACE + 60_000;
+  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0'], { now: past, spawn: failing(settled) }).out, [`lingered ENG-1 attempt 1: a session of it, ${NEXT.id}, ran on after its issue settled and could not be stopped; \`claude stop ${NEXT.id}\` stops it`, 'lingering ENG-1 attempt 1']);
 });
 
 test('wait returns as soon as a result arrives while it waits', (t) => {

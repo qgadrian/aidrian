@@ -255,8 +255,9 @@ the walk of step 1 covers every width of `walk_widths` for each browser task, at
 the "seen" label names the widths each item was seen at, such as "(seen at 390 px)", "How it was checked" names the widths
 walked, and "Not checked" names a width not reached; a label and a `Width:` line always list each width in px.
 A re-check finds a persona item's finding by its audit key, never its title, and leaves the item unrecorded when that
-entry is gone; it walks the item at the widths it was seen at, each persona at its own. It reopens the item when the finding shows at any width
-reached, confirms it only when it shows at none and every width was reached, and else leaves it unrecorded, saying so.
+entry is gone; it walks the item at the widths it was seen at, each persona at its own. It reopens the item when the finding shows in any
+observation reached, each persona, task, and width it was seen at; confirms it only when every observation was re-walked and it shows in
+none; and else leaves it unrecorded, naming the observation not walked, such as one persona's walk of a shared finding.
 
 With `review.productFeedback.auto` on, the flows run this skill themselves, after a draft opens and again before marking it
 ready, as [review.md](review.md#product-feedback-in-the-rounds) says, and the [ready hold](hooks.md#ready-hold) keeps the draft

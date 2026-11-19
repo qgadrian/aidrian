@@ -17,9 +17,13 @@ nothing else. `<pr>`, `<number>`, and `<state>` are what the skill names them; s
    `product-manager` as step 2 briefs it, with that item alone.
 3. Record each with `aidrian pr product-feedback recheck '<pr>' <id> confirmed --note '<what showed>'` when the finding
    no longer shows at the level it was found at or a better one, else `reopened`. A finding with a `Width:` bullet is
-   reopened as soon as it shows at any width the re-check reached. It is confirmed only when it shows at none of them
-   and every seen-at width was reached. When it shows at none of the reached widths and a seen-at width was out of
-   reach, leave the item unrecorded: say so in the reply, naming that width.
+   judged by observation: each persona, task, and width the bullet says it was seen at. A plain bullet, such as
+   `- Width: 390 px.`, means the finding's own persona and task at those widths. The finding is reopened as soon as it
+   shows in any observation the re-check reached. It is confirmed only when every observation was re-walked and it
+   shows in none of them. When it shows in none of those reached and an observation could not be walked, such as a
+   persona's task now unavailable or a width out of reach, leave the item unrecorded: say so in the reply, naming that
+   observation. So a finding two personas share stays unrecorded when one persona's observation could not be walked,
+   however clean the other's were, and showing in one observation reopens it, however clean the rest are.
 4. Start from the last posted body at `<state>/tmp/product-feedback-<number>.md`, and change only the lines of items
    whose state changed, as [comment-format.md](comment-format.md) words them. When that file is gone, keep the earlier comment and post nothing
    new: say so in the reply. Else post it as step 5 says: it edits the same comment.

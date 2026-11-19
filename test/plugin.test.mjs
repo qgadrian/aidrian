@@ -1388,11 +1388,17 @@ test('persona-audit walks each browser task at every width walk_widths lists, an
   assert.doesNotMatch(recheck, /found by its title/u);
   assert.match(recheck, /A persona finding whose entry has a `Width:` bullet \(the sidecar holds no width\) is walked at each width that bullet says it was seen at, and only at those, whatever `walk_widths` says now\./u);
   assert.match(recheck, /A bullet that names personas walks each persona at its own widths alone, and each task at its own when it names tasks\./u);
-  // Reopened when it shows at any width reached; confirmed only when it shows at none and every width was reached;
-  // else left unrecorded.
-  assert.match(recheck, /A finding with a `Width:` bullet is reopened as soon as it shows at any width the re-check reached\./u);
-  assert.match(recheck, /It is confirmed only when it shows at none of them and every seen-at width was reached\./u);
-  assert.match(recheck, /When it shows at none of the reached widths and a seen-at width was out of reach, leave the item unrecorded: say so in the reply, naming that width\./u);
+  // Judged by observation, each persona, task, and width the bullet names: reopened when it shows in any observation
+  // reached; confirmed only when every observation was re-walked and it shows in none; else left unrecorded.
+  assert.match(recheck, /A finding with a `Width:` bullet is judged by observation: each persona, task, and width the bullet says it was seen at\./u);
+  assert.match(recheck, /A plain bullet, such as `- Width: 390 px\.`, means the finding's own persona and task at those widths\./u);
+  assert.match(recheck, /The finding is reopened as soon as it shows in any observation the re-check reached\./u);
+  assert.match(recheck, /It is confirmed only when every observation was re-walked and it shows in none of them\./u);
+  assert.match(recheck, /When it shows in none of those reached and an observation could not be walked, such as a persona's task now unavailable or a width out of reach, leave the item unrecorded: say so in the reply, naming that observation\./u);
+  // The two edge cases: one persona's observation of a shared finding not walked, and the finding showing in one alone.
+  assert.match(recheck, /So a finding two personas share stays unrecorded when one persona's observation could not be walked, however clean the other's were,/u);
+  assert.match(recheck, /and showing in one observation reopens it, however clean the rest are\./u);
+  assert.doesNotMatch(recheck, /every seen-at width was reached/u);
 
   // The docs: off by default, what it changes, its cost, and the link to the key.
   const key = /\[`review\.productFeedback\.allWidths`\]\(config\.md#walking-every-width\)/u;
@@ -1411,7 +1417,7 @@ test('persona-audit walks each browser task at every width walk_widths lists, an
   assert.match(whatARunDoes, /and one that several personas saw at different widths names each persona with its own\./u);
   assert.match(feedback, /A re-check finds a persona item's finding by its audit key, never its title, and leaves the item unrecorded when that entry is gone; it walks the item at the widths it was seen at, each persona at its own\./u);
   assert.match(feedback, /a label and a `Width:` line always list each width in px\./u);
-  assert.match(feedback, /It reopens the item when the finding shows at any width reached, confirms it only when it shows at none and every width was reached, and else leaves it unrecorded, saying so\./u);
+  assert.match(feedback, /It reopens the item when the finding shows in any observation reached, each persona, task, and width it was seen at; confirms it only when every observation was re-walked and it shows in none; and else leaves it unrecorded, naming the observation not walked, such as one persona's walk of a shared finding\./u);
   assert.match(whatARunDoes, /A task none of whose widths is reached is walked once at the session's width, which gets its own row and is the width its findings name\./u);
   const config = flat('docs/config.md');
   assert.match(config, /`review\.productFeedback\.allWidths` \| `null`, the default, or `\{ "files": \[\.\.\.\] \}`/u);

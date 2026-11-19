@@ -462,7 +462,7 @@ const isEnding = (value) => isObject(value) && typeof value.id === 'string' && S
   && idOrNull(value.next) && Number.isFinite(value.at)
   && (isPid(value.host_pid)
     ? value.own === undefined && isPid(value.shell)
-    : typeof value.own === 'string' && SESSION_ID.test(value.own) && (value.shell === null || isPid(value.shell)));
+    : value.host_pid === undefined && typeof value.own === 'string' && SESSION_ID.test(value.own) && (value.shell === null || isPid(value.shell)));
 
 // Records that `session` ends itself once its turn ends, and that the shell `shell` then opens the background session
 // `id`, whose full id is `next` or null. An attended session names its host process `hostPid`, which the shell started;
@@ -498,15 +498,15 @@ export function noteFollow(store, session, { shell }, { now = Date.now() } = {})
 }
 
 // The shell whose terminal follows `session`, from the last FOLLOW_AGE, under its own id or a short one it starts with, the
-// latest if several: { shell, id }, where `id` is the id it was filed under; or null.
-export function readFollow(store, session, { now = Date.now() } = {}) {
+// latest if several whose shell `live(shell)` accepts: { shell, id }, where `id` is the id it was filed under; or null.
+export function readFollow(store, session, { now = Date.now(), live = () => true } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const read = (id) => {
     const value = readMarker(store, sessionFile('follow', id), { now, field: 'at', shape: isFollow });
     return value && { shell: value.shell, id, at: value.at };
   };
   const shorts = listStore(store).map((name) => SHORT_FOLLOW.exec(name)?.[1]).filter((short) => short !== undefined && short !== session && session.startsWith(short));
-  const found = [read(session), ...shorts.map(read)].filter(Boolean);
+  const found = [read(session), ...shorts.map(read)].filter((each) => each && live(each.shell));
   if (found.length === 0) return null;
   const latest = found.reduce((last, each) => (each.at > last.at ? each : last));
   return { shell: latest.shell, id: latest.id };

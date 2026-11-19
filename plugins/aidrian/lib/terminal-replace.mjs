@@ -123,8 +123,9 @@ export function writeNext({ shell, id, env = process.env, now = Date.now() }) {
 // The shell whose terminal shows the background session `session`, as the shell function recorded when it opened it by
 // its full id or a short one it starts with, in the last FOLLOW_AGE: { shell, id }, where `id` is the id it opened, the
 // latest if several; or null. Only a regular file this user owns, no symlink, in a folder no other user may write.
-// The shell may have moved on since; replaceTerminal.hasClient says whether it still runs the host's client.
-export function readFollows(session, { env = process.env, now = Date.now() } = {}) {
+// The shell may have moved on since; replaceTerminal.hasClient says whether it still runs the host's client, and
+// `live(shell)`, asked of a newer record only, skips one whose shell does not, so a dead one never hides a live one.
+export function readFollows(session, { env = process.env, now = Date.now(), live = () => true } = {}) {
   if (typeof session !== 'string' || !OPEN_ID.test(session)) return null;
   let folder;
   let names;
@@ -145,7 +146,7 @@ export function readFollows(session, { env = process.env, now = Date.now() } = {
     const at = Number(match[2]) * 1000;
     const id = match[1];
     if (at > now + NEXT_MARGIN || now - at > FOLLOW_AGE || !(id === session || (id.length >= SHORT_ID_MIN && session.startsWith(id)))) continue;
-    if (!latest || at > latest.at) latest = { shell, id, at };
+    if ((!latest || at > latest.at) && live(shell)) latest = { shell, id, at };
   }
   return latest && { shell: latest.shell, id: latest.id };
 }

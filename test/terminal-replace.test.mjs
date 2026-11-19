@@ -71,7 +71,7 @@ test('a request to end acts once, holds for its window, and refuses a wrong shap
   noteEnding(store, SESSION, { hostPid: 4343, shell: 4242, id: 'abcd1234' });
   assert.deepEqual(takeEnding(store, SESSION), { hostPid: 4343, shell: 4242, id: 'abcd1234', next: null });
   assert.equal(takeEnding(store, SESSION), null, 'taken once');
-  for (const bad of [{ hostPid: 1, shell: 4242, id: 'abcd1234' }, { hostPid: 4343, shell: 0, id: 'abcd1234' }, { hostPid: 4343, shell: 4242, id: 'a b' }, { hostPid: '4343', shell: 4242, id: 'abcd1234' }]) {
+  for (const bad of [{ hostPid: 1, shell: 4242, id: 'abcd1234' }, { hostPid: 4343, shell: 0, id: 'abcd1234' }, { hostPid: 4343, shell: 4242, id: 'a b' }, { hostPid: '4343', shell: 4242, id: 'abcd1234' }, { hostPid: null, own: 'abcd1234', shell: null, id: 'efgh5678' }]) {
     assert.equal(noteEnding(store, SESSION, bad, { now }), null, JSON.stringify(bad));
   }
   assert.equal(noteEnding(store, '../x', { hostPid: 4343, shell: 4242, id: 'abcd1234' }, { now }), null, 'a session id that cannot name a file');
@@ -342,6 +342,7 @@ test('the shell function\'s record says which shell shows a session, under its i
   assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4343, id: BG_SESSION }, 'the latest of those that name it');
   assert.deepEqual(readFollows(NEXT_SESSION, { env, now }), { shell: 4444, id: 'efgh5678' }, 'a short id the session starts with');
   assert.equal(readFollows('zzzz0000-0000', { env, now }), null, 'another session');
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, live: (shell) => shell !== 4343 }), { shell: 4242, id: 'abcd1234' }, 'a newer record whose shell runs no client hides no live one');
   writeFileSync(path.join(records, 'follows-4646'), `zzzz ${seconds()}\n`);
   assert.equal(readFollows('zzzz0000-0000', { env, now }), null, 'a prefix shorter than a short id names no other session');
   rmSync(path.join(records, 'follows-4646'));

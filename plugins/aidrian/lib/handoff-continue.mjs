@@ -367,8 +367,9 @@ function unhooked({ host, store, session, env, now, mode }) {
 function followed({ host, store, session, env, run, now }) {
   const replace = replacer(host);
   if (typeof replace.endOwn !== 'function' || replace.attended(env)) return null;
-  const follows = [safely(() => readFollow(store, session, { now })), safely(() => readFollows(session, { env, now }))];
-  const live = follows.find((follow) => follow !== null && safely(() => replace.hasClient?.({ shell: follow.shell, run })) === true);
+  const alive = (shell) => safely(() => replace.hasClient?.({ shell, run })) === true;
+  const follows = [safely(() => readFollow(store, session, { now, live: alive })), safely(() => readFollows(session, { env, now, live: alive }))];
+  const live = follows.find((follow) => follow !== null);
   return live ? { own: live.id, shell: live.shell } : { own: session, shell: null };
 }
 

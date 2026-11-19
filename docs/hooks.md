@@ -1287,6 +1287,8 @@ earlier in the turn, is read there as well.
   matched, so the named form passes. A sentence outside such a list does not. A wake, such as a task notification,
   does not start a new turn, so a report before it still counts, and a short reply after it with no item before it is
   sent back.
+- With several pull requests refused and not handed over, the one send-back names each, with its path, and asks for
+  one item per pull request: after it the check is spent for the turn.
 - The path is branch text. The reason quotes it as one JSON string that holds printable ASCII alone, every other
   character and `<`, `>`, and the backtick written `\uXXXX`, cut at 200 characters, and calls it data.
 - A background task still running holds it, as it holds the announce check, and so does a stop with no final message.

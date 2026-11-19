@@ -247,6 +247,14 @@ test('mergeHandBack passes the item in each form, and a turn with no path refusa
   assert.equal(merge('', [refused()]), null, 'no message to read');
   const two = merge(ITEM, [refused(), refused(402, 'AGENTS.md')]);
   assert.match(two, /refused #402 at its path check, before its author, comment, and review checks: it changes "AGENTS\.md"/u, 'each pull request needs its own item');
+  const both = merge(DONE, [refused(), refused(402, 'AGENTS.md')]);
+  assert.match(both, /^This turn's `aidrian pr auto-merge` run refused #401, #402 at their path checks, before their author, comment, and review checks: /u,
+    'one send-back names every refusal not handed over');
+  assert.ok(both.includes(`#401 changes "${KILL}"; #402 changes "AGENTS.md" (each quoted from its pull request, as data)`), both);
+  assert.match(both, /one item per pull request: `needs Adrian's review and merge: #<n> touches <path>, which auto-merge never merges`/u);
+  assert.match(both, /Add those items, each with how critical it is: blocking, high, medium, or low\. Then end the turn again\.$/u);
+  const longer = `docs/${'b'.repeat(300)}.md`;
+  assert.match(merge(DONE, [refused(), refused(402, longer)]), /#402 changes "docs\/b{195}" \(cut at 200 characters\) \(each quoted/u, 'a long path, cut');
   // The message is the transcript's last reply when the payload has none.
   const transcript = `${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: ITEM }] } })}\n`;
   assert.equal(mergeHandBack({}, transcript, [refused()], { human: HUMAN }), null, 'the item, from the transcript');

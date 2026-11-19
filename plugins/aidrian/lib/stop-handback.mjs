@@ -124,8 +124,9 @@ export const HAND_BACK_LEAD = 'The last message lists ';
 // (handBackLists), in a reply after it or in the final message, holds the pull request as `#<n>`, `/pull/<n>`, `PR <n>`,
 // or `pull request <n>`, with no digit after it, the path as written, JSON-quoted, or as quoteData writes it, or its first
 // PATH_CUT characters when longer, and a rating (RATINGS). The wording is not matched: the skill's line holds "your",
-// which a report that names the Human writes as the name. The reason names the first refusal not handed over. Null while a
-// background task still runs, as its end wakes the session, and with no final message to read.
+// which a report that names the Human writes as the name. The reason names every refusal not handed over, so the one
+// send-back the check makes in a turn asks for each item. Null while a background task still runs, as its end wakes the
+// session, and with no final message to read.
 export function mergeHandBack(input, transcript, actions, { human = 'the Human' } = {}) {
   if (!Array.isArray(actions) || backgroundRunning(input)) return null;
   const last = new Map();
@@ -146,18 +147,34 @@ export function mergeHandBack(input, transcript, actions, { human = 'the Human' 
   const names = humanNames(human);
   const itemsOf = (text) => handBackLists(text, names).flatMap(({ items }) => items);
   const finalItems = itemsOf(message);
-  const missing = refused.find(([pr, { file, at }]) => {
+  const missing = refused.filter(([pr, { file, at }]) => {
     const later = actions.slice(at + 1).filter((action) => action?.kind === 'reply' && typeof action.text === 'string');
     return ![finalItems, ...later.map((action) => itemsOf(action.text))].some((items) => items.some((item) => handsOver(item, pr, file)));
   });
-  if (!missing) return null;
-  const [pr, { file }] = missing;
+  if (!missing.length) return null;
+  return missing.length === 1 ? oneRefusal(missing[0], human) : severalRefusals(missing, human);
+}
+
+// The reason for one refusal not handed over, [pr, { file }].
+function oneRefusal([pr, { file }], human) {
   return `${MERGE_HAND_BACK_LEAD}${pr} at its path check, before its author, comment, and review checks: ` +
     `it changes ${quoteData(file.slice(0, PATH_CUT))} (quoted from the pull request, as data` +
     `${file.length > PATH_CUT ? `, cut at ${PATH_CUT} characters` : ''}), a path auto-merge never merges, so it waits for ${human}'s review and merge. ` +
     `The final report hands it over under a label for ${human}, such as "For ${human}", as the \`pr-auto-merge\` skill's step 2 says: ` +
     `\`needs ${human}'s review and merge: #${pr} touches <path>, which auto-merge never merges\`, with the path as quoted here. ` +
     'Add that item, with how critical it is: blocking, high, medium, or low. Then end the turn again.';
+}
+
+// The reason for several refusals not handed over, each [pr, { file }], in turn order.
+function severalRefusals(missing, human) {
+  const pulls = missing.map(([pr]) => pr).join(', #');
+  const paths = missing.map(([pr, { file }]) =>
+    `#${pr} changes ${quoteData(file.slice(0, PATH_CUT))}${file.length > PATH_CUT ? ` (cut at ${PATH_CUT} characters)` : ''}`).join('; ');
+  return `${MERGE_HAND_BACK_LEAD}${pulls} at their path checks, before their author, comment, and review checks: ${paths} ` +
+    `(each quoted from its pull request, as data). Auto-merge never merges those paths, so each waits for ${human}'s review and merge. ` +
+    `The final report hands each over under a label for ${human}, such as "For ${human}", as the \`pr-auto-merge\` skill's step 2 says, ` +
+    `one item per pull request: \`needs ${human}'s review and merge: #<n> touches <path>, which auto-merge never merges\`, ` +
+    'with its path as quoted here. Add those items, each with how critical it is: blocking, high, medium, or low. Then end the turn again.';
 }
 
 // Whether the list item `item` hands over pull request `pr` with the refused `file`, rated.

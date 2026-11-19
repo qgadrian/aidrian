@@ -36,13 +36,14 @@ const git = (cwd, ...args) => {
   return result.stdout.trim();
 };
 
-// `bin/gh` as a shell wrapper that execs node on `body`, the fake's script.
-function ghWrapper(bin, body) {
+// `bin/gh` as a shell wrapper that execs node on `body`, the fake's script. With `trap`, the shell ignores SIGTERM before
+// node starts, and exec keeps it ignored, so gh ignores SIGTERM from its first instant, however slowly node starts.
+function ghWrapper(bin, body, { trap = false } = {}) {
   mkdirSync(bin, { recursive: true });
   const script = path.join(bin, 'gh.cjs');
   writeFileSync(script, body);
   const file = path.join(bin, 'gh');
-  writeFileSync(file, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
+  writeFileSync(file, `#!/bin/sh\n${trap ? "trap '' TERM\n" : ''}exec '${process.execPath}' '${script}' "$@"\n`);
   chmodSync(file, 0o755);
 }
 // Each gh call the snapshot made, as the GH_SPAWNS preload recorded it in the snapshot's process before the spawn:
@@ -56,8 +57,8 @@ const ghSpawns = (log) => ghSpawned(log).length;
 function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false, status = 0 }) {
   const beat = `${log}.beat`;
   ghWrapper(bin, `const fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
-    (trap ? `process.on('SIGTERM', () => {});\nfs.appendFileSync(${JSON.stringify(beat)}, '.');\nconst beat = setInterval(() => fs.appendFileSync(${JSON.stringify(beat)}, '.'), 25);\n` : '') +
-    `setTimeout(() => { ${trap ? 'clearInterval(beat); ' : ''}process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`);
+    (trap ? `fs.appendFileSync(${JSON.stringify(beat)}, '.');\nconst beat = setInterval(() => fs.appendFileSync(${JSON.stringify(beat)}, '.'), 25);\n` : '') +
+    `setTimeout(() => { ${trap ? 'clearInterval(beat); ' : ''}process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`, { trap });
 }
 const ghCalls = (log) => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
@@ -482,6 +483,9 @@ test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
   const env = withWorktree(t, { gh: { delay: 6000, trap: true } });
   const { json, endedAt, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
   assert.equal(status, 0);
+  // What the snapshot asked of gh, recorded in its own process before the spawn: the 1500 ms it was given, not the 4000 ms
+  // default, and SIGKILL, which the shell's `trap '' TERM` cannot ignore. Load cannot change what is asked.
+  assert.deepEqual(ghSpawned(env.log).map(({ timeout, killSignal }) => ({ timeout, killSignal })), [{ timeout: 1500, killSignal: 'SIGKILL' }]);
   assert.equal(ghCalls(env.log).length, 1, 'gh started, and set its trap long before the deadline');
   // Times from gh's start, its log line's mtime, so the node and git startups a loaded machine slows come before it. The
   // 1500 ms deadline runs from gh's spawn: gh's own lifetime, to its last beat, stays under the 4000 ms default budget,

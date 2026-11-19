@@ -7,7 +7,8 @@
 //     75 (a wait, not a refusal) while it meets one, and `end` refuses while one runs;
 //   - `wait` writes a `linger` row the first time it meets one, and once LINGER_GRACE has passed since, stops its chain
 //     and writes a `gone` row with `how: 'stopped'`; one the host lists as ended gets a `gone` row with `how: 'ended'`,
-//     from `wait`, `start`, or `end`. A session that cannot be stopped gets a line each wait, as an overdue one does.
+//     from `wait`, `start`, or `end`. A session that cannot be stopped gets a line each wait, as an overdue one does,
+//     which names the host's command that stops it by hand (notStopped).
 // The write-ahead row of a start asks settledStarts again under the ledger's lock, from the ledger alone, so no start
 // passes beside a session the run still answers for.
 
@@ -31,6 +32,15 @@ export function chainEnded({ cap, store, id, session, env, spawn, now }) {
     if (answer !== true) return answer === false ? false : null;
   }
   return true;
+}
+
+// The end of a line about the session of the start row `start` that the run could not stop: `could not be stopped`,
+// then how the Human stops it by hand, from the host adapter's `stopLine` (`capabilities.projectStart`, `cap`), or a
+// plain pointer to the host's own command when the adapter has none or answers with no plain line.
+export function notStopped(cap, start) {
+  const how = typeof cap?.stopLine === 'function' ? safely(() => cap.stopLine({ id: start.id })) : null;
+  const plain = typeof how === 'string' && how !== '' && !/[\u0000-\u001f\u007f-\u009f]/u.test(how);
+  return `could not be stopped; ${plain ? how : 'the host\'s own command stops it'}`;
 }
 
 // Whether every session of the issue's chain from the start row `start` runs no more, as the host lists it or once
@@ -101,7 +111,7 @@ export function settleLingering({ state, run, store, cap, env, spawn, now, wait 
       continue;
     }
     if (!stopChain({ cap, store, start: row, env, spawn, now })) {
-      lines.push(`lingered ${row.key} attempt ${row.attempt}: a session of it ran on after its issue settled and could not be stopped`);
+      lines.push(`lingered ${row.key} attempt ${row.attempt}: a session of it ran on after its issue settled and ${notStopped(cap, row)}`);
       still.push(row);
       continue;
     }

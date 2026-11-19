@@ -657,8 +657,12 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   const text = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
   const halt = text.slice(text.indexOf('## Halt'), text.indexOf('## Stop'));
   assert.ok(halt.includes('Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session that a `could not be stopped` line named twice: no wait ends it.'), 'the bound on the wait');
-  assert.ok(halt.includes('Name each session step 2 left running by its issue and attempt, and its name in the host\'s list of background sessions, `<run> · <key> · <attempt>`: the Human stops it by hand with the host\'s own stop command, then runs `aidrian project end <run>`.'), 'the report names it');
-  assert.match(text, /## Stop Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then report the refusal as the cause, with what its line says fixes it, and each session step 2 left running, as § Halt step 4 names it\./u, 'Stop takes the same bounded wait and names the same sessions');
+  assert.ok(halt.includes('Name each session step 2 left running by its issue, its attempt, and the session id from its `started <key> attempt <n> session <id>` line: the Human stops it by hand with the host\'s command its `could not be stopped` line names. Only a driver ends the run: § Hand off\'s last list says how the Human takes the run up.'), 'the report names it');
+  assert.match(text, /## Stop Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue, its attempt, and its session id, with how the Human stops it and takes the run up, as § Halt step 4 says\./u, 'Stop takes the same bounded wait and names the same sessions');
+  // Only the run's driver may end it: neither the halt report nor the stop sends the Human to `aidrian project end`.
+  const stop = text.slice(text.indexOf('## Stop'), text.indexOf('## Finish'));
+  assert.ok(!halt.includes('aidrian project end') && !stop.includes('aidrian project end'), 'no end for the Human');
+  assert.match(text, /## Hand off .*A run left with no driver is taken up by the Human:/u, 'the list Halt points to');
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

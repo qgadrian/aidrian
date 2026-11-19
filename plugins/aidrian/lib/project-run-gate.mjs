@@ -20,16 +20,17 @@
 //   5. a host that declares no `capabilities.projectStart`; one whose start is not confined (a halt); one whose start is
 //      unverified where the base branch does not set projectRun.unverifiedHosts, or whose `hookTrust` does not answer
 //      'trusted' (a halt); from here on, an unverified host's every answer prints an `unverified:` line;
-//   6. an issue `next` does not list, and a start past a cap in code: PROJECT_STARTS a run, PROJECT_STARTS_PER_DAY a
-//      project, ISSUE_ATTEMPTS an issue, PROJECT_PARALLEL running, each also under the base branch's projectRun value,
-//      clamped to CEILINGS; each attempt counts once, and one given back (`void`) not at all, nor, toward
-//      ISSUE_ATTEMPTS, one a usage or rate limit ended, which the run's LIMIT_WAITS bounds instead;
+//   6. an issue `next` does not list, and a start past a cap in code: PROJECT_STARTS a run and PROJECT_PARALLEL
+//      running, each also under the base branch's projectRun.maxStarts and maxParallel, clamped to CEILINGS,
+//      PROJECT_STARTS_PER_DAY a project, and ISSUE_ATTEMPTS an issue (capProblem); each attempt counts once, and one
+//      given back (`void`) not at all, nor, toward ISSUE_ATTEMPTS, one a usage or rate limit ended, which the run's
+//      LIMIT_WAITS bounds instead;
 //   7. what the held start would refuse (heldProblem), asked before any folder is made; then a user the forge does not let
 //      push, or a session the host says could not push, reach the forge, run as confined as it is meant to, or would be
 //      let write a guarded folder (a halt); a forge that cannot be asked now; a state file with a second hard link (a
 //      halt); then a default branch whose head the forge cannot name, or that the local base refs do not name too
-//      (forgeBase), the base tip every later check and cut uses, fetched only now. No session reads the main checkout's
-//      host files: it works in its clone, whose reads of the main checkout the host's sandbox denies;
+//      (forgeBase), the base tip every later check and cut uses, fetched only now. No session loads the main checkout's
+//      host files: it works in its clone, which loads none of them, under a sandbox that may also deny it reads there;
 //   8. a first attempt whose branch the forge has already; a clone whose host config or instruction files differ from
 //      the base tip, or hold any such file untracked or git-ignored, each compared by its bytes on disk, and a host
 //      instruction file in a folder above it that no review saw; then a clone the host says would run a command outside
@@ -50,7 +51,7 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
-import { chainEnded, lingerLine, lingerProblem, settleLingering, stopChain } from './project-linger.mjs';
+import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
@@ -742,7 +743,7 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
     let reason = ended === true ? 'no_result' : null;
     if (!reason && overdue) {
       if (!stopChain({ cap, store, start, env, spawn, now })) {
-        lines.push(`overdue ${key} attempt ${start.attempt}: a session of it could not be stopped`);
+        lines.push(`overdue ${key} attempt ${start.attempt}: a session of it ${notStopped(cap, start)}`);
         continue;
       }
       reason = dropped ? 'bad_result' : 'timeout';
@@ -791,7 +792,7 @@ function limitLine({ state, run, store, cap, env, home, spawn, key, start, found
     if (written?.rows?.length) return { line: `paused ${key} ${limit.kind} ${when(paused.until)}: its session goes on once the limit resets` };
     if (paused?.until !== null) return {};
   }
-  if (ended !== true && !stopChain({ cap, store, start, env, spawn, now })) return { line: `limited ${key} attempt ${start.attempt}: a session of it could not be stopped` };
+  if (ended !== true && !stopChain({ cap, store, start, env, spawn, now })) return { line: `limited ${key} attempt ${start.attempt}: a session of it ${notStopped(cap, start)}` };
   let closed = null;
   const written = safely(() => appendToRun(state, run, (fresh) => {
     if (!current(fresh)) return { rows: [] };

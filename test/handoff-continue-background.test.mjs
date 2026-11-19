@@ -203,6 +203,36 @@ test('an issue session starts no continuation on any host, and one whose tags ca
   assert.deepEqual(bgCalls(third.calls), [], 'nothing started');
 });
 
+// A clear continuation of an issue's session would run outside its clone and sandbox as a background one would: the
+// gate answers none before it reads the route, so neither the clear fallback nor --route clear arms a marker.
+test('an issue session arms no clear: neither the clear fallback nor --route clear', (t) => {
+  const confinedLines = ['continue: none', 'fallback: a confined issue session starts no continuation; push the work and hand the result over'];
+  const marked = (setting) => {
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    t.after(() => rmSync(xdg, { recursive: true, force: true }));
+    const env = { ...setting.env, XDG_STATE_HOME: xdg };
+    assert.ok(markUnattended(SESSION, { root: setting.dir, env, tags: { project: 'launch', issue: 'ENG-1' } }));
+    return env;
+  };
+  for (const [why, options, args] of [
+    ['the clear fallback, with this machine\'s switch unset', { local: null }, {}],
+    ['--route clear', {}, { override: 'clear' }],
+    ['a config that asks for clear', { handoff: { continue: 'clear' } }, {}],
+  ]) {
+    const setting = setup(t, options);
+    passCheck(setting);
+    const env = marked(setting);
+    assert.equal(routeOf({ env: setting.env, cwd: setting.dir, ...args }).out[0], 'route: clear', `${why}: a session with no mark goes on by clear`);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    const result = gate(setting, { run, env, ...args });
+    assert.deepEqual(result.out, confinedLines, `${why}: ${result.err.join('\n')}`);
+    assert.equal(result.exitCode, 0, why);
+    assert.equal(readArmed(setting.store, SESSION), null, `${why}: no clear marker armed`);
+    assert.deepEqual(bgCalls(calls), [], `${why}: nothing started`);
+    assert.deepEqual(routeOf({ env, cwd: setting.dir, ...args }).out, ['route: none', confinedLines[1]], `${why}: the route says the same`);
+  }
+});
+
 test('a driver whose driver mark is there but cannot be read whole starts no continuation, and keeps no brief', (t) => {
   for (const [why, text] of [['not JSON', '{'], ['no run', JSON.stringify({ role: 'driver', root: '/x', state: '/y' })], ['no state folder', JSON.stringify({ role: 'driver', run: 'launch', root: '/x' })]]) {
     const setting = setup(t);

@@ -8,7 +8,7 @@ The hooks keep working, with the default in place of each bad value.
 Without a `config.json`, the commands use the defaults.
 
 [`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example,
-and [config-recipes.md](config-recipes.md) gives three checked starting configs by how much the Human steers.
+and [config-recipes.md](config-recipes.md) gives four checked starting configs by how much the Human steers.
 
 ## Keys
 
@@ -558,6 +558,8 @@ A local `off`, or a local file that git tracks or that has an error, always wins
 `solo` makes the default branch's content the switch: whoever can push to it turns the three switches on for every
 machine that sets none. A solo owner protects the default branch with no bypass, so only a reviewed pull request
 changes it. Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an older plugin rejects it.
+The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe sets it, beside every key of the full-autonomy
+recipe and `projectRun.allow`.
 
 ## Pull request contract
 
@@ -1811,6 +1813,9 @@ This depends on the session-end hook: on a host with no SessionEnd, and in a ses
 The driver reads the tracker with its own tools and writes a snapshot input; `init RUN --file PATH` validates it and starts the run.
 `next RUN` names the issues to start, and `summary RUN` writes the run's `summary.md` from its ledger.
 The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder.
+How its sessions relate to the cap of five background continuations in a row, and how the driver hands off, is
+[A project run](handoff.md#a-project-run). The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe
+allows project runs.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -2024,7 +2029,9 @@ refuses. `wait` prints `lingering <issue> attempt <n>` and waits on it as on an 
 the first time, and once 2 minutes have passed since that row it stops the session and writes a `gone` row with
 `how: "stopped"`, printing `lingered <issue> attempt <n> stopped`. One the host lists as ended gets a `gone` row with
 `how: "ended"`, from `wait`, `start`, or `end`, and `wait` prints `lingered <issue> attempt <n> ended` when it had seen it
-run on. A session that cannot be stopped prints `lingered <issue> attempt <n>: ... could not be stopped` each `wait`.
+run on. A session that cannot be stopped prints `lingered <issue> attempt <n>: ... could not be stopped; <how>` each
+`wait`, where `<how>` is the host's own command that stops it by hand, such as `` `claude stop <id>` stops it ``; so do
+the `overdue` and `limited` lines of a session `wait` could not stop.
 The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.

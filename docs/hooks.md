@@ -1074,10 +1074,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   Claude Code's `.claude/skills`, `agents`, `commands`, and `.claude/settings.local.json`, and while the project has a
   project run under way, an active run in any of its state folders, a folder of runs that cannot be listed, or a live
   unattended or pending mark naming it, no subagent may either, whichever session it belongs to. In a project with no
-  run, a subagent writes them as before. A confined session, as Codex's, writes the `work`, `git`, `drop`, and `cache` folders of
-  its issue's running attempt under `<state>/runs/<run>/attempts/`, as the run's ledger names it, and nothing else in
-  the runs folder. A project run's attempt clone is no shared main checkout: the [main-checkout rule](#main-checkout)
-  reads the run's main checkout as its own.
+  run, a subagent writes them as before. These files refuse no project start: an issue's session works in its
+  attempt's clone, which loads none of them, and a start checks only the clone's own host files and the folders above
+  it ([Host files no review saw](handoff.md#a-project-run)); the rule keeps them as a review saw them for the sessions
+  that do load them, in the main checkout and its linked worktrees.
+  A confined session, as Codex's, writes the `work`, `git`, `drop`, and `cache` folders of its issue's running attempt
+  under `<state>/runs/<run>/attempts/`, as the run's ledger names it, and nothing else in the runs folder.
+  A project run's attempt clone is no shared main checkout: the [main-checkout rule](#main-checkout) reads the run's
+  main checkout as its own.
 - In a project run's attempt clone, every call is refused while the clone's own git config sets a key that makes git
   run a program or send elsewhere, while its work folder's `.git` is not the pointer file to the attempt's own git
   folder, or while that git folder holds a `commondir` or a `config.worktree` other than the placeholder the start

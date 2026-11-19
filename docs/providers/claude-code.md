@@ -317,6 +317,8 @@ the default branch, on the forge and by its local ref, sets [`projectRun.unverif
 Every start then prints an `unverified:` line. The sandbox's key names come from the host's settings reference and
 sandboxing page, read on 2026-11-18; a value the host does not validate in a session no Human attends is silently
 ignored, so the live checks below must show each one holds.
+How issue sessions and the driver relate to the cap of five background continuations in a row is
+[A project run](../handoff.md#a-project-run).
 
 - Each attempt works in a fresh clone, never a linked worktree: in a linked worktree, the host's sandbox lets a
   session write the main repository's whole shared `.git` but its `hooks/` and `config`.

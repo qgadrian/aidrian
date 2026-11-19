@@ -18,7 +18,9 @@
 // so a second run on the same bytes starts nothing (startInBackground, which holds the start with
 // lib/session-start-gate.mjs startHeld).
 // A session another gate's pending mark still holds (lib/unattended-mark.mjs), which may be the session that gate is
-// starting before its chain floor exists, is refused: it could otherwise start the count again.
+// starting before its chain floor exists, is refused: it could otherwise start the count again. A session whose
+// unattended mark names a project run or an issue gets `continue: none` on every route, a --route clear included,
+// before the route is read (confinedIssue): its continuation, a clear one too, would run outside its clone and sandbox.
 // The main session alone runs it: the agent-gates hook refuses it to a subagent, whose shell carries the main session's
 // id (lib/handoff-guard.mjs handoffContinueDenial). The route a host can do, and what it asks of the Human, are the host
 // adapter's `capabilities.handoffContinue`; this file names no host. `aidrian handoff route` (routeOf) prints the route
@@ -179,19 +181,19 @@ const routeProblem = (override) => (override !== undefined && !CONTINUE_ROUTES.i
 // decides, so the session-handoff skill knows before it writes the brief whether to settle every running agent.
 // It prints `route: <route>`, and the `fallback:` line when the route asked for cannot run, exit 0; exit 2 on an unknown
 // --route or a config with errors (CONFIG_ERROR). It opens no store and writes nothing. The gate may still fall back for
-// what only a brief or the store tells, such as its chain or a store it refuses. A session whose unattended mark names an
-// issue of a project run gets `route: none` for the background route (confinedIssue), as the gate answers it. `forgeSolo` is backgroundGate's.
+// what only a brief or the store tells, such as its chain or a store it refuses. A session whose unattended mark names a
+// run or an issue of a project run gets `route: none` on every route, whatever the config or --route says (confinedIssue),
+// as the gate answers it. `forgeSolo` is backgroundGate's.
 export function routeOf({ override, env = process.env, cwd = process.cwd(), forgeSolo } = {}) {
   const bad = routeProblem(override);
   if (bad) return bad;
   const project = projectAt(cwd);
   const config = commandConfig(project, { exitCode: 2 });
-  const host = detectHost({ env });
-  const routed = effectiveRoute(config.session.handoff.continue, host, override, () => backgroundGate(project, config, env, { forgeSolo }));
   const { session } = sessionIdentity(env);
-  const mark = routed.route === 'background' && typeof session === 'string' && SESSION_ID.test(session) ? safely(() => readUnattendedMark(session, { env })) : null;
+  const mark = typeof session === 'string' && SESSION_ID.test(session) ? safely(() => readUnattendedMark(session, { env })) : null;
   const confined = confinedIssue(mark);
-  const { route, fallback } = confined ? { route: 'none', fallback: confined } : routed;
+  const host = detectHost({ env });
+  const { route, fallback } = confined ? { route: 'none', fallback: confined } : effectiveRoute(config.session.handoff.continue, host, override, () => backgroundGate(project, config, env, { forgeSolo }));
   return { exitCode: 0, out: [`route: ${route}`, ...(fallback ? [`fallback: ${fallback}`] : [])], err: [] };
 }
 
@@ -219,6 +221,9 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
     if (mark?.pending) {
       return refuse('another session\'s handoff gate is starting a background session, and until the host lists that session\'s id, this one cannot be told apart from it and has no chain floor to hold a brief to; run this again in a few minutes, after the start, or a person resumes the brief');
     }
+    // Before any route: an issue's session arms no clear and starts no background session, whatever --route says.
+    const confined = confinedIssue(mark);
+    if (confined) return none(confined);
     const host = detectHost({ env });
     const routed = effectiveRoute(configured, host, override, () => backgroundGate(project, config, env, { forgeSolo }));
     return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, cwd, root: project.checkouts.at(-1), mark });

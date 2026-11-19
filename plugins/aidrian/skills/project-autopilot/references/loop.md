@@ -35,8 +35,8 @@ named and go on from that output as step 2 says.
    - `lingered <key> attempt <n> ended` or `... stopped`: a session that ran on after its issue settled runs no more;
      step 1.
    - only `running <key>` and `lingering <key> attempt <n>` lines: step 3 again.
-   - `overdue <key> ...`, or `limited <key> attempt <n>: ...` or `lingered <key> attempt <n>: ...` that ends `could not
-     be stopped`: a session the run could not stop.
+   - `overdue <key> ...`, or `limited <key> attempt <n>: ...` or `lingered <key> attempt <n>: ...` that says `could not
+     be stopped`, then the host's command that stops it by hand: a session the run could not stop.
      Note it, and go on; a second such line for the same issue: § Stop, with that line as the cause.
    - `idle`: step 1.
    - exit 75, `retry: <why>`, as when the forge cannot answer now: § Retry. Exit 1: § Stop.
@@ -70,16 +70,18 @@ A halt is host-wide, such as a failed sandbox proof, and waits on a person.
 3. `aidrian project summary <run>`.
 4. Tell the Human, in the final report: the cause on the `halt` line, the fix on stderr after `halt:`,
    and `aidrian project resume <run>` for the Human to run once it is fixed. Name each session step 2 left running by
-   its issue and attempt, and its name in the host's list of background sessions, `<run> · <key> · <attempt>`: the
-   Human stops it by hand with the host's own stop command, then runs `aidrian project end <run>`. End the turn.
+   its issue, its attempt, and the session id from its `started <key> attempt <n> session <id>` line: the Human stops
+   it by hand with the host's command its `could not be stopped` line names. Only a driver ends the run: § Hand off's
+   last list says how the Human takes the run up. End the turn.
 
 Never run `aidrian project resume` here: only an attended session lifts a halt.
 
 ## Stop
 
 Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then
-report the refusal as the cause, with what its line says fixes it, and each session step 2 left running, as § Halt step
-4 names it. Never retry a refused start to see whether it passes.
+report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue,
+its attempt, and its session id, with how the Human stops it and takes the run up, as § Halt step 4 says. Never retry
+a refused start to see whether it passes.
 
 ## Finish
 
@@ -108,5 +110,6 @@ A run left with no driver is taken up by the Human:
   so the run's custody, and it drives on from the loop.
 - A background continuation the host lists as ended: `aidrian project resume <run>`, in a session the Human attends,
   takes custody, and that session drives on. For a driver it cannot read as such, it says to resume that session instead.
-A run's driver hands off on the normal route, and its hops count as any session's. Each issue's session starts with
-its own hops, apart from the driver's.
+
+A run's driver hands off on the normal route, and its hops count as any session's. An issue's session starts at
+chain 0 and starts no continuation at all: it pushes its work and hands its result over.

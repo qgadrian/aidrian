@@ -15,11 +15,11 @@ import test from 'node:test';
 import { chainOf, checkBrief } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { continueBrief } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
+import { LINGER_GRACE, notStopped } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { markDriver } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { PROJECT_PARALLEL } from '../plugins/aidrian/lib/project-run-gate.mjs';
-import { drivenRunStart } from '../plugins/aidrian/lib/run-driver.mjs';
+import { drivenRunStart, recordsStart } from '../plugins/aidrian/lib/run-driver.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const MINUTE = 60_000;
@@ -230,6 +230,28 @@ test('a session that runs on after its issue settled counts toward maxParallel: 
   assert.deepEqual(live(fx), [STARTED[1].id, STARTED[2].id]);
 });
 
+test('a session that runs on past the grace and cannot be stopped is named with the host\'s command that stops it, each wait', (t) => {
+  const fx = runFixture(t, parallel(2));
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  handOver(fx, 'ENG-1', STARTED[0].session);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'lingering ENG-1 attempt 1']);
+  const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : fx.claude.run(command, args, options));
+  const line = `lingered ENG-1 attempt 1: a session of it ran on after its issue settled and could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`;
+  for (const late of [1, 2]) {
+    const waited = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: Date.now() + LINGER_GRACE + late * 60_000, spawn: failing });
+    assert.deepEqual(waited.out, [line, 'lingering ENG-1 attempt 1'], `wait ${late}`);
+  }
+  assert.equal(fx.rows().filter((row) => row.event === 'gone').length, 0, 'no gone row for a session that runs on');
+});
+
+test('a could-not-be-stopped line falls back to the host\'s own command when the adapter names none it can print', () => {
+  const plain = 'could not be stopped; the host\'s own command stops it';
+  assert.equal(notStopped({ stopLine: ({ id }) => `\`stop ${id}\` stops it` }, { id: 'c0ffee01' }), 'could not be stopped; `stop c0ffee01` stops it');
+  assert.equal(notStopped({}, { id: 'c0ffee01' }), plain, 'no stopLine');
+  assert.equal(notStopped({ stopLine: () => { throw new Error('x'); } }, { id: 'c0ffee01' }), plain, 'a stopLine that throws');
+  assert.equal(notStopped({ stopLine: () => 'clear\u001b[2J' }, { id: 'c0ffee01' }), plain, 'a line with a control character');
+});
+
 test('one at a time, a wait that returned on a result before its session ended gives wait and a retry, never a stop; end refuses until it ends', (t) => {
   const fx = runFixture(t, { issues: ISSUES });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -331,8 +353,22 @@ for (const maxParallel of [1, 2]) {
     assert.equal(drivenRunStart(DRIVER, { ...continuation, id: STARTED[0].id, project: { run: 'launch', issue: 'ENG-1', attempt: 1 } }, { env: fx.env, home: fx.home }), true);
     assert.equal(drivenRunStart(DRIVER, { ...continuation, id: STARTED[0].id, project: { run: 'launch', issue: 'ENG-1', attempt: 2 } }, { env: fx.env, home: fx.home }), false, 'another attempt');
     assert.equal(drivenRunStart(OTHER, { ...continuation, id: STARTED[0].id, project: { run: 'launch', issue: 'ENG-1', attempt: 1 } }, { env: fx.env, home: fx.home }), false, 'a session with no driver mark');
+    assert.equal(drivenRunStart(DRIVER, { ...continuation, id: STARTED[3].id, project: { run: 'launch', issue: 'ENG-1', attempt: 1 } }, { env: fx.env, home: fx.home }), false, 'the same run, issue, and attempt under another session id');
   });
 }
+
+// A start record passes only when one started row names its session id, issue, and attempt, in its own run: a record
+// that copies an issue's run, issue, and attempt under the id of another session still waits for the host.
+test('recordsStart matches the started row\'s session id, as well as its run, issue, and attempt', () => {
+  const rows = [{ event: 'start', key: 'ENG-1', attempt: 1, outcome: 'started', id: STARTED[0].id }];
+  const record = (id, project = { run: 'launch', issue: 'ENG-1', attempt: 1 }) => ({ id, project });
+  assert.equal(recordsStart(rows, 'launch', record(STARTED[0].id)), true, 'the row\'s own session');
+  assert.equal(recordsStart(rows, 'launch', record(STARTED[1].id)), false, 'the same run, issue, and attempt under another session id');
+  assert.equal(recordsStart(rows, 'launch', record(STARTED[0].id, { run: 'other', issue: 'ENG-1', attempt: 1 })), false, 'another run');
+  assert.equal(recordsStart(rows, 'other', record(STARTED[0].id)), false, 'a run the record does not name');
+  assert.equal(recordsStart([{ ...rows[0], outcome: 'pending' }], 'launch', record(STARTED[0].id)), false, 'a row that did not start it');
+  assert.equal(recordsStart(rows, 'launch', record(undefined)), false, 'a record with no id');
+});
 
 // Hands the run on from `session` with a brief of its own bytes: `aidrian project handoff`, then the background route.
 function handOff(fx, session, name, extra = '') {

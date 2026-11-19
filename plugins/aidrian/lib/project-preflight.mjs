@@ -1,7 +1,7 @@
 // `aidrian project preflight`: every check that would refuse or halt a project run's start, run at once from the
 // attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
 // starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
-// origin names, the state folder and any other active run, the team's projectRun through the forge, the machine's
+// origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's
 // switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
 // sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach), and whether the host
@@ -15,6 +15,8 @@
 // repository's secrets on every push. A read the forge or the tracker lacks becomes an `ask` line, which the driver
 // answers with its own tools.
 
+import path from 'node:path';
+
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { resolveAutoMerge } from './config-local.mjs';
 import { forgeFor } from './forges/index.mjs';
@@ -24,9 +26,10 @@ import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, teamsNote } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
+import { ancestorProblem } from './project-trust.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
 
@@ -47,6 +50,8 @@ export function preflightCommand({ project, config, run = null, env = process.en
   if (!place.problem) {
     const active = activeRuns(place.state, run ? { except: run } : {});
     check('run', active.length ? `the run ${active[0].run ?? 'in a folder that cannot be listed'} is still active, and a project has one active run at a time` : null);
+    // Every attempt's clone lies under the runs folder, so a host instruction file above it refuses every start.
+    check('instructions', ancestorProblem(path.join(runsFolder(place.state), 'attempts'), { project, tip: baseBranchTip(project.root), env }));
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };
   const facade = forge ?? forgeFor(project.root);

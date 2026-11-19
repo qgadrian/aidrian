@@ -1990,7 +1990,8 @@ An issue the ledger records parked, or a canceled one, is never started, and eve
 is skipped and names it. `--json` prints the whole plan, with the `maxParallel` it read.
 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
-state folder and any other active run but `RUN`, `projectRun.allow` through the forge, the machine's switch, the host's
+state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
+runs folder, which every attempt's clone would load, `projectRun.allow` through the forge, the machine's switch, the host's
 start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
 sandbox that `projectRun.outsideSandbox` does not name), and whether the host carries on by itself after a usage limit
 (in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the only place the host reads it), since

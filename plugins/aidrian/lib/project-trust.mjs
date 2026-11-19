@@ -4,23 +4,21 @@
 // graft, an index flag, nor a filter can stand in for what a review saw.
 //   - repositoryProblem: a stateless halt for a repository whose git state could run a program or move a fetch: replace
 //     refs, grafts, or a config key of REFUSED_KEYS in a scope git reads for the folder.
-//   - trustProblem, ancestorProblem, mainCheckoutProblem: the host files a session in the worktree would load.
+//   - trustProblem, ancestorProblem: the host files a session in an attempt's clone would load, the clone's own and those
+//     in a folder above it. The main checkout's own host files refuse no start: the clone loads none of them.
 
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { safely } from './session-start-gate.mjs';
 import { isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
 import { GATE_CONFIG, gateGit } from './git.mjs';
-import { instructionNames, mainCheckoutPaths } from './hosts/index.mjs';
+import { instructionNames } from './hosts/index.mjs';
 import { GUARDED_PATHS } from './project.mjs';
 
 // How far down the default branch's first-parent chain a main checkout's HEAD may lag the tip.
 export const LAG_CAP = 500;
-// The largest host settings file of a main checkout read for its host's check.
-const SETTINGS_CAP = 64 * 1024;
 const BOOLEAN = /^(?:true|false|yes|no|on|off|1|0)$/iu;
 
 // The config keys a repository may not set in a scope git reads for it, as patterns over the lower-case key, each with
@@ -269,18 +267,18 @@ export function trustProblem(dir, tip) {
   return null;
 }
 
-// Why a host would load instructions no review saw from a folder above the worktree `dir`, or null. Each folder above it,
-// up to but not including the file system's root, may hold a host instruction file or folder (lib/hosts/index.mjs
-// instructionNames), which every host that reads it loads into the session. One is allowed only inside the main checkout
-// of `project`, tracked by git, and the same as the commit `tip`, or an ancestor of it the main checkout is at
-// (reviewedMismatch), with nothing untracked or ignored in a folder; a host's own user folder, read for every session
-// wherever it starts, is the user's. `env` names those user folders.
+// Why a host would load instructions no review saw from a folder above `dir`, an attempt's clone or a folder in the runs
+// folder, or null. Each folder above it, up to but not including the file system's root, may hold a host instruction
+// file or folder (lib/hosts/index.mjs instructionNames), which every host that reads it loads into the session. One is
+// allowed only inside the main checkout of `project`, tracked by git, and the same as the commit `tip`, or an ancestor
+// of it the main checkout is at (reviewedMismatch), with nothing untracked or ignored in a folder; a host's own user
+// folder, read for every session wherever it starts, is the user's. `env` names those user folders. The state folder
+// lies outside every checkout (project-run.mjs runPlace), so the advice moves the file or the state folder.
 export function ancestorProblem(dir, { project, tip, env = process.env }) {
   const { files, folders, userFolders } = instructionNames(env);
   const users = new Set(userFolders.map((each) => resolvedPath(each) ?? path.resolve(each)));
   const main = resolvedPath(project.checkouts.at(-1)) ?? project.checkouts.at(-1);
   const start = resolvedPath(dir) ?? path.resolve(dir);
-  const mainFolders = new Set(mainCheckoutPaths().folders.map((each) => each.split('/')[0]));
   for (let folder = path.dirname(start); folder !== path.dirname(folder); folder = path.dirname(folder)) {
     for (const name of [...files, ...folders]) {
       const file = path.join(folder, name);
@@ -291,15 +289,8 @@ export function ancestorProblem(dir, { project, tip, env = process.env }) {
         continue;
       }
       if (folders.includes(name) && users.has(resolvedPath(file) ?? file)) continue;
-      // The main checkout's host folder, such as .claude: the very check every start makes of what a worktree session
-      // reads there, so the two never disagree.
-      if (folder === main && mainFolders.has(name)) {
-        const own = mainCheckoutProblem({ main, tip });
-        if (own) return own;
-        continue;
-      }
       const why = reviewedProblem({ main, file, folder: stat.isDirectory(), tip });
-      if (why) return `the host loads ${file}, in a folder above the worktree, and ${why}; move it away, or set git.worktrees.dir to a folder with no host instruction file above it`;
+      if (why) return `the host loads ${file}, in a folder above the attempt's clone, and ${why}; move it away, or set state.dir to a folder with no host instruction file above it`;
     }
   }
   return null;
@@ -319,47 +310,6 @@ function reviewedProblem({ main, file, folder, tip }) {
   const others = gateGit(['ls-files', '-z', '--others', '--exclude-standard', '--', rel], main, { timeout: 60_000 });
   const ignored = gateGit(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory', '--', rel], main, { timeout: 60_000 });
   if (others.status !== 0 || ignored.status !== 0 || others.stdout !== '' || ignored.stdout !== '') return 'it holds files git does not track';
-  return null;
-}
-
-// Why a session in a linked worktree of the main checkout `main` would read host files there no review saw, or null.
-// Each host declares what it reads (lib/hosts/index.mjs mainCheckoutPaths), wherever the worktree lies: in a declared
-// folder, every file must be tracked and the same by its bytes on disk as the commit `tip`, or as the main checkout's
-// HEAD when that lies on the tip's first-parent chain (reviewedMismatch), and none may be untracked or ignored; a declared
-// settings file, when there, must be a regular file under SETTINGS_CAP holding JSON its host's `problem` takes. The
-// answer names the file, and the key or file that refuses, and how to clear it.
-export function mainCheckoutProblem({ main, tip }) {
-  const { folders, settings } = mainCheckoutPaths();
-  const reads = (file, why, clear) => `the host reads ${file} from the main checkout in every worktree session, and ${why}; ${clear}`;
-  for (const folder of folders) {
-    const others = listed(main, ['ls-files', '--others', '--exclude-standard', '--', folder]);
-    const ignored = listed(main, ['ls-files', '--others', '--ignored', '--exclude-standard', '--', folder]);
-    if (!others || !ignored) return reads(path.join(main, folder), 'git cannot list its files', 'fix the main checkout\'s git, then start again');
-    const local = [...others, ...ignored];
-    if (local.length) return reads(path.join(main, local[0]), 'git does not track it, so no review saw it', 'commit it through a reviewed pull request, or remove it from the main checkout');
-    const raw = reviewedMismatch(main, tip, (each) => each.startsWith(`${folder}/`));
-    if (raw) return reads(path.join(main, raw.path ?? folder), raw.problem ?? 'it differs from the base tip', 'update the main checkout to the base tip, or restore the file');
-  }
-  for (const { file, problem } of settings) {
-    const full = path.join(main, file);
-    let stat;
-    try {
-      stat = lstatSync(full);
-    } catch {
-      continue;
-    }
-    const clear = 'remove that from it, or move the file away';
-    if (stat.isSymbolicLink() || !stat.isFile()) return reads(full, 'it is not a regular file', 'replace it with a regular file, or remove it');
-    if (stat.size > SETTINGS_CAP) return reads(full, `it is over ${SETTINGS_CAP} bytes`, clear);
-    let value;
-    try {
-      value = JSON.parse(readFileSync(full, 'utf8'));
-    } catch {
-      return reads(full, 'it is not JSON', clear);
-    }
-    const why = safely(() => problem(value)) ?? null;
-    if (why) return reads(full, `${why}, which a session no Human attends must not run under`, clear);
-  }
   return null;
 }
 

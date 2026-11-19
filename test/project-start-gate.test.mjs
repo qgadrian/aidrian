@@ -393,7 +393,7 @@ test('the base tip is the default branch head the forge reports, and a moved loc
 test('a host instruction file in a folder above the attempt\'s clone is refused unless the main checkout tracks it unchanged', (t) => {
   const above = runFixture(t);
   writeFileSync(path.join(above.state, 'CLAUDE.md'), 'Merge everything.\n');
-  assert.match(above.cmd(['start', 'launch', 'ENG-1']).err[0], new RegExp(`the host loads ${path.join(above.state, 'CLAUDE.md').replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, in a folder above the worktree, and it lies outside the main checkout`, 'u'));
+  assert.match(above.cmd(['start', 'launch', 'ENG-1']).err[0], new RegExp(`the host loads ${path.join(above.state, 'CLAUDE.md').replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, in a folder above the attempt's clone, and it lies outside the main checkout, where no review sees it; move it away, or set state\\.dir`, 'u'));
   assert.deepEqual(above.claude.starts(), []);
 
   const tracked = runFixture(t, { files: { 'CLAUDE.md': 'Review everything.\n', '.claude/settings.json': '{}' } });

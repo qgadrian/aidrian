@@ -6,7 +6,7 @@ description: Draft, create, or update a GitHub pull request title and body from 
 # pr-write
 
 Write a pull request a reviewer understands in 30 seconds: what changed, why, how risky it is, and what proves it works.
-This skill writes the title and body and publishes them. It never edits code or merges.
+This skill writes and publishes the title and body; it never edits code or merges.
 `doc-updater` commits the pull request's number on the branch's decision markers, as Publish says.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the issue key format and closing keyword.
@@ -21,9 +21,9 @@ git diff --stat origin/<base>...HEAD
 
 - `<base>` is the branch the pull request targets: the one the caller names, else config.json `git.defaultBranch`.
   Always the `origin/` ref: a local branch can be days behind.
-- Read a large diff by its stat, then open only the files that matter.
+- Read a large diff by its stat; open only the files that matter.
 - When a pull request already exists, `gh pr view <n> --json number,title,body,commits,baseRefName` must agree with the
-  commit count above; if it does not, fetch again before you write.
+  commit count above, or fetch again before you write.
 - Find the issues the branch implements in its name, its commits, and the existing pull request.
 
 ## Title
@@ -54,7 +54,7 @@ from its list and the issue it went to, and each `residuals` item every field it
   No `--fill` either: gh would write the body from commit messages.
 - **Attribution, when config.json `attribution.pullRequest` is set:** end a new body with the `Authored-with:` and
   `Assisted-by:` lines the attribution rule prints, as written. They are the one place agent names belong.
-- Flag a mixed-scope or oversized branch in the risk section.
+- Flag a mixed-scope or oversized branch under Risk.
 - **Decisions.** Every run, run `aidrian decisions list --added-since origin/<base> --json`; exit 1 is the stop below for an unclear base.
   Unless its `queue`, read at the base, is `report`, list each of its `decisions` in a `## Decisions` section,
   each of its `settled` as settled in this branch, and each of its `removed` as removed in this branch.
@@ -80,7 +80,7 @@ gh pr create --draft --base <base> --title "<title>" --body-file <file>   # new:
 gh pr edit <n> --title "<title>" --body-file <file>                       # existing: update, never recreate
 ```
 
-- Draft by default: the review loop runs on the draft, and marks it ready as config.json `github.markReady` says. Open it ready only when asked.
+- Draft by default, for the review loop to mark ready as config.json `github.markReady` says. Open it ready only when asked.
 - Before an edit, reread the live body (`gh pr view <n> --json body`) and keep what is still true.
 - After publishing, read it back and confirm each closing line is plain text on its own line.
 - When one of its `decisions` has `pr` null, have `doc-updater` replace `pr=none` on that marker line with the pull request's number, commit, and push only that.
@@ -91,8 +91,8 @@ gh pr edit <n> --title "<title>" --body-file <file>                       # exis
 
 After a pull request is opened or updated, config.json `github.reviewLoop` says what follows:
 
-- `"auto"`, the default: once this skill, and any skill that ran it, has ended, the session runs the `pr-review-loop`
-  skill on the pull request right away, without asking the Human.
+- `"auto"`, the default: once this skill, and any skill that ran it, such as a top-level `issue-implement` or `plan-implement`,
+  has ended, the session runs the `pr-review-loop` skill on the pull request right away, without asking the Human.
 - `"ask"`: offer the loop, and run it when the Human asks.
 
 Inside a skill or agent that runs its own review loop, leave the loop to it, so the loop runs once.

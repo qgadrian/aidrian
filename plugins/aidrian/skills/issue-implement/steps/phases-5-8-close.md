@@ -63,3 +63,11 @@ A failed write goes in the report; it never fails a finished implementation.
 Write the report the skill's output section defines.
 
 This skill ends at the draft, its integration review, and the report: the skill's result, not the session's last message. The caller owns what follows.
+
+When no skill or agent above it runs the review loop, as on a direct run, the session owns what follows,
+and the run goes on after the report.
+Under config.json `github.reviewLoop` `"auto"`, the default, the session runs the `pr-review-loop` skill on the pull request right away,
+as its own next step and not as a step of this skill. The loop's last step then marks the draft ready as `github.markReady` says
+and, once it marked it ready, runs the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0.
+Under `"ask"`, the session offers the loop and runs it when the Human asks.
+A caller that runs its own review loop keeps it, so the loop runs once.

@@ -67,9 +67,15 @@ The `design-import` skill's `references/plan-requirements.md` sets their rules; 
 A slice's closure criterion changes during the run only as the `orchestration` skill's `references/review-rules.md`
 § A closure criterion proven elsewhere says. The plan's declared acceptance criteria never change there.
 
+## After the draft
+
+Phase 8's end holds here, with this skill as the one run: on a direct run under `github.reviewLoop` `"auto"`
+the session goes on into the `pr-review-loop` skill, its ready step, and the `pr-auto-merge` skill,
+which merges only when `aidrian pr auto-merge <n>` exits 0.
+
 ## Rules
 
 - The plan file is the only record of slice state. Never track progress in the conversation alone.
-- No tracker calls. The run writes to the pull request only through the `pr-write` step and phase 7's integration review,
+- No tracker calls. This skill writes to the pull request only through the `pr-write` step and phase 7's integration review,
   and never names a local plan path there.
 - Never fork the engine: cite issue-implement's steps in a brief; never paraphrase them.

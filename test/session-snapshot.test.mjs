@@ -17,6 +17,8 @@ import { auditsSection, lessonsSection, snapshotContext } from '../plugins/aidri
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
 const HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-stop.mjs');
+// The preload that records each gh call in the snapshot's own process, before gh is spawned (test/fixtures/gh-spawns.mjs).
+const GH_SPAWNS = path.join(ROOT, 'test/fixtures/gh-spawns.mjs');
 const LIB = path.join(ROOT, 'plugins/aidrian/lib');
 const FIXTURES = path.join(ROOT, 'test/fixtures/transcripts');
 const POSIX = process.platform !== 'win32';
@@ -34,25 +36,26 @@ const git = (cwd, ...args) => {
   return result.stdout.trim();
 };
 
-// `bin/gh` as a shell wrapper that counts its spawn in `<log>.spawns` before it execs node on `body`, the fake's script:
-// a test that stops gh at a short deadline counts the spawn, which a loaded machine's slow node start cannot outlast.
-function ghWrapper(bin, log, body) {
+// `bin/gh` as a shell wrapper that execs node on `body`, the fake's script.
+function ghWrapper(bin, body) {
   mkdirSync(bin, { recursive: true });
   const script = path.join(bin, 'gh.cjs');
   writeFileSync(script, body);
   const file = path.join(bin, 'gh');
-  writeFileSync(file, `#!/bin/sh\necho >> '${log}.spawns'\nexec '${process.execPath}' '${script}' "$@"\n`);
+  writeFileSync(file, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
   chmodSync(file, 0o755);
 }
-// How many times gh was spawned, as ghWrapper counts them.
-const ghSpawns = (log) => (existsSync(`${log}.spawns`) ? readFileSync(`${log}.spawns`, 'utf8').split('\n').length - 1 : 0);
+// Each gh call the snapshot made, as the GH_SPAWNS preload recorded it in the snapshot's process before the spawn:
+// { args, timeout, killSignal, at }. A gh that a short deadline stops before its node starts is still here.
+const ghSpawned = (log) => (existsSync(`${log}.spawns`) ? readFileSync(`${log}.spawns`, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
+const ghSpawns = (log) => ghSpawned(log).length;
 
 // A fake gh that logs each call's arguments to `log`, waits `delay` ms, then prints `answer` and exits with `status`. With
 // `trap`, it ignores SIGTERM, as a gh stuck in its own cleanup may, and appends to `<log>.beat` every 25 ms while it lives,
 // so the beat file's mtime is when it was last alive.
 function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false, status = 0 }) {
   const beat = `${log}.beat`;
-  ghWrapper(bin, log, `const fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
+  ghWrapper(bin, `const fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
     (trap ? `process.on('SIGTERM', () => {});\nfs.appendFileSync(${JSON.stringify(beat)}, '.');\nconst beat = setInterval(() => fs.appendFileSync(${JSON.stringify(beat)}, '.'), 25);\n` : '') +
     `setTimeout(() => { ${trap ? 'clearInterval(beat); ' : ''}process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`);
 }
@@ -77,7 +80,7 @@ function setup(t, { config = {}, origin = null, branch = 'main', name = 'project
   const env = { ...process.env, ...GIT_CONFIG_NONE, XDG_STATE_HOME: state, TMPDIR: temp, PATH: `${path.join(base, 'bin')}${path.delimiter}${process.env.PATH}` };
   const run = (args = [], { cwd = dir, extraEnv = {} } = {}) => {
     const started = Date.now();
-    const result = spawnSync(process.execPath, [CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
+    const result = spawnSync(process.execPath, ['--import', GH_SPAWNS, CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, GH_SPAWN_LOG: `${log}.spawns`, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
     const endedAt = Date.now();
     return { ...result, ms: endedAt - started, endedAt, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
   };
@@ -397,11 +400,11 @@ test('worktrees counts the owned and the merged ones, and reads merged heads onc
   fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
   assert.deepEqual(late.json.worktrees, { owned: 1, mergedNotCleaned: 1, stale: true }, 'a refresh past the deadline shows the cached value as stale');
-  // From gh's spawn, the spawns file's mtime, to the snapshot's exit: the node and git startups a loaded machine slows
-  // come before it.
-  const lateMs = late.endedAt - statSync(`${env.log}.spawns`).mtimeMs;
+  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
+  // machine slows come before it.
+  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
   assert.ok(lateMs < 4000, `${lateMs} ms`);
-  // Spawns, not log lines: the 200 ms deadline can stop a slowly started node gh before it logs its call.
+  // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
   assert.equal(ghSpawns(env.log), 2);
   assert.deepEqual(env.run(['--session', ID]).json.worktrees.stale, true);
   assert.equal(ghSpawns(env.log), 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
@@ -902,7 +905,7 @@ test('a named pipe at the lesson inbox or the audits triage file fails that sect
 function withLedger(t, options = {}) {
   const env = setup(t, options);
   const answerFile = path.join(env.base, 'answer.json');
-  ghWrapper(path.join(env.base, 'bin'), env.log, `const fs = require('node:fs');\n` +
+  ghWrapper(path.join(env.base, 'bin'), `const fs = require('node:fs');\n` +
     `const input = process.argv.includes('--input') ? fs.readFileSync(0, 'utf8') : null;\n` +
     `fs.appendFileSync(${JSON.stringify(env.log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), input, ghHost: process.env.GH_HOST ?? null }) + '\\n');\n` +
     `const { text, status, delay } = JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\n` +
@@ -1077,13 +1080,13 @@ test('prs: results cache 60s; past the deadline the cached rows are stale, and w
   writeFileSync(cache, JSON.stringify({ ...stored, attemptAt: Date.now() - 120_000 }));
   env.answer({ data: {} }, { delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
-  // From gh's spawn, the spawns file's mtime, to the snapshot's exit: the node and git startups a loaded machine slows
-  // come before it.
-  const lateMs = late.endedAt - statSync(`${env.log}.spawns`).mtimeMs;
+  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
+  // machine slows come before it.
+  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
   assert.ok(lateMs < 4000, `${lateMs} ms`);
   assert.deepEqual(late.json.prs, [{ ...PR_ROW, stale: true }]);
   assert.deepEqual(late.json.errors, []);
-  // Spawns, not log lines: the 200 ms deadline can stop a slowly started node gh before it logs its call.
+  // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
   assert.equal(env.spawns(), 2);
   assert.deepEqual(env.run(['--session', ID]).json.prs, [{ ...PR_ROW, stale: true }]);
   assert.equal(env.spawns(), 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');

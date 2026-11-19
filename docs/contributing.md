@@ -68,7 +68,10 @@ A test that does not test the deadline itself gives the code the time the test s
   `node --import test/fixtures/frozen-clock.mjs <hook>`, whose `Date.now` stands at the process's start, so the ready
   hold gives each `gh` call the whole 3.5 s. The plugin reads no test switch from the environment: a hook a real
   session starts keeps its whole deadline whatever variables it inherits.
-- A wall-clock bound measures only the part the deadline bounds, such as from the fake `gh`'s start to the command's exit.
+- A test that counts the `gh` calls a command made, or times them, reads them where the command makes them:
+  `node --import test/fixtures/gh-spawns.mjs <cli>` records each call in the command's own process before `gh` is
+  spawned, with the time limit and signal it asks for, so a `gh` a short deadline stops before it starts still counts.
+- A wall-clock bound measures only the part the deadline bounds, such as from `gh`'s spawn to the command's exit.
 
 A test of the deadline itself keeps the real clock, and no production deadline changes for a test.
 

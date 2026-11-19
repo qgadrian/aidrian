@@ -345,7 +345,7 @@ function progressOf({ store, session, now, cwd, text }) {
 // than idle. It notes the request in the store for the Stop hook. A request it cannot note is none: the session stays.
 function handTerminal({ host, store, session, env, run, now, mode, id, next }) {
   if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id) || !replacer(host)) return null;
-  const way = unattendedHere(session, { store, env, now }) ? followed({ host, store, session, env, run, now }) : safely(() => terminalOf(host, { env, run }));
+  const way = unattendedHere(session, { store, env, now }) ? followed({ host, store, session, env, run, now, next }) : safely(() => terminalOf(host, { env, run }));
   if (way === null || safely(() => noteEnding(store, session, { ...way, id, next }, { now })) === null) return null;
   return way.shell === null ? 'stop' : 'switch';
 }
@@ -364,12 +364,20 @@ function unhooked({ host, store, session, env, now, mode }) {
 // terminal follows it, as the shell function recorded when it opened this session, which it deletes once that program
 // exits, or else as the store records once the session before it ended itself, which may be stale; the first of them
 // that still runs the host's client (replaceTerminal.hasClient); else null, and the session only stops. `own` is the id
-// that record names it by, or its own.
-function followed({ host, store, session, env, run, now }) {
+// that record names it by, or its own. A shell record that opened it by another target, such as its name, counts when
+// the host says that target, such as its whole name, can open this session alone (replaceTerminal.nameMatcher), read
+// once, and only for such a record; `own` is then the session's own id. The host leaves out the session `next`, the
+// full id of the one this handoff just started, when known: no terminal attached to it before it existed.
+function followed({ host, store, session, env, run, now, next = null }) {
   const replace = replacer(host);
   if (typeof replace.endOwn !== 'function' || replace.attended(env)) return null;
   const alive = (shell) => safely(() => replace.hasClient?.({ shell, run })) === true;
-  const follows = [safely(() => readFollows(session, { env, now, live: alive })), safely(() => readFollow(store, session, { now, live: alive }))];
+  let matcher;
+  const named = (target) => {
+    matcher ??= safely(() => replace.nameMatcher?.({ session, skip: next, env, run })) ?? (() => false);
+    return safely(() => matcher(target)) === true;
+  };
+  const follows = [safely(() => readFollows(session, { env, now, live: alive, named })), safely(() => readFollow(store, session, { now, live: alive }))];
   const live = follows.find((follow) => follow !== null);
   return live ? { own: live.id, shell: live.shell } : { own: session, shell: null };
 }

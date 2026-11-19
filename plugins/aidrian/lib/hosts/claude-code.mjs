@@ -5,7 +5,7 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { attachLine, findLine, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { attachLine, findLine, nameMatcher, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
@@ -194,6 +194,8 @@ export default {
         // `claude attach` then exits 0 about a second later (probed on 2.1.326), so the shell function goes on.
         endOwn: ({ id, session, env, run }) => stopOwnBackground({ id, session, env, run }),
         hasClient: ({ shell, run }) => hasClient({ shell, run }),
+        // `claude attach` takes a session's name, or part of it, in place of its id.
+        nameMatcher: ({ session, skip, env, run }) => nameMatcher({ session, skip, env, run }),
         signal: END_SIGNAL,
       },
       // Its own clear and compact commands are part of the route, so they cancel nothing. Its commands reference

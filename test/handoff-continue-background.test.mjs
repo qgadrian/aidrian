@@ -1118,12 +1118,12 @@ test('a background session the gate started ends itself once its turn ends, in a
     assert.ok(markUnattended(SESSION, { root: setting.dir, env }), name);
     if (follows === 'store') assert.ok(noteFollow(setting.store, SESSION, { shell: 4242 }), name);
     if (follows === 'shell') followsRecord(env, 4242, SESSION);
-    if (follows === 'short') followsRecord(env, 4242, 'sess');
+    if (follows === 'short') followsRecord(env, 4242, 'session-');
     if (follows === 'other') followsRecord(env, 4242, 'zzzz9999');
     const result = gate(setting, { run: withClients(fakeRun({ own: setting.dir }).run, rows), env });
     assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
     assert.ok(result.out[1].endsWith({ switch: SWITCHES, stop: STOPS }[ending] ?? PLAIN), `${name}: ${result.out[1]}`);
-    const own = follows === 'short' ? 'sess' : SESSION;
+    const own = follows === 'short' ? 'session-' : SESSION;
     const expected = { switch: { own, shell: 4242 }, stop: { own: SESSION, shell: null } }[ending];
     assert.deepEqual(takeEnding(setting.store, SESSION), expected ? { ...expected, id: 'abcd1234', next: NEW_SESSION } : null, name);
   }

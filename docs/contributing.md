@@ -64,9 +64,10 @@ A test that does not test the deadline itself gives the code the time the test s
 
 - In process, through the rule's clock seam, such as the ready hold's `now` (`deadlineForge`), frozen as `FROZEN` in
   `test/ready-hold.test.mjs`.
-- For a hook the test runs as a program, `AIDRIAN_TEST_READY_CLOCK=frozen` in the hook's environment stops the ready
-  hold's clock, so each `gh` call gets the whole 3.5 s. The hook honours it only under node's test runner
-  (`NODE_TEST_CONTEXT` set), and the suite strips it from the shell it starts in.
+- For a hook the test runs as a program, the test runs the shipped hook under a test-owned preload,
+  `node --import test/fixtures/frozen-clock.mjs <hook>`, whose `Date.now` stands at the process's start, so the ready
+  hold gives each `gh` call the whole 3.5 s. The plugin reads no test switch from the environment: a hook a real
+  session starts keeps its whole deadline whatever variables it inherits.
 - A wall-clock bound measures only the part the deadline bounds, such as from the fake `gh`'s start to the command's exit.
 
 A test of the deadline itself keeps the real clock, and no production deadline changes for a test.

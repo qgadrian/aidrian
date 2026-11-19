@@ -42,13 +42,6 @@ import { commandPath, readWords } from './review-request.mjs';
 export const DEADLINE_MS = 3500;
 export const HOOK_BUDGET_MS = 4000;
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNHELD_READY';
-// The test seam for the hooks run as programs: `frozen` in the hook's own environment, under node's test runner
-// (NODE_TEST_CONTEXT, which it sets for every test file and the processes it spawns), stops the hold's clock, so each gh
-// call gets the whole DEADLINE_MS however slowly a loaded machine starts the hook and its gh. Outside the runner it is
-// ignored, and the deadline is the real one. docs/contributing.md#load-independent-deadlines.
-export const TEST_CLOCK = 'AIDRIAN_TEST_READY_CLOCK';
-// deadlineForge's clock seams that `env` asks for: the frozen clock above, or none.
-export const testClock = (env) => (env.NODE_TEST_CONTEXT && env[TEST_CLOCK] === 'frozen' ? { now: () => 0, startedAt: Infinity } : {});
 const MUTATION = 'markPullRequestReadyForReview';
 // A word close to `ready`, as text a shell is fed may spell it: `re""ady`, `"ready"`, or printf's `re%sdy`.
 const READY_LIKE = /re\S{0,4}dy/iu;
@@ -260,7 +253,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, ...seam
     const projects = list.filter((project, at) => project && list.findIndex((other) => other?.root === project.root) === at);
     return { call, projects };
   });
-  return judgeCalls(calls, { ...seams, ...testClock(env) });
+  return judgeCalls(calls, seams);
 }
 
 // The deny reason for one MCP call that marks ready, `given` as { owner, repo, pullNumber, draft }, or null. A number it
@@ -272,5 +265,5 @@ export function checkMcp(given, { cwd = process.cwd(), env = process.env, ...sea
   const n = Number(given.pullNumber);
   if (!(Number.isInteger(n) && n > 0)) return null;
   const repo = typeof given.owner === 'string' && typeof given.repo === 'string' ? `${given.owner}/${given.repo}` : null;
-  return judgeCalls([{ call: { target: String(n), repo, url: false }, projects: [project] }], { ...seams, ...testClock(env) });
+  return judgeCalls([{ call: { target: String(n), repo, url: false }, projects: [project] }], seams);
 }

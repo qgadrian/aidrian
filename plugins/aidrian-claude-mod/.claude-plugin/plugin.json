@@ -1,6 +1,6 @@
 {
   "name": "aidrian-mod",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Optional Claude Code mod for the aidrian plugin: a band above the prompt, an aidrian-mod pane, and notifications. Requires the aidrian plugin.",
   "author": {
     "name": "aidrian"

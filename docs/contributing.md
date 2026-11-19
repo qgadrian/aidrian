@@ -11,8 +11,15 @@ Read [working-agreement.md](working-agreement.md) first: the rules every change 
 npm ci
 make hooks       # once per clone, run by the Human in the main checkout: the hooks in .githooks/
 npm run build    # after editing plugins/aidrian/agents-src/<group>/, providers/, or agent-addons/
-npm run check    # what CI runs
+aidrian test changed  # before a push: the test files the change touches
+npm run check    # what CI runs on the pushed head
 ```
+
+Push a change once its touched tests pass, and let CI run `npm run check`: a full local run on a loaded machine once
+held a fix back for two hours. Run it locally only when CI cannot, once, before marking ready.
+This repository's config does not yet opt into [push first](hooks.md#push-first): an older plugin rejects the
+`testing` keys, and every session here runs the installed one. Issue #386
+sets `"testing": { "fullSuite": ["npm run check"], "pushFirstMinutes": 5 }` and raises `requires.aidrian` once a release ships them.
 
 `make` lists the same tasks.
 

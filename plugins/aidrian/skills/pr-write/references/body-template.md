@@ -38,6 +38,8 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
 
 - **Summary** leads with the outcome, not the file list. Group the bullets by area, not by commit.
 - **Tests run** is evidence: the behaviour each command or check proved. A test count alone proves nothing.
+  A result quotes a run that finished in this session, or CI as `gh pr checks` shows it; a stopped run is "not finished".
+  The pull request body rule refuses a pass no finished run of that command shows.
 - **Risk** names the blast radius, data or security impact, backward compatibility, and how to roll back.
 - **Decisions** lists each decision an agent made alone, so the reviewer can keep or reject it. It never names the agent.
   A closure criterion changed during the run is one such decision: what the plan asked, the tests that now prove it, and the break they failed on.

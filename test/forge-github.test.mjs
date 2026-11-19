@@ -23,6 +23,7 @@ const FACADE = [
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
+  'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'workflowRun',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -557,7 +558,11 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
         defaultBranchRef: { name: 'main', target: { pointer: null, config: blob('{"version":1}'), knowledge: { object: { entries: [{ name: '10-x.json', type: 'blob', object: { text: '{}', isTruncated: false } }] } } } },
         pullRequest: {
           headRefOid: sha,
+          headRefName: 'feat/x',
           baseRefName: 'release',
+          title: 'feat: x',
+          body: 'Fixes ENG-1',
+          history: { totalCount: 101, nodes: [{ commit: { oid: sha, message: 'feat: x' } }] },
           isDraft: false,
           reviewDecision: 'APPROVED',
           author: { login: 'adrian' },
@@ -580,7 +585,8 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
   const { forge, args } = recorded(() => JSON.stringify(answer));
   const paths = { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' };
   assert.deepEqual(forge.reviewTrail('acme/notes', 7, { paths }), {
-    viewer: 'adrian', head: sha, base: 'release', author: 'adrian', draft: false, reviewDecision: 'APPROVED',
+    viewer: 'adrian', head: sha, headRef: 'feat/x', title: 'feat: x', body: 'Fixes ENG-1', messages: [{ oid: sha, message: 'feat: x' }], messagesComplete: false,
+    base: 'release', author: 'adrian', draft: false, reviewDecision: 'APPROVED',
     latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }],
     checks: { head: sha, rows: [{ name: 'e2e', state: 'IN_PROGRESS' }, { name: 'deploy', state: 'SUCCESS' }], complete: true },
     files: [{ path: 'src/a.js', changeType: 'MODIFIED' }], filesTotal: 2, filesComplete: false,

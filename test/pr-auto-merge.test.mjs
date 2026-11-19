@@ -1404,3 +1404,96 @@ test('reviewProblem holds on a waiver whose record holds no text, and names the 
   state.passes['agent:code-reviewer'] = { head, list: [{ id: 'R1-9', file: 'src/a.js', state: 'fixed' }, { file: 'src/a.js', state: 'fixed' }] };
   assert.match(reviewProblem(state, head), /finding R1-1, above low severity and no listing holds it fixed/u, 'a listing of another id, or of none, ends nothing');
 });
+
+// The closing-word refusal (reason `closes`): a project run's issue session, whose unattended mark names its issue,
+// merges only a pull request whose title, body, and commits close, and whose title links, no other issue of a team the
+// run knows (lib/closing-words.mjs).
+const TEAM_KEYS = { own: 'ENG-1', prefixes: new Set(['ENG', 'TAX']) };
+function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-1', messages = ['feat: export'], context = TEAM_KEYS, runIssue = () => context, commits, pullHead = HEAD } = {}) {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const { forge, calls } = fakeForge();
+  const listed = messages.map((message, i) => ({ sha: `${i}`.repeat(40), commit: { message } }));
+  forge.pull = (repo, n, { host } = {}) => (calls.push(['pull', repo, n, host]), { head: { sha: pullHead }, title, body, commits: commits ?? listed.length });
+  forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), listed);
+  forge.reviewTrail = () => {
+    throw Object.assign(new Error('trail'), { stderr: 'past the closing words\n' });
+  };
+  const out = [];
+  const err = [];
+  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => true, runIssue, out: { log: (line) => out.push(line), error: (line) => err.push(line) } });
+  return { code, out, err, calls, reason: out.length ? JSON.parse(out[0]).reason : null, why: out.length ? JSON.parse(out[0]).why : null };
+}
+const passes = (result, label) => {
+  assert.equal(result.code, 3, label);
+  assert.match(result.err.join('\n'), /could not read the review trail of #7 with gh \(past the closing words\)/u, label);
+};
+
+test('closes: an issue session\'s pull request that closes only its own issue goes on to merge trust', (t) => {
+  for (const given of [
+    {},
+    { body: 'Fixes eng-1 and refs ENG-2', messages: ['fix(api): handle ENG-3 in the export', 'Resolves: ENG-1'] },
+    { context: { own: '5', prefixes: new Set() }, body: 'Closes #5, and https://github.com/acme/notes/issues/5' },
+    // Tokens shaped like keys of no team the run knows, and a list a line break ends.
+    { title: 'fix: utf-8 BOM', messages: ['fix: x86-64 build', 'Fixed SHA-256 check', 'fix: e2e-2 flake'] },
+    { body: 'Closes ENG-1\n\nTAX-13 covers the rest' },
+    { title: 'feat(ENG-1): export' },
+    { title: 'ENG-1-export: x', body: 'Fixes ENG-1-export\r\nENG-9 is next' },
+  ]) {
+    const result = closing(t, given);
+    passes(result, JSON.stringify(given, (k, v) => (v instanceof Set ? [...v] : v)));
+    assert.deepEqual(result.calls.filter((call) => ['pull', 'changeCommits'].includes(call[0])).map((call) => call[0]), ['pull', 'changeCommits']);
+  }
+});
+
+test('closes: a title, body, or commit that closes, or a title that names, another issue of a known team is off (closes), before merge trust', (t) => {
+  for (const [given, where] of [
+    [{ body: 'Fixes ENG-1, ENG-9' }, /its body says "Fixes ENG-9"/u],
+    [{ title: 'fix: export (closes ENG-4)' }, /its title says "closes ENG-4"/u],
+    [{ messages: ['feat: export', 'Completes TAX-2'] }, /commit 1111111 says "Completes TAX-2"/u],
+    [{ body: 'Resolves https://linear.app/acme/issue/ENG-7/slug' }, /ENG-7/u],
+    [{ context: { own: '5', prefixes: new Set() }, body: 'Closes other/repo#5' }, /"Closes other\/repo#5"/u],
+    [{ body: 'Fixes #3' }, /"Fixes #3"/u],
+    [{ body: 'Fixes https://example.com/x, ENG-9' }, /"Fixes ENG-9"/u],
+    // Any white space but a line break separates: a no-break space, an em space, a lone CR.
+    [{ body: 'Fixes ENG-9' }, /"Fixes ENG-9"/u],
+    [{ body: 'Fixes ENG-1, ENG-9' }, /"Fixes ENG-9"/u],
+    [{ body: 'Fixes\rENG-9' }, /"Fixes ENG-9"/u],
+    // A key a hyphen joins to more text still counts.
+    [{ body: 'Fixes ENG-9-export' }, /"Fixes ENG-9"/u],
+    [{ title: 'ENG-9-export: x' }, /its title names "ENG-9"/u],
+    // A key of a team the run does not know is passed over, and the list goes on.
+    [{ body: 'Fixes ACME-1, TAX-40' }, /"Fixes TAX-40"/u],
+    [{ body: 'Fixes utf-8 and TAX-40' }, /"Fixes TAX-40"/u],
+    [{ context: { own: null, prefixes: null } }, /the issue its unattended mark names, and that mark names none it can read/u],
+    [{ context: { own: 'ENG-1', prefixes: null }, title: 'fix: utf-8 BOM' }, /its title says "fix utf-8"/u],
+  ]) {
+    const result = closing(t, given);
+    assert.deepEqual([result.code, result.reason], [1, 'closes'], JSON.stringify(given));
+    assert.match(result.why, where);
+  }
+  // A key in the title links that issue, with or without a closing word.
+  const titled = closing(t, { title: 'feat: export, see TAX-12' });
+  assert.deepEqual([titled.reason, /its title names "TAX-12", which links that issue/u.test(titled.why)], ['closes', true]);
+});
+
+test('closes: a list longer than the gate reads is off; a cut commit list is off; a head that moved is an error, not a refusal', (t) => {
+  const long = closing(t, { body: `Fixes ${Array(50).fill('ENG-1').join(', ')}, ENG-9` });
+  assert.deepEqual([long.reason, /lists more than 50 references after a closing word/u.test(long.why)], ['closes', true]);
+  assert.match(closing(t, { commits: 300 }).why, /gh listed 1 of its 300 commits, and GitHub lists at most 250/u);
+  const moved = closing(t, { pullHead: OLD });
+  assert.equal(moved.code, 3, 'the stop command waits on an error');
+  assert.match(moved.err.join('\n'), /the head of #7 moved from abcdef1 to 1234567 while the gate read its title and body/u);
+});
+
+test('closes: a session no mark names an issue for, and an attended one, read no closing words', (t) => {
+  const unmarked = closing(t, { runIssue: () => undefined, body: 'Fixes ENG-9' });
+  passes(unmarked, 'unmarked');
+  assert.ok(!unmarked.calls.some((call) => call[0] === 'changeCommits'));
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const { forge, calls } = fakeForge();
+  const out = [];
+  assert.equal(runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => false, runIssue: () => TEAM_KEYS, out: { log: (line) => out.push(line), error: () => {} } }), 0);
+  assert.ok(!calls.some((call) => call[0] === 'pull'), 'an attended session reads no closing words');
+});

@@ -45,8 +45,9 @@
 // A session no Human attends (its unattended mark, lib/unattended-mark.mjs, read by the host's session id) may not take
 // the record's word alone, which a project run's confined session can write: a merge the checks above let through, with
 // a record or none, the Human's answer, or a waiver, must also name its number and full head, in the repository the
-// session is pinned to, and pass lib/review/merge-trust.mjs trustProblem on the forge (unattendedProblem). Attended
-// sessions are unchanged.
+// session is pinned to, and pass lib/review/merge-trust.mjs trustProblem on the forge (unattendedProblem); a pull request
+// of a project run's issue may close or link no other issue, by its title, body, commits, and the merge's own subject and
+// body (mergeClosesProblem). Attended sessions are unchanged.
 
 import { closeSync, constants, fstatSync, openSync, readFileSync, readSync } from 'node:fs';
 import path from 'node:path';
@@ -59,6 +60,7 @@ import { stateFolders } from '../../handoff-guard.mjs';
 import { branchPolicies, changesRequested, includesGuardedPaths, pathsProblem, refusingBranches, startDocs, trailDocs, trailPaths, trailPolicies } from '../../pr-auto-merge.mjs';
 import { computeVerdict } from '../../pr-checks.mjs';
 import { findProject, mayFollowTeamDefault } from '../../project.mjs';
+import { closingTextsProblem, mergeClosingContext } from '../../closing-words.mjs';
 import { pinnedRepository, readRun } from '../../project-run.mjs';
 import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
@@ -128,7 +130,7 @@ export function readMerge({ program, args, environment = [] }, env = {}, { cwd =
     if (variable.test(match[2]) || variable.test(match[1]) || !/^\d+$/u.test(match[2]) || !/^[^/]+\/[^/]+$/u.test(match[1])) return { pr: null, head: null, target: null, repo: null, unreadable: true };
     const sha = fields.map((flag) => literal(flag.value)).find((text) => text?.startsWith('sha='))?.slice('sha='.length) ?? null;
     const repo = fillRepo(match[1], invocationRepo(environment, env));
-    return { pr: Number(match[2]), head: sha && SHA.test(sha) ? sha : null, target: null, repo };
+    return { pr: Number(match[2]), head: sha && SHA.test(sha) ? sha : null, target: null, repo, text: apiMergeText(fields, flags) };
   }
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;
   const { words, flags } = readWords(args, new Set(MERGE_VALUES));
@@ -146,9 +148,57 @@ export function readMerge({ program, args, environment = [] }, env = {}, { cwd =
     repo: flagRepo ? literal(flagRepo) : urlRepo ?? invocationRepo(environment, env),
     // A target the rule cannot read, such as `"$PR"`, is no pull request it can check.
     unreadable: Boolean(words[2]) && target === null,
+    text: mergeText(last('-t', '--subject'), last('-b', '--body'), last('-F', '--body-file')),
     // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then.
     ...(flags.some((flag) => flag.name === '--auto') ? { auto: true } : {}),
   };
+}
+
+// The merge commit's own subject and body a merge names, for the closing-word check (lib/closing-words.mjs):
+// { subject, body, unreadable }, each text null when the merge names none, and `unreadable` true when one comes from a
+// file or a word built from a variable, which the guard cannot read.
+function mergeText(subject, body, bodyFile) {
+  const read = (token) => (token && !token.dynamic ? token.text : null);
+  return { subject: read(subject), body: read(body), unreadable: Boolean(subject?.dynamic || body?.dynamic || bodyFile) };
+}
+
+// The same for a REST merge's `commit_title` and `commit_message` fields: a field built from a variable, one `-F` reads
+// from a file (`@file`), or a request body from `--input` is unreadable.
+function apiMergeText(fields, flags) {
+  const text = { subject: null, body: null, unreadable: flags.some((flag) => flag.name === '--input') };
+  for (const flag of fields) {
+    if (!flag.value || flag.value.dynamic) {
+      text.unreadable = true;
+      continue;
+    }
+    const at = flag.value.text.indexOf('=');
+    const [key, value] = at === -1 ? [flag.value.text, ''] : [flag.value.text.slice(0, at), flag.value.text.slice(at + 1)];
+    if (!['commit_title', 'commit_message'].includes(key)) continue;
+    if (['-F', '--field'].includes(flag.name) && value.startsWith('@')) text.unreadable = true;
+    else text[key === 'commit_title' ? 'subject' : 'body'] = value;
+  }
+  return text;
+}
+
+// Why a merge no Human asks for would close, or link, an issue other than its project run's own, or null
+// (closing-words.mjs): the pull request's title, body, and every commit message, from the review trail `trail` at the
+// pinned head, and the merge's own subject and body, `merge.text`. Only for a pull request of a run's issue, as
+// mergeClosingContext reads `mark` and the main checkout `home`; `pr` is { repo, host }.
+export function mergeClosesProblem({ trail, merge, mark, home, pr }) {
+  const context = mergeClosingContext(mark, home, trail?.headRef);
+  if (context === undefined) return null;
+  if (merge.text?.unreadable) return 'its merge commit\'s subject or body comes from a file or a variable the guard cannot read, and a merge of a project run\'s issue may close only that issue';
+  if (typeof trail?.title !== 'string' || trail.messagesComplete !== true || !Array.isArray(trail.messages) || trail.messages.some((each) => typeof each?.message !== 'string')) {
+    return 'the forge did not give its title and every commit message, so whether its merge closes another issue cannot be told';
+  }
+  const texts = [
+    { where: 'its title', text: trail.title, title: true },
+    { where: 'its body', text: trail.body ?? '' },
+    ...trail.messages.map((each) => ({ where: `commit ${String(each.oid ?? '').slice(0, 7) || 'with no SHA'}`, text: each.message })),
+    ...(merge.text?.subject ? [{ where: 'the merge commit\'s subject', text: merge.text.subject, title: true }] : []),
+    ...(merge.text?.body ? [{ where: 'the merge commit\'s body', text: merge.text.body }] : []),
+  ];
+  return closingTextsProblem(texts, context, pr);
 }
 
 // The GraphQL mutations that merge a pull request, or leave its merge to GitHub: auto-merge and the merge queue.
@@ -523,7 +573,8 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
       ?? trustProblem({
         trail, head, reviewer: policies.policy.github.reviewer, files: Array.isArray(trail?.files) ? trail.files : [], complete: trail?.filesComplete === true,
         configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles, state: scoped(recordFor(project, pr, repo), project, repo), signoffs: readHumanSignoffs({ repo, pr }),
-      });
+      })
+      ?? mergeClosesProblem({ trail, merge, mark, home, pr: { repo, host: pinned.host } });
     return problem ? deny(problem) : null;
   } catch (error) {
     return deny(`the forge could not confirm it in time (${String(error?.message ?? error).split('\n')[0]}); running the merge once more is safe`);
@@ -603,10 +654,11 @@ function checkTool(toolInput, { cwd, input, viewPr, waiverForge, startedAt, now,
   const pr = Number.isInteger(n) && n > 0 ? n : null;
   const how = 'Merge with `gh pr merge <PR> --match-head-commit <sha>` instead, which names the head.';
   if (pr === null) return unresolved(null, how);
+  const text = { subject: typeof toolInput?.commit_title === 'string' ? toolInput.commit_title : null, body: typeof toolInput?.commit_message === 'string' ? toolInput.commit_message : null, unreadable: false };
   const memo = {};
   const planted = mark ? recordProblem(project, pr, { pastDeadline: () => now() >= startedAt + WAIVER_DEADLINE_MS }) : null;
   if (planted) return unattendedProblem({ project, home: places.home, merge: { pr, head, repo }, mark, startedAt, now, planted });
   const reason = judgeMerge({ project, pr, head, repo, viewPr, answers: transcriptAnswers(readTranscript(input?.transcript_path)), how, waiverForge, startedAt, now, memo });
   if (reason) return reason;
-  return mark ? unattendedProblem({ project, home: places.home, merge: { pr, head, repo }, mark, forge: trustForge, startedAt, now, memo }) : null;
+  return mark ? unattendedProblem({ project, home: places.home, merge: { pr, head, repo, text }, mark, forge: trustForge, startedAt, now, memo }) : null;
 }

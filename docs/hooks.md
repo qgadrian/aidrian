@@ -601,7 +601,12 @@ read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge tr
 `github.autoMerge.allow` on both branches, the main checkout's own switch on, the default branch's required checks named,
 the paths check with `includeGuardedPaths` and the policy files, the gh user's own pull request, no outsider's comment
 or review in comment and review lists the forge gave whole, no changes requested, not a draft, and every check of exactly the head finished and passed, so gh merges at
-once rather than leave the merge to auto-merge or a merge queue. A read that fails or runs out of time refuses, and says
+once rather than leave the merge to auto-merge or a merge queue. For a pull request of a [project run](config.md#project-run)'s
+issue, the issue its mark names, or, for any other mark such as the driver's, the issue whose snapshot branch is the
+pull request's head, the merge also keeps [`closes`](config.md#when-it-is-on): its title, body, and every commit
+message, as the same read gives them at merge time, and the merge's own subject and body (`-t`, `-b`, `commit_title`,
+`commit_message`), close or name no other issue of a team the run knows. A body from a file (`-F`, `@file`,
+`--input`) or a variable refuses, and so do commit messages the forge gave only in part. A read that fails or runs out of time refuses, and says
 one more try is safe. Whether GitHub keeps `--match-head-commit` when a push lands between the guard's read and the
 merge is not verified live; the guard's read is of the same head it names. An attended session's merges are unchanged,
 and read nothing more.

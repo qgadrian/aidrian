@@ -5,8 +5,9 @@
 //
 // A run lives in `<state>/runs/<run>/`, where `<state>` is the project's state folder, as runPlace resolves it:
 //   snapshot.json  each issue's key, branch, status type, blockedBy keys, and priority, and the status type of each
-//                  blocker outside the project. No title, body, or other tracker text, ever: validateSnapshot copies only
-//                  these fields, each checked, and drops every other one. The branch is the one tracker-derived text kept.
+//                  blocker outside the project, and, when the driver gives them, the workspace's team keys (`teams`).
+//                  No title, body, or other tracker text, ever: validateSnapshot copies only these fields, each checked,
+//                  and drops every other one. The branch is the one tracker-derived text kept.
 //   ledger.jsonl   append-only, each row written under the file's lock (lib/jsonl.mjs withLocks). Its first row, `init`,
 //                  pins the repository, records the driver's session id, and ties the run to snapshot.json by its
 //                  sha256 and issue count; later rows record what happened to an issue, and the rows of the start gate
@@ -59,7 +60,10 @@ const plainPart = (part) => typeof part === 'string' && PLAIN.test(part) && part
 // The fields of an issue and of an outside blocker the snapshot keeps. Every other field is dropped.
 const ISSUE_FIELDS = new Set(['key', 'branch', 'status', 'blockedBy', 'priority']);
 const OUTSIDE_FIELDS = new Set(['key', 'status']);
-const TOP_FIELDS = new Set(['issues', 'outside']);
+const TOP_FIELDS = new Set(['issues', 'outside', 'teams']);
+// A team key of the tracker workspace, as an issue key's prefix is, and the most a snapshot lists.
+export const TEAM_KEY = /^[A-Z][A-Z0-9]{0,15}$/u;
+export const MAX_TEAMS = 500;
 // Opens without following a final symlink and without waiting on a FIFO, whose fstat then shows it is no regular file.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 // A timestamp as Date#toISOString writes it.
@@ -142,12 +146,24 @@ export function validateSnapshot(input, names = {}) {
       });
     }
   }
+  // `teams`, when given: every team key of the tracker workspace, which the closing-word check (closing-words.mjs) reads
+  // a token's prefix against, so a key of a team outside the run still counts.
+  let teams;
+  if (input.teams !== undefined) {
+    if (!Array.isArray(input.teams) || input.teams.length > MAX_TEAMS) problems.push(`"teams" is not a list of at most ${MAX_TEAMS} team keys`);
+    else {
+      input.teams.forEach((team, i) => {
+        if (typeof team !== 'string' || !TEAM_KEY.test(team)) problems.push(`teams[${i}] ${quote(team)} is not a team key such as ENG`);
+      });
+      teams = [...new Set(input.teams)];
+    }
+  }
   repeated(issues.map((issue) => issue.key), 'issue key', problems);
   repeated(issues.map((issue) => issue.branch), 'branch', problems);
   repeated(outside.map((blocker) => blocker.key), 'outside blocker key', problems);
   const inside = new Set(issues.map((issue) => issue.key));
   for (const blocker of outside) if (inside.has(blocker.key)) problems.push(`${blocker.key} is both an issue and an outside blocker`);
-  return { snapshot: problems.length ? null : { issues, outside }, problems, dropped };
+  return { snapshot: problems.length ? null : { issues, outside, ...(teams ? { teams } : {}) }, problems, dropped };
 }
 
 const keyOk = (key) => typeof key === 'string' && ISSUE_KEY.test(key);
@@ -446,7 +462,7 @@ export function readRun(state, run) {
   } catch {
     return { problem: `the snapshot of run ${run} is not JSON` };
   }
-  const checked = validateSnapshot({ issues: snapshot?.issues, outside: snapshot?.outside });
+  const checked = validateSnapshot({ issues: snapshot?.issues, outside: snapshot?.outside, ...(snapshot?.teams === undefined ? {} : { teams: snapshot.teams }) });
   if (!checked.snapshot || checked.snapshot.issues.length !== init.issues) return { problem: `the snapshot of run ${run} does not pass its checks` };
   const keys = new Set(checked.snapshot.issues.map((issue) => issue.key));
   const states = new Map();

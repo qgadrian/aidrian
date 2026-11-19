@@ -174,7 +174,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   and its title last renamed, `changeFiles`, every changed file past the 100 `change` lists, and
   `reviewTrail(repo, n, { host })`, what a merge no Human asks for confirms in one call: the head, the base, the first
   100 changed files, the newest 100 reviews, and the first 100 conversation comments, each author's login and whether it
-  is a bot, and every editor of a comment ([Merge trust](../review.md#merge-trust)).
+  is a bot, and every editor of a comment ([Merge trust](../review.md#merge-trust)); and the head branch, title, body,
+  and the first 100 commit messages, whole or not, for the closing-word check.
 - The repository: `repo`, `repository`, `branchHead`, the commit a branch points to, `contents`, `tree`, one folder of a
   commit's tree with each entry's mode, `visibility`, and `viewer`.
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment(repo, id, { host, pr })`,
@@ -207,6 +208,15 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `-F`, which reads a leading `@` as a file.
 - Commits: `commit`, `checkRuns`, `compare`, `deployments` of one commit and `deploymentStatuses` of one deployment,
   and `uploadImages` for a pull request's captures.
+- Merge stops, which `aidrian project stop-action` reads and takes (`lib/project-stops.mjs`): `mergeState(repo, ref)`,
+  where the pull request of a number or a head branch stands for a merge, with its mergeability and merge state;
+  `workflowRun(repo, id, { host })`, one Actions run with its head commit, branch, repository, and attempt;
+  `rerunFailedChecks(repo, runs, { host })`, which starts the failed jobs of each workflow run again;
+  `branchAllowsForce(repo, branch, { host })`, false when the branch is protected or a ruleset forbids a push that is
+  no fast-forward; and `updateBranch(repo, n, { host, expectedHead, method })`, which brings it up to date with its
+  base on the forge, only while its head is `expectedHead`, by merging the base in or, with `method: 'rebase'`, by a
+  rebase. `changeCommits(repo, n, { host })` lists its commits with their messages, for the auto-merge gate's
+  closing-word check ([config.md](../config.md#when-it-is-on)).
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,

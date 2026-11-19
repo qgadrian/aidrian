@@ -32,6 +32,7 @@ import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { runFolder, runsFolder } from './project-run.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
+import { archiveStops } from './stop-history.mjs';
 import { safely } from './session-start-gate.mjs';
 import { markFolders, readUnattendedMark } from './unattended-mark.mjs';
 import { WORK_FOLDERS } from './unattended-write.mjs';
@@ -295,7 +296,7 @@ function linkedPart(top, relative) {
 // Removes the folder of each confined attempt of `found` whose session runs no more: an attempt that is not its issue's
 // running one, and whose start ran nothing (`void`), or held a session `cap.ended` lists as ended. An attempt whose
 // start left it unknown waits for its orphan settling, and one whose drop holds a result no row took in yet stays. Only
-// a folder at the path attemptFolder gives is removed.
+// a folder at the path attemptFolder gives is removed, and only once its stop history is archived (stop-history.mjs).
 export function sweepAttempts({ state, run, found, cap, env, spawn }) {
   const settled = new Set(found.rows.filter((row) => row.event === 'orphan').map((row) => `${row.key}#${row.attempt}`));
   for (const row of startRows(found).filter((each) => typeof each.drop === 'string')) {
@@ -308,7 +309,17 @@ export function sweepAttempts({ state, run, found, cap, env, spawn }) {
     if (!taken && existsSync(path.join(row.drop, DROP_FILE))) continue;
     const done = row.outcome === 'void' || settled.has(`${row.key}#${row.attempt}`)
       || (row.outcome === 'started' && safely(() => cap.ended({ id: row.id, session: row.child, env, run: spawn })) === true);
-    if (done) safely(() => rmSync(folder, { recursive: true, force: true }));
+    // The stop history goes to the run's archive first, so the caps hold across attempts; one that cannot be kept
+    // keeps the folder.
+    // A folder swept already is archived already.
+    if (!done || !existsSync(folder)) continue;
+    let kept;
+    try {
+      kept = archiveStops({ state, run, key: row.key, attempt: row.attempt, drop: row.drop });
+    } catch {
+      kept = 'not archived';
+    }
+    if (kept === null) safely(() => rmSync(folder, { recursive: true, force: true }));
   }
 }
 

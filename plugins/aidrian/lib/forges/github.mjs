@@ -77,7 +77,8 @@ const EDITS_QUERY = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,na
 // default branch's name, and its config pointer, config.json, and knowledge folder at the paths given; and the pull
 // request's head, base, author, draft state, review decision, latest reviews, the head's checks, the changed files, the
 // newest reviews, and the first conversation comments, each with the login of every edit to it, and the base branch's
-// pointer and config.json. A login GraphQL gives a bot carries no `[bot]`; `__typename` says whether the author is a bot.
+// pointer and config.json; and the head branch, title, body, and first commits' messages, for the closing-word check.
+// A login GraphQL gives a bot carries no `[bot]`; `__typename` says whether the author is a bot.
 export const TRAIL_PAGE = 100;
 const BLOB = '... on Blob { text isTruncated }';
 const POLICY_FILES = `pointer: file(path: $pointer) { object { ${BLOB} } } config: file(path: $config) { object { ${BLOB} } }`;
@@ -90,12 +91,16 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
     }
     pullRequest(number: $n) {
       headRefOid
+      headRefName
       baseRefName
+      title
+      body
       isDraft
       reviewDecision
       author { login }
       baseRef { name target { ... on Commit { ${POLICY_FILES} } } }
       latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
+      history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
       commits(last: 1) {
         nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } }
       }
@@ -579,11 +584,18 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const reviews = trailNodes(pr.reviews);
       const comments = trailNodes(pr.comments);
       const commit = pr.commits?.nodes?.at(-1)?.commit ?? null;
+      const history = trailNodes(pr.history);
       const contexts = trailNodes(commit?.statusCheckRollup?.contexts);
       const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
       return {
         viewer: typeof data?.viewer?.login === 'string' ? data.viewer.login : null,
         head: typeof pr.headRefOid === 'string' ? pr.headRefOid : null,
+        headRef: typeof pr.headRefName === 'string' ? pr.headRefName : null,
+        title: typeof pr.title === 'string' ? pr.title : null,
+        body: typeof pr.body === 'string' ? pr.body : null,
+        // Every commit's message, for the closing-word check (lib/closing-words.mjs); complete only when all are here.
+        messages: history.nodes.map((each) => ({ oid: each?.commit?.oid ?? null, message: typeof each?.commit?.message === 'string' ? each.commit.message : null })),
+        messagesComplete: history.complete,
         base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
         author: typeof pr.author?.login === 'string' ? pr.author.login : null,
         draft: pr.isDraft === true,
@@ -652,5 +664,46 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // Uploads image files to `repo` through the gh-image extension and returns what it prints: one Markdown image a file.
     // It may take UPLOAD_TIMEOUT_MS.
     uploadImages: (repo, files) => gh(['image', '--repo', repo, ...files], { timeoutMs: UPLOAD_TIMEOUT_MS }),
+    // What an auto-merge stop reads and does (lib/project-stops.mjs), and what the closing-word check reads
+    // (lib/pr-auto-merge.mjs closingProblem).
+    // Where pull request `ref` of `repo` stands for a merge: `ref` is its number or its head branch, and `repo` may name
+    // its host, `host/owner/name`. GitHub's view with MERGE_STATE_FIELDS: `mergeable` is MERGEABLE, CONFLICTING, or
+    // UNKNOWN, and `mergeStateStatus` is BEHIND, DIRTY, BLOCKED, CLEAN, UNSTABLE, HAS_HOOKS, DRAFT, or UNKNOWN.
+    mergeState: (repo, ref) => json(['pr', 'view', String(ref), '--repo', repo, '--json', MERGE_STATE_FIELDS]),
+    // Starts the failed jobs of each Actions workflow run of `repo` in `runs`, by id, again; returns the ids it asked for.
+    rerunFailedChecks: (repo, runs, { host } = {}) => runs.map((run) => {
+      const id = idOf(run, 'a workflow run id');
+      rest(`repos/${repo}/actions/runs/${id}/rerun-failed-jobs`, { method: 'POST', empty: true, host });
+      return id;
+    }),
+    // Whether a push that is no fast-forward may land on the branch `branch` of `repo`: false when GitHub protects the
+    // branch, whose protection only an admin may read, or a ruleset that applies to it forbids one (`non_fast_forward`).
+    branchAllowsForce: (repo, branch, { host } = {}) => {
+      const name = encodeURIComponent(branch);
+      if (rest(`repos/${repo}/branches/${name}`, { host })?.protected !== false) return false;
+      const rules = rest(`repos/${repo}/rules/branches/${name}`, { paginate: true, host });
+      return Array.isArray(rules) && rules.every((rule) => typeof rule?.type === 'string' && rule.type !== 'non_fast_forward');
+    },
+    // Brings pull request `n` of `repo` up to date with its base on the forge, only while its head is `expectedHead`:
+    // `merge` merges the base in, one new commit on top; `rebase` puts its commits on the base, which replaces them, a
+    // push that is no fast-forward. Throws what gh throws, such as GitHub's 422 for a conflict or a head that moved.
+    updateBranch: (repo, n, { host, expectedHead, method = 'merge' } = {}) => {
+      const number = idOf(n, 'a pull request number');
+      if (typeof expectedHead !== 'string' || !/^[0-9a-f]{40}$/u.test(expectedHead)) throw new Error('an update names the head it expects, a full commit SHA');
+      if (method === 'merge') return rest(`repos/${repo}/pulls/${number}/update-branch`, { method: 'PUT', fields: { expected_head_sha: expectedHead }, host });
+      if (method !== 'rebase') throw new Error('an update merges the base in or rebases onto it');
+      const id = rest(`repos/${repo}/pulls/${number}`, { host })?.node_id;
+      if (typeof id !== 'string' || !NODE_ID.test(id)) throw new Error(`GitHub gave no node id for pull request #${number}`);
+      return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${REBASE_MUTATION}`, '-f', `id=${id}`, '-f', `head=${expectedHead}`]);
+    },
+    // One Actions workflow run of `repo`, by id: its `head_sha`, `head_branch`, `head_repository`, and `run_attempt`.
+    workflowRun: (repo, id, { host } = {}) => rest(`repos/${repo}/actions/runs/${idOf(id, 'a workflow run id')}`, { host }),
+    // The commits of pull request `n` of `repo`, every page, each with its `commit.message`: GitHub lists at most 250.
+    changeCommits: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${idOf(n, 'a pull request number')}/commits?per_page=100`, { host }),
   });
 }
+
+// The fields mergeState reads.
+export const MERGE_STATE_FIELDS = 'number,url,state,isDraft,mergeable,mergeStateStatus,headRefOid,headRefName,baseRefName,isCrossRepository,reviewDecision,latestReviews';
+// updateBranch's rebase, which GitHub's REST route does not offer.
+const REBASE_MUTATION = 'mutation($id:ID!,$head:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$head,updateMethod:REBASE}){pullRequest{headRefOid}}}';

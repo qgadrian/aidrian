@@ -12,7 +12,7 @@ import { sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbo
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
+import { initRun, recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
 import { drivesRun, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
@@ -50,6 +50,7 @@ const trailOf = (text, over = {}) => ({
   files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true,
   reviews: [], reviewsComplete: true, comments: [card()], commentsComplete: true,
   branches: { default: { name: 'main', pointer: null, config: text, knowledge: null }, base: { name: 'main', pointer: null, config: text } },
+  headRef: 'feat/eng-1-export', title: 'feat(export): add CSV export', body: 'Fixes ENG-1', messages: [{ oid: HEAD, message: 'feat: export' }], messagesComplete: true,
   ...over,
 });
 const changing = (...paths) => ({ files: paths.map((each) => ({ path: each, changeType: 'MODIFIED' })), filesTotal: paths.length });
@@ -334,6 +335,7 @@ test('a forged sign-off in the review record, a sandbox-writable folder, does no
   assert.equal(off.code, 1);
   assert.match(off.result.why, /flow payments needs the Human's sign-off on head abcdef1 \(it changes a file of the flow\), and this machine's sign-off store holds none/u);
   assert.equal(off.result.trust, 'signoff');
+  assert.deepEqual([off.result.flow, off.result.signoffClass], ['payments', 'product'], 'a flow with no security tag or reviewer is a product decision');
   assert.match(merge(r, MERGE, { trail }) ?? '', /flow payments needs the Human's sign-off/u);
   // The record naming no flow at all does not lift the floor the forge's file list gives.
   r.record(forged([]));
@@ -699,4 +701,91 @@ test('an in-process sign-off is refused to a session with an unattended mark or 
   assert.deepEqual(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows, {}, 'the dry run records nothing');
   await sign('abcd1234-0000-4000-8000-00000000e0e2');
   assert.equal(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows.payments.head, r.commit, 'a session the Human attends');
+});
+
+// The closing-word rule at merge time (lib/closing-words.mjs, merge-review.mjs mergeClosesProblem): a merge no Human asks
+// for, of a project run's issue's pull request, closes or links no other issue of a team the run knows, whatever its
+// title, body, and commits say on the forge then, and whatever subject and body the merge itself gives.
+function closingRun(t, { teams } = {}) {
+  const fx = runFixture(t, { local: { handoff: { background: 'on' }, github: { autoMerge: 'on' } }, init: teams === undefined });
+  if (teams !== undefined) {
+    // The driver's snapshot names every team of the tracker workspace.
+    const file = path.join(fx.dir, 'snapshot.json.input');
+    writeFileSync(file, JSON.stringify({ issues: ISSUES, teams }));
+    const started = initRun({ project: fx.project, config: fx.config, run: 'launch', file, session: DRIVER, env: fx.env, home: fx.home });
+    assert.equal(started.exitCode, 0, started.err.join('\n'));
+  }
+  t.after(() => rmSync(signoffFolder(), { recursive: true, force: true }));
+  const record = emptyState(7, 'acme/widgets');
+  record.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' };
+  writeLocalState(fx.project, record);
+  const text = JSON.stringify({ ...fx.committed, github: { ...CHECKS, autoMerge: TEAM } });
+  const run = (command, { mark = { root: fx.dir, project: 'launch', issue: 'ENG-1' }, over = {} } = {}) =>
+    check(command, { cwd: fx.dir, env: {}, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text, over)) });
+  const mcpRun = (toolInput, { mark = { root: fx.dir, project: 'launch', issue: 'ENG-1' }, over = {} } = {}) =>
+    checkMcp(toolInput, { cwd: fx.dir, input: { session_id: 'issue-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(text, trailOf(text, over)) });
+  return { fx, run, mcpRun };
+}
+
+test('the merge guard refuses a run issue\'s merge whose body, title, commits, or merge text close or name another issue, read at merge time', (t) => {
+  const { run, mcpRun } = closingRun(t);
+  assert.equal(run(MERGE), null, 'its own issue only');
+  for (const [over, why] of [
+    [{ body: 'Fixes ENG-1, ENG-2' }, /its body says "Fixes ENG-2", so its merge would close an issue other than its own issue ENG-1/u],
+    [{ title: 'feat: export for ENG-4' }, /its title names "ENG-4"/u],
+    [{ messages: [{ oid: HEAD, message: 'Closes ENG-2' }] }, /commit abcdef1 says "Closes ENG-2"/u],
+    [{ messagesComplete: false }, /the forge did not give its title and every commit message/u],
+  ]) assert.match(run(MERGE, { over }) ?? '', why, JSON.stringify(over));
+  // The body edited after a passing auto-merge: the guard reads the forge again at the merge.
+  assert.equal(run(MERGE, { over: { body: 'Fixes ENG-1' } }), null);
+  assert.match(run(MERGE, { over: { body: 'Fixes ENG-1\nFixes ENG-4' } }) ?? '', /"Fixes ENG-4"/u);
+  // The merge's own commit subject and body, and text the guard cannot read.
+  assert.match(run(`gh pr merge 7 -t 'Closes ENG-2' --match-head-commit ${HEAD}`) ?? '', /the merge commit's subject says "Closes ENG-2"/u);
+  assert.match(run(`gh pr merge 7 -b 'resolves ENG-4' --match-head-commit ${HEAD}`) ?? '', /the merge commit's body says "resolves ENG-4"/u);
+  assert.match(run(`gh pr merge 7 -F body.md --match-head-commit ${HEAD}`) ?? '', /comes from a file or a variable the guard cannot read/u);
+  assert.match(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-2' }) ?? '', /the merge commit's body says "Fixes ENG-2"/u);
+  assert.equal(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-1' }), null);
+});
+
+test('the merge guard holds the run\'s driver, whose mark names no issue, to the issue whose branch the pull request is from; an attended merge reads none of it', (t) => {
+  const { fx, run } = closingRun(t);
+  const driver = { root: fx.dir, cwd: null };
+  assert.equal(run(MERGE, { mark: driver }), null);
+  assert.match(run(MERGE, { mark: driver, over: { body: 'Fixes ENG-1 and ENG-4' } }) ?? '', /"Fixes ENG-4", so its merge would close an issue other than its own issue ENG-1/u);
+  assert.equal(run(MERGE, { mark: driver, over: { headRef: 'feat/not-a-run-issue', body: 'Fixes ENG-4' } }), null, 'a pull request of no run issue is not held');
+  // A mark whose tags name an issue it cannot read names none: any reference refuses.
+  assert.match(run(MERGE, { mark: { root: fx.dir, project: null, issue: null } }) ?? '', /mark names none it can read/u);
+  const attended = check(`gh pr merge 7 -t 'Closes ENG-2' --match-head-commit ${HEAD}`, { cwd: fx.dir, env: {}, input: {}, viewPr: viewer, unattendedMark: () => null, trustForge: () => assert.fail('an attended merge asks the forge nothing') });
+  assert.equal(attended, null);
+});
+
+test('a missing sign-off of a security flow is a security decision: a flow whose id holds security, or whose require names security-engineer', (t) => {
+  for (const [flows, id] of [
+    [{ 'payments-security': PAYMENTS }, 'payments-security'],
+    [{ payments: { ...PAYMENTS, require: ['agent:security-engineer'] } }, 'payments'],
+  ]) {
+    const r = repo(t, configOf({ review: { flows } }));
+    r.record((state) => (state.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));
+    const off = autoMerge(t, r, { files: ['src/pay/charge.js'], trail: trailOf(r.text, changing('src/pay/charge.js')) });
+    assert.deepEqual([off.result.trust, off.result.flow, off.result.signoffClass], ['signoff', id, 'security'], id);
+  }
+});
+
+test('a run whose snapshot names the workspace\'s teams refuses a key of a team outside the run, in a body, a title, and a merge body', (t) => {
+  const { run } = closingRun(t, { teams: ['ENG', 'OPS', 'SEC'] });
+  assert.match(run(MERGE, { over: { body: 'Fixes ENG-1, OPS-5' } }) ?? '', /its body says "Fixes OPS-5"/u);
+  assert.match(run(MERGE, { over: { title: 'feat: export for SEC-2' } }) ?? '', /its title names "SEC-2"/u);
+  assert.match(run(`gh pr merge 7 -b 'Closes OPS-5' --match-head-commit ${HEAD}`) ?? '', /the merge commit's body says "Closes OPS-5"/u);
+  // No team is named UTF or SHA: those tokens are still no keys.
+  assert.equal(run(MERGE, { over: { title: 'fix: utf-8 BOM', messages: [{ oid: HEAD, message: 'Fixed SHA-256 check' }] } }), null);
+  // With no teams in the snapshot, only the run's own teams are known, the residual docs/config.md names.
+  const { run: plain } = closingRun(t);
+  assert.equal(plain(MERGE, { over: { body: 'Fixes ENG-1, OPS-5' } }), null);
+});
+
+test('a missing sign-off is a security decision when any unsigned flow is a security one, even when the first is not', (t) => {
+  const r = repo(t, configOf({ review: { flows: { payments: PAYMENTS, 'zz-security': { ...PAYMENTS } } } }));
+  r.record((state) => (state.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));
+  const off = autoMerge(t, r, { files: ['src/pay/charge.js'], trail: trailOf(r.text, changing('src/pay/charge.js')) });
+  assert.deepEqual([off.result.trust, off.result.flow, off.result.signoffClass], ['signoff', 'payments', 'security']);
 });

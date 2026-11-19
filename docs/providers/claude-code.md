@@ -349,6 +349,17 @@ that could open another session.
 Checked by hand on Claude Code 2.1.326, in a pseudo-terminal: `claude attach <id>` on a live background session exits 0
 about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the next session.
 
+A client that opened a session from Claude Code's own session list is not followed: the old session stops, and the
+client returns to the list. `claude attach <id>` typed in the shell is the way that follows every hop. Checked by hand
+on Claude Code 2.1.328 on 2026-11-19:
+
+- No command points a running client at another session.
+- `claude agents --json`, the job state file, and the daemon roster do not say which client shows which session, so
+  the gate cannot find a client the list opened.
+- `claude attach <id>` exits 0 within 2 seconds of `claude stop <id>`.
+
+The client returning to the list was seen once, not probed.
+
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
 function; a handoff through a wrapped launcher, end to end.
 

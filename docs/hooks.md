@@ -64,13 +64,23 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
   the session never asks the Human whether to hand off or keep going; it judges by itself and runs the
   `session-handoff` skill when a handoff is worth it. `"ask"` and `"off"` print nothing;
-- in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), one
-  `Handoff terminal:` line while this machine's `handoff.background` is `"on"` and config.json resolves
-  `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
-  not start, unless a startup file already holds the current block: after a background handoff its terminal stays on
-  the old session, and the line names
-  `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older copy of the plugin,
-  which answers `unknown command: shell-init`, with the host's update command (`claude plugin update aidrian@aidrian-harness`);
+- in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), while this
+  machine's `handoff.background` is `"on"`, one `Handoff terminal:` line at most, the first of these that applies:
+  1. A shell startup file holds a block of the shell function that is not the current one: the line names every such
+     file, and the `aidrian shell-init <shell> --install` command that replaces its block, for the Human to run. Any
+     session gets it, one the function started or a background one too.
+  2. config.json resolves `session.handoff` to the background route in `"auto"` mode, and a session a Human attends was
+     not started by the shell function, while a startup file holds the current block: the session was started past the
+     function, such as by a launcher, an editor command, or a terminal opened before the install, so its terminal will not
+     switch at a background handoff. The line says a new terminal settles the last, and names
+     `aidrian shell-init <shell> --install --wrap <launcher>`, for the shell whose file holds the block, for a launcher
+     on PATH that ends in `exec claude`.
+  3. The same session, with no block installed: after a background handoff its terminal stays on the old session, and
+     the line names `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older
+     copy of the plugin, which answers `unknown command: shell-init`, with the host's update command
+     (`claude plugin update aidrian@aidrian-harness`).
+
+  It reads the two startup files and no process. A file it cannot read counts as holding no block;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.

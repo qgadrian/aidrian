@@ -5,7 +5,8 @@
 // brings it to the current text; a file with a line of its own that runs `aidrian shell-init` is left as it is.
 // `--uninstall` removes the block, from its start marker to its end marker, and nothing else. A host's plugins have no
 // install step, and the startup file is the Human's: the Human runs either one, and lib/rules/shell-init-install.mjs
-// refuses both to an agent. The session start says when a block differs from the current text (staleBlockLines).
+// refuses both to an agent. The session start says, in one line, when a block differs from the current text or the
+// session's terminal will not follow a handoff (terminalLine).
 // `--install --wrap <name>`, repeatable, also writes the same function under each name, for a launcher on PATH that ends
 // in `exec` of the host's program. A name is untrusted text that becomes shell code, so wrapProblem checks it on every
 // path to the block: 1 to 32 letters, digits, `_`, or `-`, starting with a letter; not a host's own program; not in
@@ -386,35 +387,55 @@ function rcBlocks(shell, env) {
   }
 }
 
-// Whether a startup file holds the current block, alone.
-const holdsCurrent = (env) => SHELLS.some((shell) => {
-  const blocks = rcBlocks(shell, env);
-  return blocks.length === 1 && isCurrent(shell, blocks[0]);
-});
-
-// The session start's lines about the startup files, on a host that can replace a terminal while this machine's switch
-// `background` is on: one for each startup file whose blocks differ from the current text, which a re-install replaces;
-// it never rewrites one itself. `human` names the Human.
-export function staleBlockLines({ host, background, env = process.env, human }) {
-  if (!replacer(host) || background !== 'on') return [];
-  return SHELLS.flatMap((shell) => {
-    const file = rcFile(shell, env);
+// The session start's one `Handoff terminal:` line, or null, on a host that can replace a terminal while this machine's
+// switch `background` is on; `human` names the Human. The first that applies:
+// 1. A startup file whose blocks are not one current block: the line that names every such file and the command that
+//    replaces its block, for any session, since a session the function started runs the old text too. It never
+//    rewrites a block itself.
+// 2. An attended session the function did not start, while the working config's `handoff` resolves to the background
+//    route in `auto` mode, so its terminal stays after a handoff: with the current block in a startup file, it was
+//    started past it (pastLine); with none, the install line (installLine).
+// It reads the two startup files and nothing else: no process, so a start costs no `ps`. A file it cannot read holds
+// no block here, and the line never throws.
+export function terminalLine({ host, background, handoff, env = process.env, human }) {
+  const replace = replacer(host);
+  if (!replace || background !== 'on') return null;
+  const files = SHELLS.map((shell) => {
     const blocks = rcBlocks(shell, env);
-    if (blocks.length === 0 || (blocks.length === 1 && isCurrent(shell, blocks[0]))) return [];
-    return [`Handoff terminal: the aidrian shell function block in ${file} differs from this plugin's, so a handoff may not replace the terminal as this version does. ` +
-      `This session hands ${human} the command ${handCommand(shell)}, which replaces the block, and never runs it or edits the file itself.`];
+    return { shell, file: rcFile(shell, env), blocks, current: blocks.length === 1 && isCurrent(shell, blocks[0]) };
   });
+  const stale = files.filter(({ blocks, current }) => blocks.length > 0 && !current);
+  if (stale.length > 0) return staleLine(stale, human);
+  if (handoff?.mode !== 'auto' || handoff?.continue !== 'background') return null;
+  if (shellPid(env) !== null || !replace.attended(env)) return null;
+  const holder = files.find(({ current }) => current);
+  return holder ? pastLine(replace.program, holder.shell, human) : installLine(replace, human);
 }
 
-// The session start's line for an attended session the shell function did not start, on a host that can replace a
-// terminal, while this machine's switch `background` is on and the working config's `handoff` resolves to the
-// background route in `auto` mode: after a handoff its terminal would stay on the old session. Else null, and null too
-// when a startup file already holds the current block: the session then runs where that file did not start it, such as
-// an editor's terminal, and an install would change nothing.
-export function unwrappedLine({ host, background, handoff, env, human }) {
-  const replace = replacer(host);
-  if (!replace || background !== 'on' || handoff?.mode !== 'auto' || handoff?.continue !== 'background') return null;
-  if (shellPid(env) !== null || !replace.attended(env) || holdsCurrent(env)) return null;
+// The line for the startup files `stale` names, { shell, file } each: one file keeps the singular wording.
+function staleLine(stale, human) {
+  if (stale.length === 1) {
+    const [{ shell, file }] = stale;
+    return `Handoff terminal: the aidrian shell function block in ${file} differs from this plugin's, so a handoff may not replace the terminal as this version does. ` +
+      `This session hands ${human} the command ${handCommand(shell)}, which replaces the block, and never runs it or edits the file itself.`;
+  }
+  const files = stale.map(({ file }) => file).join(' and ');
+  const commands = stale.map(({ shell }) => handCommand(shell)).join(' and ');
+  return `Handoff terminal: the aidrian shell function blocks in ${files} differ from this plugin's, so a handoff may not replace the terminal as this version does. ` +
+    `This session hands ${human} the commands ${commands}, which replace them, and never runs them or edits the files itself.`;
+}
+
+// The current block is installed, yet the function did not start the session: a launcher, an editor command, or a
+// terminal opened before the install started it. A launcher on PATH opts in with `--wrap`; the session cannot tell
+// which of the three it was without reading processes, so the line names all three.
+function pastLine(program, shell, human) {
+  return `Handoff terminal: this session's \`${program}\` was started past the aidrian shell function, such as by a launcher, an editor command, or a terminal opened before the function was installed, so this terminal will not switch at a background handoff. ` +
+    `A new terminal settles the last. For a launcher on PATH that ends in \`exec ${program}\`, this session hands ${human} ${handCommand(shell, '--install --wrap <launcher>')}, ` +
+    `with the launcher's own name in place of \`<launcher>\`, and never runs it itself, since it writes ${human}'s shell startup file.`;
+}
+
+// No startup file holds a block: the install command for either shell, after an update when the copy is older.
+function installLine(replace, human) {
   const update = typeof replace.updateCommand === 'string' ? `, with \`${replace.updateCommand}\`` : '';
   return `Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's \`${replace.program}\`, ` +
     `so after a background handoff this terminal stays on the old session beside the new one. For it to follow, this session hands ${human} ` +

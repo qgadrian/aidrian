@@ -148,7 +148,8 @@ Update the plugin first, `claude plugin update aidrian@aidrian-harness` for Clau
 It writes a marked block to `~/.zshrc` (or `~/.bashrc`), and changes no other line. The block is the shell function
 itself, `function claude`, which runs `claude` as before; when a handoff ends the session, it opens the new one with
 `claude attach`. No plugin code runs when a terminal starts. Run again after a plugin update, it replaces the block
-with the current one; a session says when the block is older than the plugin. An alias for `claude` that points
+with the current one; a session says when the block is older than the plugin, and when its terminal will stay
+behind at a handoff, as when a launcher or an editor command started it. An alias for `claude` that points
 elsewhere, such as `alias claude=~/.claude/local/claude`, runs past the function, and the block says so on stderr.
 A launcher on PATH that ends in `exec claude "$@"` follows too once named with `--wrap`, such as
 `aidrian shell-init zsh --install --wrap claude-work` ([Replacing the terminal](docs/handoff.md#replacing-the-terminal)).

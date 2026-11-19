@@ -212,9 +212,22 @@ function sessionStart(t, env, { local = { handoff: { background: 'on' } }, hando
   return result.stdout;
 }
 
+// The session start's `Handoff terminal:` lines in `out`.
+const terminalLines = (out) => out.split('\n').filter((line) => line.startsWith('Handoff terminal:'));
+const PAST = (shell) => new RegExp(`^Handoff terminal: this session's \`claude\` was started past the aidrian shell function, such as by a launcher, an editor command, or a terminal opened before the function was installed, so this terminal will not switch at a background handoff\\. A new terminal settles the last\\. For a launcher on PATH that ends in \`exec claude\`, this session hands "the Human" \`! aidrian shell-init ${shell} --install --wrap <launcher>\`, with the launcher's own name in place of \`<launcher>\`, and never runs it itself, since it writes "the Human"'s shell startup file\\.$`, 'u');
+const STALE_ZSH = /^Handoff terminal: the aidrian shell function block in .*\.zshrc differs from this plugin's, so a handoff may not replace the terminal as this version does\. This session hands "the Human" the command `! aidrian shell-init zsh --install`, which replaces the block, and never runs it or edits the file itself\.$/u;
+const staleBlock = (shell) => rcBlock(shell).replace('|| rc=$?', '; rc=$?');
+
 test('the session start tells an attended session the shell function did not start that its terminal will not follow a handoff', (t) => {
   const line = /^Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's `claude`, .* this session hands "the Human" `! aidrian shell-init zsh --install`, or `! aidrian shell-init bash --install` for bash, to run once before opening a new terminal, and never runs it itself, since it writes "the Human"'s shell startup file\. A copy of the plugin older than this one answers `unknown command: shell-init`: the plugin is updated first, with `claude plugin update aidrian@aidrian-harness`\.$/mu;
   assert.match(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }), line);
+  // The current block is installed, so the session was started past it: by a launcher, an editor command, or in an
+  // older terminal. The one line says so and names the wrap command.
+  const current = folder(t, 'aidrian-home-');
+  writeFileSync(path.join(current, '.zshrc'), `alias g=git\n${rcBlock('zsh')}\n`);
+  const lines = terminalLines(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }, { home: current }));
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], PAST('zsh'));
   for (const [name, env, options] of [
     ['the shell function started it', { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' }, {}],
     ['a background session', { CLAUDE_CODE_SESSION_ATTENDED: '0' }, {}],
@@ -223,11 +236,47 @@ test('the session start tells an attended session the shell function did not sta
     ['the clear route', { CLAUDE_CODE_SESSION_ATTENDED: '1' }, { handoff: { mode: 'auto', continue: 'clear' } }],
   ]) {
     assert.doesNotMatch(sessionStart(t, env, options), /Handoff terminal/u, name);
+    assert.doesNotMatch(sessionStart(t, env, { ...options, home: current }), /Handoff terminal/u, `${name}, with the current block`);
   }
-  // A session started where the startup file did not run, such as an editor's terminal: an install would change nothing.
-  const home = folder(t, 'aidrian-home-');
-  writeFileSync(path.join(home, '.zshrc'), `alias g=git\n${rcBlock('zsh')}\n`);
-  assert.doesNotMatch(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }, { home }), /Handoff terminal/u, 'the current block is installed');
+});
+
+test('the session start prints one Handoff terminal line at most, a stale block first, and names the shell that holds the block', (t) => {
+  const attended = { CLAUDE_CODE_SESSION_ATTENDED: '1' };
+  const write = (home, zsh, bash) => {
+    if (zsh !== null) writeFileSync(path.join(home, '.zshrc'), `alias g=git\n${zsh}\n`);
+    if (bash !== null) writeFileSync(path.join(home, '.bashrc'), `alias g=git\n${bash}\n`);
+    return home;
+  };
+  const one = (home, env = attended) => {
+    const lines = terminalLines(sessionStart(t, env, { home }));
+    assert.equal(lines.length, 1, lines.join('\n'));
+    return lines[0];
+  };
+  assert.match(one(write(folder(t, 'aidrian-home-'), null, rcBlock('bash'))), PAST('bash'), 'a current block in ~/.bashrc alone');
+  assert.match(one(write(folder(t, 'aidrian-home-'), rcBlock('zsh', HOSTS, ['cc']), null)), PAST('zsh'), 'a current block that wraps a launcher');
+  assert.match(one(write(folder(t, 'aidrian-home-'), staleBlock('zsh'), null)), STALE_ZSH, 'a stale zsh block');
+  assert.match(one(write(folder(t, 'aidrian-home-'), staleBlock('zsh'), rcBlock('bash'))), STALE_ZSH, 'a stale zsh block beside a current bash block');
+  const both = one(write(folder(t, 'aidrian-home-'), staleBlock('zsh'), staleBlock('bash')));
+  assert.match(both, /^Handoff terminal: the aidrian shell function blocks in \S+\.zshrc and \S+\.bashrc differ from this plugin's, so a handoff may not replace the terminal as this version does\. This session hands "the Human" the commands `! aidrian shell-init zsh --install` and `! aidrian shell-init bash --install`, which replace them, and never runs them or edits the files itself\.$/u);
+  const started = { ...attended, AIDRIAN_SHELL_PID: '4242' };
+  assert.match(one(write(folder(t, 'aidrian-home-'), staleBlock('zsh'), null), started), STALE_ZSH, 'a session the function started');
+  assert.match(one(write(folder(t, 'aidrian-home-'), staleBlock('zsh'), null), { CLAUDE_CODE_SESSION_ATTENDED: '0' }), STALE_ZSH, 'a background session');
+});
+
+test('the session start still prints its other lines when a startup file cannot be read or has a start marker with no end', (t) => {
+  const attended = { CLAUDE_CODE_SESSION_ATTENDED: '1' };
+  const unreadable = folder(t, 'aidrian-home-');
+  mkdirSync(path.join(unreadable, '.zshrc'));
+  const broken = folder(t, 'aidrian-home-');
+  writeFileSync(path.join(broken, '.zshrc'), `alias g=git\n${BEGIN}\nfunction claude {\n`);
+  for (const [name, home, line] of [['a startup file that is a folder', unreadable, /did not start this session's `claude`/u], ['a start marker with no end', broken, STALE_ZSH]]) {
+    const out = sessionStart(t, attended, { home });
+    assert.match(out, /^Project knowledge:/mu, name);
+    assert.match(out, /^Format:/mu, name);
+    const lines = terminalLines(out);
+    assert.equal(lines.length, 1, `${name}: ${lines.join('\n')}`);
+    assert.match(lines[0], line, name);
+  }
 });
 
 test('the session start names a startup file whose block differs from the current one, and never rewrites it', (t) => {
@@ -515,7 +564,7 @@ test('the session start counts a block that wraps a launcher and is otherwise cu
   const wrapped = `alias g=git\n${rcBlock('zsh', HOSTS, ['cc'])}\n`;
   writeFileSync(rc, wrapped);
   assert.doesNotMatch(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' }, { home }), /Handoff terminal/u, 'no stale line');
-  assert.doesNotMatch(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }, { home }), /Handoff terminal/u, 'it holds the current block');
+  assert.match(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1' }, { home }), /^Handoff terminal: this session's `claude` was started past the aidrian shell function/mu, 'it holds the current block');
   writeFileSync(rc, wrapped.replace('|| rc=$?', '; rc=$?'));
   assert.match(sessionStart(t, { CLAUDE_CODE_SESSION_ATTENDED: '1', AIDRIAN_SHELL_PID: '4242' }, { home }), /^Handoff terminal: the aidrian shell function block in .*\.zshrc differs from this plugin's/mu);
 });

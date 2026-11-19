@@ -348,9 +348,10 @@ to another folder falls back to the clear route with that reason; committing `st
    nothing to open by hand; without it, `This session has ended its work; the new one is <name>, open it with <the
    host's command>.` A session the background route started, which no terminal follows, says it stops once this turn
    ends, before the same words ([Replacing the terminal](#replacing-the-terminal)).
-   In `auto` mode, a session a Human attends whose shell never loaded the function, such as one started in a terminal
-   opened before `aidrian shell-init <shell> --install` wrote it, adds one line on why its terminal stays: start the
-   next session in a new terminal, or after reloading the shell's startup file.
+   In `auto` mode, a session a Human attends that the function did not start, as with a launcher, an editor command,
+   or a terminal opened before `aidrian shell-init <shell> --install` wrote the function, adds one line on why its
+   terminal stays: start the next session in a new terminal, with a launcher wrapped by `--install --wrap` when one
+   starts it.
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
@@ -433,7 +434,8 @@ not source `~/.bashrc`. `--uninstall` removes every block, from its start marker
 a start marker with no end after it changes nothing and exits 1. A startup file that is a link stays one, and keeps its
 mode. Each prints what it did. When a block differs from the current text, as after a plugin update that changed it,
 the session start adds a `Handoff terminal:` line that names the file and the command to hand the Human; it never
-rewrites the block itself.
+rewrites the block itself. When both startup files hold such a block, one line names both files and both commands,
+and a session start never prints more than one `Handoff terminal:` line ([Start lines](hooks.md#start-lines)).
 
 `aidrian shell-init zsh` (or `bash`) prints the same function, for a startup file that evals it, and exits 2 for any
 other shell. The function is named for each host program that can do it, today `claude`, and is declared as
@@ -509,7 +511,9 @@ A shell function of the wrapped name that the shell already has when it reads th
 the startup file or a hook a terminal's own setup registers, stays: the block defines no wrapper for that name and
 prints one line on stderr that says the launcher was not wrapped. The block tells its own wrapper apart, by its first
 run, so reading the startup file again in the same shell, `source ~/.zshrc`, redefines the wrapper and prints nothing.
-A function of that name defined after the block replaces the wrapper, as any later definition does.
+A function of that name defined after the block replaces the wrapper, as any later definition does. In zsh, an
+`autoload` of the wrapped name issued after the block does not replace a function already defined, so the wrapper
+stays; wrap no name that a later line of the startup file autoloads.
 Bash in POSIX mode refuses a function name with `-`, such as `claude-work`, so such a name suits zsh or a bash not in that mode.
 
 It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
@@ -521,9 +525,12 @@ It runs only where every switch of the background route is on, and `session.hand
    shell, and the new session's id and full id. When anything above is missing, it notes nothing, and the say line ends
    with the plain line on how to open the new session instead. A session a Human attends that the shell function did
    not start, while this machine's switch and the working config turn the route on in `auto` mode, gets a
-   `Handoff terminal:` line at its start that says its terminal will not follow, and names the install command
-   ([Start lines](hooks.md#start-lines)). When a startup file already holds the current block, it gets none: such a
-   session runs where that file did not start it, such as an editor's terminal, and an install would change nothing.
+   `Handoff terminal:` line at its start that says its terminal will not follow ([Start lines](hooks.md#start-lines)).
+   With no block installed, it names the install command. When a startup file already holds the current block, the
+   session was started past the function, such as by a launcher, an editor command, or a terminal opened before the
+   install. The line names all three, since the session start reads no process to tell them apart; says a new
+   terminal settles the last; and names `aidrian shell-init <shell> --install --wrap <launcher>` for a launcher on PATH
+   that ends in `exec claude`.
 2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
    shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
@@ -581,6 +588,10 @@ Limits:
   the shell's own environment. What the launcher sets before its `exec`, such as a variable naming a config folder, or
   flags, does not reach the later sessions, so a launcher that exists only to set such a variable may open the next
   session with the shell's settings. Not verified live.
+- A client that opened the session from the host's own session list is not followed: the old session still stops.
+  The client then returned to the list the one time it was seen; that was not probed further.
+  `claude attach <id>` typed in the shell is the way that follows every hop
+  ([provider page](providers/claude-code.md#replacing-the-terminal)).
 
 ## The snapshot
 

@@ -1085,6 +1085,13 @@ test('in auto mode, an attended session its shell function did not start says wh
   }
 });
 
+test('the line on why the terminal stays names each way past the shell function, and the launcher wrap', () => {
+  for (const words of ['a launcher', 'an editor command', 'a terminal opened before `aidrian shell-init zsh --install`', '`--install --wrap`', 'start the next session in a new terminal']) {
+    assert.ok(UNHOOKED.includes(words), words);
+  }
+  assert.doesNotMatch(UNHOOKED, /had not loaded|reloading/u);
+});
+
 // A stand-in for `run` that answers `ps -A` with `rows`, each `pid ppid comm`, and passes every other call to `run`.
 const withClients = (run, rows) => (command, args, options) => (command === '/bin/ps' && args[0] === '-A'
   ? { status: 0, stdout: `${rows.join('\n')}\n`, stderr: '' }

@@ -350,9 +350,10 @@ function handTerminal({ host, store, session, env, run, now, mode, id, next }) {
   return way.shell === null ? 'stop' : 'switch';
 }
 
-// Whether the terminal stays on this session only because its shell never loaded the shell function: auto mode, a host
-// that can replace a terminal, a session a Human attends, and no shell pid in its environment, as when the terminal
-// opened before `aidrian shell-init <shell> --install` wrote the function, or it was never installed.
+// Whether the terminal stays on this session only because the shell function did not start it: auto mode, a host that
+// can replace a terminal, a session a Human attends, and no shell pid in its environment, as when a launcher or an
+// editor command started it, the terminal opened before `aidrian shell-init <shell> --install` wrote the function, or
+// it was never installed.
 function unhooked({ host, store, session, env, now, mode }) {
   const replace = replacer(host);
   if (mode !== 'auto' || !replace || shellPid(env) !== null || !replace.attended(env)) return false;
@@ -422,7 +423,7 @@ function safely(act) {
 }
 
 // Why the terminal did not switch, for a session its shell's function did not start (docs/handoff.md#replacing-the-terminal).
-export const UNHOOKED = 'This terminal stays on this session because its shell had not loaded the aidrian shell function when this session started, as when this terminal opened before `aidrian shell-init zsh --install` (or bash) wrote it; start the next session in a new terminal, or after reloading the shell\'s startup file, and its handoff switches the terminal.';
+export const UNHOOKED = 'This terminal stays on this session because the aidrian shell function did not start it, as with a launcher, an editor command, or a terminal opened before `aidrian shell-init zsh --install` (or bash) wrote the function; start the next session in a new terminal, with a launcher wrapped by `--install --wrap` when one starts it, and its handoff switches the terminal.';
 
 // The lines of a background start, `marker` as noteStarted records it. The say line ends on what becomes of this session,
 // as `ending` (handTerminal) says: `switch`, its terminal switches to the new one once the turn ends, with nothing to

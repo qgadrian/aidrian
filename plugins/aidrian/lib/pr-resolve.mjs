@@ -155,9 +155,10 @@ function deploymentPreview({ host, repo, head }, patterns, forge) {
 }
 
 // The project's folder from the top of its repository, with a trailing slash, '' at the top, or null when git fails.
-function projectFolder(root) {
+// Only git's line end is cut: a folder name may start with a space, as ` web/` does.
+export function projectFolder(root) {
   const shown = runGit(['rev-parse', '--show-prefix'], root);
-  return shown.status === 0 ? shown.stdout.trim() : null;
+  return shown.status === 0 ? shown.stdout.replace(/\r?\n$/u, '') : null;
 }
 
 // The CLI body. `forge`, `remotes`, `patterns`, and `prefix` are the test seams: the forge facade (lib/forges), whose

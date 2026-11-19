@@ -11,7 +11,7 @@ import { parse } from 'yaml';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { previewPatterns } from '../plugins/aidrian/lib/personas.mjs';
 import { checkoutRemotes, remoteKey } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { changedFilesMatch, parseTarget, previewFrom, runResolve, walkWidths } from '../plugins/aidrian/lib/pr-resolve.mjs';
+import { changedFilesMatch, parseTarget, previewFrom, projectFolder, runResolve, walkWidths } from '../plugins/aidrian/lib/pr-resolve.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AIDRIAN = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -538,6 +538,18 @@ test('aidrian pr resolve reads walk_widths with the project folder as the prefix
   assert.deepEqual(widths('app/src/page.tsx'), [390, 1440], 'a file under the project folder');
   assert.deepEqual(widths('src/page.tsx'), [], 'the same path outside it');
   assert.deepEqual(widths('lib/src/page.tsx'), [], 'another folder of the project folder\'s length');
+});
+
+// pr resolve and pr product-feedback both read the project folder here, so a cut leading space would match no changed file.
+test('projectFolder keeps a leading space in a nested project folder, and cuts only git\'s line end', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-pr-resolve-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: dir }).status, 0);
+  const web = path.join(dir, ' web', 'app');
+  mkdirSync(web, { recursive: true });
+  assert.equal(projectFolder(dir), '', 'the top of the repository');
+  assert.equal(projectFolder(web), ' web/app/');
+  assert.equal(changedFilesMatch({ files: [change(' web/app/src/page.tsx')], changedFiles: 1 }, ['src/**'], projectFolder(web)), true);
 });
 
 // The case runs with model calls, so not here; its scaffold runs here, and what its fixture prints is what its graders grade.

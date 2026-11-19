@@ -38,7 +38,7 @@ import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './personas.mjs';
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
-import { changedFilesMatch, fromOutside, parseTarget } from './pr-resolve.mjs';
+import { changedFilesMatch, fromOutside, parseTarget, projectFolder } from './pr-resolve.mjs';
 import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
 import { decodedCopy, neutralized, refusedKind } from './review/publish.mjs';
@@ -239,9 +239,8 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
     return { exit: 0, result: { state: 'clear', reason, why, pr: target.number, repo, head: null, owed: [] } };
   }
   const pr = pullRequest(value, { forge, remotes }, VIEW_FIELDS, view);
-  const shown = runGit(['rev-parse', '--show-prefix'], project.root);
-  if (shown.status !== 0) throw new Error('git could not give the project\'s folder in the repository');
-  const prefix = shown.stdout.trim();
+  const prefix = projectFolder(project.root);
+  if (prefix === null) throw new Error('git could not give the project\'s folder in the repository');
   const main = mainBranch(pr) ?? defaultBranch(forge, pr);
   const onMain = readBranch(forge, pr, main, prefix);
   const onBase = pr.base === main ? onMain : readBranch(forge, pr, pr.base, prefix);

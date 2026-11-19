@@ -251,8 +251,10 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 - A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
   time is the one recorded. The table is read whole, up to 64 MiB of command lines, so a busy machine's listing still
   finds a start by its folder. A session `wait` could not stop is named with how the Human stops it: the listing
-  `ps -o pid=,lstart=,ucomm= -p <pid>`, which prints no arguments, and `kill <pid>` only when that start time falls
-  between the attempt's two start rows in the run's ledger, since another process may have taken the pid. A start that
+  `TZ=UTC ps -o pid=,lstart=,ucomm= -p <pid>`, which prints no arguments and the start time in UTC, as the ledger's
+  rows are, to the second, and `kill <pid>` only when that start time falls within the seconds of the attempt's two
+  start rows in the run's ledger, from the second of the first through the second of the last, since another process
+  may have taken the pid. A start that
   recorded no process points to the attempt's run log instead, never to a process picked by its name.
 
 Before `verified` changes, a live Codex must show every one of these:

@@ -1001,7 +1001,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A project run's driver counts as a session no Human attends for writes to the
   [continuation store](handoff.md#continue), `<state>/handoffs/.continue/`, the runs folder (its ledger and snapshot),
   the unattended marks, and the sign-off store, from `aidrian project init` on, wherever its call runs, its first
-  driver too, which has no unattended mark of its own, and for the
+  driver too, which has no unattended mark of its own: from another project's folder, the run's project, which the
+  driver mark names, is guarded as the call's own, and a call the guards cannot read whole or in time is refused.
+  A refusal names the driver's run as what holds it. The same holds for the
   [merge guard](#merge-guard), `aidrian pr auto-merge`, and the review-signoff rule. `aidrian project init` files its
   driver mark, `driver.<session id>.json` beside the unattended marks, naming the run, its main checkout, and its state
   folder, before the init row, and refuses when it cannot; each start and wait by the current driver files it again,
@@ -1271,15 +1273,17 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   guard cannot tell, so the block
   says it may change the file, or, for a glob, that it may reach it; Read still reads the file
   ([provider page](providers/claude-code.md#powershell-commands)). A command of more than 512 words, counting
-  each case, of a subagent or of a session the background route started, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
+  each case, of a subagent, of a session the background route started, or of a session a project run's driver mark
+  holds, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
   such a call, and the gates are asked before any guard ([config](config.md#agents)).
 - The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
-  a call of a subagent, or of a main session the background handoff route started, is refused, as the guards could not
-  finish reading the command in time, and an attended main session's runs, as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
+  a call of a subagent, of a main session the background handoff route started, or of a main session a project run's
+  driver mark holds, its run's first driver included, is refused, as the guards could not finish reading the command
+  in time, and an attended main session's runs, as the guards allow it anyway. The walk checks it at each entry it tests, so a folder of many long names cannot hold
   the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it
   does not match. A Bash call of more than 1024 write targets, counting each folder a path may
-  be in, of a subagent or of a session the background route started, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
+  be in, of a subagent, of a session the background route started, or of a run's driver, is refused at once, and a glob that leads the guards through more than 100,000 entries counts as one that may
   reach a guarded file. Each folder a glob reaches counts once a call, however many guarded files are tested against it,
   so `Remove-Item -Recurse node_modules\*\dist` over a `node_modules` of 30,000 entries runs.
   A link a glob passes is resolved from the spelling of its folder that reached it, and its target is compared with a

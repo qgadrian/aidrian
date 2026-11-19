@@ -159,7 +159,7 @@ test('the background route marks the new session unattended under the state root
 });
 
 // Every host's project start is confined, so an issue's session works in a clone under its host's sandbox: a continuation
-// would start outside both, and the gate starts none, before any store or mark write.
+// would start outside both, and the gate starts none, before any floor, mark, or start record.
 test('an issue session starts no continuation on any host, and one whose tags cannot be read starts none either', (t) => {
   const marks = (setting) => {
     const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
@@ -283,6 +283,19 @@ test('a session whose unattended mark cannot be read arms no clear on any route;
     const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env, ...args });
     assert.equal(result.out[0], 'continue: clear', `${why}: ${result.out.join('\n')} ${result.err.join('\n')}`);
     assert.equal(readArmed(setting.store, SESSION)?.route, 'clear', `${why}: armed`);
+  }
+  // Another gate's pending mark that cannot be read holds the session as one that gate may be starting, not as one whose
+  // own mark cannot be read: the gate keeps its own refusal, and the route its configured answer.
+  for (const [why, options, args] of routes) {
+    const setting = setup(t, options);
+    passCheck(setting);
+    const { env, folder } = marks(setting);
+    writeFileSync(path.join(folder, 'pending.cafe0009-0000-4000-8000-000000000009.json'), JSON.stringify({ pending: true }), { mode: 0o600 });
+    assert.equal(routeOf({ env, cwd: setting.dir, ...args }).out[0], 'route: clear', `${why}: a pending mark`);
+    const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env, ...args });
+    assert.equal(result.exitCode, 1, `${why}: ${result.out.join('\n')}`);
+    assert.match(result.err[0], /another session's handoff gate is starting a background session/u, why);
+    assert.equal(readArmed(setting.store, SESSION), null, `${why}: no clear marker armed`);
   }
 });
 

@@ -1251,8 +1251,8 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
 - The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
   denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
-  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, and the main
-  session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
+  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, as is one of a
+  main session no Human attends or a project run's driver, and an attended main session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
   than 1024 write targets are refused too, as the guards read no more ([hooks](hooks.md#agent-gates)).
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
 - An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
@@ -2034,7 +2034,8 @@ run on. A session that cannot be stopped prints
 each `wait`, where `<id>` is the session's id as its `started` line printed it, and `<how>` the host's own command that
 stops it by hand, such as `` `claude stop <id>` stops it ``; so do the `overdue` and `limited` lines of a session `wait`
 could not stop, `a session of it, <id>, could not be stopped; <how>`. An id of no session's shape is left out, and a
-`<how>` that is not printable ASCII alone becomes `the host's own command stops it`.
+`<how>` that is empty or holds a character no display text keeps, such as a control, a line or paragraph separator,
+a bidirectional mark, or a zero-width character, becomes `the host's own command stops it`.
 The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.

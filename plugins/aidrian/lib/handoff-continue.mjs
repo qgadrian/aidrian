@@ -353,7 +353,7 @@ function startInBackground(ready) {
   // A project run's driver hands on a driver: its continuation is held as one from its first call, with the run's driver
   // mark filed for it (run-driver.mjs), and drives only once custody moves to it on its first `aidrian project wait`.
   // A driver mark that is there but cannot be read whole, as one with no run, main checkout, or state folder, or a read
-  // that fails, would hand the continuation no mark: then nothing starts, before any store or mark write.
+  // that fails, would hand the continuation no mark: then nothing starts, before any floor, mark, or start record.
   let driver;
   try {
     driver = readDriverMark(session, { env });

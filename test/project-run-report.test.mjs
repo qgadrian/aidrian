@@ -297,6 +297,63 @@ test('the driver may not write the handoff continuation store, though it runs th
   assert.equal(gate.status, 0, gate.stderr);
   // A session neither mark holds still writes there, as before.
   assert.equal(spawnSync(process.execPath, [AGENT_GATES], { input: JSON.stringify({ cwd: fx.dir, session_id: OTHER, tool_name: 'Write', tool_input: { file_path: path.join(store, 'armed-x.json'), content: '{}' } }), cwd: fx.dir, env: { ...fx.env, HOME: fx.home }, encoding: 'utf8' }).status, 0, 'an attended session');
+  // Its refusal names what holds it: its run, not a background start it never had.
+  const named = call('Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' });
+  assert.match(named.stderr, /only `aidrian handoff` commands write, and this session drives a project run, which no Human attends/u);
+  assert.doesNotMatch(named.stderr, /background handoff route started this session/u);
+  const ledger = call('Write', { file_path: path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl'), content: '{}' });
+  assert.match(ledger.stderr, /only `aidrian project` commands write, and this session drives a project run, which no Human attends/u);
+});
+
+// The agent gate hook, run as `session` on `tool` with `input`, from `cwd`, with `more` in its environment.
+const gates = (fx, session, tool, input, cwd = fx.dir, more = {}) => spawnSync(process.execPath, [AGENT_GATES], {
+  input: JSON.stringify({ cwd, session_id: session, tool_name: tool, tool_input: input }), cwd, env: { ...fx.env, HOME: fx.home, ...more }, encoding: 'utf8',
+});
+
+test('the first driver is held from its run\'s stores past the guards\' time budget and their word limit', (t) => {
+  const fx = started(t);
+  const store = path.join(fx.state, 'handoffs', '.continue');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  const late = { AIDRIAN_GUARD_BUDGET_MS: '0' };
+  for (const [what, file] of [['store', path.join(store, 'armed-x.json')], ['ledger', path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl')]]) {
+    const refused = gates(fx, DRIVER, 'Write', { file_path: file, content: '{}' }, fx.dir, late);
+    assert.equal(refused.status, 2, `${what}: ${refused.stderr}`);
+    assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only a main session a Human attends may change, and this session has driven a project run/u, what);
+  }
+  assert.equal(gates(fx, OTHER, 'Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' }, fx.dir, late).status, 0, 'an attended session past the budget');
+  // A PowerShell command longer than the guards read may hide the store in the words they skip.
+  const words = `Remove-Item ${Array.from({ length: 600 }, (_, i) => `w${i}`).join(' ')} ${path.join(store, 'armed-x.json')}`;
+  const long = gates(fx, DRIVER, 'PowerShell', { command: words });
+  assert.equal(long.status, 2, long.stderr);
+  assert.match(long.stderr, /the guards read at most 512 in a shell command they cannot parse, so it may change a file only a main session a Human attends may change, and this session has driven a project run/u);
+  assert.equal(gates(fx, OTHER, 'PowerShell', { command: words }).status, 0, 'an attended session\'s long command');
+});
+
+test('from another project\'s folder, the first driver is still held from its run\'s store and ledger', (t) => {
+  const fx = started(t);
+  const elsewhere = path.join(fx.root, 'elsewhere');
+  mkdirSync(path.join(elsewhere, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(elsewhere, '.aidrian', 'config.json'), JSON.stringify({ version: 1 }));
+  execFileSync('git', ['init', '-q', elsewhere]);
+  const store = path.join(fx.state, 'handoffs', '.continue');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  const targets = [['store', path.join(store, 'armed-x.json'), /the handoff continuation store/u], ['ledger', path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl'), /the folder of the project runs/u]];
+  for (const [what, file, guard] of targets) {
+    const refused = gates(fx, DRIVER, 'Write', { file_path: file, content: '{}' }, elsewhere);
+    assert.equal(refused.status, 2, `${what}: ${refused.stderr}`);
+    assert.match(refused.stderr, guard, what);
+    assert.match(refused.stderr, /this session drives a project run, which no Human attends/u, what);
+    const shell = gates(fx, DRIVER, 'Bash', { command: `echo {} > ${file}` }, elsewhere);
+    assert.equal(shell.status, 2, `${what} by Bash: ${shell.stderr}`);
+  }
+  // A session the background route started, marked in the run's project, is still refused there, by its own reason.
+  const marked = 'abcd1234-0000-4000-8000-00000000f001';
+  assert.ok(markUnattended(marked, { root: fx.dir, env: fx.env }));
+  const held = gates(fx, marked, 'Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' }, elsewhere);
+  assert.equal(held.status, 2, held.stderr);
+  assert.match(held.stderr, /background handoff route started this session/u);
+  // An attended session no mark names writes there from another project, as before.
+  for (const [what, file] of targets) assert.equal(gates(fx, OTHER, 'Write', { file_path: file, content: '{}' }, elsewhere).status, 0, `${what}: an attended session`);
 });
 
 test('preflight names every blocker at once, and starts nothing', (t) => {

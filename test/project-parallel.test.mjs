@@ -258,10 +258,13 @@ test('a could-not-be-stopped line names the session, and falls back to the host\
     ['a paragraph separator', '`stop x` stops it\u2029injected'],
     ['a right-to-left override', '`stop x` stops it\u202Eti spots'],
     ['a zero-width space', '`st\u200Bop x` stops it'],
+    ['a tab', '`stop x`\tstops it'],
     ['an empty line', ''],
   ]) {
     assert.equal(notStopped({ stopLine: () => text }, { id: 'c0ffee01' }), plain, why);
   }
+  // A letter beyond ASCII, as in a folder's name, hides nothing: the line keeps it.
+  assert.equal(notStopped({ stopLine: () => '`stop x` in /tmp/café stops it' }, { id: 'c0ffee01' }), 'a session of it, c0ffee01, could not be stopped; `stop x` in /tmp/café stops it');
   // An id of no session's shape is never printed, nor passed to the adapter.
   let asked = 0;
   const counting = { stopLine: ({ id }) => {
@@ -279,7 +282,7 @@ test('a could-not-be-stopped line names the session, and falls back to the host\
 // compare; a start that recorded no process points to its run log, never to a process picked by its name.
 test('Codex\'s could-not-be-stopped line names a listing with no arguments and the start time to compare, and no kill by name', () => {
   const recorded = codexStopLine({ id: 'pid-4242-0123456789abcdef' });
-  assert.equal(recorded, '`ps -o pid=,lstart=,ucomm= -p 4242` shows the start time of the process 4242, with no arguments; when it falls between this attempt\'s two start rows in the run\'s ledger, `kill 4242` stops it, and otherwise another process took the pid, so leave it');
+  assert.equal(recorded, '`TZ=UTC ps -o pid=,lstart=,ucomm= -p 4242` shows the start time of the process 4242 in UTC, to the second, with no arguments; when it falls within the seconds of this attempt\'s two start rows in the run\'s ledger, from the second of the first through the second of the last, `kill 4242` stops it, and otherwise another process took the pid, so leave it');
   for (const command of [...recorded.matchAll(/`([^`]+)`/gu)].map((match) => match[1])) {
     assert.equal(processKill(command, { env: {} }), null, `${command} passes the process-kill rule`);
   }

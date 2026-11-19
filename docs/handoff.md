@@ -433,7 +433,8 @@ Limits:
   session's own mark is written, or when nothing started or the start was stopped; a start whose outcome is unknown
   keeps it until it lapses.
   Such a session, and one with a mark, is also refused a call the guards cannot finish reading within their time
-  budget, and a command with more write targets or words than they read, as a subagent is.
+  budget, and a command with more write targets or words than they read, as a subagent is, and so is a project run's
+  driver, whose driver mark holds it.
   A session the gate started before the marks is known by its chain floor of route `background`, under its full id or
   a short one, in the store of the working copy's `state.dir` or the base branch's, each where the hook's environment
   puts it and where the user's own puts it, as the gate does; the hook reads it only for a call the guards below would

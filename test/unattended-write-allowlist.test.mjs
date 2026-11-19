@@ -54,7 +54,7 @@ function fixture(t) {
   git('commit', '-q', '-m', 'config');
   git('worktree', 'add', '-q', '-b', 'feat/x', worktree);
   const attempt = path.join(state, 'runs', 'launch', 'attempts', 'ENG-1.1');
-  for (const name of ['work', 'git', 'drop']) mkdirSync(path.join(attempt, name), { recursive: true });
+  for (const name of ['work', 'git', 'drop', 'cache']) mkdirSync(path.join(attempt, name), { recursive: true });
   const env = { ...process.env, XDG_STATE_HOME: path.join(root, 'marks'), XDG_CONFIG_HOME: xdg, GIT_CONFIG_SYSTEM: system, HOME: home, TMPDIR: temp };
   delete env.GIT_CONFIG_NOSYSTEM;
   delete env.ZDOTDIR;
@@ -132,7 +132,7 @@ test('a session no Human attends writes its own worktree, its attempt\'s work an
     path.join(fx.state, 'reviews', '.pr-7.json.tmp'),
     path.join(fx.state, 'reviews', 'pr-7', 'captures', 'abc', 'home.png'),
     path.join(fx.temp, 'scratch.txt'),
-    ...['work', 'drop'].map((name) => path.join(fx.attempt, name, 'x.json')),
+    ...['work', 'drop', 'cache'].map((name) => path.join(fx.attempt, name, 'x.json')),
   ];
   for (const file of allowed) {
     mkdirSync(path.dirname(file), { recursive: true });
@@ -310,6 +310,59 @@ test('a program that writes its own config is refused to a session no Human atte
   for (const command of ['git config user.name', 'git config --get user.name', 'git config -l', 'git config get user.name', `git config --file ${path.join(fx.temp, 'c')} user.name x`,
     `git worktree add ${path.join(fx.temp, 'wt2')}`, `git clone https://example.invalid/x.git ${path.join(fx.temp, 'x')}`, 'crontab -l', 'launchctl list', 'defaults read com.x', 'claude mcp list', 'codex mcp list', 'npm config get registry', 'gh config get editor', 'gh auth status', 'codex --profile p exec x', 'npx prettier --check .', 'pnpm dlx create-x', 'pnpm install']) {
     assert.equal(fx.ask(bash(command)), null, command);
+  }
+});
+
+test('a session no Human attends never publishes, withdraws, or changes a package or its owners on a registry', (t) => {
+  const fx = fixture(t);
+  const refused = [
+    'npm publish', 'npm publish --access public', 'npm --registry https://registry.npmjs.org publish', 'npm unpublish x@1.0.0', 'npm dist-tag add x@1.0.0 latest',
+    'npm deprecate x "gone"', 'npm owner add other x', 'npm access set status=public x', 'npm token create',
+    'pnpm publish', 'pnpm -r publish', 'pnpm unpublish x', 'pnpm dist-tag add x@1 next', 'pnpm deprecate x y', 'pnpm owner add a x', 'pnpm access public x', 'pnpm token list',
+    'yarn publish', 'yarn unpublish x', 'yarn dist-tag add x@1 next', 'yarn deprecate x y', 'yarn owner add a x', 'yarn access public x', 'yarn token list',
+    'yarn npm publish', 'yarn npm tag add x@1 next', 'yarn npm login', 'yarn tag add x@1 next', 'yarn login',
+    'bun publish', 'bun pm publish', 'bun unpublish x', 'bun dist-tag add x@1 next', 'bun deprecate x y', 'bun owner add a x', 'bun access public x', 'bun token list',
+    'gem push x-1.0.0.gem', 'gem yank x -v 1.0.0', 'gem owner x -a a@b.c', 'gem signin',
+    'cargo publish', 'cargo publish --registry r', 'cargo yank --version 1.0.0', 'cargo owner --add a', 'cargo login',
+    'twine upload dist/*', 'python -m twine upload dist/*', 'python3 -m twine upload dist/*', 'uvx twine upload dist/*', 'pipx run twine upload dist/*', 'npx twine upload dist/*',
+    'uv publish', 'uv publish --token x', 'poetry publish', 'poetry publish --build', 'npx npm publish',
+    // Release tools, through a runner and npm's and pnpm's exec forms, and Ruby's release task.
+    'lerna publish', 'npx lerna publish', 'pnpm dlx lerna publish', 'npx changeset publish', 'npx @changesets/cli publish', 'pnpm dlx @changesets/cli@2 publish',
+    'npm exec -- lerna publish', 'npm exec lerna publish', 'npm x changeset publish', 'pnpm exec changeset publish', 'npm exec -- npm publish',
+    'bundle exec rake release', 'rake release',
+    // Options before the subcommand, in any order and form.
+    'pnpm --filter web publish', 'pnpm -F web publish', 'pnpm --filter=web publish', 'yarn workspace web publish', 'yarn workspace web npm publish',
+    'cargo +nightly publish', 'npm --loglevel verbose publish', 'npm --registry=https://registry.npmjs.org publish',
+  ];
+  for (const command of refused) assert.match(fx.ask(bash(command))?.reason ?? '', /a package on a registry, or its owners/u, command);
+  for (const command of ['npm install', 'npm ci', 'npm run publish-docs', 'npm view x', 'pnpm install', 'yarn install', 'yarn npm info x', 'bun install', 'gem install x', 'bundle install',
+    'cargo build', 'cargo fetch', 'twine check dist/*', 'python -m pip install x', 'uv sync', 'uv add x', 'poetry install', 'npm pack',
+    'npm owner ls x', 'npm dist-tag ls x', 'pnpm owner ls x', 'npm access list packages', 'lerna run build', 'npx changeset version', 'npm exec -- tsc',
+    'bundle exec rake test', 'cargo +nightly build', 'yarn workspace web build']) {
+    assert.equal(fx.ask(bash(command)), null, command);
+  }
+});
+
+test('an attempt\'s work, drop, or cache folder replaced by a link is no place of the session\'s, and writes through it are refused', (t) => {
+  for (const name of ['cache', 'drop', 'work']) {
+    const fx = fixture(t);
+    const own = () => fx.attempt;
+    const folder = path.join(fx.attempt, name);
+    mkdirSync(path.join(fx.home, '.claude'), { recursive: true });
+    assert.equal(fx.ask(write(path.join(folder, 'x.json')), { own }), null, `${name} as a plain folder`);
+    rmSync(folder, { recursive: true, force: true });
+    symlinkSync(path.join(fx.home, '.claude'), folder);
+    for (const target of [path.join(folder, 'settings.json'), path.join(fx.home, '.claude', 'settings.json')]) {
+      assert.match(fx.ask(write(target), { own })?.reason ?? '', new RegExp(`the attempt's ${name} folder, which is no plain folder but a link|a dot file or folder of the user's home folder`, 'u'), `${name}: ${target}`);
+    }
+    assert.match(fx.ask(write(path.join(folder, 'settings.json')), { own })?.reason ?? '', new RegExp(`the attempt's ${name} folder, which is no plain folder`, 'u'), name);
+  }
+  // The keep file that holds drop and cache in place is refused, by the write tool and the shell.
+  const fx = fixture(t);
+  const own = () => fx.attempt;
+  for (const name of ['drop', 'cache']) {
+    const keep = path.join(fx.attempt, name, '.aidrian-keep');
+    for (const input of [write(keep), bash(`rm -f ${keep}`)]) assert.match(fx.ask(input, { own })?.reason ?? '', /the keep file of an attempt's folder/u, `${input.tool_name} ${keep}`);
   }
 });
 

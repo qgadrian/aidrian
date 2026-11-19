@@ -48,10 +48,11 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
+import { cacheVars, registryHosts } from './project-registries.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, driverOf, endedIn, ISSUE_ATTEMPTS, issueChain, latestStart, resultAuthorProblem, resumerProblem, runStore, startRows, startsOf, timeOf } from './project-run-guard.mjs';
-import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, stateWorkFolders, sweepAttempts, unverifiedNote } from './project-start.mjs';
+import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
@@ -118,9 +119,9 @@ function guardedStore({ env, home }) {
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
-// unverifiedHosts, outsideSandbox, mcpServers } with each number the lowest of the two reads and its CEILINGS value, each
-// switch true only when both reads set it, outsideSandbox the names both reads list, and mcpServers the servers both
-// reads define alike, or { problem }. A forge read that fails refuses.
+// unverifiedHosts, outsideSandbox, mcpServers, registries } with each number the lowest of the two reads and its
+// CEILINGS value, each switch true only when both reads set it, outsideSandbox and registries the names both reads
+// list, and mcpServers the servers both reads define alike, or { problem }. A forge read that fails refuses.
 export function teamPolicy(project, repository, forge) {
   const local = baseBranchConfig(project, 'projectRun');
   if (local.why) return { problem: local.why };
@@ -140,6 +141,7 @@ export function teamPolicy(project, repository, forge) {
     unverifiedHosts: local.config.projectRun.unverifiedHosts === true && policies.policy.projectRun.unverifiedHosts === true,
     outsideSandbox: bothList(local.config.projectRun.outsideSandbox, policies.policy.projectRun.outsideSandbox),
     mcpServers: bothServers(local.config.projectRun.mcpServers, policies.policy.projectRun.mcpServers),
+    registries: bothList(local.config.projectRun.registries, policies.policy.projectRun.registries),
   };
 }
 
@@ -355,7 +357,7 @@ function startPlace(context) {
   return { orphans, attempt: capped.attempt, tip: base.tip, branch, ...room, log: log.file };
 }
 
-// The attempt's fresh clone, checked, and the folders it may write: { cwd, git, grants, drop, main, mainGit }, or
+// The attempt's fresh clone, checked, and the folders it may write: { cwd, git, grants, drop, vars, main, mainGit }, or
 // { halt } or { problem }. A clone the host says would run a command outside its sandbox (`cloneProblem`) halts, and so
 // does one whose origin pushes to another URL than `pushUrl`, the one the host's access check read, as a pushInsteadOf
 // of the user's git config would make it. Last, the host's placeholders go in (placeHolders).
@@ -384,13 +386,20 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
   if (placed) return { problem: placed.problem };
   const common = gateGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], main, { timeout: 30_000 });
   const mainGit = common.status === 0 ? resolvedPath(common.stdout.trim()) : null;
-  return { cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, ...folders.folders], drop: clone.drop, main: resolvedPath(main) ?? main, mainGit };
+  // The package managers' caches, for the session's sandboxed commands alone: the host's SessionStart hook reads them
+  // from the attempt's folder (Claude Code), or the start passes them to its shell policy (Codex).
+  const vars = cacheVars(clone.cache, env, { registries: policy.registries });
+  const written = writeShellVars(clone.folder, vars);
+  if (written) return { problem: written };
+  return { cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, vars, main: resolvedPath(main) ?? main, mainGit };
 }
 
 // The start itself, held by startHeld, with its write-ahead row and its one settling row: the answer of the start.
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
-  const { attempt, branch, cwd, git, grants, drop, log, main, mainGit } = place;
+  const { attempt, branch, cwd, git, grants, drop, vars, log, main, mainGit } = place;
+  // The forge's hosts, and the registries the team lists (projectRun.registries).
+  const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(context.policy.registries)];
   const name = sessionName(run, key, attempt);
   const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
   const base = { event: 'start', key, attempt, session, name, cwd, branch, ...(drop ? { drop } : {}) };
@@ -400,7 +409,7 @@ function launchStart(context, place) {
     session,
     launch: (hold, identify) => {
       const started = cap.start({
-        session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains: forgeDomains(context.found.init.repository), main, mainGit, tokens: forgeTokenVars(),
+        session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains, cacheVars: vars, main, mainGit, tokens: forgeTokenVars(),
         // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
         guarded: guardedStore({ env, home }),
         mcp: context.policy.mcpServers, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }),

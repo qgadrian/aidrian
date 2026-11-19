@@ -42,6 +42,11 @@ A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
 
 ## Start lines
 
+Before anything else, in a main session whose own mark names a run and issue whose ledger gives it the confined
+attempt it starts in, or whose pending mark starts it in that attempt's clone, the hook hands the host the environment that attempt's sandboxed commands get,
+the package managers' caches in its `cache` folder, on a host that takes it: Claude Code, through the file it names in
+`CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). It prints nothing for it.
+
 At the start of every session and subagent, the hook prints:
 
 - one line naming the `always` knowledge docs and the commands that find the rest;
@@ -1013,7 +1018,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   Claude Code's `.claude/skills`, `agents`, `commands`, and `.claude/settings.local.json`, and while the project has a
   project run under way, an active run in any of its state folders, a folder of runs that cannot be listed, or a live
   unattended or pending mark naming it, no subagent may either, whichever session it belongs to. In a project with no
-  run, a subagent writes them as before. A confined session, as Codex's, writes the `work`, `git`, and `drop` folders of
+  run, a subagent writes them as before. A confined session, as Codex's, writes the `work`, `git`, `drop`, and `cache` folders of
   its issue's running attempt under `<state>/runs/<run>/attempts/`, as the run's ledger names it, and nothing else in
   the runs folder. A project run's attempt clone is no shared main checkout: the [main-checkout rule](#main-checkout)
   reads the run's main checkout as its own.
@@ -1041,7 +1046,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
     is outside. A mark filed before the start folder was recorded names no worktree;
-  - its issue's running attempt folders `work` and `drop`, under `<state>/runs/<run>/attempts/`;
+  - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
+    while it is a plain folder: one replaced by a link is refused, and so is the keep file `.aidrian-keep` in `drop`
+    and `cache`;
   - the state folders it writes by hand, each when it is no link, of every state folder of the project its mark names:
     `plans`, `tmp`, `handoffs` (the continuation store in it stays refused, as above), and `quorum`, where the product
     quorum runs under auto decisions; in `reviews`, only a review manifest, `pr-<n>.json` or a temporary copy of it,
@@ -1097,9 +1104,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,
     `codex login`, and `codex logout` for Codex, and their removals); `npm`, `pnpm`, and `yarn config set`, `npm set`,
     `npm login`, `npm adduser`, `crontab` but `-l`, `launchctl` but its reads, and `defaults write`, `delete`, `import`,
-    and `rename`. A subcommand is found past the program's global options that take a value, as in
-    `codex --profile p login` or `gh -R o/r config set`, and through a package runner: `npx`, `pnpm dlx`, `bunx`, and
-    `yarn dlx`.
+    and `rename`; and every command that publishes, withdraws, or changes a package or its owners on a registry:
+    `npm`, `pnpm`, `yarn`, and `bun` `publish`, `unpublish`, `dist-tag`, `deprecate`, `owner`, `access`, and `token`,
+    `yarn npm publish`, `tag`, and `login`, `lerna publish`, `changeset publish`, `gem push`, `yank`, `owner`, and
+    `signin`, `rake release` and `bundle exec rake release`, `cargo publish`, `yank`, `owner`, and `login`, also after
+    `+<toolchain>`, `twine upload`, `uv publish`, and `poetry publish`, past options in any order and yarn's
+    `workspace <name>`, with the read forms `owner ls`, `dist-tag ls`, and `access list` and `get` passing
+    ([Dependency installs](providers/claude-code.md#dependency-installs)). A subcommand is found past the program's global options that take a value, as in
+    `codex --profile p login` or `gh -R o/r config set`, and through a package runner: `npx`, `pnpm dlx`, `bunx`,
+    `yarn dlx`, `npm exec`, `npm x`, and `pnpm exec`.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
     a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
     reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a

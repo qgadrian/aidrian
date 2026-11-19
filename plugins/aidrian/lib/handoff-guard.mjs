@@ -556,7 +556,7 @@ export function continueStoreWriteDenial(input, project, { names: { human }, sta
   return base().failed && held() && holdsState(project, state, home) ? unreadableBase(input, human) : null;
 }
 
-// Whether a real, case-folded path lies in the work, git, or drop folder of the attempt folder `own()` gives, the real
+// Whether a real, case-folded path lies in the work, git, drop, or cache folder of the attempt folder `own()` gives, the real
 // path of the attempt a confined host's session works in (project-run-guard.mjs ownAttemptFolder), read only when a
 // write reaches the runs folder: the folders that session writes (lib/project-start.mjs). None when `own` is null or
 // gives none.
@@ -566,7 +566,7 @@ function ownAttempt(own) {
   return (target) => {
     if (typeof target !== 'string' || !named()) return false;
     const base = fold(named());
-    return ['work', 'git', 'drop'].some((part) => isWithin(path.join(base, part), target));
+    return ['work', 'git', 'drop', 'cache'].some((part) => isWithin(path.join(base, part), target));
   };
 }
 

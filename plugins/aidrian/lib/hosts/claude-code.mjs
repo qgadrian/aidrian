@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
-import { accessProblem, cloneProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -231,6 +231,9 @@ export default {
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
       placeholders: PLACEHOLDERS,
       sessionNote,
+      // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
+      // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
+      shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
       start: ({ session, cwd, name, prompt, env, hold, identify, beacon, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
         session, cwd, name, prompt, env, hold, identify, beacon, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),

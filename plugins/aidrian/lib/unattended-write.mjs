@@ -2,7 +2,7 @@
 // (lib/unattended-mark.mjs readUnattendedMark), and its subagents, which the agent gate hook asks on every call
 // (scripts/hook-agent-gates.mjs). docs/hooks.md#agent-gates says what passes and what refuses.
 //   - Its own mark: it writes only its own worktree (the checkout of the folder its mark says it started in), its
-//     attempt's work and drop folders, the state folders it writes by hand (HAND_FOLDERS), a review manifest or capture,
+//     attempt's work, drop, and cache folders, the state folders it writes by hand (HAND_FOLDERS), a review manifest or capture,
 //     and the temporary folder. Wherever it lies, it never writes a git folder, the user's or the system's git config, a
 //     shell startup file, another dot entry of the home folder, a review or attest record, or the dispatch records.
 //   - A pending mark, held while a gate starts a session, or a mark that cannot be read: only the entries refused
@@ -17,6 +17,7 @@ import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
+import { ATTEMPT_KEEP, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
@@ -79,7 +80,7 @@ const refuser = (list) => (file, what, folder = false, allows = null) => list.pu
 // pass.
 //   - limited: a pending mark or one with no main checkout; only `refused`, `later`, and the home folder's dot entries
 //     hold, with `specific` the state folders of `project` that pass among those.
-//   - specific: its attempt's work and drop folders (`own()`, project-run-guard.mjs ownAttemptFolder), and HAND_FOLDERS of
+//   - specific: its attempt's work, drop, and cache folders (`own()`, project-run-guard.mjs ownAttemptFolder), and HAND_FOLDERS of
 //     every state folder of `project`, the project the mark names, that is no link; `reviews`, each state's reviews folder.
 //   - worktree: the checkout of the folder its mark says it started in, when it shares its git folder with the mark's
 //     main checkout; never the call's folder. `temp`: the temporary folders, this process's and /tmp by default.
@@ -160,7 +161,14 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
   }
   const attempt = typeof own === 'function' ? own() : null;
   if (attempt) {
-    places.specific.push(real(path.join(attempt, 'work')), real(path.join(attempt, 'drop')));
+    // Each folder of the attempt it writes is its place only while it is a plain folder: one a session replaced with a
+    // link, as `cache -> ~/.claude`, would lead its writes wherever the link goes, so it is refused there instead.
+    for (const name of ['work', 'drop', 'cache']) {
+      const folder = path.join(attempt, name);
+      if (canonical(folder) === folder) places.specific.push(real(folder));
+      else refuse(folder, `the attempt's ${name} folder, which is no plain folder but a link, and leads anywhere`, true);
+    }
+    for (const name of KEPT_FOLDERS) refuse(path.join(attempt, name, ATTEMPT_KEEP), 'the keep file of an attempt\'s folder, which holds the folder in place');
     hostRefused(refuse, path.join(attempt, 'work'));
     places.nested.push({ root: real(path.join(attempt, 'work')), work: path.join(attempt, 'work'), links: null });
     refuse(path.join(attempt, 'git', 'config'), 'the attempt clone\'s git config');

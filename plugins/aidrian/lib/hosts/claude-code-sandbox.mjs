@@ -13,10 +13,12 @@
 // 2026-11-18; no live run has checked them, and a value that fails validation in a session no Human attends is silently
 // ignored. It reads no file when loaded: hooks load every adapter.
 
-import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { ATTEMPT_KEEP, KEPT_FOLDERS } from '../attempt-clone.mjs';
+import { ENV_NAME } from '../project-registries.mjs';
 import { programNames, programOnPath } from './process.mjs';
 
 // The host files of a clone or worktree, from its root, the session never writes: the settings it would load on a later
@@ -64,6 +66,12 @@ export const CREDENTIAL_PATHS = Object.freeze([
   '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
   '.vault-token', '.config/hub', '.claude.json', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
   '.bash_history', '.zsh_history', '.local/share/fish',
+  // The package registries' token stores, beside .npmrc, .pypirc, and cargo's and gem's above: yarn's, npm's XDG
+  // config, bun's, gem's XDG credentials, bundler's config, pnpm's own config, pip's config, which may name an index
+  // with its password, poetry's, and uv's.
+  '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
+  '.config/pnpm/rc', 'Library/Preferences/pnpm/rc', '.config/pip/pip.conf', '.pip/pip.conf', 'Library/Application Support/pip/pip.conf',
+  '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
 ]);
 
 // The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it.
@@ -77,7 +85,6 @@ const KNOWN_SECRETS = Object.freeze([
   'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NPM_TOKEN', 'NODE_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY', 'GITLAB_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'SSH_AUTH_SOCK',
 ]);
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 
 // The credential-named variables of `env`, and the well-known ones, but the forge's own token variables, `keep`: the
 // names a sandboxed command never sees.
@@ -139,14 +146,19 @@ const credentialStores = (home, config) => [...new Set([
 ])];
 
 // The settings object of the session that works in the clone `work`, whose separate git folder is `git`, granted the
-// real folders `grants` (its git folder, drop folder, and the state work folders), the network hosts `domains`, and the
+// real folders `grants` (its git, drop, and cache folders, and the state work folders), the network hosts `domains`, and the
 // temporary folders `temp`, for the user whose home is `home` and host config folder `config`, on `platform`. `main` is
 // the main checkout, which no sandboxed command and no Read reaches but its git folder `mainGit`, whose objects the clone
 // borrows; `secrets` the environment variables the sandbox unsets (secretVars); `guarded` folders no sandboxed command
-// writes even where a user's allowWrite would reach them, such as the sign-off store (review/merge-trust.mjs). Scalars
-// passed with --settings win over the user's settings; lists merge with them, which accessProblem checks.
-export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [] }) {
-  const credentials = credentialStores(home, config);
+// writes even where a user's allowWrite would reach them, such as the sign-off store (review/merge-trust.mjs); `stores`
+// more credential files that lie outside the home folder, as npm's global config (npmGlobalConfigs). The attempt's drop
+// and cache folders each hold a keep file (attempt-clone.mjs ATTEMPT_KEEP) whose write is denied, so neither can be
+// emptied and removed. No package manager variable is set here: the settings' `env` would reach the host's own process,
+// its hooks, and its MCP servers, so they reach the sandboxed commands alone, through the SessionStart hook
+// (writeEnvFile). Scalars passed with --settings win over the user's settings; lists merge with them, which
+// accessProblem checks.
+export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [], stores = [] }) {
+  const credentials = [...new Set([...credentialStores(home, config), ...stores])];
   const unread = main ? [...credentials, main] : credentials;
   const reopen = main && mainGit && within(main, mainGit) ? { allowRead: [mainGit] } : {};
   return {
@@ -164,6 +176,7 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
         denyWrite: [
           path.join(work, '.git'), path.join(git, 'config'), path.join(git, 'hooks'), path.join(git, 'commondir'), path.join(git, 'config.worktree'),
           ...PROTECTED_PATHS.map((each) => path.join(work, each)), ...nestedGlobs(work), ...guarded,
+          ...KEPT_FOLDERS.map((name) => path.join(path.dirname(git), name, ATTEMPT_KEEP)),
         ],
         denyRead: unread,
         ...reopen,
@@ -178,6 +191,42 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
     disableClaudeAiConnectors: true,
     worktree: { bgIsolation: 'none' },
   };
+}
+
+// The npm config files a sandboxed command could read a registry token from beside ~/.npmrc: the user and global config
+// files the driver's environment names (npm_config_userconfig and npm_config_globalconfig, in either case), and
+// `<prefix>/etc/npmrc`, for the prefix it names and the one the npm first on PATH, in an absolute folder, lies under
+// (`<prefix>/bin/npm`).
+export function npmGlobalConfigs(env) {
+  const absolute = (each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each);
+  const named = [env.npm_config_userconfig, env.NPM_CONFIG_USERCONFIG, env.npm_config_globalconfig, env.NPM_CONFIG_GLOBALCONFIG].filter(absolute).map((each) => path.resolve(each));
+  const prefixes = [env.NPM_CONFIG_PREFIX, env.npm_config_prefix].filter(absolute);
+  const npm = programOnPath(env, programNames('npm'));
+  if (npm && !CONTROL.test(npm)) prefixes.push(path.dirname(path.dirname(npm)));
+  return [...new Set([...named, ...prefixes.map((prefix) => path.join(path.resolve(prefix), 'etc', 'npmrc'))])];
+}
+
+// A value as a POSIX shell reads it inside single quotes, each quote closed, escaped, and opened again.
+const quoted = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+
+// Appends an `export NAME='value'` line for each of `vars` to the host's session environment file `file`, which the
+// host sources before each Bash command of the session, and no hook or MCP server reads: whether it wrote them. A file
+// that is no absolute path, a link, or a name a shell does not take writes nothing.
+export function writeEnvFile(file, vars) {
+  if (typeof file !== 'string' || !path.isAbsolute(file) || CONTROL.test(file)) return false;
+  const entries = Object.entries(vars ?? {});
+  if (!entries.length || !entries.every(([name, value]) => ENV_NAME.test(name) && typeof value === 'string' && !CONTROL.test(value))) return false;
+  let fd;
+  try {
+    fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
+    if (!fstatSync(fd).isFile()) return false;
+    writeSync(fd, `${entries.map(([name, value]) => `export ${name}=${quoted(value)}`).join('\n')}\n`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 // The MCP configuration the session starts with under --strict-mcp-config: only `servers`, the base branch's

@@ -19,8 +19,9 @@ import { resolveAutoMerge } from '../plugins/aidrian/lib/config.mjs';
 import { machineSwitch } from '../plugins/aidrian/lib/config-local.mjs';
 import { pauseSync, resolvedPath } from '../plugins/aidrian/lib/fs.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { BEACON_GRACE, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, PS_BUFFER, runCommand, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
+import { BEACON_GRACE, configFlags, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, PS_BUFFER, runCommand, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { cacheVars } from '../plugins/aidrian/lib/project-registries.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -47,16 +48,17 @@ function hookKeys() {
 
 // Codex's config.toml: the plugin installed, its hooks trusted (`trusted`: 'all', 'tracker', or 'none'; `off`, a script
 // whose hook is turned off), and the workspace-write sandbox's network on, with `roots` its writable roots.
-function codexConfig({ trusted = 'all', off = null, network = true, roots = null, slashTmp = false } = {}) {
+function codexConfig({ trusted = 'all', off = null, network = true, roots = null, slashTmp = false, extra = '' } = {}) {
   const id = 'aidrian@aidrian-harness';
   const keys = hookKeys().filter(({ command }) => trusted === 'all' || (trusted === 'tracker' && /hook-tracker-(?:pre|post)\.mjs/u.test(command)));
   const trust = keys.map(({ key, command }) => `[hooks.state."${id}:hooks/hooks.json:${key}"]\ntrusted_hash = "sha256:x"\n${off && command.includes(off) ? 'enabled = false\n' : ''}`).join('');
   // /tmp holds the whole fixture on Linux, so the sandbox's own /tmp is excluded unless `slashTmp`.
   const sandbox = `[sandbox_workspace_write]\n${network ? 'network_access = true\n' : ''}${slashTmp ? '' : 'exclude_slash_tmp = true\n'}${roots ? `writable_roots = [${roots.map((each) => JSON.stringify(each)).join(', ')}]\n` : ''}`;
-  return `[plugins."${id}"]\nenabled = true\n${trusted === 'none' ? '' : trust}${sandbox}`;
+  return `[plugins."${id}"]\nenabled = true\n${trusted === 'none' ? '' : trust}${sandbox}${extra}`;
 }
 
-// A fake `codex` in `bin`. It records its arguments, folder, pid, and inherited session id in `<bin>/codex-call.json`,
+// A fake `codex` in `bin`. It records its arguments, folder, pid, inherited session id, and the cache variables it got
+// (project-registries.mjs cacheVars) in `<bin>/codex-call.json`,
 // prints the first event `mode.event` names ('thread', 'other', or 'none'), a to-do list item first when `mode.todo`,
 // and a `turn.failed` event with the message `mode.failed`; then, unless `mode.tool` is false, after `mode.slow`
 // milliseconds, its first tool call's event and, when `mode.hook`, runs the agent gate hook as Codex runs it for that
@@ -70,7 +72,11 @@ function fakeCodex(t, bin, mode) {
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const mode = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(bin, 'codex-mode.json'))}, 'utf8'));
-fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: process.env.CODEX_THREAD_ID ?? null }));
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: process.env.CODEX_THREAD_ID ?? null, caches: Object.fromEntries(Object.entries(process.env).filter(([name]) => ${JSON.stringify(Object.keys(cacheVars('/c', {}, { registries: ['npm'] })))}.includes(name))) }));
+if (mode.reject) {
+  console.error(mode.reject);
+  process.exit(1);
+}
 console.error('codex: reading the prompt');
 const say = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
 if (mode.event === 'thread') say({ type: 'thread.started', thread_id: ${JSON.stringify(THREAD)} });
@@ -110,6 +116,9 @@ const gone = (pid) => {
   return Boolean(state?.gone || state?.zombie);
 };
 
+// The forge's hosts an adapter's start allows through Codex's network proxy.
+const DOMAINS = ['github.com', 'api.github.com'];
+
 // The fixture as a Codex driver session sees it: CODEX_THREAD_ID names the driver, CODEX_HOME holds `codexConfig`, and
 // HOME is the fixture's. `projectRun` is the base branch's.
 function codexRun(t, { projectRun = { allow: true, unverifiedHosts: true }, forgeConfig, config = {}, mode = { event: 'thread', hook: true }, project = {} } = {}) {
@@ -135,7 +144,7 @@ function codexRun(t, { projectRun = { allow: true, unverifiedHosts: true }, forg
 }
 
 // An adapter's start outside the gate: a folder, a log, a grant, and a hold that files a real pending mark.
-function adapterStart(t, fx, { beacon = () => true, wait = shortWait, limits, identify = () => true } = {}) {
+function adapterStart(t, fx, { beacon = () => true, wait = shortWait, limits, identify = () => true, caches, domains = DOMAINS } = {}) {
   const cwd = path.join(fx.root, 'work');
   const grant = path.join(fx.root, 'grant');
   mkdirSync(cwd, { recursive: true });
@@ -144,7 +153,7 @@ function adapterStart(t, fx, { beacon = () => true, wait = shortWait, limits, id
   const hold = ({ cwd: folder, known }) => markPending(DRIVER, { cwd: folder, root: fx.dir, known, env: fx.env }) !== null;
   const prompt = 'Project run launch, issue ENG-1, attempt 1: work the issue.';
   const env = { ...fx.env, CODEX_THREAD_ID: DRIVER };
-  return { cwd, grant, log, prompt, result: startProject({ cwd, prompt, name: 'launch · ENG-1 · 1', env, hold, identify, log, beacon, grants: [grant], wait, limits }) };
+  return { cwd, grant, log, prompt, result: startProject({ cwd, prompt, name: 'launch · ENG-1 · 1', env, hold, identify, log, beacon, grants: [grant], domains, cacheVars: caches, wait, limits }) };
 }
 
 test('Codex declares an unverified, confined project start behind its hook trust, its sandbox network, and its writable roots', () => {
@@ -204,6 +213,44 @@ test('a process table listing past 1 MiB, as on a busy machine, is still read wh
   assert.equal(cut.error?.code, 'ENOBUFS');
 });
 
+test('the adapter gives the cache variables to the sandboxed commands alone, through the shell policy, never the codex process, and refuses ones that are not plain text', (t) => {
+  const fx = runFixture(t);
+  const fake = fakeCodex(t, fx.bin, { event: 'thread', hook: false });
+  const cache = path.join(fx.root, 'attempt', 'cache');
+  const caches = cacheVars(cache, { GOFLAGS: '-mod=mod' }, { registries: ['npm'] });
+  const { result } = adapterStart(t, fx, { caches });
+  assert.equal(result.problem, undefined, result.problem);
+  const { argv, caches: inherited } = fake.call();
+  for (const [name, value] of Object.entries(caches)) assert.ok(argv.includes(`shell_environment_policy.set.${name}=${JSON.stringify(value)}`), name);
+  assert.deepEqual(configFlags({ domains: DOMAINS, cacheVars: caches }).filter((each) => each !== '-c').length, 2 + Object.keys(caches).length);
+  assert.ok(Object.values(inherited).every((value) => !value.startsWith(cache)), 'the codex process, which its hooks and MCP servers inherit, gets none');
+  assert.equal(caches.GOFLAGS, '-mod=mod -modcacherw', 'the driver\'s go flags, and the module cache left writable');
+  // A value with a quote or a backslash stays one TOML string.
+  assert.deepEqual(configFlags({ domains: DOMAINS, cacheVars: { A: 'it\'s "x" \\ y' } }).at(-1), 'shell_environment_policy.set.A="it\'s \\"x\\" \\\\ y"');
+  assert.equal(stopProcess({ id: THREAD, started: result.id, wait: shortWait }), true);
+
+  for (const bad of [{ npm_config_cache: '/c\n/x' }, { 'bad name': '/c' }, { npm_config_cache: 7 }, ['/c'], null]) {
+    const fresh = fakeCodex(t, fx.bin, { event: 'thread', hook: false });
+    const refused = adapterStart(t, fx, { caches: bad }).result;
+    assert.match(refused.problem ?? '', /the cache environment the gate passes the session is not variable names to plain text/u, JSON.stringify(bad));
+    assert.equal(fresh.call(), null, 'no codex ran');
+  }
+  for (const domains of [[], ['github.com; rm -rf /'], null]) {
+    const fresh = fakeCodex(t, fx.bin, { event: 'thread', hook: false });
+    assert.match(adapterStart(t, fx, { domains }).result.problem ?? '', /the network hosts the gate grants the session are not host names/u, JSON.stringify(domains));
+    assert.equal(fresh.call(), null, 'no codex ran');
+  }
+});
+
+test('a Codex that refuses the network proxy or shell policy keys is stopped on its first proof, and the problem names the key', (t) => {
+  const fx = runFixture(t);
+  fakeCodex(t, fx.bin, { event: 'none', reject: 'Error loading config.toml: unknown variant `network_proxy` for key `features`' });
+  const { result } = adapterStart(t, fx);
+  assert.equal(result.proof, 'session', 'a failed start proof, which halts the run');
+  assert.equal(result.uncertain, false);
+  assert.match(result.problem, /^Codex refused a setting the start passes \(Error loading config\.toml: unknown variant `network_proxy` for key `features`\)/u);
+});
+
 test('the adapter runs codex exec with the sandbox pinned and each granted folder, and holds the session on its id, its first tool call, and the beacon', (t) => {
   const fx = runFixture(t);
   const fake = fakeCodex(t, fx.bin, { event: 'thread', hook: false });
@@ -214,7 +261,8 @@ test('the adapter runs codex exec with the sandbox pinned and each granted folde
   });
   assert.equal(result.problem, undefined, result.problem);
   const { argv, cwd: ran, pid, inherited } = fake.call();
-  assert.deepEqual(argv, ['exec', '--json', '--sandbox', 'workspace-write', '--cd', resolvedPath(cwd), '--add-dir', resolvedPath(grant), prompt]);
+  assert.deepEqual(argv, ['exec', '--json', '--sandbox', 'workspace-write', '-c', 'features.network_proxy.enabled=true', '-c', 'features.network_proxy.domains={ "github.com" = "allow", "api.github.com" = "allow" }',
+    '--cd', resolvedPath(cwd), '--add-dir', resolvedPath(grant), prompt]);
   assert.ok(argv.every((arg) => arg === prompt || !BYPASS.test(arg)), 'no flag that bypasses the sandbox or the approvals');
   assert.equal(ran, resolvedPath(cwd));
   assert.equal(inherited, null, 'the driver\'s session id is not the new session\'s');
@@ -337,6 +385,17 @@ test('a session that could not push, reach the forge, or keep out of a guarded f
   assert.deepEqual(sandboxed.rows(), []);
   assert.equal(sandboxed.run().states.get('ENG-1'), undefined, 'the issue is not parked');
 
+  // A user network proxy setting halts until a live run shows the start's own allow rules replace it; a comment does not.
+  for (const extra of ['[features.network_proxy]\ndomains = { "evil.example" = "allow" }\n', '[features]\nnetwork_proxy = { enabled = true }\n', 'features.network_proxy.domains = { "evil.example" = "allow" }\n']) {
+    const proxied = codexRun(t, { config: { extra } });
+    const halted = proxied.cmd(['start', 'launch', 'ENG-1']);
+    assert.match(halted.out[0], /^halt Codex's config\.toml sets a features\.network_proxy key/u, extra);
+    assert.equal(proxied.fake.call(), null, 'nothing ran');
+    assert.deepEqual(proxied.rows(), []);
+  }
+  const commented = codexRun(t, { config: { extra: '# features.network_proxy is set per start\n' } });
+  assert.equal(codex.capabilities.projectStart.access({ env: commented.env, guarded: [] }), null, 'a comment that names it does not halt');
+
   const roots = codexRun(t, { config: { roots: ['~/.local/state'] } });
   assert.match(roots.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt Codex's config\.toml makes ~\/\.local\/state writable in its workspace-write sandbox, which reaches /u);
 
@@ -372,11 +431,15 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.match(result.out[0], /^unverified: this host's project start is checked on fixtures only/u);
   const folder = resolvedPath(fx.attempt());
-  const [work, git, drop] = ['work', 'git', 'drop'].map((name) => path.join(folder, name));
+  const [work, git, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const state = resolvedPath(fx.state);
-  const { argv, pid } = fx.fake.call();
-  assert.deepEqual(argv.slice(0, -1), ['exec', '--json', '--sandbox', 'workspace-write', '--cd', work,
-    '--add-dir', git, '--add-dir', drop, ...['plans', 'reviews', 'tmp', 'dispatch'].flatMap((name) => ['--add-dir', path.join(state, name)])]);
+  const { argv, pid, caches } = fx.fake.call();
+  // The network proxy holds the session to the forge's hosts, and the cache variables reach its sandboxed commands alone.
+  const vars = cacheVars(path.join(fx.attempt(), 'cache'), fx.env);
+  assert.deepEqual(argv.slice(0, -1), ['exec', '--json', '--sandbox', 'workspace-write', ...configFlags({ domains: ['github.com', 'api.github.com'], cacheVars: vars }), '--cd', work,
+    '--add-dir', git, '--add-dir', drop, '--add-dir', cache, ...['plans', 'reviews', 'tmp', 'dispatch'].flatMap((name) => ['--add-dir', path.join(state, name)])]);
+  assert.ok(Object.values(caches).every((value) => !value.startsWith(cache) && !value.startsWith(path.join(fx.attempt(), 'cache'))), 'none in the codex process\'s own environment');
+  assert.equal(statSync(cache).mode & 0o777, 0o700);
   assert.match(argv.at(-1), /work only in that folder/u, 'the session note');
   // The clone: at the base tip, on the issue's branch, with the pinned origin and a git folder of its own.
   assert.equal(fx.git('-C', work, 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim());
@@ -391,6 +454,16 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   assert.deepEqual(readUnattendedMark(THREAD, { env: fx.env, home: fx.home }), { root: fx.dir, cwd: path.join(fx.attempt(), 'work'), project: 'launch', issue: 'ENG-1' }, 'the mark names the attempt\'s work folder it starts in');
   assert.equal(statSync(path.dirname(fx.log())).mode & 0o777, 0o700);
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['running ENG-1']);
+});
+
+test('start on Codex allows through its network proxy exactly the forge\'s hosts and the registries both reads list, and passes corepack the npm registry', (t) => {
+  const fx = codexRun(t, { projectRun: { allow: true, unverifiedHosts: true, registries: ['npm', 'pypi'] } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
+  const { argv } = fx.fake.call();
+  const rules = argv[argv.indexOf('features.network_proxy.enabled=true') + 2];
+  assert.equal(rules, 'features.network_proxy.domains={ "github.com" = "allow", "api.github.com" = "allow", "registry.npmjs.org" = "allow", "registry.yarnpkg.com" = "allow", "pypi.org" = "allow", "files.pythonhosted.org" = "allow" }');
+  assert.ok(argv.includes('shell_environment_policy.set.COREPACK_NPM_REGISTRY="https://registry.npmjs.org"'));
+  assert.ok(argv.includes(`shell_environment_policy.set.COREPACK_HOME=${JSON.stringify(path.join(fx.attempt(), 'cache', 'corepack'))}`));
 });
 
 test('a confined session hands its result over in its drop folder, and the driver\'s wait takes it in, then removes the attempt once the session ends', (t) => {

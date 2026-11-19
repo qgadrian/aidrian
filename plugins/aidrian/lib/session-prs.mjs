@@ -481,7 +481,7 @@ export const SUMMARY_BUDGET = 58;
 // The label rule, written again in the Claude mod's lib/format.mjs, which cannot import this file: a row has a number
 // when it is a safe integer above 0, and its repository is its host and its path in lower case.
 // Lower case matches GitHub's case-insensitive paths; on a forge with case-sensitive paths, repositories that differ only
-// in case share one label, one letter or bare `#42` when they are the only ones: an accepted residual of pull request #426.
+// in case share a repository prefix, empty when they are the only repository: an accepted residual of pull request #426.
 const hasNumber = (row) => Number.isSafeInteger(row.number) && row.number > 0;
 const repositoryOf = (row) => `${row.host}/${String(row.repo).toLowerCase()}`;
 

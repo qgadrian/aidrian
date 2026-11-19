@@ -130,9 +130,12 @@ export const drivesRun = (session, options = {}) => runDriver(session, options) 
 export const droveRun = (session, options = {}) => readDriverMark(session, options) !== null;
 
 // The unattended mark a driver stands for, for a reader that takes one (the merge guard, `aidrian pr auto-merge`):
-// { root, cwd: null } with the run's main checkout, `root` null when it is unknown, which such a reader refuses on; or
-// null when `session` drives no run.
+// { root, cwd: null, driving } with the run's main checkout, `root` null when it is unknown, which such a reader refuses
+// on, and `driving` the run, null when its mark cannot name it, so the merge guard holds the driver's merges to that
+// run's budget of waived merges (waiver.mjs runOf); or null when `session` drives no run.
 export function driverHold(session, options = {}) {
   const driver = runDriver(session, options);
-  return driver ? { root: driver.project ? driver.root : null, cwd: null } : null;
+  if (!driver) return null;
+  const driving = typeof driver.run === 'string' ? driver.run : null;
+  return { root: driver.project ? driver.root : null, cwd: null, driving };
 }

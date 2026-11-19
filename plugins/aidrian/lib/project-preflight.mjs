@@ -125,9 +125,11 @@ function trackerLines(base, policy, mcpServers) {
   lines.push(problem ? `blocker tracker: ${problem}` : 'ok tracker');
   // An issue's session reads its issue from a file the driver wrote, so a run needs no tracker server in it.
   if (adapter && !entries.some(([name, definition]) => mapped(name, definition) === adapter)) lines.push(`note tracker: projectRun.mcpServers holds no ${adapter.name} server, so issue sessions will not write the tracker; the driver reports`);
-  // Every tracker connection there must reach an adapter's endpoint, or be named in tracker.servers: the rule screens no other.
-  const others = entries.filter(([name, definition]) => !mapped(name, definition) && !(tracker.servers ?? []).includes(name)).map(([name]) => name);
-  if (others.length) lines.push(`note mcp-servers: the run rule maps ${others.map((name) => JSON.stringify(name)).join(', ')} to no tracker, so it screens no tracker write there; a tracker connection must reach its adapter's endpoint or be named in tracker.servers`);
+  // Every tracker connection there must reach an adapter's endpoint, or be named in tracker.servers: on any other the
+  // rule holds issue sessions and the driver to calls that read, unless projectRun.nonTrackerServers names it.
+  const declared = base.config?.projectRun?.nonTrackerServers ?? [];
+  const others = entries.filter(([name, definition]) => !mapped(name, definition) && !(tracker.servers ?? []).includes(name) && !declared.includes(name)).map(([name]) => name);
+  if (others.length) lines.push(`note mcp-servers: the run rule maps ${others.map((name) => JSON.stringify(name)).join(', ')} to no tracker, so issue sessions and the driver may call only tools there whose name says they read; name a server that reaches no tracker in projectRun.nonTrackerServers, and point a tracker connection at its adapter's endpoint or name it in tracker.servers`);
   return { lines, adapter };
 }
 

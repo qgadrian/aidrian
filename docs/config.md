@@ -127,7 +127,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
   "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
-  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "outsideSandbox": [], "mcpServers": {}, "registries": [] }
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [] }
 }
 ```
 
@@ -484,8 +484,10 @@ The merge guard takes it only for a merge that names the head: `gh pr merge <PR>
 (`--judge <agent id>`) and the recording session's [dispatch log](dispatch-log.md) holds that judge's dispatch, a
 `code-reviewer`, between the cap and the verdict. Only a host whose hook writes that row confirms a judge: Claude Code
 does; Codex does not, so on Codex no verdict stands for auto-merge and the gate exits 1. With `telemetry.enabled`
-false no log is written, and the same holds. In a project run, the run must have merged fewer than 3 pull requests on
-a verdict, counted by the verdicts that stand on each merged head; the merge guard holds a run's session to that too.
+false no log is written, and the same holds. The merge guard asks the same of the verdict it takes, so a session that
+skips auto-merge cannot merge on a verdict it recorded with no `--judge`. In a project run, the run must have merged
+fewer than 3 pull requests on a verdict, counted by the verdicts that stand on each merged head; the merge guard holds
+a run's sessions to that too, its driver among them.
 Its JSON then says `"waived": true`.
 The waiver lifts a denial; it merges nothing itself. A session no Human attends still meets every check of
 [merge trust](review.md#merge-trust): the waiver changes only the `round_limit` stop.
@@ -501,10 +503,11 @@ whose state folder is not the default branch's. Exit 1 says why; exit 3 is a rea
 the cap and dispatches a judge only on exit 0.
 
 A project run merges at most 3 pull requests on a verdict. The gate and `aidrian pr auto-merge` only count that budget;
-the merge guard takes it at the merge itself, under the run's ledger lock: it counts again and writes a `waived` row
-for the pull request, or refuses the merge once 3 are spent, so the sessions of issues that run in parallel never
-spend more between them. A taken merge counts even if the merge then fails; one the ledger lock or a read refuses is
-not merged.
+the merge guard takes it at the merge itself, under the run's ledger lock, once every other check of the merge,
+merge trust included, has passed: it counts again and writes a `waived` row for the pull request, or refuses the merge
+once 3 are spent, so the sessions of issues that run in parallel never spend more between them. A merge the guard
+refuses spends nothing. A taken merge counts even if the merge then fails after the guard let it run; one the ledger
+lock or a read refuses is not merged.
 
 ### What it never covers
 
@@ -1831,6 +1834,7 @@ allows project runs.
 | `projectRun.unverifiedHosts` | `false` | Whether a run starts sessions on a host whose project start no live run has verified, which today is both hosts, Claude Code and Codex: setting it opts into a sandbox boundary no live run has checked ([Claude Code](providers/claude-code.md#project-start), [Codex](providers/codex.md#project-start)). Read from the default branch on the forge; a local ref only refuses. Each such start prints an `unverified:` line. |
 | `projectRun.outsideSandbox` | `[]` | The names a confined session may still run outside its host's sandbox, each one the team has reviewed: a key of the user's host settings that runs a command, such as `hooks`, `statusLine`, or `apiKeyHelper`; any plugin other than this one that is installed or enabled, by its id, such as `name@marketplace`, since a plugin's hooks, MCP and LSP servers, and monitors all run outside the sandbox; a skill, agent, or command of the user's config folder whose frontmatter declares hooks or MCP servers, by its path spelled from `~/.claude/`, such as `~/.claude/skills/deploy/SKILL.md`; or one of the repository's, at any depth, by its path, such as `.claude/skills/deploy/SKILL.md`, or a link under a skills, agents, or commands folder that leads out of it, such as `.claude/skills/foo`. Any other such command halts the start. It never lifts a halt on the user's `sandbox` settings. Only the names both the default branch on the forge and the local ref list count. |
 | `projectRun.mcpServers` | `{}` | The MCP servers a confined session loads, as the host's `mcpServers` object takes them, each name to its definition. The session starts with only these: a project's `.mcp.json`, the user's own servers, and the host's claude.ai connectors never load. Each listed server, and the helper command it starts, runs outside the sandbox with the user's full access, so list only a server the team trusts with that; its definition travels in the session's command line, which any process of the user can read in the process list, so it holds no secret. Only the servers both the forge and the local ref define alike count. |
+| `projectRun.nonTrackerServers` | `[]` | The servers of `projectRun.mcpServers` that reach no tracker, by name, such as a docs server. The [project run rule](#tracker) holds an issue's session and the driver, on every server that list names and no tracker adapter maps, to calls whose name says they read, since it cannot tell a write there from a tracker write; a server named here is free of that. A server an adapter maps by its name or endpoint stays held whatever this lists. Read from the base branch. |
 | `projectRun.registries` | `[]` | The package registries a confined session may reach to install the project's dependencies, by ecosystem name, each once: `npm` (`registry.npmjs.org`, and `registry.yarnpkg.com`, yarn's default), `pypi` (`pypi.org` and `files.pythonhosted.org`), `crates` (`index.crates.io` and `static.crates.io`), `go` (`proxy.golang.org` and `sum.golang.org`), and `rubygems` (`index.rubygems.org` and `rubygems.org`). The hosts are fixed in `lib/project-registries.mjs`: no name of a host, and no other domain, is ever accepted. A team opts in; a project with no code yet lists the ecosystems of the stack it will scaffold. Install scripts a package runs, such as npm's `postinstall`, run inside the session's sandbox, under its write and network limits, which is why letting a session install is acceptable. Every listed registry but `pypi` and `crates` gives a channel a sandboxed command can send data out on that an attacker can read, `go` the widest, since its proxy fetches from any host a module path names; each is accepted because the forge channel gives one already, and narrowing the forge token reopens that ruling ([Dependency installs](providers/claude-code.md#dependency-installs) names each one's path). With `npm` listed, corepack downloads pnpm and yarn from it too. Every session, whatever this lists, keeps its package managers' caches in its attempt's `cache` folder, and the home folder stays as it is. Codex holds a session to the same hosts through its network proxy, which no live run has checked yet ([Codex](providers/codex.md#project-start)). Only the names both the default branch on the forge and the local ref list count. |
 
 On a host whose start proves its sandbox ([Claude Code](providers/claude-code.md#the-sandbox-proof)), a start refuses
@@ -2063,7 +2067,18 @@ label, and body hash it printed, until `recorded`; a driver mark the ledger does
 before its first `wait`, is held, and writes nothing: the background route files the driver's mark for a driver's
 continuation as it starts it. For both, every call on the tracker's server is a write unless
 its name says it reads, and the tracker's servers include those of `projectRun.mcpServers` whose endpoint an adapter
-names. A session that drove a run keeps the sign-off hold after `end`. A session no Human attends calls no tool a tracker's
+names. A server `projectRun.mcpServers` lists that no adapter maps, such as Linear's own server started by `npx`
+under a name of the team's choosing, may be a tracker connection the rule cannot screen: on it, both are refused every
+call whose name does not say it reads (`get_`, `list_`, `search_`, `read_`, and the other read verbs of the
+[first-word check](#how-a-write-is-judged)), unless `projectRun.nonTrackerServers` names it as reaching no tracker.
+`aidrian project preflight` notes each such server. When the base branch's config cannot be read, or the mark names no
+project, which servers reach a tracker cannot be told, so both are refused that on every server no adapter maps; a held
+session, which reads no base branch, always is. The rule runs under the [agent gate hook's time budget](hooks.md#agent-gates):
+a call it cannot judge in time is refused to a marked, held, or driving session unless its name says it reads.
+The driver may post an owed comment or status more than once before `recorded` closes it: the hook judges each call
+against the report, not against what earlier calls wrote. A repeated status changes nothing, and a repeated comment is
+a duplicate the driver's report already holds, an accepted residual.
+A session that drove a run keeps the sign-off hold after `end`. A session no Human attends calls no tool a tracker's
 merge verb names, on any server, and no session merges or
 marks a pull request ready through a tracker's own tool: `gh pr merge` and `gh pr ready` are the routes the merge guard
 and the ready hold judge. A marked session's base branch config is read through the main checkout its mark names, and

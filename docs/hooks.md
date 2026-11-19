@@ -576,11 +576,15 @@ any other, the denial says to name it. It never stands in for the review bot: it
 passed exactly that head in the review trail, open findings of this machine's own reviewers, each of `medium`
 severity or lower and no security finding, are the whole cause of the cap the record keeps, no sign-off of the Human's
 is owed on the head in the sign-off store, and, for a project run's session, the run has not spent its budget of
-waived merges; otherwise the denial says which, and offers no route to record a verdict. The store and the run's
+waived merges; otherwise the denial says which, and offers no route to record a verdict. A verdict stands only for the
+judge it names (`--judge`), whose dispatch, a `code-reviewer` between the cap and the verdict, the recording session's
+[dispatch log](dispatch-log.md) shows, so one recorded with no judge never stands, as for auto-merge. A run's driver
+counts against its run's budget as an issue's session does. A project run's session takes the merge from that budget
+only after every other check of the merge, merge trust included, passed, so a refused merge spends none of it. The store and the run's
 ledger and records are read only before the deadline below: past it, the denial says the team's value could not be
 read in time. The ledger is read through the main checkout and its config, as the pinned repository is, and the count
 stops at the budget, each record read checked against the deadline. Any `aidrian pr auto-merge`
-under these switches takes a verdict too, with the judge's dispatch checked as well. The guard reads the waiver only when the denial is that one and this
+under these switches takes a verdict too, on the same judge check. The guard reads the waiver only when the denial is that one and this
 machine's `github.unattendedWaiver` switch is on, or unset under the team's [`solo`](config.md#solo), so with the
 switch off it makes no network call it did not make before. With the switch unset it reads git first, once, each
 read held to the deadline below: the default branch's local ref, and whether git tracks the local file. It reads the

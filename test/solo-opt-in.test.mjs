@@ -13,6 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { configFromText, DEFAULTS, loadConfig, machineSwitch } from '../plugins/aidrian/lib/config.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { backgroundGate } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { detectHost } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
@@ -158,8 +159,12 @@ test('solo on the base branch, with no local setting, turns each of the three sw
   const cap = { head: HEAD, reviewed: HEAD, items: [], counted: 0, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [] };
   const state = {
     ...emptyState(5, 'acme/notes'), outcome: { status: 'round_limit', head: HEAD, at: T0, cap }, signoffable: { head: HEAD, flows: [] },
-    waivers: [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'judge', at: '2026-11-03T15:00:00.000Z' }],
+    waivers: [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'judge', judge_id: 'judge-1', session: 'sess-judge', at: '2026-11-03T15:00:00.000Z' }],
   };
+  // The judge the verdict names, dispatched between the cap and the verdict, as the guard confirms in the dispatch log.
+  const log = logPath(project, loadConfig(project).config);
+  mkdirSync(path.dirname(log), { recursive: true });
+  writeFileSync(log, `${JSON.stringify({ event: 'dispatch', ts: '2026-11-03T14:30:00.000Z', session_id: 'sess-judge', dispatcher: 'main', agent_id: 'judge-1', agent_type: 'aidrian:code-reviewer' })}\n`);
   assert.deepEqual(guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: fakeForge(), startedAt: Date.now() }), { allow: true, note: '', route: '' });
   // Through a pull request number, as aidrian pr settle reads it.
   assert.equal(prSolo(project, 5, { forge: fakeForge() }), true);

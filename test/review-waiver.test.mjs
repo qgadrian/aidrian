@@ -57,6 +57,10 @@ function repo(t, { config = {}, local = null } = {}) {
   if (local) writeFileSync(path.join(dir, LOCAL), JSON.stringify(local));
   const transcript = path.join(dir, 'transcript.jsonl');
   writeFileSync(transcript, '');
+  // The judge every verdict below names (waiver()), dispatched between the cap (T0) and the verdict, in the dispatch log.
+  const log = logPath(projectAt(dir), loadConfig(projectAt(dir)).config);
+  mkdirSync(path.dirname(log), { recursive: true });
+  writeFileSync(log, `${JSON.stringify(JUDGE_ROW)}\n`);
   const record = (pr, edit) => {
     const state = emptyState(pr, 'acme/notes');
     edit(state);
@@ -126,8 +130,12 @@ const roundLimit = (state, head = HEAD, extra = {}) => {
   state.signoffable = { head, flows: [] };
 };
 const received = (state, head = HEAD) => (state.outcome = { status: 'received', head, at: T0 });
-const waiver = (state, { head = HEAD, kind = 'round_cap', verdict = 'waive', at = '2026-11-03T15:00:00.000Z', reason = 'every open finding is a nit' } = {}) =>
-  (state.waivers = [...(state.waivers ?? []), { head, kind, verdict, reason, judge: 'code-reviewer', at }]);
+// A judge's verdict as `aidrian pr waive --judge` records it, naming the judge and the recording session; `judged: false`
+// drops both, as a verdict recorded with no --judge holds.
+const JUDGE = { judge_id: 'judge-1', session: 'sess-judge' };
+const JUDGE_ROW = { event: 'dispatch', ts: '2026-11-03T14:30:00.000Z', session_id: JUDGE.session, dispatcher: 'main', agent_id: JUDGE.judge_id, agent_type: 'aidrian:code-reviewer' };
+const waiver = (state, { head = HEAD, kind = 'round_cap', verdict = 'waive', at = '2026-11-03T15:00:00.000Z', reason = 'every open finding is a nit', judged = true } = {}) =>
+  (state.waivers = [...(state.waivers ?? []), { head, kind, verdict, reason, judge: 'code-reviewer', ...(judged ? JUDGE : {}), at }]);
 
 // ---- config (AC5, AC6)
 
@@ -416,6 +424,23 @@ test('both switches on and a waive entry: the merge guard lets round_limit on th
   assert.equal(merge(r, `gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), null, 'gh api naming the head');
   // The MCP merge tool takes it the same way.
   assert.equal(checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: viewer([]), waiverForge: teamForge() }), null);
+});
+
+test('the merge guard takes a verdict only for a judge the recording session\'s dispatch log shows: one recorded with no --judge never stands', (t) => {
+  const r = repo(t, { local: ON });
+  const command = `gh pr merge 5 --squash --match-head-commit ${HEAD}`;
+  const mcp = () => checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: viewer([]), waiverForge: teamForge() });
+  r.record(5, (state) => (roundLimit(state), waiver(state, { judged: false })));
+  for (const reason of [merge(r, command), mcp()]) {
+    assert.match(reason ?? '', /A judge's verdict cannot stand for this head: the verdict names no judge agent and session \(`aidrian pr waive --judge <agent id>`\), so the dispatch log cannot show its judge was dispatched\./u);
+  }
+  // A judge the log does not show, or one of another session, is refused the same way.
+  for (const named of [{ judge_id: 'judge-9', session: JUDGE.session }, { judge_id: JUDGE.judge_id, session: 'sess-other' }]) {
+    r.record(5, (state) => (roundLimit(state), waiver(state, { judged: false }), Object.assign(state.waivers.at(-1), named)));
+    assert.match(merge(r, command) ?? '', /cannot stand for this head: the dispatch log holds no dispatch of the code-reviewer judge-\d by session sess-\w+ between the cap and the verdict/u, JSON.stringify(named));
+  }
+  r.record(5, (state) => (roundLimit(state), waiver(state)));
+  assert.equal(merge(r, command), null, 'the judge the log shows');
 });
 
 test('a head the last review step did not cover is never waived: after received, none_needed, or round_limit, denied with no route, nothing read', (t) => {
@@ -1041,12 +1066,16 @@ test('parallel issues of a run that each count the budget below its most: the me
   const merge = (pr) => guardWaiver({ project, state: readLocalState(project, pr), pr, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: () => 0, memo: memo() });
   // Before either merge, each counts two of three spent: each may merge, as its gate and auto-merge read it.
   for (const pr of [5, 7]) assert.equal(budgetProblem({ project, home: fx.project, config: fx.config, run: 'launch', pr }), null, `#${pr}`);
-  assert.deepEqual(merge(5), { allow: true, note: '', route: '' });
+  const first = merge(5);
+  assert.deepEqual([first.allow, first.note, first.route], [true, '', '']);
+  assert.equal(fx.rows().filter((row) => row.event === 'waived').length, 0, 'nothing is taken before the merge guard\'s every check passed');
+  assert.equal(first.take(), null, 'taken once they did');
   const second = merge(7);
   assert.equal(second.allow, false);
   assert.match(second.route, /A judge's verdict cannot stand for this head: project run launch merged 3 pull requests on a judge's verdict already, its most \(3\)/u);
   assert.deepEqual(fx.rows().filter((row) => row.event === 'waived').map((row) => [row.pr, row.head]), [[5, HEAD]], 'the take is in the ledger, once');
-  assert.equal(merge(5).allow, true, 'the same pull request merged again, as a retry, takes nothing more');
+  const retry = merge(5);
+  assert.deepEqual([retry.allow, retry.take()], [true, null], 'the same pull request merged again, as a retry, takes nothing more');
   assert.equal(fx.rows().filter((row) => row.event === 'waived').length, 1);
   assert.match(budgetProblem({ project, home: fx.project, config: fx.config, run: 'launch', pr: 7 }) ?? '', /its most \(3\)/u, 'the read-only count sees the take too');
   // A ledger another process holds locked refuses the take: no merge on a budget it could not count.

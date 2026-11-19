@@ -1455,22 +1455,27 @@ Two checks read it:
   fit and nothing settles which, the edit is judged as if the body were new. An edit judges only the clauses its pull
   request's current body does not already hold. The duplicate-body check reads the edit's target the same way.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
-  own rows since its run started: a run of the session or of another agent is that one's to report. A machine
-  handoff's JSON object, in a ```` ```json ```` fence or bare from the first line that opens with `{`, is read one string
-  value at a time, and the prose before and after it as text of its own; an object that does not parse is read as plain
-  text. It skips only fenced code, block quote lines, and what an outside source governs: a clause that opens with
+  own rows since its run started: a run of the session or of another agent is that one's to report. The report is
+  read in one pass over its lines, with fences found as the body rule finds them. A machine handoff's JSON, a
+  ```` ```json ```` fence whose content parses or an object that opens on a line starting with `{` outside fenced code,
+  is read one string value at a time, and the prose around it as text of its own. Any other fence, such as a
+  ```` ```jsonc ```` one or a ```` ```json ```` one that does not parse, stays fenced code, so a `{` line inside it
+  is no handoff and a claim after it still counts. At most 100 JSON values are parsed a report, and none is read by
+  recursion, so no report makes the check throw.
+  It skips only fenced code, block quote lines, and what an outside source governs: a clause that opens with
   "according to" an outside source, and a part of a clause, split at a coordinating "and", in which an outside source
-  and a verb of saying come right before the command, as "the pull request body says `npm test` passed" or "the
-  reviewer wrote \"`npm test` passed\"". Such a part that ends at its list of commands carries into the next part,
-  whose predicate is the source's, so "the pull request body says `npm test` and `vitest run` passed" is all the
-  body's, while "the issue says `npm test` hangs, and `vitest run` passed 3/3" keeps the second claim. Words in double
-  quotes are the writer's own, so "`npm run check` reported \"4071/4071 pass\"" is a claim. An outside source is
-  another agent, a subagent, a pull request, an issue, a review, or a handoff; a report, handoff, or review after
-  "this", "my", or "our", with at most one word between, "this agent", "my run", and "the test output" are the
-  writer's own, so "according to the test output, `npm test` passed", "my final report lists ...", and "fixed the issue
-  reported in the ticket and `npm test` passed" stay claims. An accepted residual: a report that puts its own claim in
-  fenced code other than a JSON handoff, or in a block quote, is not checked; the check stops the mistake seen live, a
-  report written from runs that never ended, not one set on hiding.
+  and a verb of saying come right before the command, as "the pull request body says
+  `npm test` passed" or "the reviewer wrote \"`npm test` passed\"". Such a part that ends at its list of commands
+  carries into the next part, whose predicate is the source's, so "the pull request body says `npm test` and
+  `vitest run` passed" is all the body's, while "the issue says `npm test` hangs, and `vitest run` passed 3/3" keeps
+  the second claim. Words in double quotes are the writer's own, so "`npm run check` reported \"4071/4071 pass\"" is a
+  claim. An outside source is another agent, a subagent, a pull request, an issue, a review, or a handoff; a report,
+  handoff, or review after "this", "my", or "our", with at most one word between, "this agent", "this subagent",
+  "my run", and "the test output" are the writer's own, so "according to the test output, `npm test` passed",
+  "my final report lists ...", and "fixed the issue reported in the ticket and `npm test` passed" stay claims.
+  An accepted residual: a report that puts its own claim in fenced code other than a JSON handoff, or in a block
+  quote, is not checked; the check stops the mistake seen live, a report written from runs that never ended, not one
+  set on hiding.
   It sends the subagent back once, on the first stop of its turn, to quote the output a finished run returned or to
   call the run "not finished".
 

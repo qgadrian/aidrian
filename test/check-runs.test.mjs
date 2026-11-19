@@ -302,6 +302,20 @@ test('a report that is or opens with a JSON object is read a string value at a t
     'a JSON object in a json fence');
 });
 
+test('a `{` line inside fenced code is no handoff, and a claim after the fence still counts', () => {
+  const own = (text) => passClaims(text, { section: null, ownOnly: true, testing: TESTING }).map(({ key, counts }) => ({ key, counts }));
+  const config = '{"testing": {"fullSuite": ["npm run check"]}}';
+  for (const [fence, why] of [['```', 'a plain fence'], ['```jsonc', 'a jsonc fence']]) {
+    assert.deepEqual(own(`The config now reads:\n\n${fence}\n${config}\n\`\`\`\n\n\`npm run check\`: 12/12 pass.`), [{ key: 'npm run check', counts: [12] }], why);
+  }
+  assert.deepEqual(own(`The config now reads:\n\n\`\`\`json\n${config}\n{"broken":\n\`\`\`\n\n\`npm run check\`: 12/12 pass.`), [{ key: 'npm run check', counts: [12] }],
+    'a json fence that does not parse, with a whole object on a line of it');
+  const many = '```json\n{"a": "x"}\n```\n'.repeat(10_000);
+  assert.deepEqual(own(`${many}\n\`npm run check\`: 12/12 pass.`), [{ key: 'npm run check', counts: [12] }], '10,000 json fences, then an own claim');
+  const deep = `${'['.repeat(5000)}"\`npm test\` passed 1/1"${']'.repeat(5000)}`;
+  assert.deepEqual(own(`\`\`\`json\n${deep}\n\`\`\``), [{ key: 'npm test', counts: [1] }], 'deep nesting reads with no recursion');
+});
+
 test('a report\'s own claim stays one when it names a source that does not say the command', () => {
   const own = (text) => passClaims(text, { section: null, ownOnly: true, testing: TESTING }).map(({ key, counts }) => ({ key, counts }));
   for (const [text, counts] of [
@@ -316,6 +330,7 @@ test('a report\'s own claim stays one when it names a source that does not say t
     ['My handoff lists `npm test` passed 40/40.', [40]],
     ['According to my review, `npm test` passed 40/40.', [40]],
     ['This agent reports `npm test` passed 40/40.', [40]],
+    ['This subagent reports `npm test` passed 40/40.', [40]],
   ]) assert.deepEqual(own(text), [{ key: 'npm test', counts }], text);
   assert.deepEqual(own('The final report states `npm test` passed 40/40.'), [], 'a report not the writer\'s');
   assert.deepEqual(own('My subagent reports `npm test` passed 40/40.'), [], 'a subagent is another agent');

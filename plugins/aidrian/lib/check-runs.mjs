@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
-import { sectionLines, unfencedLines } from './markdown-sections.mjs';
+import { closes, fencedLines, fenceOf, sectionLines, unfencedLines } from './markdown-sections.mjs';
 import { appendSessionFile, readSessionTail, writeSessionFile } from './session-folder.mjs';
 import { aidrianArgs, lexPipeline, readInvocation, walkCommands } from './shell-lex.mjs';
 
@@ -363,10 +363,10 @@ const FAIL_WORD = /\bnot\s+finished\b|\b(?:failed|failing|red|timed\s+out|stoppe
 const CI_WORD = /\bCI\b|\bpipeline\b|\bworkflow\b/u;
 // An outside source a report may quote: another agent, a pull request, an issue, a review. The writer's own words are
 // none: a report, handoff, or review after "this", "my", or "our", with at most one word between, as "my final report";
-// "this agent"; "the test report"; and "the test output" or "my run", which name no source here. "My subagent" is
-// another agent.
+// "this agent" and "this subagent"; "the test report"; and "the test output" or "my run", which name no source here.
+// "My subagent" is another agent.
 const SELF = String.raw`(?<!\b(?:this|my|our)\s+(?:[A-Za-z-]+\s+)?)`;
-const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|${SELF}review|subagent|(?<!\bthis\s)agent|dispatcher|issue|ticket|comment|thread|${SELF}handoff|${SELF}(?<!\btest\s)report|brief|author|commit\s+message|bot)`;
+const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|${SELF}review|(?<!\bthis\s)subagent|(?<!\bthis\s)agent|dispatcher|issue|ticket|comment|thread|${SELF}handoff|${SELF}(?<!\btest\s)report|brief|author|commit\s+message|bot)`;
 const SAYS = String.raw`(?:says?|said|claim(?:s|ed)?|states?|stated|reports?|reported|writes|wrote|lists?|listed|quotes?|quoted|asserts?|asserted)`;
 // A clause an outside source governs: one that opens with "according to" it, or a part of it, split at a coordinating
 // "and", in which a source and a verb of saying come right before the command (saidBefore, built with the suites).
@@ -380,20 +380,72 @@ const saidBefore = (suites) => {
 // "and `vitest run` passed": what the source says of them follows.
 const endsAtCommand = (suites) => new RegExp(`(?:${commandWords(suites).join('|')})[\\s,.;:]*$`, 'u');
 
-// The texts of a report, each its writer's own. A machine handoff's JSON object, in a ```json fence or on its own from
-// the first line that opens with `{`, gives each string value of it, and the prose before and after it is text of its
-// own; any other report, or one whose object does not parse, is one text.
+// The most JSON values a report's reading parses (reportTexts): past it, a fence stays fenced code and a `{` line text.
+const HANDOFF_PARSES = 100;
+
+// The texts of a report, each its writer's own, read in one pass over its lines with fences found as unfencedLines
+// finds them. A machine handoff's JSON gives each string value of it as a text: a ```json fence whose content parses,
+// or an object that opens on a line starting with `{` outside any fence. Any other fence, a ```jsonc one or a ```json
+// one that does not parse, stays fenced code, and the prose around them is text, so a claim after a fence still counts.
 function reportTexts(report) {
-  const fence = /^[ \t]*```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```[ \t]*$/mu.exec(report);
-  const fenced = fence ? parsed(fence[1]) : undefined;
-  if (fenced !== undefined) {
-    return [...reportTexts(report.slice(0, fence.index)), ...stringsOf(fenced), ...reportTexts(report.slice(fence.index + fence[0].length))];
+  const lines = report.split(/\r?\n/u);
+  const fenced = fencedLines(report);
+  const texts = [];
+  let prose = [];
+  let parses = 0;
+  const handoff = (value) => {
+    if (prose.length) texts.push(prose.join('\n'));
+    prose = [];
+    for (const text of stringsOf(value)) texts.push(text);
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (fenced[index]) {
+      const { end, last } = fenceBlock(lines, fenced, index);
+      const json = /^\s*(?:`{3,}|~{3,})\s*json\s*$/iu.test(line) && parses < HANDOFF_PARSES;
+      parses += json ? 1 : 0;
+      const value = json ? parsed(lines.slice(index + 1, end).join('\n')) : undefined;
+      if (value !== null && typeof value === 'object') handoff(value);
+      else for (const each of lines.slice(index, last + 1)) prose.push(each);
+      index = last;
+    } else if (line.startsWith('{') && parses < HANDOFF_PARSES) {
+      parses += 1;
+      const object = bareObject(lines, index);
+      if (!object) {
+        prose.push(line);
+        continue;
+      }
+      handoff(object.value);
+      if (object.after.trim()) prose.push(object.after);
+      index = object.through;
+    } else {
+      prose.push(line);
+    }
   }
-  const open = /^\{/mu.exec(report);
-  const end = open ? jsonEnd(report, open.index) : null;
-  const bare = end === null ? undefined : parsed(report.slice(open.index, end));
-  if (bare === undefined) return [report];
-  return [report.slice(0, open.index), ...stringsOf(bare), report.slice(end)];
+  if (prose.length) texts.push(prose.join('\n'));
+  return texts;
+}
+
+// The fenced block that opens on line `index` of `lines`, `fenced` marking each fenced line (fencedLines), as
+// { end, last }: `end` the closing fence's line, or the first line past the block when none closes it, and `last` the
+// block's last line.
+function fenceBlock(lines, fenced, index) {
+  const open = fenceOf(lines[index]);
+  let end = index + 1;
+  while (end < lines.length && fenced[end] && !(open && closes(fenceOf(lines[end]), open))) end += 1;
+  return { end, last: end < lines.length && fenced[end] ? end : end - 1 };
+}
+
+// The JSON object that opens on line `index` of `lines`, as { value, through, after }: the line it ends on, and the
+// text after it there; or null when it does not close or parse.
+function bareObject(lines, index) {
+  const rest = lines.slice(index).join('\n');
+  const end = jsonEnd(rest, 0);
+  const value = end === null ? undefined : parsed(rest.slice(0, end));
+  if (value === undefined) return null;
+  const text = rest.slice(0, end);
+  const through = index + (text.match(/\n/gu)?.length ?? 0);
+  return { value, through, after: lines[through].slice(end - text.lastIndexOf('\n') - 1) };
 }
 
 // `text` parsed as JSON, or undefined when it does not parse.
@@ -426,11 +478,18 @@ function jsonEnd(text, start) {
 }
 
 // Every string value in a parsed JSON value, in order.
+// Read with a stack, not recursion, so no nesting depth throws.
 function stringsOf(value) {
-  if (typeof value === 'string') return [value];
-  if (value === null || typeof value !== 'object') return [];
-  return Object.values(value).flatMap(stringsOf);
+  const strings = [];
+  const stack = [value];
+  while (stack.length) {
+    const next = stack.pop();
+    if (typeof next === 'string') strings.push(next);
+    else if (next !== null && typeof next === 'object') stack.push(...Object.values(next).reverse());
+  }
+  return strings;
 }
+
 // A Markdown block quote line.
 const BLOCK_QUOTE = /^\s{0,3}>/u;
 // A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one.

@@ -702,6 +702,11 @@ test('a worktree the call did not create records no links row: no result, a refu
     ['aidrian worktree new feat/existing || cat saved.json', `${createdLine('feat/existing', tree)}\n`],
     // A refused call, and the saved result of the next call's branch: that place is the refusal's.
     ['aidrian worktree new feat/other && aidrian worktree new feat/existing', `${blockedLine('feat/other')}\n`],
+    // A command after the calls that runs even when a call failed, so a saved result can take a call's place.
+    ['aidrian worktree new feat/existing && npm test; cat saved.json', `${createdLine('feat/existing', tree)}\n`],
+    ['aidrian worktree new feat/existing && npm test || cat saved.json', `${createdLine('feat/existing', tree)}\n`],
+    ['aidrian worktree new feat/other && aidrian worktree new feat/existing && npm test || cat saved-b.json', `${blockedLine('feat/other')}\n${createdLine('feat/existing', tree)}\n`],
+    [`aidrian worktree new feat/existing <<'EOF'\nbody\nEOF\ncat saved.json`, `${createdLine('feat/existing', tree)}\n`],
     // A relative cd: the payload may name the folder the line started in or the one it ended in.
     ['cd sub && aidrian worktree new feat/existing', `${createdLine('feat/existing', tree)}\n`],
   ];
@@ -721,6 +726,17 @@ test('a created result is recorded when other commands share its line: one after
   // An echoed result of an existing worktree, before or after a call: never that call's own result.
   assert.deepEqual(linkRows(`echo '${createdLine('feat/first', tree)}' && aidrian worktree new feat/first && npm test`, dir, { stdout: `${createdLine('feat/first', tree)}\n${blockedLine('feat/first')}\n` }), []);
   assert.deepEqual(linkRows(`aidrian worktree new feat/first; echo '${createdLine('feat/first', tree)}'`, dir, { stdout: `${createdLine('feat/first', tree)}\n` }), []);
+});
+
+test('two calls on one line in two projects: each row lands in its own project`s session folder', { skip: !POSIX }, () => {
+  const here = worktreeRepo('feat/here-call');
+  const there = worktreeRepo('feat/there-call', { origin: 'git@github.com:acme/there.git' });
+  const command = `aidrian worktree new feat/here-call && env -C ${there.dir} aidrian worktree new feat/there-call && npm test`;
+  const byProject = linkRowsByProject(command, here.dir, { stdout: `${createdLine('feat/here-call', here.tree)}\n${createdLine('feat/there-call', there.tree)}\nok\n` });
+  const idOf = (dir) => path.basename(stateDir(findProject(dir)));
+  assert.deepEqual(Object.keys(byProject).sort(), [idOf(here.dir), idOf(there.dir)].sort(), 'one session folder each');
+  assert.deepEqual(byProject[idOf(here.dir)].map(({ branch, cwd, path: repo }) => [branch, cwd, repo]), [['feat/here-call', here.listed, 'acme/widgets']]);
+  assert.deepEqual(byProject[idOf(there.dir)].map(({ branch, cwd, path: repo }) => [branch, cwd, repo]), [['feat/there-call', there.listed, 'acme/there']]);
 });
 
 test('a worktree made after a cd is filed in the project of that folder, with its own checkout`s path', { skip: !POSIX }, () => {
@@ -800,7 +816,8 @@ test('project discovery`s tracked-file check of a local switch runs inside the l
     assert.deepEqual(ledger.map(({ kind, number }) => [kind, number]), [['touched', 12]], `${name}: the ledger row`);
     return took;
   };
-  const baseline = timed('none', 'no-such-call');
+  // The fastest of three runs that stall nothing, so one slow run under machine load does not hide a stall.
+  const baseline = Math.min(...[1, 2, 3].map(() => timed('none', 'no-such-call')));
   const over = timed('ls-files', '*"ls-files"*') - baseline;
   // Git's own 2 s limit on that check would show as about 2 s over; the links' budget as 1 s at most.
   assert.ok(over < 1500, `the stalled tracked-file check cost ${over} ms over the ${baseline} ms baseline, past the links budget`);

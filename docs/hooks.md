@@ -1341,15 +1341,23 @@ here with `status: "created"`, that branch, and an absolute `worktree_path`, rea
 result is matched to its own call by its place (`worktreeCalls` and `createdWorktrees`): the line must open with bare
 assignments and `cd`s the walk leaves out, joined by `&&`, `;`, or a newline, then one or more calls joined by `&&`, so
 nothing prints before the first call, each call runs only once the one before it succeeded, and the nth JSON line with a
-`status` is the nth call's. What follows the last call, joined by `&&` or ending the line, may print anything, so
-`aidrian worktree new <branch> && npm test` records its worktree, and
-`aidrian worktree new <a> && aidrian worktree new <b>` records both, in order. A call followed by anything else, such
-as `;`, `||`, or a pipe, may have printed nothing before another command prints, so it, and any call after it, records
-nothing; so does a call whose output is redirected, a negated one, every call on a line with a `&`, and every call
-after a substitution other than a plain `cat`, whose error output the shell does not capture. So a call that was
-skipped, as after `false &&`, refused, as for a branch already checked out, or printed nothing records nothing, and
-neither does an echoed or replayed result, such as `echo '<saved result>'; aidrian worktree new <branch>` or
-`aidrian worktree new <branch>; cat <saved result>`.
+`status` is the nth call's.
+From the first call to the end of the line, every command is joined to the next by `&&`, a pipe allowed inside a
+command after the calls, and only a `;` or a newline may end the line, so no command after a call runs unless that
+call succeeded.
+What follows the last call may print anything, so `aidrian worktree new <branch> && npm test` records its worktree, and
+`aidrian worktree new <a> && aidrian worktree new <b>` records both, in order.
+A line with `;`, `||`, a newline, or a `&` after its first call records nothing, as
+`aidrian worktree new <branch> && npm test || cat <saved result>` would let a saved result take the place of a call
+that failed and printed nothing.
+Pairing stops at the first result that is neither created nor planned: that call failed, and no call after it ran.
+A call piped elsewhere or whose output is redirected records nothing, with any call after it, and so do a negated
+call and every call after a substitution other than a plain `cat`, whose error output the shell does not capture.
+So a call that was skipped, as after `false &&`, refused, as for a branch already checked out, or printed nothing
+records nothing, and neither does an echoed or replayed result, such as
+`echo '<saved result>'; aidrian worktree new <branch>` or `aidrian worktree new <branch>; cat <saved result>`.
+Claude Code runs `PostToolUse` only for a Bash call that succeeded, so there a worktree is recorded only when the whole
+line succeeded; on Codex, which runs it either way, a line that failed after its calls still records them.
 Within that rule an existing worktree is not recorded as one the session made, but the output is what the
 host hands the hook, which the model's own shell call shapes: a call made to print a forged result, such as a wrapper
 named `aidrian`, can still claim one. That is accepted for display data. Each command is looked up in the folder it ran

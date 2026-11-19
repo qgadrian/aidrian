@@ -202,7 +202,8 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   `[hooks.state]` entry for this plugin's id in `config.toml`, not turned off. Trust them in `/hooks` after each install
   and update. `[sandbox_workspace_write] network_access = true` must be set, or the session could neither push nor
   reach the forge, and `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
-  folders, nor the runs folder. Each failure halts the start, and records nothing.
+  folders, the [sign-off store](../review.md#merge-trust)'s folders, nor the runs folder; nor may `/tmp` or `$TMPDIR`,
+  which the sandbox also writes, unless `exclude_slash_tmp` or `exclude_tmpdir_env_var` is set true there. Each failure halts the start, and records nothing.
 - A start holds the session only after three proofs, each in a bounded wait: its session id in the first JSON event
   within 30 seconds, its first tool call within 180 seconds, and the agent gate hook's beacon a few seconds after it.
   A failed proof stops the process at once, gives the attempt back, and halts the run until the Human's own shell, or

@@ -108,4 +108,6 @@ Then:
    After `gh pr ready`, push nothing more: a later finding belongs in a new pull request.
 2. Once step 1 marked it ready in this run, run the `pr-auto-merge` skill.
    Keep the line it stops on for the report. Merge only through that step, never otherwise.
+   In a session no Human attends, the merge also needs merge trust: the review bot's pass on the head, requested with
+   `aidrian pr await-review <n> --request`, and the Human's sign-off of each flow that asks for one, from a session they attend.
 3. Write the last checkpoint when allowed, then the report of `SKILL.md` § Report.

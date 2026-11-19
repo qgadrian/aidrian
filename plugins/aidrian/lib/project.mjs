@@ -64,7 +64,7 @@ const GUARDED_LIB = [
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-trust', 'remotes', 'review-gate', 'session-length',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-trust', 'remotes', 'review-gate', 'run-driver', 'session-length',
   'session-start-gate', 'shell-lex', 'solo',
   'stop-announce', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell', 'unattended-write', 'usage',
 ].join('|');
@@ -85,6 +85,10 @@ export const GUARDED_PATHS = new RegExp(
     `|^plugins/aidrian/(?:${GUARDED_PLUGIN})`,
   'iu',
 );
+
+// The paths, from the top of the repository, a review trail reads each branch's policy files at for the project folder
+// `prefix` (the forge's reviewTrail `paths`): the pointer file, the default folder's config.json, and its knowledge folder.
+export const trailPaths = (prefix = '') => ({ pointer: `${prefix}${OVERRIDE}`, config: `${prefix}${DEFAULT_DIR}/config.json`, knowledge: `${prefix}${DEFAULT_DIR}/knowledge` });
 
 // The knowledge index folder beside a config.json path, such as one configPathIn located: `<folder>/knowledge`, with the
 // same prefix, as openProject's `paths.knowledge` is.

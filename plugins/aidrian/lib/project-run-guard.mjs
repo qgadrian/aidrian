@@ -24,6 +24,7 @@ import { opaqueShellCommand } from './hosts/index.mjs';
 import { findProject } from './project.mjs';
 import { activeRuns, attendedProblem, ISSUE_KEY, readRun, RUN_ID, runPlace } from './project-run.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
+import { endedIn, runDriver } from './run-driver.mjs';
 import { marksNaming, readUnattendedMark } from './unattended-mark.mjs';
 
 // The file a confined session hands its result over in, in its drop folder: project-result.mjs's DROP_FILE, which
@@ -72,6 +73,21 @@ export function projectRunActive(project, config, { base, home } = {}) {
     if (activeRuns(state).length > 0) return true;
   }
   return marksNaming(project.checkouts ?? [], home ? { home } : {});
+}
+
+// The hold predicates (run-driver.mjs): which run `session` is held as the driver of, from its driver mark alone.
+export { driverHold, drivesRun, endedIn, runDriver } from './run-driver.mjs';
+
+// The authority rule for a driver's WRITES, for a guard that lets a run's driver do what no other session may: the run
+// `session` drives by its driver mark (runDriver, naming a run, its project, and its state folder), whose ledger, read
+// there, names `session` as its current driver (driverOf) and records no end. { run, project, state, found }, or null.
+// runDriver alone only holds a session; it never grants.
+export function currentDriver(session, options = {}) {
+  const driver = runDriver(session, options);
+  if (!driver?.run || !driver.project || !driver.state) return null;
+  const found = readRun(driver.state, driver.run);
+  if (found.problem || endedIn(found.rows) || driverOf(found).session !== session) return null;
+  return { run: driver.run, project: driver.project, state: driver.state, found };
 }
 
 // Whether the member of a chain, { id, session }, is the session `session`: its full id, or, when only the id the host
@@ -326,6 +342,7 @@ const RULES = Object.freeze({
   start: driverOnly,
   wait: driverOnly,
   handoff: driverOnly,
+  end: driverOnly,
   result: ({ found, store, key, session, home }) => {
     let mark = null;
     try {

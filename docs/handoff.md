@@ -379,6 +379,8 @@ Limits:
     `chgrp` of the store, a file in it, its handoffs folder, or the state folder, which would hide the floor;
   - a write in the unattended marks' folder, or a change of its mode or owner, or of the state root's, which would
     lift its own mark, with or without a project, as a subagent is refused it too;
+  - a write in the [sign-off store](review.md#merge-trust), which holds the Human's flow sign-offs a merge no Human asks
+    for reads, as a subagent is refused it too;
   - a host session started outside the gate, such as `claude -p`, `claude --bg`, or `claude --resume`, by the matcher
     each host adapter declares (`sessionStart`, [Adding a host](providers/adding-a-host.md));
   - an `aidrian handoff continue` or `aidrian handoff route` whose command line sets or unsets `XDG_STATE_HOME`, `HOME`,

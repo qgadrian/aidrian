@@ -73,6 +73,71 @@ const NODE_QUERY = 'query($id:ID!){node(id:$id){... on PullRequest{url}}}';
 // When a pull request's body and title last changed: the body's last edit and the newest title rename, as the ready
 // checks hold reads whether a check an edit re-queues has had time to show.
 const EDITS_QUERY = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
+// What an unattended merge confirms on the forge (lib/review/merge-trust.mjs), in one call: the user's login; the
+// default branch's name, and its config pointer, config.json, and knowledge folder at the paths given; and the pull
+// request's head, base, author, draft state, review decision, latest reviews, the head's checks, the changed files, the
+// newest reviews, and the first conversation comments, each with the login of every edit to it, and the base branch's
+// pointer and config.json. A login GraphQL gives a bot carries no `[bot]`; `__typename` says whether the author is a bot.
+export const TRAIL_PAGE = 100;
+const BLOB = '... on Blob { text isTruncated }';
+const POLICY_FILES = `pointer: file(path: $pointer) { object { ${BLOB} } } config: file(path: $config) { object { ${BLOB} } }`;
+const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!, $config: String!, $knowledge: String!) {
+  viewer { login }
+  repository(owner: $o, name: $r) {
+    defaultBranchRef {
+      name
+      target { ... on Commit { ${POLICY_FILES} knowledge: file(path: $knowledge) { object { ... on Tree { entries { name type object { ${BLOB} } } } } } } }
+    }
+    pullRequest(number: $n) {
+      headRefOid
+      baseRefName
+      isDraft
+      reviewDecision
+      author { login }
+      baseRef { name target { ... on Commit { ${POLICY_FILES} } } }
+      latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
+      commits(last: 1) {
+        nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } }
+      }
+      files(first: ${TRAIL_PAGE}) { totalCount nodes { path changeType } }
+      reviews(last: ${TRAIL_PAGE}) { totalCount nodes { author { login __typename } authorAssociation state commit { oid } submittedAt } }
+      comments(first: ${TRAIL_PAGE}) {
+        totalCount
+        nodes { fullDatabaseId author { login __typename } authorAssociation editor { login } body updatedAt userContentEdits(first: ${TRAIL_PAGE}) { totalCount nodes { editor { login } deletedBy { login } } } }
+      }
+    }
+  }
+}`;
+// One GraphQL node's author as the trail gives it: { login, bot }, with a deleted account's login null.
+const trailAuthor = (author) => ({ login: typeof author?.login === 'string' ? author.login : null, bot: author?.__typename === 'Bot' });
+// A GraphQL connection's nodes, and whether they are all of it.
+const trailNodes = (connection) => {
+  const nodes = Array.isArray(connection?.nodes) ? connection.nodes : [];
+  return { nodes, complete: Number.isSafeInteger(connection?.totalCount) && connection.totalCount <= nodes.length };
+};
+// A file the trail read: its text, null when the branch has none, or false when GitHub gave only part of it or no text.
+const blobText = (entry) => {
+  if (entry === null || entry === undefined) return null;
+  const object = entry.object;
+  return object && object.isTruncated === false && typeof object.text === 'string' ? object.text : false;
+};
+// A branch's policy files as the trail gives them: { name, pointer, config }, and `knowledge`, the folder's entries
+// [{ name, type, text }] or null with no such folder, for the default branch.
+const branchFiles = (name, target, knowledge = false) => ({
+  name: typeof name === 'string' ? name : null,
+  pointer: blobText(target?.pointer),
+  config: blobText(target?.config),
+  ...(knowledge ? {
+    knowledge: target?.knowledge === null || target?.knowledge === undefined ? null
+      : (Array.isArray(target.knowledge.object?.entries) ? target.knowledge.object.entries.map((entry) => ({ name: entry?.name, type: entry?.type, text: blobText(entry) })) : false),
+  } : {}),
+});
+// One check of the head as `forge.checks` rows give it: { name, state }, a check run's conclusion once it completed,
+// else its status, and a status context's state.
+const checkOf = (node) => (node?.__typename === 'StatusContext'
+  ? { name: String(node.context ?? ''), state: String(node.state ?? '') }
+  : { name: String(node?.name ?? ''), state: String((node?.status === 'COMPLETED' ? node.conclusion : node?.status) ?? '') });
+
 // How long an upload of images may take: a pull request's captures go up in one call.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
@@ -475,6 +540,78 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     reviewThreads: (repo, n, after = null) => {
       const [owner, name] = repo.split('/');
       return json(['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`, ...(after ? ['-f', `after=${after}`] : [])]);
+    },
+    // What an unattended merge of pull request `n` of `repo` confirms on the forge, in the facade's shape: { viewer, head,
+    // base, author, draft, reviewDecision, latestReviews: [{ author: { login }, state }], checks: { head, rows, complete },
+    // files: [{ path, changeType }], filesTotal, filesComplete, reviews: [{ login, bot, association, state, commit, at }], reviewsComplete,
+    // comments: [{ id, login, bot, association, body, at, editors, editsComplete }], commentsComplete, branches: { default,
+    // base } }. `reviews` are the newest TRAIL_PAGE, `comments` and `files` the first TRAIL_PAGE; `editors` holds the
+    // login of the comment's last editor, of every edit of it, and of whoever deleted an edit from its history, null for a
+    // deleted account or an edit with no editor. `paths` are the pointer file, config.json, and knowledge folder to read on
+    // the default branch, and the first two on the base, from the top of the repository. `host` names the GitHub host.
+    // An answer with no pull request throws.
+    reviewTrail: (repo, n, { host, paths } = {}) => {
+      const number = idOf(n, 'a pull request number');
+      const [owner, name, ...extra] = String(repo).split('/');
+      if (!owner || !name || extra.length) throw new Error('a repository is owner/name');
+      const { pointer, config, knowledge } = paths ?? {};
+      if (![pointer, config, knowledge].every((each) => typeof each === 'string' && each !== '')) throw new Error('the review trail needs the paths of the policy files it reads');
+      const args = ['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${TRAIL_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`,
+        '-f', `pointer=${pointer}`, '-f', `config=${config}`, '-f', `knowledge=${knowledge}`];
+      let answer;
+      try {
+        answer = json(args);
+      } catch (error) {
+        // A policy file the branch has not is GraphQL's NOT_FOUND on that field, and gh then exits 1 with the answer on
+        // stdout: the answer stands, with that field null. Any other error throws as gh threw it.
+        let partial = null;
+        try {
+          partial = JSON.parse(error?.stdout ?? '');
+        } catch {}
+        const missing = (each) => each?.type === 'NOT_FOUND' && ['pointer', 'config', 'knowledge'].includes(each?.path?.at(-1));
+        if (!partial?.data || !Array.isArray(partial.errors) || !partial.errors.every(missing)) throw error;
+        answer = partial;
+      }
+      const data = answer?.data;
+      const pr = data?.repository?.pullRequest;
+      if (!pr || typeof pr !== 'object') throw new Error(`GitHub answered no pull request #${number} of ${repo}`);
+      const files = trailNodes(pr.files);
+      const reviews = trailNodes(pr.reviews);
+      const comments = trailNodes(pr.comments);
+      const commit = pr.commits?.nodes?.at(-1)?.commit ?? null;
+      const contexts = trailNodes(commit?.statusCheckRollup?.contexts);
+      const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
+      return {
+        viewer: typeof data?.viewer?.login === 'string' ? data.viewer.login : null,
+        head: typeof pr.headRefOid === 'string' ? pr.headRefOid : null,
+        base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
+        author: typeof pr.author?.login === 'string' ? pr.author.login : null,
+        draft: pr.isDraft === true,
+        reviewDecision: typeof pr.reviewDecision === 'string' ? pr.reviewDecision : '',
+        latestReviews: trailNodes(pr.latestReviews).nodes.map((each) => ({ author: { login: each?.author?.login ?? null }, state: each?.state ?? null })),
+        // No rollup is no check reported: an empty, whole list.
+        checks: { head: typeof commit?.oid === 'string' ? commit.oid : null, rows: contexts.nodes.map(checkOf), complete: commit?.statusCheckRollup ? contexts.complete : true },
+        files: files.nodes.filter((each) => typeof each?.path === 'string').map(({ path, changeType }) => ({ path, changeType: typeof changeType === 'string' ? changeType : null })),
+        filesTotal: Number.isSafeInteger(pr.files?.totalCount) ? pr.files.totalCount : null,
+        filesComplete: files.complete,
+        reviews: reviews.nodes.map((each) => ({ ...trailAuthor(each?.author), association: association(each), state: each?.state ?? null, commit: each?.commit?.oid ?? null, at: each?.submittedAt ?? null })),
+        reviewsComplete: reviews.complete,
+        comments: comments.nodes.map((each) => {
+          const edits = trailNodes(each?.userContentEdits);
+          return {
+            id: restId(each?.fullDatabaseId), ...trailAuthor(each?.author), association: association(each), body: typeof each?.body === 'string' ? each.body : '', at: each?.updatedAt ?? null,
+            // The comment's last editor, each edit's editor, and whoever deleted an edit from its history.
+            editors: [...(each?.editor ? [each.editor] : []), ...edits.nodes.flatMap((edit) => [edit?.editor ?? null, ...(edit?.deletedBy ? [edit.deletedBy] : [])])]
+              .map((actor) => (typeof actor?.login === 'string' ? actor.login : null)),
+            editsComplete: edits.complete,
+          };
+        }),
+        commentsComplete: comments.complete,
+        branches: {
+          default: branchFiles(data?.repository?.defaultBranchRef?.name, data?.repository?.defaultBranchRef?.target, true),
+          base: branchFiles(pr.baseRef?.name, pr.baseRef?.target),
+        },
+      };
     },
     // When the body of pull request `n` of `repo` was last edited and its title last renamed, GitHub's GraphQL answer:
     // `data.repository.pullRequest` with `lastEditedAt` (null when never edited) and `timelineItems.nodes`, the newest

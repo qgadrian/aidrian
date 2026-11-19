@@ -37,7 +37,7 @@
 // back and halts the run with a `halt` row.
 
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
@@ -50,11 +50,12 @@ import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
-import { custody, driverOf, ISSUE_ATTEMPTS, issueChain, latestStart, resultAuthorProblem, resumerProblem, runStore, startRows, startsOf, timeOf } from './project-run-guard.mjs';
+import { custody, driverOf, endedIn, ISSUE_ATTEMPTS, issueChain, latestStart, resultAuthorProblem, resumerProblem, runStore, startRows, startsOf, timeOf } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, stateWorkFolders, sweepAttempts, unverifiedNote } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
+import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
-import { PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
+import { markDriver, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
 
 export { cleanText, ISSUE_ATTEMPTS, RESULT_CAP, validateResult };
 export { DECISION_CLASSES, RESULT_STATUSES } from './project-result.mjs';
@@ -104,6 +105,15 @@ function markProblem(session, { env, home }) {
   if (mark.root === null) return 'this session\'s unattended mark cannot be read, so whether it works an issue of a project run cannot be told';
   if (mark.issue !== undefined) return `this session works the issue ${mark.issue ?? 'its mark names'} of a project run, and an issue's session starts no other; only the run's driver does`;
   return null;
+}
+
+// The sign-off store's folders (review/merge-trust.mjs signoffFolders) a confined session's sandbox denies, by their real
+// paths: the one under this environment's state root is made first, owner-only, so a deny names a path there at launch.
+function guardedStore({ env, home }) {
+  try {
+    mkdirSync(signoffFolder(env), { recursive: true, mode: 0o700 });
+  } catch {}
+  return signoffFolders({ env, home }).map((each) => resolvedPath(each) ?? path.resolve(each));
 }
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
@@ -183,6 +193,9 @@ function chainEnded({ cap, store, id, session, env, spawn, now }) {
 
 // The ledger rows that move custody to `session` when `held` (custody) says it is the successor, else none.
 const custodyRows = (held, session, now) => (held.role === 'successor' ? [{ event: 'driver', session, from: held.driver.session, sha256: held.sha256, at: iso(now) }] : []);
+// Files the driver mark of `session`, the run's current driver, or the continuation custody moved to, once its row is
+// written (unattended-mark.mjs markDriver): each start and wait refreshes it, and it names the state folder `state`.
+const markCustodian = (session, found, run, state, env) => markDriver(session, { run, root: found.init.main, state: resolvedPath(state) ?? state, env });
 
 // The attempts a run's rows count: one each, and none given back.
 const counted = (rows) => rows.filter((row) => row.outcome !== 'void');
@@ -286,6 +299,7 @@ function startContext(given) {
   const { state, found, store } = opened;
   const held = custody({ found, store, session, now: given.now });
   if (held.problem) return plain(held.problem);
+  if (endedIn(found.rows)) return plain(`the run ${run} ended, and starts no issue`);
   const halted = haltOf(found);
   if (halted) return { answer: haltAnswer(`the run is halted: ${halted}`, { lift: RESUME(run) }) };
   const main = project.checkouts.at(-1);
@@ -387,6 +401,8 @@ function launchStart(context, place) {
     launch: (hold, identify) => {
       const started = cap.start({
         session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains: forgeDomains(context.found.init.repository), main, mainGit, tokens: forgeTokenVars(),
+        // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
+        guarded: guardedStore({ env, home }),
         mcp: context.policy.mcpServers, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }),
       });
       if (started?.proof && started.uncertain === false) proof = started.problem;
@@ -394,7 +410,7 @@ function launchStart(context, place) {
     },
     stop: (id) => cap.stop({ id, env, run: spawn }),
     ended: (earlier) => chainEnded({ cap, store, id: earlier.id, session: earlier.session, env, spawn, now: Date.now() }),
-    intent: () => writeAhead({ state, run, base, held, session, now: Date.now() }),
+    intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env }),
     store,
     root: context.main,
     floor: { slug: `project-${run}`, chain: 0, brief: null, route: 'background' },
@@ -408,13 +424,15 @@ function launchStart(context, place) {
 
 // Writes the start of `base` ahead, before the host starts anything: a start row with `outcome: 'uncertain'` and
 // `pending: true`, and the issue running, with custody as the start found it. Whether it was written.
-function writeAhead({ state, run, base, held, session, now }) {
+function writeAhead({ state, run, base, held, session, now, found, env }) {
   const at = iso(now);
   const custodian = held.role === 'driver' ? session : held.driver.session;
   const written = safely(() => appendToRun(state, run, (fresh) => (driverOf(fresh).session === custodian
     ? { rows: [...custodyRows(held, session, now), { ...base, at, outcome: 'uncertain', pending: true }, { event: 'issue', key: base.key, state: 'running', at }] }
     : { problem: 'custody of the run moved while the session started' })));
-  return Boolean(written && !written.problem);
+  const done = Boolean(written && !written.problem);
+  if (done) markCustodian(session, found, run, state, env);
+  return done;
 }
 
 // Why startHeld would refuse a start for `session` now, or null: its claim on a start holds (claimBusy), or its earlier
@@ -509,6 +527,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     const moved = appendToRun(state, run, () => ({ rows: custodyRows(held, session, now) }));
     if (moved.problem) return refuse(moved.problem);
   }
+  markCustodian(session, opened.found, run, state, env);
   const before = new Map(opened.found.states);
   // `now` dates the first read; `clock` moves it on, so a deadline is never measured against another clock.
   const offset = now - clock();
@@ -632,7 +651,28 @@ export function recordHandoff({ project, config, run, brief, env = process.env, 
   const hash = sha256(read.bytes);
   const written = appendToRun(state, run, () => ({ rows: [...custodyRows(held, session, now), { event: 'handoff', session, sha256: hash, at: iso(now) }] }));
   if (written.problem) return refuse(written.problem);
+  markCustodian(session, found, run, state, env);
   return { exitCode: 0, out: [`handoff: run ${run} may move to the session the brief ${path.basename(read.path)} starts, sha256 ${hash}`], err: [] };
+}
+
+// Records, for the driver of run `run`, the run's end at the end of its loop: an `end` row, which ends the run for
+// project-run.mjs activeRuns and releases the driver's hold (run-driver.mjs runDriver), so its session may sign off
+// again. Only the run's current driver records it, by custody; the end of a run whose issues are parked is the driver's
+// to record too, after its report names them. A run that ended starts no issue. Returns { exitCode, out, err }.
+export function endRun({ project, config, run, env = process.env, home, now = Date.now() }) {
+  const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project end: ${why}`] });
+  const { session } = sessionIdentity(env);
+  const marked = typeof session === 'string' && SESSION_ID.test(session) ? markProblem(session, { env, home }) : null;
+  if (marked) return refuse(marked);
+  const opened = openRun(project, config, run, { env, home });
+  if (opened.problem) return refuse(opened.problem);
+  const { state, found, store } = opened;
+  if (endedIn(found.rows)) return refuse(`the run ${run} ended already`);
+  const held = custody({ found, store, session, now });
+  if (held.problem) return refuse(held.problem);
+  const written = appendToRun(state, run, () => ({ rows: [...custodyRows(held, session, now), { event: 'end', session, at: iso(now) }] }));
+  if (written.problem) return refuse(written.problem);
+  return { exitCode: 0, out: [`end: run ${run} ended, and its driver's hold is released`], err: [] };
 }
 
 // Lifts the halt of run `run` (project-run.mjs haltOf) for the Human's own shell, which names no session, or an attended

@@ -235,7 +235,9 @@ not every feature. The warning never blocks.
 `signoff: "human"` adds `aidrian pr signoff <PR> --flow <id> --head <sha>`, run on the Human's word. The `review-signoff` rule
 ([hooks.md](hooks.md#bash-rules)) blocks an agent that runs it, unless the session holds the Human's
 [answer to it](#answering-in-the-session); on a host without one, the Human runs it in their own shell (`!` in a Claude
-Code prompt, or another terminal). It is still an audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
+Code prompt, or another terminal). A subagent and a session no Human attends may not run it at all: a flow sign-off also
+goes to the [sign-off store](#merge-trust), which a merge no Human asks for reads instead of the record. It is still an
+audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
 override is listed in the review summary on the pull request, or only in the local record with `review.record:
 "local"`. For proof, protect the branch with a required review from a second account.
 Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
@@ -1233,6 +1235,65 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof.
   A record without the list has none. The [merge guard](hooks.md#merge-guard) reads them only while the team's
   `github.unattendedWaiver.allow` and this machine's switch are both on: [Unattended waiver](config.md#unattended-waiver).
+
+### Merge trust
+
+The record is this machine's word, and a project run's confined session can write it: the state work folders it may
+write hold the review records and the dispatch log, and it may post to the pull request as the user. So a merge in a
+session no Human attends never rests on the record alone. Such a session is one with an
+[unattended mark](handoff.md#the-background-route), a pending or unreadable one included, read by the session id its
+host gives, or a project run's driver, by its driver mark ([hooks.md](hooks.md#agent-gates)). For it, `aidrian pr auto-merge` and the [merge guard](hooks.md#merge-guard), on Claude Code and Codex alike,
+also ask for two things no such session writes (`plugins/aidrian/lib/review/merge-trust.mjs`); the guard first asks the
+team's auto-merge policy of the forge too, as `aidrian pr auto-merge` does. A merge in a session the Human attends is
+unchanged: neither reads anything more.
+
+1. **The review bot's verdict, on the forge.** The default branch's `github.reviewer`, read from GitHub, a bot account,
+   passed exactly the merge's head: an approving review of that commit, or its own status card saying its code review of
+   that full commit completed and found nothing (`has_any_findings` false, since marking the bot's threads resolved
+   clears `has_unresolved_findings`), with every edit of the card the bot's, its last editor and anyone who deleted an
+   edit from its history included. A review of that commit by the bot in any other state, a dismissed one included,
+   keeps it off. A clean receipt or a 👍 names no full commit, so neither counts. The check holds whatever the record's
+   outcome: a `none_needed` pull request merges unattended only once the bot is requested on it, with
+   `aidrian pr await-review <PR> --request`, and has passed. With no bot set, the check is off with no route: a session
+   no Human attends merges nothing, and the refusal says to set `github.reviewer` on the default branch, or that the
+   Human merges. One GraphQL call reads it, the forge's review trail: the head, the base, the author, the review decision,
+   the head's checks, the first 100 changed files, the last 100 reviews, the first 100 conversation comments with their
+   edits, and both branches' pointer file and `config.json`, with the default branch's knowledge folder. Only a pointer to
+   another folder reads those over REST too. On a real pull request the whole check takes about 1 to 1.5 seconds; a read
+   that runs out of the guard's 4 seconds refuses, and says one more try is safe.
+2. **The Human's sign-offs, from the sign-off store.** `aidrian pr signoff <PR> --flow <id>` also writes the sign-off to
+   `$XDG_STATE_HOME/aidrian/signoffs/<owner>/<name>/<PR>.json`, first: a store it cannot write keeps the record unwritten
+   too. It keeps the head the Human typed, resolved to its full commit in their checkout, a prefix two commits share
+   refused; `--last` keeps the forge's current head. The store is the user's alone (each folder 0700, the file 0600, read
+   without following a link). Only a main session the Human attends writes it: the agent gate hook refuses a subagent, a
+   session no Human attends, and a project run's driver a write there, the review-signoff rule refuses them the command
+   ([hooks.md](hooks.md#bash-rules)), a confined Claude Code session's sandbox denies it to commands and file tools, and
+   the project start gate refuses a Codex writable root, `/tmp`, or `$TMPDIR` that reaches it. During a run, a sign-off
+   comes from a separate session the Human attends. A merge no Human asks for needs, on exactly its head, a store entry
+   for each flow the record names for the Human's sign-off on that head, and for each flow the forge's file list and both
+   branches' configs may select, so a record that names none does not lift them; `aidrian pr signoff` takes a sign-off of
+   any such flow on the forge's current head:
+   - a `signoff: "human"` flow whose `files` match a behaviour file, sorted by the config's `review.ignore` and
+     `review.nonBehaviour` as the plan sorts them, or that a plan command, an `exec` reviewer's command, the visual
+     review's login or preview command, `added` patterns, or `content` tracing may select, since the merge reads no
+     content;
+   - any flow whose `tests` match a deleted file;
+   - `harness-config` when a changed file is a policy file of aidrian, a file either branch's config was read from, or a
+     doc a flow's invariants cite, or one of those commands is set;
+   - every such flow when the list holds a rename or is cut short.
+   A sign-off kept from an earlier head ([Sign-off by the Human](#sign-off-by-the-human)) does not count here: the Human
+   signs off the head that merges. A sign-off given on another machine is not in this machine's store.
+
+The guard reads the review record bounded for every session: a record file that is a link, a FIFO, has a second hard
+link, or is larger than 2 MiB (ten times the largest record in use) reads as no record at once, and each file is parsed
+once a call. For a session no Human attends, or a project run's driver, it first checks the pull request's record
+files without parsing them, and refuses the merge when one fails those checks, or there are more than 8, or more than
+8 MiB in all.
+Attended reads are unchanged: the review step still reads the record's sign-offs, from this machine or the pull
+request's comment, and a merge the Human asks for still takes the record's outcome. The trust model's residuals: the
+user's gh token stays readable to a confined session, so it can merge through the API outside every hook; a bot whose
+own account a session can steer is no second reviewer; and only branch protection with a required review from a second
+account is proof.
 
 ### Finding ids
 

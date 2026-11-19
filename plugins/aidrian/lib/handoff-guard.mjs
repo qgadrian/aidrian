@@ -35,6 +35,7 @@ import { defaultStateDir, findProject, stateDir, stateRoot } from './project.mjs
 import { GIT_VARS } from './review/env.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { aidrianArgs, changedVariables, changesVariable, readGit, walkCommands } from './shell-lex.mjs';
+import { SIGNOFF_FOLDER, signoffFolders } from './review/signoff-store.mjs';
 import { MARK_FOLDER, markFolders, marksNaming } from './unattended-mark.mjs';
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
@@ -173,7 +174,7 @@ const runsGate = (actions) => ({ invocation, unread }) => {
 };
 
 // Every `aidrian project` subcommand, today's and those a later step adds (lib/project-run-guard.mjs).
-export const PROJECT_SUBCOMMANDS = Object.freeze(['init', 'next', 'start', 'wait', 'result', 'handoff', 'resume', 'summary', 'report', 'recorded', 'stop-action']);
+export const PROJECT_SUBCOMMANDS = Object.freeze(['init', 'next', 'start', 'wait', 'result', 'handoff', 'resume', 'summary', 'report', 'recorded', 'stop-action', 'end']);
 // A subcommand word, and the word `project`, in any case, as a text no lexer reads names them; lib/project-run-guard.mjs
 // reads them too.
 export const PROJECT_SUB = new RegExp(String.raw`(?<![\w-])(?:${PROJECT_SUBCOMMANDS.join('|')})(?![\w-])`, 'iu');
@@ -235,6 +236,34 @@ export function handoffEnvDenial(input, { names: { human } }, { unattended = () 
   const moves = GATE_ENV.includes(named) ? 'which would move the continuation store, the session, or the host command the gate reads, or the policy it reads' : 'and the gate runs with no variable a command sets';
   const why = `it runs \`aidrian handoff\` or \`aidrian project\` with ${named} set or unset by the command itself, ${moves}, and ${who}`;
   return { match: `changes ${named} for aidrian handoff or project`, reason: projectRuleReason(input, why, human, 'that the handoff runs with the environment the host gave the session') };
+}
+
+// Why the call in `input` may not run because it runs an `aidrian pr` command with a GATE_ENV variable set or unset by the
+// command line itself, or null: { match, reason }. `aidrian pr auto-merge` and `aidrian pr signoff` read the sign-off
+// store and the review records under the state root those variables move, so a session `unattended()` says no Human
+// attends could point them at a folder it writes. Every other variable runs, as the Human's own words, such as an
+// approved round grant, ride on the command line. A command in a shell the lexer cannot read counts when its text
+// names `aidrian`, `pr`, and one of GATE_ENV.
+export function prEnvDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+  const opaque = opaqueShellCommand(input);
+  const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
+  if (typeof command !== 'string') return null;
+  let named = null;
+  if (opaque !== null) {
+    const texts = opaqueTexts(opaque);
+    const word = (name) => new RegExp(String.raw`(?<![\w-])${name}(?![\w-])`, 'iu');
+    if (!texts.some((text) => word('aidrian').test(text) && word('pr').test(text))) return null;
+    named = GATE_ENV.find((name) => texts.some((text) => word(name).test(text))) ?? null;
+  } else {
+    const commands = walkCommands(command, null).filter(({ invocation }) => {
+      const words = invocation ? aidrianArgs(invocation) : null;
+      return Boolean(words) && (words[0]?.dynamic || words[0]?.text === 'pr');
+    });
+    named = GATE_ENV.find((name) => commands.some(({ invocation }) => changesVariable(invocation, name))) ?? null;
+  }
+  if (!named || !unattended()) return null;
+  const why = `it runs \`aidrian pr\` with ${named} set or unset by the command itself, which would move the state root its review records and the sign-off store are read from, and ${UNATTENDED}`;
+  return { match: `changes ${named} for aidrian pr`, reason: projectRuleReason(input, why, human) };
 }
 
 // The hosts that declare their command that starts a session (docs/providers/adding-a-host.md `sessionStart`).
@@ -602,14 +631,36 @@ const MARK_TAIL = path.join('aidrian', MARK_FOLDER);
 // in a folder no path gives, and a word of a command in a shell the lexer cannot read, count when a part of it is named
 // `unattended`, or, for a glob, may name it (globNamesFile). With `links` false it skips the link walk.
 export function unattendedMarkWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, folders = markFolders() } = {}) {
+  const writer = isSubagent(input) ? 'which only the handoff gate writes' : `which only the handoff gate writes, ${UNATTENDED}`;
+  return rootFolderDenial(input, human, { project, links, unattended, folders, part: MARK_PART, tail: MARK_TAIL, what: 'the unattended marks', does: `which tell the hooks a session no Human attends wherever it runs, and ${writer}` });
+}
+
+// A path part that names the sign-off store's folder, in any case.
+const SIGNOFF_PART = new RegExp(String.raw`^${SIGNOFF_FOLDER}$`, 'iu');
+const SIGNOFF_TAIL = path.join('aidrian', SIGNOFF_FOLDER);
+
+// Why the call in `input` may not run because it writes in the sign-off store (lib/review/merge-trust.mjs), or null:
+// { match, reason }. A merge no Human asks for reads the Human's flow sign-offs there, never in the review record a
+// confined session can write, so only `aidrian pr signoff` in a main session the Human attends writes it. It holds for a
+// subagent, and for a main session `unattended()` says no Human attends, and reads a call's targets as
+// unattendedMarkWriteDenial does, with `folders` (signoffFolders) and the part name `signoffs`.
+export function signoffWriteDenial(input, { names: { human } }, { project = null, links = true, unattended = () => false, folders = signoffFolders() } = {}) {
+  const writer = isSubagent(input) ? 'which only `aidrian pr signoff` in a main session the Human attends writes' : `which only \`aidrian pr signoff\` in a session the Human attends writes, ${UNATTENDED}`;
+  return rootFolderDenial(input, human, { project, links, unattended, folders, part: SIGNOFF_PART, tail: SIGNOFF_TAIL, what: 'the sign-off store', does: `which holds the Human's flow sign-offs a merge no Human asks for reads, ${writer}` });
+}
+
+// The denial of a write that reaches one of `folders`, each a folder directly under a state root, named by the path part
+// `part` (`tail` with the state root's name above it), for a subagent or a session `unattended()` says no Human attends:
+// unattendedMarkWriteDenial's reading, for any such folder.
+function rootFolderDenial(input, human, { project, links, unattended, folders, part, tail, what, does }) {
   const subagent = isSubagent(input);
   const { files, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
   if (files.length === 0 && names.length === 0 && globs.length === 0 && modes.length === 0) return null;
-  const named = (text) => text.split(/[\\/]/u).some((part) => MARK_PART.test(part));
+  const named = (text) => text.split(/[\\/]/u).some((each) => part.test(each));
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   const byName = names.some(named) || unplaced.some(({ text }) => named(text))
-    || globs.some((glob) => (glob.unsure || glob.opaque) && (named(glob.text) || globNamesFile(glob.text, MARK_TAIL, { folderParts: 0 })));
+    || globs.some((glob) => (glob.unsure || glob.opaque) && (named(glob.text) || globNamesFile(glob.text, tail, { folderParts: 0 })));
   let hit = byName;
   if (!hit) {
     const placed = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder, recursive }) => ({ target: real(path.resolve(folder ?? '/', text)), recursive }));
@@ -618,8 +669,9 @@ export function unattendedMarkWriteDenial(input, { names: { human } }, { project
     const targets = files.map(real);
     const marks = folders.map((folder) => ({ mark: real(folder), root: real(path.dirname(folder)) }));
     const near = (target) => marks.some(({ root }) => isWithin(root, target) || isWithin(target, root));
-    const seen = links ? linkWalk(input) : null;
-    const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, seen, { below: true }));
+    // The link walk reads folders on disk: made once, and only when a glob may reach the folder through a link.
+    let seen;
+    const linksTo = (target) => links && sure.some((glob) => globLinksTo(glob, target, (seen ??= linkWalk(input)), { below: true }));
     if (![...targets, ...known.map(({ prefix }) => prefix), ...placed.map(({ target }) => target)].some(near) && !marks.some(({ root }) => linksTo(root))) return null;
     const roots = (project?.checkouts ?? []).map(real);
     hit = marks.some(({ mark, root }) => reaches({ files: targets, known, placed, linksTo }, mark, [root], roots));
@@ -627,9 +679,8 @@ export function unattendedMarkWriteDenial(input, { names: { human } }, { project
   if (!hit || !(subagent || unattended())) return null;
   const opaque = opaqueShellCommand(input) !== null;
   const verb = opaque || byName ? 'may change' : 'changes';
-  const writer = subagent ? 'which only the handoff gate writes' : `which only the handoff gate writes, ${UNATTENDED}`;
-  const why = `it ${verb} the unattended marks, ${MARK_TAIL}, which tell the hooks a session no Human attends wherever it runs, and ${writer}`;
-  return { match: `${verb} the unattended marks`, reason: projectRuleReason(input, why, human) };
+  const why = `it ${verb} ${what}, ${tail}, ${does}`;
+  return { match: `${verb} ${what}`, reason: projectRuleReason(input, why, human) };
 }
 
 // The folder of every project run under a state folder, as lib/project-run.mjs runsFolder names it; that file imports

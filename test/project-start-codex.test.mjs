@@ -47,11 +47,12 @@ function hookKeys() {
 
 // Codex's config.toml: the plugin installed, its hooks trusted (`trusted`: 'all', 'tracker', or 'none'; `off`, a script
 // whose hook is turned off), and the workspace-write sandbox's network on, with `roots` its writable roots.
-function codexConfig({ trusted = 'all', off = null, network = true, roots = null } = {}) {
+function codexConfig({ trusted = 'all', off = null, network = true, roots = null, slashTmp = false } = {}) {
   const id = 'aidrian@aidrian-harness';
   const keys = hookKeys().filter(({ command }) => trusted === 'all' || (trusted === 'tracker' && /hook-tracker-(?:pre|post)\.mjs/u.test(command)));
   const trust = keys.map(({ key, command }) => `[hooks.state."${id}:hooks/hooks.json:${key}"]\ntrusted_hash = "sha256:x"\n${off && command.includes(off) ? 'enabled = false\n' : ''}`).join('');
-  const sandbox = network || roots ? `[sandbox_workspace_write]\n${network ? 'network_access = true\n' : ''}${roots ? `writable_roots = [${roots.map((each) => JSON.stringify(each)).join(', ')}]\n` : ''}` : '';
+  // /tmp holds the whole fixture on Linux, so the sandbox's own /tmp is excluded unless `slashTmp`.
+  const sandbox = `[sandbox_workspace_write]\n${network ? 'network_access = true\n' : ''}${slashTmp ? '' : 'exclude_slash_tmp = true\n'}${roots ? `writable_roots = [${roots.map((each) => JSON.stringify(each)).join(', ')}]\n` : ''}`;
   return `[plugins."${id}"]\nenabled = true\n${trusted === 'none' ? '' : trust}${sandbox}`;
 }
 
@@ -116,7 +117,10 @@ function codexRun(t, { projectRun = { allow: true, unverifiedHosts: true }, forg
   const codexHome = path.join(fx.root, 'codex-home');
   mkdirSync(codexHome);
   writeFileSync(path.join(codexHome, 'config.toml'), codexConfig(config));
-  const env = { ...fx.env, HOME: fx.home, CODEX_THREAD_ID: DRIVER, CODEX_HOME: codexHome };
+  // A temporary folder apart from the state folders, as on a machine: the suite's own holds the whole fixture.
+  const temp = path.join(fx.root, 'tmp');
+  mkdirSync(temp);
+  const env = { ...fx.env, HOME: fx.home, CODEX_THREAD_ID: DRIVER, CODEX_HOME: codexHome, TMPDIR: temp };
   for (const name of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CONFIG_DIR']) delete env[name];
   const fake = fakeCodex(t, fx.bin, mode);
   const attempt = (n = 1) => path.join(runsFolder(fx.state), 'launch', 'attempts', `ENG-1.${n}`);

@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
+
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, projectPrompt, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
@@ -266,6 +268,9 @@ test('custody moves to the continuation the driver handed the run to, and never 
   assert.equal(moved.exitCode, 0, moved.err.join('\n'));
   const driverRow = fresh.rows().find((row) => row.event === 'driver');
   assert.deepEqual([driverRow.session, driverRow.from, driverRow.sha256], [CONT, DRIVER, hash]);
+  // The continuation that took custody is the driver by its own mark, before any wait.
+  assert.deepEqual(runDriver(CONT, { env: fresh.env, home: fresh.home })?.run, 'launch');
+  assert.equal(runDriver(CONT, { env: fx.env, home: fx.home }), null, 'never in the run it took no custody of');
   assert.match(fresh.cmd(['start', 'launch', 'ENG-4']).err[0], /this session is not the driver of the run launch, abcd1234-0000-4000-8000-00000000a0c1/u, 'the old driver lost custody');
 });
 

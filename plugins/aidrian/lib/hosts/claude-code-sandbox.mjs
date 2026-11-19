@@ -142,9 +142,10 @@ const credentialStores = (home, config) => [...new Set([
 // real folders `grants` (its git folder, drop folder, and the state work folders), the network hosts `domains`, and the
 // temporary folders `temp`, for the user whose home is `home` and host config folder `config`, on `platform`. `main` is
 // the main checkout, which no sandboxed command and no Read reaches but its git folder `mainGit`, whose objects the clone
-// borrows; `secrets` the environment variables the sandbox unsets (secretVars). Scalars passed with --settings win over
-// the user's settings; lists merge with them, which accessProblem checks.
-export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [] }) {
+// borrows; `secrets` the environment variables the sandbox unsets (secretVars); `guarded` folders no sandboxed command
+// writes even where a user's allowWrite would reach them, such as the sign-off store (review/merge-trust.mjs). Scalars
+// passed with --settings win over the user's settings; lists merge with them, which accessProblem checks.
+export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [] }) {
   const credentials = credentialStores(home, config);
   const unread = main ? [...credentials, main] : credentials;
   const reopen = main && mainGit && within(main, mainGit) ? { allowRead: [mainGit] } : {};
@@ -162,7 +163,7 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
         allowWrite: [...new Set([...grants, ...temp])],
         denyWrite: [
           path.join(work, '.git'), path.join(git, 'config'), path.join(git, 'hooks'), path.join(git, 'commondir'), path.join(git, 'config.worktree'),
-          ...PROTECTED_PATHS.map((each) => path.join(work, each)), ...nestedGlobs(work),
+          ...PROTECTED_PATHS.map((each) => path.join(work, each)), ...nestedGlobs(work), ...guarded,
         ],
         denyRead: unread,
         ...reopen,
@@ -171,7 +172,8 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
       credentials: { envVars: secrets.map((name) => ({ name, mode: 'deny' })) },
     },
     // Read rules take `//` for an absolute path; the file tools run outside the sandbox, so they need their own.
-    permissions: { deny: unread.flatMap((each) => [`Read(/${each})`, `Read(/${each}/**)`]) },
+    // The guarded folders are held from the file tools too, which run outside the sandbox.
+    permissions: { deny: [...unread.flatMap((each) => [`Read(/${each})`, `Read(/${each}/**)`]), ...guarded.flatMap((each) => [`Edit(/${each})`, `Edit(/${each}/**)`])] },
     // The claude.ai connectors load whatever --strict-mcp-config says; only this turns them off, and a true wins from any source.
     disableClaudeAiConnectors: true,
     worktree: { bgIsolation: 'none' },

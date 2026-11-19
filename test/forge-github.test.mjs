@@ -20,7 +20,7 @@ const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
-  'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
+  'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
@@ -545,6 +545,72 @@ test('the ready checks hold`s edit times: one GraphQL call, naming a host only w
   const query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
   const tail = ['-f', `query=${query}`, '-F', 'o=acme', '-F', 'r=notes', '-F', 'n=12'];
   assert.deepEqual(args(), [['api', 'graphql', ...tail], ['api', 'graphql', '--hostname', 'ghe.example.com', ...tail]]);
+});
+
+test('the review trail: one GraphQL call naming the host and the policy paths it is given, answered in the facade`s shape', () => {
+  const sha = 'a'.repeat(40);
+  const blob = (text) => ({ object: { text, isTruncated: false } });
+  const answer = {
+    data: {
+      viewer: { login: 'adrian' },
+      repository: {
+        defaultBranchRef: { name: 'main', target: { pointer: null, config: blob('{"version":1}'), knowledge: { object: { entries: [{ name: '10-x.json', type: 'blob', object: { text: '{}', isTruncated: false } }] } } } },
+        pullRequest: {
+          headRefOid: sha,
+          baseRefName: 'release',
+          isDraft: false,
+          reviewDecision: 'APPROVED',
+          author: { login: 'adrian' },
+          baseRef: { name: 'release', target: { pointer: { object: { text: 'cut', isTruncated: true } }, config: blob('{}') } },
+          latestReviews: { nodes: [{ author: { login: 'lead' }, state: 'APPROVED' }] },
+          commits: { nodes: [{ commit: { oid: sha, statusCheckRollup: { contexts: { totalCount: 2, nodes: [{ __typename: 'CheckRun', name: 'e2e', status: 'IN_PROGRESS', conclusion: null }, { __typename: 'StatusContext', context: 'deploy', state: 'SUCCESS' }] } } } }] },
+          files: { totalCount: 2, nodes: [{ path: 'src/a.js', changeType: 'MODIFIED' }] },
+          reviews: { totalCount: 1, nodes: [{ author: { login: 'review-bot', __typename: 'Bot' }, authorAssociation: 'NONE', state: 'APPROVED', commit: { oid: sha }, submittedAt: '2026-11-18T10:00:00Z' }] },
+          comments: {
+            totalCount: 2,
+            nodes: [
+              { fullDatabaseId: '42', author: { login: 'review-bot', __typename: 'Bot' }, authorAssociation: 'NONE', editor: { login: 'adrian' }, body: 'card', updatedAt: '2026-11-18T10:01:00Z', userContentEdits: { totalCount: 2, nodes: [{ editor: { login: 'review-bot' }, deletedBy: null }, { editor: null, deletedBy: { login: 'adrian' } }] } },
+              { fullDatabaseId: '43', author: null, authorAssociation: 'NONE', editor: null, body: 'gone', updatedAt: '2026-11-18T10:02:00Z', userContentEdits: { totalCount: 101, nodes: [] } },
+            ],
+          },
+        },
+      },
+    },
+  };
+  const { forge, args } = recorded(() => JSON.stringify(answer));
+  const paths = { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' };
+  assert.deepEqual(forge.reviewTrail('acme/notes', 7, { paths }), {
+    viewer: 'adrian', head: sha, base: 'release', author: 'adrian', draft: false, reviewDecision: 'APPROVED',
+    latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }],
+    checks: { head: sha, rows: [{ name: 'e2e', state: 'IN_PROGRESS' }, { name: 'deploy', state: 'SUCCESS' }], complete: true },
+    files: [{ path: 'src/a.js', changeType: 'MODIFIED' }], filesTotal: 2, filesComplete: false,
+    reviews: [{ login: 'review-bot', bot: true, association: 'NONE', state: 'APPROVED', commit: sha, at: '2026-11-18T10:00:00Z' }], reviewsComplete: true,
+    comments: [
+      { id: 42, login: 'review-bot', bot: true, association: 'NONE', body: 'card', at: '2026-11-18T10:01:00Z', editors: ['adrian', 'review-bot', null, 'adrian'], editsComplete: true },
+      { id: 43, login: null, bot: false, association: 'NONE', body: 'gone', at: '2026-11-18T10:02:00Z', editors: [], editsComplete: false },
+    ],
+    commentsComplete: true,
+    branches: {
+      default: { name: 'main', pointer: null, config: '{"version":1}', knowledge: [{ name: '10-x.json', type: 'blob', text: '{}' }] },
+      base: { name: 'release', pointer: false, config: '{}' },
+    },
+  }, 'the last editor, each edit`s editor, whoever deleted an edit, and a file given only in part as false');
+  forge.reviewTrail('acme/notes', 7, { host: 'ghe.example.com', paths: { pointer: 'web/.aidrian.json', config: 'web/.aidrian/config.json', knowledge: 'web/.aidrian/knowledge' } });
+  const [plain, enterprise] = args();
+  assert.deepEqual(plain.slice(0, 2), ['api', 'graphql']);
+  assert.deepEqual(plain.slice(-12), ['-f', 'o=acme', '-f', 'r=notes', '-F', 'n=7', '-f', 'pointer=.aidrian.json', '-f', 'config=.aidrian/config.json', '-f', 'knowledge=.aidrian/knowledge']);
+  assert.deepEqual(enterprise.slice(0, 4), ['api', 'graphql', '--hostname', 'ghe.example.com']);
+  assert.deepEqual(enterprise.slice(-6), ['-f', 'pointer=web/.aidrian.json', '-f', 'config=web/.aidrian/config.json', '-f', 'knowledge=web/.aidrian/knowledge']);
+  assert.throws(() => forge.reviewTrail('acme/notes', '7; rm', { paths }), /positive whole number/u, 'no number from text');
+  assert.throws(() => forge.reviewTrail('acme', 7, { paths }), /owner\/name/u);
+  assert.throws(() => forge.reviewTrail('acme/notes', 7), /needs the paths of the policy files/u, 'the caller names the paths');
+  assert.throws(() => recorded(() => '{"data":{"repository":{"pullRequest":null}}}').forge.reviewTrail('acme/notes', 7, { paths }), /no pull request #7/u);
+  // A policy file the branch has not is GraphQL's NOT_FOUND on that field, with gh exiting 1: the answer stands.
+  const missing = { data: { ...answer.data, repository: { ...answer.data.repository, defaultBranchRef: { name: 'main', target: { pointer: null, config: blob('{}'), knowledge: null } } } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'defaultBranchRef', 'target', 'pointer'] }] };
+  const partial = createGithubForge({ cwd: '/repo', run: () => { throw Object.assign(new Error('exit 1'), { stdout: JSON.stringify(missing) }); } });
+  assert.equal(partial.reviewTrail('acme/notes', 7, { paths }).branches.default.knowledge, null);
+  const other = createGithubForge({ cwd: '/repo', run: () => { throw Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ...missing, errors: [{ type: 'FORBIDDEN', path: ['repository'] }] }) }); } });
+  assert.throws(() => other.reviewTrail('acme/notes', 7, { paths }), /exit 1/u, 'any other error throws');
 });
 
 test('compareUrl: a link from two full-hex SHAs on the forge`s own address of the repository, read once, and none from anything else', () => {

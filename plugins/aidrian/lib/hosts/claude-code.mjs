@@ -231,8 +231,8 @@ export default {
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
       placeholders: PLACEHOLDERS,
       sessionNote,
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, git, grants, domains, main, mainGit, tokens, mcp, home, platform, run, wait }) => startProject({
-        session, cwd, name, prompt, env, hold, identify, beacon, sandbox: { git, grants, domains, main, mainGit, tokens }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
+        session, cwd, name, prompt, env, hold, identify, beacon, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

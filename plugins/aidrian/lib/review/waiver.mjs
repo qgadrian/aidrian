@@ -120,7 +120,11 @@ export function budgetedForge(make, deadline, now = Date.now) {
     if (left <= 0) throw new Error(`no time left in the hook to read ${name}`);
     return make({ timeoutMs: Math.min(cap, left), killSignal: 'SIGKILL' })[name](...args);
   };
-  return { change: call('change', VIEW_TIMEOUT_MS), repository: call('repository', READ_TIMEOUT_MS), contents: call('contents', READ_TIMEOUT_MS) };
+  return {
+    change: call('change', VIEW_TIMEOUT_MS), repository: call('repository', READ_TIMEOUT_MS), contents: call('contents', READ_TIMEOUT_MS),
+    // The merge guard's trust read for a session no Human attends (merge-review.mjs), one GraphQL call, as long as a view.
+    reviewTrail: call('reviewTrail', VIEW_TIMEOUT_MS),
+  };
 }
 
 // Whether both switches let a verdict stand: { on, reason: null | 'local' | 'team' | 'unread', refusing, why }. The team
@@ -129,7 +133,7 @@ export function budgetedForge(make, deadline, now = Date.now) {
 // unset follows the team's `solo` from the same reads, once the default branch's local ref says so too and the local
 // file is no tracked one (config-local.mjs machineSwitch). `localSolo` is that local answer when the caller read it
 // already, inside its own deadline, as the merge guard does (readWaiver); null reads it here, for a command.
-export function waiverGate({ project, forge, repo, host, base, prefix, localSolo = null }) {
+export function waiverGate({ project, forge, repo, host, base, prefix, localSolo = null, memo = null }) {
   const local = project.localUnattendedWaiver;
   const notIn = { on: false, reason: 'local', refusing: [], why: `this machine has not opted in (github.unattendedWaiver in ${project.paths.local})` };
   if (local !== 'on' && local !== 'unset') return notIn;
@@ -140,6 +144,8 @@ export function waiverGate({ project, forge, repo, host, base, prefix, localSolo
   } catch (error) {
     return { on: false, reason: 'unread', refusing: [], why: error.message };
   }
+  // The merge guard's trust check for a session no Human attends reuses them (merge-review.mjs unattendedProblem).
+  if (memo) memo.policies = { key: `${repo}|${base}|${prefix}`, value: policies };
   const refusing = refusingBranches(policies, base, 'unattendedWaiver');
   const allow = refusing.length === 0;
   const machine = allow ? machineSwitch(local, () => soloOn(policies) && (localSolo ?? localRefSolo(project)), project, localSolo ?? undefined) : local;
@@ -156,7 +162,8 @@ const UNREAD_NOTE = ', and the team\'s github.unattendedWaiver could not be read
 // local ref commits solo and the local file is untracked; a read that fails or runs out of time is no solo. `named`: the merge names its head (`--match-head-commit`, `sha=`, the MCP
 // `sha`), the only merge a verdict counts for, since gh would otherwise merge whatever head the branch has by then.
 // `view` is the guard's earlier view, null when it made none. `forge` is budgetedForge's `make`, the test seam;
-// `startedAt` when the hook's process started, by `now`, the one clock for every merge of one command.
+// `startedAt` when the hook's process started, by `now`, the one clock for every merge of one command. `memo`, when given,
+// keeps the policies the gate read, for the merge guard's trust check.
 // Any throw, from a read or the clock, is the `unread` denial: the hook's own catch would let the merge run.
 export function guardWaiver(args) {
   try {
@@ -166,7 +173,7 @@ export function guardWaiver(args) {
   }
 }
 
-function readWaiver({ project, state, pr, head, named = false, repo = null, view = null, forge = null, startedAt, now = Date.now }) {
+function readWaiver({ project, state, pr, head, named = false, repo = null, view = null, forge = null, startedAt, now = Date.now, memo = null }) {
   const none = { allow: false, note: '', route: '' };
   const local = project.localUnattendedWaiver;
   if ((local !== 'on' && local !== 'unset') || !state?.outcome || owed(state).length) return none;
@@ -203,7 +210,7 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   const home = typeof seen?.url === 'string' ? repoName(seen.url) : null;
   if (!base || !host || !home) return unread;
   const rest = Math.floor(deadline - now());
-  const gate = waiverGate({ project, forge: reads, repo: home, host, base, prefix: rest > 0 ? knownPrefix(project.root, { timeout: Math.min(READ_TIMEOUT_MS, rest) }) : null, localSolo });
+  const gate = waiverGate({ project, forge: reads, repo: home, host, base, prefix: rest > 0 ? knownPrefix(project.root, { timeout: Math.min(READ_TIMEOUT_MS, rest) }) : null, localSolo, memo });
   if (gate.reason === 'unread') return unread;
   if (!gate.on) return none;
   const verdict = waiverFor(state, head, kind);

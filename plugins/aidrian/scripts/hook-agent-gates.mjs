@@ -3,7 +3,7 @@
 // and, with or without gates, from setting the machine's switches, as it keeps a session the background handoff route
 // started (lib/handoff-guard.mjs startedUnattended); lib/handoff-guard.mjs, with or without
 // gates, from running `aidrian handoff continue` or writing in the handoff continuation store, and keeps a subagent
-// and such a session from writing there or in the unattended marks, from starting a host session outside the gate,
+// and such a session from writing there, in the unattended marks, or in the sign-off store, from starting a host session outside the gate,
 // from running the gate with a variable of their own that moves its store or session, and from repointing a git remote
 // or gh's default repository, through which the plugin reads the team's policy on the forge, and from writing in the
 // folder of the project runs. Every session's `aidrian project` command is authorized against its run's ledger by the
@@ -46,12 +46,12 @@ import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, projectRunWriteDenial, remoteChangeDenial, startedUnattended, stateFolders, unattendedMarkWriteDenial } from '../lib/handoff-guard.mjs';
+import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, signoffWriteDenial, startedUnattended, stateFolders, unattendedMarkWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
-import { ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
+import { drivesRun, ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
-import { noteBeacon, readUnattendedMark } from '../lib/unattended-mark.mjs';
+import { noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
 
 // The milliseconds from the hook's start the guards may take. AIDRIAN_GUARD_BUDGET_MS may only lower it, as a test does.
@@ -88,20 +88,24 @@ async function gate(input) {
   const marked = mark?.root ? findProject(mark.root) : null;
   // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started
   // in, and the mark the one the gate ran in.
-  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? (snapshot?.root ? openProject(snapshot.root) : null) ?? marked;
+  // A project run's driver is held to its run's project wherever its call runs, as a marked session is (runDriver).
+  const driven = readDriverMark(input.session_id);
+  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? (snapshot?.root ? openProject(snapshot.root) : null) ?? marked
+    ?? (driven?.root ? findProject(driven.root) : null);
   if (snapshot?.problem) {
     const settings = project ? loadConfig(project).config : DEFAULTS;
     const denial = unreadableConfigDenial(input, snapshot.file, snapshot.problem, settings, 'to start a new session, which takes the gates from the config again');
     if (denial) await block(input, 'agent-gates', denial.reason, { match: 'the gate snapshot cannot be read', project: project ?? undefined, config: settings });
   }
   if (!project) {
-    // The gate command runs outside a project too, with the defaults.
+    // The gate command runs outside a project too, with the defaults. A run's driver is held there too, by its mark.
     const unattended = () => mark !== null;
+    const storeHeld = () => unattended() || drivesRun(input.session_id);
     let outside;
     try {
-      outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended })
+      outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended }) ?? prEnvDenial(input, DEFAULTS, { unattended })
         ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended })
-        ?? projectCommandDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended })
+        ?? projectCommandDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended: storeHeld }) ?? signoffWriteDenial(input, DEFAULTS, { unattended: storeHeld })
         // A session its own mark holds, with no project it can read, cannot tell its own places, so it writes nothing; a
         // pending or unreadable hold keeps only the entries refused wherever they lie (lib/unattended-write.mjs).
         ?? unattendedWriteDenial(input, DEFAULTS, { mark, places: () => unattendedPlaces({ cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), mark, project: null }) }));
@@ -166,22 +170,29 @@ function guards(input, project, config, gated, snapshot, marked, unattended, bas
   // checkout's host paths.
   let active;
   const runSession = () => (active ??= projectRunActive(project, config, { base }));
+  // A project run's driver is held as one no Human attends for the runs folder, the marks, and the sign-off store: it may
+  // run for hours with no Human at hand. Its driver mark names it (project-run-guard.mjs runDriver).
+  let drives;
+  const storeHeld = () => unattended() || (drives ??= drivesRun(input.session_id));
   return opaqueLimitDenial(input, config, { unattended })
     ?? writeLimitDenial(input, config, { unattended })
     ?? handoffContinueDenial(input, config)
     ?? handoffEnvDenial(input, config, { unattended })
+    ?? prEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
     ?? remoteChangeDenial(input, config, { unattended })
     ?? projectCommandDenial(input, config, { unattended })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended, base })
-    ?? unattendedMarkWriteDenial(input, config, { project, links: false, unattended })
-    ?? projectRunWriteDenial(input, project, config, state, { links: false, unattended, base, own })
+    ?? unattendedMarkWriteDenial(input, config, { project, links: false, unattended: storeHeld })
+    ?? signoffWriteDenial(input, config, { project, links: false, unattended: storeHeld })
+    ?? projectRunWriteDenial(input, project, config, state, { links: false, unattended: storeHeld, base, own })
     ?? mainCheckoutWriteDenial(input, project, config, { links: false, unattended, runSession })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended, base })
-    ?? unattendedMarkWriteDenial(input, config, { project, unattended })
-    ?? projectRunWriteDenial(input, project, config, state, { unattended, base, own })
+    ?? unattendedMarkWriteDenial(input, config, { project, unattended: storeHeld })
+    ?? signoffWriteDenial(input, config, { project, unattended: storeHeld })
+    ?? projectRunWriteDenial(input, project, config, state, { unattended: storeHeld, base, own })
     ?? mainCheckoutWriteDenial(input, project, config, { unattended, runSession })
     ?? otherProject(input, project, marked, unattended, own);
 }

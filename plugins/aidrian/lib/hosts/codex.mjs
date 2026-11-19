@@ -163,9 +163,34 @@ function writableRoots(env) {
   return [...rest.slice(0, end).matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/gu)].map((match) => match[1] ?? match[2]);
 }
 
-// Why the writable roots of Codex's config would let a session write in one of `guarded`, real absolute paths such as
-// the main checkout's git folder, the state root, the mark folders, and the runs folder, or null.
+// The temporary folders Codex's workspace-write sandbox lets a session write besides its writable roots: /tmp, unless
+// config.toml sets `exclude_slash_tmp = true` under `[sandbox_workspace_write]`, and the folder $TMPDIR names, unless it
+// sets `exclude_tmpdir_env_var = true` (Codex's config reference).
+function tempRoots(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    lines = [];
+  }
+  const sandbox = section(lines, (line) => /^\[sandbox_workspace_write\]\s*(?:#.*)?$/u.test(line)) ?? [];
+  const excluded = (key) => sandbox.some((line) => new RegExp(String.raw`^\s*${key}\s*=\s*true\b`, 'u').test(line));
+  const tmpdir = typeof env.TMPDIR === 'string' && path.isAbsolute(env.TMPDIR) ? env.TMPDIR : null;
+  return [...(excluded('exclude_slash_tmp') ? [] : ['/tmp']), ...(tmpdir && !excluded('exclude_tmpdir_env_var') ? [tmpdir] : [])];
+}
+
+// Why the writable roots of Codex's config, or the temporary folders its sandbox writes (tempRoots), would let a session
+// write in one of `guarded`, real absolute paths such as the main checkout's git folder, the state root, the mark
+// folders, the sign-off store's, and the runs folder, or null.
 function writableRootsProblem(env, guarded) {
+  for (const root of tempRoots(env)) {
+    let real = root;
+    try {
+      real = realpathSync(root);
+    } catch {}
+    const holds = guarded.find((folder) => real === folder || folder.startsWith(`${real}${path.sep}`) || real.startsWith(`${folder}${path.sep}`));
+    if (holds) return `Codex's workspace-write sandbox lets a session write ${root}, which reaches ${holds}, a folder a session no Human attends must not write: move the state folder out of it, or set ${root === '/tmp' ? 'exclude_slash_tmp' : 'exclude_tmpdir_env_var'} = true under [sandbox_workspace_write] in config.toml`;
+  }
   for (const root of writableRoots(env)) {
     if (typeof root !== 'string') return 'Codex\'s config.toml sets writable_roots for its workspace-write sandbox in a form the gate cannot read';
     const home = env.HOME || homedir();

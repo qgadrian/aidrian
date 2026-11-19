@@ -28,8 +28,8 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
-import { committedConfigFile, defaultStateDir, stateDir } from './project.mjs';
-import { readUnattendedMark } from './unattended-mark.mjs';
+import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
+import { MARK_FOLDER, markDriver, readUnattendedMark } from './unattended-mark.mjs';
 
 // A run id: lower-case letters, digits, and dashes, starting with a letter or digit.
 export const RUN_ID = /^[a-z0-9][a-z0-9-]{0,63}$/u;
@@ -371,12 +371,17 @@ export function initRun({ project, config, run, file, session, input = {}, env =
     const active = activeRuns(state, { except: run });
     if (active.length && active[0].run === null) return refuse(`the folder of the project runs, ${runsFolder(state)}, cannot be read, so whether a run is still active cannot be told`);
     if (active.length) return refuse(`the run ${active[0].run} is still active in ${runFolder(state, active[0].run)}; finish it, or remove its folder, before another starts`);
-    mkdirSync(runFolder(state, run), { mode: 0o700 });
-    const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...read.snapshot })}\n`;
-    writeFileSync(snapshotFile(state, run), text, { mode: 0o600, flag: 'wx' });
     // `main`: the run's main checkout, by its real path, which an attempt clone of a confined host stands for
     // (lib/attempt-clone.mjs): its machine switches and decisions are read there.
     const main = resolvedPath(project.checkouts.at(-1)) ?? project.checkouts.at(-1);
+    // From here the session drives the run, and the hooks hold it as one no Human attends for the runs folder, the
+    // marks, and the sign-off store (run-driver.mjs): its driver mark is filed first, or the run does not start.
+    if (!markDriver(session, { run, root: main, state: resolvedPath(state) ?? state, env, now })) {
+      return refuse(`this session's driver mark cannot be filed in ${path.join(stateRoot(env), MARK_FOLDER)}, so the hooks could not hold the run's driver`);
+    }
+    mkdirSync(runFolder(state, run), { mode: 0o700 });
+    const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...read.snapshot })}\n`;
+    writeFileSync(snapshotFile(state, run), text, { mode: 0o600, flag: 'wx' });
     const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
     // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (recordIssue).
     appendRow(ledgerFile(state, run), row);
@@ -521,6 +526,8 @@ export function activeRuns(state, { except } = {}) {
   return names.filter((name) => RUN_ID.test(name) && name !== except).filter((name) => {
     const found = readRun(state, name);
     if (found.problem) return true;
+    // A run whose ledger records its end (`aidrian project end`) is over, whatever its issues.
+    if (found.rows.some((row) => row?.event === 'end')) return false;
     return planRun(found.snapshot, found.states).verdict !== 'done';
   }).map((run) => ({ run }));
 }

@@ -22,7 +22,7 @@
 // repository (isTrustedCommenter, summaryComment): a stranger's comment never supplies a record.
 
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
@@ -254,13 +254,99 @@ function wellFormed(state, pr) {
   return isObject(state) && state.version === 1 && state.pr === pr && Array.isArray(state.rounds) && isObject(state.passes) && isObject(state.signoffs);
 }
 
-function readFile(target, pr) {
+// The largest record file read: ten times the largest record seen in use (about 200 KB), far under MAX_RECORD, which
+// bounds a record decoded from a comment. A larger file reads as no record.
+export const RECORD_FILE_CAP = 2 * 1024 * 1024;
+// The most record files of one pull request, and their total bytes, a reader that holds a session no Human attends to
+// the record takes (recordProblem): past either, the record is refused rather than read.
+export const RECORD_FILES_CAP = 8;
+export const RECORD_TOTAL_CAP = 8 * 1024 * 1024;
+
+// The text of the record file `target`, read bounded: { text, key }, { parsed, key } from the memo, { size, key } with
+// `stat`, { missing: true }, or { problem }. It is opened without following a link and without waiting on a FIFO, and
+// read only when it is a regular file with one link and at most RECORD_FILE_CAP bytes, so a planted link, FIFO, hard
+// link, or huge file never stalls a reader, such as the merge guard, past its hook's time, nor leads it to a file
+// elsewhere. `key` names the file's version, for the memo.
+const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+function recordText(target, { stat: only = false } = {}) {
+  let fd;
   try {
-    const state = JSON.parse(readFileSync(target, 'utf8'));
-    return wellFormed(state, pr) ? { failures: {}, overrides: [], outcome: null, pending: [], ...state } : null;
-  } catch {
-    return null;
+    fd = openSync(target, NO_FOLLOW);
+  } catch (error) {
+    return error.code === 'ENOENT' || error.code === 'ENOTDIR' ? { missing: true } : { problem: `it cannot be opened as a plain file (${error.code ?? 'no code'})` };
   }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return { problem: 'it is not a regular file' };
+    if (stat.nlink !== 1) return { problem: `it has ${stat.nlink} hard links` };
+    if (stat.size > RECORD_FILE_CAP) return { problem: `it is larger than ${RECORD_FILE_CAP} bytes` };
+    const key = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    if (only) return { size: stat.size, key };
+    if (memo?.has(target) && memo.get(target).key === key) return { key, parsed: memo.get(target).parsed };
+    const buffer = Buffer.alloc(stat.size);
+    const read = readSync(fd, buffer, 0, stat.size, 0);
+    return { text: buffer.subarray(0, read).toString('utf8'), key };
+  } catch (error) {
+    return { problem: `it cannot be read (${error.code ?? 'no code'})` };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// The records parsed while withRecordMemo runs, by file and version: a reader that reads one record many times, as the
+// merge guard does through its several record readers, parses each file once. Null outside it.
+let memo = null;
+export function withRecordMemo(fn) {
+  if (memo) return fn();
+  memo = new Map();
+  try {
+    return fn();
+  } finally {
+    memo = null;
+  }
+}
+
+function readFile(target, pr) {
+  const read = recordText(target);
+  let parsed = read.parsed;
+  if (parsed === undefined) {
+    if (read.text === undefined) return null;
+    try {
+      parsed = JSON.parse(read.text);
+    } catch {
+      parsed = null;
+    }
+    memo?.set(target, { key: read.key, parsed });
+  }
+  // Each reader gets its own copy: readers change the record they read.
+  const state = parsed === null ? null : structuredClone(parsed);
+  return wellFormed(state, pr) ? { failures: {}, overrides: [], outcome: null, pending: [], ...state } : null;
+}
+
+// Why this machine's record files of pull request `pr` cannot all be read as records, or null: more than
+// RECORD_FILES_CAP of them, or more than RECORD_TOTAL_CAP bytes in all, in every folder of this project's records
+// (recordFolders), or one that recordText refuses. Nothing is parsed. A reader that holds a session no Human attends to
+// the record, such as the merge guard, refuses the merge on it, before it reads the record: a record it cannot read may
+// be one planted to read as no record, or to spend the hook's time. `pastDeadline()` stops the walk.
+export function recordProblem(project, pr, { pastDeadline = () => false } = {}) {
+  let count = 0;
+  let total = 0;
+  for (const dir of recordFolders(project)) {
+    let names = [];
+    try {
+      names = readdirSync(dir).filter((name) => name === `pr-${pr}-review.json` || (name.startsWith(`pr-${pr}-review-`) && name.endsWith('.json')));
+    } catch {}
+    for (const name of names) {
+      if (pastDeadline()) return `the review record files of #${pr} could not all be checked in time`;
+      count += 1;
+      if (count > RECORD_FILES_CAP) return `this machine holds more than ${RECORD_FILES_CAP} review record files of #${pr}, more than any review writes`;
+      const read = recordText(path.join(dir, name), { stat: true });
+      if (read.problem) return `the review record file ${path.join(dir, name)} ${read.problem}`;
+      total += read.size ?? 0;
+      if (total > RECORD_TOTAL_CAP) return `the review record files of #${pr} hold more than ${RECORD_TOTAL_CAP} bytes, more than any review writes`;
+    }
+  }
+  return null;
 }
 
 // The old-name record `old`, for a reader of repository `repo`, or null: one that names `repo`, or one that names none

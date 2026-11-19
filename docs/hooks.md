@@ -284,7 +284,9 @@ What each rule matches:
   type from a phone, which refuses any other stop. A long form runs on the Human's AskUserQuestion answer naming
   `<owner>/<name>#<PR>` of the repository it acts on ([review.md](review.md#answering-in-the-session)): its `--repo`,
   one of this checkout's remotes, else the one repository the remotes name; a checkout whose remotes name more than one
-  needs the `--repo`. The rule reads no forge to learn it.
+  needs the `--repo`. The rule reads no forge to learn it. A subagent's sign-off, one from a session no Human
+  attends (its unattended mark), and one from a project run's driver are refused with no answer route, since a flow
+  sign-off also writes the [sign-off store](review.md#merge-trust); the dry run still runs.
 - Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
@@ -573,9 +575,36 @@ one command holds.
 A read that fails or would begin too late keeps the denial, which then says the team's value could not be read in time.
 With both switches on, the denial names `aidrian pr waive` as a second route.
 
+A session no Human attends, one whose [unattended mark](handoff.md#the-background-route) the hook reads by the host's own
+session id, a pending or unreadable mark included, such as a project run's issue session, may not take the record's word
+alone: a confined session can write the review records. The guard holds it to the projects its mark names, the gate's
+start folder, else its main checkout, wherever its call runs, so a git folder of its own makes no hole; a mark that
+names no project the guard can read refuses, and so does a main checkout that does not resolve to a project, whatever
+the start folder; the start folder gives only the project's folder in the repository and its record folders. A project
+run's driver is held the same way, from its driver mark. Its `gh pr merge --auto`, and any `gh api` call naming
+`mergePullRequest`, `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a GraphQL call
+(`graphql`, `/graphql`, `graphql/`, `graphql?x=1`, or an absolute URL whose path is GraphQL's, or an endpoint the
+shell builds) whose query is in a file it names or the shell builds, and fed text naming one, are refused: each leaves
+the merge to GitHub. Before any record is parsed, its pull request's record files are checked: more than 8, more than
+8 MiB in all, or one that is a link, a FIFO, a hard link, or over 2 MiB refuses. Every other merge such a
+session makes that the checks above let through, with a record or none, the Human's answer, or a waiver, must also:
+name its number and its full 40-character head (`--match-head-commit`, `sha=`, the merge tool's `sha`, or the GitHub MCP
+server's `expectedHeadSha`, which its merge passes to GitHub), in the repository the session is pinned to, its project
+run's, read from the run's ledger, else the main checkout's origin (a merge naming another repository is refused); read
+its record files bounded, each parsed once a call; and pass on the forge, in one GraphQL
+read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge trust](review.md#merge-trust). The policy:
+`github.autoMerge.allow` on both branches, the main checkout's own switch on, the default branch's required checks named,
+the paths check with `includeGuardedPaths` and the policy files, the gh user's own pull request, no outsider's comment
+or review in comment and review lists the forge gave whole, no changes requested, not a draft, and every check of exactly the head finished and passed, so gh merges at
+once rather than leave the merge to auto-merge or a merge queue. A read that fails or runs out of time refuses, and says
+one more try is safe. Whether GitHub keeps `--match-head-commit` when a push lands between the guard's read and the
+merge is not verified live; the guard's read is of the same head it names. An attended session's merges are unchanged,
+and read nothing more.
+
 [Auto-merge](config.md#auto-merge) goes through this guard: the rule reads its `gh pr merge` like any other.
 The guard is not proof that a review happened, because no record lets a merge run (step 2 above).
-So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-merge off.
+So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-merge off. In a session no Human attends
+it asks for [merge trust](review.md#merge-trust) too.
 It also stays off for a changed instruction or workflow file (`paths`), a comment from outside the repository (`outsider`),
 and requested changes (`review`). Neither it nor this guard stops a session with a shell or a forged local record:
 for proof, protect the branch with a required review from a second account. [Limits](config.md#limits).
@@ -914,6 +943,21 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
+- A project run's driver counts as a session no Human attends for writes to the runs folder (its ledger and snapshot),
+  the unattended marks, and the sign-off store, from `aidrian project init` on, wherever its call runs, and for the
+  [merge guard](#merge-guard), `aidrian pr auto-merge`, and the review-signoff rule. `aidrian project init` files its
+  driver mark, `driver.<session id>.json` beside the unattended marks, naming the run, its main checkout, and its state
+  folder, before the init row, and refuses when it cannot; each start and wait by the current driver files it again,
+  and custody files one for the continuation it moves to (`runDriver` in `lib/run-driver.mjs`, which reads the mark
+  alone, and the ledger only in the state folder it names). It holds whatever its age, until that ledger records the
+  run's end (`aidrian project end`); a mark it cannot read, a missing state folder, or a ledger it cannot read holds
+  the session too, and authorizes nothing. The driver's own `aidrian project` commands still write the ledger.
+- The same two, and a project run's driver, may not write in the
+  [sign-off store](review.md#merge-trust), `$XDG_STATE_HOME/aidrian/signoffs/` or `~/.local/state/aidrian/signoffs/`,
+  read the same way, with the part named `signoffs`: a merge no Human asks for reads the Human's flow sign-offs there,
+  and only `aidrian pr signoff` in a main session the Human attends writes it. A session no Human attends may not run an
+  `aidrian pr` command with `XDG_STATE_HOME`, `HOME`, or another variable that moves the state root set or unset by the
+  command line itself.
 - With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
   a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
   `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,

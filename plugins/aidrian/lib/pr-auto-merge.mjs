@@ -40,19 +40,27 @@
 //      fixture, or golden file; and every file still at the head is a regular file there, read from the head's tree:
 //      no symbolic link and no submodule. Every list is read from GitHub, never the working copy, so a pull request
 //      cannot widen what lets it through. Any other `none_needed` waits for the Human.
+//   8. trust, only for a session no Human attends (its unattended mark): the record is this machine's word, which a
+//      project run's confined session can write, so the merge also rests on what no such session writes
+//      (lib/review/merge-trust.mjs): the default branch's `github.reviewer` bot passed exactly the head on GitHub, read in
+//      one call (the forge's reviewTrail), whatever the record's outcome, and the sign-off store holds the Human's
+//      sign-off on exactly the head of every flow the record names for it and every flow the changed files, as GitHub
+//      lists them, may select (flowsFloor). With no bot set, it is off. Its reason is `trust`. An attended run reads none.
 // gh reads, each through the forge facade (lib/forges): one `gh pr view` for the number, head, base, author, URL, files,
 // and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the
 // contents API, at `refs/heads/<branch>` (once when the base is the default branch); and, only when the team, the checks,
 // the paths, and the machine all allow it, `gh api user` for the login, then the pull request's three comment lists.
 // When the view lists fewer files than it counts, and the team and the checks allow it, the paged file list and then the
 // pull request's head again, before the login. Then, with a whole list, the default branch's knowledge folder beside its
-// config.json and each `.json` index in it (startDocs).
+// config.json and each `.json` index in it (startDocs). Last, for a session no Human attends and only when every other check
+// allows it, the review trail.
 // The `none_needed` route of the review check reads the head's tree too, one folder at a time, after every other check
 // of that route passed; the two configs above hold its lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
-// repo, base }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
-// other team values are the default branch's.
+// repo, base, trust? }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
+// other team values are the default branch's; `trust`, only with the reason `trust`, is `bot` or `signoff`, which half
+// of merge trust is missing, as the plain line names it too.
 // When the reason is local and the local file has errors, they go to stderr.
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 // A failed read of the full file list, or of the head after it, is off (paths): the paths check names it.
@@ -62,13 +70,20 @@ import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { noneNeededProblem, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
-import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
+import { configPathIn, GUARDED_PATHS, knowledgeIn, mayFollowTeamDefault, POLICY_PATHS, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
+import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
+import { driverHold } from './run-driver.mjs';
+import { readUnattendedMark } from './unattended-mark.mjs';
 import { heldWaiver } from './review/settled.mjs';
 import { owed } from './review/state.mjs';
 import { recordFor, scoped } from './rules/github/merge-review.mjs';
+
+// Whether no Human attends `session`: its unattended mark, a pending or unreadable one included, or its driver mark.
+const heldSession = (session, options = {}) => (readUnattendedMark(session, options) ?? driverHold(session, options)) !== null;
 
 export const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
@@ -205,6 +220,65 @@ export function branchPolicies(forge, pr, prefix = '') {
   const baseErrors = base === main ? policyErrors : [];
   const basePolicy = base === main ? policy : branchConfig(forge, pr, base, prefix, { seen, parse: (text, file) => configFromText(text, file, baseErrors) });
   return { main, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors, configFile };
+}
+
+// The paths a review trail reads each branch's policy files at (project.mjs trailPaths), for the merge guard.
+export { trailPaths };
+
+// branchPolicies' answer from a review trail's branch files, with no further read, or null when the trail cannot stand
+// in for those reads: a branch it names no name for, a file it gave only in part, or a pointer that names another
+// folder than the default one, whose config.json the trail did not read. `pr` is { repo, base }.
+export function trailPolicies(trail, pr, prefix = '') {
+  const { default: main, base } = trail?.branches ?? {};
+  if (typeof main?.name !== 'string' || main.name === '') return null;
+  const branch = pr.base ?? main.name;
+  if (branch !== main.name && base?.name !== branch) return null;
+  const paths = trailPaths(prefix);
+  const configOf = (files, errors, seen) => {
+    const read = (name) => {
+      const file = `${prefix}${name}`;
+      seen.push(file);
+      const text = { [paths.pointer]: files.pointer, [paths.config]: files.config }[file];
+      if (text === undefined || text === false) throw new TrailMiss();
+      return text;
+    };
+    const file = configPathIn(read);
+    return configFromText(read(file), file, errors);
+  };
+  const seen = [];
+  const policyErrors = [];
+  try {
+    const policy = configOf(main, policyErrors, seen);
+    const configFile = seen.at(-1);
+    const baseErrors = branch === main.name ? policyErrors : [];
+    const basePolicy = branch === main.name ? policy : configOf(base, baseErrors, seen);
+    return { main: main.name, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors, configFile };
+  } catch (error) {
+    if (error instanceof TrailMiss) return null;
+    throw error;
+  }
+}
+class TrailMiss extends Error {}
+
+// startDocs' answer from a review trail's knowledge folder on the default branch, read beside `configFile` when that is
+// the default folder's, or null when the trail did not read that folder.
+export function trailDocs(trail, configFile, prefix = '') {
+  const folder = knowledgeIn(configFile);
+  if (folder !== trailPaths(prefix).knowledge) return null;
+  const listing = trail?.branches?.default?.knowledge;
+  if (listing === null) return { docs: [], folder };
+  if (!Array.isArray(listing)) return `the review trail gave no listing of ${folder}`;
+  const docs = [];
+  for (const entry of listing.filter((each) => each?.type === 'blob' && typeof each.name === 'string' && each.name.endsWith('.json')).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const file = `${folder}/${entry.name}`;
+    if (typeof entry.text !== 'string') return `the review trail gave only part of ${file}`;
+    try {
+      docs.push(...indexedAlways(entry.text, file).map((doc) => `${prefix}${doc}`));
+    } catch (error) {
+      return error.message;
+    }
+  }
+  return { docs, folder };
 }
 
 // What the `none_needed` route of the review check reads from the two branches' configs (pr-auto-merge-docs.mjs
@@ -380,8 +454,10 @@ export function checksProblem({ github: policy, state }, working, where) {
 
 const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, ${team.deleteWorktree ? 'delete' : 'keep'} the worktree`;
 
-// The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does.
-export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } = {}) {
+// The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does. `unattended`
+// says whether no Human attends the session that runs it: its unattended mark, by the session id its host gives the
+// command (hosts/index.mjs sessionIdentity), a pending or unreadable mark included.
+export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}) } = {}) {
   const fail = (message) => {
     console.error(`aidrian pr auto-merge: ${message}`);
     return 3;
@@ -418,6 +494,8 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   const followsDefault = project.localAutoMerge === 'unset' && team.allow && team.default === 'on';
   const local = followsDefault && !mayFollowTeamDefault(project) ? 'off' : project.localAutoMerge;
   let { effective, reason } = resolveAutoMerge({ autoMerge: team }, local);
+  // Which half of merge trust is missing, `bot` or `signoff`, when the reason is `trust`; else null.
+  let trust = null;
   let why = reason === 'team'
     ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
@@ -461,19 +539,36 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
         }
       };
       const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree };
-      const problem = changesRequested(pr) ?? reviewProblem(scoped(recordFor(project, pr.number, pr.repo), project, pr.repo), pr.head, unreviewed);
+      const state = scoped(recordFor(project, pr.number, pr.repo), project, pr.repo);
+      const problem = changesRequested(pr) ?? reviewProblem(state, pr.head, unreviewed);
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
+      else if (unattended()) {
+        // The record is this machine's word, which a confined session can write: a merge no Human attends rests on the
+        // forge too. The merge guard holds the merge itself to the same.
+        let trail;
+        try {
+          trail = forge.reviewTrail(pr.repo, pr.number, { host: pr.host, paths: trailPaths(prefix) });
+        } catch (error) {
+          return fail(`could not read the review trail of #${pr.number} with gh (${ghError(error)})`);
+        }
+        const verdict = trustVerdict({
+          trail, head: pr.head, reviewer: policy.github.reviewer, files: listed.files, complete: true, configs: [policy, policies.basePolicy],
+          prefix, policyFiles, state, signoffs: readHumanSignoffs({ repo: pr.repo, pr: pr.number }),
+        });
+        if (verdict) [effective, reason, why, trust] = [false, 'trust', verdict.why, verdict.kind];
+      }
     }
   }
 
   const result = {
     effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
-    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base,
+    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(trust ? { trust } : {}),
   };
+  // A trust refusal names its reason and which half is missing: the bot's verdict, or a sign-off.
+  const off = reason === 'trust' ? `auto-merge off for #${pr.number} (trust: ${trust}): ${why}` : `auto-merge off for #${pr.number}: ${why}`;
   console.log(asJson ? JSON.stringify(result)
-    : effective ? `auto-merge on for #${pr.number} at ${pr.head.slice(0, 7)}: ${team.strategy ?? 'no strategy set'}, ${cleanup(team)}`
-      : `auto-merge off for #${pr.number}: ${why}`);
+    : effective ? `auto-merge on for #${pr.number} at ${pr.head.slice(0, 7)}: ${team.strategy ?? 'no strategy set'}, ${cleanup(team)}` : off);
   if (reason === 'local') {
     for (const line of project.errors.filter((each) => each.startsWith(`${project.paths.local}:`))) console.error(line);
   }

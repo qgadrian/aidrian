@@ -161,8 +161,11 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
 - Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
-  each session started with ([hooks.md](hooks.md#agent-gates)), and `unattended/`, the marks of the sessions the
-  [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days.
+  each session started with ([hooks.md](hooks.md#agent-gates)), `unattended/`, the marks of the sessions the
+  [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, with each project run
+  driver's `driver.<session id>.json` ([hooks.md](hooks.md#agent-gates)), and `signoffs/`, the
+  [sign-off store](review.md#merge-trust), `<owner>/<name>/<PR>.json`, owner-only, which only `aidrian pr signoff` in a
+  session the Human attends writes.
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
   `aidrian pr review` (`review-<n>/` from before they were keyed by repository), `pr-<n>-review.md`, and

@@ -44,7 +44,7 @@ const SHORT = /^([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 const MARK = /^[\w-]{1,128}\.json$/u;
 // A pending mark, named for the session that ran the gate; the dot keeps it apart from a mark under a short id.
 const PENDING = /^pending\.[\w-]{1,128}\.json$/u;
-const TEMPORARY = /^\.(?:pending\.|beacon\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
+const TEMPORARY = /^\.(?:pending\.|beacon\.|driver\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // The beacon of a session a pending mark holds, which the agent gate hook files on its first call (noteBeacon).
 const BEACON = /^beacon\.[\w-]{1,128}\.json$/u;
 const DAY = 24 * 60 * 60 * 1000;
@@ -121,6 +121,48 @@ export function markUnattended(session, { root, cwd = null, env = process.env, n
   } catch {
     return null;
   }
+}
+
+// Files the driver mark of `session`, `driver.<session>.json`, { role: 'driver', run, root, state, at }, in
+// markFolder(env): the session drives the project run `run` of the main checkout `root`, whose ledger is in the state
+// folder `state`, by its real path. `aidrian project init` files it before its init row, and the current driver files it
+// again on each start and wait, as custody does for the continuation it moves to (lib/project-run-gate.mjs). It is
+// never swept: it holds until the run's ledger records its end (run-driver.mjs). Returns the file, or null as
+// markUnattended. Never throws.
+export function markDriver(session, { run, root, state, env = process.env, now = Date.now() } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof run !== 'string' || !RUN_TAG.test(run)) return null;
+  if ([root, state].some((each) => typeof each !== 'string' || !path.isAbsolute(each))) return null;
+  try {
+    return writeMark(ownFolder(env, now), `driver.${session}.json`, { role: 'driver', run, root, state, at: now });
+  } catch {
+    return null;
+  }
+}
+
+// The driver mark of `session` (markDriver), read in each of markFolders, the session's own id only, whatever its age:
+// { run, root, state } when one is there and reads whole; with `run`, `root`, and `state` null for what cannot be read,
+// which holds the session too; null when none is there. A mark of another user does not hold. `home` is a test's, as in
+// markFolders.
+export function readDriverMark(session, { env = process.env, home } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  const uid = processUid();
+  for (const folder of markFolders({ env, home })) {
+    const file = path.join(folder, `driver.${session}.json`);
+    let stat;
+    try {
+      stat = lstatSync(file);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+      return { run: null, root: null, state: null };
+    }
+    if (Number.isInteger(uid) && stat.uid !== uid) continue;
+    const value = stat.isFile() && stat.size < MARK_CAP ? readJson(file) : null;
+    const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
+    const fits = isObject(value) && value.role === 'driver' && typeof value.run === 'string' && RUN_TAG.test(value.run) && absolute(value.root);
+    if (!fits) return { run: null, root: null, state: null };
+    return { run: value.run, root: value.root, state: absolute(value.state) ? value.state : null };
+  }
+  return null;
 }
 
 // Files the pending mark of the gate run by `session`, which is about to start a session in the folder `cwd`, with

@@ -221,12 +221,12 @@ function ownMode({ session, list, env, readMode }) {
 // Starts the session of one issue of a project run, in the background, in the attempt's clone `cwd`, under the name
 // `name`, whose first message is `prompt`, as startIn does, in the permission mode the driver session `session` runs in
 // (`readMode`, sessionMode by default; never bypassPermissions), under the host's sandbox: `--setting-sources user`,
-// the settings sandboxSettings gives for `sandbox`, { git, grants, domains, main, mainGit, tokens }, and
+// the settings sandboxSettings gives for `sandbox`, { git, grants, domains, main, mainGit, tokens, guarded }, and
 // `--strict-mcp-config` with only the servers `mcp` names. `sandbox.git` is the clone's git folder, which `sandbox.grants`
 // must hold, each an absolute path of plain text that resolves; `sandbox.domains` the forge's network hosts;
 // `sandbox.main` the main checkout, which the session may not read but its git folder `sandbox.mainGit`, and in which
 // neither the clone nor a granted folder may lie; `sandbox.tokens` the forge's token variables, the one credential kept
-// (secretVars). Any miss runs no `claude --bg`. No agent is
+// (secretVars); `sandbox.guarded` the folders no sandboxed command writes, such as the sign-off store. Any miss runs no `claude --bg`. No agent is
 // passed, so the session runs as the host's main agent and no agent's own permission mode can stand in for the one
 // passed; the driver's effort is passed on. `home` and `platform` are the user's home folder and the operating system
 // the settings name.
@@ -292,7 +292,10 @@ function sandboxInputs(sandbox) {
     }
   }
   const tokens = Array.isArray(sandbox.tokens) ? sandbox.tokens.filter((each) => typeof each === 'string') : [];
-  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens };
+  // Folders no sandboxed command may write, which need not exist yet: each an absolute path of plain text, kept as given.
+  const guarded = sandbox.guarded ?? [];
+  if (!Array.isArray(guarded) || !guarded.every(plain)) return { problem: 'a folder the gate guards from the session is not an absolute path of plain text' };
+  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens, guarded: [...guarded] };
 }
 
 // The temporary folders a sandboxed command may write, by their real paths: /tmp and the host's own.

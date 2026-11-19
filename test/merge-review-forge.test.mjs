@@ -16,13 +16,13 @@ import { activeRuns, initRun, recordIssue } from '../plugins/aidrian/lib/project
 import { currentDriver, drivesRun, endedIn, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
-import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders } from '../plugins/aidrian/lib/review/merge-trust.mjs';
+import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders, unsignedFlows } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { recordSignoff } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { check as signoffCheck, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
-import { DRIVER, ISSUES, OTHER, runFixture } from './project-start-fixture.mjs';
+import { DRIVER, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 // An unattended merge never rests on a record a confined session can write (docs/review.md, Merge trust): the merge guard
 // and `aidrian pr auto-merge` confirm the team's policy and the review bot's verdict on the forge, and read the Human's
@@ -610,9 +610,10 @@ test('an end row a session other than the run`s driver wrote releases nothing: t
   assert.equal(currentDriver(DRIVER, seen)?.run, 'launch', 'and still the run`s driver');
   assert.deepEqual(activeRuns(fx.state), [{ run: 'launch' }], 'the run is still under way');
   assert.doesNotMatch(fx.cmd(['start', 'launch', 'ENG-1']).err.join('\n'), /ended/u, 'a stray end row ends no run');
-  // The driver's own end row, by custody, releases it, once the issue that start began has settled: end refuses while
-  // an issue runs.
+  // The driver's own end row, by custody, releases it, once the issue that start began has settled and its session
+  // ended: end refuses while an issue runs, or its session runs on.
   recordIssue(fx.state, 'launch', { key: 'ENG-1', state: 'parked', decision: 'd1' });
+  fx.claude.states[STARTED[0].session] = 'done';
   assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
   assert.equal(endedIn(fx.run()), true);
   assert.equal(runDriver(DRIVER, seen), null);
@@ -850,6 +851,18 @@ test('a missing sign-off is a security decision when any unsigned flow is a secu
   r.record((state) => (state.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));
   const off = autoMerge(t, r, { files: ['src/pay/charge.js'], trail: trailOf(r.text, changing('src/pay/charge.js')) });
   assert.deepEqual([off.result.trust, off.result.flow, off.result.signoffClass], ['signoff', 'payments', 'security']);
+});
+
+test('a sign-off store that cannot be read counts every flow that needs a sign-off unsigned: a security decision when any is a security one', (t) => {
+  const r = repo(t, configOf({ review: { flows: { payments: PAYMENTS, 'zz-security': { ...PAYMENTS } } } }));
+  r.record((state) => (state.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));
+  const file = signoffFile('acme/notes', 7);
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, '{ not json', { mode: 0o600 });
+  const off = autoMerge(t, r, { files: ['src/pay/charge.js'], trail: trailOf(r.text, changing('src/pay/charge.js')) });
+  assert.deepEqual([off.result.trust, off.result.flow, off.result.signoffClass], ['signoff', 'payments', 'security']);
+  assert.match(off.result.why, /cannot be read as a sign-off store file/u);
+  assert.deepEqual(unsignedFlows({ flows: new Set(['zz-security', 'payments']), signoffs: { problem: 'x' }, head: HEAD }), ['payments', 'zz-security']);
 });
 
 // A record stopped at the round cap on HEAD with nothing but findings behind it, naming no flow for the Human, and a

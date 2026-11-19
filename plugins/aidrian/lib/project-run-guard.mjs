@@ -241,7 +241,7 @@ export const runStore = (project, config, state) => openStore(state, { checkouts
 
 // The plain words of an `aidrian project` command after its subcommand: { positionals, options, dynamic }, where
 // `dynamic` is true when a positional or an option's value is built from a variable or a substitution.
-const VALUED = new Set(['--project', '--file', '--texts', '--max-wait']);
+const VALUED = new Set(['--project', '--file', '--max-wait']);
 function readRest(tokens) {
   const positionals = [];
   const options = {};

@@ -230,7 +230,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
 | `audits.triage.labels` | The labels every issue from the persona-audit triage gets: [Audit triage](#audit-triage). |
 | `tracker` | The workspace, team, and project MCP tracker writes belong to, off by default: [Tracker](#tracker). |
-| `projectRun` | The keys of a run that works through a tracker project one issue at a time: [Project run](#project-run). |
+| `projectRun` | The keys of a run that works through a tracker project, one issue or a few independent ones at a time: [Project run](#project-run). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 A state folder inside the repository's checkouts keeps the plans, lessons, and audits, and `aidrian check` warns about it,
@@ -373,7 +373,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
 | `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, an owed review, or a waiver above `low` through an accepted residual, on any pass record, keeps it off, also after the waiver ends: a waiver above `low` holds auto-merge until the Human merges. The hold keys on the finding's [id](review.md#finding-ids), so a listing of the same title and file as fixed ends nothing. A `none_needed` record of exactly the current head counts too, with nothing owed, only when all of these hold. Its plan's reasons are exactly "only files that cannot change behaviour", at depth `none`, so any other reason, an extra one such as a rule's, or a record an older plugin wrote with no reasons, waits for the Human. [`github.autoMerge.unreviewedPaths`](#auto-merge) is a non-empty list with no error on both the default branch and the base, and each lists every changed file, from the project root. Every changed file in the paths check's whole list is added, modified, or deleted (never `CHANGED`, a type change, nor `COPIED`); is one the default branch's [`review.nonBehaviour`](review.md#rules), its own or the built-in list, names, and not one its `review.ignore` names, since no review read it, with no error anywhere in its `review` group; and ends in `.md`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, or `.ico`, whatever the lists say. Whatever the team lists, these stay off: a file on the `paths` row's fixed list, which holds every host's instruction files, at the repository root or the project root, even with `github.autoMerge.includeGuardedPaths` on; a knowledge doc the start hook loads, or a file of its knowledge folder, as the `paths` row reads them, with the key on too, and knowledge the gate cannot read; a path with a folder or file name that starts with `.`, which covers every host's folder, such as `.github/prompts/`, `.kiro/`, and `.changeset/`; and a test file, fixture, or golden file: a path the review's test-file patterns match (`*.test.*`, `*.spec.*`, `*_test.*`, or a `test/`, `tests/`, `__tests__/`, or `spec/` folder), or one under a `fixture`, `fixtures`, `__fixtures__`, `testdata`, `test-data`, `golden`, `goldens`, or `__golden__` folder. Every list is read from GitHub as the branches commit it now, never from the head or this checkout, so a pull request that widens a list gets nothing from it. Last, every changed file still at the head is a regular file there. The forge's changed-file list gives no file mode, so the gate reads the head commit's tree, one folder at a time. It refuses a symbolic link (mode `120000`), which a static server or site builder may follow to a file it should not publish, a submodule (`160000`), any other mode, a file the tree does not hold, and a tree it cannot read whole. A deleted file is not looked up. Beyond the two branches' config files and the knowledge the `paths` row read, the route reads only that tree. |
-| `closes` | Only for a [project run](#project-run)'s issue session, one whose unattended mark names the run's issue: the pull request's title, body, and every commit message name no issue but that one after a closing word, as GitHub and a tracker's forge integration read them: `close`, `fix`, `resolve`, and `complete`, in each form, followed by a list of `#12`, `owner/name#12`, an issue link, or tracker keys such as `ENG-12`. The title names no key but the issue's own even with no closing word, since Linear links an issue a title names, and may move it at the merge. A token counts as a tracker key only when its prefix is a team key the run knows: the issue's own, the snapshot's `teams`, every team of the tracker workspace as the driver read it at init, and the teams of the run's issues. So `utf-8`, `SHA-256`, and `e2e-2` are none while no team is so named. A snapshot with no `teams` knows only the run's own teams, and a key of any other team is not seen: a named residual. A key a hyphen joins to more text, such as `ENG-9-export`, counts. Any white space separates a list but a line break, which ends it; a key of a team the run does not know, and a link to another site, are passed over, and one longer than 50 references keeps it off. A merge would otherwise close those issues too, behind the run's back. The gate reads the pull request at exactly its head, then its commits, and a list shorter than its count, which GitHub caps at 250, keeps it off; a head that moves during the read is an error (exit 3). A mark that is pending or cannot be read names no issue, and a run whose snapshot cannot be read knows no team, so any reference keeps it off. Text that names an issue in the body with no closing word, such as `Refs ENG-9`, does not count. The [merge guard](hooks.md#merge-guard) holds the merge itself to the same rule at the moment it runs, with the merge commit's own subject and body. |
+| `closes` | Only for a [project run](#project-run)'s issue session, one whose unattended mark names the run's issue: the pull request's title, body, and every commit message name no issue but that one after a closing word, as GitHub and a tracker's forge integration read them: `close`, `fix`, `resolve`, and `complete`, in each form, followed by a list of `#12`, `owner/name#12`, an issue link, or tracker keys such as `ENG-12`. The title names no key but the issue's own even with no closing word, since Linear links an issue a title names, and may move it at the merge. A token counts as a tracker key only when its prefix is a team key the run knows: the issue's own, the snapshot's `teams`, every team of the tracker workspace as the driver read it at init, and the teams of the run's issues. So `utf-8`, `SHA-256`, and `e2e-2` are none while no team is so named. A snapshot with no `teams` knows only the run's own teams, and a key of any other team is not seen: a named residual. A key a hyphen joins to more text, such as `ENG-9-export`, counts. Any white space separates a closing word from its first reference, line breaks included, and separates the rest of a list but a line break, which ends it; a key of a team the run does not know, and a link to another site, are passed over, and one longer than 50 references keeps it off. A merge would otherwise close those issues too, behind the run's back. The gate reads the pull request at exactly its head, then its commits, and a list shorter than its count, which GitHub caps at 250, keeps it off; a head that moves during the read is an error (exit 3). A mark that is pending or cannot be read names no issue, and a run whose snapshot cannot be read knows no team, so any reference keeps it off. Text that names an issue in the body with no closing word, such as `Refs ENG-9`, does not count. The [merge guard](hooks.md#merge-guard) holds the merge itself to the same rule at the moment it runs, with the merge commit's own subject and body. |
 | `trust` | Only in a session no Human attends, one with an [unattended mark](handoff.md#the-background-route), or a project run's driver: the record is this machine's word, which a project run's confined session can write, so the merge also needs [merge trust](review.md#merge-trust), the default branch's `github.reviewer` bot's passing verdict on exactly the head, read from GitHub in one more call, and the Human's sign-off from the sign-off store of every flow the record or the changed files ask for, on that head. With no bot set it stays off, and says to set one. `--json` adds `trust`, `bot` or `signoff`, which half is missing, and the plain line names both: `auto-merge off for #<PR> (trust: bot): ...`. With `signoff`, it adds `flow`, the first flow whose sign-off is missing, and `signoffClass`, `security` when any unsigned flow of the default branch has an id that holds the word `security` or a `require` that names `agent:security-engineer`, else `product`. A session the Human attends skips this row. |
 
 `strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only.
@@ -499,6 +499,12 @@ yet (one judge rules per head), a host that confirms a judge with telemetry on, 
 run, its budget of waived merges and a pull request of the run's pinned repository. It also refuses a working copy
 whose state folder is not the default branch's. Exit 1 says why; exit 3 is a read that failed. `autopilot` runs it at
 the cap and dispatches a judge only on exit 0.
+
+A project run merges at most 3 pull requests on a verdict. The gate and `aidrian pr auto-merge` only count that budget;
+the merge guard takes it at the merge itself, under the run's ledger lock: it counts again and writes a `waived` row
+for the pull request, or refuses the merge once 3 are spent, so the sessions of issues that run in parallel never
+spend more between them. A taken merge counts even if the merge then fails; one the ledger lock or a read refuses is
+not merged.
 
 ### What it never covers
 
@@ -1803,13 +1809,13 @@ This depends on the session-end hook: on a host with no SessionEnd, and in a ses
 
 `aidrian project` keeps the record of a project run, which a driver session uses to work through a tracker project.
 The driver reads the tracker with its own tools and writes a snapshot input; `init RUN --file PATH` validates it and starts the run.
-`next RUN` names the issue to start, and `summary RUN` writes the run's `summary.md` from its ledger.
+`next RUN` names the issues to start, and `summary RUN` writes the run's `summary.md` from its ledger.
 The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `projectRun.allow` | `false` | Whether the team allows project runs. |
-| `projectRun.maxParallel` | `1` | The most issues that run at once, from 1 to 4. |
+| `projectRun.maxParallel` | `1` | The most issues that run at once, from 1 to 4, read from the default branch on the forge and held to 4 in code; a local ref only lowers it, and a read that fails runs one at a time. `next` names that many issues to start, less those running, and none while a session runs on after its issue settled; `init --check` names as many for turn 1, and `start` refuses one past it. The driver's starts still run one at a time: each takes the session's start claim and its one pending mark, and its write-ahead row asks the order and the cap again under the ledger's lock, so two starts never pass it together; one that loses the race is refused, and halts nothing. An issue starts only once every blocker in the run is done, which a result counts only for a merge the forge confirmed. |
 | `projectRun.maxStarts` | `300` | The most sessions one run starts, from 1 to 1000. |
 | `projectRun.issueHours` | `6` | How long one issue may run, in hours, from 1 to 24. |
 | `projectRun.blockedStatus` | `null` | The tracker status a blocked issue moves to; `null` moves none. |
@@ -1853,7 +1859,7 @@ one action. The `why` is cleaned and capped as a result's `stop` is, and a forge
 | Behind the base | `update_branch`: the forge merges the base in, or rebases under the `rebase` strategy where the branch's rules allow a push that is no fast-forward | the same 2 |
 | GitHub still computing it, a head that moved while read, or pending checks | `wait` | 3 per head |
 | The bot asked already for this head and not passed yet | `wait`: `aidrian pr await-review <n>`, with no second request | the same 3 per head |
-| A forge read or auto-merge that failed (`aidrian pr auto-merge` exit 3), or a forge action it refused | `wait` 60, then 300, then 900 seconds | 3 per attempt, apart from the waits above |
+| A forge read, its checks' read included, or auto-merge that failed (`aidrian pr auto-merge` exit 3), or a forge action it refused | `wait` 60, then 300, then 900 seconds; a wait past 150 seconds is taken in foreground waits of at most 150 seconds each, since the host moves a longer call to the background | 3 per attempt, apart from the waits above |
 | `review` on a head a base update made | `review_round`: one review round of that head | 1 per head |
 | `trust` with `bot` | `request_bot`: `aidrian pr await-review <n> --request` | 1 per head |
 | Auto-merge on, failing checks that are each a first run of the head, on the issue's branch, in the pinned repository, as the forge reads each Actions run | `rerun_checks`: the forge starts their failed jobs again | 1 per head |
@@ -1892,10 +1898,13 @@ end moved later only by a named reset. Until the pause is over, `start` of any i
 Time paused counts toward no issue's `issueHours`.
 
 A session the host still lists running, on a host that continues its own session at the reset (Claude Code, started
-with `autoContinueAtUsageLimit`), keeps running for a usage limit while its pause runs, and a minute after: `wait`
+with `autoContinueAtUsageLimit`), keeps running for a usage limit while its pause runs, and 5 minutes past the later
+of the pause's end and the newest entry its transcript holds after the limit record, such as the host's own entry
+when it continues the session, so a session is not stopped before its first new answer, and never more than 30 minutes
+past the pause's end, so an entry dated ahead or entries that keep coming never hold it from `issueHours` for long: `wait`
 prints `paused <issue> usage until <time>` and goes on waiting on it. Every other limited session is stopped, and its
 attempt ends `limit`: one that ended on the limit, one of a host that does not continue (Codex), a rate limit, a
-session whose record is unchanged once its pause is over, and a limit past the run's 24 pauses. `wait` prints
+session whose record is unchanged once its pause and that grace are over, and a limit past the run's 24 pauses. `wait` prints
 `limit <issue> <kind> until <time> -> open`. A limited attempt counts toward no cap of the
 issue, so a limit never parks one. Once the pause is over, the same issue starts again as a new attempt: a fresh
 clone of the issue's branch as the forge holds it, whose prompt says the attempt before stopped on a limit. Work the
@@ -1911,7 +1920,7 @@ main checkout, named in the ledger's init row, as its own: the machine's switche
 checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose
 state folder the project does not name, reads every switch off.
 
-`init` and `next` read none of these keys: `init` does not check `allow`, and `next` names one issue at a time; `start` and `wait` read them from the default branch.
+`init` reads none of these keys and does not check `allow`; `next` and `init --check` read `maxParallel` from the default branch, as `start` and `wait` read them all.
 
 The snapshot input is one JSON object, at most 1 MiB, read as a regular file and never through a symlink:
 
@@ -1961,11 +1970,12 @@ with the driver's session id and the sha256 and issue count of `snapshot.json`; 
 longer matches. Both files are read with no symlink followed, as regular files, under a size cap.
 One run per project is active at a time.
 
-`next` orders the issues by `blockedBy`, then by priority, then by key. It prints `next KEY BRANCH` for the issue to start,
-`wait N running` when none may start while some run, or `done` when nothing may start and nothing runs.
+`next` orders the issues by `blockedBy`, then by priority, then by key. It prints `next KEY BRANCH` for each issue to start,
+`wait N running` when none may start while some run or a session runs on after its issue settled, or `done` when nothing
+may start and nothing runs.
 Lines for the issues that run, are blocked, or are skipped follow. An issue in a cycle of blockers is blocked.
 An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
-is skipped and names it. `--json` prints the whole plan.
+is skipped and names it. `--json` prints the whole plan, with the `maxParallel` it read.
 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
 state folder and any other active run but `RUN`, `projectRun.allow` through the forge, the machine's switch, the host's
@@ -1980,12 +1990,19 @@ the forge's default branch with `github.requiredChecks` listed and this machine'
 set to `"background"`, since `"clear"` waits on a person; and `github.reviewer`, with the bot seen on a recent
 pull request and an active CI workflow, read through the forge. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
-blocker. `init RUN --file PATH [--texts PATH] --check` checks the inputs as `init` would, prints their blockers
+blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
 (problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue
-to start with no text) and the `next` lines, and writes no run. `--texts` is a second input, apart from the snapshot
-input and its 1 MiB cap: an object of issue key to `{ title, description, criteria, labels }`, read as the snapshot
-input is, under a cap of 500 issues at each field's cap. `init` keeps each text capped, with hidden characters removed,
-in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`, and each start writes it read-only to the attempt's
+to start with no text) and the `next` lines, and writes no run. An issue's text never comes from a file a session
+writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
+says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each
+issue the tracker's answer holds, by its key, its title, description, and labels, under the unattended marks
+(`issue-reads/<session id>/`). The agent gate hook refuses a subagent's or an unattended session's write there as it
+reads the call, the same check that keeps the marks: a command that hides the path from that reading, such as an
+interpreter's one-liner that builds it, is not refused. `init` keeps, for each snapshot issue, the read its own session
+recorded, its subagents' reads included, and none for an issue no read recorded, nor any read through a symlinked or
+another user's folder. It then removes the session's recorded reads; the session-end hook removes them too (Claude
+Code), and each new record, each `init`, and each `next` remove those older than a day, on every host. It keeps each text capped, with hidden characters and controls but line feeds and
+tabs removed, in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`, and each start writes it read-only to the attempt's
 `issue.md`, fenced and marked as untrusted text from the tracker, which the issue's session reads instead of the tracker. The `project-autopilot` skill runs both in its
 attended first turn, and `init` last, once nothing blocks.
 
@@ -1996,7 +2013,19 @@ exact tool `calls` for the base branch's tracker. Both values come from the base
 from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
 ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
 ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
-`end RUN` refuses while any issue still runs, naming them.
+`end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
+
+Every session a start held counts toward the run's caps until the host lists it ended, not only the session of an issue
+that runs (`lib/project-linger.mjs`). An issue settles once `wait` takes in its result, often while its session still
+finishes its last turn, and a session can keep working past it for good. While the host lists such a session as
+working, `next` prints `wait N running`, counting it, and a `lingering <issue> attempt <n>` line (`--json` adds
+`lingering`), `start` of any issue exits 75 with a `retry:` line that names it, a wait and not a refusal, and `end`
+refuses. `wait` prints `lingering <issue> attempt <n>` and waits on it as on an issue that runs; it writes a `linger` row
+the first time, and once 2 minutes have passed since that row it stops the session and writes a `gone` row with
+`how: "stopped"`, printing `lingered <issue> attempt <n> stopped`. One the host lists as ended gets a `gone` row with
+`how: "ended"`, from `wait`, `start`, or `end`, and `wait` prints `lingered <issue> attempt <n> ended` when it had seen it
+run on. A session that cannot be stopped prints `lingered <issue> attempt <n>: ... could not be stopped` each `wait`.
+The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
 A command whose ledger another process holds locked, and a `start` or `wait` whose read of the team's policy the forge

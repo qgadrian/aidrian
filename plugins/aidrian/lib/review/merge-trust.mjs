@@ -151,15 +151,16 @@ export function trustVerdict({ trail, head, reviewer, files, complete, configs, 
   return signoff ? { kind: 'signoff', why: signoff, flow: unsignedFlow({ flows, signoffs, head }), unsigned: unsignedFlows({ flows, signoffs, head }) } : null;
 }
 
-// The flow signoffProblem names: the first of `flows`, sorted, the store holds no sign-off of on `head`, or null when the
-// store itself could not be read.
+// The flow signoffProblem names: the first of `flows`, sorted, the store holds no sign-off of on `head`, or null when no
+// flow needs one.
 export function unsignedFlow({ flows, signoffs, head }) {
   return unsignedFlows({ flows, signoffs, head })[0] ?? null;
 }
 
-// Every one of `flows`, sorted, the store holds no sign-off of on `head`: none when the store itself could not be read.
+// Every one of `flows`, sorted, the store holds no sign-off of on `head`: every one of them when the store itself could
+// not be read, so a reader that classes the missing sign-offs, as a security one among them, sees each.
 export function unsignedFlows({ flows, signoffs, head }) {
-  if (signoffs.problem) return [];
+  if (signoffs.problem) return [...flows].sort();
   return [...flows].sort().filter((flow) => !(signoffs.flows[flow] && signoffs.flows[flow].head === head.toLowerCase()));
 }
 

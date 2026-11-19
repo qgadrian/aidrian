@@ -37,8 +37,8 @@ must exist in the team.
 
 Hand the read to one subagent, so its hundreds of issues never enter this session: one that can write files and call
 the tracker's tools. Give it the project, the run id (the project's name in lowercase words joined by `-`, then the
-date, such as `billing-v2-20261118`), the two files `<state>/tmp/<run>.snapshot.json` and `<state>/tmp/<run>.texts.json`,
-where `<state>` is the folder `aidrian state` prints, and these rules:
+date, such as `billing-v2-20261118`), the file `<state>/tmp/<run>.snapshot.json`, where `<state>` is the folder
+`aidrian state` prints, and these rules:
 
 - Read with the tracker's tools (`knowledge/references/tracker.md`): Linear's `list_issues` with the project and
   `fields` `id`, `title`, `description`, `labels`, `gitBranchName`, `statusType`, `priority`, `parentId`, page by page;
@@ -50,16 +50,17 @@ where `<state>` is the folder `aidrian state` prints, and these rules:
 - The snapshot keeps for each issue only `key`, `branch`, `status` (its status type), `blockedBy` (keys), and
   `priority` (0 to 4); a blocker outside the project goes in `outside` as `{ key, status }`. Write
   `{ "issues": [...], "outside": [...], "teams": [...] }` to the snapshot file.
-- The texts file holds each issue's text as data, an object of key to `{ title, description, criteria, labels }`, the
-  acceptance criteria as written. The run keeps it apart from the snapshot and writes it to a file each issue's session
-  reads instead of the tracker. No comment.
+- Each issue's text comes from the tracker's own answers to these reads: the run records every issue an issue read
+  (`get_issue`, `list_issues`) answers, by its key, and init keeps that text for the issue's session to read instead
+  of the tracker. Write no text into any file: a text a session writes is never taken. No comment.
 - A parent whose children are in the project is not run: its children are. A parent with no children there runs.
 - Return only the counts and each blocker it met.
 
-Then run `aidrian project init <run> --file <snapshot file> --texts <texts file> --check`. It checks both inputs as init
-will, writes no run, and prints `ok snapshot <n> issues, <m> with text`, a `blocker snapshot:` line for each problem,
-cycle, or issue started outside the run, a `blocker texts:` line for each issue with no text when
-`projectRun.mcpServers` holds no tracker server its session could read it through, the `next` lines, and a
+Then run `aidrian project init <run> --file <snapshot file> --check`. It checks the input as init will, writes no run,
+and prints `ok snapshot <n> issues, <m> with text`, a `blocker snapshot:` line for each problem, cycle, or issue
+started outside the run, a `blocker texts:` line for each issue whose text no read recorded when
+`projectRun.mcpServers` holds no tracker server its session could read it through, the `next` lines for turn 1, as
+many as `projectRun.maxParallel` starts at once, and a
 `note teams` line when the snapshot names no `teams`: read the team list again and add them before init.
 
 ## 4. Tell the Human
@@ -68,6 +69,6 @@ One message, with every blocker of steps 2 and 3, each with its fix.
 
 - With blockers: ask the Human to fix them and say when. Then run steps 2 and 3 again, and start nothing until both
   are clean.
-- With none: run `aidrian project init <run> --file <snapshot file> --texts <texts file>`, then tell the Human the issue count, how many can
+- With none: run `aidrian project init <run> --file <snapshot file>`, then tell the Human the issue count, how many can
   start now, and that nothing is needed until the report. Start the loop of [loop.md](loop.md) in this same turn:
   the Human may leave. A later preflight names the run, `aidrian project preflight <run>`, so the run it made is no blocker.

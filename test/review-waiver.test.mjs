@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,7 +13,7 @@ import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
+import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, takeWaivedMerge, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { budgetProblem, judgeProblem, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
@@ -1022,6 +1022,41 @@ test('the posted copy keeps no judge id, session, or cap cause, on a private rep
   const project = repo(t).project();
   const why = judgeProblem({ project, config: loadConfig(project).config, state, entry: { ...state.waivers[0], judge_id: '<script>', session: 'x y' } });
   assert.match(why ?? '', /no dispatch of the code-reviewer \(an id of no known shape\) by session \(an id of no known shape\)/u);
+});
+
+test('parallel issues of a run that each count the budget below its most: the merge guard takes the last waived merge for one, under the ledger lock, and refuses the other', async (t) => {
+  const fx = runFixture(t);
+  const { owner, name } = fx.run().init.repository;
+  const r = repo(t, { local: ON });
+  for (const n of [1, 2]) {
+    const state = emptyState(n, `${owner}/${name}`);
+    roundLimit(state);
+    waiver(state);
+    writeLocalState(r.project(), state);
+  }
+  appendToRun(fx.state, 'launch', () => ({ rows: [1, 2].map((pr) => ({ event: 'result', key: 'WID-1', attempt: 1, session: 'child', via: 'drop', status: 'merged', pr, verified: true, at: new Date().toISOString() })) }));
+  for (const n of [5, 7]) r.record(n, (state) => (roundLimit(state), waiver(state)));
+  const project = r.project();
+  const memo = () => ({ run: 'launch', home: fx.project });
+  const merge = (pr) => guardWaiver({ project, state: readLocalState(project, pr), pr, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: () => 0, memo: memo() });
+  // Before either merge, each counts two of three spent: each may merge, as its gate and auto-merge read it.
+  for (const pr of [5, 7]) assert.equal(budgetProblem({ project, home: fx.project, config: fx.config, run: 'launch', pr }), null, `#${pr}`);
+  assert.deepEqual(merge(5), { allow: true, note: '', route: '' });
+  const second = merge(7);
+  assert.equal(second.allow, false);
+  assert.match(second.route, /A judge's verdict cannot stand for this head: project run launch merged 3 pull requests on a judge's verdict already, its most \(3\)/u);
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'waived').map((row) => [row.pr, row.head]), [[5, HEAD]], 'the take is in the ledger, once');
+  assert.equal(merge(5).allow, true, 'the same pull request merged again, as a retry, takes nothing more');
+  assert.equal(fx.rows().filter((row) => row.event === 'waived').length, 1);
+  assert.match(budgetProblem({ project, home: fx.project, config: fx.config, run: 'launch', pr: 7 }) ?? '', /its most \(3\)/u, 'the read-only count sees the take too');
+  // A ledger another process holds locked refuses the take: no merge on a budget it could not count.
+  const ledger = path.join(fx.state, 'runs', 'launch', 'ledger.jsonl');
+  const jsonl = path.resolve(import.meta.dirname, '../plugins/aidrian/lib/jsonl.mjs');
+  const holder = spawn(process.execPath, ['--input-type=module', '-e', `import { withLocks } from ${JSON.stringify(jsonl)}; withLocks([${JSON.stringify(ledger)}], () => { process.stdout.write('held\\n'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 8000); });`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => holder.kill());
+  await new Promise((resolve) => holder.stdout.once('data', resolve));
+  const locked = takeWaivedMerge({ project, home: fx.project, config: fx.config, run: 'launch', pr: 9, head: HEAD, waitMs: 0 });
+  assert.match(locked ?? '', /could not be locked or written to take this merge from its budget/u);
 });
 
 test('the guard reads the sign-off store and the run`s budget only with time left: past the deadline it is the unread denial, and the hook ends inside 5 s', async (t) => {

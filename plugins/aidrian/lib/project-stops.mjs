@@ -53,6 +53,9 @@ export const POLICY_REASONS = Object.freeze(['team', 'local', 'checks', 'paths',
 const KNOWN_REASONS = new Set([...POLICY_REASONS, 'review', 'trust']);
 // How long a wait on a read or an action that failed lasts, in seconds.
 export const WAIT_PAUSE = 60;
+// The longest one wait call may last, in seconds: a host moves a command still running at 180 s to the background, so a
+// longer wait is taken in calls of at most this many seconds each.
+export const WAIT_STEP = 150;
 // How long each wait on a failed read or action lasts, in seconds, in turn: the `retry` cap, per attempt.
 export const RETRY_PAUSES = Object.freeze([60, 300, 900]);
 // The head a retry row records when the forge named none: retries count per attempt, never per head.
@@ -124,6 +127,13 @@ export function classifyStop({ view, autoMerge, checks = null, history = [], att
   return merge.action === 'park' ? { ...merge, parkAs: 'merge_steps' } : merge;
 }
 
+// How the session waits `seconds`: in one call, or, past WAIT_STEP, in foreground calls of at most WAIT_STEP seconds each,
+// since a host moves a longer call to the background.
+function waitWords(seconds) {
+  if (seconds <= WAIT_STEP) return `wait ${seconds} seconds`;
+  return `wait ${seconds} seconds in all, in ${Math.ceil(seconds / WAIT_STEP)} foreground waits of at most ${WAIT_STEP} seconds each, never one longer call, which the host moves to the background`;
+}
+
 // What the session does after each action, once stopAction took the forge's part.
 function nextStep(decision, { view, branch, method }) {
   const again = 'then run the pr-auto-merge skill again';
@@ -136,7 +146,7 @@ function nextStep(decision, { view, branch, method }) {
       return 'record the result pr_open with this line as its stop';
     case 'wait': return decision.awaitBot
       ? `run \`aidrian pr await-review ${view.number}\`, which waits for the bot it asked, ${again}`
-      : `wait ${decision.pause ?? WAIT_PAUSE} seconds, ${again}`;
+      : `${waitWords(decision.pause ?? WAIT_PAUSE)}, ${again}`;
     case 'rerun_checks': return `the forge started the failed jobs of ${decision.runs.length} workflow run${decision.runs.length === 1 ? '' : 's'} again; ${again}`;
     case 'update_branch': return `the forge ${method === 'rebase' ? `rebased it onto ${view.base}` : `merged ${view.base} into it`}; ${again}`;
     case 'merge_base': return `run \`git fetch origin ${view.base} ${branch}\` and \`git checkout -B ${branch} origin/${branch}\`, merge origin/${view.base}, resolve the conflicts, run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\`, never with force; ${again}`;
@@ -182,13 +192,13 @@ export function readMergeState(forge, repository, branch) {
 // The checks of the pull request `view` as `aidrian pr checks` judges them, by this checkout's lists (`lists`, config.json
 // `github`), plus `runs`: the Actions workflow runs of the failing checks, each once, or null when a failing check is no
 // Actions run (no workflow, such as an app's status) of the pinned repository `repository`, or a skip fails it. A read
-// that fails, or lists nothing, is pending.
+// that lists nothing is pending; one that fails is { error }, a wait on the retry cap, never the pending checks' cap.
 export function readChecks(forge, repository, view, lists) {
   let rows;
   try {
     rows = forge.checks(String(view.number), { repo: `${repository.host}/${repository.owner}/${repository.name}` });
   } catch (error) {
-    return { verdict: 'pending', reason: `the forge could not list its checks now (${quoted(error)})`, runs: null };
+    return { error: `the forge could not list the checks of #${view.number} now (${quoted(error)})` };
   }
   if (!Array.isArray(rows) || rows.length === 0) return { verdict: 'pending', reason: 'the forge lists no check yet', runs: null };
   const verdict = computeVerdict(rows, lists, { draft: view.draft });
@@ -281,6 +291,7 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   if (view.state === 'OPEN' && view.base !== main) return answer({ action: 'park', why: `it targets ${view.base}, not the default branch ${main}, which a project run's issue merges into` }, view);
   const merged = view.state === 'OPEN' ? (autoMerge ?? ((url) => autoMergeOf(project, url, { forge, session, home })))(view.url) : null;
   const checks = merged?.result?.effective === true && merged.result.head === view.head ? readChecks(forge, repository, view, config.github) : null;
+  if (checks?.error) return answer(transientWait(rows, start.attempt, checks.error), view);
   const decision = classifyStop({ view, autoMerge: merged, checks, history: rows, attempt: start.attempt });
   if (decision.action === 'rerun_checks') {
     const refused = rerunProblem(forge, repository, view, branch, decision.runs);

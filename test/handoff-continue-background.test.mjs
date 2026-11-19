@@ -203,6 +203,26 @@ test('an issue session starts no continuation on any host, and one whose tags ca
   assert.deepEqual(bgCalls(third.calls), [], 'nothing started');
 });
 
+test('a driver whose driver mark is there but cannot be read whole starts no continuation, and keeps no brief', (t) => {
+  for (const [why, text] of [['not JSON', '{'], ['no run', JSON.stringify({ role: 'driver', root: '/x', state: '/y' })], ['no state folder', JSON.stringify({ role: 'driver', run: 'launch', root: '/x' })]]) {
+    const setting = setup(t);
+    passCheck(setting);
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    t.after(() => rmSync(xdg, { recursive: true, force: true }));
+    const env = { ...setting.env, XDG_STATE_HOME: xdg };
+    const folder = path.join(xdg, 'aidrian', 'unattended');
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(folder, `driver.${SESSION}.json`), text, { mode: 0o600 });
+    const { run, calls } = fakeRun({ own: setting.dir });
+    const result = gate(setting, { run, env });
+    assert.equal(result.out[0], 'continue: none', why);
+    assert.match(result.out[1], /holds a project run's driver mark that cannot be read whole, so its continuation could not be held as the run's driver/u, why);
+    assert.deepEqual(bgCalls(calls), [], `${why}: nothing started`);
+    assert.equal(readStarted(setting.store, SESSION), null, `${why}: no start recorded`);
+    assert.deepEqual(readdirSync(setting.store.dir).filter((name) => name.startsWith('continued-')), [], `${why}: no brief kept`);
+  }
+});
+
 test('a start the gate cannot mark unattended is stopped and falls back, as one it cannot hold to a floor', (t) => {
   const setting = setup(t);
   passCheck(setting);

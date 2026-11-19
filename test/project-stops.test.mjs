@@ -245,11 +245,13 @@ test('a forge read or action that fails waits under the wait cap, and parks only
     [['workflowRun'], { checks: [checkRow('e2e', 'FAILURE', 41)] }, /^wait .*the forge could not describe workflow run 41/u],
     [['rerunFailedChecks'], { checks: [checkRow('e2e', 'FAILURE', 41)] }, /^wait .*the forge could not start the failed jobs again \("gh: rerunFailedChecks failed \(HTTP 502\)"\)/u],
     [['updateBranch'], { merge: { mergeStateStatus: 'BEHIND' } }, /^wait .*the forge could not bring #12 up to date with main/u],
+    // A checks read that fails waits on the retry cap, never on the pending checks' cap of this head.
+    [['checks'], {}, /^wait ENG-1 #12 at aaaaaaa: the forge could not list the checks of #12 now \("gh: checks failed \(HTTP 502\)"\) \(1 of 3 for this attempt\); wait 60 seconds/u],
   ]) {
     const fx = stopped(t, { fail, ...given });
     assert.match(fx.act(on()).out[0], why, fail[0]);
-    assert.match(fx.act(on()).out[0], /\(2 of 3 for this attempt\); wait 300 seconds/u, `${fail[0]}: backs off`);
-    assert.match(fx.act(on()).out[0], /\(3 of 3 for this attempt\); wait 900 seconds/u, `${fail[0]}: backs off`);
+    assert.match(fx.act(on()).out[0], /\(2 of 3 for this attempt\); wait 300 seconds in all, in 2 foreground waits of at most 150 seconds each, never one longer call, which the host moves to the background, then run the pr-auto-merge skill again$/u, `${fail[0]}: backs off`);
+    assert.match(fx.act(on()).out[0], /\(3 of 3 for this attempt\); wait 900 seconds in all, in 6 foreground waits of at most 150 seconds each/u, `${fail[0]}: backs off`);
     assert.match(fx.act(on()).out[0], /^park .*failed 3 times in this attempt already/u, `${fail[0]}: spent`);
   }
   const exit3 = stopped(t);

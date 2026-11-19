@@ -42,6 +42,7 @@ import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, projectCheckouts, stateDir } from './project.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
+import { drivenRunStart } from './run-driver.mjs';
 import { OPEN_ID, readFollows, replacer, shellPid, terminalOf } from './terminal-replace.mjs';
 import { PENDING_AGE, readDriverMark, readUnattendedMark } from './unattended-mark.mjs';
 
@@ -294,7 +295,9 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // goes on by the clear route instead (progressOf), or, when the working config's maxChain cannot arm a clear at this
 // chain, by none: a person resumes the brief. A hop whose next floor CHAIN_CEILING cannot record (floorFits) goes on by
 // none too, since a clear would deliver the same chain. A session whose earlier start the store still records starts
-// no other until the host lists that one as ended (busy). Otherwise the store keeps the checked bytes, the host starts a new
+// no other until the host lists that one as ended (busy), but for a project run's current driver whose earlier start is
+// one of its run's issues' sessions, which the run's caps count instead (run-driver.mjs drivenRunStart). Otherwise the
+// store keeps the checked bytes, the host starts a new
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, held by
 // startHeld (lib/session-start-gate.mjs), which records the new session's chain floor, with the hop's progress and its
 // parent, this session, under its full id or the short one the host printed, and its unattended mark under the same id,
@@ -321,6 +324,19 @@ function startInBackground(ready) {
     const named = typeof mark.root === 'string' && !hasControl(mark.root) ? ` of the project in ${mark.root}` : ' whose project its unattended mark does not name';
     return none(`this session was started by a handoff gate${named}, and its chain floor lives in that project's store, so it starts no background session here; a person resumes the brief ${slug}`);
   }
+  // A project run's driver hands on a driver: its continuation is held as one from its first call, with the run's driver
+  // mark filed for it (run-driver.mjs), and drives only once custody moves to it on its first `aidrian project wait`.
+  // A driver mark that is there but cannot be read whole, as one with no run, main checkout, or state folder, or a read
+  // that fails, would hand the continuation no mark: then nothing starts, before any store or mark write.
+  let driver;
+  try {
+    driver = readDriverMark(session, { env });
+  } catch {
+    driver = { run: null, root: null, state: null };
+  }
+  if (driver && !(driver.run && driver.root && driver.state)) {
+    return none(`this session holds a project run's driver mark that cannot be read whole, so its continuation could not be held as the run's driver; it starts no background session, and a person resumes the brief ${slug}`);
+  }
   const fallBack = (why) => {
     const routed = byClear(host, why);
     if (routed.route !== 'clear') return none(routed.fallback);
@@ -332,15 +348,14 @@ function startInBackground(ready) {
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
-  // A project run's driver hands on a driver: its continuation is held as one from its first call, with the run's driver
-  // mark filed for it (run-driver.mjs), and drives only once custody moves to it on its first `aidrian project wait`.
-  const driver = safely(() => readDriverMark(session, { env }));
   const held = startHeld({
     session,
-    driver: driver?.run && driver.root ? driver : null,
+    driver,
     launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait }),
     stop: (id) => handoff.stopBackground?.({ id, env, run }),
-    ended: (earlier) => handoff.sessionEnded?.({ id: earlier.id, session: earlier.session, env, run }),
+    // A driver's last start may be one of its run's issues, which the run's caps count while it runs: the start gate's
+    // read of the same record (run-driver.mjs drivenRunStart). Every other record waits for the host's listing.
+    ended: (earlier) => (driver && drivenRunStart(session, earlier, { env })) || handoff.sessionEnded?.({ id: earlier.id, session: earlier.session, env, run }),
     store,
     root,
     floor: { slug, chain: chain + 1, brief: found.path, route: 'background', progress, parent: session },

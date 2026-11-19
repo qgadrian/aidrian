@@ -96,6 +96,31 @@ export function runDriver(session, { env = process.env, home } = {}) {
   return held;
 }
 
+// Whether the ledger rows `rows` of the run `run`, after its init row, record the start record `earlier` as a session
+// the run's driver started for one of its issues: a start row that held it (`outcome: 'started'`), with the record's id,
+// issue, and attempt. The run's caps count such a session until the host lists it ended or `wait` stops it
+// (project-linger.mjs), so it holds back no other start of the driver's, nor the driver's handoff.
+export function recordsStart(rows, run, earlier) {
+  const own = earlier?.project;
+  if (!own || own.run !== run || typeof earlier.id !== 'string') return false;
+  return rows.some((row) => row?.event === 'start' && row.outcome === 'started' && row.id === earlier.id && row.key === own.issue && row.attempt === own.attempt);
+}
+
+// Whether `session` is the current driver, by custody, of the live run its driver mark names, and that run's ledger
+// records the start record `earlier` as one of its issues' sessions (recordsStart): the background handoff route's
+// read of a driver's last start record (lib/handoff-continue.mjs). Any other session, a mark it cannot read whole, a
+// ledger it cannot read, or a run that ended: false, so the host's own listing decides, as for every session.
+export function drivenRunStart(session, earlier, options = {}) {
+  const mark = readDriverMark(session, options);
+  if (!mark?.run || !mark.state) return false;
+  const rows = ledgerRows(path.join(mark.state, RUNS, mark.run, 'ledger.jsonl'));
+  const init = rows?.[0];
+  if (init?.event !== 'init' || init.run !== mark.run) return false;
+  const rest = rows.slice(1).filter((row) => row !== null && typeof row === 'object');
+  if (endedIn({ init, rows: rest }) || driverAfter(init, rest).session !== session) return false;
+  return recordsStart(rest, mark.run, earlier);
+}
+
 // Whether `session` is held as a project run's driver (runDriver).
 export const drivesRun = (session, options = {}) => runDriver(session, options) !== null;
 

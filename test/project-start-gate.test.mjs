@@ -131,7 +131,8 @@ test('start refuses an issue next does not list', (t) => {
   assert.match(fx.cmd(['start', 'launch', 'ENG-2']).err[0], /`aidrian project next launch` does not list ENG-2 to start now; it lists ENG-1/u);
   assert.match(fx.cmd(['start', 'launch', 'ENG-9']).err[0], /the run launch holds no issue "ENG-9"/u);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).err[0], /does not list ENG-4 to start now: it says wait/u, 'one issue runs at a time');
+  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).err[0], /1 issues run already, and a run runs at most 1 at once/u, 'one issue runs at a time');
+  assert.equal(fx.cmd(['next', 'launch']).out[0], 'wait 1 running', 'and next says to wait');
   assert.match(fx.cmd(['start', 'launch', 'ENG-1']).err[0], /does not list ENG-1/u, 'a running issue is never started twice');
   assert.equal(fx.claude.starts().length, 1);
 });
@@ -285,8 +286,10 @@ test('a driver whose earlier issue session handed off to a continuation still ru
   noteStarted(fx.store, child, { sha256: sha('x'), slug: 'eng-1', brief, chain: 1, id: 'beef0001', session: 'beef0001-0000-4000-8000-00000000be01', name: null, cwd: fx.dir });
   fx.claude.states[child] = 'done';
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'done', at: at(Date.now()) }] }));
+  // Its chain runs on after the issue settled: a wait, exit 75, and no start.
   const refused = fx.cmd(['start', 'launch', 'ENG-4']);
-  assert.match(refused.err[0], /this session's earlier start, c0ffee01, has not ended as the host lists it/u, 'the continuation is not listed as done');
+  assert.equal(refused.exitCode, 75, refused.err.join('\n'));
+  assert.match(refused.err[0], /the session of ENG-1 attempt 1 runs on after its issue settled/u, 'the continuation is not listed as done');
   assert.equal(fx.claude.starts().length, 1);
 });
 
@@ -326,10 +329,12 @@ test('the normal path: wait returns on the result while the issue\'s session is 
   writeFileSync(file, JSON.stringify({ status: 'blocked', stop: 'needs a token' }));
   const pause = () => assert.equal(fx.cmd(['result', 'launch', 'ENG-1', '--file', file], { session: STARTED[0].session }).exitCode, 0);
   // The confined session hands its result over in its drop folder, and wait takes it in.
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '60'], { pause }).out, ['result ENG-1 blocked -> parked blocked', 'idle']);
-  // ENG-1's session finishes its turn: still listed working, so no other starts yet, and nothing is left behind.
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '60'], { pause }).out, ['result ENG-1 blocked -> parked blocked', 'lingering ENG-1 attempt 1']);
+  // ENG-1's session finishes its turn: still listed working, so no other starts yet (a wait, exit 75, never a stop), and
+  // nothing is left behind.
   const early = fx.cmd(['start', 'launch', 'ENG-4']);
-  assert.match(early.err[0], /this session's earlier start, c0ffee01, has not ended as the host lists it/u);
+  assert.equal(early.exitCode, 75, early.err.join('\n'));
+  assert.match(early.err[0], /the session of ENG-1 attempt 1 runs on after its issue settled/u);
   assert.ok(!existsSync(attemptFolder(fx.state, 'launch', 'ENG-4', 1)), 'no clone made');
   assert.equal(fx.git('branch', '--list', 'fix/eng-4').trim(), '', 'no branch made');
   fx.claude.states[STARTED[0].session] = 'done';
@@ -456,7 +461,7 @@ test('a start the cheap checks refuse fetches nothing from the forge or origin',
   fx.git('commit', '-q', '--allow-empty', '-m', 'on the remote');
   fx.git('push', '-q', fx.bare, 'HEAD:refs/heads/main');
   fx.git('reset', '-q', '--hard', 'HEAD~1');
-  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).err[0], /has not ended as the host lists it/u);
+  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).err[0], /the session of ENG-1 attempt 1 runs on after its issue settled/u);
   assert.equal(fx.forge.calls.filter(([kind]) => kind === 'branchHead').length, before, 'no forge read of the head');
   assert.equal(fx.git('rev-parse', 'refs/remotes/origin/main').trim(), fetchedAt, 'no fetch');
 });

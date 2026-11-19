@@ -1475,6 +1475,9 @@ test('closes: a title, body, or commit that closes, or a title that names, anoth
     [{ body: 'Fixes ENG-9' }, /"Fixes ENG-9"/u],
     [{ body: 'Fixes ENG-1, ENG-9' }, /"Fixes ENG-9"/u],
     [{ body: 'Fixes\rENG-9' }, /"Fixes ENG-9"/u],
+    // Before the first reference, a line break separates too: the forge reads the word and the key on the next line.
+    [{ body: 'Fixes\nTAX-5' }, /"Fixes TAX-5"/u],
+    [{ body: 'Closes:\r\n\r\n  ENG-9 and more' }, /"Closes ENG-9"/u],
     // A key a hyphen joins to more text still counts.
     [{ body: 'Fixes ENG-9-export' }, /"Fixes ENG-9"/u],
     [{ title: 'ENG-9-export: x' }, /its title names "ENG-9"/u],

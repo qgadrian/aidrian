@@ -598,3 +598,14 @@ export const PLACEHOLDERS = Object.freeze([
 export const sessionNote = ({ work, branch }) => `This session runs in Claude Code's sandbox, in ${work}, a clone made for this attempt: work only in that folder, and never ask to run a command outside the sandbox. ` +
   `Push only with \`git push origin HEAD:refs/heads/${branch}\`, and name the branch to every forge command, as \`gh pr create --head ${branch}\`. ` +
   'This session starts no other session and hands no continuation over: when its work ends, it records its result.';
+
+// Why the host would not carry on by itself after a usage limit, or null: a limit is account-wide, so it stops a project
+// run's driver at the same moment as the issues' sessions, and only a driver whose host continues on its own takes the
+// run on once the limit lifts. The user's settings must set `autoContinueAtUsageLimit` to true. It reads only the user's
+// settings, where the host's own code honors the key; a project or managed setting is not read, and is no answer.
+export function limitContinueProblem({ env, home }) {
+  const settings = userSettings(configFolder(env, home ?? env.HOME ?? homedir()));
+  if (settings.problem) return settings.problem;
+  if (settings.value.autoContinueAtUsageLimit === true) return null;
+  return `the host's user settings ${settings.file} do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it`;
+}

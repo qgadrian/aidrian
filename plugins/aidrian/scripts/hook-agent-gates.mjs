@@ -50,6 +50,7 @@ import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnv
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
 import { drivesRun, ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
+import { droveRun } from '../lib/run-driver.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
 import { noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
@@ -101,11 +102,13 @@ async function gate(input) {
     // The gate command runs outside a project too, with the defaults. A run's driver is held there too, by its mark.
     const unattended = () => mark !== null;
     const storeHeld = () => unattended() || drivesRun(input.session_id);
+    // A session that drove a run keeps the sign-off hold after the run's end (run-driver.mjs droveRun).
+    const signoffHeld = () => storeHeld() || droveRun(input.session_id);
     let outside;
     try {
       outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended }) ?? prEnvDenial(input, DEFAULTS, { unattended })
         ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended })
-        ?? projectCommandDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended: storeHeld }) ?? signoffWriteDenial(input, DEFAULTS, { unattended: storeHeld })
+        ?? projectCommandDenial(input, DEFAULTS, { unattended }) ?? unattendedMarkWriteDenial(input, DEFAULTS, { unattended: storeHeld }) ?? signoffWriteDenial(input, DEFAULTS, { unattended: signoffHeld })
         // A session its own mark holds, with no project it can read, cannot tell its own places, so it writes nothing; a
         // pending or unreadable hold keeps only the entries refused wherever they lie (lib/unattended-write.mjs).
         ?? unattendedWriteDenial(input, DEFAULTS, { mark, places: () => unattendedPlaces({ cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), mark, project: null }) }));
@@ -174,6 +177,8 @@ function guards(input, project, config, gated, snapshot, marked, unattended, bas
   // run for hours with no Human at hand. Its driver mark names it (project-run-guard.mjs runDriver).
   let drives;
   const storeHeld = () => unattended() || (drives ??= drivesRun(input.session_id));
+  // A session that drove a run keeps the sign-off hold after the run's end (run-driver.mjs droveRun).
+  const signoffHeld = () => storeHeld() || droveRun(input.session_id);
   return opaqueLimitDenial(input, config, { unattended })
     ?? writeLimitDenial(input, config, { unattended })
     ?? handoffContinueDenial(input, config)
@@ -184,14 +189,14 @@ function guards(input, project, config, gated, snapshot, marked, unattended, bas
     ?? projectCommandDenial(input, config, { unattended })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended, base })
     ?? unattendedMarkWriteDenial(input, config, { project, links: false, unattended: storeHeld })
-    ?? signoffWriteDenial(input, config, { project, links: false, unattended: storeHeld })
+    ?? signoffWriteDenial(input, config, { project, links: false, unattended: signoffHeld })
     ?? projectRunWriteDenial(input, project, config, state, { links: false, unattended: storeHeld, base, own })
     ?? mainCheckoutWriteDenial(input, project, config, { links: false, unattended, runSession })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended, base })
     ?? unattendedMarkWriteDenial(input, config, { project, unattended: storeHeld })
-    ?? signoffWriteDenial(input, config, { project, unattended: storeHeld })
+    ?? signoffWriteDenial(input, config, { project, unattended: signoffHeld })
     ?? projectRunWriteDenial(input, project, config, state, { unattended: storeHeld, base, own })
     ?? mainCheckoutWriteDenial(input, project, config, { unattended, runSession })
     ?? otherProject(input, project, marked, unattended, own);

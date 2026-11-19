@@ -249,7 +249,7 @@ export const runStore = (project, config, state) => openStore(state, { checkouts
 
 // The plain words of an `aidrian project` command after its subcommand: { positionals, options, dynamic }, where
 // `dynamic` is true when a positional or an option's value is built from a variable or a substitution.
-const VALUED = new Set(['--project', '--file', '--max-wait']);
+const VALUED = new Set(['--project', '--file', '--texts', '--max-wait']);
 function readRest(tokens) {
   const positionals = [];
   const options = {};
@@ -376,6 +376,11 @@ const RULES = Object.freeze({
   wait: driverOnly,
   handoff: driverOnly,
   end: driverOnly,
+  // The reports the run owes the tracker, and closing one: the driver's, as the tracker guard holds its writes to them.
+  report: driverOnly,
+  recorded: driverOnly,
+  // Reads every check a start would make, and starts nothing.
+  preflight: readOnly,
   result: ({ found, store, key, session, home }) => {
     let mark = null;
     try {

@@ -22,7 +22,7 @@
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from '../remotes.mjs';
-import { drivesRun } from '../run-driver.mjs';
+import { droveRun } from '../run-driver.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
@@ -147,8 +147,9 @@ export const UNATTENDED_REASON =
 // asked only for a sign-off that records: with one, or from a subagent, the sign-off is refused with no answer route.
 export function check(command, { cwd = process.cwd(), input = {}, unattendedMark = () => readUnattendedMark(input?.session_id), drives = null } = {}) {
   const project = findProject(cwd);
-  // A project run's driver signs off nothing: the run's sign-offs come from a separate session the Human attends.
-  const driver = drives ?? (() => drivesRun(input?.session_id));
+  // A session that drove a project run signs off nothing, even after the run's end: the run's sign-offs come from a
+  // separate session the Human attends.
+  const driver = drives ?? (() => droveRun(input?.session_id));
   // Who may not record a sign-off wherever the call runs, read before the project, so a folder that is none, such as a
   // git folder of its own, makes no hole: a subagent, a session no Human attends, and a run's driver.
   let held;

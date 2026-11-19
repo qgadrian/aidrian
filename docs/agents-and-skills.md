@@ -70,6 +70,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | --- | --- |
 | `orchestration` | The orchestrator's steps for worktrees, slices, and pull requests. It merges only when this run marked the pull request ready and `aidrian pr auto-merge` exits 0. |
 | `autopilot` | Runs one task unattended to a reviewed pull request, or takes over a session under way with `--continue`. Merges only when `aidrian pr auto-merge` exits 0. |
+| `project-autopilot` | Runs a whole tracker project unattended, one fresh `autopilot` session per issue, after one attended first turn that names every blocker. Writes the tracker only as `aidrian project report` owes. |
 | `session-handoff` | Writes a brief so a fresh session can resume the work. |
 | `session-continue` | Resumes work from a handoff brief. |
 

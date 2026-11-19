@@ -21,7 +21,7 @@ import { mainCheckoutPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { ACTIONS } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { ISSUE_KEY, RUN_ID, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { projectCalls, projectCommandDenial, SUBCOMMAND_RULES } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { projectCalls, projectCommandDenial, SUBCOMMAND_RULES, SUBCOMMANDS } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { ISSUE_TAG, markPending, markUnattended, RUN_TAG } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -155,16 +155,25 @@ test('a subagent and an unattended session never write in the folder of the proj
 
 test('every subcommand the command takes has a hook rule, and one with no rule is refused', (t) => {
   for (const action of ACTIONS) assert.ok(SUBCOMMAND_RULES.includes(action), `no hook rule for aidrian project ${action}`);
+  // Every subcommand word the hooks know has its rule now; a later one with none is refused with "no rule yet".
+  for (const sub of SUBCOMMANDS) assert.ok(SUBCOMMAND_RULES.includes(sub), `no hook rule for aidrian project ${sub}`);
   const fx = runFixture(t);
-  for (const sub of ['report', 'recorded']) {
-    assert.ok(!SUBCOMMAND_RULES.includes(sub), `${sub} has a rule now: replace this case with its own test`);
-    const denial = projectCommandDenial(bash(`aidrian project ${sub} launch ENG-1`, { session_id: DRIVER, cwd: fx.dir }), fx.config, { unattended: attended, home: fx.home });
-    assert.match(denial?.reason ?? '', new RegExp(`the hooks hold no rule for \`aidrian project ${sub}\` yet`, 'u'), sub);
-  }
   // A word the command does not take at all is refused too, and an option word is not a subcommand.
   const unknown = projectCommandDenial(bash('aidrian project frobnicate launch ENG-1', { session_id: DRIVER, cwd: fx.dir }), fx.config, { unattended: attended, home: fx.home });
   assert.match(unknown?.reason ?? '', /the hooks hold no rule for `aidrian project frobnicate`, a word the command does not take/u);
   assert.equal(projectCommandDenial(bash('aidrian project --help', { session_id: DRIVER, cwd: fx.dir }), fx.config, { unattended: attended, home: fx.home }), null);
+});
+
+test('report and recorded are the driver\'s; preflight is read-only, and a subagent runs none of them', (t) => {
+  const fx = runFixture(t);
+  const ask = (command, session, more = {}) => projectCommandDenial(bash(command, { session_id: session, cwd: fx.dir, ...more }), fx.config, { unattended: attended, home: fx.home });
+  for (const command of ['aidrian project report launch', 'aidrian project report launch --json', 'aidrian project recorded launch ENG-1']) {
+    assert.equal(ask(command, DRIVER), null, command);
+    assert.match(ask(command, OTHER)?.reason ?? '', /is the driver's, and this session is not the driver of the run launch/u, command);
+    assert.match(ask(command, DRIVER, { agent_id: 'agent-7' })?.reason ?? '', /a subagent runs only `aidrian project next`/u, command);
+  }
+  assert.equal(ask('aidrian project preflight', OTHER), null, 'any main session reads the checks');
+  assert.match(ask('aidrian project preflight', DRIVER, { agent_id: 'agent-7' })?.reason ?? '', /a subagent runs only/u);
 });
 
 test('the copies of the run id, issue key, and command word patterns match their sources', () => {

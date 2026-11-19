@@ -1867,6 +1867,61 @@ Lines for the issues that run, are blocked, or are skipped follow. An issue in a
 An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
 is skipped and names it. `--json` prints the whole plan.
 
+`preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
+state folder and any other active run but `RUN`, `projectRun.allow` through the forge, the machine's switch, the host's
+start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
+sandbox that `projectRun.outsideSandbox` does not name), and whether the host carries on by itself after a usage limit
+(in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the only place the host reads it), since
+a limit is the account's and stops the driver with the issues' sessions. Then what the run needs to finish with no one:
+the base branch's tracker, with no server in `projectRun.mcpServers` named like a tracker whose endpoint no adapter maps
+(no tracker server there is a `note`: issue sessions then write no tracker, and the driver reports; a `note mcp-servers`
+lists the servers the run rule maps to no tracker, each of which must be no tracker connection); auto-merge allowed on
+the forge's default branch with `github.requiredChecks` listed and this machine's switch on; `session.handoff.continue`
+set to `"background"`, since `"clear"` waits on a person; and `github.reviewer`, with the bot seen on a recent
+pull request and an active CI workflow, read through the forge. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
+or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
+blocker. `init RUN --file PATH [--texts PATH] --check` checks the inputs as `init` would, prints their blockers
+(problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue
+to start with no text) and the `next` lines, and writes no run. `--texts` is a second input, apart from the snapshot
+input and its 1 MiB cap: an object of issue key to `{ title, description, criteria, labels }`, read as the snapshot
+input is, under a cap of 500 issues at each field's cap. `init` keeps each text capped, with hidden characters removed,
+in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`, and each start writes it read-only to the attempt's
+`issue.md`, fenced and marked as untrusted text from the tracker, which the issue's session reads instead of the tracker. The `project-autopilot` skill runs both in its
+attended first turn, and `init` last, once nothing blocks.
+
+`report RUN [--json]` prints, for the driver only, the report the run owes each issue that settled for good, done after
+a forge-confirmed merge or parked: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
+blocked issue), `projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the
+exact tool `calls` for the base branch's tracker. Both values come from the base branch's config. The body is built
+from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
+ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
+ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
+`end RUN` refuses while any issue still runs, naming them.
+`resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
+ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
+A command whose ledger another process holds locked, and a `start` or `wait` whose read of the team's policy the forge
+cannot answer now, exit 75 with a `retry:` line, a refusal that may pass; a policy the forge answers and refuses exits 1.
+`resume` names a driver it cannot read as an ended background session, such as the first one the Human ran: the Human
+resumes that same host session, which keeps its id and custody.
+
+The [tracker write guard](#tracker) holds a project run's sessions whatever the working copy's `tracker.enabled` says,
+knowing each by its marks alone, never the folder a call runs in. An issue's session writes only its own issue, by its
+key, through its tracker's issue and comment tools and the fields its adapter lists: status `started`, an estimate,
+a patch of its body, and a comment, each with no mention, link, address, image, HTML, or hidden character, a file or
+host name in backticks; only the text a patch inserts is checked, never the anchors it matches. Result text the run
+quotes keeps a file or host name as an inline code span. A live check is still owed: that Linear renders no link inside
+inline code. The current
+driver (a driver mark the ledger's custody confirms) writes only the calls `report` owes, each matching the status,
+label, and body hash it printed, until `recorded`; a driver mark the ledger does not confirm, as a continuation's
+before its first `wait`, is held, and writes nothing: the background route files the driver's mark for a driver's
+continuation as it starts it. For both, every call on the tracker's server is a write unless
+its name says it reads, and the tracker's servers include those of `projectRun.mcpServers` whose endpoint an adapter
+names. A session that drove a run keeps the sign-off hold after `end`. A session no Human attends calls no tool a tracker's
+merge verb names, on any server, and no session merges or
+marks a pull request ready through a tracker's own tool: `gh pr merge` and `gh pr ready` are the routes the merge guard
+and the ready hold judge. A marked session's base branch config is read through the main checkout its mark names, and
+a read that fails refuses it.
+
 ## Checking
 
 `aidrian check` validates this file with the rest of the project folder.

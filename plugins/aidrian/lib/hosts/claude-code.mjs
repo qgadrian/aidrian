@@ -8,7 +8,7 @@ import path from 'node:path';
 import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
-import { accessProblem, cloneProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, limitContinueProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -230,6 +230,8 @@ export default {
       confined: true,
       access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
+      // Whether a driver on this host would carry on by itself after a usage limit (aidrian project preflight).
+      limitContinue: ({ env, home }) => limitContinueProblem({ env, home }),
       placeholders: PLACEHOLDERS,
       sessionNote,
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to

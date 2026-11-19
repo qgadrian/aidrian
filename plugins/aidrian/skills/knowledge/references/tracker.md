@@ -15,6 +15,9 @@ and its conventions from the knowledge.
 Make no read ahead of a write: when the guard refuses a write because this session has not read the connected workspace,
 call the read tool the refusal names, then write again.
 For any other refusal, follow its reason. Never edit `tracker` to get a write through.
+In a project run, the guard holds an issue's session to its own issue, and the driver to what `aidrian project report` owes,
+whatever `tracker.enabled` says. No session merges or marks a pull request ready through a tracker's tool: use `gh pr merge`
+and `gh pr ready`.
 
 | Step | Linear: the host's Linear tools | GitHub Issues: `gh` |
 | --- | --- | --- |

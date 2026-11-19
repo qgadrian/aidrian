@@ -30,6 +30,7 @@ import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
+import { issueTextsOf, TEXT_BYTES, writeIssueTexts } from './project-issue-text.mjs';
 import { MARK_FOLDER, markDriver, readUnattendedMark } from './unattended-mark.mjs';
 
 // A run id: lower-case letters, digits, and dashes, starting with a letter or digit.
@@ -51,6 +52,8 @@ export const MAX_ISSUES = 500;
 export const MAX_BLOCKERS = 50;
 export const MAX_OUTSIDE = 1000;
 export const BRANCH_CAP = 120;
+// The largest texts input read (`init --texts`): every issue's text at its caps.
+export const TEXTS_CAP = MAX_ISSUES * TEXT_BYTES;
 // The largest snapshot.json and ledger.jsonl a run reads. snapshot.json keeps a subset of an input under INPUT_CAP.
 const SNAPSHOT_CAP = 2 * INPUT_CAP;
 const LEDGER_CAP = 8 * 1024 * 1024;
@@ -221,6 +224,21 @@ export function readCapped(file, cap) {
   }
 }
 
+// The texts input at `file` (`init --texts`), read as readCapped reads, at most TEXTS_CAP bytes: { texts } with each
+// issue of `keys` it gives a text, or { problem }. No file gives { texts: {} }.
+export function readIssueTexts(file, keys) {
+  if (!file) return { texts: {} };
+  const read = readCapped(file, TEXTS_CAP);
+  if (read.problem) return { problem: `the texts input ${read.problem}` };
+  try {
+    const value = JSON.parse(read.bytes.toString('utf8'));
+    if (!isObject(value)) return { problem: 'the texts input is not a JSON object of issue keys to their text' };
+    return { texts: issueTextsOf(value, keys) };
+  } catch {
+    return { problem: 'the texts input is not JSON' };
+  }
+}
+
 // The snapshot input at `file`, read as readCapped reads, at most INPUT_CAP bytes: validateSnapshot's answer, with
 // `names` its, or { snapshot: null, problems: [why] } when it cannot be read as one JSON value.
 export function readSnapshotInput(file, names = {}) {
@@ -352,7 +370,7 @@ export function pinnedRepository(project) {
 
 // The names branchProblem holds a branch apart from for `project`: its default branch, as the working copy's and the
 // base branch's config name it and as origin's HEAD points to it, and its remotes.
-function refNames(project, config) {
+export function refNames(project, config) {
   const base = baseBranchConfig(project, 'git.defaultBranch');
   const head = runGit(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], project.root);
   const originHead = head.status === 0 ? head.stdout.trim().replace(/^refs\/remotes\/origin\//u, '') : null;
@@ -369,7 +387,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // payload when one is known; attendedProblem says who may run it. It refuses a run id or snapshot that fails its checks,
 // a state folder runPlace refuses, a project whose origin names no forge repository, a run that exists already, and any
 // other run still active. Throws jsonl.mjs's LOCKED when another process holds the runs lock. `home` is for a test.
-export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now() }) {
+export function initRun({ project, config, run, file, texts: textsFile = null, session, input = {}, env = process.env, home, now = Date.now() }) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${quote(run)} is not lower-case letters, digits, and dashes, up to 64, starting with a letter or digit`);
   const place = runPlace(project, config, { env, home });
   if (place.problem) return refuse(place.problem);
@@ -380,6 +398,8 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   if (!read.snapshot) return { exitCode: 1, out: [], err: ['aidrian project init: the snapshot input has problems; fix them and run init again', ...read.problems.slice(0, 20).map((problem) => `  ${problem}`)] };
   const repository = pinnedRepository(project);
   if (!repository) return refuse('the origin remote names no forge repository, so the run cannot pin one');
+  const texts = readIssueTexts(textsFile, new Set(read.snapshot.issues.map((issue) => issue.key)));
+  if (texts.problem) return refuse(texts.problem);
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
   return withLocks([runsLock(state)], () => {
@@ -398,6 +418,8 @@ export function initRun({ project, config, run, file, session, input = {}, env =
     mkdirSync(runFolder(state, run), { mode: 0o700 });
     const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...read.snapshot })}\n`;
     writeFileSync(snapshotFile(state, run), text, { mode: 0o600, flag: 'wx' });
+    // Each issue's text, kept apart from snapshot.json, for its session to read from a file (lib/project-issue-text.mjs).
+    const kept = writeIssueTexts(runFolder(state, run), texts.texts);
     const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
     // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (recordIssue).
     appendRow(ledgerFile(state, run), row);
@@ -407,6 +429,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
         `run: ${run}`,
         `issues: ${read.snapshot.issues.length}`,
         `repository: ${repository.host}/${repository.owner}/${repository.name}`,
+        ...(kept ? [`issue text: ${kept} of ${read.snapshot.issues.length} kept for the issues' sessions to read`] : []),
         ...(read.dropped ? [`dropped: ${read.dropped} fields the snapshot never keeps, such as titles and bodies`] : []),
         `folder: ${runFolder(state, run)}`,
       ],

@@ -16,7 +16,8 @@ import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check, checkMcp, DEADLINE_MS, FED_REASON, HOOK_BUDGET_MS, MANY_REASON, OVERRIDE } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
+import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
+import { check, checkMcp, DEADLINE_MS, FED_REASON, HOOK_BUDGET_MS, MANY_REASON, OVERRIDE, TEST_CLOCK } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
 import { answer, URL7 } from './fixtures/ready-hold/gh.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -94,9 +95,13 @@ function recordDefect(dir) {
   assert.equal(feedback(dir, HEAD, 'record', URL7, '--items', items), 0);
 }
 
+// FROZEN is the ready hold's clock (deadlineForge `now`) in every in-process check that does not test the deadline itself: it
+// stands still, so each gh call gets the whole DEADLINE_MS however long a loaded machine takes over the git reads between calls.
+const FROZEN = () => 0;
+
 const owedNow = (dir, spec = { head: HEAD }, more = {}) => {
   const { calls, exec } = seam(spec);
-  return { calls, reason: (command) => check(command, { cwd: dir, env: {}, forge: forgeOver(exec), ...more }) };
+  return { calls, reason: (command) => check(command, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec), ...more }) };
 };
 
 test('with nothing recorded, every way of marking ready is held, and the deny names the skill and status', (t) => {
@@ -162,7 +167,7 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
     assert.doesNotMatch(denied, new RegExp(`${OVERRIDE}|opt|auto`, 'u'), 'the deny names neither the override nor the opt-out');
   }
   const { reason: inEnv } = owedNow(dir);
-  assert.match(check('gh pr ready 7', { cwd: dir, env: { GH_REPO: 'acme/notes' }, forge: forgeOver(seam({ head: HEAD }).exec) }) ?? '', /#7 ready/u);
+  assert.match(check('gh pr ready 7', { now: FROZEN, cwd: dir, env: { GH_REPO: 'acme/notes' }, forge: forgeOver(seam({ head: HEAD }).exec) }) ?? '', /#7 ready/u);
   for (const command of ['gh pr ready 7 --undo', 'gh pr ready 7 --undo=true', 'gh pr ready 7 --undo=1', 'gh pr ready 7 --undo=false --undo']) assert.equal(inEnv(command), null, command);
 });
 
@@ -286,14 +291,14 @@ test('the hold lets the command run when clear, when a read fails, for another r
   const failing = () => {
     throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 502\n', status: 1 });
   };
-  assert.equal(check('gh pr ready 7', { cwd: fresh, env: {}, forge: forgeOver(failing) }), null, 'gh failing lets it run');
+  assert.equal(check('gh pr ready 7', { now: FROZEN, cwd: fresh, env: {}, forge: forgeOver(failing) }), null, 'gh failing lets it run');
   assert.equal(owedNow(fresh).reason('gh pr ready 7 -R someone/else'), null, 'a repository no remote holds');
   assert.equal(owedNow(fresh).reason(`gh pr ready https://github.com/someone/else/pull/7`), null);
   const { calls, exec } = seam({ head: HEAD });
-  assert.equal(check('gh pr ready 7', { cwd: fresh, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null, 'the override in the hook environment');
+  assert.equal(check('gh pr ready 7', { now: FROZEN, cwd: fresh, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null, 'the override in the hook environment');
   assert.equal(calls.length, 0);
-  assert.match(check(`${OVERRIDE}=1 gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u, 'an inline setter lifts nothing');
-  assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u);
+  assert.match(check(`${OVERRIDE}=1 gh pr ready 7`, { now: FROZEN, cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u, 'an inline setter lifts nothing');
+  assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { now: FROZEN, cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u);
 });
 
 test('every gh call shares one deadline, and a gh that stalls past it lets the command run', (t) => {
@@ -336,6 +341,42 @@ test('every gh call shares one deadline, and a gh that stalls past it lets the c
   assert.ok(whole.length && whole.every(Number.isInteger), `${whole}`);
 });
 
+test('the test clock stops the deadline only under the test runner, and DEADLINE_MS stays 3500', (t) => {
+  assert.equal(DEADLINE_MS, 3500);
+  assert.equal(HOOK_BUDGET_MS, 4000);
+  const dir = repo(t);
+  // Each call takes 1.5 s of the clock, and one given less stalls past it, as in the deadline test above.
+  const timeouts = (env) => {
+    let clock = 1_000_000;
+    const given = [];
+    const exec = (file, args, options) => {
+      given.push(options.timeout);
+      if (options.timeout < 1500) {
+        clock += options.timeout;
+        throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
+      }
+      clock += 1500;
+      return answer(args, { head: HEAD, config: configText(ON) });
+    };
+    const reason = check('gh pr ready 7', { cwd: dir, env, forge: forgeOver(exec), now: () => clock, startedAt: 1_000_000 });
+    return { reason, given };
+  };
+  const frozen = timeouts({ NODE_TEST_CONTEXT: 'child-v8', [TEST_CLOCK]: 'frozen' });
+  assert.match(frozen.reason ?? '', /still owed/u, 'frozen: every call is made, so the hold reads the state');
+  assert.ok(frozen.given.length > 2, frozen.given.join(', '));
+  assert.ok(frozen.given.every((each) => each === DEADLINE_MS), `frozen: every call gets the whole deadline: ${frozen.given.join(', ')}`);
+  for (const env of [{ [TEST_CLOCK]: 'frozen' }, { NODE_TEST_CONTEXT: 'child-v8', [TEST_CLOCK]: '1' }, { NODE_TEST_CONTEXT: 'child-v8' }]) {
+    const real = timeouts(env);
+    assert.equal(real.reason, null, `${JSON.stringify(env)}: the real clock runs out, so the command runs`);
+    assert.deepEqual(real.given, [DEADLINE_MS, DEADLINE_MS - 1500, DEADLINE_MS - 3000], JSON.stringify(env));
+  }
+  const mcp = checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 7, draft: false }, {
+    cwd: dir, env: { NODE_TEST_CONTEXT: 'child-v8', [TEST_CLOCK]: 'frozen' }, forge: forgeOver(seam({ head: HEAD }).exec), now: () => Number.MAX_SAFE_INTEGER, startedAt: 0,
+  });
+  assert.match(mcp ?? '', /#7 ready/u, 'the MCP form honours it too');
+  assert.equal(isolate({ [TEST_CLOCK]: 'frozen' })[TEST_CLOCK], undefined, 'the suite never inherits it from the shell');
+});
+
 test('a defect answered fix-now, fixed, and re-checked confirmed reaches ready; reopened leaves the draft', (t) => {
   const dir = repo(t);
   recordDefect(dir);
@@ -363,14 +404,14 @@ test('the MCP form holds draft false through the server\'s two tools, and passes
   const dir = repo(t);
   const { exec } = seam({ head: HEAD });
   const given = { owner: 'acme', repo: 'notes', pullNumber: 7 };
-  assert.match(checkMcp({ ...given, draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }) ?? '', /#7 ready/u);
-  assert.equal(checkMcp({ ...given, draft: true }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null);
-  assert.equal(checkMcp({ ...given, title: 'x' }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'an edit with no draft');
-  assert.equal(checkMcp({ ...given, draft: false }, { cwd: dir, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null);
-  assert.equal(checkMcp({ ...given, pullNumber: 'seven', draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'a number it cannot read runs');
-  assert.equal(checkMcp({ ...given, owner: 'someone', draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'another repository');
+  assert.match(checkMcp({ ...given, draft: false }, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec) }) ?? '', /#7 ready/u);
+  assert.equal(checkMcp({ ...given, draft: true }, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec) }), null);
+  assert.equal(checkMcp({ ...given, title: 'x' }, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'an edit with no draft');
+  assert.equal(checkMcp({ ...given, draft: false }, { now: FROZEN, cwd: dir, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null);
+  assert.equal(checkMcp({ ...given, pullNumber: 'seven', draft: false }, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'a number it cannot read runs');
+  assert.equal(checkMcp({ ...given, owner: 'someone', draft: false }, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'another repository');
   // The repository as the call spells it, read by gh: any case is this repository.
-  assert.match(checkMcp({ owner: 'ACME', repo: 'Notes', pullNumber: 7, draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }) ?? '', /#7 ready/u);
+  assert.match(checkMcp({ owner: 'ACME', repo: 'Notes', pullNumber: 7, draft: false }, { now: FROZEN, cwd: dir, env: {}, forge: forgeOver(exec) }) ?? '', /#7 ready/u);
 });
 
 test('a call that names its repository is judged in the session\'s project as well, whatever folder it runs in', (t) => {
@@ -474,6 +515,10 @@ test('the pull request is viewed once, and origin/HEAD names the default branch 
   }
 });
 
+// The hook's environment that stops the hold's clock (ready-hold.mjs TEST_CLOCK), for a hook run that does not test the
+// deadline itself: each fake gh is a node process a loaded machine starts slowly, and the hook's own start counts too.
+const FROZEN_HOOK = { [TEST_CLOCK]: 'frozen' };
+
 // The hooks as programs, with the fake gh first on PATH.
 function hookRun(dir, script, payload, spec, env = {}) {
   const bin = path.join(dir, 'bin');
@@ -492,7 +537,7 @@ function hookRun(dir, script, payload, spec, env = {}) {
 test('the Bash hook holds gh pr ready while owed, and a stalled gh lets it run inside the hook\'s time', (t) => {
   const dir = repo(t);
   const bash = (command, spec, env) => hookRun(dir, 'hook-bash.mjs', { tool_name: 'Bash', tool_input: { command } }, spec, env);
-  const held = bash('gh pr ready 7', { head: HEAD });
+  const held = bash('gh pr ready 7', { head: HEAD }, FROZEN_HOOK);
   assert.equal(held.status, 2, held.stderr);
   assert.match(held.stderr, /product feedback is still owed/u);
   assert.equal(bash('gh pr ready 7', { head: HEAD }, { [OVERRIDE]: '1' }).status, 0, 'the override in the session environment');
@@ -516,7 +561,7 @@ test('a command that marks ready and merges leaves the merge guard its time: a s
 
 test('the GitHub MCP hook holds the server\'s tools and Codex\'s connector tool that marks ready', (t) => {
   const dir = repo(t);
-  const mcp = (tool_name, tool_input) => hookRun(dir, 'hook-mcp-github.mjs', { tool_name, tool_input }, { head: HEAD });
+  const mcp = (tool_name, tool_input) => hookRun(dir, 'hook-mcp-github.mjs', { tool_name, tool_input }, { head: HEAD }, FROZEN_HOOK);
   const given = { owner: 'acme', repo: 'notes', pullNumber: 7 };
   for (const name of ['mcp__github__update_pull_request', 'mcp__github__update_pull_request_draft_state']) {
     const held = mcp(name, { ...given, draft: false });
@@ -526,7 +571,7 @@ test('the GitHub MCP hook holds the server\'s tools and Codex\'s connector tool 
   }
   for (const call of [RECORDED.ready, { ...RECORDED.ready, tool_name: 'mcp__codex_apps__github_mark_pull_request_ready_for_review' }]) {
     const held = hookRun(dir, 'hook-mcp-github.mjs', { ...RECORDED.pre, tool_name: call.tool_name, tool_input: { ...call.tool_input, repository_full_name: 'acme/notes', pr_number: 7 } },
-      { head: HEAD }, RECORDED.env);
+      { head: HEAD }, { ...RECORDED.env, ...FROZEN_HOOK });
     assert.equal(held.status, 2, `${call.tool_name}: ${held.stderr}`);
     assert.match(held.stderr, /#7 ready/u);
   }
@@ -534,7 +579,7 @@ test('the GitHub MCP hook holds the server\'s tools and Codex\'s connector tool 
 
 test('the GitHub MCP hook holds a ready through a GitHub MCP server a Claude Code plugin installs, under its plugin name', (t) => {
   const dir = repo(t);
-  const mcp = (tool_name, tool_input, env) => hookRun(dir, 'hook-mcp-github.mjs', { tool_name, tool_input }, { head: HEAD }, env);
+  const mcp = (tool_name, tool_input, env) => hookRun(dir, 'hook-mcp-github.mjs', { tool_name, tool_input }, { head: HEAD }, { ...env, ...FROZEN_HOOK });
   const given = { owner: 'acme', repo: 'notes', pullNumber: 7 };
   for (const name of ['mcp__plugin_github_github__update_pull_request', 'mcp__plugin_github_github__update_pull_request_draft_state']) {
     for (const env of [{}, { CLAUDECODE: '1' }]) {

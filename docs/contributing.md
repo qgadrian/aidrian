@@ -57,6 +57,20 @@ Last, `scripts/code-shape.mjs` lists on stderr the files of `plugins/aidrian/lib
 and the nested ternaries, by the [default code style](../plugins/aidrian/skills/knowledge/references/code-style.md).
 These are warnings, and never fail the check.
 
+## Load-independent deadlines
+
+A full local run loads the machine, and a test that races a real deadline then fails at random.
+A test that does not test the deadline itself gives the code the time the test says:
+
+- In process, through the rule's clock seam, such as the ready hold's `now` (`deadlineForge`), frozen as `FROZEN` in
+  `test/ready-hold.test.mjs`.
+- For a hook the test runs as a program, `AIDRIAN_TEST_READY_CLOCK=frozen` in the hook's environment stops the ready
+  hold's clock, so each `gh` call gets the whole 3.5 s. The hook honours it only under node's test runner
+  (`NODE_TEST_CONTEXT` set), and the suite strips it from the shell it starts in.
+- A wall-clock bound measures only the part the deadline bounds, such as from the fake `gh`'s start to the command's exit.
+
+A test of the deadline itself keeps the real clock, and no production deadline changes for a test.
+
 ## What the tests hold
 
 - The Claude Code marketplace lists `aidrian`, from `./plugins/aidrian`, then the optional Claude mod `aidrian-mod`,

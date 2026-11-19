@@ -3,6 +3,7 @@
 // - IDENTITY_VARS of lib/hosts/: the running session's identity, as each host names it.
 // - AIDRIAN_ALLOW_*: the escape hatches that switch a rule off; a reviewer never runs with one.
 // - AIDRIAN_GUARD_BUDGET_MS: a lower time budget for the agent gate hook's guards, which refuses more.
+// - AIDRIAN_TEST_READY_CLOCK: under the test runner, the ready hold's frozen clock (lib/rules/github/ready-hold.mjs TEST_CLOCK).
 // - AIDRIAN_SHELL_PID: the shell whose function started the session (lib/terminal-replace.mjs), which lets a session end itself.
 // - GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and the others git sets in a hook: with one set, a `git` call acts on
 //   another repository than the one in its folder.
@@ -20,7 +21,7 @@ export const GIT_VARS = Object.freeze([
 // `env` without those variables, changed in place and returned.
 export function isolate(env) {
   for (const key of Object.keys(env)) {
-    if (SESSION_VARS.includes(key) || GIT_VARS.includes(key) || key.startsWith('AIDRIAN_ALLOW_') || key === 'AIDRIAN_GUARD_BUDGET_MS' || key === 'AIDRIAN_SHELL_PID') delete env[key];
+    if (SESSION_VARS.includes(key) || GIT_VARS.includes(key) || key.startsWith('AIDRIAN_ALLOW_') || key === 'AIDRIAN_GUARD_BUDGET_MS' || key === 'AIDRIAN_TEST_READY_CLOCK' || key === 'AIDRIAN_SHELL_PID') delete env[key];
   }
   return env;
 }

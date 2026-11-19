@@ -34,14 +34,27 @@ const git = (cwd, ...args) => {
   return result.stdout.trim();
 };
 
-// A fake gh that logs each call's arguments to `log`, waits `delay` ms, then prints `answer`. With `trap`, it ignores
-// SIGTERM, as a gh stuck in its own cleanup may.
-function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false }) {
+// `bin/gh` as a shell wrapper that counts its spawn in `<log>.spawns` before it execs node on `body`, the fake's script:
+// a test that stops gh at a short deadline counts the spawn, which a loaded machine's slow node start cannot outlast.
+function ghWrapper(bin, log, body) {
   mkdirSync(bin, { recursive: true });
+  const script = path.join(bin, 'gh.cjs');
+  writeFileSync(script, body);
   const file = path.join(bin, 'gh');
-  writeFileSync(file, `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
-    `${trap ? "process.on('SIGTERM', () => {});\n" : ''}setTimeout(() => process.stdout.write(${JSON.stringify(answer)}), ${delay});\n`);
+  writeFileSync(file, `#!/bin/sh\necho >> '${log}.spawns'\nexec '${process.execPath}' '${script}' "$@"\n`);
   chmodSync(file, 0o755);
+}
+// How many times gh was spawned, as ghWrapper counts them.
+const ghSpawns = (log) => (existsSync(`${log}.spawns`) ? readFileSync(`${log}.spawns`, 'utf8').split('\n').length - 1 : 0);
+
+// A fake gh that logs each call's arguments to `log`, waits `delay` ms, then prints `answer` and exits with `status`. With
+// `trap`, it ignores SIGTERM, as a gh stuck in its own cleanup may, and appends to `<log>.beat` every 25 ms while it lives,
+// so the beat file's mtime is when it was last alive.
+function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false, status = 0 }) {
+  const beat = `${log}.beat`;
+  ghWrapper(bin, log, `const fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
+    (trap ? `process.on('SIGTERM', () => {});\nfs.appendFileSync(${JSON.stringify(beat)}, '.');\nconst beat = setInterval(() => fs.appendFileSync(${JSON.stringify(beat)}, '.'), 25);\n` : '') +
+    `setTimeout(() => { ${trap ? 'clearInterval(beat); ' : ''}process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`);
 }
 const ghCalls = (log) => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
@@ -65,7 +78,8 @@ function setup(t, { config = {}, origin = null, branch = 'main', name = 'project
   const run = (args = [], { cwd = dir, extraEnv = {} } = {}) => {
     const started = Date.now();
     const result = spawnSync(process.execPath, [CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
-    return { ...result, ms: Date.now() - started, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
+    const endedAt = Date.now();
+    return { ...result, ms: endedAt - started, endedAt, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
   };
   const projectState = () => spawnSync(process.execPath, [CLI, 'state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   return { base, dir, state, temp, env, run, log, projectState };
@@ -383,10 +397,14 @@ test('worktrees counts the owned and the merged ones, and reads merged heads onc
   fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
   assert.deepEqual(late.json.worktrees, { owned: 1, mergedNotCleaned: 1, stale: true }, 'a refresh past the deadline shows the cached value as stale');
-  assert.ok(late.ms < 4000, `${late.ms} ms`);
-  assert.equal(ghCalls(env.log).length, 2);
+  // From gh's spawn, the spawns file's mtime, to the snapshot's exit: the node and git startups a loaded machine slows
+  // come before it.
+  const lateMs = late.endedAt - statSync(`${env.log}.spawns`).mtimeMs;
+  assert.ok(lateMs < 4000, `${lateMs} ms`);
+  // Spawns, not log lines: the 200 ms deadline can stop a slowly started node gh before it logs its call.
+  assert.equal(ghSpawns(env.log), 2);
   assert.deepEqual(env.run(['--session', ID]).json.worktrees.stale, true);
-  assert.equal(ghCalls(env.log).length, 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
+  assert.equal(ghSpawns(env.log), 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
 });
 
 test('a snapshot started while a slow gh still answers an earlier one starts no gh call', async (t) => {
@@ -459,9 +477,16 @@ test('a Stop marker past its 64 KiB cap is not read: the handoff section fails',
 
 test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
   const env = withWorktree(t, { gh: { delay: 6000, trap: true } });
-  const { json, ms, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
+  const { json, endedAt, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
   assert.equal(status, 0);
   assert.equal(ghCalls(env.log).length, 1, 'gh started, and set its trap long before the deadline');
+  // Times from gh's start, its log line's mtime, so the node and git startups a loaded machine slows come before it. The
+  // 1500 ms deadline runs from gh's spawn: gh's own lifetime, to its last beat, stays under the 4000 ms default budget,
+  // and load can only shorten it.
+  const started = statSync(env.log).mtimeMs;
+  const lived = statSync(`${env.log}.beat`).mtimeMs - started;
+  assert.ok(lived < 2750, `gh lived ${lived} ms: stopped at the 1500 ms deadline, not the 4000 ms default`);
+  const ms = endedAt - started;
   assert.ok(ms < 4500, `${ms} ms`);
   assert.equal(json.worktrees.mergedNotCleaned, null);
   assert.ok(json.errors.includes('worktrees'), 'a read that failed with no cache is a failure');
@@ -819,8 +844,10 @@ test('the merged-heads cache is bound to origin`s repository: once origin moves,
   assert.ok(moved.errors.includes('worktrees'));
   const cache = path.join(fixed, 'sessions', ID, MERGED_HEADS.name);
   writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), attemptAt: Date.now() - 120_000 }));
-  fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
-  const failed = env.run(['--session', ID, '--deadline-ms', '200']).json;
+  // A gh that fails at once, `status: 1`: the refresh fails on gh's answer, not on a 200 ms deadline that a loaded
+  // machine's start of the fake gh outlasts before it logs the call this test reads.
+  fakeGh(path.join(env.base, 'bin'), { log: env.log, status: 1 });
+  const failed = env.run(['--session', ID]).json;
   assert.deepEqual(failed.worktrees, { owned: 1, mergedNotCleaned: null }, 'a failed refresh shows no other repository`s heads as stale');
   assert.deepEqual(ghCalls(env.log).at(-1).slice(-2), ['--repo', 'github.com/acme/other']);
 });
@@ -875,19 +902,17 @@ test('a named pipe at the lesson inbox or the audits triage file fails that sect
 function withLedger(t, options = {}) {
   const env = setup(t, options);
   const answerFile = path.join(env.base, 'answer.json');
-  const gh = path.join(env.base, 'bin', 'gh');
-  writeFileSync(gh, `#!${process.execPath}\nconst fs = require('node:fs');\n` +
+  ghWrapper(path.join(env.base, 'bin'), env.log, `const fs = require('node:fs');\n` +
     `const input = process.argv.includes('--input') ? fs.readFileSync(0, 'utf8') : null;\n` +
     `fs.appendFileSync(${JSON.stringify(env.log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), input, ghHost: process.env.GH_HOST ?? null }) + '\\n');\n` +
     `const { text, status, delay } = JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\n` +
     `setTimeout(() => { process.stdout.write(text); process.exitCode = status; }, delay);\n`);
-  chmodSync(gh, 0o755);
   const answer = (value, { status = 0, delay = 0 } = {}) => writeFileSync(answerFile, JSON.stringify({ text: typeof value === 'string' ? value : JSON.stringify(value), status, delay }));
   answer({ data: {} });
   env.run(['--session', ID]);
   const folder = path.join(env.projectState(), 'sessions', ID);
   const ledger = (rows) => writeFileSync(path.join(folder, 'prs.jsonl'), rows.map((row) => `${JSON.stringify(row)}\n`).join(''), { mode: 0o600 });
-  return { ...env, folder, answer, ledger, calls: () => ghCalls(env.log) };
+  return { ...env, folder, answer, ledger, calls: () => ghCalls(env.log), spawns: () => ghSpawns(env.log) };
 }
 
 // One ledger row, `minute` minutes past a fixed hour, in the project's folder unless it names another.
@@ -1052,18 +1077,22 @@ test('prs: results cache 60s; past the deadline the cached rows are stale, and w
   writeFileSync(cache, JSON.stringify({ ...stored, attemptAt: Date.now() - 120_000 }));
   env.answer({ data: {} }, { delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
-  assert.ok(late.ms < 4000, `${late.ms} ms`);
+  // From gh's spawn, the spawns file's mtime, to the snapshot's exit: the node and git startups a loaded machine slows
+  // come before it.
+  const lateMs = late.endedAt - statSync(`${env.log}.spawns`).mtimeMs;
+  assert.ok(lateMs < 4000, `${lateMs} ms`);
   assert.deepEqual(late.json.prs, [{ ...PR_ROW, stale: true }]);
   assert.deepEqual(late.json.errors, []);
-  assert.equal(env.calls().length, 2);
+  // Spawns, not log lines: the 200 ms deadline can stop a slowly started node gh before it logs its call.
+  assert.equal(env.spawns(), 2);
   assert.deepEqual(env.run(['--session', ID]).json.prs, [{ ...PR_ROW, stale: true }]);
-  assert.equal(env.calls().length, 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
+  assert.equal(env.spawns(), 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
   rmSync(cache);
   const cold = env.run(['--session', ID, '--deadline-ms', '200']);
   assert.deepEqual([cold.json.prs, cold.json.errors], [null, ['prs']], 'no cache: the section fails');
   rmSync(cache);
   env.ledger([]);
-  assert.deepEqual([env.run(['--session', ID]).json.prs, env.calls().length], [[], 3], 'a ledger with no row: no call');
+  assert.deepEqual([env.run(['--session', ID]).json.prs, env.spawns()], [[], 3], 'a ledger with no row: no call');
   env.ledger([ledgerRow(env.dir, { branch: 'feat/none' })]);
   env.answer({ data: { r0: { pullRequests: { nodes: [] }, parent: null } } });
   const none = env.run(['--session', ID]).json;

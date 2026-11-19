@@ -654,6 +654,8 @@ the hook started, so another rule's lookups in the same command leave the hook i
 costs three gh calls: the view and the default branch's two config reads. A pull request stacked on a branch other than the
 default one costs two more, for the base's config, and a ready on another remote, such as a fork's upstream, one more for
 its default branch; on a slow network those can pass the deadline, and the command then runs.
+Only under node's test runner (`NODE_TEST_CONTEXT` set), `AIDRIAN_TEST_READY_CLOCK=frozen` in the hook's own environment
+stops this clock; outside the runner it is ignored ([Load-independent deadlines](contributing.md#load-independent-deadlines)).
 A gh call that fails, one past the deadline, `status` exiting 3, or anything else it cannot read about the state lets the
 command run. The deny never names the override or the local opt-out as a route. A choice is the Human's, so an unattended
 run leaves the draft.

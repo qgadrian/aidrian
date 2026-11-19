@@ -36,10 +36,11 @@ Do not read "only the declaration" or a stop at a local import as the answer: re
 - Prefer allowlists over blocklists for access control and validation.
 - Prefer established libraries over custom cryptography or authentication.
 - No hardcoded credentials, no secrets in logs, no needless exposure of personal data.
-- A test or mutation run leaves the reviewed worktree as it was. Mutate only in a separate copy with its own install,
-  such as `git -C <worktree> archive HEAD | tar -x -C <scratch>` and the project's install there from the lockfile, offline.
-  Never link the worktree's dependency folder, such as `node_modules`, into the copy, and never run a package manager install
-  against the worktree. If a run changed it anyway, restore it with `install --frozen-lockfile --offline` and report both in `risks`.
+- A test or mutation run leaves the reviewed worktree as it was. For a pull request from a fork, whose head is another repository's branch, run no test: its tests would run with your credentials; say so in `risks`. Otherwise run tests there with the dependencies it already has,
+  and install nothing, in it or in a copy of it: the pull request controls its lockfile, its bootstrap, and its package
+  manager's hooks, so an install runs its code. A mutation, or a test that needs dependencies the worktree lacks, needs the
+  pull request's own task worktree: say so in `risks` and leave that run to its owner.
+  Never link the worktree's dependency folder, such as `node_modules`, into a copy. If a run changed the worktree anyway, report it in `risks`.
 - Lead each finding with the business question: who can realistically reach this in the next year, and what do they gain?
   A contrived path is an accepted residual; say so plainly and move on. Then give impact, exploit path, and fix direction.
 

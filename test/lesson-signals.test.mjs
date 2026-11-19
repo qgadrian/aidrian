@@ -265,6 +265,36 @@ test('a stop sent back for a running background task files no delivery lesson fo
   assert.deepEqual([...all(), ...plugin()].map((lesson) => lesson.key), []);
 });
 
+// A pending handoff left `unwritten` but stayed in `missing` when the report named it on a delivery line, so the stop was
+// sent back for it and filed the lesson the pending state exists to prevent. Another path the report names still counts.
+test('a pending handoff the report names on a delivery line is not missing; another missing path still is', (t) => {
+  const { dir, all, plugin, hook } = project(t);
+  const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-product-manager.json');
+  const transcript = path.join(dir, 'agent-p1.jsonl');
+  writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }),
+    JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } }),
+  ].join('\n'));
+  // Claude Code wakes the agent with its background agent's report, so the stop ends and the handoff waits for that one.
+  const stop = (message) => hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: 'p1', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript,
+    last_assistant_message: message, stop_hook_active: false, background_tasks: [{ id: 'achild001', type: 'local_agent', status: 'running' }],
+  }, { CLAUDECODE: '1' });
+  const rows = () => readFileSync(path.join(stateDir(projectAt(dir)), 'dispatch-log.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const named = stop(`Waiting for the explorer.\nHandoff: ${file}`);
+  assert.equal(named.status, 0, `the pending handoff sent the agent back: ${named.stderr}`);
+  assert.deepEqual([...all(), ...plugin()].map((lesson) => lesson.key), [], 'the pending handoff is no lesson');
+  assert.equal(rows().at(-1).delivered, 'file', 'the pending handoff is not missing on the stop row');
+  assert.ok(!existsSync(file), 'nothing is written while the task runs');
+  const other = stop(`Waiting for the explorer.\nHandoff: ${file}\nWrote out/notes.md`);
+  assert.equal(other.status, 2, 'a path that exists nowhere still sends the agent back');
+  assert.match(other.stderr, /^Your report names `out\/notes\.md`, which does not exist\./u);
+  assert.ok(!other.stderr.includes(file), 'the pending handoff is not among the missing paths');
+  assert.equal(rows().at(-1).delivered, 'missing');
+  assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.note]), [['delivery-check:aidrian:product-manager', 'aidrian:product-manager presented out/notes.md as written, and it did not exist.']]);
+});
+
 // A subagent transcript in Claude Code's shape: a background push and a resumed reviewer, each with the text result and the
 // structured `toolUseResult` that names its id, as the stalled fix agents' transcripts held them.
 function childTranscript(dir) {

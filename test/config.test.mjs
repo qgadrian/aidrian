@@ -503,7 +503,7 @@ test('review.productFeedback.auto and files: off and null by default, each check
   const none = '.aidrian/config.json: "review.productFeedback.auto" is true, and neither review.productFeedback.files nor review.visual.targets says which files are user-facing';
   assert.deepEqual([DEFAULTS.review.productFeedback.auto, DEFAULTS.review.productFeedback.files], [false, null]);
   assert.deepEqual(at({ auto: true, files: ['src/**', 're:^app/'] }).errors, []);
-  assert.deepEqual(at({ auto: true, files: ['src/**'] }).config.review.productFeedback, { auto: true, files: ['src/**'], maxPersonas: 2 });
+  assert.deepEqual(at({ auto: true, files: ['src/**'] }).config.review.productFeedback, { auto: true, files: ['src/**'], maxPersonas: 2, allWidths: null });
   assert.deepEqual(at({ auto: false }).errors, []);
   assert.deepEqual(at({ auto: true }).errors, [none]);
   assert.equal(at({ auto: true }).config.review.productFeedback.auto, true, 'it stays true, so status reads it as clear');
@@ -527,6 +527,7 @@ test('.aidrian.local.json review.productFeedback may set only auto', (t) => {
   assert.deepEqual(at({ auto: false }), []);
   assert.deepEqual(at({ files: ['src/**'] }), ['.aidrian.local.json: unknown key "review.productFeedback.files"; only "review.productFeedback.auto" is a machine setting']);
   assert.deepEqual(at({ maxPersonas: 5 }), ['.aidrian.local.json: unknown key "review.productFeedback.maxPersonas"; only "review.productFeedback.auto" is a machine setting']);
+  assert.deepEqual(at({ allWidths: { files: ['src/**'] } }), ['.aidrian.local.json: unknown key "review.productFeedback.allWidths"; only "review.productFeedback.auto" is a machine setting']);
   assert.deepEqual(at({ auto: 'on' }), ['.aidrian.local.json: "review.productFeedback.auto" must be true or false']);
   assert.deepEqual(at(true), ['.aidrian.local.json: "review.productFeedback" must be { "auto": true } or { "auto": false }']);
 });
@@ -537,6 +538,39 @@ test('review.ignore and review.nonBehaviour: an empty re: is a config error, and
     assert.deepEqual(errors, [`.aidrian/config.json: "review.${key}" has re: with no expression`], key);
     assert.deepEqual(config.review[key], ['README.md'], key);
   }
+});
+
+test('review.productFeedback.allWidths is null by default, takes { files }, and each bad value is an error that keeps null', (t) => {
+  const at = (allWidths) => loadConfig(project(t, { version: 1, review: { productFeedback: { allWidths } } }));
+  assert.equal(DEFAULTS.review.productFeedback.allWidths, null);
+  assert.equal(loadConfig(project(t, { version: 1 })).config.review.productFeedback.allWidths, null);
+  for (const files of [['src/**'], ['re:^app/(pages|components)/', 'src/**']]) {
+    const { config, errors } = at({ files });
+    assert.deepEqual([errors, config.review.productFeedback.allWidths], [[], { files }], JSON.stringify(files));
+  }
+  assert.deepEqual([at(null).errors, at(null).config.review.productFeedback.allWidths], [[], null]);
+  const shape = '.aidrian/config.json: "review.productFeedback.allWidths" must be null or { "files": <a non-empty list of globs> }';
+  const list = '.aidrian/config.json: "review.productFeedback.allWidths.files" must be a non-empty list of globs';
+  for (const [value, errors] of [
+    [true, [shape]],
+    ['src/**', [shape]],
+    [['src/**'], [shape]],
+    [{ files: ['src/**'], routes: ['/'] }, ['.aidrian/config.json: unknown key "review.productFeedback.allWidths.routes"']],
+    [{}, [list]],
+    [{ files: [] }, [list]],
+    [{ files: 'src/**' }, [list]],
+    [{ files: [''] }, [list]],
+    [{ files: ['src/**', 1] }, [list]],
+    [{ files: ['re:'] }, ['.aidrian/config.json: "review.productFeedback.allWidths.files" has re: with no expression']],
+  ]) {
+    const loaded = at(value);
+    assert.deepEqual(loaded.errors, errors, JSON.stringify(value));
+    assert.equal(loaded.config.review.productFeedback.allWidths, null, `${JSON.stringify(value)} keeps null`);
+  }
+  const broken = at({ files: ['re:('] });
+  assert.equal(broken.errors.length, 1);
+  assert.match(broken.errors[0], /^\.aidrian\/config\.json: "review\.productFeedback\.allWidths\.files" has re:\(: /u);
+  assert.equal(broken.config.review.productFeedback.allWidths, null);
 });
 
 test('review.productFeedback.maxPersonas is a whole number from 1 to 10, 2 by default', (t) => {

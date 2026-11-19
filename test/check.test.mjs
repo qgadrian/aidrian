@@ -456,6 +456,34 @@ test('check warns when auto-merge is allowed, review.visual is unset, and git tr
   assert.equal(check(), '', 'silent with auto-merge not allowed');
 });
 
+test('check warns when review.productFeedback.allWidths is set and review.visual lists no viewports', (t) => {
+  const dir = exampleRepo(t);
+  const config = (review) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, ...(review && { review }) }));
+  const visual = { platform: 'web', targets: [{ files: ['src/app/**'], routes: ['/'] }], viewports: [390, 1024, 1440] };
+  const allWidths = { files: ['src/app/**'] };
+  const check = () => {
+    const { status, stderr } = run(['check'], dir);
+    assert.equal(status, 0, stderr);
+    return stderr;
+  };
+
+  config({ productFeedback: { allWidths } });
+  assert.equal(check(), 'warning: review.productFeedback.allWidths is set, but review.visual lists no viewports, so it has no effect\n');
+  config({ productFeedback: { allWidths }, visual });
+  assert.equal(check(), '', 'silent with review.visual set');
+  config({ productFeedback: { allWidths: null } });
+  assert.equal(check(), '', 'silent with the key null');
+  config(null);
+  assert.equal(check(), '', 'silent with the key absent');
+
+  // A review.visual with an error reads as unset, and its own error already says what to fix.
+  config({ productFeedback: { allWidths }, visual: { ...visual, viewports: [] } });
+  const broken = run(['check'], dir);
+  assert.equal(broken.status, 1);
+  assert.match(broken.stderr, /review\.visual\.viewports/u);
+  assert.doesNotMatch(broken.stderr, /allWidths/u, 'no warning on a config with errors');
+});
+
 test('the screen warning escapes control characters in the file it names, so a file name cannot forge a line', (t) => {
   const dir = exampleRepo(t);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { requiredChecks: ['test'], autoMerge: { allow: true } } }));

@@ -38,11 +38,10 @@ import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './personas.mjs';
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
-import { fromOutside, parseTarget } from './pr-resolve.mjs';
+import { changedFilesMatch, fromOutside, parseTarget, projectFolder } from './pr-resolve.mjs';
 import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
 import { decodedCopy, neutralized, refusedKind } from './review/publish.mjs';
-import { pathPattern } from './review/plan.mjs';
 
 const ITEM_ID = /^PF([1-9]\d*)$/u;
 const RECHECKS = ['confirmed', 'reopened'];
@@ -240,9 +239,8 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
     return { exit: 0, result: { state: 'clear', reason, why, pr: target.number, repo, head: null, owed: [] } };
   }
   const pr = pullRequest(value, { forge, remotes }, VIEW_FIELDS, view);
-  const shown = runGit(['rev-parse', '--show-prefix'], project.root);
-  if (shown.status !== 0) throw new Error('git could not give the project\'s folder in the repository');
-  const prefix = shown.stdout.trim();
+  const prefix = projectFolder(project.root);
+  if (prefix === null) throw new Error('git could not give the project\'s folder in the repository');
   const main = mainBranch(pr) ?? defaultBranch(forge, pr);
   const onMain = readBranch(forge, pr, main, prefix);
   const onBase = pr.base === main ? onMain : readBranch(forge, pr, pr.base, prefix);
@@ -258,10 +256,7 @@ export function feedbackStatus(value, project, { forge, remotes = () => checkout
   if (unlisted) throw new Error(`review.visual on ${unlisted.branch} has errors, and its targets are that branch's file list`);
   const lists = unionOf(branches.map((config) => feedbackOf(config).files ?? targetFilesOf(config)));
   if (!lists.length) return clear('no_file_lists');
-  const patterns = lists.map(pathPattern);
-  const hidden = pr.files.length !== pr.changedFiles || pr.files.some(({ changeType }) => changeType === 'RENAMED' || !changeType);
-  const matches = pr.files.some((file) => file.path.startsWith(prefix) && patterns.some((pattern) => pattern.test(file.path.slice(prefix.length))));
-  if (!hidden && !matches) return clear('not_user_facing');
+  if (!changedFilesMatch(pr, lists, prefix)) return clear('not_user_facing');
 
   const working = loadConfig(project).config;
   const moved = stateDirProblem(working, onMain.config, "the default branch's", 'the record');

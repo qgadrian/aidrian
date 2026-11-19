@@ -55,6 +55,13 @@ function quorumProductWarnings(project, { quorum: { product }, decisions }) {
   return warnings;
 }
 
+// The warning for `review.productFeedback.allWidths` set with no viewports to walk. Its default is null, so the merged
+// value says whether it is set.
+function allWidthsWarnings({ review }) {
+  if (review.productFeedback.allWidths === null || review.visual?.viewports?.length) return [];
+  return ['review.productFeedback.allWidths is set, but review.visual lists no viewports, so it has no effect'];
+}
+
 // The warnings about the checkout and this machine's switches.
 function checkoutWarnings(project, config) {
   const warnings = [];
@@ -96,7 +103,7 @@ export const commands = {
       // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
       // Only with no errors too: a `review.visual` with an error reads as unset, and its error already says what to fix.
-      const screens = errors.length ? [] : unseenScreenWarnings(project, config, () => trackedFiles(project));
+      const screens = errors.length ? [] : [...unseenScreenWarnings(project, config, () => trackedFiles(project)), ...allWidthsWarnings(config)];
       const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker), ...screens];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));

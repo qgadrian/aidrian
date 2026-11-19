@@ -140,6 +140,10 @@ Any other run keeps the shape above, with no width in it.
   The first line stays `- Persona: ... Task: ... Evidence: ... Label: ...`. Any other finding, walked another way or not
   walked, has none.
 - Seen at several widths, it is one finding naming each, as one finding two personas share is written once and names both.
+  When the personas or tasks of a shared finding were seen at different widths, its `Width:` bullet names each persona
+  with its own widths, such as `- Width: floor-manager at 390 px; host at 1440 px. Not at 1024 px.`, and each task in
+  brackets after its persona when the tasks differ. `Not at` then names the widths none of them saw it at.
+  The re-check walks each persona at its own widths alone, so a merge never drops which persona saw which width.
 - The task table gets a `Width` column after `Task`, and one row per task and width, so each width has its own outcome.
   A task not walked in a browser keeps one row, with `-` in the Width column.
 - The `Reached:` line names the widths walked, such as `walked at 390, 1024, and 1440 px`.

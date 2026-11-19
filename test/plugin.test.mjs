@@ -1354,6 +1354,10 @@ test('persona-audit walks each browser task at every width walk_widths lists, an
   assert.match(report, /A finding of a task walked in a browser gets a `- Width:` bullet after its first line, naming the widths it was seen at and the widths walked without it, such as `- Width: 390 px\. Not at 1024 or 1440 px\.`/u);
   assert.match(report, /Any other finding, walked another way or not walked, has none\./u);
   assert.match(report, /Seen at several widths, it is one finding naming each, as one finding two personas share is written once and names both\./u);
+  // A shared finding keeps which persona, and which task, saw which width, so the re-check never walks one at another's width.
+  assert.match(report, /When the personas or tasks of a shared finding were seen at different widths, its `Width:` bullet names each persona with its own widths, such as `- Width: floor-manager at 390 px; host at 1440 px\. Not at 1024 px\.`, and each task in brackets after its persona when the tasks differ\./u);
+  assert.match(report, /`Not at` then names the widths none of them saw it at\./u);
+  assert.match(report, /The re-check walks each persona at its own widths alone, so a merge never drops which persona saw which width\./u);
   assert.match(report, /The task table gets a `Width` column after `Task`, and one row per task and width, so each width has its own outcome\./u);
   assert.match(report, /A task not walked in a browser keeps one row, with `-` in the Width column\./u);
   assert.match(report, /\| Persona \| Task \| Width \| Evidence \| Outcome \|/u);
@@ -1377,7 +1381,13 @@ test('persona-audit walks each browser task at every width walk_widths lists, an
   assert.doesNotMatch(format, /seen at every width/u);
   assert.match(format, /"How it was checked" then names the widths walked, and "Not checked" names each width not reached/u);
   // The re-check walks at the finding's widths, and confirms only when it shows at none.
-  assert.match(recheck, /A persona finding whose entry in the report, found by its title, has a `Width:` bullet \(the sidecar holds no width\) is walked at each width that bullet says it was seen at, and only at those, whatever `walk_widths` says now\./u);
+  // The re-check finds the entry by the item's audit key, never its title or the record's moving report pointer, and
+  // leaves the item unrecorded when that entry is gone, so a fix is never confirmed at a width it was not seen at.
+  assert.match(recheck, /Find its finding by the item's `audit_key` in `items --json`, `<report file>#<finding id>`, never by its title nor the record's `report`: in `<state>\/audits\/`, that report's sidecar `<name>\.json` holds the finding with that `id`, and its entry in the report is the `### ` finding heading at that finding's place in the sidecar's `findings`, with the same title\./u);
+  assert.match(recheck, /When that report, its sidecar, that `id`, or that heading is missing, leave the item unrecorded: say so in the reply, naming the `audit_key`\./u);
+  assert.doesNotMatch(recheck, /found by its title/u);
+  assert.match(recheck, /A persona finding whose entry has a `Width:` bullet \(the sidecar holds no width\) is walked at each width that bullet says it was seen at, and only at those, whatever `walk_widths` says now\./u);
+  assert.match(recheck, /A bullet that names personas walks each persona at its own widths alone, and each task at its own when it names tasks\./u);
   // Reopened when it shows at any width reached; confirmed only when it shows at none and every width was reached;
   // else left unrecorded.
   assert.match(recheck, /A finding with a `Width:` bullet is reopened as soon as it shows at any width the re-check reached\./u);
@@ -1398,6 +1408,8 @@ test('persona-audit walks each browser task at every width walk_widths lists, an
   assert.match(whatARunDoes, /Each finding walked in a browser names the widths it was seen at in a `Width:` line/u);
   assert.match(feedback, /covers every width of `walk_widths` for each browser task/u);
   assert.match(feedback, /the "seen" label names the widths each item was seen at/u);
+  assert.match(whatARunDoes, /and one that several personas saw at different widths names each persona with its own\./u);
+  assert.match(feedback, /A re-check finds a persona item's finding by its audit key, never its title, and leaves the item unrecorded when that entry is gone; it walks the item at the widths it was seen at, each persona at its own\./u);
   assert.match(feedback, /a label and a `Width:` line always list each width in px\./u);
   assert.match(feedback, /It reopens the item when the finding shows at any width reached, confirms it only when it shows at none and every width was reached, and else leaves it unrecorded, saying so\./u);
   assert.match(whatARunDoes, /A task none of whose widths is reached is walked once at the session's width, which gets its own row and is the width its findings name\./u);

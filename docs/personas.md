@@ -190,7 +190,8 @@ With [`review.productFeedback.allWidths`](config.md#walking-every-width) set, of
 a pull request run walks each in-scope browser task once per width of `walk_widths`, in place of the persona's width,
 and checks each of those widths before the first walk. A task walked another way, such as an API call or a CLI, is
 walked once, and no question is asked first: the committed key is the consent. The walks then number personas x tasks
-x widths. Each finding walked in a browser names the widths it was seen at in a `Width:` line, the task table has a row per task and
+x widths. Each finding walked in a browser names the widths it was seen at in a `Width:` line, and one that several
+personas saw at different widths names each persona with its own. The task table has a row per task and
 width, the `Reached:` line names the widths walked, and a width out of reach is a `Not reached` line naming the task and
 the width while the other widths are still walked. A task none of whose widths is reached is walked once at the
 session's width, which gets its own row and is the width its findings name. The sidecar holds no width.
@@ -253,7 +254,8 @@ With [`review.productFeedback.allWidths`](config.md#walking-every-width) set, of
 the walk of step 1 covers every width of `walk_widths` for each browser task, at a cost of personas x tasks x widths walks. In the comment,
 the "seen" label names the widths each item was seen at, such as "(seen at 390 px)", "How it was checked" names the widths
 walked, and "Not checked" names a width not reached; a label and a `Width:` line always list each width in px.
-A re-check walks a persona item at the widths it was seen at. It reopens the item when the finding shows at any width
+A re-check finds a persona item's finding by its audit key, never its title, and leaves the item unrecorded when that
+entry is gone; it walks the item at the widths it was seen at, each persona at its own. It reopens the item when the finding shows at any width
 reached, confirms it only when it shows at none and every width was reached, and else leaves it unrecorded, saying so.
 
 With `review.productFeedback.auto` on, the flows run this skill themselves, after a draft opens and again before marking it
